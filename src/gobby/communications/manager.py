@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from collections.abc import Callable
@@ -23,6 +24,7 @@ from gobby.communications.polling import PollingManager
 from gobby.communications.rate_limiter import TokenBucketRateLimiter
 from gobby.communications.router import MessageRouter
 from gobby.communications.threads import ThreadManager
+from gobby.communications.webhook_verification import verify_webhook_with_timeout
 
 if TYPE_CHECKING:
     from pathlib import Path
@@ -34,6 +36,7 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
+_WEBHOOK_VERIFICATION_TIMEOUT_SECONDS = 5.0
 
 
 class CommunicationsManager:
@@ -94,7 +97,7 @@ class CommunicationsManager:
         # Auto-create gobby_chat channel if none exists
         await self._ensure_gobby_chat_channel()
 
-        channels = self._store.list_channels(enabled_only=True)
+        channels = await asyncio.to_thread(self._store.list_channels, enabled_only=True)
         for channel in channels:
             try:
                 adapter = await self._init_adapter(channel)
@@ -225,7 +228,7 @@ class CommunicationsManager:
         except Exception as e:
             logger.error(f"Error shutting down channel {name!r}: {e}", exc_info=True)
 
-    def _enrich_outbound_metadata(
+    async def _enrich_outbound_metadata(
         self,
         channel: ChannelConfig,
         channel_name: str,
@@ -240,7 +243,11 @@ class CommunicationsManager:
                 effective["platform_destination"] = default_dest
 
         if session_id:
-            identity = self._identity_manager.get_identity_by_session(channel.id, session_id)
+            identity = await asyncio.to_thread(
+                self._identity_manager.get_identity_by_session,
+                channel.id,
+                session_id,
+            )
             if identity and "conversation_reference" in identity.metadata_json:
                 conv_ref = identity.metadata_json["conversation_reference"]
                 if isinstance(conv_ref, dict):
@@ -284,19 +291,16 @@ class CommunicationsManager:
 
         channel = self._channel_by_name[channel_name]
 
-        # Rate limit check — waits until a token is available
         await self._rate_limiter.wait_if_needed(channel.id)
 
-        # Look up thread if we have a session
         platform_thread_id = None
         if session_id:
             platform_thread_id = self._get_thread_id(channel_name, session_id)
 
-        effective_metadata = self._enrich_outbound_metadata(
+        effective_metadata = await self._enrich_outbound_metadata(
             channel, channel_name, session_id, metadata
         )
 
-        # Build CommsMessage
         message = CommsMessage(
             id=str(uuid.uuid4()),
             channel_id=channel.id,
@@ -309,7 +313,6 @@ class CommunicationsManager:
             created_at=datetime.now(UTC).isoformat(),
         )
 
-        # Send via adapter
         try:
             platform_message_id = await adapter.send_message(message)
             message.platform_message_id = platform_message_id
@@ -319,13 +322,11 @@ class CommunicationsManager:
             message.error = str(e)
             logger.error(f"Failed to send message to {channel_name!r}: {e}", exc_info=True)
 
-        # Store in DB
         try:
-            self._store.create_message(message)
+            await asyncio.to_thread(self._store.create_message, message)
         except Exception as e:
             logger.error(f"Failed to store outbound message: {e}", exc_info=True)
 
-        # Fire event callback
         if self.event_callback is not None:
             try:
                 await self.event_callback("comms.message_sent", message=message)
@@ -372,7 +373,7 @@ class CommunicationsManager:
 
         display_name = filename or file_path.name
 
-        effective_metadata = self._enrich_outbound_metadata(
+        effective_metadata = await self._enrich_outbound_metadata(
             channel, channel_name, session_id, metadata
         )
 
@@ -413,8 +414,8 @@ class CommunicationsManager:
             logger.error(f"Failed to send attachment to {channel_name!r}: {e}", exc_info=True)
 
         try:
-            self._store.create_message(message)
-            self._store.create_attachment(attachment)
+            await asyncio.to_thread(self._store.create_message, message)
+            await asyncio.to_thread(self._store.create_attachment, attachment)
         except Exception as e:
             logger.error(f"Failed to store outbound attachment: {e}", exc_info=True)
 
@@ -474,8 +475,11 @@ class CommunicationsManager:
         self, channel_id: str, external_user_id: str, external_username: str | None = None
     ) -> CommsIdentity:
         """Resolve identity and auto-create/link session if needed."""
-        return self._identity_manager.resolve_identity(
-            channel_id, external_user_id, external_username
+        return await asyncio.to_thread(
+            self._identity_manager.resolve_identity,
+            channel_id,
+            external_user_id,
+            external_username,
         )
 
     async def handle_inbound_messages(
@@ -519,8 +523,12 @@ class CommunicationsManager:
                             "conversation_reference"
                         ]
 
-                    identity = self._identity_manager.resolve_identity(
-                        channel.id, message.identity_id, external_username, metadata=identity_meta
+                    identity = await asyncio.to_thread(
+                        self._identity_manager.resolve_identity,
+                        channel.id,
+                        message.identity_id,
+                        external_username,
+                        metadata=identity_meta,
                     )
                     message.session_id = identity.session_id
                     message.identity_id = identity.id
@@ -528,7 +536,7 @@ class CommunicationsManager:
                 if message.session_id and message.platform_thread_id:
                     self._track_thread(channel_name, message.session_id, message.platform_thread_id)
 
-                stored.append(self._store.create_message(message))
+                stored.append(await asyncio.to_thread(self._store.create_message, message))
             except Exception as e:
                 logger.error(f"Failed to process inbound message: {e}", exc_info=True)
 
@@ -570,12 +578,14 @@ class CommunicationsManager:
 
         webhook_secret = channel.webhook_secret
         if webhook_secret and webhook_secret.startswith("$secret:"):
-            resolved = self._secret_store.get(webhook_secret.removeprefix("$secret:"))
+            resolved = await asyncio.to_thread(
+                self._secret_store.get,
+                webhook_secret.removeprefix("$secret:"),
+            )
             if resolved is None:
                 raise ValueError(f"Webhook secret for channel {channel_name!r} is not configured")
             webhook_secret = resolved
 
-        # Verify webhook signature if a secret is configured
         if webhook_secret:
             verify_bytes: bytes
             if raw_body is not None:
@@ -587,7 +597,19 @@ class CommunicationsManager:
                 # might differ from the original request body, breaking HMAC.
                 raise ValueError("raw_body must be provided for webhook signature verification")
 
-            if not adapter.verify_webhook(verify_bytes, headers, webhook_secret):
+            try:
+                verified = await verify_webhook_with_timeout(
+                    adapter,
+                    verify_bytes,
+                    headers,
+                    webhook_secret,
+                    _WEBHOOK_VERIFICATION_TIMEOUT_SECONDS,
+                )
+            except TimeoutError as exc:
+                raise ValueError(
+                    f"Webhook signature verification failed for channel {channel_name!r}"
+                ) from exc
+            if not verified:
                 raise ValueError(
                     f"Webhook signature verification failed for channel {channel_name!r}"
                 )
@@ -634,7 +656,8 @@ class CommunicationsManager:
                     continue  # Skip empty values
                 # Channel-scoped secret name avoids collisions between channels
                 secret_name = f"COMMS_{channel_type.upper()}_{key.upper()}_{name.upper()}"
-                self._secret_store.set(
+                await asyncio.to_thread(
+                    self._secret_store.set,
                     name=secret_name,
                     plaintext_value=str(value),
                     category="integration",
@@ -644,7 +667,6 @@ class CommunicationsManager:
                 if key == "webhook_secret":
                     webhook_secret = secret_ref
                 else:
-                    # Put reference in config so adapter resolves it
                     config[key] = secret_ref
 
         channel_config = ChannelConfig(
@@ -658,10 +680,8 @@ class CommunicationsManager:
             webhook_secret=webhook_secret,
         )
 
-        # Save to DB
-        self._store.create_channel(channel_config)
+        await asyncio.to_thread(self._store.create_channel, channel_config)
 
-        # Initialize adapter
         try:
             await self._activate_channel(channel_config)
             logger.info(f"Added channel {name!r} ({channel_type})")
@@ -677,14 +697,16 @@ class CommunicationsManager:
         Args:
             name: Channel name to remove.
         """
-        channel = self._channel_by_name.get(name) or self._store.get_channel_by_name(name)
+        channel = self._channel_by_name.get(name) or await asyncio.to_thread(
+            self._store.get_channel_by_name, name
+        )
         if channel is None:
             raise ValueError(f"Channel {name!r} not found")
 
         await self._deactivate_channel(name, channel)
 
         try:
-            self._store.delete_channel(channel.id)
+            await asyncio.to_thread(self._store.delete_channel, channel.id)
             logger.info(f"Removed channel {name!r}")
         except Exception as e:
             logger.error(f"Failed to delete channel {name!r} from DB: {e}")
@@ -697,7 +719,7 @@ class CommunicationsManager:
         rules to target the web UI.  Unlike external channels, it needs
         no credentials.
         """
-        channels = self._store.list_channels(enabled_only=False)
+        channels = await asyncio.to_thread(self._store.list_channels, enabled_only=False)
         if any(c.channel_type == "gobby_chat" for c in channels):
             return
 
@@ -716,7 +738,7 @@ class CommunicationsManager:
             updated_at=now,
         )
         try:
-            self._store.create_channel(channel)
+            await asyncio.to_thread(self._store.create_channel, channel)
             logger.info("Auto-created gobby_chat channel for unified routing")
         except Exception as e:
             logger.error(f"Failed to auto-create gobby_chat channel: {e}", exc_info=True)
@@ -759,7 +781,7 @@ class CommunicationsManager:
             The updated ChannelConfig.
         """
         channel.updated_at = datetime.now(UTC).isoformat()
-        updated = self._store.update_channel(channel)
+        updated = await asyncio.to_thread(self._store.update_channel, channel)
 
         current_names = [
             name for name, cached in self._channel_by_name.items() if cached.id == updated.id

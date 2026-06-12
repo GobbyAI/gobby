@@ -230,8 +230,8 @@ class LinearSyncService:
         project = self.project_manager.get(self.project_id)
         return project.linear_project_id if project else None
 
-    def _get_graphql_client(self) -> LinearGraphQLClient | None:
-        return LinearGraphQLClient.from_database(self.task_manager.db)
+    async def _get_graphql_client(self) -> LinearGraphQLClient | None:
+        return await LinearGraphQLClient.from_database_async(self.task_manager.db)
 
     def _linear_mcp_has_tool(self, tool_name: str) -> bool:
         """Return False only when cached Linear tool metadata proves absence."""
@@ -324,7 +324,7 @@ class LinearSyncService:
                 arguments={},
             )
         except Exception as e:
-            client = self._get_graphql_client()
+            client = await self._get_graphql_client()
             if client:
                 return await client.list_teams()
             raise LinearSyncError(
@@ -345,7 +345,7 @@ class LinearSyncService:
                 arguments={"teamId": team_id},
             )
         except Exception as e:
-            client = self._get_graphql_client()
+            client = await self._get_graphql_client()
             if client:
                 return await client.list_projects(team_id)
             raise LinearSyncError(
@@ -378,7 +378,7 @@ class LinearSyncService:
             )
             project = _extract_record(result, "project")
         except Exception as e:
-            client = self._get_graphql_client()
+            client = await self._get_graphql_client()
             if not client:
                 raise LinearSyncError(
                     "Linear MCP server does not expose create_project and no Linear API key "
@@ -468,7 +468,7 @@ class LinearSyncService:
             )
             issues = result.get("issues", [])
         except Exception:
-            client = self._get_graphql_client()
+            client = await self._get_graphql_client()
             if not client:
                 raise
             issues = await client.list_issues(
@@ -557,7 +557,7 @@ class LinearSyncService:
         linear_state = self.map_gobby_state_to_linear(self._project_gobby_state_for_linear(task))
 
         issue_title = self._linear_issue_title(task)
-        client = self._get_graphql_client()
+        client = await self._get_graphql_client()
         if client:
             effective_team_id = task.linear_team_id or self.linear_team_id
             state_id = await self._linear_state_id_for_name(
@@ -618,7 +618,7 @@ class LinearSyncService:
         linear_project_id = await self.ensure_project_binding(effective_team_id)
         title = self._linear_issue_title(task)
 
-        client = self._get_graphql_client()
+        client = await self._get_graphql_client()
         if client:
             result_dict = await client.create_issue(
                 team_id=effective_team_id,
@@ -778,7 +778,7 @@ class LinearSyncService:
             )
             issues = result.get("issues", [])
         except Exception as e:
-            client = self._get_graphql_client()
+            client = await self._get_graphql_client()
             if not client:
                 _linear_fetch_failure_limiter.log_failure(logger, e)
                 stats["errors"] = len(rows)

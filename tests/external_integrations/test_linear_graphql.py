@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from datetime import UTC, datetime
 from email.utils import format_datetime
 from typing import Any
@@ -92,6 +93,29 @@ async def test_execute_retries_rate_limit_with_retry_after_and_succeeds(
     assert result == {"viewer": {"id": "user-1"}}
     assert len(calls) == 2
     assert delays == [1.25]
+
+
+async def test_from_database_async_reads_secret_off_event_loop(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+
+    class FakeSecretStore:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def get(self, _name: str) -> str:
+            worker_threads.append(threading.get_ident())
+            return "lin_api_key"
+
+    monkeypatch.setattr(linear_graphql, "SecretStore", FakeSecretStore)
+
+    client = await LinearGraphQLClient.from_database_async(object())  # type: ignore[arg-type]
+
+    assert isinstance(client, LinearGraphQLClient)
+    assert len(worker_threads) == 1
+    assert worker_threads[0] != loop_thread
 
 
 def test_parse_numeric_retry_after_adds_bounded_jitter(

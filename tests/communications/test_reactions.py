@@ -1,3 +1,4 @@
+import threading
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -120,6 +121,33 @@ async def test_handle_reaction_unknown_message():
     approval_manager.approve_step.assert_not_called()
     assert approval_manager.approve_step.call_count == 0
     assert not approval_manager.approve_step.called
+
+
+async def test_handle_reaction_lookups_run_off_event_loop():
+    loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+    store = MagicMock()
+    message = SimpleNamespace(channel_id="chan-1", metadata_json={})
+    identity = SimpleNamespace(id="identity-1")
+
+    def get_message_by_platform_id(_channel_name: str, _message_id: str) -> SimpleNamespace:
+        worker_threads.append(threading.get_ident())
+        return message
+
+    def get_identity_by_external(_channel_id: str, _user_id: str) -> SimpleNamespace:
+        worker_threads.append(threading.get_ident())
+        return identity
+
+    store.get_message_by_platform_id.side_effect = get_message_by_platform_id
+    store.get_identity_by_external.side_effect = get_identity_by_external
+    handler = ReactionHandler(store, make_service_container())
+    handler._execute_action = AsyncMock()  # type: ignore[method-assign]
+
+    await handler.handle_reaction("slack", "msg-1", "+1", "user-1")
+
+    handler._execute_action.assert_awaited_once_with("approve", message, identity)
+    assert len(worker_threads) == 2
+    assert all(thread_id != loop_thread for thread_id in worker_threads)
 
 
 @pytest.mark.asyncio

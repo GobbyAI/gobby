@@ -22,6 +22,7 @@ class TeamsAdapter(BaseChannelAdapter):
 
     _BOTFRAMEWORK_JWKS_URL = "https://login.botframework.com/v1/.well-known/keys"
     _BOTFRAMEWORK_ISSUER = "https://api.botframework.com"
+    _JWKS_TIMEOUT_SECONDS = 5.0
 
     def __init__(self) -> None:
         self._client: httpx.AsyncClient | None = None
@@ -313,7 +314,10 @@ class TeamsAdapter(BaseChannelAdapter):
 
         try:
             if self._jwk_client is None:
-                self._jwk_client = PyJWKClient(self._BOTFRAMEWORK_JWKS_URL)
+                self._jwk_client = PyJWKClient(
+                    self._BOTFRAMEWORK_JWKS_URL,
+                    timeout=self._JWKS_TIMEOUT_SECONDS,
+                )
 
             signing_key = self._jwk_client.get_signing_key_from_jwt(token)
             decoded = jwt.decode(

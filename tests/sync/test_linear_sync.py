@@ -343,7 +343,7 @@ class TestLinearSyncServiceSync:
             ]
         )
         client.update_issue = AsyncMock(return_value={"id": "lin-42", "title": "#42: Updated"})
-        sync_service._get_graphql_client = MagicMock(return_value=client)
+        sync_service._get_graphql_client = AsyncMock(return_value=client)
         sync_service.task_manager.get_task.return_value = mock_task
 
         await sync_service.sync_task_to_linear(task_id="test-task-id")
@@ -407,7 +407,7 @@ class TestLinearSyncServiceSync:
         client = MagicMock()
         client.list_issues = AsyncMock(side_effect=LinearGraphQLError("network unavailable"))
         sync_service._linear_mcp_has_tool = MagicMock(return_value=False)  # type: ignore[method-assign]
-        sync_service._get_graphql_client = MagicMock(return_value=client)  # type: ignore[method-assign]
+        sync_service._get_graphql_client = AsyncMock(return_value=client)  # type: ignore[method-assign]
         caplog.set_level(logging.DEBUG, logger="gobby.sync.linear")
 
         first = await sync_service.pull_linear_updates()
@@ -445,7 +445,7 @@ class TestLinearSyncServiceSync:
             ]
         )
         sync_service._linear_mcp_has_tool = MagicMock(return_value=False)  # type: ignore[method-assign]
-        sync_service._get_graphql_client = MagicMock(return_value=client)  # type: ignore[method-assign]
+        sync_service._get_graphql_client = AsyncMock(return_value=client)  # type: ignore[method-assign]
         caplog.set_level(logging.DEBUG, logger="gobby.sync.linear")
 
         await sync_service.pull_linear_updates()

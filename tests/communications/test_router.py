@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -58,6 +59,27 @@ async def test_router_matching():
     # Matches only *
     matched = await router.match_channels("unknown.event")
     assert matched == ["chan-2"]
+
+
+async def test_router_loads_rules_off_event_loop():
+    loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+    store = MagicMock()
+    rules = [
+        CommsRoutingRule(id="rule-1", name="Rule 1", channel_id="chan-1", event_pattern="*"),
+    ]
+
+    def list_routing_rules(enabled_only: bool = True) -> list[CommsRoutingRule]:
+        assert enabled_only is True
+        worker_threads.append(threading.get_ident())
+        return rules
+
+    store.list_routing_rules.side_effect = list_routing_rules
+    router = MessageRouter(store)
+
+    assert await router.match_channels("task.created") == ["chan-1"]
+    assert len(worker_threads) == 1
+    assert worker_threads[0] != loop_thread
 
 
 @pytest.mark.asyncio

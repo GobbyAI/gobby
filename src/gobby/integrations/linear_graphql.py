@@ -49,6 +49,11 @@ class LinearGraphQLClient:
             return None
         return cls(api_key)
 
+    @classmethod
+    async def from_database_async(cls, db: HubDatabase) -> LinearGraphQLClient | None:
+        """Build a client from the stored Linear API key without blocking the event loop."""
+        return await asyncio.to_thread(cls.from_database, db)
+
     async def execute(self, query: str, variables: dict[str, Any] | None = None) -> dict[str, Any]:
         headers = {
             "Authorization": self.api_key,

@@ -54,7 +54,7 @@ class MessageRouter:
         now = time.monotonic()
         if self._rules_cache is None or now >= self._cache_expires_at:
             # rules should already be sorted by priority from store
-            rules = self.store.list_routing_rules(enabled_only=True)
+            rules = await asyncio.to_thread(self.store.list_routing_rules, enabled_only=True)
             # Handle both sync and async return from store if needed in future
             if asyncio.iscoroutine(rules):
                 rules = await rules

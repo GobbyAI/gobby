@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import threading
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -341,3 +342,39 @@ async def test_inbound_message_resolves_identity_and_sets_session():
     created_message = store.create_message.call_args.args[0]
     assert created_message.session_id == "session-abc"
     assert created_message.identity_id == "id-1"
+
+
+async def test_inbound_identity_and_store_calls_run_off_event_loop():
+    loop_thread = threading.get_ident()
+    worker_threads: list[int] = []
+    channel = _channel()
+    store = _store([channel])
+    existing = _identity(session_id="session-abc")
+
+    def get_identity_by_external(_channel_id: str, _external_user_id: str) -> CommsIdentity:
+        worker_threads.append(threading.get_ident())
+        return existing
+
+    def create_message(message: CommsMessage) -> CommsMessage:
+        worker_threads.append(threading.get_ident())
+        return message
+
+    store.get_identity_by_external.side_effect = get_identity_by_external
+    store.create_message.side_effect = create_message
+    manager = await _make_manager(store)
+
+    inbound = CommsMessage(
+        id="msg-1",
+        channel_id="chan-1",
+        direction="inbound",
+        content="Hello",
+        created_at="2024-01-01T00:00:00",
+        identity_id="ext-user-1",
+        metadata_json={"external_username": "alice"},
+    )
+
+    stored = await manager.handle_inbound_messages("test-channel", [inbound])
+
+    assert stored == [inbound]
+    assert len(worker_threads) == 2
+    assert all(thread_id != loop_thread for thread_id in worker_threads)

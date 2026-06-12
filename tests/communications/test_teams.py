@@ -1,4 +1,5 @@
 import asyncio
+import json
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import jwt
@@ -25,17 +26,24 @@ def mock_secret_resolver():
     return _resolve
 
 
-@pytest.mark.asyncio
-async def test_initialize_and_refresh(adapter, mock_secret_resolver):
-    config = ChannelConfig(
+def _teams_config() -> ChannelConfig:
+    return ChannelConfig(
         id="test",
         channel_type="teams",
         name="test",
         enabled=True,
         created_at="2024-01-01T00:00:00Z",
         updated_at="2024-01-01T00:00:00Z",
-        config_json={},
+        config_json={
+            "app_id": "$secret:TEAMS_APP_ID",
+            "app_password": "$secret:TEAMS_APP_PASSWORD",
+        },
     )
+
+
+@pytest.mark.asyncio
+async def test_initialize_and_refresh(adapter, mock_secret_resolver):
+    config = _teams_config()
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_response = MagicMock()
@@ -55,15 +63,7 @@ async def test_initialize_and_refresh(adapter, mock_secret_resolver):
 
 @pytest.mark.asyncio
 async def test_concurrent_refresh(adapter, mock_secret_resolver):
-    config = ChannelConfig(
-        id="test",
-        channel_type="teams",
-        name="test",
-        enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
-        config_json={},
-    )
+    config = _teams_config()
 
     # Initial initialize
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
@@ -118,15 +118,7 @@ async def test_concurrent_refresh(adapter, mock_secret_resolver):
 
 @pytest.mark.asyncio
 async def test_send_message(adapter, mock_secret_resolver):
-    config = ChannelConfig(
-        id="test",
-        channel_type="teams",
-        name="test",
-        enabled=True,
-        created_at="2024-01-01T00:00:00Z",
-        updated_at="2024-01-01T00:00:00Z",
-        config_json={},
-    )
+    config = _teams_config()
 
     with patch("httpx.AsyncClient.post", new_callable=AsyncMock) as mock_post:
         mock_response_auth = MagicMock()
@@ -198,9 +190,18 @@ def test_verify_webhook(adapter):
 
     with patch("jwt.decode") as mock_decode:
         # Valid case
-        mock_decode.return_value = {"aud": "app_id_123", "iss": "https://api.botframework.com"}
+        service_url = "https://smba.trafficmanager.net/teams/"
+        mock_decode.return_value = {
+            "aud": "app_id_123",
+            "iss": "https://api.botframework.com",
+            "serviceUrl": service_url,
+        }
         headers = {"Authorization": "Bearer some.jwt.token"}
-        result = adapter.verify_webhook(b"", headers, "secret")
+        result = adapter.verify_webhook(
+            json.dumps({"serviceUrl": service_url}).encode(),
+            headers,
+            "secret",
+        )
         assert result
 
         # jwt.decode is called with proper signature verification args
@@ -221,3 +222,19 @@ def test_verify_webhook(adapter):
     headers = {"Authorization": "Bearer bad.jwt.token"}
     result = adapter.verify_webhook(b"", headers, "secret")
     assert not result
+
+
+def test_verify_webhook_configures_jwks_timeout(adapter):
+    adapter._app_id = "app_id_123"
+
+    with patch("gobby.communications.adapters.teams.PyJWKClient") as mock_jwk_client:
+        mock_instance = mock_jwk_client.return_value
+        mock_instance.get_signing_key_from_jwt.side_effect = jwt.PyJWKClientError("bad token")
+
+        result = adapter.verify_webhook(b"{}", {"Authorization": "Bearer bad.jwt.token"}, "secret")
+
+    assert not result
+    mock_jwk_client.assert_called_once_with(
+        "https://login.botframework.com/v1/.well-known/keys",
+        timeout=5.0,
+    )

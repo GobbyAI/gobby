@@ -1,5 +1,6 @@
 """Reaction handling for communications."""
 
+import asyncio
 import logging
 from typing import Any
 
@@ -51,7 +52,11 @@ class ReactionHandler:
         """
         # 1. Look up the original message by platform_message_id
         # We need a method to get message by platform ID
-        message = self._store.get_message_by_platform_id(channel_name, message_id)
+        message = await asyncio.to_thread(
+            self._store.get_message_by_platform_id,
+            channel_name,
+            message_id,
+        )
         if not message:
             logger.debug(f"Reaction {reaction} on unknown message {message_id} in {channel_name}")
             return
@@ -63,7 +68,11 @@ class ReactionHandler:
             return
 
         # 3. Look up identity to map to Gobby user
-        identity = self._store.get_identity_by_external(message.channel_id, user_id)
+        identity = await asyncio.to_thread(
+            self._store.get_identity_by_external,
+            message.channel_id,
+            user_id,
+        )
         if not identity:
             logger.warning(f"Unknown user {user_id} reacted to message {message_id}")
             return
