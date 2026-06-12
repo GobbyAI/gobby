@@ -361,6 +361,42 @@ class TestDeleteClone:
         call_kwargs = mock_git_manager.delete_clone.call_args.kwargs
         assert call_kwargs.get("force") is True
 
+    @pytest.mark.asyncio
+    async def test_delete_clone_file_failure_preserves_original_record(
+        self, registry, mock_clone_storage, mock_git_manager
+    ):
+        """Failed file deletion leaves the existing clone record in place."""
+        original_clone = Clone(
+            id="clone-123",
+            project_id="proj-1",
+            branch_name="main",
+            clone_path="/tmp/clones/test",
+            base_branch="main",
+            task_id="task-123",
+            agent_session_id=None,
+            status="active",
+            remote_url=None,
+            last_sync_at=None,
+            cleanup_after=None,
+            created_at="now",
+            updated_at="now",
+        )
+        mock_clone_storage.get.return_value = original_clone
+        mock_git_manager.delete_clone.return_value = MagicMock(
+            success=False, error="permission denied", message=""
+        )
+
+        result = await registry.call("delete_clone", {"clone_id": "clone-123"})
+
+        assert result["success"] is False
+        assert "permission denied" in result["error"]
+        mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/test", force=False)
+        mock_clone_storage.delete.assert_not_called()
+        mock_clone_storage.create.assert_not_called()
+        assert mock_clone_storage.get.return_value is original_clone
+        assert original_clone.id == "clone-123"
+        assert original_clone.task_id == "task-123"
+
 
 class TestSyncClone:
     """Tests for sync_clone tool."""
