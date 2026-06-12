@@ -469,12 +469,8 @@ class ACPHookAdapter(BaseAdapter):
         # alive. But when the user interrupts the turn (ESC) Gemini still fires
         # AfterAgent without a completed prompt_response; in that case, kill the
         # loop so the cancel doesn't get trapped in a retry cycle.
-        if (
-            hook_type == "AfterAgent"
-            and hook_response.decision == "block"
-            and self._is_cancelled_after_agent(input_data)
-        ):
-            result["continue"] = False
+        if hook_type == "AfterAgent" and hook_response.decision == "block":
+            result["continue"] = not self._is_cancelled_after_agent(input_data)
 
         return result
 

@@ -198,6 +198,7 @@ class ACPClient:
         self._session_info: dict[str, Any] = {}
         self._io_lock = asyncio.Lock()
         self._active_operations = 0
+        self._request_ids = itertools.count(1)
         self._stderr_drain = SubprocessStderrDrain(f"{self.display_name} ACP", logger=logger)
 
     @property
@@ -409,7 +410,7 @@ class ACPClient:
             if not self._process or not self._process.stdin or not self._process.stdout:
                 raise RuntimeError(f"{type(self).__name__} process not available")
 
-            request_id = _make_id()
+            request_id = next(self._request_ids)
             request = {
                 "jsonrpc": "2.0",
                 "method": method,
@@ -541,7 +542,7 @@ class ACPClient:
         try:
             await self._io_lock.acquire()
             lock_acquired = True
-            request_id = _make_id()
+            request_id = next(self._request_ids)
             request: dict[str, Any] = {
                 "jsonrpc": "2.0",
                 "method": "session/prompt",

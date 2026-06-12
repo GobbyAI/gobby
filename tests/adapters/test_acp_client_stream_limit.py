@@ -66,7 +66,7 @@ async def test_read_stream_handles_line_larger_than_default_limit() -> None:
     )
     client._prompt_timeout = 5.0
 
-    events = [event async for event in client._read_stream()]
+    events = [event async for event in client._read_stream(expected_response_id=1)]
 
     # The oversized assistant chunk survived intact, followed by the final
     # result marker — no LimitOverrunError.

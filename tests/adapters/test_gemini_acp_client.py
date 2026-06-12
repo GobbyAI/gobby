@@ -10,14 +10,12 @@ Covers:
 from __future__ import annotations
 
 import asyncio
-import itertools
 import json
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-import gobby.adapters.acp_client as acp_client
 from gobby.adapters.gemini_acp_client import (
     DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS,
     GeminiACPClient,
@@ -25,11 +23,6 @@ from gobby.adapters.gemini_acp_client import (
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
-
-
-@pytest.fixture(autouse=True)
-def _reset_acp_request_ids() -> None:
-    acp_client._next_id = itertools.count(1)
 
 
 # ---------------------------------------------------------------------------
