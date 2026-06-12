@@ -236,6 +236,16 @@ class TerminalPromptMonitor:
                 continue
 
             try:
+                pane_output = await self._get_tmux().capture_pane(tmux_name, lines=15)
+                if pane_output is None:
+                    pane_output = ""
+                if self._should_skip_periodic_enter_for_dialog(pane_output, config):
+                    logger.debug(
+                        "Skipped periodic Enter for agent %s while known dialog is visible",
+                        run.id,
+                    )
+                    continue
+
                 sent = await self._get_tmux().send_keys(
                     tmux_name,
                     PromptDetector.ENTER_KEY,
@@ -249,3 +259,22 @@ class TerminalPromptMonitor:
                 logger.warning("Error sending periodic Enter to agent %s: %s", run.id, e)
 
         return handled
+
+    def _should_skip_periodic_enter_for_dialog(
+        self,
+        pane_output: str,
+        config: TmuxConfig,
+    ) -> bool:
+        """Return True when periodic Enter would confirm a known prompt dialog."""
+        if not pane_output:
+            return False
+
+        if self._prompt_detector.detect_trust_prompt(pane_output):
+            return True
+        if self._prompt_detector.detect_loop_prompt(pane_output):
+            return True
+        if not config.auto_enter_approval_prompts and self._prompt_detector.detect_approval_prompt(
+            pane_output
+        ):
+            return True
+        return False

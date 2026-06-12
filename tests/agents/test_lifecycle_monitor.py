@@ -3430,6 +3430,8 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
     temp_db: HubDatabase,
 ) -> None:
     """Repeated lifecycle DB reads and task recovery do not grow PostgreSQL handles."""
+    from gobby.config.tmux import TmuxConfig
+
     executor = DatabaseExecutor(max_workers=2, thread_name_prefix="lifecycle-db")
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
@@ -3454,6 +3456,7 @@ async def test_lifecycle_monitor_db_paths_stay_on_bounded_executor(
         db=temp_db,
         session_manager=session_manager,
         task_manager=task_manager,
+        tmux_config=TmuxConfig(),
         run_db=executor.run,
     )
     original_list_active = agent_run_manager.list_active

@@ -804,6 +804,7 @@ class TestPeriodicAgentTerminalEnter:
         *,
         enabled: bool = True,
         interval: int = 30,
+        auto_enter_approval_prompts: bool = True,
         db: HubDatabase | None = None,
     ) -> AgentLifecycleMonitor:
         from gobby.config.tmux import TmuxConfig
@@ -812,10 +813,12 @@ class TestPeriodicAgentTerminalEnter:
             agent_run_manager=mock_run_mgr,
             db=db or MagicMock(),
             tmux_config=TmuxConfig(
+                auto_enter_approval_prompts=auto_enter_approval_prompts,
                 auto_enter_agent_terminals=enabled,
                 auto_enter_agent_interval_seconds=interval,
             ),
         )
+        mock_tmux.capture_pane.return_value = ""
         monitor._tmux = mock_tmux
         monitor._terminal_prompt_monitor._get_tmux = lambda: mock_tmux
         return monitor
@@ -840,6 +843,60 @@ class TestPeriodicAgentTerminalEnter:
             call("gobby-claude", PromptDetector.ENTER_KEY, literal=False),
             call("gobby-gemini", PromptDetector.ENTER_KEY, literal=False),
         ]
+
+    @pytest.mark.asyncio
+    async def test_periodic_enter_skips_approval_prompt_when_gate_disabled(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(
+            mock_run_mgr,
+            mock_tmux,
+            interval=30,
+            auto_enter_approval_prompts=False,
+        )
+        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_tmux.capture_pane.return_value = (
+            "Tool call needs your approval.\n"
+            "› 1. Allow   Run the tool and continue.\n"
+            "  2. Cancel  Cancel this tool call\n"
+            "enter to submit | esc to cancel\n"
+        )
+        current_time = 100.0
+        monitor._terminal_prompt_monitor._monotonic = lambda: current_time
+
+        handled_1 = await monitor.check_periodic_enters()
+        current_time = 131.0
+        handled_2 = await monitor.check_periodic_enters()
+
+        assert (handled_1, handled_2) == (0, 0)
+        assert mock_tmux.capture_pane.call_count == 2
+        mock_tmux.send_keys.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_periodic_enter_skips_known_dialogs_owned_by_specific_handlers(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [
+            self._run(run_id="run-trust", tmux_session_name="gobby-trust"),
+            self._run(run_id="run-loop", tmux_session_name="gobby-loop"),
+            self._run(run_id="run-normal", tmux_session_name="gobby-normal"),
+        ]
+        mock_tmux.capture_pane.side_effect = [
+            "Do you trust the files in this folder?\n❯ 1. Trust Folder\n",
+            "Potential loop detected. Continue anyway? (yes/no)\n",
+            "ready for input\n",
+        ]
+        mock_tmux.send_keys.return_value = True
+
+        handled = await monitor.check_periodic_enters()
+
+        assert handled == 1
+        mock_tmux.send_keys.assert_called_once_with(
+            "gobby-normal",
+            PromptDetector.ENTER_KEY,
+            literal=False,
+        )
 
     @pytest.mark.asyncio
     async def test_periodic_enter_reaches_active_step_workflow_agents(
