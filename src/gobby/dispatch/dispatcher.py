@@ -82,6 +82,7 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
+_HEARTBEAT_LOCK = asyncio.Lock()
 
 _PIPELINE_ATTACH_DATABASE_ERRORS = (
     psycopg.IntegrityError,
@@ -128,6 +129,31 @@ def _unavailable(result: HeartbeatResult, reason: str) -> HeartbeatResult:
 
 
 async def run_heartbeat(
+    *,
+    db: HubDatabase | None = None,
+    project_id: str | None = None,
+    startup: bool = False,
+    max_active_agents: int | None = None,
+    holder: str = DISPATCH_HOLDER,
+    ttl_seconds: int = DISPATCH_TTL_SECONDS,
+    services: object | None = None,
+    max_actions: int | None = None,
+) -> HeartbeatResult:
+    """Serialize heartbeat entry points before scanning and dispatching tasks."""
+    async with _HEARTBEAT_LOCK:
+        return await _run_heartbeat_unlocked(
+            db=db,
+            project_id=project_id,
+            startup=startup,
+            max_active_agents=max_active_agents,
+            holder=holder,
+            ttl_seconds=ttl_seconds,
+            services=services,
+            max_actions=max_actions,
+        )
+
+
+async def _run_heartbeat_unlocked(
     *,
     db: HubDatabase | None = None,
     project_id: str | None = None,
@@ -347,7 +373,13 @@ async def _execute_spawn_action(
     if resume_result.handled:
         return resume_result.run_id
     try:
-        raw_run_id: object = spawn_agent(action, db=db, context=context, services=services)
+        raw_run_id: object = spawn_agent(
+            action,
+            db=db,
+            context=context,
+            services=services,
+            mutex=mutex,
+        )
         if inspect.isawaitable(raw_run_id):
             raw_run_id = await cast(Awaitable[str | None], raw_run_id)
     except DispatchSpawnUnavailable:

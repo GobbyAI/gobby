@@ -37,8 +37,13 @@ from ._code_index import (
     without_code_index_skill,
 )
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
-from ._idempotency import active_task_spawn_response, non_actionable_task_spawn_response
+from ._idempotency import non_actionable_task_spawn_response
 from ._provider_resolution import defaulted_provider, provider_prefixed_model
+from ._spawn_guards import (
+    TaskSpawnLease,
+    active_task_response_if_blocked,
+    reserve_agent_slot,
+)
 from ._worktree_reuse import prepare_reused_worktree
 
 if TYPE_CHECKING:
@@ -59,58 +64,6 @@ def _normalize_optional_model(value: str | None) -> str | None:
         return None
     value = value.strip()
     return value or None
-
-
-def _run_string_attr(run: Any, name: str) -> str | None:
-    value = getattr(run, name, None)
-    return value if isinstance(value, str) and value else None
-
-
-def _is_parent_merge_orchestrator_run(
-    run: Any,
-    *,
-    requested_agent_name: str | None,
-    parent_session_id: str,
-) -> bool:
-    return (
-        requested_agent_name == "merge-worker"
-        and _run_string_attr(run, "agent_name") == "merge-orchestrator"
-        and _run_string_attr(run, "child_session_id") == parent_session_id
-    )
-
-
-def _active_task_spawn_blocker(
-    run_storage: Any,
-    task_id: str,
-    *,
-    requested_agent_name: str | None,
-    parent_session_id: str,
-) -> Any | None:
-    """Return an active run that should block spawning another agent for a task."""
-    if not run_storage.has_active_run_for_task(task_id):
-        return None
-
-    active_runs: list[Any] = []
-    try:
-        maybe_runs = run_storage.list_active(task_ids=[task_id], limit=100)
-    except (AttributeError, TypeError):
-        maybe_runs = None
-    if isinstance(maybe_runs, list | tuple):
-        active_runs = list(maybe_runs)
-
-    if not active_runs:
-        active_run = run_storage.get_active_run_for_task(task_id)
-        active_runs = [active_run] if active_run is not None else []
-
-    for active_run in active_runs:
-        if _is_parent_merge_orchestrator_run(
-            active_run,
-            requested_agent_name=requested_agent_name,
-            parent_session_id=parent_session_id,
-        ):
-            continue
-        return active_run
-    return None
 
 
 def _transition_condition_met(condition: str | None, variables: dict[str, Any]) -> bool:
@@ -267,6 +220,7 @@ async def spawn_agent_impl(
     db: Any | None = None,  # HubDatabase
     daemon_config: Any | None = None,  # DaemonConfig
     code_index: Any | None = None,  # CodeIndexContext
+    held_task_mutex: Any | None = None,
 ) -> dict[str, Any]:
     """
     Core spawn_agent implementation that can be called directly.
@@ -481,17 +435,6 @@ async def spawn_agent_impl(
                 claimed_session_id = get_claimed_session_id(resolved_task)
         except Exception as e:
             logger.warning(f"Failed to resolve task_id {task_id}: {e}")
-
-    # 4b. Dedup check: return success if an agent already owns the task.
-    if resolved_task_id and runner.run_storage:
-        active_run = _active_task_spawn_blocker(
-            runner.run_storage,
-            resolved_task_id,
-            requested_agent_name=requested_agent_name,
-            parent_session_id=parent_session_id,
-        )
-        if active_run is not None:
-            return active_task_spawn_response(active_run, task_id)
 
     if resolved_task_id and resolved_task is not None and not is_task_actionable(resolved_task):
         return non_actionable_task_spawn_response(
@@ -747,7 +690,61 @@ async def spawn_agent_impl(
     # prepare_terminal_spawn (called inside execute_spawn) inserts the
     # agent_runs row using that exact id. It is the single source of truth.
 
-    spawn_result = await execute_spawn(spawn_request)
+    task_spawn_lease = TaskSpawnLease(
+        db=db,
+        task_id=resolved_task_id,
+        held_mutex=held_task_mutex,
+    )
+    if resolved_task_id and runner.run_storage:
+        active_response = active_task_response_if_blocked(
+            run_storage=runner.run_storage,
+            task_id=resolved_task_id,
+            task_ref=task_id,
+            requested_agent_name=requested_agent_name,
+            parent_session_id=parent_session_id,
+        )
+        if active_response is not None:
+            return active_response
+    lease_response = task_spawn_lease.acquire()
+    if lease_response is not None:
+        return lease_response
+    if resolved_task_id and runner.run_storage:
+        active_response = active_task_response_if_blocked(
+            run_storage=runner.run_storage,
+            task_id=resolved_task_id,
+            task_ref=task_id,
+            requested_agent_name=requested_agent_name,
+            parent_session_id=parent_session_id,
+        )
+        if active_response is not None:
+            task_spawn_lease.release_unattached()
+            return active_response
+
+    async with reserve_agent_slot(
+        db=db,
+        project_id=project_id,
+        project_path=resolved_project_path,
+    ) as slot_response:
+        if slot_response is not None:
+            task_spawn_lease.release_unattached()
+            return slot_response
+        spawn_result = await execute_spawn(spawn_request)
+        if spawn_result.success:
+            attach_error = task_spawn_lease.attach(run_id)
+            if attach_error is not None:
+                task_spawn_lease.release_unattached()
+                try:
+                    runner.run_storage.fail(
+                        run_id,
+                        error=f"task spawn mutex attach failed: {attach_error}",
+                    )
+                except Exception as e:
+                    logger.warning(f"Failed to mark agent_run {run_id} as failed: {e}")
+                return {
+                    "success": False,
+                    "error": f"task spawn mutex attach failed: {attach_error}",
+                    "run_id": run_id,
+                }
     tmux_session_name = getattr(spawn_result, "tmux_session_name", None)
     if not isinstance(tmux_session_name, str):
         tmux_session_name = None
@@ -957,6 +954,7 @@ async def spawn_agent_impl(
             health_task.add_done_callback(_health_check_tasks.discard)
     else:
         # Spawn failed — mark DB record as failed
+        task_spawn_lease.release_unattached()
         try:
             runner.run_storage.fail(run_id, error=spawn_result.error or "Spawn failed")
         except Exception as e:

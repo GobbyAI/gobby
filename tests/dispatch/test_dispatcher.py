@@ -587,6 +587,38 @@ def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_pr
 
 
 @pytest.mark.asyncio
+async def test_run_heartbeat_serializes_concurrent_entry_points(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    in_flight = 0
+    max_seen = 0
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+
+    async def fake_unlocked(**_kwargs: Any) -> dispatcher.HeartbeatResult:
+        nonlocal in_flight, max_seen
+        in_flight += 1
+        max_seen = max(max_seen, in_flight)
+        if not first_entered.is_set():
+            first_entered.set()
+            await release_first.wait()
+        in_flight -= 1
+        return dispatcher.HeartbeatResult(scanned=1)
+
+    monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", fake_unlocked)
+
+    first = asyncio.create_task(dispatcher.run_heartbeat())
+    await first_entered.wait()
+    second = asyncio.create_task(dispatcher.run_heartbeat())
+    release_first.set()
+    await asyncio.gather(first, second)
+
+    assert max_seen == 1
+
+
+@pytest.mark.asyncio
 async def test_max_active_agents_cap(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
