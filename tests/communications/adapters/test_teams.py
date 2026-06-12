@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -222,14 +223,16 @@ def test_verify_webhook_success(adapter: TeamsAdapter) -> None:
         algorithm="HS256",
     )
     headers = {"Authorization": f"Bearer {token}"}
+    payload = json.dumps({"serviceUrl": "https://smba.trafficmanager.net/apis/"}).encode()
 
     adapter._jwk_client = mock_jwk_client
     with patch("jwt.decode") as mock_decode:
         mock_decode.return_value = {
             "aud": "test-app-id",
             "iss": "https://api.botframework.com",
+            "serviceUrl": "https://smba.trafficmanager.net/apis/",
         }
-        assert adapter.verify_webhook(b"", headers, "not-used") is True
+        assert adapter.verify_webhook(payload, headers, "not-used") is True
 
         mock_decode.assert_called_once_with(
             token,
@@ -238,6 +241,56 @@ def test_verify_webhook_success(adapter: TeamsAdapter) -> None:
             audience="test-app-id",
             issuer="https://api.botframework.com",
         )
+
+
+async def test_verify_webhook_rejects_replayed_service_url(
+    adapter: TeamsAdapter,
+) -> None:
+    """Replayed Bot Framework tokens cannot forge the activity serviceUrl."""
+    adapter._app_id = "test-app-id"
+    adapter._client = AsyncMock()
+    adapter._access_token = "bot-access-token"
+    adapter._token_expires_at = time.time() + 3600
+
+    mock_jwk_client = MagicMock()
+    mock_signing_key = MagicMock()
+    mock_signing_key.key = "test-rsa-key"
+    mock_jwk_client.get_signing_key_from_jwt.return_value = mock_signing_key
+
+    token = jwt.encode(
+        {
+            "aud": "test-app-id",
+            "iss": "https://api.botframework.com",
+            "serviceUrl": "https://smba.trafficmanager.net/apis/",
+        },
+        "test-secret-key-that-is-at-least-32-bytes-long",
+        algorithm="HS256",
+    )
+    payload = {
+        "type": "message",
+        "id": "msg-forged",
+        "text": "Hi",
+        "from": {"id": "user-1"},
+        "recipient": {"id": "bot-1"},
+        "conversation": {"id": "conv-forged", "tenantId": "tenant-xyz"},
+        "serviceUrl": "https://attacker.example.com/apis/",
+    }
+    headers = {"Authorization": f"Bearer {token}"}
+
+    adapter._jwk_client = mock_jwk_client
+    with patch("jwt.decode") as mock_decode:
+        mock_decode.return_value = {
+            "aud": "test-app-id",
+            "iss": "https://api.botframework.com",
+            "serviceUrl": "https://smba.trafficmanager.net/apis/",
+        }
+
+        assert adapter.verify_webhook(json.dumps(payload).encode(), headers, "not-used") is False
+
+    assert "conv-forged" not in adapter._conversation_refs
+    with pytest.raises(ValueError, match="No ConversationReference stored"):
+        await adapter.send_proactive("conv-forged", "do not send")
+    adapter._client.post.assert_not_called()
 
 
 def test_verify_webhook_failure(adapter: TeamsAdapter) -> None:

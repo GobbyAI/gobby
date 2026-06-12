@@ -318,12 +318,18 @@ class TeamsAdapter(BaseChannelAdapter):
                 issuer=self._BOTFRAMEWORK_ISSUER,
             )
 
-            # Additional serviceUrl claim validation if present
-            if "serviceUrl" in decoded and not decoded["serviceUrl"].startswith("https://"):
+            token_service_url = decoded.get("serviceUrl")
+            if not isinstance(token_service_url, str) or not token_service_url.startswith(
+                "https://"
+            ):
+                return False
+
+            activity = json.loads(payload)
+            if not isinstance(activity, dict) or token_service_url != activity.get("serviceUrl"):
                 return False
 
             return True
-        except (jwt.InvalidTokenError, jwt.PyJWKClientError) as e:
+        except (json.JSONDecodeError, jwt.InvalidTokenError, jwt.PyJWKClientError) as e:
             logger.debug("Teams webhook JWT verification failed: %s", e)
             return False
 
