@@ -400,6 +400,42 @@ def test_get_build_status_reports_closed_root_as_completed(temp_db) -> None:
     assert status["summary"]["closed_tasks"] == 1
 
 
+@pytest.mark.parametrize(
+    ("closed_reason", "expected_state"),
+    [
+        ("wont_do", "cancelled"),
+        ("cancelled", "cancelled"),
+        ("failed", "failed"),
+    ],
+)
+def test_get_build_status_reports_non_success_closed_root_state(
+    temp_db,
+    closed_reason: str,
+    expected_state: str,
+) -> None:
+    from gobby.build.observability import get_build_status
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+
+    project_id = _project(temp_db, f"observability-{closed_reason}-root")
+    manager = LocalTaskManager(temp_db)
+    root = _automated_task(temp_db, project_id, f"{closed_reason} Root")
+    manager.lifecycle_events.record_lifecycle_event(
+        root.id,
+        from_state=None,
+        to_state="development",
+        reason=BUILD_EVENT_REASON,
+        by_actor="build",
+    )
+    manager.close_task(root.id, reason=closed_reason, force=True)
+
+    status = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project_id)
+
+    assert status["summary"]["state"] == expected_state
+    assert status["summary"]["open_tasks"] == 0
+    assert status["summary"]["closed_tasks"] == 1
+
+
 def test_get_build_status_hides_stale_current_stage_for_closed_root(temp_db) -> None:
     from gobby.build.observability import get_build_status
     from gobby.storage.tasks import LocalTaskManager
@@ -421,10 +457,11 @@ def test_get_build_status_hides_stale_current_stage_for_closed_root(temp_db) -> 
         """
         UPDATE tasks
            SET closed_at = %s,
-               closed_reason = %s
+               closed_reason = %s,
+               closed_commit_sha = %s
          WHERE id = %s
         """,
-        ("2026-06-02T00:00:00+00:00", "closed-with-stale-stage", root.id),
+        ("2026-06-02T00:00:00+00:00", "closed-with-stale-stage", "abc1234", root.id),
     )
 
     status = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project_id)

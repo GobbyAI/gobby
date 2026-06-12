@@ -232,12 +232,48 @@ def _build_summary(
 
 def _root_build_state(task_manager: LocalTaskManager, root: Task) -> str:
     if root.closed_at is not None:
-        return "completed"
+        return _closed_root_build_state(root)
     if root.allow_automation:
         return "running"
     if task_manager.lifecycle_events.has_build_event(root.id):
         return "paused"
     return "never_started"
+
+
+def _closed_root_build_state(root: Task) -> str:
+    reason = (root.closed_reason or "").strip().lower()
+    if _is_cancelled_close_reason(reason):
+        return "cancelled"
+    if _is_failed_close_reason(reason):
+        return "failed"
+    if root.closed_commit_sha or _is_completed_close_reason(reason):
+        return "completed"
+    return "failed"
+
+
+def _is_completed_close_reason(reason: str) -> bool:
+    return reason in {"", "completed", "merged", "already_implemented", "manifest_exhausted"}
+
+
+def _is_cancelled_close_reason(reason: str) -> bool:
+    return reason in {
+        "cancelled",
+        "canceled",
+        "duplicate",
+        "obsolete",
+        "out_of_repo",
+        "wont_do",
+        "wont_fix",
+    }
+
+
+def _is_failed_close_reason(reason: str) -> bool:
+    return (
+        reason == "failed"
+        or reason.startswith("failed:")
+        or reason.endswith("_failed")
+        or "_failed:" in reason
+    )
 
 
 def _task_status(
