@@ -811,6 +811,84 @@ async def test_text_generation_service_candidate_list_is_exhaustive_for_unavaila
     assert codex.requests == []
 
 
+async def test_text_generation_service_aggregates_all_unavailable_candidates() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                reason="Claude CLI is not installed.",
+                models=("haiku",),
+            ),
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                reason="Codex app server is not available.",
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {})
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("claude/haiku", "codex/gpt-5.4-mini"),
+            )
+        )
+
+    error = exc_info.value
+    assert error.provider is None
+    assert error.model is None
+    assert error.reason is not None
+    assert error.reason.startswith("All text generation candidates unavailable:")
+    assert "provider=claude" in error.reason
+    assert "provider=codex" in error.reason
+
+
+async def test_text_generation_service_aggregates_all_unavailable_json_candidates() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                reason="Claude CLI is not installed.",
+                models=("haiku",),
+            ),
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                reason="Codex app server is not available.",
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {})
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await service.generate_json(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("claude/haiku", "codex/gpt-5.4-mini"),
+            )
+        )
+
+    error = exc_info.value
+    assert error.provider is None
+    assert error.model is None
+    assert error.reason is not None
+    assert error.reason.startswith("All JSON generation candidates unavailable:")
+    assert "provider=claude" in error.reason
+    assert "provider=codex" in error.reason
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_json_candidates_do_not_fallback_to_profile_defaults() -> (
     None

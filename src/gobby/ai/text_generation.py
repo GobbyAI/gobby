@@ -18,6 +18,7 @@ from gobby.ai.registry import (
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
+    CapabilityUnavailableError,
     build_daemon_ai_capability_registry,
 )
 from gobby.config.app import DaemonConfig
@@ -139,16 +140,25 @@ class TextGenerationService:
         candidates = self._candidate_requests(request)
         attempted_candidates: list[str] = []
         candidate_errors: dict[str, str] = {}
+        candidate_unavailable_errors: list[CapabilityUnavailableError] = []
         text_result, last_error = await self._try_generate_result_candidates(
             candidates,
             attempted_candidates=attempted_candidates,
             candidate_errors=candidate_errors,
+            candidate_unavailable_errors=candidate_unavailable_errors,
         )
         if text_result is not None:
             return text_result
 
         if len(attempted_candidates) == 1 and last_error is not None:
             raise last_error
+        if unavailable_error := self._aggregate_unavailable_candidates_error(
+            attempted_candidates=attempted_candidates,
+            candidate_errors=candidate_errors,
+            candidate_unavailable_errors=candidate_unavailable_errors,
+            operation="text generation",
+        ):
+            raise unavailable_error from last_error
         raise RuntimeError(
             "No text generation candidate succeeded "
             f"(tried: {attempted_candidates}; errors: {candidate_errors})"
@@ -159,16 +169,25 @@ class TextGenerationService:
         candidates = self._candidate_requests(request)
         attempted_candidates: list[str] = []
         candidate_errors: dict[str, str] = {}
+        candidate_unavailable_errors: list[CapabilityUnavailableError] = []
         result, last_error = await self._try_generate_json_candidates(
             candidates,
             attempted_candidates=attempted_candidates,
             candidate_errors=candidate_errors,
+            candidate_unavailable_errors=candidate_unavailable_errors,
         )
         if result is not None:
             return result
 
         if len(attempted_candidates) == 1 and last_error is not None:
             raise last_error
+        if unavailable_error := self._aggregate_unavailable_candidates_error(
+            attempted_candidates=attempted_candidates,
+            candidate_errors=candidate_errors,
+            candidate_unavailable_errors=candidate_unavailable_errors,
+            operation="JSON generation",
+        ):
+            raise unavailable_error from last_error
         raise RuntimeError(
             "No JSON generation candidate succeeded; "
             f"attempted candidates: {attempted_candidates}; errors: {candidate_errors}"
@@ -180,6 +199,7 @@ class TextGenerationService:
         *,
         attempted_candidates: list[str],
         candidate_errors: dict[str, str],
+        candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[LLMTextResult | None, Exception | None]:
         last_error: Exception | None = None
         for index, candidate in enumerate(candidates):
@@ -214,6 +234,8 @@ class TextGenerationService:
             except Exception as exc:
                 last_error = exc
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                if isinstance(exc, CapabilityUnavailableError):
+                    candidate_unavailable_errors.append(exc)
                 self._log_generation_event(
                     request=candidate,
                     binding=binding,
@@ -231,6 +253,7 @@ class TextGenerationService:
         *,
         attempted_candidates: list[str],
         candidate_errors: dict[str, str],
+        candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[dict[str, Any] | None, Exception | None]:
         last_error: Exception | None = None
         for index, candidate in enumerate(candidates):
@@ -269,6 +292,8 @@ class TextGenerationService:
             except Exception as exc:
                 last_error = exc
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                if isinstance(exc, CapabilityUnavailableError):
+                    candidate_unavailable_errors.append(exc)
                 if parse_outcome == "not_attempted" and isinstance(
                     exc, (ValueError, json.JSONDecodeError)
                 ):
@@ -283,6 +308,29 @@ class TextGenerationService:
                     terminal_failure=not has_remaining_candidates,
                 )
         return None, last_error
+
+    @staticmethod
+    def _aggregate_unavailable_candidates_error(
+        *,
+        attempted_candidates: list[str],
+        candidate_errors: dict[str, str],
+        candidate_unavailable_errors: list[CapabilityUnavailableError],
+        operation: str,
+    ) -> CapabilityUnavailableError | None:
+        if not attempted_candidates or len(candidate_unavailable_errors) != len(
+            attempted_candidates
+        ):
+            return None
+
+        details = "; ".join(
+            f"{candidate}: {candidate_errors[candidate]}"
+            for candidate in attempted_candidates
+            if candidate in candidate_errors
+        )
+        return CapabilityUnavailableError(
+            AICapability.TEXT_GENERATE,
+            reason=f"All {operation} candidates unavailable: {details}",
+        )
 
     def _candidate_requests(
         self, request: TextGenerationRequest

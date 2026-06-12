@@ -582,6 +582,53 @@ def test_generate_returns_deterministic_unavailable_error(client: TestClient) ->
     }
 
 
+def test_generate_returns_aggregated_unavailable_error_for_profile_candidates(
+    client: TestClient,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                reason="Claude CLI is not installed.",
+                models=("haiku",),
+            ),
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                reason="Codex app server is not available.",
+                models=("gpt-5.4-mini",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {})
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_text_generation_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/generate",
+            json={
+                "prompt": "Summarize this",
+                "profile": "feature_low",
+                "candidates": ("claude/haiku", "codex/gpt-5.4-mini"),
+            },
+        )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "capability_unavailable"
+    assert body["capability"] == "text_generate"
+    assert body["provider"] is None
+    assert body["model"] is None
+    assert body["reason"].startswith("All text generation candidates unavailable:")
+    assert "provider=claude" in body["reason"]
+    assert "provider=codex" in body["reason"]
+
+
 def test_vision_status_lists_only_proven_providers_as_available(
     client: TestClient,
 ) -> None:
