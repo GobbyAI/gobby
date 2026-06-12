@@ -288,6 +288,24 @@ def test_verify_webhook(adapter: SMSAdapter) -> None:
     assert adapter.verify_webhook(payload_str.encode("utf-8"), headers, secret) is False
 
 
+def test_verify_webhook_uses_initialized_auth_token(adapter: SMSAdapter) -> None:
+    """Twilio webhook verification can use the auth token resolved during initialize."""
+    auth_token = "my-secret"
+    adapter._auth_token = auth_token
+    url = "https://example.com/webhook"
+    payload_dict = {
+        "From": "+0987654321",
+        "Body": "Hello!",
+    }
+    payload_str = urlencode(payload_dict)
+    headers = {
+        "x-twilio-signature": twilio_signature(url, payload_dict, auth_token),
+        "x-original-url": url,
+    }
+
+    assert adapter.verify_webhook(payload_str.encode("utf-8"), headers, "") is True
+
+
 def test_verify_webhook_keeps_blank_params(adapter: SMSAdapter) -> None:
     """Blank form values are part of Twilio's signature input."""
     secret = "my-secret"

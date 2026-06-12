@@ -278,6 +278,29 @@ def test_verify_webhook(adapter: SlackAdapter) -> None:
     assert adapter.verify_webhook(payload, headers, secret) is True
 
 
+def test_verify_webhook_uses_initialized_signing_secret(adapter: SlackAdapter) -> None:
+    signing_secret = "test_secret"
+    adapter._signing_secret = signing_secret
+    timestamp = str(int(time.time()))
+    payload = b'{"test": "data"}'
+
+    sig_basestring = f"v0:{timestamp}:{payload.decode('utf-8')}"
+    signature = (
+        "v0="
+        + hmac.new(
+            signing_secret.encode("utf-8"),
+            sig_basestring.encode("utf-8"),
+            hashlib.sha256,
+        ).hexdigest()
+    )
+    headers = {
+        "X-Slack-Request-Timestamp": timestamp,
+        "X-Slack-Signature": signature,
+    }
+
+    assert adapter.verify_webhook(payload, headers, "") is True
+
+
 def test_verify_webhook_invalid_signature(adapter: SlackAdapter) -> None:
     secret = "test_secret"
     timestamp = str(int(time.time()))

@@ -381,6 +381,10 @@ class SlackAdapter(BaseChannelAdapter):
 
     def verify_webhook(self, payload: bytes, headers: dict[str, str], secret: str) -> bool:
         """Verify webhook signature."""
+        signing_secret = secret or self._signing_secret
+        if not signing_secret:
+            return False
+
         timestamp = headers.get("x-slack-request-timestamp")
         slack_signature = headers.get("x-slack-signature")
 
@@ -403,7 +407,7 @@ class SlackAdapter(BaseChannelAdapter):
         my_signature = (
             "v0="
             + hmac.new(
-                secret.encode("utf-8"), sig_basestring.encode("utf-8"), hashlib.sha256
+                signing_secret.encode("utf-8"), sig_basestring.encode("utf-8"), hashlib.sha256
             ).hexdigest()
         )
 

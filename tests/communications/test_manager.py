@@ -12,6 +12,8 @@ import httpx
 import pytest
 
 from gobby.communications.adapters.slack import SlackAdapter
+from gobby.communications.adapters.sms import SMSAdapter
+from gobby.communications.adapters.teams import TeamsAdapter
 from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.manager import CommunicationsManager
 from gobby.communications.models import ChannelConfig, CommsIdentity, CommsMessage
@@ -485,7 +487,9 @@ async def test_handle_inbound_stores_messages():
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         await manager.start()
 
-    stored = await manager.handle_inbound("test-channel", {"data": "payload"}, {})
+    stored = await manager.handle_inbound(
+        "test-channel", {"data": "payload"}, {}, raw_body=b'{"data":"payload"}'
+    )
 
     assert len(stored) == 1
     assert stored[0].content == "Hi there!"
@@ -508,6 +512,36 @@ async def test_handle_inbound_webhook_verification_failure():
 
     with pytest.raises(ValueError, match="signature verification failed"):
         await manager.handle_inbound("test-channel", b"payload", {"X-Signature": "bad"})
+
+
+@pytest.mark.asyncio
+async def test_handle_inbound_verifies_adapter_when_webhook_secret_unset():
+    """Adapters still reject forged webhooks when channel.webhook_secret is unset."""
+    manager = CommunicationsManager(make_config(), make_store([]), make_secret_store(), MagicMock())
+    slack_adapter = SlackAdapter()
+    sms_adapter = SMSAdapter()
+    teams_adapter = TeamsAdapter()
+    slack_adapter._signing_secret = "slack-signing-secret"
+    sms_adapter._auth_token = "twilio-auth-token"
+    sms_adapter._webhook_url = "https://example.com/hooks/sms"
+    teams_adapter._app_id = "teams-app-id"
+    cases = [
+        ("slack-channel", make_channel("slack-channel", "slack"), slack_adapter, {}),
+        (
+            "sms-channel",
+            make_channel("sms-channel", "sms"),
+            sms_adapter,
+            {"x-twilio-signature": "bad"},
+        ),
+        ("teams-channel", make_channel("teams-channel", "teams"), teams_adapter, {}),
+    ]
+
+    for channel_name, channel, adapter, headers in cases:
+        manager._adapters[channel_name] = adapter
+        manager._channel_by_name[channel_name] = channel
+
+        with pytest.raises(ValueError, match="signature verification failed"):
+            await manager.handle_inbound(channel_name, b"forged", headers)
 
 
 @pytest.mark.asyncio
@@ -573,7 +607,7 @@ async def test_handle_inbound_resolves_identity():
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         await manager.start()
 
-    stored = await manager.handle_inbound("test-channel", {}, {})
+    stored = await manager.handle_inbound("test-channel", {}, {}, raw_body=b"{}")
     assert stored[0].session_id == "session-abc"
     assert stored[0].identity_id == "identity-1"
 

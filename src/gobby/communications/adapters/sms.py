@@ -228,6 +228,10 @@ class SMSAdapter(BaseChannelAdapter):
 
     def verify_webhook(self, payload: bytes, headers: dict[str, str], secret: str) -> bool:
         """Verify webhook signature."""
+        auth_token = secret or self._auth_token
+        if not auth_token:
+            return False
+
         # Normalize headers to lowercase for reliable lookup
         lower_headers = {k.lower(): v for k, v in headers.items()}
         twilio_signature = lower_headers.get("x-twilio-signature")
@@ -259,7 +263,7 @@ class SMSAdapter(BaseChannelAdapter):
         for key in sorted(params.keys()):
             data += f"{key}{params[key]}"
 
-        mac = hmac.new(secret.encode("utf-8"), data.encode("utf-8"), hashlib.sha1)
+        mac = hmac.new(auth_token.encode("utf-8"), data.encode("utf-8"), hashlib.sha1)
         computed = base64.b64encode(mac.digest()).decode("utf-8")
 
         return hmac.compare_digest(computed, twilio_signature)

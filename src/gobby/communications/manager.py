@@ -575,33 +575,30 @@ class CommunicationsManager:
                 raise ValueError(f"Webhook secret for channel {channel_name!r} is not configured")
             webhook_secret = resolved
 
-        if webhook_secret:
-            verify_bytes: bytes
-            if raw_body is not None:
-                verify_bytes = raw_body
-            elif isinstance(payload, bytes):
-                verify_bytes = payload
-            else:
-                # We cannot safely verify signature without raw bytes, as JSON serialization
-                # might differ from the original request body, breaking HMAC.
-                raise ValueError("raw_body must be provided for webhook signature verification")
+        verify_bytes: bytes
+        if raw_body is not None:
+            verify_bytes = raw_body
+        elif isinstance(payload, bytes):
+            verify_bytes = payload
+        else:
+            # We cannot safely verify signature without raw bytes, as JSON serialization
+            # might differ from the original request body, breaking HMAC.
+            raise ValueError("raw_body must be provided for webhook signature verification")
 
-            try:
-                verified = await verify_webhook_with_timeout(
-                    adapter,
-                    verify_bytes,
-                    headers,
-                    webhook_secret,
-                    _WEBHOOK_VERIFICATION_TIMEOUT_SECONDS,
-                )
-            except TimeoutError as exc:
-                raise ValueError(
-                    f"Webhook signature verification failed for channel {channel_name!r}"
-                ) from exc
-            if not verified:
-                raise ValueError(
-                    f"Webhook signature verification failed for channel {channel_name!r}"
-                )
+        try:
+            verified = await verify_webhook_with_timeout(
+                adapter,
+                verify_bytes,
+                headers,
+                webhook_secret or "",
+                _WEBHOOK_VERIFICATION_TIMEOUT_SECONDS,
+            )
+        except TimeoutError as exc:
+            raise ValueError(
+                f"Webhook signature verification failed for channel {channel_name!r}"
+            ) from exc
+        if not verified:
+            raise ValueError(f"Webhook signature verification failed for channel {channel_name!r}")
 
         # Parse messages from payload
         payload_for_parse: dict[str, Any] | bytes = payload
