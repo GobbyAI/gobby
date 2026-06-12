@@ -487,7 +487,8 @@ class CloneIsolationHandler(IsolationHandler):
         clone_path = self._generate_clone_path(branch_name, project_name)
 
         # Create clone (full when use_local, shallow otherwise)
-        result = self._clone_manager.create_clone(
+        result = await asyncio.to_thread(
+            self._clone_manager.create_clone,
             clone_path=clone_path,
             branch_name=branch_name,
             base_branch=base_branch,

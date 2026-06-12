@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import subprocess
+import threading
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -84,6 +85,75 @@ async def test_clone_isolation_writes_parent_project_id(tmp_path: Path) -> None:
     assert data["id"] == "parent-proj"
     assert data["parent_project_path"] == str(parent.resolve())
     assert data["parent_project_id"] == "parent-proj"
+
+
+@pytest.mark.asyncio
+async def test_clone_creation_does_not_block_event_loop(tmp_path: Path) -> None:
+    parent = tmp_path / "parent"
+    (parent / ".gobby").mkdir(parents=True)
+    (parent / ".gobby" / "project.json").write_text(
+        json.dumps({"id": "parent-proj", "name": "parent"})
+    )
+    clone_path = tmp_path / "clone"
+
+    clone_manager = MagicMock()
+    release_clone = threading.Event()
+
+    def create_clone(**_kwargs: object) -> MagicMock:
+        release_clone.wait(timeout=0.5)
+        clone_path.mkdir()
+        return MagicMock(success=True)
+
+    clone_manager.create_clone.side_effect = create_clone
+    clone_storage = MagicMock()
+    clone_storage.get_by_branch.return_value = None
+    clone_storage.create.return_value = MagicMock(
+        id="clone-1",
+        clone_path=str(clone_path),
+        branch_name="feature",
+    )
+
+    handler = CloneIsolationHandler(clone_manager=clone_manager, clone_storage=clone_storage)
+    handler._generate_clone_path = MagicMock(return_value=str(clone_path))
+    config = SpawnConfig(
+        prompt="Test",
+        task_id=None,
+        task_title=None,
+        task_seq_num=None,
+        branch_name="feature",
+        branch_prefix=None,
+        base_branch="main",
+        project_id="parent-proj",
+        project_path=str(parent),
+        provider="codex",
+        parent_session_id="sess-1",
+    )
+
+    with (
+        patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+    ):
+        loop = asyncio.get_running_loop()
+        loop_was_responsive = loop.create_future()
+        prepare_task = asyncio.create_task(handler.prepare_environment(config))
+        loop.call_soon(loop_was_responsive.set_result, None)
+
+        await asyncio.wait_for(loop_was_responsive, timeout=1.0)
+        assert not prepare_task.done()
+        release_clone.set()
+        ctx = await asyncio.wait_for(prepare_task, timeout=2.0)
+
+    assert ctx.cwd == str(clone_path)
+    assert ctx.branch_name == "feature"
+    assert ctx.clone_id == "clone-1"
+    assert ctx.isolation_type == "clone"
+    clone_manager.create_clone.assert_called_once_with(
+        clone_path=str(clone_path),
+        branch_name="feature",
+        base_branch="main",
+        shallow=True,
+        use_local=False,
+    )
 
 
 @pytest.mark.asyncio
