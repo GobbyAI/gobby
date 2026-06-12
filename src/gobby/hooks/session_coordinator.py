@@ -440,12 +440,9 @@ class SessionCoordinator:
                 try:
                     import subprocess
 
-                    from gobby.config.tmux import TmuxConfig
+                    from gobby.agents.tmux import get_configured_tmux_command_prefix
 
-                    tmux_cfg = TmuxConfig()
-                    cmd = [tmux_cfg.command]
-                    if tmux_cfg.socket_name:
-                        cmd.extend(["-L", tmux_cfg.socket_name])
+                    cmd = get_configured_tmux_command_prefix()
                     cmd.extend(["capture-pane", "-t", tmux_session_name, "-p", "-S", "-"])
 
                     proc = subprocess.run(cmd, capture_output=True, timeout=5, text=True)
@@ -465,12 +462,9 @@ class SessionCoordinator:
                 try:
                     import subprocess
 
-                    from gobby.config.tmux import TmuxConfig
+                    from gobby.agents.tmux import get_configured_tmux_command_prefix
 
-                    tmux_cfg = TmuxConfig()
-                    kill_cmd = [tmux_cfg.command]
-                    if tmux_cfg.socket_name:
-                        kill_cmd.extend(["-L", tmux_cfg.socket_name])
+                    kill_cmd = get_configured_tmux_command_prefix()
                     kill_cmd.extend(["kill-session", "-t", tmux_session_name])
                     subprocess.run(kill_cmd, capture_output=True, timeout=5)
                 except Exception as e:

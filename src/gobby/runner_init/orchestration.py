@@ -88,6 +88,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
     except Exception as e:
         logger.warning(f"Failed to initialize workflow loader: {e}")
 
+    from gobby.agents.tmux import configure_tmux
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -95,6 +96,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
 
     ism_manager = InterSessionMessageManager(runner.database)
     agent_run_manager = LocalAgentRunManager(runner.database)
+    configure_tmux(runner.config.tmux)
 
     runner.wake_dispatcher = WakeDispatcher(
         session_manager=runner.session_manager,

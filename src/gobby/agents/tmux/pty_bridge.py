@@ -70,7 +70,11 @@ class TmuxPTYBridge:
         Raises:
             RuntimeError: If attach fails.
         """
-        cfg = config or TmuxConfig()
+        if config is None:
+            from gobby.agents.tmux import get_configured_tmux_config
+
+            config = get_configured_tmux_config()
+        cfg = config
 
         async with self._lock:
             if streaming_id in self._bridges:

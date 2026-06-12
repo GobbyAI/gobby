@@ -375,15 +375,13 @@ class RunningAgentRegistry:
         # Strategy 1: tmux kill-pane (primary — all agents use tmux)
         if ctx.get("tmux_pane"):
             try:
-                from gobby.config.tmux import TmuxConfig
+                from gobby.agents.tmux import get_configured_tmux_command_prefix
 
-                tmux_socket = TmuxConfig().socket_name or "gobby"
+                tmux_command = get_configured_tmux_command_prefix()
 
                 # Verify the pane exists before killing
                 rc, stdout, _ = await self._run_subprocess(
-                    "tmux",
-                    "-L",
-                    tmux_socket,
+                    *tmux_command,
                     "display-message",
                     "-t",
                     ctx["tmux_pane"],
@@ -393,9 +391,7 @@ class RunningAgentRegistry:
                 )
                 if rc == 0 and stdout.strip():
                     await self._run_subprocess(
-                        "tmux",
-                        "-L",
-                        tmux_socket,
+                        *tmux_command,
                         "kill-pane",
                         "-t",
                         ctx["tmux_pane"],

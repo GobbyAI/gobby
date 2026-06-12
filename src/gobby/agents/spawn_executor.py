@@ -62,8 +62,10 @@ _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS = ["Workflow", "Task"]
 def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
     daemon_config = request.daemon_config
     tmux_config = getattr(daemon_config, "tmux", None)
+    if not isinstance(tmux_config, TmuxConfig):
+        raise RuntimeError("daemon tmux config is required to spawn tmux agents")
 
-    return TmuxSpawner(config=tmux_config if isinstance(tmux_config, TmuxConfig) else None)
+    return TmuxSpawner(config=tmux_config)
 
 
 def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:

@@ -55,9 +55,9 @@ class TmuxSpawner(TerminalSpawnerBase):
 
     def __init__(
         self,
-        config: TmuxConfig | None = None,
+        config: TmuxConfig,
     ) -> None:
-        self._config = config or TmuxConfig()
+        self._config = config
         self._session_manager = TmuxSessionManager(self._config)
 
     @property

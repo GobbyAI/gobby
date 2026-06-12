@@ -48,7 +48,11 @@ class TmuxPaneMonitor:
         session_manager: SessionManager | None = None,
     ) -> None:
         self._callback = session_end_callback
-        self._config = config or TmuxConfig()
+        if config is None:
+            from gobby.agents.tmux import get_configured_tmux_config
+
+            config = get_configured_tmux_config()
+        self._config = config
         self._poll_interval = poll_interval
         self._session_manager = session_manager
         self._task: asyncio.Task[None] | None = None

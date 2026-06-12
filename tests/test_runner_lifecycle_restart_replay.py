@@ -9,6 +9,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
+from gobby.agents.tmux import configure_tmux, get_tmux_output_reader, get_tmux_session_manager
+from gobby.config.tmux import TmuxConfig
 from gobby.runner_lifecycle_agents import _list_active_agent_runs_once
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.sessions import SessionManager
@@ -44,10 +46,7 @@ class TestAgentRestartReconciliation:
         output_reader = SimpleNamespace(start_reader=AsyncMock(return_value=True))
 
         with (
-            patch(
-                "gobby.agents.tmux.session_manager.TmuxSessionManager",
-                return_value=tmux_manager,
-            ),
+            patch("gobby.agents.tmux.get_tmux_session_manager", return_value=tmux_manager),
             patch("gobby.agents.tmux.get_tmux_output_reader", return_value=output_reader),
         ):
             reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
@@ -71,6 +70,47 @@ class TestAgentRestartReconciliation:
         runner.agent_lifecycle_monitor.get_cleanup_agent.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_reconcile_uses_configured_tmux_socket_for_live_agent(self) -> None:
+        config = TmuxConfig(
+            socket_name="unused-name",
+            socket_path="/tmp/gobby-test-reconcile-configured.sock",
+        )
+        run = SimpleNamespace(id="run-1", tmux_session_name="gobby-run-1", pid=111)
+        run_storage = SimpleNamespace(
+            list_active=MagicMock(return_value=[run]),
+            update_runtime=MagicMock(),
+        )
+        runner = self._runner(run_storage)
+        configure_tmux(config)
+        tmux_manager = get_tmux_session_manager()
+        output_reader = get_tmux_output_reader()
+        list_sessions = AsyncMock(
+            return_value=[
+                SimpleNamespace(name="gobby-run-1", pane_pid=111, pane_dead=False),
+            ]
+        )
+        start_reader = AsyncMock(return_value=True)
+
+        with (
+            patch.object(tmux_manager, "list_sessions", list_sessions),
+            patch.object(output_reader, "start_reader", start_reader),
+        ):
+            reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
+
+        assert tmux_manager.config == config
+        list_sessions.assert_awaited_once_with()
+        assert reconciled == 2
+        runner.completion_registry.register.assert_called_once_with(
+            "run-1",
+            subscribers=["parent-1"],
+            continuation_prompt=None,
+        )
+        run_storage.update_runtime.assert_not_called()
+        start_reader.assert_awaited_once_with("run-1", "gobby-run-1")
+        runner.agent_lifecycle_monitor.cleanup_agent.assert_not_awaited()
+        runner.agent_lifecycle_monitor.get_cleanup_agent.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_reconcile_missing_tmux_session_cleans_run(self) -> None:
         run = SimpleNamespace(id="run-1", tmux_session_name="gobby-run-1", pid=111)
         run_storage = SimpleNamespace(
@@ -81,7 +121,7 @@ class TestAgentRestartReconciliation:
         tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
 
         with patch(
-            "gobby.agents.tmux.session_manager.TmuxSessionManager",
+            "gobby.agents.tmux.get_tmux_session_manager",
             return_value=tmux_manager,
         ):
             reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
@@ -108,7 +148,7 @@ class TestAgentRestartReconciliation:
         )
 
         with patch(
-            "gobby.agents.tmux.session_manager.TmuxSessionManager",
+            "gobby.agents.tmux.get_tmux_session_manager",
             return_value=tmux_manager,
         ):
             reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(runner)
@@ -221,7 +261,7 @@ class TestAgentRestartReconciliation:
         tmux_manager = SimpleNamespace(list_sessions=AsyncMock(return_value=[]))
 
         with patch(
-            "gobby.agents.tmux.session_manager.TmuxSessionManager",
+            "gobby.agents.tmux.get_tmux_session_manager",
             return_value=tmux_manager,
         ):
             reconciled = await runner_lifecycle._reconcile_agent_runs_after_restart(

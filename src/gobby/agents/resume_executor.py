@@ -15,7 +15,6 @@ import psycopg
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.spawn import prepare_terminal_spawn
 from gobby.agents.spawners.command_builder import build_cli_command
-from gobby.agents.tmux.session_manager import TmuxSessionManager
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.agents.trust import pre_approve_directory
 from gobby.config.tmux import TmuxConfig
@@ -382,7 +381,9 @@ async def _kill_spawned_tmux_session(run_id: str, tmux_session_name: str | None)
     if not tmux_session_name:
         return
     try:
-        await TmuxSessionManager().kill_session(str(tmux_session_name), missing_ok=True)
+        from gobby.agents.tmux import get_tmux_session_manager
+
+        await get_tmux_session_manager().kill_session(str(tmux_session_name), missing_ok=True)
     except Exception as exc:
         logger.warning(
             "Failed to kill tmux session after resume persistence failure",
@@ -433,7 +434,9 @@ def _tmux_spawner(daemon_config: Any | None, metadata: dict[str, Any]) -> TmuxSp
         except Exception as exc:
             logger.warning("Failed to load persisted tmux resume config: %s", exc)
     tmux_config = getattr(daemon_config, "tmux", None)
-    return TmuxSpawner(config=tmux_config if isinstance(tmux_config, TmuxConfig) else None)
+    if not isinstance(tmux_config, TmuxConfig):
+        raise RuntimeError("daemon tmux config is required to resume tmux agents")
+    return TmuxSpawner(config=tmux_config)
 
 
 def _resume_title(run: AgentRun) -> str | None:

@@ -102,8 +102,8 @@ class TmuxSessionManager:
     are invisible to ``tmux ls`` in the user's default server.
     """
 
-    def __init__(self, config: TmuxConfig | None = None) -> None:
-        self._config = config or TmuxConfig()
+    def __init__(self, config: TmuxConfig) -> None:
+        self._config = config
 
     @property
     def config(self) -> TmuxConfig:

@@ -68,6 +68,12 @@ def _signal_process_group(pid: int, sig: int) -> None:
     os.killpg(os.getpgid(pid), sig)
 
 
+def _configured_tmux_command_prefix() -> list[str]:
+    from gobby.agents.tmux import get_configured_tmux_command_prefix
+
+    return get_configured_tmux_command_prefix()
+
+
 async def _wait_for_pid_exit(pid: int, timeout: float) -> bool:
     if timeout <= 0:
         try:
@@ -155,14 +161,8 @@ async def _close_terminal_window(
     # Strategy 1: tmux kill-pane (primary — all agents use tmux)
     if ctx.get("tmux_pane"):
         try:
-            from gobby.config.tmux import TmuxConfig
-
-            tmux_socket = TmuxConfig().socket_name or "gobby"
-
             rc, stdout, _ = await _run_subprocess(
-                "tmux",
-                "-L",
-                tmux_socket,
+                *_configured_tmux_command_prefix(),
                 "display-message",
                 "-t",
                 ctx["tmux_pane"],
@@ -172,9 +172,7 @@ async def _close_terminal_window(
             )
             if rc == 0 and stdout.strip():
                 await _run_subprocess(
-                    "tmux",
-                    "-L",
-                    tmux_socket,
+                    *_configured_tmux_command_prefix(),
                     "kill-pane",
                     "-t",
                     ctx["tmux_pane"],
@@ -250,9 +248,9 @@ async def _close_terminal_window(
 async def _close_tmux_session(session_name: str, *, timeout: float = 5.0) -> dict[str, Any]:
     """Close a persisted Gobby tmux session and its process groups."""
     try:
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.agents.tmux import get_tmux_session_manager
 
-        killed = await TmuxSessionManager().kill_session(session_name, timeout=timeout)
+        killed = await get_tmux_session_manager().kill_session(session_name, timeout=timeout)
     except Exception as e:
         logger.debug("tmux session close failed for %s: %s", session_name, e)
         return {"success": False, "error": str(e)}

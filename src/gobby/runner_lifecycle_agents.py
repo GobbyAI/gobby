@@ -124,9 +124,9 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
         return reconciled
 
     try:
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.agents.tmux import get_tmux_session_manager
 
-        live_sessions = await TmuxSessionManager().list_sessions()
+        live_sessions = await get_tmux_session_manager().list_sessions()
     except Exception as e:
         logger.warning("Failed to list tmux sessions during agent restart reconciliation: %s", e)
         return reconciled
@@ -332,10 +332,10 @@ async def _cleanup_lingering_daemon_restart_tmux_session(
         return False
 
     try:
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.agents.tmux import get_tmux_session_manager
 
         session_name = str(tmux_session_name)
-        killed = await TmuxSessionManager().kill_session(session_name, missing_ok=True)
+        killed = await get_tmux_session_manager().kill_session(session_name, missing_ok=True)
         if killed:
             run_storage.clear_tmux_session_name(str(getattr(run, "id", "unknown")), session_name)
     except Exception as e:

@@ -15,7 +15,6 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.config.tmux import TmuxConfig
 from gobby.sessions.compact_continuation import (
     build_compact_self_continue_prompt,
     clear_compact_self_continuation_pending,
@@ -188,7 +187,9 @@ def _resolve_tmux_target(
             return None, None, f"Agent session is not running (status={agent_run.status})"
         if not agent_run.tmux_session_name:
             return None, None, "Agent session has no tmux terminal (mode may be autonomous)"
-        return agent_run.tmux_session_name, TmuxSessionManager(TmuxConfig()), None
+        from gobby.agents.tmux import get_tmux_session_manager
+
+        return agent_run.tmux_session_name, get_tmux_session_manager(), None
 
     # Fallback: interactive CLI session with terminal_context
     session = session_manager.get(session_id)
