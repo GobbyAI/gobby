@@ -6,6 +6,7 @@ from collections.abc import Sequence
 from typing import Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import json_text_expr, newer_than_now_expr
 
 from ._constants import TERMINAL_AGENT_RUN_STATUSES, AgentRunStatus
 from ._helpers import _positive_rowcount
@@ -60,15 +61,31 @@ class _AgentRunQueryMixin:
         task_id: str,
         *,
         limit: int = 20,
+        max_age_hours: float = 24,
     ) -> list[AgentRun]:
         """List recent cancelled daemon-stop runs for task resume recovery."""
+        if max_age_hours <= 0:
+            raise ValueError("max_age_hours must be positive")
+        consumed_at_sql = json_text_expr(
+            self.db,
+            "ar.resume_metadata_json",
+            "daemon_stop_resume_consumed_at",
+        )
+        recent_sql = newer_than_now_expr(
+            self.db,
+            "COALESCE(ar.completed_at, ar.updated_at, ar.created_at)",
+            "%s",
+            "hour",
+        )
         return self._fetch_runs_with_live_stats(
-            """
+            f"""
             WHERE ar.task_id = %s
               AND ar.status = 'cancelled'
               AND ar.terminal_reason = 'daemon_stop'
+              AND ({consumed_at_sql} IS NULL OR {consumed_at_sql} = '')
+              AND {recent_sql}
             """,
-            (task_id,),
+            (task_id, max_age_hours),
             order_by="ORDER BY ar.completed_at DESC NULLS LAST, ar.updated_at DESC",
             limit=limit,
         )

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from enum import Enum
@@ -338,6 +338,35 @@ class LocalWorktreeManager:
             Updated Worktree or None if not found
         """
         return self.update(worktree_id, agent_session_id=session_id)
+
+    def claim_if_available(
+        self,
+        worktree_id: str,
+        session_id: str,
+        *,
+        allowed_existing_session_ids: Iterable[str | None] = (None,),
+    ) -> Worktree | None:
+        """Claim a worktree only if it is unowned or owned by an allowed prior session."""
+        allowed = [value for value in allowed_existing_session_ids if value]
+        conditions = ["id = %s", "(agent_session_id IS NULL"]
+        params: list[Any] = [session_id, datetime.now(UTC).isoformat(), worktree_id]
+        if allowed:
+            placeholders = ", ".join("%s" for _ in allowed)
+            conditions[-1] += f" OR agent_session_id IN ({placeholders})"
+            params.extend(allowed)
+        conditions[-1] += ")"
+
+        cursor = self.db.execute(
+            f"""
+            UPDATE worktrees
+            SET agent_session_id = %s, updated_at = %s
+            WHERE {" AND ".join(conditions)}
+            """,  # nosec B608
+            tuple(params),
+        )
+        if getattr(cursor, "rowcount", 0) <= 0:
+            return None
+        return self.get(worktree_id)
 
     def release(self, worktree_id: str) -> Worktree | None:
         """
