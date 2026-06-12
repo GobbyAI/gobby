@@ -43,11 +43,22 @@ def make_channel(
 
 def make_store(channels: list[ChannelConfig] | None = None) -> MagicMock:
     store = MagicMock()
-    store.list_channels.return_value = channels or []
+    stored_channels = channels or []
+    store.list_channels.return_value = stored_channels
+    store.get_channel_by_name.side_effect = lambda name: next(
+        (channel for channel in store.list_channels.return_value if channel.name == name),
+        None,
+    )
     store.get_routing_rules.return_value = []
     store.create_message.return_value = None
     store.create_channel.return_value = None
-    store.delete_channel.return_value = None
+
+    def delete_channel(channel_id: str) -> None:
+        store.list_channels.return_value = [
+            channel for channel in store.list_channels.return_value if channel.id != channel_id
+        ]
+
+    store.delete_channel.side_effect = delete_channel
     store.get_identity_by_external.return_value = None
     return store
 
@@ -425,6 +436,26 @@ async def test_add_channel_creates_and_initializes():
     assert channel.channel_type == "slack"
     store.create_channel.assert_called_once()
     assert "my-slack" in manager._adapters
+    assert manager.channel_to_dict(channel)["active"] is True
+    assert manager.channel_to_dict(channel)["init_error"] is None
+
+
+async def test_add_channel_returns_inactive_with_init_error_on_adapter_failure():
+    store = make_store()
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter = make_adapter(channel_type="slack")
+    mock_adapter.initialize.side_effect = RuntimeError("bad token")
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        channel = await manager.add_channel("slack", "my-slack", {"token": "$secret:SLACK_TOKEN"})
+
+    payload = manager.channel_to_dict(channel)
+    assert payload["active"] is False
+    assert payload["init_error"] == "bad token"
+    assert "my-slack" not in manager._adapters
+    store.create_channel.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -551,15 +582,27 @@ async def test_remove_channel_shuts_down_and_deletes():
 
 @pytest.mark.asyncio
 async def test_remove_channel_not_found_noop():
-    """remove_channel() is a no-op for unknown channel names."""
+    """remove_channel() reports not found only when no DB row exists."""
     store = make_store()
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
 
-    # Should not raise
-    await manager.remove_channel("nonexistent")
+    with pytest.raises(ValueError, match="not found"):
+        await manager.remove_channel("nonexistent")
+
     store.delete_channel.assert_not_called()
-    assert store.delete_channel.call_count == 0
-    assert not store.delete_channel.called
+
+
+async def test_remove_channel_deletes_inactive_db_row_by_name():
+    channel = make_channel(enabled=False)
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    await manager.remove_channel("test-channel")
+
+    store.get_channel_by_name.assert_called_once_with("test-channel")
+    store.delete_channel.assert_called_once_with("chan-1")
+    assert "test-channel" not in manager._adapters
+    assert manager.get_channel_status("test-channel")["status"] == "not_found"
 
 
 def test_list_channels():
@@ -635,19 +678,65 @@ def test_get_channel_returns_none_for_missing():
     assert result is None
 
 
-def test_update_channel_delegates_to_store():
+async def test_update_channel_delegates_to_store():
     """update_channel() delegates to store and sets updated_at."""
     channel = make_channel()
     store = make_store()
     store.update_channel.return_value = channel
     manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
 
-    result = manager.update_channel(channel)
+    with patch("gobby.communications.manager.get_adapter_class", return_value=None):
+        result = await manager.update_channel(channel)
 
     assert result == channel
     store.update_channel.assert_called_once_with(channel)
     # updated_at should be refreshed
     assert channel.updated_at != "2024-01-01T00:00:00"
+
+
+async def test_update_channel_disable_stops_runtime_traffic():
+    channel = make_channel()
+    store = make_store([channel])
+    store.update_channel.return_value = channel
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    manager._polling_manager = MagicMock()
+    adapter = make_adapter(supports_polling=True)
+    manager._adapters[channel.name] = adapter
+    manager._channel_by_name[channel.name] = channel
+
+    channel.enabled = False
+
+    result = await manager.update_channel(channel)
+
+    assert result == channel
+    manager._polling_manager.stop_polling.assert_called_once_with(channel.name)
+    adapter.shutdown.assert_awaited_once()
+    assert channel.name not in manager._adapters
+    assert channel.name not in manager._channel_by_name
+    assert manager.channel_to_dict(channel)["active"] is False
+
+
+async def test_update_channel_enabled_reinitializes_and_refreshes_runtime_state():
+    channel = make_channel(config_json={"rate_limit_per_minute": 7, "burst": 3})
+    store = make_store([channel])
+    store.update_channel.return_value = channel
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+    manager._rate_limiter = MagicMock()
+    old_adapter = make_adapter()
+    new_adapter = make_adapter()
+    manager._adapters[channel.name] = old_adapter
+    manager._channel_by_name[channel.name] = channel
+    mock_adapter_cls = MagicMock(return_value=new_adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        result = await manager.update_channel(channel)
+
+    assert result == channel
+    old_adapter.shutdown.assert_awaited_once()
+    new_adapter.initialize.assert_awaited_once()
+    assert manager._adapters[channel.name] == new_adapter
+    assert manager._channel_by_name[channel.name] == channel
+    manager._rate_limiter.configure_channel.assert_called_once_with("chan-1", 7, 3)
 
 
 @pytest.mark.asyncio

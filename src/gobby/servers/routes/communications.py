@@ -5,7 +5,7 @@ FastAPI route module for Gobby communications framework.
 import json
 import logging
 from dataclasses import asdict
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from fastapi import APIRouter, HTTPException, Query, Request, Response
 from pydantic import BaseModel, Field
@@ -94,7 +94,7 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
             raise HTTPException(status_code=503, detail="Communications manager not available")
 
         channels = comms_manager.list_channels()
-        return [asdict(c) for c in channels]
+        return [comms_manager.channel_to_dict(c) for c in channels]
 
     @router.post("/channels")
     async def create_channel(request: ChannelCreateRequest) -> dict[str, Any]:
@@ -110,7 +110,7 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
                 config=request.config,
                 secrets=request.secrets,
             )
-            return asdict(channel)
+            return cast("dict[str, Any]", comms_manager.channel_to_dict(channel))
         except Exception as e:
             logger.error("Failed to add channel: %s", e, exc_info=True)
             raise HTTPException(status_code=400, detail="Invalid channel configuration") from e
@@ -131,9 +131,9 @@ def create_communications_router(server: HTTPServer) -> APIRouter:
         if request.enabled is not None:
             channel.enabled = request.enabled
 
-        updated = comms_manager.update_channel(channel)
+        updated = await comms_manager.update_channel(channel)
 
-        return asdict(updated)
+        return cast("dict[str, Any]", comms_manager.channel_to_dict(updated))
 
     @router.delete("/channels/{channel_id}")
     async def remove_channel(channel_id: str) -> dict[str, Any]:

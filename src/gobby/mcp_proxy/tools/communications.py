@@ -123,7 +123,14 @@ def create_communications_registry(
                 config=config,
                 secrets=secrets,
             )
-            return {"success": True, "channel_id": ch.id}
+            channel = communications_manager.channel_to_dict(ch)
+            return {
+                "success": channel["active"],
+                "channel_id": ch.id,
+                "active": channel["active"],
+                "init_error": channel["init_error"],
+                "channel": channel,
+            }
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Callable
+from dataclasses import asdict
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -63,6 +64,7 @@ class CommunicationsManager:
         self._session_store = session_store
         self._adapters: dict[str, BaseChannelAdapter] = {}
         self._channel_by_name: dict[str, ChannelConfig] = {}
+        self._channel_init_errors: dict[str, str] = {}
 
         # Extracted managers
         self._identity_manager = IdentityManager(store, session_store, config)
@@ -172,6 +174,48 @@ class CommunicationsManager:
 
         await adapter.initialize(channel, resolve_secret_ref)
         return adapter
+
+    def _configure_channel_rate_limit(self, channel: ChannelConfig) -> None:
+        rate = channel.config_json.get(
+            "rate_limit_per_minute",
+            self._config.channel_defaults.rate_limit_per_minute,
+        )
+        burst = channel.config_json.get(
+            "burst",
+            self._config.channel_defaults.burst,
+        )
+        self._rate_limiter.configure_channel(channel.id, int(rate), int(burst))
+
+    async def _activate_channel(self, channel: ChannelConfig) -> BaseChannelAdapter:
+        adapter = await self._init_adapter(channel)
+        self._adapters[channel.name] = adapter
+        self._channel_by_name[channel.name] = channel
+        self._channel_init_errors.pop(channel.name, None)
+        self._configure_channel_rate_limit(channel)
+
+        if adapter.supports_polling and not self._config.webhook_base_url:
+            interval = channel.config_json.get("poll_interval")
+            self._polling_manager.start_polling(channel.name, adapter, interval)
+
+        return adapter
+
+    async def _deactivate_channel(self, name: str, channel: ChannelConfig | None = None) -> None:
+        adapter = self._adapters.pop(name, None)
+        cached_channel = self._channel_by_name.pop(name, None)
+        self._channel_init_errors.pop(name, None)
+        self._polling_manager.stop_polling(name)
+
+        channel = channel or cached_channel
+        if channel is not None:
+            self._rate_limiter.remove_channel(channel.id)
+
+        if adapter is None:
+            return
+
+        try:
+            await adapter.shutdown()
+        except Exception as e:
+            logger.error(f"Error shutting down channel {name!r}: {e}", exc_info=True)
 
     def _enrich_outbound_metadata(
         self,
@@ -623,27 +667,10 @@ class CommunicationsManager:
 
         # Initialize adapter
         try:
-            adapter = await self._init_adapter(channel_config)
-            self._adapters[name] = adapter
-            self._channel_by_name[name] = channel_config
-            # Configure rate limiter
-            rate = config.get(
-                "rate_limit_per_minute",
-                self._config.channel_defaults.rate_limit_per_minute,
-            )
-            burst = config.get(
-                "burst",
-                self._config.channel_defaults.burst,
-            )
-            self._rate_limiter.configure_channel(channel_config.id, int(rate), int(burst))
-
-            # Also start polling if newly added channel supports it
-            if adapter.supports_polling and not self._config.webhook_base_url:
-                interval = channel_config.config_json.get("poll_interval")
-                self._polling_manager.start_polling(name, adapter, interval)
-
+            await self._activate_channel(channel_config)
             logger.info(f"Added channel {name!r} ({channel_type})")
         except Exception as e:
+            self._channel_init_errors[name] = str(e)
             logger.error(f"Failed to initialize adapter for new channel {name!r}: {e}")
 
         return channel_config
@@ -654,23 +681,18 @@ class CommunicationsManager:
         Args:
             name: Channel name to remove.
         """
-        adapter = self._adapters.pop(name, None)
-        channel = self._channel_by_name.pop(name, None)
+        channel = self._channel_by_name.get(name) or self._store.get_channel_by_name(name)
+        if channel is None:
+            raise ValueError(f"Channel {name!r} not found")
 
-        if adapter is not None:
-            self._polling_manager.stop_polling(name)
-            try:
-                await adapter.shutdown()
-            except Exception as e:
-                logger.error(f"Error shutting down channel {name!r}: {e}", exc_info=True)
+        await self._deactivate_channel(name, channel)
 
-        if channel is not None:
-            self._rate_limiter.remove_channel(channel.id)
-            try:
-                self._store.delete_channel(channel.id)
-                logger.info(f"Removed channel {name!r}")
-            except Exception as e:
-                logger.error(f"Failed to delete channel {name!r} from DB: {e}")
+        try:
+            self._store.delete_channel(channel.id)
+            logger.info(f"Removed channel {name!r}")
+        except Exception as e:
+            logger.error(f"Failed to delete channel {name!r} from DB: {e}")
+            raise
 
     async def _ensure_gobby_chat_channel(self) -> None:
         """Auto-create a gobby_chat channel if one doesn't already exist.
@@ -730,7 +752,7 @@ class CommunicationsManager:
         """
         return self._store.get_channel(channel_id)
 
-    def update_channel(self, channel: ChannelConfig) -> ChannelConfig:
+    async def update_channel(self, channel: ChannelConfig) -> ChannelConfig:
         """Update channel configuration in DB.
 
         Args:
@@ -740,7 +762,34 @@ class CommunicationsManager:
             The updated ChannelConfig.
         """
         channel.updated_at = datetime.now(UTC).isoformat()
-        return self._store.update_channel(channel)
+        updated = self._store.update_channel(channel)
+
+        current_names = [
+            name for name, cached in self._channel_by_name.items() if cached.id == updated.id
+        ]
+        if updated.name not in current_names:
+            current_names.append(updated.name)
+
+        for name in current_names:
+            await self._deactivate_channel(name, updated)
+
+        if not updated.enabled:
+            return updated
+
+        try:
+            await self._activate_channel(updated)
+        except Exception as e:
+            self._channel_init_errors[updated.name] = str(e)
+            logger.error(f"Failed to initialize adapter for updated channel {updated.name!r}: {e}")
+
+        return updated
+
+    def channel_to_dict(self, channel: ChannelConfig) -> dict[str, Any]:
+        """Serialize a channel with runtime activity and initialization state."""
+        payload = asdict(channel)
+        payload["active"] = channel.name in self._adapters
+        payload["init_error"] = self._channel_init_errors.get(channel.name)
+        return payload
 
     def list_channels(self) -> list[ChannelConfig]:
         """List all channels (enabled and disabled) from DB.
@@ -772,11 +821,11 @@ class CommunicationsManager:
                 "supports_webhooks": adapter.supports_webhooks,
                 "supports_polling": adapter.supports_polling,
                 "is_polling": self._polling_manager.is_polling(name),
+                "init_error": None,
             }
 
         # Channel not active — check DB
-        channels = self._store.list_channels(enabled_only=False)
-        db_channel = next((c for c in channels if c.name == name), None)
+        db_channel = self._store.get_channel_by_name(name)
         if db_channel is None:
             return {"name": name, "status": "not_found", "active": False}
 
@@ -786,6 +835,7 @@ class CommunicationsManager:
             "status": "inactive",
             "active": False,
             "enabled": db_channel.enabled,
+            "init_error": self._channel_init_errors.get(name),
         }
 
     # --- Public store delegation methods ---

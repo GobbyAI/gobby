@@ -1,3 +1,4 @@
+from dataclasses import asdict
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -13,8 +14,14 @@ def comms_manager():
     manager = MagicMock()
     manager.handle_inbound = AsyncMock(return_value=[])
     manager.add_channel = AsyncMock()
+    manager.update_channel = AsyncMock()
     manager.remove_channel = AsyncMock()
     manager._store = MagicMock()
+    manager.channel_to_dict.side_effect = lambda channel: {
+        **asdict(channel),
+        "active": False,
+        "init_error": None,
+    }
 
     # Mock some store methods
     manager.list_channels.return_value = []
@@ -123,6 +130,34 @@ def test_create_channel(client, comms_manager):
     assert response.status_code == 200
     assert response.json()["id"] == "ch1"
     comms_manager.add_channel.assert_called_once()
+
+
+def test_create_channel_reports_init_error(client, comms_manager):
+    ch = ChannelConfig(
+        id="ch1",
+        channel_type="slack",
+        name="myslack",
+        enabled=True,
+        config_json={"foo": "bar"},
+        created_at="2023-01-01T00:00:00Z",
+        updated_at="2023-01-01T00:00:00Z",
+    )
+    comms_manager.add_channel.return_value = ch
+    comms_manager.channel_to_dict.return_value = {
+        **asdict(ch),
+        "active": False,
+        "init_error": "bad token",
+    }
+    comms_manager.channel_to_dict.side_effect = None
+
+    response = client.post(
+        "/api/comms/channels",
+        json={"channel_type": "slack", "name": "myslack", "config": {"foo": "bar"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["active"] is False
+    assert response.json()["init_error"] == "bad token"
 
 
 def test_update_channel(client, comms_manager):

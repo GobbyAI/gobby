@@ -1,5 +1,6 @@
 """Tests for gobby-communications MCP tool registry."""
 
+from dataclasses import asdict
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock
 
@@ -25,6 +26,11 @@ def mock_manager(mock_store):
     manager.add_channel = AsyncMock()
     manager.remove_channel = AsyncMock()
     manager.get_channel_status = MagicMock(return_value={"connected": True})
+    manager.channel_to_dict.side_effect = lambda channel: {
+        **asdict(channel),
+        "active": True,
+        "init_error": None,
+    }
     # Public delegation methods (mirror CommunicationsManager API)
     manager.list_channels = mock_store.list_channels
     manager.get_channel_by_name = mock_store.get_channel_by_name
@@ -150,6 +156,36 @@ async def test_add_channel(registry, mock_manager):
     res = await handler(channel_type="slack", name="new-channel", config={})
     assert res["success"] is True
     assert res["channel_id"] == "ch-new"
+    assert res["active"] is True
+    assert res["init_error"] is None
+
+
+async def test_add_channel_reports_init_error(registry, mock_manager):
+    channel = ChannelConfig(
+        id="ch-new",
+        channel_type="slack",
+        name="new-channel",
+        enabled=True,
+        config_json={},
+        created_at=datetime.now().isoformat(),
+        updated_at=datetime.now().isoformat(),
+    )
+    mock_manager.add_channel.return_value = channel
+    mock_manager.channel_to_dict.return_value = {
+        **asdict(channel),
+        "active": False,
+        "init_error": "bad token",
+    }
+    mock_manager.channel_to_dict.side_effect = None
+
+    handler = registry.get_tool("add_channel")
+
+    res = await handler(channel_type="slack", name="new-channel", config={})
+    assert res["success"] is False
+    assert res["channel_id"] == "ch-new"
+    assert res["active"] is False
+    assert res["init_error"] == "bad token"
+    assert res["channel"]["init_error"] == "bad token"
 
 
 @pytest.mark.asyncio
