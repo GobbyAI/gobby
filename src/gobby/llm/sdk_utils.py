@@ -63,7 +63,7 @@ def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:
     suffix = f"\n\n{breadcrumb}" if breadcrumb else ""
     head_budget = budget - len(suffix)
     if head_budget <= 0:
-        return text[:budget]
+        return (breadcrumb or text)[:budget]
 
     # Require clean cuts to keep at least half of the head budget. This prevents
     # the breadcrumb from crowding out content and falls back to a hard cut when
@@ -88,6 +88,39 @@ def head_with_breadcrumb(text: str, *, budget: int, breadcrumb: str) -> str:
     return f"{head}{suffix}"
 
 
+def _split_contributors(text: str, contributor_sizes: Mapping[str, int]) -> list[str] | None:
+    parts: list[str] = []
+    cursor = 0
+    for size in contributor_sizes.values():
+        if size < 0:
+            return None
+        parts.append(text[cursor : cursor + size])
+        cursor += size
+        if cursor < len(text):
+            if text[cursor : cursor + 2] != "\n\n":
+                return None
+            cursor += 2
+    return parts if cursor == len(text) else None
+
+
+def _truncate_contributors(text: str, contributor_sizes: Mapping[str, int]) -> str | None:
+    parts = _split_contributors(text, contributor_sizes)
+    if not parts:
+        return None
+    marker = "\n... [truncated]"
+    separator_budget = 2 * (len(parts) - 1)
+    content_budget = ADDITIONAL_CONTEXT_LIMIT - len(marker) - separator_budget
+    if content_budget < 0:
+        return None
+    allocations = [len(part) for part in parts]
+    while sum(allocations) > content_budget:
+        index = max(range(len(allocations)), key=allocations.__getitem__)
+        allocations[index] -= min(allocations[index], sum(allocations) - content_budget)
+    return (
+        "\n\n".join(part[:budget] for part, budget in zip(parts, allocations, strict=True)) + marker
+    )
+
+
 def truncate_additional_context(
     text: str,
     *,
@@ -110,4 +143,8 @@ def truncate_additional_context(
             ADDITIONAL_CONTEXT_LIMIT,
             dict(contributor_sizes or {}),
         )
+    if contributor_sizes:
+        truncated = _truncate_contributors(text, contributor_sizes)
+        if truncated is not None:
+            return truncated
     return text[: ADDITIONAL_CONTEXT_LIMIT - 16] + "\n... [truncated]"

@@ -180,8 +180,8 @@ class TestResolveActionOptionId:
     def test_approve_with_unknown_option_is_none(self) -> None:
         assert resolve_action_option_id("codex", "approve", "approve_bogus") is None
 
-    def test_approve_without_option_is_none(self) -> None:
-        assert resolve_action_option_id("codex", "approve", None) is None
+    def test_approve_without_option_uses_generic_act_default(self) -> None:
+        assert resolve_action_option_id("codex", "approve", None) == "approve_act"
 
     @pytest.mark.parametrize("decision", ["", "deny", None])
     def test_unknown_decision_is_none(self, decision: str | None) -> None:

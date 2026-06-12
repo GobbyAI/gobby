@@ -28,7 +28,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from gobby.adapters.plan_options import get_plan_accept_option
+from gobby.adapters.plan_options import get_plan_accept_option, get_plan_accept_options
 
 # Reserved option id for the reject / request-changes action. It is NOT part of
 # the plan_options accept set (which is approve-only); native plan menus expose
@@ -173,14 +173,18 @@ def resolve_action_option_id(
     """Resolve the registry option id for a plan decision.
 
     ``request_changes`` maps to :data:`REQUEST_CHANGES_OPTION_ID`. An ``approve``
-    decision uses ``option_id`` only when it is a real plan_options accept id (the
-    accept set is uniform across sources); an unknown or missing id yields
-    ``None`` so the caller errors rather than sending the wrong keystrokes.
+    decision uses ``option_id`` when it is a real plan_options accept id. A
+    missing approve id falls back to the generic approve target, matching Path A.
+    Unknown ids still return ``None`` so callers do not send the wrong keystrokes.
     """
     if decision == "request_changes":
         return REQUEST_CHANGES_OPTION_ID
-    if decision == "approve" and option_id and get_plan_accept_option(source or "", option_id):
-        return option_id
+    if decision == "approve":
+        if option_id:
+            return option_id if get_plan_accept_option(source or "", option_id) else None
+        for option in get_plan_accept_options(source or ""):
+            if option.post_plan_chat_mode == "normal":
+                return option.id
     return None
 
 

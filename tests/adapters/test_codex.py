@@ -864,6 +864,23 @@ class TestCodexAppServerClientTurnManagement:
         assert turn.status == "inProgress"
 
     @pytest.mark.asyncio
+    async def test_start_turn_clears_pending_prompt_on_send_failure(self) -> None:
+        client = CodexAppServerClient()
+
+        with (
+            patch.object(
+                client,
+                "_send_request",
+                new_callable=AsyncMock,
+                side_effect=RuntimeError("send failed"),
+            ),
+            pytest.raises(RuntimeError, match="send failed"),
+        ):
+            await client.start_turn("thr-1", "Help me refactor")
+
+        assert "thr-1" not in client._pending_turn_prompts_by_thread
+
+    @pytest.mark.asyncio
     async def test_start_turn_with_images(self):
         """start_turn handles image inputs."""
         client = CodexAppServerClient()
@@ -1701,13 +1718,13 @@ class TestCodexAdapterTranslateFromHookResponse:
         assert result["decision"] == "decline"
 
     def test_block_response(self) -> None:
-        """Block response maps to cancel."""
+        """Block response maps to decline."""
         adapter = CodexAdapter()
 
         response = HookResponse(decision="block")
         result = adapter.translate_from_hook_response(response)
 
-        assert result["decision"] == "cancel"
+        assert result["decision"] == "decline"
 
     def test_auto_approve_response(self) -> None:
         """Auto-approve maps to acceptForSession."""

@@ -468,10 +468,11 @@ def present_unsupported_response_fields(
     capability: HookCapability | None,
 ) -> tuple[str, ...]:
     """Return populated HookResponse fields unsupported by a hook capability."""
-    if capability is None:
-        return ()
+    unsupported_fields = (
+        capability.unsupported_response_fields if capability is not None else RESPONSE_FIELD_NAMES
+    )
     return tuple(
         field_name
-        for field_name in sorted(capability.unsupported_response_fields)
+        for field_name in sorted(unsupported_fields)
         if _response_field_present(response, field_name)
     )

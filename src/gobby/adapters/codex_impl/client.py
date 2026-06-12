@@ -464,8 +464,6 @@ class CodexAppServerClient:
 
         return models
 
-    # ===== Turn Management =====
-
     async def start_turn(
         self,
         thread_id: str,
@@ -490,7 +488,6 @@ class CodexAppServerClient:
         Returns:
             CodexTurn object (initial state, updates via notifications)
         """
-        # Build input array
         inputs: list[dict[str, Any]] = [{"type": "text", "text": prompt}]
 
         if images:
@@ -506,7 +503,6 @@ class CodexAppServerClient:
         }
         self._pending_turn_prompts_by_thread[thread_id] = prompt
 
-        # Add context prefix as instructions field
         if context_prefix:
             params["instructions"] = context_prefix
 
@@ -517,8 +513,11 @@ class CodexAppServerClient:
             params["effort"] = config_overrides.pop("reasoningEffort")
 
         params.update(config_overrides)
-
-        result = await self._send_request("turn/start", params)
+        try:
+            result = await self._send_request("turn/start", params)
+        except Exception:
+            self._pending_turn_prompts_by_thread.pop(thread_id, None)
+            raise
 
         turn_data = result.get("turn", {})
         turn = CodexTurn(
@@ -919,20 +918,21 @@ class CodexAppServerClient:
                 line = await loop.run_in_executor(None, stdout.readline)
 
                 if not line:
-                    if proc.poll() is not None:
+                    return_code = proc.poll()
+                    if return_code is not None:
                         logger.warning("Codex app-server process terminated")
                         self._state = CodexConnectionState.ERROR
-                        with self._pending_requests_lock:
-                            for pending_future in self._pending_requests.values():
-                                if not pending_future.done():
-                                    pending_future.set_exception(
-                                        ConnectionError("Codex app-server process terminated")
-                                    )
-                            self._pending_requests.clear()
+                        if return_code:
+                            with self._pending_requests_lock:
+                                for pending_future in self._pending_requests.values():
+                                    if not pending_future.done():
+                                        pending_future.set_exception(
+                                            ConnectionError("Codex app-server process terminated")
+                                        )
+                                self._pending_requests.clear()
                         break
                     continue
 
-                # Parse JSON-RPC message
                 try:
                     message = json.loads(line.strip())
                 except json.JSONDecodeError as e:
@@ -962,7 +962,6 @@ class CodexAppServerClient:
                         else:
                             future.set_result(message.get("result", {}))
 
-                # Handle notification (no "id")
                 elif "method" in message:
                     method = message["method"]
                     params = message.get("params", {})
@@ -971,14 +970,12 @@ class CodexAppServerClient:
 
                     logger.debug(f"Received notification: {method}")
 
-                    # Call global handler
                     if self._on_notification:
                         try:
                             self._on_notification(method, params)
                         except Exception as e:
                             logger.error(f"Notification handler error: {e}")
 
-                    # Call method-specific handlers
                     handlers = self._notification_handlers.get(method, [])
                     for handler in handlers:
                         try:
