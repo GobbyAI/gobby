@@ -922,39 +922,11 @@ class CodeIndexStorage:
         if not query.strip():
             return []
 
-        try:
-            hits = pick_search_backend(self.db, "code_content").search(
-                query,
-                limit,
-                filters={"project_id": project_id, "file_path": file_path},
-            )
-        except Exception as e:
-            logger.debug(f"Content keyword search failed, falling back to LIKE: {e}")
-            # Fallback to LIKE search
-            like_query = f"%{query}%"
-            params: list[Any] = [project_id, like_query]
-            sql = """SELECT file_path, line_start, line_end, language,
-                        substr(content, max(1, instr(content, %s) - 60), 120) as snippet
-                     FROM code_content_chunks
-                     WHERE project_id = %s AND content LIKE %s"""
-            if file_path:
-                sql += " AND file_path = %s"
-                params = [query, project_id, like_query, file_path]
-            else:
-                params = [query, project_id, like_query]
-            sql += " LIMIT %s"
-            params.append(limit)
-            rows = self.db.fetchall(sql, tuple(params))
-            return [
-                {
-                    "file_path": row["file_path"],
-                    "line_start": row["line_start"],
-                    "line_end": row["line_end"],
-                    "snippet": row["snippet"],
-                    "language": row["language"],
-                }
-                for row in rows
-            ]
+        hits = pick_search_backend(self.db, "code_content").search(
+            query,
+            limit,
+            filters={"project_id": project_id, "file_path": file_path},
+        )
 
         rows = self._rows_by_ids("code_content_chunks", [hit.id for hit in hits])
         rows_by_id = {str(row["id"]): row for row in rows}

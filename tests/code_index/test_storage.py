@@ -630,6 +630,21 @@ def test_search_content_fts_no_match(code_storage: CodeIndexStorage) -> None:
     assert results == []
 
 
+def test_search_content_fts_surfaces_backend_failure(
+    code_storage: CodeIndexStorage, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Backend failures propagate instead of becoming empty results."""
+    code_storage.upsert_content_chunks(_make_chunks())
+
+    def fail_fetch_all(_hub: Any, _sql: str, _params: list[Any]) -> list[Any]:
+        raise RuntimeError("pg_search unavailable")
+
+    monkeypatch.setattr("gobby.search.keyword.fetch_all", fail_fetch_all)
+
+    with pytest.raises(RuntimeError, match="pg_search unavailable"):
+        code_storage.search_content_fts("greeting", "proj-1")
+
+
 # ── Summary freshness ──────────────────────────────────────────────────
 
 

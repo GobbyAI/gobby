@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import logging
 import re
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
-
-logger = logging.getLogger(__name__)
 
 SearchMode = Literal["keyword", "semantic"]
 
@@ -156,11 +153,7 @@ class BM25SearchBackend:
              LIMIT {limit_placeholder}
         """
 
-        try:
-            rows = fetch_all(self._hub, sql, params)
-        except Exception as exc:
-            logger.debug("pg_search BM25 search failed on %s: %s", self._config.table, exc)
-            return []
+        rows = fetch_all(self._hub, sql, params)
 
         raw_scores = [float(row_value(row, "score")) for row in rows]
         normalized = normalize_positive_scores(raw_scores)
