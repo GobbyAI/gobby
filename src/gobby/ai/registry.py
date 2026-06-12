@@ -548,6 +548,12 @@ def _whisper_translate_binding(config: DaemonConfig | None) -> CapabilityBinding
     return _whisper_audio_binding(config, AICapability.AUDIO_TRANSLATE)
 
 
+def _whisper_runtime_available(config: DaemonConfig) -> bool:
+    from gobby.voice.stt import WhisperSTT
+
+    return WhisperSTT(config.voice).is_available
+
+
 def _whisper_audio_binding(
     config: DaemonConfig | None,
     capability: AICapability,
@@ -561,7 +567,7 @@ def _whisper_audio_binding(
         )
 
     voice = config.voice
-    metadata = {
+    metadata: dict[str, object] = {
         "device": voice.whisper_device,
         "compute_type": voice.whisper_compute_type,
     }
@@ -569,7 +575,11 @@ def _whisper_audio_binding(
         reason = "voice.enabled is false."
     elif not voice.stt_enabled:
         reason = "voice.stt_enabled is false."
+    elif not _whisper_runtime_available(config):
+        reason = "faster-whisper is not installed."
+        metadata["runtime_available"] = False
     else:
+        metadata["runtime_available"] = True
         return CapabilityBinding(
             capability=capability,
             provider="whisper",

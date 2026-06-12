@@ -51,6 +51,12 @@ class _InvalidAudioAdapter(_FakeAudioAdapter):
         return {"text": "not a supported adapter output"}
 
 
+class _UnavailableAudioAdapter(_FakeAudioAdapter):
+    async def transcribe(self, request: AudioCapabilityRequest) -> str:
+        self.transcribe_requests.append(request)
+        raise AudioProviderUnavailableError("provider unavailable")
+
+
 class _FakeWhisper:
     def __init__(self, *, available: bool = True) -> None:
         self.is_available = available
@@ -105,6 +111,43 @@ async def test_audio_service_selects_transcribe_provider() -> None:
     assert result.provider == "remote"
     assert result.capability == AICapability.AUDIO_TRANSCRIBE
     assert adapter.transcribe_requests[0].audio_bytes == b"audio"
+
+
+@pytest.mark.asyncio
+async def test_audio_service_falls_back_when_binding_runtime_unavailable() -> None:
+    whisper = _UnavailableAudioAdapter()
+    remote = _FakeAudioAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.AUDIO_TRANSCRIBE,
+                provider="whisper",
+                adapter_style=AIAdapterStyle.LOCAL,
+                available=True,
+                models=("base",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.AUDIO_TRANSCRIBE,
+                provider="remote",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("whisper-large-v3",),
+            ),
+        ]
+    )
+    service = AudioCapabilityService(registry, {"whisper": whisper, "remote": remote})
+
+    result = await service.execute(
+        AudioCapabilityRequest(
+            audio_bytes=b"audio",
+            capability=AICapability.AUDIO_TRANSCRIBE,
+        )
+    )
+
+    assert result.text == "transcribed"
+    assert result.provider == "remote"
+    assert len(whisper.transcribe_requests) == 1
+    assert len(remote.transcribe_requests) == 1
 
 
 @pytest.mark.asyncio

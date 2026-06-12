@@ -349,7 +349,10 @@ def test_daemon_registry_reports_embedding_configured_state() -> None:
     assert binding.metadata["dim"] == 768
 
 
-def test_daemon_registry_reports_voice_transcribe_configured_state() -> None:
+def test_daemon_registry_reports_voice_transcribe_configured_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.ai.registry._whisper_runtime_available", lambda _config: True)
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(voice=VoiceConfig(enabled=True, stt_enabled=True)),
         provider_installed=lambda _entry: False,
@@ -365,6 +368,41 @@ def test_daemon_registry_reports_voice_transcribe_configured_state() -> None:
     assert translate.provider == "whisper"
     assert translate.adapter_style == AIAdapterStyle.LOCAL
     assert translate.models == ("base",)
+
+
+def test_daemon_registry_reports_whisper_runtime_unavailable(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr("gobby.ai.registry._whisper_runtime_available", lambda _config: False)
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(
+            voice=VoiceConfig(
+                enabled=True,
+                stt_enabled=True,
+                openai_compatible_audio=[
+                    OpenAICompatibleAudioBindingConfig(
+                        provider="remote-stt",
+                        url="http://localhost:8080/v1",
+                        model="whisper-large-v3",
+                    )
+                ],
+            )
+        ),
+        provider_installed=lambda _entry: False,
+    )
+
+    whisper = registry.binding(AICapability.AUDIO_TRANSCRIBE, "whisper")
+    assert whisper is not None
+    assert whisper.available is False
+    assert whisper.reason == "faster-whisper is not installed."
+    assert registry.select(AICapability.AUDIO_TRANSCRIBE).provider == "remote-stt"
+
+    audio_status = registry.status_snapshot()["capabilities"][AICapability.AUDIO_TRANSCRIBE.value]
+    whisper_status = next(
+        binding for binding in audio_status["bindings"] if binding["provider"] == "whisper"
+    )
+    assert whisper_status["available"] is False
+    assert whisper_status["metadata"]["runtime_available"] is False
 
 
 def test_daemon_registry_reports_openai_compatible_audio_bindings() -> None:
