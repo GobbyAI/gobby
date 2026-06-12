@@ -870,9 +870,8 @@ async def _patch_mcp_config_for_isolation(
                         data = {}
 
                 projects = data.setdefault("projects", {})
-                projects[isolated_path] = {
-                    "mcpServers": mcp_config["mcpServers"],
-                }
+                project_config = projects.setdefault(isolated_path, {})
+                project_config["mcpServers"] = mcp_config["mcpServers"]
 
                 # Atomic write via tempfile + os.replace to avoid TOCTOU race
                 fd, tmp_path = tempfile.mkstemp(dir=str(claude_json_path.parent), suffix=".tmp")

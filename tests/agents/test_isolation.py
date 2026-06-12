@@ -1332,7 +1332,20 @@ class TestPatchMcpConfigForIsolation:
         Path(isolated_path).mkdir()
 
         fake_claude_json = tmp_path / ".claude.json"
-        existing = {"existingKey": "value", "projects": {"/other": {"foo": "bar"}}}
+        existing_project_config = {
+            "allowedTools": ["Bash(git status:*)"],
+            "hasCompletedProjectOnboarding": True,
+            "hasTrustDialogAccepted": True,
+            "history": [{"display": "gobby status", "pastedContents": {}}],
+            "mcpServers": {"old": {"command": "old-mcp"}},
+        }
+        existing = {
+            "existingKey": "value",
+            "projects": {
+                "/other": {"foo": "bar"},
+                isolated_path: existing_project_config,
+            },
+        }
         fake_claude_json.write_text(json.dumps(existing))
 
         with patch("pathlib.Path.home", return_value=tmp_path):
@@ -1342,6 +1355,12 @@ class TestPatchMcpConfigForIsolation:
         assert data["existingKey"] == "value"
         assert "/other" in data["projects"]
         assert isolated_path in data["projects"]
+        project_config = data["projects"][isolated_path]
+        assert project_config["allowedTools"] == existing_project_config["allowedTools"]
+        assert project_config["hasCompletedProjectOnboarding"] is True
+        assert project_config["hasTrustDialogAccepted"] is True
+        assert project_config["history"] == existing_project_config["history"]
+        assert "gobby" in project_config["mcpServers"]
 
     @pytest.mark.asyncio
     async def test_handles_write_failure_gracefully(
