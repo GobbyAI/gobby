@@ -83,7 +83,7 @@ async def test_initialize_with_webhook(
         mock_post.assert_called_with(
             "https://api.telegram.org/bottest-telegram-token/setWebhook",
             json={
-                "url": "https://example.com/webhooks/v1/comms/webhooks/test_telegram_channel",
+                "url": f"https://example.com/webhooks/api/comms/webhooks/{channel_config.name}",
                 "secret_token": "test_secret_token",
             },
         )

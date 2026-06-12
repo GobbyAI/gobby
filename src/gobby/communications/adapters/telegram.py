@@ -80,7 +80,7 @@ class TelegramAdapter(BaseChannelAdapter):
         # Optionally call setWebhook if webhook_base_url is configured
         webhook_base_url = config.config_json.get("webhook_base_url")
         if webhook_base_url:
-            webhook_url = f"{webhook_base_url.rstrip('/')}/v1/comms/webhooks/{config.id}"
+            webhook_url = f"{webhook_base_url.rstrip('/')}/api/comms/webhooks/{config.name}"
 
             payload: dict[str, Any] = {"url": webhook_url}
 
