@@ -22,6 +22,24 @@ pytestmark = pytest.mark.unit
 # ── Symbols ─────────────────────────────────────────────────────────────
 
 
+def _make_search_symbol(symbol_id: str, name: str, byte_start: int) -> Symbol:
+    return Symbol(
+        id=symbol_id,
+        project_id="proj-1",
+        file_path=f"src/{symbol_id}.py",
+        name=name,
+        qualified_name=name,
+        kind="function",
+        language="python",
+        byte_start=byte_start,
+        byte_end=byte_start + 10,
+        line_start=1,
+        line_end=1,
+        signature=f"def {name}() -> None:",
+        content_hash=symbol_id,
+    )
+
+
 def test_upsert_and_get_symbol(
     code_storage: CodeIndexStorage, sample_symbols: list[Symbol]
 ) -> None:
@@ -95,6 +113,32 @@ def test_search_symbols_by_name(
     results = code_storage.search_symbols_by_name("greet", "proj-1")
     assert len(results) >= 1
     assert any(s.name == "greet" for s in results)
+
+
+def test_search_symbols_by_name_ranks_exact_prefix_then_id(
+    code_storage: CodeIndexStorage,
+) -> None:
+    """Exact names are not truncated by earlier substring matches."""
+    symbols = [
+        _make_search_symbol("symbol-substring-a", "arun_00", 10),
+        _make_search_symbol("symbol-substring-b", "arun_01", 20),
+        _make_search_symbol("symbol-substring-c", "brun_00", 30),
+        _make_search_symbol("symbol-substring-d", "crun_00", 40),
+        _make_search_symbol("symbol-runner-b", "runner", 50),
+        _make_search_symbol("symbol-runway", "runway", 60),
+        _make_search_symbol("symbol-exact", "run", 70),
+        _make_search_symbol("symbol-runner-a", "runner", 80),
+    ]
+    code_storage.upsert_symbols(symbols)
+
+    results = code_storage.search_symbols_by_name("run", "proj-1", limit=4)
+
+    assert [symbol.id for symbol in results] == [
+        "symbol-exact",
+        "symbol-runner-a",
+        "symbol-runner-b",
+        "symbol-runway",
+    ]
 
 
 def test_search_symbols_by_name_with_kind_filter(

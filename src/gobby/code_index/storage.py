@@ -147,10 +147,16 @@ class CodeIndexStorage:
             params.append(file_path)
 
         where = " AND ".join(conditions)
-        params.append(limit)
+        params.extend([query, f"{escaped}%", limit])
 
         rows = self.db.fetchall(
-            f"SELECT * FROM code_symbols WHERE {where} ORDER BY name LIMIT %s",
+            f"""
+            SELECT *
+            FROM code_symbols
+            WHERE {where}
+            ORDER BY (name = %s) DESC, (name LIKE %s ESCAPE '\\') DESC, name, id
+            LIMIT %s
+            """,
             tuple(params),
         )
         return [Symbol.from_row(r) for r in rows]
