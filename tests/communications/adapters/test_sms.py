@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import base64
+import hashlib
+import hmac
 from typing import Any
 from unittest.mock import MagicMock, patch
 from urllib.parse import urlencode
@@ -42,6 +45,15 @@ def secret_resolver() -> Any:
 @pytest.fixture
 def adapter() -> SMSAdapter:
     return SMSAdapter()
+
+
+def twilio_signature(url: str, params: dict[str, str], secret: str) -> str:
+    data = url
+    for key in sorted(params.keys()):
+        data += f"{key}{params[key]}"
+
+    mac = hmac.new(secret.encode("utf-8"), data.encode("utf-8"), hashlib.sha1)
+    return base64.b64encode(mac.digest()).decode("utf-8")
 
 
 @pytest.mark.asyncio
@@ -148,6 +160,31 @@ def test_parse_webhook(adapter: SMSAdapter) -> None:
     assert msg.metadata_json["opt_out_action"] is None
 
 
+def test_parse_webhook_accepts_media_only_mms(adapter: SMSAdapter) -> None:
+    """Media-only MMS with blank body still produces an inbound message."""
+    payload_str = urlencode(
+        {
+            "From": "+0987654321",
+            "To": "+1234567890",
+            "Body": "",
+            "MessageSid": "SMmedia",
+            "NumMedia": "1",
+            "MediaUrl0": "https://api.twilio.com/media/image.png",
+        }
+    )
+
+    messages = adapter.parse_webhook(payload_str.encode("utf-8"), {})
+
+    assert len(messages) == 1
+    msg = messages[0]
+    assert msg.content == ""
+    assert msg.platform_message_id == "SMmedia"
+    assert msg.identity_id == "+0987654321"
+    assert msg.metadata_json["Body"] == ""
+    assert msg.metadata_json["NumMedia"] == "1"
+    assert msg.metadata_json["MediaUrl0"] == "https://api.twilio.com/media/image.png"
+
+
 @pytest.mark.parametrize("keyword", ["STOP", "UNSUBSCRIBE", "CANCEL", "END", "QUIT"])
 def test_parse_webhook_opt_out(adapter: SMSAdapter, keyword: str) -> None:
     """Test opt-out keyword detection."""
@@ -230,10 +267,6 @@ def test_parse_webhook_no_opt_action(adapter: SMSAdapter) -> None:
 
 def test_verify_webhook(adapter: SMSAdapter) -> None:
     """Test verify Twilio webhook signature."""
-    import base64
-    import hashlib
-    import hmac
-
     secret = "my-secret"
     url = "https://example.com/webhook"
 
@@ -243,16 +276,8 @@ def test_verify_webhook(adapter: SMSAdapter) -> None:
     }
     payload_str = urlencode(payload_dict)
 
-    # Calculate valid signature
-    data = url
-    for key in sorted(payload_dict.keys()):
-        data += f"{key}{payload_dict[key]}"
-
-    mac = hmac.new(secret.encode("utf-8"), data.encode("utf-8"), hashlib.sha1)
-    computed = base64.b64encode(mac.digest()).decode("utf-8")
-
     headers = {
-        "x-twilio-signature": computed,
+        "x-twilio-signature": twilio_signature(url, payload_dict, secret),
         "x-original-url": url,
     }
 
@@ -263,12 +288,26 @@ def test_verify_webhook(adapter: SMSAdapter) -> None:
     assert adapter.verify_webhook(payload_str.encode("utf-8"), headers, secret) is False
 
 
+def test_verify_webhook_keeps_blank_params(adapter: SMSAdapter) -> None:
+    """Blank form values are part of Twilio's signature input."""
+    secret = "my-secret"
+    url = "https://example.com/webhook"
+    payload_dict = {
+        "From": "+0987654321",
+        "Body": "",
+        "NumMedia": "0",
+    }
+    payload_str = urlencode(payload_dict)
+    headers = {
+        "x-twilio-signature": twilio_signature(url, payload_dict, secret),
+        "x-original-url": url,
+    }
+
+    assert adapter.verify_webhook(payload_str.encode("utf-8"), headers, secret) is True
+
+
 def test_verify_webhook_uses_config_url(adapter: SMSAdapter) -> None:
     """verify_webhook uses config webhook_url as primary source."""
-    import base64
-    import hashlib
-    import hmac
-
     secret = "my-secret"
     config_url = "https://my-gobby.example.com/api/comms/webhooks/sms"
     adapter._webhook_url = config_url
@@ -276,16 +315,8 @@ def test_verify_webhook_uses_config_url(adapter: SMSAdapter) -> None:
     payload_dict = {"From": "+1234", "Body": "Hi"}
     payload_str = urlencode(payload_dict)
 
-    # Calculate signature using config URL
-    data = config_url
-    for key in sorted(payload_dict.keys()):
-        data += f"{key}{payload_dict[key]}"
-
-    mac = hmac.new(secret.encode("utf-8"), data.encode("utf-8"), hashlib.sha1)
-    computed = base64.b64encode(mac.digest()).decode("utf-8")
-
     # No URL headers — config URL should be used
-    headers = {"x-twilio-signature": computed}
+    headers = {"x-twilio-signature": twilio_signature(config_url, payload_dict, secret)}
 
     assert adapter.verify_webhook(payload_str.encode("utf-8"), headers, secret) is True
 

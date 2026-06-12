@@ -181,16 +181,20 @@ class SMSAdapter(BaseChannelAdapter):
         if isinstance(payload, bytes):
             # Twilio sends application/x-www-form-urlencoded
             payload_str = payload.decode("utf-8")
-            params = dict(parse_qsl(payload_str))
+            params = dict(parse_qsl(payload_str, keep_blank_values=True))
         else:
             params = payload
 
         # For SMS, From is the sender number, To is our number, Body is the text
         from_number = params.get("From")
-        body = params.get("Body")
+        body = str(params.get("Body") or "")
         message_sid = params.get("MessageSid")
+        try:
+            num_media = int(str(params.get("NumMedia", "0") or "0"))
+        except ValueError:
+            num_media = 0
 
-        if not from_number or not body:
+        if not from_number or (not body and num_media <= 0):
             return []
 
         # Detect opt-out/opt-in keywords
@@ -248,7 +252,7 @@ class SMSAdapter(BaseChannelAdapter):
 
         # Parse the payload to sort the params
         payload_str = payload.decode("utf-8")
-        params = dict(parse_qsl(payload_str))
+        params = dict(parse_qsl(payload_str, keep_blank_values=True))
 
         # Sort params and append to URL per Twilio's signature spec
         data = url
