@@ -11,6 +11,8 @@ Commands for managing merge operations:
 
 import asyncio
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +44,16 @@ def get_worktree_manager() -> Any:
     return LocalWorktreeManager(db)
 
 
+@contextmanager
+def worktree_manager_context() -> Iterator[Any]:
+    """Yield a short-lived worktree manager and close its owned database."""
+    manager = get_worktree_manager()
+    try:
+        yield manager
+    finally:
+        manager.db.close()
+
+
 def get_git_manager(worktree_path: str) -> Any:
     """Get git manager rooted at the worktree path being merged."""
     from gobby.worktrees.git import WorktreeGitManager
@@ -57,7 +69,8 @@ def _get_resolution_worktree_path(
     if not resolution:
         raise RuntimeError(f"Resolution '{resolution_id}' not found")
 
-    worktree = get_worktree_manager().get(resolution.worktree_id)
+    with worktree_manager_context() as worktree_manager:
+        worktree = worktree_manager.get(resolution.worktree_id)
     if not worktree or not worktree.worktree_path:
         raise RuntimeError(f"Worktree '{resolution.worktree_id}' not found or has no path")
     return str(worktree.worktree_path)
@@ -118,13 +131,14 @@ async def _apply_active_resolution(
 
     from gobby.mcp_proxy.tools.merge import create_merge_registry
 
-    registry = create_merge_registry(
-        merge_storage=manager,
-        merge_resolver=get_merge_resolver(),
-        git_manager=get_git_manager(worktree_path),
-        worktree_manager=get_worktree_manager(),
-    )
-    result = await registry.call("merge_apply", {"resolution_id": resolution_id})
+    with worktree_manager_context() as worktree_manager:
+        registry = create_merge_registry(
+            merge_storage=manager,
+            merge_resolver=get_merge_resolver(),
+            git_manager=get_git_manager(worktree_path),
+            worktree_manager=worktree_manager,
+        )
+        result = await registry.call("merge_apply", {"resolution_id": resolution_id})
     return result if isinstance(result, dict) else {"success": False, "error": str(result)}
 
 

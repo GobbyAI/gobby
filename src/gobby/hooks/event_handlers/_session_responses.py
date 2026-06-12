@@ -7,7 +7,7 @@ They accept the handler instance as the first ``handler`` parameter.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.hooks.events import HookResponse
 from gobby.tasks.state_semantics import (
@@ -24,8 +24,12 @@ if TYPE_CHECKING:
 _logger = logging.getLogger(__name__)
 
 
+class _SessionVariableWriter(Protocol):
+    def set_variable(self, session_id: str, name: str, value: Any) -> None: ...
+
+
 def _set_claimed_task_reconciliation(
-    sv_mgr: Any,
+    sv_mgr: _SessionVariableWriter,
     session_id: str,
     *,
     task_claimed: bool,

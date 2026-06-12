@@ -9,6 +9,7 @@ from __future__ import annotations
 import asyncio
 import importlib.util
 import logging
+import sys
 import tempfile
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol
@@ -223,4 +224,7 @@ class WhisperSTT:
     @property
     def is_available(self) -> bool:
         """Check if faster-whisper is installed."""
-        return importlib.util.find_spec("faster_whisper") is not None
+        try:
+            return importlib.util.find_spec("faster_whisper") is not None
+        except ValueError:
+            return "faster_whisper" in sys.modules

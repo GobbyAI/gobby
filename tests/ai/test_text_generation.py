@@ -884,6 +884,7 @@ async def test_text_generation_service_candidate_list_is_exhaustive_for_unavaila
     assert codex.requests == []
 
 
+@pytest.mark.asyncio
 async def test_text_generation_service_aggregates_all_unavailable_candidates() -> None:
     registry = AICapabilityRegistry(
         [
@@ -923,6 +924,7 @@ async def test_text_generation_service_aggregates_all_unavailable_candidates() -
     assert "provider=codex" in error.reason
 
 
+@pytest.mark.asyncio
 async def test_text_generation_service_aggregates_all_unavailable_json_candidates() -> None:
     registry = AICapabilityRegistry(
         [

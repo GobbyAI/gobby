@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import click
 
@@ -25,7 +26,9 @@ def _build_expansion_service() -> ExpansionService:
     return ExpansionService(task_manager=task_manager, llm_service=llm_service, config=config)
 
 
-def _fail_run_and_raise(run_manager: LocalExpansionRunManager, run_id: str, exc: Exception) -> None:
+def _fail_run_and_raise(
+    run_manager: LocalExpansionRunManager, run_id: str, exc: Exception
+) -> NoReturn:
     run_manager.fail(run_id, str(exc))
     raise click.ClickException(str(exc)) from exc
 

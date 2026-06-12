@@ -417,6 +417,7 @@ def create_readiness_registry(
     # Create session variable manager for session_task scoping
     session_var_manager = SessionVariableManager(task_manager.db)
     session_manager = SessionManager(task_manager.db)
+    selection_stuck_detector = stuck_detector or StuckDetector(task_manager.db)
 
     # --- list_ready_tasks ---
 
@@ -659,9 +660,8 @@ def create_readiness_registry(
         # --- Single mode (count == 1): detailed suggestion ---
         best_task, best_score, is_leaf, best_proximity = scored[0]
         if session_id:
-            detector = stuck_detector or StuckDetector(task_manager.db)
             try:
-                detector.record_task_selection(
+                selection_stuck_detector.record_task_selection(
                     session_id=session_id,
                     task_id=best_task.id,
                     context={

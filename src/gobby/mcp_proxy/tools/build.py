@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Coroutine
 from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
@@ -47,14 +46,6 @@ def _resolve_coordinator_session_ref(coordinator: str | None) -> str | None:
     if not session_id:
         raise ValueError("coordinator=current requires an MCP session context")
     return session_id
-
-
-def _run_coroutine(coro: Coroutine[Any, Any, Any]) -> Any:
-    return asyncio.run(coro)
-
-
-async def _run_blocking_build_call(coro: Coroutine[Any, Any, Any]) -> Any:
-    return await asyncio.to_thread(_run_coroutine, coro)
 
 
 def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
@@ -132,14 +123,12 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             coordinator_session_ref=_resolve_coordinator_session_ref(coordinator),
             project_explicit=project_id is not None,
         )
-        result = await _run_blocking_build_call(
-            build(
-                input_ref,
-                opts,
-                db=ctx.task_manager.db,
-                project_id=resolved_project_id,
-                services=get_app_context(),
-            )
+        result = await build(
+            input_ref,
+            opts,
+            db=ctx.task_manager.db,
+            project_id=resolved_project_id,
+            services=get_app_context(),
         )
         payload = asdict(result)
         if not payload.get("warnings"):
@@ -171,7 +160,11 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     services=get_app_context(),
                 )
             )
-        return asdict(build_stop(db=ctx.task_manager.db, project_id=resolved_project_id))
+        return asdict(
+            await asyncio.to_thread(
+                build_stop, db=ctx.task_manager.db, project_id=resolved_project_id
+            )
+        )
 
     async def build_resume_tool(
         input_ref: str | None = None,
@@ -191,7 +184,11 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     services=get_app_context(),
                 )
             )
-        return asdict(build_resume(db=ctx.task_manager.db, project_id=resolved_project_id))
+        return asdict(
+            await asyncio.to_thread(
+                build_resume, db=ctx.task_manager.db, project_id=resolved_project_id
+            )
+        )
 
     async def build_clean_tool(
         input_ref: str,
@@ -206,17 +203,15 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_clean")
-        result = await _run_blocking_build_call(
-            build_clean_target(
-                input_ref,
-                db=ctx.task_manager.db,
-                project_id=resolved_project_id,
-                dry_run=dry_run,
-                force=force,
-                delete_dirty_worktrees=delete_dirty_worktrees,
-                yes=yes,
-                services=get_app_context(),
-            )
+        result = await build_clean_target(
+            input_ref,
+            db=ctx.task_manager.db,
+            project_id=resolved_project_id,
+            dry_run=dry_run,
+            force=force,
+            delete_dirty_worktrees=delete_dirty_worktrees,
+            yes=yes,
+            services=get_app_context(),
         )
         return asdict(result)
 
@@ -233,17 +228,15 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         resolved_project_id = project_id or ctx.get_current_project_id()
         if resolved_project_id is None:
             raise ValueError("Could not determine project_id for build_restart")
-        result = await _run_blocking_build_call(
-            build_restart_target(
-                input_ref,
-                db=ctx.task_manager.db,
-                project_id=resolved_project_id,
-                dry_run=dry_run,
-                force=force,
-                yes=yes,
-                no_resume=no_resume,
-                services=get_app_context(),
-            )
+        result = await build_restart_target(
+            input_ref,
+            db=ctx.task_manager.db,
+            project_id=resolved_project_id,
+            dry_run=dry_run,
+            force=force,
+            yes=yes,
+            no_resume=no_resume,
+            services=get_app_context(),
         )
         return asdict(result)
 

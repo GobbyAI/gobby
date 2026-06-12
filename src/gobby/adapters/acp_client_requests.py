@@ -133,7 +133,15 @@ async def _apply_pre_tool_decision(
 ) -> dict[str, Any] | None:
     if pre_tool_callback is None:
         return None
-    return await pre_tool_callback({"tool_name": tool_name, "tool_input": tool_input})
+    try:
+        return await pre_tool_callback({"tool_name": tool_name, "tool_input": tool_input})
+    except Exception:
+        logger.exception(
+            "ACP pre-tool callback failed for %s with input keys %s",
+            tool_name,
+            sorted(str(key) for key in tool_input),
+        )
+        return {"decision": "deny", "reason": "Gobby pre-tool callback failed"}
 
 
 def _permission_tool_details(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
@@ -149,7 +157,11 @@ def _permission_tool_details(params: dict[str, Any]) -> tuple[str, dict[str, Any
     else:
         tool_name = "acp_tool"
 
-    raw_input = tool_call.get("rawInput") or tool_call.get("input") or tool_call.get("arguments")
+    raw_input = dict(tool_call)
+    for input_key in ("rawInput", "input", "arguments"):
+        if input_key in tool_call:
+            raw_input = tool_call[input_key]
+            break
     tool_input = raw_input if isinstance(raw_input, dict) else dict(tool_call)
     return tool_name, tool_input
 

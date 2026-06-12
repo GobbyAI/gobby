@@ -3,6 +3,7 @@
 TDD tests for the pipelines CLI group.
 """
 
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import ANY, AsyncMock, MagicMock, patch
 
@@ -251,7 +252,7 @@ class TestPipelinesRun:
     """Tests for gobby pipelines run command."""
 
     @pytest.fixture(autouse=True)
-    def _daemon_run_unavailable(self):
+    def _daemon_run_unavailable(self) -> Iterator[None]:
         with patch("gobby.cli.pipelines._try_daemon_run", return_value=None):
             yield
 
@@ -649,7 +650,7 @@ class TestPipelinesApprove:
     """Tests for gobby pipelines approve command."""
 
     @pytest.fixture(autouse=True)
-    def _daemon_unavailable(self):
+    def _daemon_unavailable(self) -> Iterator[None]:
         with patch("gobby.cli.pipelines._try_daemon_approval", return_value=None):
             yield
 
@@ -753,7 +754,7 @@ class TestPipelinesReject:
     """Tests for gobby pipelines reject command."""
 
     @pytest.fixture(autouse=True)
-    def _daemon_unavailable(self):
+    def _daemon_unavailable(self) -> Iterator[None]:
         with patch("gobby.cli.pipelines._try_daemon_approval", return_value=None):
             yield
 

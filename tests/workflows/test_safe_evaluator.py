@@ -133,20 +133,23 @@ class TestTaskTypeIn:
 
 
 class TestHasStopSignal:
-    def test_returns_true_when_signal_acknowledged(self, mock_stop_registry: MagicMock) -> None:
-        mock_stop_registry.acknowledge.return_value = True
+    def test_returns_true_when_signal_pending(self, mock_stop_registry: MagicMock) -> None:
+        mock_stop_registry.has_pending_signal.return_value = True
 
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx, stop_registry=mock_stop_registry)
         assert ev.evaluate("has_stop_signal('session-abc')") is True
-        mock_stop_registry.acknowledge.assert_called_once_with("session-abc")
+        mock_stop_registry.has_pending_signal.assert_called_once_with("session-abc")
+        mock_stop_registry.acknowledge.assert_not_called()
 
     def test_returns_false_when_no_signal(self, mock_stop_registry: MagicMock) -> None:
-        mock_stop_registry.acknowledge.return_value = False
+        mock_stop_registry.has_pending_signal.return_value = False
 
         ctx: dict[str, Any] = {"variables": {}}
         ev = _build_evaluator(ctx, stop_registry=mock_stop_registry)
         assert ev.evaluate("has_stop_signal('session-abc')") is False
+        mock_stop_registry.has_pending_signal.assert_called_once_with("session-abc")
+        mock_stop_registry.acknowledge.assert_not_called()
 
     def test_no_stop_registry_returns_false(self) -> None:
         ctx: dict[str, Any] = {"variables": {}}

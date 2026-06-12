@@ -137,12 +137,6 @@ def create_worktree(
             e.show()
             return
         raise
-    except httpx.ConnectError as e:
-        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
-    except httpx.HTTPStatusError as e:
-        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
-    except Exception as e:
-        raise click.ClickException(str(e)) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -154,6 +148,7 @@ def create_worktree(
         click.echo(f"  Branch: {result.get('branch_name', 'unknown')}")
     else:
         click.echo(f"Failed to create worktree: {result.get('error')}", err=True)
+        raise SystemExit(1)
 
 
 @worktrees.command("list")
@@ -251,17 +246,12 @@ def delete_worktree(worktree_ref: str, force: bool, yes: bool) -> None:
     except click.ClickException as e:
         e.show()
         return
-    except httpx.ConnectError as e:
-        raise click.ClickException("Cannot connect to Gobby daemon. Is it running?") from e
-    except httpx.HTTPStatusError as e:
-        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
-    except Exception as e:
-        raise click.ClickException(str(e)) from e
 
     if _delete_tool_succeeded(result):
         click.echo(f"Deleted worktree: {worktree_id}")
     else:
         click.echo(f"Failed to delete worktree: {result.get('error')}", err=True)
+        raise SystemExit(1)
 
 
 # ... spawn command is unchanged ...

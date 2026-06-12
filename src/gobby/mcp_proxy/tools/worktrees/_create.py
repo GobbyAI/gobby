@@ -174,15 +174,25 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except Exception as post_err:
             logger.warning(f"Post-creation setup failed for worktree {worktree.id}: {post_err}")
 
-        event = emit_worktree_event(
-            "worktree_created",
-            worktree_id=worktree.id,
-            project_id=worktree.project_id,
-            branch_name=worktree.branch_name,
-            worktree_path=worktree.worktree_path,
-            base_branch=worktree.base_branch,
-            task_id=worktree.task_id,
-        )
+        event = None
+        try:
+            event = emit_worktree_event(
+                "worktree_created",
+                worktree_id=worktree.id,
+                project_id=worktree.project_id,
+                branch_name=worktree.branch_name,
+                worktree_path=worktree.worktree_path,
+                base_branch=worktree.base_branch,
+                task_id=worktree.task_id,
+            )
+        except Exception as event_err:
+            logger.warning(
+                "Failed to emit worktree_created event for %s at %s: %s",
+                worktree.id,
+                worktree.worktree_path,
+                event_err,
+                exc_info=True,
+            )
 
         return {
             "success": True,

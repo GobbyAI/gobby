@@ -87,8 +87,8 @@ def delete(ctx: click.Context, memory_ref: str, project_ref: str | None = None) 
     manager = memory_module.get_memory_manager(ctx)
     try:
         memory_id = memory_module.resolve_memory_id(manager, memory_ref, project_id=project_id)
-    except click.ClickException as e:
-        raise click.ClickException(e.message) from e
+    except click.ClickException:
+        raise
     success = asyncio.run(manager.delete_memory(memory_id))
     if success:
         click.echo(f"Deleted memory: {memory_id}")
@@ -146,8 +146,8 @@ def show_memory(ctx: click.Context, memory_ref: str, project_ref: str | None = N
     manager = memory_module.get_memory_manager(ctx)
     try:
         memory_id = memory_module.resolve_memory_id(manager, memory_ref, project_id=project_id)
-    except click.ClickException as e:
-        raise click.ClickException(e.message) from e
+    except click.ClickException:
+        raise
     memory = manager.get_memory(memory_id, project_id=project_id)
     if not memory:
         raise click.ClickException(f"Memory not found: {memory_id}")
@@ -182,8 +182,8 @@ def update_memory(
     manager = memory_module.get_memory_manager(ctx)
     try:
         memory_id = memory_module.resolve_memory_id(manager, memory_ref, project_id=project_id)
-    except click.ClickException as e:
-        raise click.ClickException(e.message) from e
+    except click.ClickException:
+        raise
     tag_list = parse_tags(tags, empty_as_none=True)
 
     try:

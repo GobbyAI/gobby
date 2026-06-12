@@ -112,7 +112,9 @@ class ClaudeCodeAdapter(BaseAdapter):
     - Legacy execute() path available via set_legacy_mode(True) for rollback
     """
 
-    source = SessionSource.CLAUDE
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.CLAUDE
 
     # Event type mapping: Claude hook names -> unified HookEventType.
     EVENT_MAP: dict[str, HookEventType] = dict(CLAUDE_EVENT_MAP)

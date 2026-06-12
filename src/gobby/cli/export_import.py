@@ -129,32 +129,6 @@ def _validate_prompt_import(source: Path) -> None:
     except UnicodeDecodeError as exc:
         raise click.ClickException(f"Invalid UTF-8 in {source}: {exc}") from exc
 
-    if content.startswith("---"):
-        first_newline = content.find("\n")
-        if first_newline != -1 and content[:first_newline].strip() == "---":
-            search_from = first_newline + 1
-            while search_from < len(content):
-                line_end = content.find("\n", search_from)
-                if line_end == -1:
-                    line_end = len(content)
-                if content[search_from:line_end].strip() == "---":
-                    try:
-                        frontmatter = yaml.safe_load(content[first_newline + 1 : search_from]) or {}
-                    except YAMLError as exc:
-                        raise click.ClickException(
-                            f"Invalid prompt frontmatter in {source}: {exc}"
-                        ) from exc
-                    if not isinstance(frontmatter, dict):
-                        raise click.ClickException(
-                            f"Invalid prompt frontmatter in {source}: expected a mapping."
-                        )
-                    break
-                search_from = line_end + 1
-            else:
-                raise click.ClickException(
-                    f"Invalid prompt frontmatter in {source}: missing closing delimiter."
-                )
-
     parse_frontmatter(content)
 
 

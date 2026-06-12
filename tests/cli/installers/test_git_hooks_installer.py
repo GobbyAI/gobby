@@ -206,10 +206,6 @@ echo "after"
         assert "\n\n\n" not in result
 
 
-class TestRemoveLegacyImportSection:
-    """Tests for legacy JSONL import hook cleanup."""
-
-
 class TestBackupHook:
     """Tests for _backup_hook function."""
 

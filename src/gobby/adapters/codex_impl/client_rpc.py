@@ -225,16 +225,15 @@ async def read_loop(client: CodexAppServerClient) -> None:
             if not line:
                 return_code = proc.poll()
                 if return_code is not None:
-                    logger.warning("Codex app-server process terminated")
+                    logger.warning("Codex app-server process terminated with code %s", return_code)
                     client._state = CodexConnectionState.ERROR
-                    if return_code:
-                        with client._pending_requests_lock:
-                            for pending_future in client._pending_requests.values():
-                                if not pending_future.done():
-                                    pending_future.set_exception(
-                                        ConnectionError("Codex app-server process terminated")
-                                    )
-                            client._pending_requests.clear()
+                    with client._pending_requests_lock:
+                        for pending_future in client._pending_requests.values():
+                            if not pending_future.done():
+                                pending_future.set_exception(
+                                    ConnectionError("Codex app-server process terminated")
+                                )
+                        client._pending_requests.clear()
                     break
                 continue
 

@@ -10,7 +10,10 @@ from gobby.hooks.events import HookEventType, SessionSource
 class GrokAdapter(ACPHookAdapter):
     """Adapter for Grok CLI hook translation."""
 
-    source = SessionSource.GROK
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.GROK
+
     EVENT_MAP: dict[str, HookEventType] = dict(GROK_EVENT_MAP)
     HOOK_EVENT_NAME_MAP: dict[str, str] = dict(GROK_HOOK_ALIASES)
     TOOL_MAP: dict[str, str] = {

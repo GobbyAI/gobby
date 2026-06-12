@@ -484,6 +484,11 @@ def create_build_router(server: HTTPServer) -> APIRouter:
                 )
             )
             return _success_envelope(result.to_dict())
+        except BuildProfileError as e:
+            return JSONResponse(
+                status_code=400,
+                content=_error_envelope(str(e), "BUILD_RESTART_ERROR"),
+            )
         except ValueError as e:
             return JSONResponse(
                 status_code=400,

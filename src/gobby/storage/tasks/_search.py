@@ -134,14 +134,18 @@ class TaskSearchBackend:
             parent_task_id=parent_task_id,
             category=category,
         )
-        if filters.current_stage_state:
-            hits = self._search_with_stage_state(
-                query=query,
-                limit=fetch_limit,
-                filters=filters,
-            )
-        else:
-            hits = self._backend.search(query, fetch_limit, filters=filters.keyword_filters())
+        try:
+            if filters.current_stage_state:
+                hits = self._search_with_stage_state(
+                    query=query,
+                    limit=fetch_limit,
+                    filters=filters,
+                )
+            else:
+                hits = self._backend.search(query, fetch_limit, filters=filters.keyword_filters())
+        except Exception as e:
+            logger.warning(f"pg_search task search failed: {e}")
+            return []
 
         results: list[tuple[str, float]] = []
         for hit in hits:

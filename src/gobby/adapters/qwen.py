@@ -11,4 +11,6 @@ from gobby.hooks.events import SessionSource
 class QwenAdapter(ACPHookAdapter):
     """Adapter for Qwen CLI hook translation."""
 
-    source = SessionSource.QWEN
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.QWEN

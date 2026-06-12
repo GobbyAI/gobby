@@ -193,8 +193,15 @@ class ACPWebChatBackend:
         async def _apply_pre_tool(data: dict[str, Any]) -> dict[str, Any] | None:
             tool_name = data.get("tool_name")
             tool_input = data.get("tool_input")
+            if not isinstance(tool_name, str):
+                logger.warning(
+                    "%s emitted non-string tool_name %r; using safe empty name",
+                    self.display_name,
+                    tool_name,
+                )
+                tool_name = ""
             return await session._apply_pre_tool_lifecycle(
-                str(tool_name or ""),
+                tool_name,
                 tool_input if isinstance(tool_input, dict) else {},
             )
 

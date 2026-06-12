@@ -113,9 +113,12 @@ def _truncate_contributors(text: str, contributor_sizes: Mapping[str, int]) -> s
     if content_budget < 0:
         return None
     allocations = [len(part) for part in parts]
-    while sum(allocations) > content_budget:
+    allocated = sum(allocations)
+    while allocated > content_budget:
         index = max(range(len(allocations)), key=allocations.__getitem__)
-        allocations[index] -= min(allocations[index], sum(allocations) - content_budget)
+        reduction = min(allocations[index], allocated - content_budget)
+        allocations[index] -= reduction
+        allocated -= reduction
     return (
         "\n\n".join(part[:budget] for part, budget in zip(parts, allocations, strict=True)) + marker
     )

@@ -313,6 +313,8 @@ class MemoryBackupManager:
                 f"Importing memories from {memories_file}: file has {file_count}, DB has {db_count}"
             )
             return self._import_memories_from_lines(lines)
+        except MemoryImportError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to import memories: {e}")
             raise MemoryImportError(f"Failed to import memories: {e}") from e

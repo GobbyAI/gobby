@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -25,6 +25,7 @@ class NullProjectMemoryRepairResult:
     fixable: int
     fixed: int
     repairs: list[NullProjectMemoryRepair]
+    failed_secondary_updates: list[dict[str, str]] = field(default_factory=list)
 
 
 def find_null_project_repairs(db: HubDatabase) -> list[NullProjectMemoryRepair]:

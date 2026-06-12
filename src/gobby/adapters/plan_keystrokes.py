@@ -182,6 +182,8 @@ def resolve_action_option_id(
     if decision == "approve":
         if option_id:
             return option_id if get_plan_accept_option(source or "", option_id) else None
+        # Without an explicit accept id, intentionally use the first normal
+        # post-plan accept option as the generic approve fallback.
         for option in get_plan_accept_options(source or ""):
             if option.post_plan_chat_mode == "normal":
                 return option.id

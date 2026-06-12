@@ -27,6 +27,7 @@ class CloneStatus(str, Enum):
     STALE = "stale"
     MERGED = "merged"
     CLEANUP = "cleanup"
+    DELETING = "deleting"
 
 
 @dataclass

@@ -506,6 +506,30 @@ def test_daemon_registry_marks_missing_provider_binaries_unavailable() -> None:
     assert codex.reason == "Codex CLI is not installed."
 
 
+def test_capability_binding_probe_exception_caches_unavailable() -> None:
+    calls = 0
+
+    def unavailable_probe() -> bool:
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("probe transport failed")
+
+    binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider="codex",
+        adapter_style=AIAdapterStyle.DAEMON,
+        available=True,
+        availability_probe=unavailable_probe,
+        availability_probe_ttl_seconds=60.0,
+    )
+
+    assert binding.available is False
+    assert binding._availability_probe_result is False
+    assert binding._availability_checked_at is not None
+    assert binding.available is False
+    assert calls == 1
+
+
 def test_daemon_registry_reprobes_provider_installation_after_startup(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

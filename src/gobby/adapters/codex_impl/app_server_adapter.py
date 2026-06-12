@@ -98,7 +98,9 @@ class CodexAdapter(BaseAdapter):
     - detach_from_client() removes handlers
     """
 
-    source = SessionSource.CODEX
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.CODEX
 
     # Event type mapping: Codex app-server methods -> unified HookEventType
     EVENT_MAP: dict[str, HookEventType] = {

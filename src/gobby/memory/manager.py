@@ -236,8 +236,12 @@ class MemoryManager:
         """Run dialect-aware keyword search and return ranked memory IDs."""
         from gobby.search.keyword import pick_search_backend
 
-        backend = pick_search_backend(self.db, "memories")
-        hits = backend.search(query, limit, filters={"project_id": project_id})
+        try:
+            backend = pick_search_backend(self.db, "memories")
+            hits = backend.search(query, limit, filters={"project_id": project_id})
+        except Exception as exc:
+            logger.warning("Memory keyword search failed: %s", exc)
+            return []
         return [(hit.id, hit.score) for hit in hits]
 
     @staticmethod
@@ -661,6 +665,7 @@ class MemoryManager:
         fixable_repairs = [repair for repair in repairs if repair.project_id is not None]
 
         fixed = 0
+        failed_secondary_updates: list[dict[str, str]] = []
         if not dry_run:
             for repair in fixable_repairs:
                 project_id = cast(str, repair.project_id)
@@ -669,19 +674,48 @@ class MemoryManager:
                     repair.memory_id,
                     project_id,
                 )
-                await self._embed_and_upsert(
-                    repair.memory_id,
-                    updated.content,
-                    payload={"project_id": project_id},
-                )
-                self._enqueue_for_graph(repair.memory_id, project_id=project_id)
                 fixed += 1
+                try:
+                    await self._embed_and_upsert(
+                        repair.memory_id,
+                        updated.content,
+                        payload={"project_id": project_id},
+                    )
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to update embedding for repaired memory %s: %s",
+                        repair.memory_id,
+                        exc,
+                    )
+                    failed_secondary_updates.append(
+                        {
+                            "memory_id": repair.memory_id,
+                            "index": "embedding",
+                            "error": str(exc),
+                        }
+                    )
+                try:
+                    self.storage.mark_pending_graph(repair.memory_id)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to queue repaired memory %s for graph indexing: %s",
+                        repair.memory_id,
+                        exc,
+                    )
+                    failed_secondary_updates.append(
+                        {
+                            "memory_id": repair.memory_id,
+                            "index": "knowledge_graph",
+                            "error": str(exc),
+                        }
+                    )
 
         return NullProjectMemoryRepairResult(
             total=len(repairs),
             fixable=len(fixable_repairs),
             fixed=fixed,
             repairs=repairs,
+            failed_secondary_updates=failed_secondary_updates,
         )
 
     async def aupdate_memory(

@@ -12,6 +12,12 @@ if TYPE_CHECKING:
 pytestmark = pytest.mark.unit
 
 
+@pytest.fixture(autouse=True)
+def _managed_clones_root(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Let creation-path safety checks accept temp clone paths in unit tests."""
+    monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", tmp_path)
+
+
 class TestCloneGitManagerFullClone:
     """Tests for CloneGitManager.full_clone method."""
 

@@ -172,6 +172,15 @@ class CloneGitManager:
             return None
         return resolved_path
 
+    def _resolve_creatable_clone_path(self, clone_path: str | Path) -> Path | None:
+        """Resolve a new clone path and ensure it stays under the managed clones root."""
+        resolved_path = Path(clone_path).expanduser().resolve()
+        clones_root = CLONES_ROOT.expanduser().resolve()
+
+        if resolved_path == clones_root or not resolved_path.is_relative_to(clones_root):
+            return None
+        return resolved_path
+
     def get_remote_url(self, remote: str = "origin") -> str | None:
         """
         Get the remote URL for the repository.
@@ -213,7 +222,14 @@ class CloneGitManager:
         Returns:
             GitOperationResult with success status and message
         """
-        clone_path = Path(clone_path).expanduser()
+        resolved_clone_path = self._resolve_creatable_clone_path(clone_path)
+        if resolved_clone_path is None:
+            return GitOperationResult(
+                success=False,
+                message=f"Clone path must be under {CLONES_ROOT.expanduser()}",
+                error="clone_path_outside_root",
+            )
+        clone_path = resolved_clone_path
 
         # Check if path already exists
         if clone_path.exists():
@@ -303,7 +319,14 @@ class CloneGitManager:
         Returns:
             GitOperationResult with success status and message
         """
-        clone_path = Path(clone_path).expanduser()
+        resolved_clone_path = self._resolve_creatable_clone_path(clone_path)
+        if resolved_clone_path is None:
+            return GitOperationResult(
+                success=False,
+                message=f"Clone path must be under {CLONES_ROOT.expanduser()}",
+                error="clone_path_outside_root",
+            )
+        clone_path = resolved_clone_path
 
         # Check if path already exists
         if clone_path.exists():

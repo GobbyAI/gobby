@@ -9,7 +9,9 @@ from gobby.hooks.events import SessionSource
 class GeminiAdapter(ACPHookAdapter):
     """Adapter for Gemini CLI hook translation."""
 
-    source = SessionSource.GEMINI
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.GEMINI
 
 
 __all__ = ["GeminiAdapter"]

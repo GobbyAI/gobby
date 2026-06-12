@@ -3481,7 +3481,9 @@ class TestCodexClientApprovalResponseRouting:
         await asyncio.wait_for(reader_task, timeout=2.0)
 
         assert handler_called
-        assert not pending_future.done()
+        assert pending_future.done()
+        with pytest.raises(ConnectionError, match="Codex app-server process terminated"):
+            pending_future.result()
         response = json.loads(written_lines[0].strip())
         assert response["id"] == 7
         assert response["result"]["decision"] == "accept"
@@ -4293,7 +4295,7 @@ class TestCodexApprovalDeclineFormat:
                 "item/mcpToolCall/requestApproval",
                 {
                     "threadId": "thr-blocked",
-                    "toolName": "gobby-tasks:claim_task",
+                    "name": "gobby-tasks:claim_task",
                     "arguments": {"task_id": "#1"},
                 },
             ),

@@ -738,18 +738,22 @@ class CodeIndexStorage:
             )
             return cursor.rowcount > 0
 
-    def mark_symbol_summaries_attempted(self, symbol_ids: list[str]) -> int:
+    def mark_symbol_summaries_attempted(self, symbols: list[tuple[str, str]]) -> int:
         """Mark summary generation attempts for symbols that failed to produce summaries."""
-        if not symbol_ids:
+        if not symbols:
             return 0
         now = datetime.now(UTC).isoformat()
-        placeholders = ",".join("%s" for _ in symbol_ids)
+        placeholders = ",".join("(%s, %s)" for _ in symbols)
+        params = [value for symbol in symbols for value in symbol]
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                f"""UPDATE code_symbols
+                f"""UPDATE code_symbols AS s
                     SET summary_attempted_at = %s
-                    WHERE id IN ({placeholders}) AND summary IS NULL""",
-                (now, *symbol_ids),
+                    FROM (VALUES {placeholders}) AS v(id, content_hash)
+                    WHERE s.id = v.id
+                      AND s.content_hash = v.content_hash
+                      AND s.summary IS NULL""",
+                (now, *params),
             )
             return cursor.rowcount
 
@@ -929,11 +933,15 @@ class CodeIndexStorage:
         if not query.strip():
             return []
 
-        hits = pick_search_backend(self.db, "code_content").search(
-            query,
-            limit,
-            filters={"project_id": project_id, "file_path": file_path},
-        )
+        try:
+            hits = pick_search_backend(self.db, "code_content").search(
+                query,
+                limit,
+                filters={"project_id": project_id, "file_path": file_path},
+            )
+        except Exception as exc:
+            logger.warning("Code content keyword search failed: %s", exc)
+            return []
 
         rows = self._rows_by_ids("code_content_chunks", [hit.id for hit in hits])
         rows_by_id = {str(row["id"]): row for row in rows}

@@ -706,10 +706,16 @@ def check_agent(
             arguments=arguments,
             timeout=15.0,
         )
-    except Exception as e:
+    except (httpx.ConnectError, httpx.TimeoutException) as e:
         raise click.ClickException(
             f"{e}\nIs the Gobby daemon running? Start with: gobby start"
         ) from e
+    except httpx.HTTPStatusError as e:
+        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
+    except httpx.HTTPError as e:
+        raise click.ClickException(str(e)) from e
+    except Exception as e:
+        raise click.ClickException(str(e)) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))

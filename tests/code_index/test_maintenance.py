@@ -547,16 +547,16 @@ async def test_summarize_unsummarized_marks_failures_and_logs_aggregate(
             content_hash="hash-missing",
         ),
     ]
-    attempts: list[list[str]] = []
+    attempts: list[list[tuple[str, str]]] = []
     updates: dict[str, tuple[str, str]] = {}
 
     class Storage:
         def get_unsummarized_symbols(self, _project_id: str, limit: int) -> list[Any]:
             return symbols[:limit]
 
-        def mark_symbol_summaries_attempted(self, symbol_ids: list[str]) -> int:
-            attempts.append(symbol_ids)
-            return len(symbol_ids)
+        def mark_symbol_summaries_attempted(self, symbols: list[tuple[str, str]]) -> int:
+            attempts.append(symbols)
+            return len(symbols)
 
         def update_symbol_summary(self, symbol_id: str, content_hash: str, summary: str) -> bool:
             updates[symbol_id] = (content_hash, summary)
@@ -593,7 +593,7 @@ async def test_summarize_unsummarized_marks_failures_and_logs_aggregate(
             batch_size=3,
         )
 
-    assert attempts == [["sym-fail"]]
+    assert attempts == [[("sym-fail", "hash-fail")]]
     assert updates == {"sym-ok": ("hash-ok", "Returns one.")}
     assert "Summary generation failed for 1/2 symbol(s) in project proj-1" in caplog.text
 

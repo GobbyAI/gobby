@@ -39,7 +39,9 @@ logger = logging.getLogger(__name__)
 class DroidAdapter(BaseAdapter):
     """Adapter for Factory Droid hook translation."""
 
-    source = SessionSource.DROID
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.DROID
 
     EVENT_MAP: dict[str, HookEventType] = dict(DROID_EVENT_MAP)
     HOOK_EVENT_NAME_MAP: dict[str, str] = dict(DROID_HOOK_EVENT_NAME_MAP)

@@ -634,7 +634,7 @@ def test_search_content_fts_no_match(code_storage: CodeIndexStorage) -> None:
 def test_search_content_fts_surfaces_backend_failure(
     code_storage: CodeIndexStorage, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    """Backend failures propagate instead of becoming empty results."""
+    """Backend failures are treated as unavailable search results."""
     code_storage.upsert_content_chunks(_make_chunks())
 
     def fail_fetch_all(_hub: Any, _sql: str, _params: list[Any]) -> list[Any]:
@@ -642,8 +642,7 @@ def test_search_content_fts_surfaces_backend_failure(
 
     monkeypatch.setattr("gobby.search.keyword.fetch_all", fail_fetch_all)
 
-    with pytest.raises(RuntimeError, match="pg_search unavailable"):
-        code_storage.search_content_fts("greeting", "proj-1")
+    assert code_storage.search_content_fts("greeting", "proj-1") == []
 
 
 # ── Summary freshness ──────────────────────────────────────────────────
@@ -715,7 +714,12 @@ def test_get_unsummarized_symbols_deprioritizes_recent_failures(
     """Recently failed summary attempts are cooled off."""
     code_storage.upsert_symbols(sample_symbols)
 
-    assert code_storage.mark_symbol_summaries_attempted([sample_symbols[0].id]) == 1
+    assert (
+        code_storage.mark_symbol_summaries_attempted(
+            [(sample_symbols[0].id, sample_symbols[0].content_hash)]
+        )
+        == 1
+    )
 
     unsummarized = code_storage.get_unsummarized_symbols("proj-1")
 
@@ -733,7 +737,7 @@ def test_upsert_symbols_resets_summary_attempt_on_content_change(
     """Changed symbol content clears summary and failure bookkeeping."""
     sym = sample_symbols[0]
     code_storage.upsert_symbols([sym])
-    assert code_storage.mark_symbol_summaries_attempted([sym.id]) == 1
+    assert code_storage.mark_symbol_summaries_attempted([(sym.id, sym.content_hash)]) == 1
 
     sym.content_hash = "changed"
     code_storage.upsert_symbols([sym])

@@ -15,7 +15,7 @@ from gobby.code_index.storage import CodeIndexStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.native_bin import resolve_native_bin
 
-pytestmark = pytest.mark.unit
+pytestmark = pytest.mark.integration
 
 FIXTURE_FILE = "pkg/sample.py"
 INITIAL_SOURCE = '''\
@@ -56,7 +56,9 @@ def _write_fixture(root: Path, source: str) -> None:
 
 
 def _project_id(root: Path) -> str:
-    return json.loads((root / ".gobby" / "gcode.json").read_text())["id"]
+    project_id = json.loads((root / ".gobby" / "gcode.json").read_text())["id"]
+    assert isinstance(project_id, str)
+    return project_id
 
 
 def _symbol_row(
@@ -111,7 +113,7 @@ def test_real_gcode_writer_matches_python_model_contract(
     assert run.qualified_name == "Worker.run"
     assert indexed_file.id == IndexedFile.make_id(project_id, FIXTURE_FILE)
 
-    code_storage.update_symbol_summary(greet.id, "Greets a caller.")
+    code_storage.update_symbol_summary(greet.id, greet.content_hash, "Greets a caller.")
     code_db.execute(
         """
         UPDATE code_indexed_files

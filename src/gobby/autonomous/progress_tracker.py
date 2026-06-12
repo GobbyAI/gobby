@@ -185,7 +185,7 @@ class ProgressTracker:
         Args:
             db: Database connection for persistent storage
             stagnation_threshold: Seconds without high-value progress before stagnant
-            max_low_value_events: Max low-value events before stagnant
+            max_low_value_events: Max low-value events since the last high-value event
         """
         self.db = db
         self._lock = threading.Lock()

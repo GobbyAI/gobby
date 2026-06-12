@@ -58,7 +58,9 @@ class ACPHookAdapter(BaseAdapter):
     3. Calls HookManager.handle() with unified HookEvent model
     """
 
-    source = SessionSource.GEMINI
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.GEMINI
 
     # Event type mapping: Gemini CLI hook names -> unified HookEventType
     # Gemini CLI uses PascalCase hook names in the payload's "hook_event_name" field

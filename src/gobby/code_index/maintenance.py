@@ -197,10 +197,11 @@ async def _reconcile_orphan_files(
     root: Path,
 ) -> None:
     indexed_files = await context.run_db(context.storage.list_files, project_id)
+    exists_results = await asyncio.gather(
+        *(asyncio.to_thread((root / file.file_path).exists) for file in indexed_files)
+    )
     current_paths = {
-        file.file_path
-        for file in indexed_files
-        if await asyncio.to_thread((root / file.file_path).exists)
+        file.file_path for file, exists in zip(indexed_files, exists_results, strict=True) if exists
     }
     orphan_paths = await context.run_db(context.storage.get_orphan_files, project_id, current_paths)
     if not orphan_paths:
@@ -372,17 +373,20 @@ async def _summarize_unsummarized(
     attempted_symbol_ids = {
         symbol.id for symbol in symbols if source_by_symbol_id.get(symbol.id) is not None
     }
-    failed_symbol_ids = sorted(attempted_symbol_ids - set(results))
-    if failed_symbol_ids:
-        await context.run_db(context.storage.mark_symbol_summaries_attempted, failed_symbol_ids)
+    content_hash_by_symbol_id = {symbol.id: symbol.content_hash for symbol in symbols}
+    failed_symbols = [
+        (symbol_id, content_hash_by_symbol_id[symbol_id])
+        for symbol_id in sorted(attempted_symbol_ids - set(results))
+    ]
+    if failed_symbols:
+        await context.run_db(context.storage.mark_symbol_summaries_attempted, failed_symbols)
         logger.warning(
             "Summary generation failed for %s/%s symbol(s) in project %s",
-            len(failed_symbol_ids),
+            len(failed_symbols),
             len(attempted_symbol_ids),
             project.id,
         )
 
-    content_hash_by_symbol_id = {symbol.id: symbol.content_hash for symbol in symbols}
     await _update_symbol_summaries(context, results, content_hash_by_symbol_id)
 
     if results:

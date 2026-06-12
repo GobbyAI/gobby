@@ -229,7 +229,16 @@ class CapabilityBinding:
         ):
             return cached
 
-        current = bool(probe())
+        try:
+            current = bool(probe())
+        except Exception as exc:
+            logger.warning(
+                "AI capability availability probe failed for %s/%s: %s",
+                self.provider,
+                self.capability.value,
+                exc,
+            )
+            current = False
         object.__setattr__(self, "_availability_checked_at", now)
         object.__setattr__(self, "_availability_probe_result", current)
         return current

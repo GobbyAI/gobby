@@ -1700,6 +1700,7 @@ class TestAutonomousIntegration:
         history = stuck_detector.get_selection_history(session_id)
         assert len(history) == 0
 
+    @pytest.mark.integration
     def test_live_hook_and_task_selection_traffic_persist_and_detect_stuck(
         self,
         test_db: HubDatabase,
@@ -1751,6 +1752,7 @@ class TestAutonomousIntegration:
             stuck_detector=stuck_detector,
         )
         suggest = registry.get_tool("suggest_next_task")
+        assert suggest is not None
 
         suggestion = suggest(session_id=session_id, project=test_project["id"])
 

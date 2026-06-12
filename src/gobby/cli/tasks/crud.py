@@ -503,7 +503,7 @@ def create_task(
     # Handle depends_on
     dependency_messages: list[str] = []
     if resolved_blockers:
-        from gobby.storage.task_dependencies import DependencyCycleError, TaskDependencyManager
+        from gobby.storage.task_dependencies import TaskDependencyManager
 
         dep_manager = TaskDependencyManager(manager.db)
         for blocker_ref, blocker in resolved_blockers:
@@ -512,7 +512,7 @@ def create_task(
                 dep_manager.add_dependency(task.id, blocker.id, "blocks")
                 blocker_display = f"#{blocker.seq_num}" if blocker.seq_num else blocker.id[:8]
                 dependency_messages.append(f"  → depends on {blocker_display}")
-            except (DependencyCycleError, ValueError) as e:
+            except Exception as e:
                 dependency_failures.append(f"{blocker_ref}: {e}")
 
     if dependency_failures:
