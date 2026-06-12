@@ -3,15 +3,22 @@
 from __future__ import annotations
 
 import logging
+from types import SimpleNamespace
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 
-from gobby.code_index.context import CodeIndexGraphUnavailable, CodeIndexProjectNotFound
+from gobby.code_index.context import (
+    CodeIndexContext,
+    CodeIndexGraphUnavailable,
+    CodeIndexProjectNotFound,
+)
 from gobby.code_index.gcode_gateway import GcodeCommandError, GcodeUnavailableError
 from gobby.code_index.models import Symbol
+from gobby.config.code_index import CodeIndexConfig
 from gobby.servers.routes.code_index import create_code_index_router
 
 pytestmark = pytest.mark.unit
@@ -49,7 +56,7 @@ def mock_server() -> MagicMock:
     code_indexer.rebuild_graph = AsyncMock(
         return_value={"success": True, "project_id": "proj-1", "files_processed": 0, "errors": []}
     )
-    code_indexer.invalidate = AsyncMock(return_value=None)
+    code_indexer.invalidate = AsyncMock(return_value={"status": "ok", "project_id": "proj-1"})
     code_indexer.storage = MagicMock()
     code_indexer.storage.search_symbols_fts = MagicMock(return_value=[])
     code_indexer.storage.search_symbols_by_name = MagicMock(return_value=[_make_symbol()])
@@ -280,6 +287,47 @@ def test_rebuild_graph_delegates(client: TestClient, mock_server: MagicMock) -> 
         "proj-1",
         limit=50,
     )
+
+
+def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> None:
+    async def run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
+        return func(*args, **kwargs)
+
+    storage = MagicMock()
+    storage.get_project_stats.return_value = MagicMock()
+    storage.delete_project_index.return_value = {
+        "symbols": 0,
+        "files": 0,
+        "imports": 0,
+        "calls": 0,
+        "content_chunks": 0,
+        "projects": 1,
+    }
+    storage.clear_projection_cleanup_pending.return_value = False
+    vector_store = SimpleNamespace(delete_collection=AsyncMock(side_effect=RuntimeError("down")))
+    code_indexer = CodeIndexContext(
+        storage=storage,
+        vector_store=vector_store,
+        config=CodeIndexConfig(graph_enabled=False),
+        run_db=run_db,
+    )
+    server = MagicMock()
+    server.services = SimpleNamespace(code_indexer=code_indexer, codewiki_trigger=None)
+    app = FastAPI()
+    app.include_router(create_code_index_router(server))
+    test_client = TestClient(app)
+
+    response = test_client.post("/api/code-index/invalidate", json={"project_id": "proj-1"})
+
+    assert response.status_code == 207
+    body = response.json()
+    assert body["status"] == "partial_failure"
+    assert body["stores"]["vector"] == {
+        "status": "failed",
+        "error": "down",
+        "pending_retry": True,
+    }
+    storage.record_projection_cleanup_failure.assert_called_once_with("proj-1", "vector", "down")
 
 
 def test_clear_graph_returns_500_on_exception(client: TestClient, mock_server: MagicMock) -> None:

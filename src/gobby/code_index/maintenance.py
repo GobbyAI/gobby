@@ -74,6 +74,7 @@ async def _run_maintenance(
     summary_batch_size: int = 20,
 ) -> None:
     """Single maintenance pass: re-index via gcode, recover unsynced files, generate summaries."""
+    await _retry_pending_projection_cleanups(context)
     projects = await context.run_db(context.storage.list_indexed_projects)
     gcode_bin = await asyncio.to_thread(resolve_native_bin, "gcode")
 
@@ -156,6 +157,86 @@ async def _run_maintenance(
         # Generate summaries for unsummarized symbols
         if summarizer:
             await _summarize_unsummarized(context, project, summarizer, summary_batch_size)
+
+
+async def _retry_pending_projection_cleanups(
+    context: CodeIndexContext,
+    *,
+    limit: int = 100,
+) -> None:
+    pending = await context.run_db(context.storage.list_projection_cleanup_pending, limit)
+    for marker in pending:
+        if marker.store == "graph":
+            await _retry_pending_graph_cleanup(context, marker.project_id)
+        elif marker.store == "vector":
+            await _retry_pending_vector_cleanup(context, marker.project_id)
+        else:
+            logger.warning(
+                "Unknown code index projection cleanup store %s for project %s",
+                marker.store,
+                marker.project_id,
+            )
+
+
+async def _retry_pending_graph_cleanup(context: CodeIndexContext, project_id: str) -> None:
+    if not context.config.graph_enabled:
+        await context.run_db(
+            context.storage.record_projection_cleanup_failure,
+            project_id,
+            "graph",
+            "graph cleanup unavailable",
+        )
+        return
+
+    try:
+        result = await context.clear_graph(project_id)
+        if not result.get("success", False):
+            error = str(result.get("error", "unknown error"))
+            await context.run_db(
+                context.storage.record_projection_cleanup_failure,
+                project_id,
+                "graph",
+                error,
+            )
+            logger.warning("Pending graph cleanup reported failure for %s: %s", project_id, error)
+            return
+    except Exception as e:
+        await context.run_db(
+            context.storage.record_projection_cleanup_failure,
+            project_id,
+            "graph",
+            str(e),
+        )
+        logger.warning("Pending graph cleanup failed for %s: %s", project_id, e, exc_info=True)
+        return
+
+    await context.run_db(context.storage.clear_projection_cleanup_pending, project_id, "graph")
+
+
+async def _retry_pending_vector_cleanup(context: CodeIndexContext, project_id: str) -> None:
+    if context.vector_store is None:
+        await context.run_db(
+            context.storage.record_projection_cleanup_failure,
+            project_id,
+            "vector",
+            "vector cleanup unavailable",
+        )
+        return
+
+    collection = f"{context.config.qdrant_collection_prefix}{project_id}"
+    try:
+        await context.vector_store.delete_collection(collection)
+    except Exception as e:
+        await context.run_db(
+            context.storage.record_projection_cleanup_failure,
+            project_id,
+            "vector",
+            str(e),
+        )
+        logger.warning("Pending vector cleanup failed for %s: %s", project_id, e, exc_info=True)
+        return
+
+    await context.run_db(context.storage.clear_projection_cleanup_pending, project_id, "vector")
 
 
 async def _summarize_unsummarized(

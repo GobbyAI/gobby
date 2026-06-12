@@ -223,6 +223,32 @@ class IndexedProject:
         }
 
 
+ProjectionCleanupStore = Literal["graph", "vector"]
+
+
+@dataclass
+class ProjectionCleanupPending:
+    """Project-level projection cleanup that must be retried."""
+
+    project_id: str
+    store: ProjectionCleanupStore
+    attempts: int = 0
+    last_error: str | None = None
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> ProjectionCleanupPending:
+        return cls(
+            project_id=row["project_id"],
+            store=row["store"],
+            attempts=row["attempts"],
+            last_error=row["last_error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
 @dataclass
 class ContentChunk:
     """A chunk of file content for full-text search."""

@@ -245,6 +245,12 @@ async def _sync_file(
                     run_db=run_db,
                 )
                 await _run_db(run_db, storage.mark_vectors_synced, current.id)
+                await _run_db(
+                    run_db,
+                    storage.clear_projection_cleanup_pending,
+                    project_id,
+                    "vector",
+                )
                 did_work = True
             except Exception as e:
                 logger.error(
@@ -265,6 +271,12 @@ async def _sync_file(
                 )
                 if graph_synced:
                     await _run_db(run_db, storage.mark_graph_synced, current.id)
+                    await _run_db(
+                        run_db,
+                        storage.clear_projection_cleanup_pending,
+                        project_id,
+                        "graph",
+                    )
                     did_work = True
             except GcodeIndexedFileNotFoundError as e:
                 refreshed = await _run_db(run_db, storage.get_file, project_id, e.file_path)

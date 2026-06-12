@@ -389,8 +389,9 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                 content={"status": "ok", "project_id": project_id, "note": "not indexed"},
             )
 
-        await code_indexer.invalidate(project_id)
-        return JSONResponse(content={"status": "ok", "project_id": project_id})
+        result = await code_indexer.invalidate(project_id)
+        status_code = 207 if result.get("status") == "partial_failure" else 200
+        return JSONResponse(status_code=status_code, content=result)
 
     @router.post("/codewiki/refresh", status_code=202)
     async def refresh_codewiki(

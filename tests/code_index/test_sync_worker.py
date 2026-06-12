@@ -302,6 +302,7 @@ async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
         "batch_upsert",
     ]
     storage.mark_vectors_synced.assert_called_once_with(pending_file.id)
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "vector")
     storage.mark_graph_sync_attempted.assert_not_called()
     storage.mark_graph_synced.assert_not_called()
 
@@ -350,6 +351,7 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
     storage.mark_graph_sync_attempted.assert_not_called()
     storage.mark_graph_synced.assert_called_once_with(pending_file.id)
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
 
 
 @pytest.mark.asyncio
@@ -607,6 +609,7 @@ async def test_sync_file_skipped_response_marks_graph_synced(tmp_path: Path) -> 
 
     assert did_sync is True
     storage.mark_graph_synced.assert_called_once_with(pending_file.id)
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
 
 
 @pytest.mark.asyncio
@@ -983,7 +986,12 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
     )
 
     assert did_sync is True
-    assert run_db.calls == ["get_file", "get_symbols_for_file", "mark_vectors_synced"]
+    assert run_db.calls == [
+        "get_file",
+        "get_symbols_for_file",
+        "mark_vectors_synced",
+        "clear_projection_cleanup_pending",
+    ]
 
 
 @pytest.mark.asyncio
@@ -1042,6 +1050,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
     storage.mark_vectors_synced.assert_not_called()
     storage.mark_graph_sync_attempted.assert_not_called()
     storage.mark_graph_synced.assert_called_once_with(current_file.id)
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
     assert gcode_gateway.synced_files == [(tmp_path, file_path)]
 
 

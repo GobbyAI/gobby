@@ -301,6 +301,25 @@ def test_get_project_stats_not_found(code_storage: CodeIndexStorage) -> None:
     assert code_storage.get_project_stats("missing") is None
 
 
+def test_projection_cleanup_pending_round_trip(code_storage: CodeIndexStorage) -> None:
+    code_storage.record_projection_cleanup_failure("proj-1", "graph", "falkor down")
+    code_storage.record_projection_cleanup_failure("proj-1", "graph", "still down")
+    code_storage.record_projection_cleanup_failure("proj-1", "vector", "qdrant down")
+
+    pending = code_storage.list_projection_cleanup_pending()
+
+    assert [(row.project_id, row.store, row.attempts, row.last_error) for row in pending] == [
+        ("proj-1", "graph", 2, "still down"),
+        ("proj-1", "vector", 1, "qdrant down"),
+    ]
+
+    assert code_storage.clear_projection_cleanup_pending("proj-1", "graph") is True
+    assert code_storage.clear_projection_cleanup_pending("proj-1", "graph") is False
+    assert [
+        (row.project_id, row.store) for row in code_storage.list_projection_cleanup_pending()
+    ] == [("proj-1", "vector")]
+
+
 def test_upsert_project_stats_updates(code_storage: CodeIndexStorage) -> None:
     """Second upsert updates existing project stats."""
     project = IndexedProject(

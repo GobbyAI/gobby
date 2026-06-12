@@ -61,6 +61,7 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
         total_symbols=3,
     )
     storage = MagicMock()
+    storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     storage.delete_project_index.return_value = {
         "files": 2,
@@ -101,7 +102,65 @@ async def test_maintenance_purges_indexed_project_when_root_is_missing(tmp_path:
     vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-missing")
     create_proc.assert_not_called()
     assert not missing_root.exists()
-    assert run_db_calls == ["list_indexed_projects", "delete_project_index"]
+    assert run_db_calls == [
+        "list_projection_cleanup_pending",
+        "list_indexed_projects",
+        "delete_project_index",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_maintenance_retries_pending_vector_projection_cleanup() -> None:
+    class Storage:
+        def __init__(self) -> None:
+            self.cleared: list[tuple[str, str]] = []
+            self.failures: list[tuple[str, str, str]] = []
+
+        def list_projection_cleanup_pending(self, _limit: int) -> list[Any]:
+            return [SimpleNamespace(project_id="proj-retry", store="vector")]
+
+        def list_indexed_projects(self) -> list[Any]:
+            return []
+
+        def clear_projection_cleanup_pending(self, project_id: str, store: str) -> bool:
+            self.cleared.append((project_id, store))
+            return True
+
+        def record_projection_cleanup_failure(
+            self,
+            project_id: str,
+            store: str,
+            error: str,
+        ) -> None:
+            self.failures.append((project_id, store, error))
+
+    class VectorStore:
+        def __init__(self) -> None:
+            self.deleted: list[str] = []
+
+        async def delete_collection(self, collection: str) -> None:
+            self.deleted.append(collection)
+
+    storage = Storage()
+    vector_store = VectorStore()
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context: _MaintenanceContext = SimpleNamespace(
+        storage=storage,
+        clear_graph=AsyncMock(return_value={"success": True}),
+        vector_store=vector_store,
+        config=SimpleNamespace(graph_enabled=True, qdrant_collection_prefix="code_symbols_"),
+        run_db=run_db,
+    )
+
+    with patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"):
+        await _run_maintenance(context)
+
+    assert vector_store.deleted == ["code_symbols_proj-retry"]
+    assert storage.cleared == [("proj-retry", "vector")]
+    assert storage.failures == []
 
 
 @pytest.mark.asyncio
@@ -118,6 +177,7 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
         total_symbols=3,
     )
     storage = MagicMock()
+    storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     storage.delete_project_index.return_value = {
         "files": 2,
@@ -175,7 +235,11 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
     vector_store.delete_collection.assert_awaited_once_with("code_symbols_proj-stale")
     summarizer.summarize_batch.assert_not_called()
     assert "Maintenance reindex failed" not in caplog.text
-    assert run_db_calls == ["list_indexed_projects", "delete_project_index"]
+    assert run_db_calls == [
+        "list_projection_cleanup_pending",
+        "list_indexed_projects",
+        "delete_project_index",
+    ]
 
 
 @pytest.mark.asyncio
@@ -191,6 +255,7 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
         total_symbols=3,
     )
     storage = MagicMock()
+    storage.list_projection_cleanup_pending.return_value = []
     storage.list_indexed_projects.return_value = [project]
     storage.delete_project_index.return_value = ["bad"]
 
