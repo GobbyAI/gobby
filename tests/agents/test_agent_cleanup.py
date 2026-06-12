@@ -35,6 +35,7 @@ class RecordingCompletionRegistry:
 def _run(
     task_id: str | None = "task-1",
     *,
+    child_session_id: str | None = "child-1",
     status: str = "success",
     tool_calls_count: int = 0,
     turns_used: int = 0,
@@ -42,7 +43,7 @@ def _run(
     return AgentRun(
         id="run-1",
         parent_session_id="parent-1",
-        child_session_id="child-1",
+        child_session_id=child_session_id,
         provider="codex",
         prompt="test",
         status=status,
@@ -62,6 +63,7 @@ def _handler(
     agent_run_manager=None,
     completion_registry=None,
     session_manager=None,
+    session_coordinator=None,
     task_recovery=None,
 ) -> AgentCleanupHandler:
     async def default_run_db(func, *args, **kwargs):
@@ -72,7 +74,7 @@ def _handler(
         agent_run_manager=agent_run_manager or MagicMock(),
         db=db,
         get_session_manager=lambda: session_manager,
-        get_session_coordinator=lambda: None,
+        get_session_coordinator=lambda: session_coordinator,
         clone_storage=None,
         completion_registry=completion_registry,
         task_recovery=task_recovery or AsyncMock(),
@@ -220,6 +222,31 @@ async def test_post_terminal_cleanup_clears_completion_registry_and_subscribers(
 
 
 @pytest.mark.asyncio
+async def test_post_terminal_cleanup_missing_child_does_not_target_parent_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = RecordingDb()
+    session_manager = MagicMock()
+    session_coordinator = MagicMock()
+    monkeypatch.setattr(
+        "gobby.agents.runtime_cleanup.cleanup_agent_runtime_state",
+        lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
+    )
+
+    await _handler(
+        db,
+        session_manager=session_manager,
+        session_coordinator=session_coordinator,
+    ).post_terminal_cleanup(_run(task_id=None, child_session_id=None))
+
+    session_coordinator.release_session_worktrees.assert_not_called()
+    session_manager.update_status.assert_not_called()
+    assert db.executed == [
+        ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
+    ]
+
+
+@pytest.mark.asyncio
 async def test_cleanup_agent_failure_persists_child_session_progress_stats() -> None:
     failed_run = _run(status="error", tool_calls_count=7, turns_used=4)
     recovered: list[tuple[AgentRun, str]] = []
@@ -249,7 +276,7 @@ async def test_cleanup_agent_failure_persists_child_session_progress_stats() -> 
         task_recovery=TaskRecovery(),
     )
 
-    async def post_terminal_cleanup(run: AgentRun) -> None:
+    async def post_terminal_cleanup(run: AgentRun, **kwargs: object) -> None:
         cleanup_runs.append(run)
 
     handler.post_terminal_cleanup = post_terminal_cleanup  # type: ignore[method-assign]

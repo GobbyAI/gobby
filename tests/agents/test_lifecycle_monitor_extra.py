@@ -2,12 +2,17 @@
 
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from gobby.agents.idle_check_handler import IdleCheckHandler
+from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.tmux import configure_tmux
+from gobby.config.tmux import TmuxConfig as ConfiguredTmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -16,6 +21,8 @@ from gobby.storage.tasks._models import Task
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 from gobby.workflows.task_claim_state import add_claimed_task
+
+configure_tmux(ConfiguredTmuxConfig())
 
 pytestmark = pytest.mark.unit
 
@@ -76,6 +83,7 @@ class TestRecoverTaskFromFailedAgent:
         db_run = AgentRun(
             id="run-1",
             parent_session_id="parent-1",
+            child_session_id="owner-1",
             task_id="task-123",
             provider="claude",
             prompt="do it",
@@ -177,6 +185,7 @@ class TestRecoverTaskFromFailedAgent:
         db_run = AgentRun(
             id="run-review",
             parent_session_id="p",
+            child_session_id="reviewer-1",
             task_id="task-review",
             provider="claude",
             prompt="review it",
@@ -265,6 +274,7 @@ class TestRecoverTaskFromFailedAgent:
         db_run = AgentRun(
             id="run-1",
             parent_session_id="p",
+            child_session_id="owner-1",
             task_id="task-1",
             provider="claude",
             prompt="p",
@@ -312,6 +322,7 @@ class TestRecoverTaskFromFailedAgent:
         db_run = AgentRun(
             id="run-1",
             parent_session_id="p",
+            child_session_id="owner-1",
             task_id="task-1",
             provider="claude",
             prompt="p",
@@ -339,8 +350,10 @@ class TestRecoverTaskFromFailedAgent:
         assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_recover_task_uses_persisted_claimed_session_id(self) -> None:
-        """Recovery should not release a task claimed by a different live session."""
+    async def test_recover_task_ignores_persisted_claimed_session_when_child_missing(
+        self,
+    ) -> None:
+        """Recovery should not release a task when the child session is unknown."""
         mock_run_mgr = MagicMock()
         mock_task_mgr = MagicMock()
         mock_stall = MagicMock()
@@ -368,7 +381,7 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task = _task(
             task_id="task-1",
-            owner="different-owner",
+            owner="original-owner",
             seq_num=10,
         )
         mock_task_mgr.get_task.return_value = mock_task
@@ -394,6 +407,53 @@ class TestRecoverTaskFromFailedAgent:
         cleaned = await monitor.cleanup_stale_pending_runs()
         assert cleaned == 5
         mock_run_mgr.cleanup_stale_pending_runs.assert_called_once()
+
+    @pytest.mark.asyncio
+    async def test_idle_check_does_not_probe_parent_session_when_child_missing(self) -> None:
+        db_run = AgentRun(
+            id="run-1",
+            parent_session_id="parent-session",
+            child_session_id=None,
+            provider="codex",
+            prompt="test",
+            status="running",
+            created_at="2024-01-01T00:00:00+00:00",
+            updated_at="2024-01-01T00:00:00+00:00",
+            task_id="task-1",
+            tmux_session_name="agent-run-1",
+        )
+        mock_run_mgr = MagicMock()
+        mock_run_mgr.get.return_value = db_run
+        session_manager = MagicMock()
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="working")
+        idle_detector = IdleDetector()
+        cleanup_handler = AsyncMock()
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        handler = IdleCheckHandler(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(spec=HubDatabase),
+            get_session_manager=lambda: session_manager,
+            tmux=tmux,
+            idle_detector=idle_detector,
+            cleanup_handler=cleanup_handler,
+            tmux_config=SimpleNamespace(
+                idle_timeout_seconds=60,
+                idle_reprompt_delay_seconds=60,
+                max_reprompt_attempts=2,
+            ),
+            run_db=run_db,
+        )
+
+        result = await handler._handle_idle_check(db_run)
+
+        assert result == 0
+        session_manager.get.assert_not_called()
+        tmux.capture_pane.assert_awaited_once_with("agent-run-1", lines=15)
+        assert idle_detector.get_state("run-1").reprompt_count == 0
 
 
 class TestLoopPromptEscalation:

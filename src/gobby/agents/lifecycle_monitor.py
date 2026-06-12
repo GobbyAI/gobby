@@ -435,7 +435,7 @@ class AgentLifecycleMonitor:
                         self._checkpoint_manager.create_checkpoint,
                         cwd,
                         run.task_id,
-                        run.child_session_id or run.parent_session_id,
+                        run.child_session_id,
                         run.id,
                     )
                     if checkpoint:

@@ -133,7 +133,7 @@ class TaskRecoveryHandler:
             return None
 
         task = await self._run_db(self._task_manager.get_task, task_id)
-        expected_owner = db_run.child_session_id or db_run.claimed_session_id
+        expected_owner = db_run.child_session_id
         if not task or not is_task_actively_claimed(task, expected_owner):
             return None
 

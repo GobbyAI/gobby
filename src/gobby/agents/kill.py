@@ -284,7 +284,7 @@ async def kill_agent(
     Returns:
         Dict with success status and details.
     """
-    session_id = run.child_session_id or run.parent_session_id
+    session_id = run.child_session_id
     session_manager = SessionManager(db) if session_id else None
     terminal_close_result: dict[str, Any] | None = None
 

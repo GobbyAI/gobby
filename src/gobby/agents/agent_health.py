@@ -212,7 +212,7 @@ class AgentHealthMonitor:
                         continue
                     await self._clear_tmux_session_name(run)
                 elif run.pid:
-                    session_id = run.child_session_id or run.parent_session_id
+                    session_id = run.child_session_id
                     if not await pid_matches_agent_identity(
                         run.pid,
                         provider=run.provider,
@@ -268,7 +268,7 @@ class AgentHealthMonitor:
                 if age < self._tmux_config.init_timeout_seconds:
                     continue
 
-                session_id = run.child_session_id or run.parent_session_id
+                session_id = run.child_session_id
                 if not session_id or not session_manager:
                     continue
 

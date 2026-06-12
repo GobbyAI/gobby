@@ -12,9 +12,13 @@ from gobby.agents.kill import (
     _validate_terminal_value,
     kill_agent,
 )
+from gobby.agents.tmux import configure_tmux
+from gobby.config.tmux import TmuxConfig
 from gobby.storage.agents import AgentRun
 
 pytestmark = pytest.mark.unit
+
+configure_tmux(TmuxConfig())
 
 
 class TestRunSubprocess:
@@ -418,3 +422,19 @@ class TestKillAgent:
             mock_getpgid.assert_any_call(999)
             mock_killpg.assert_any_call(999, signal.SIGTERM)
             mock_killpg.assert_any_call(999, signal.SIGKILL)
+
+    @pytest.mark.asyncio
+    @patch("gobby.agents.kill._run_subprocess")
+    @patch("gobby.agents.kill._close_terminal_window")
+    async def test_missing_child_session_does_not_target_parent_terminal(
+        self, mock_close_window, mock_run, agent_run, mock_db
+    ):
+        agent_run.child_session_id = None
+        agent_run.parent_session_id = "parent-session"
+        agent_run.pid = None
+
+        res = await kill_agent(agent_run, mock_db, close_terminal=True)
+
+        assert res == {"success": False, "error": "No target PID found"}
+        mock_close_window.assert_not_called()
+        mock_run.assert_not_called()

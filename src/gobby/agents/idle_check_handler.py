@@ -156,7 +156,7 @@ class IdleCheckHandler:
         idle_timeout_seconds = self._idle_timeout_seconds_for_run(run)
 
         session_stale = False
-        session_id = run.child_session_id or run.parent_session_id
+        session_id = run.child_session_id
         session_manager = self._get_session_manager()
         session: Any | None = None
 
@@ -495,7 +495,7 @@ class IdleCheckHandler:
         if session_manager is None:
             return
 
-        session_id = run.child_session_id or run.parent_session_id
+        session_id = run.child_session_id
         if not session_id:
             return
 
