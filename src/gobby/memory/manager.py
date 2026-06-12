@@ -24,6 +24,11 @@ from gobby.memory.services.maintenance import (
 from gobby.memory.services.maintenance import (
     get_stats as _get_stats,
 )
+from gobby.memory.services.project_repair import (
+    NullProjectMemoryRepair,
+    NullProjectMemoryRepairResult,
+    find_null_project_repairs,
+)
 from gobby.memory.services.search import SearchService
 from gobby.memory.vectorstore import (
     VECTORSTORE_WARNING_INTERVAL_SECONDS,
@@ -38,7 +43,12 @@ if TYPE_CHECKING:
     from gobby.memory.services.dedup import DedupService
     from gobby.memory.vectorstore import VectorStore
 
-__all__ = ["CrossrefRebuildError", "MemoryManager"]
+__all__ = [
+    "CrossrefRebuildError",
+    "MemoryManager",
+    "NullProjectMemoryRepair",
+    "NullProjectMemoryRepairResult",
+]
 
 logger = logging.getLogger(__name__)
 
@@ -640,6 +650,39 @@ class MemoryManager:
                 payload={"project_id": result.project_id},
             )
         return result
+
+    async def fix_null_project_ids_from_sessions(
+        self,
+        *,
+        dry_run: bool = False,
+    ) -> NullProjectMemoryRepairResult:
+        """Repair NULL memory project IDs using each memory's source session."""
+        repairs = await self.run_db(find_null_project_repairs, self.db)
+        fixable_repairs = [repair for repair in repairs if repair.project_id is not None]
+
+        fixed = 0
+        if not dry_run:
+            for repair in fixable_repairs:
+                project_id = cast(str, repair.project_id)
+                updated = await self.run_db(
+                    self.storage.update_memory_project,
+                    repair.memory_id,
+                    project_id,
+                )
+                await self._embed_and_upsert(
+                    repair.memory_id,
+                    updated.content,
+                    payload={"project_id": project_id},
+                )
+                self._enqueue_for_graph(repair.memory_id, project_id=project_id)
+                fixed += 1
+
+        return NullProjectMemoryRepairResult(
+            total=len(repairs),
+            fixable=len(fixable_repairs),
+            fixed=fixed,
+            repairs=repairs,
+        )
 
     async def aupdate_memory(
         self,

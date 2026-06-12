@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
-from collections.abc import Awaitable
+from collections.abc import Awaitable, Coroutine
 from types import ModuleType
 from typing import Any, Protocol
 
@@ -17,6 +17,12 @@ class _MemoryDeleteManager(Protocol):
 
 class _MemoryListManager(_MemoryDeleteManager, Protocol):
     def list_memories(self, **kwargs: Any) -> list[Any]: ...
+
+
+class _MemoryProjectRepairManager(_MemoryListManager, Protocol):
+    def fix_null_project_ids_from_sessions(
+        self, *, dry_run: bool = False
+    ) -> Coroutine[Any, Any, Any]: ...
 
 
 def _facade() -> ModuleType:
@@ -140,64 +146,30 @@ def fix_null_project(ctx: click.Context, dry_run: bool) -> None:
 
         gobby memory fix-null-project             # Apply fixes
     """
-    from gobby.storage.hub.runtime import runtime_hub_database
+    memory_module = _facade()
+    manager: _MemoryProjectRepairManager = memory_module.get_memory_manager(ctx)
+    result: Any = asyncio.run(manager.fix_null_project_ids_from_sessions(dry_run=dry_run))
 
-    with runtime_hub_database(apply_migrations=False) as db:
-        rows = db.fetchall(
-            """
-            SELECT id, content, source_session_id
-            FROM memories
-            WHERE project_id IS NULL AND source_type IN ('session', 'agent') AND source_session_id IS NOT NULL
-            """,
-            (),
-        )
+    if result.total == 0:
+        click.echo("No memories with NULL project_id from sessions found.")
+        return
 
-        if not rows:
-            click.echo("No memories with NULL project_id from sessions found.")
-            return
+    click.echo(f"Found {result.total} memories with NULL project_id from sessions/agents.")
 
-        click.echo(f"Found {len(rows)} memories with NULL project_id from sessions/agents.")
-
-        session_ids = {row["source_session_id"] for row in rows if row["source_session_id"]}
-        placeholders = ",".join("%s" for _ in session_ids)
-        session_project_ids: dict[str, str] = {}
-        if session_ids:
-            session_rows = db.fetchall(
-                f"SELECT id, project_id FROM sessions WHERE id IN ({placeholders})",
-                tuple(session_ids),
-            )
-            session_project_ids = {
-                row["id"]: row["project_id"] for row in session_rows if row["project_id"]
-            }
-
-        updates: list[tuple[str, str]] = []
-        fixable_count = 0
-        for row in rows:
-            memory_id = row["id"]
-            session_id = row["source_session_id"]
-            content_preview = row["content"][:50] if row["content"] else ""
-
-            project_id = session_project_ids.get(session_id)
-            if project_id:
-                fixable_count += 1
-                if dry_run:
-                    click.echo(f"  Would fix {memory_id[:12]}: set project_id={project_id[:12]}")
-                    click.echo(f"    Content: {content_preview}...")
-                else:
-                    updates.append((project_id, memory_id))
-            elif dry_run:
+    if dry_run:
+        for repair in result.repairs:
+            content_preview = repair.content[:50] if repair.content else ""
+            if repair.project_id:
                 click.echo(
-                    f"  Cannot fix {memory_id[:12]}: "
-                    f"session {session_id} not found or has no project_id"
+                    f"  Would fix {repair.memory_id[:12]}: set project_id={repair.project_id[:12]}"
+                )
+                click.echo(f"    Content: {content_preview}...")
+            else:
+                click.echo(
+                    f"  Cannot fix {repair.memory_id[:12]}: "
+                    f"session {repair.source_session_id} not found or has no project_id"
                 )
 
-        if dry_run:
-            click.echo(f"\nWould fix {fixable_count} memories. Run without --dry-run to apply.")
-        else:
-            with db.transaction() as conn:
-                for project_id, memory_id in updates:
-                    conn.execute(
-                        "UPDATE memories SET project_id = %s WHERE id = %s",
-                        (project_id, memory_id),
-                    )
-            click.echo(f"Fixed {len(updates)} memories with project_id from their source sessions.")
+        click.echo(f"\nWould fix {result.fixable} memories. Run without --dry-run to apply.")
+    else:
+        click.echo(f"Fixed {result.fixed} memories with project_id from their source sessions.")

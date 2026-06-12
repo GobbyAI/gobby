@@ -1,6 +1,7 @@
 """Tests for the memory CLI module."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -710,6 +711,48 @@ class TestMemoryRestoreCommand:
 
         assert result.exit_code == 1
         assert "corrupt JSONL" in result.output
+
+
+class TestMemoryFixNullProjectCommand:
+    """Tests for gobby memory fix-null-project."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI test runner."""
+        return CliRunner()
+
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_fix_null_project_dry_run_delegates_to_manager(
+        self,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """The repair command delegates mutation planning to MemoryManager."""
+        mock_manager = MagicMock()
+        mock_manager.fix_null_project_ids_from_sessions = AsyncMock(
+            return_value=SimpleNamespace(
+                total=1,
+                fixable=1,
+                fixed=0,
+                repairs=[
+                    SimpleNamespace(
+                        memory_id="mem-123456789",
+                        content="Needs project assignment",
+                        source_session_id="sess-123",
+                        project_id="proj-123456789",
+                    )
+                ],
+            )
+        )
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["memory", "fix-null-project", "--dry-run"])
+
+        assert result.exit_code == 0
+        mock_manager.fix_null_project_ids_from_sessions.assert_awaited_once_with(dry_run=True)
+        assert "Found 1 memories with NULL project_id from sessions/agents." in result.output
+        assert "Would fix mem-12345678: set project_id=proj-1234567" in result.output
+        assert "Would fix 1 memories. Run without --dry-run to apply." in result.output
 
 
 class TestResolveMemoryId:
