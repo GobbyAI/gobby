@@ -36,6 +36,7 @@ _MISSING_TARGET_ERRORS = (
     "no such pane",
 )
 TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
+TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT = 3
 
 
 def _write_secret_env_file(env: dict[str, str]) -> Path:
@@ -104,6 +105,7 @@ class TmuxSessionManager:
 
     def __init__(self, config: TmuxConfig | None = None) -> None:
         self._config = config or TmuxConfig()
+        self._health_check_timeout_failures = 0
 
     @property
     def config(self) -> TmuxConfig:
@@ -228,21 +230,40 @@ class TmuxSessionManager:
         Returns True if healthy (or recovered), False if tmux is unavailable.
         """
         if not self.is_available():
+            self._health_check_timeout_failures = 0
             return False
 
         try:
             rc, _stdout, stderr = await self._run("list-sessions", timeout=5.0)
             # rc=1 with "no server running" is fine — server will start on next create
             if rc == 0 or "no server running" in stderr:
+                self._health_check_timeout_failures = 0
                 return True
+            self._health_check_timeout_failures = 0
+            logger.warning("tmux health check returned rc=%s: %s", rc, stderr.strip())
+            return False
         except TimeoutError:
-            logger.warning("tmux socket unresponsive (timeout). Killing stale server.")
+            self._health_check_timeout_failures += 1
+            if self._health_check_timeout_failures < TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT:
+                logger.warning(
+                    "tmux socket unresponsive (timeout %s/%s); deferring kill-server.",
+                    self._health_check_timeout_failures,
+                    TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT,
+                )
+                return False
+            logger.warning(
+                "tmux socket unresponsive after %s consecutive timeouts. Killing stale server.",
+                self._health_check_timeout_failures,
+            )
         except Exception as e:
+            self._health_check_timeout_failures = 0
             logger.warning(f"tmux health check failed: {e}")
+            return False
 
         # Attempt to kill the stale server and let it restart on next use
         try:
             await self._run("kill-server", timeout=5.0)
+            self._health_check_timeout_failures = 0
             logger.info(f"Killed stale tmux server on socket '{self._config.socket_name}'")
             return True
         except Exception as e:

@@ -1295,25 +1295,64 @@ class TestTmuxSessionManagerExtended:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_health_check_timeout_kills_server(self) -> None:
-        """health_check kills stale server on timeout and returns True."""
+    async def test_health_check_single_timeout_does_not_kill_server(self) -> None:
+        """health_check defers kill-server for an isolated timeout."""
         mgr = TmuxSessionManager()
         with (
             patch.object(mgr, "is_available", return_value=True),
             patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
         ):
-            # First call times out, second call (kill-server) succeeds
+            mock_run.side_effect = [TimeoutError("socket stuck")]
+            result = await mgr.health_check()
+        assert result is False
+        mock_run.assert_awaited_once_with("list-sessions", timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_health_check_kills_server_after_consecutive_timeouts(self) -> None:
+        """health_check kills stale server after repeated timeout evidence."""
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
             mock_run.side_effect = [
+                TimeoutError("socket stuck"),
+                TimeoutError("socket stuck"),
                 TimeoutError("socket stuck"),
                 (0, "", ""),
             ]
-            result = await mgr.health_check()
-        assert result is True
-        assert mock_run.call_count == 2
+            results = [await mgr.health_check() for _ in range(3)]
+        assert results == [False, False, True]
+        assert mock_run.await_args_list[0].args == ("list-sessions",)
+        assert mock_run.await_args_list[0].kwargs == {"timeout": 5.0}
+        assert mock_run.await_args_list[1].args == ("list-sessions",)
+        assert mock_run.await_args_list[1].kwargs == {"timeout": 5.0}
+        assert mock_run.await_args_list[2].args == ("list-sessions",)
+        assert mock_run.await_args_list[2].kwargs == {"timeout": 5.0}
+        assert mock_run.await_args_list[3].args == ("kill-server",)
+        assert mock_run.await_args_list[3].kwargs == {"timeout": 5.0}
+
+    @pytest.mark.asyncio
+    async def test_health_check_generic_error_resets_timeout_count(self) -> None:
+        """health_check requires timeouts to be consecutive before kill-server."""
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.side_effect = [
+                TimeoutError("socket stuck"),
+                RuntimeError("transient"),
+                TimeoutError("socket stuck"),
+                TimeoutError("socket stuck"),
+            ]
+            results = [await mgr.health_check() for _ in range(4)]
+        assert results == [False, False, False, False]
+        assert mock_run.await_args_list[-1].args == ("list-sessions",)
 
     @pytest.mark.asyncio
     async def test_health_check_timeout_kill_fails(self) -> None:
-        """health_check returns False when kill-server also fails."""
+        """health_check returns False when kill-server also fails after repeated timeouts."""
         mgr = TmuxSessionManager()
         with (
             patch.object(mgr, "is_available", return_value=True),
@@ -1321,25 +1360,26 @@ class TestTmuxSessionManagerExtended:
         ):
             mock_run.side_effect = [
                 TimeoutError("socket stuck"),
+                TimeoutError("socket stuck"),
+                TimeoutError("socket stuck"),
                 RuntimeError("kill failed too"),
             ]
-            result = await mgr.health_check()
-        assert result is False
+            results = [await mgr.health_check() for _ in range(3)]
+        assert results == [False, False, False]
+        assert mock_run.await_args_list[-1].args == ("kill-server",)
 
     @pytest.mark.asyncio
-    async def test_health_check_generic_error_kills_server(self) -> None:
-        """health_check attempts kill-server on generic error."""
+    async def test_health_check_generic_error_does_not_kill_server(self) -> None:
+        """health_check does not use arbitrary exceptions as stale-server evidence."""
         mgr = TmuxSessionManager()
         with (
             patch.object(mgr, "is_available", return_value=True),
             patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
         ):
-            mock_run.side_effect = [
-                RuntimeError("unexpected"),
-                (0, "", ""),
-            ]
+            mock_run.side_effect = [RuntimeError("unexpected")]
             result = await mgr.health_check()
-        assert result is True
+        assert result is False
+        mock_run.assert_awaited_once_with("list-sessions", timeout=5.0)
 
     @pytest.mark.asyncio
     async def test_list_pane_ids(self) -> None:
