@@ -337,11 +337,10 @@ async def _sync_vectors(
 ) -> None:
     """Generate embeddings and upsert to Qdrant for a file's symbols."""
     symbols = await _run_db(run_db, storage.get_symbols_for_file, project_id, file.file_path)
-    if not symbols:
-        return
-
     collection = f"{config.qdrant_collection_prefix}{project_id}"
-    await vector_store.ensure_collection(collection, embedding_dim)
+
+    if symbols:
+        await vector_store.ensure_collection(collection, embedding_dim)
 
     # Delete old vectors for this file's symbols
     try:
@@ -351,6 +350,9 @@ async def _sync_vectors(
         )
     except Exception:
         pass  # Collection may not exist yet
+
+    if not symbols:
+        return
 
     for start in range(0, len(symbols), config.sync_worker_vector_batch_size):
         batch = symbols[start : start + config.sync_worker_vector_batch_size]

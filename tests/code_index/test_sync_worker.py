@@ -52,6 +52,11 @@ class RecoveringVectorStore:
         self.calls.append(("delete", collection_name, filters))
         if collection_name not in self.collections:
             raise MissingCollectionError(collection_name)
+        self.items = [
+            item
+            for item in self.items
+            if not all(item[2].get(key) == value for key, value in filters.items())
+        ]
 
     async def batch_upsert(
         self,
@@ -776,6 +781,76 @@ async def test_sync_file_batches_vector_embedding_and_upsert(
     assert did_sync is True
     assert [len(batch) for batch in vector_store.upsert_batches] == [2, 1]
     assert len(vector_store.items) == len(sample_symbols)
+    synced_file = code_storage.get_file(project_id, file_path)
+    assert synced_file is not None
+    assert synced_file.vectors_synced is True
+
+
+@pytest.mark.asyncio
+async def test_sync_file_deletes_stale_vectors_when_file_has_no_symbols(
+    code_storage: CodeIndexStorage,
+    tmp_path: Path,
+) -> None:
+    project_id = "proj-1"
+    file_path = "src/app.py"
+    root = tmp_path
+    source_file = root / file_path
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_text("# gutted to comments only\n")
+
+    indexed_file = IndexedFile(
+        id=IndexedFile.make_id(project_id, file_path),
+        project_id=project_id,
+        file_path=file_path,
+        language="python",
+        content_hash="abc123",
+        symbol_count=0,
+        graph_synced=True,
+        vectors_synced=False,
+    )
+    code_storage.upsert_project_stats(
+        IndexedProject(
+            id=project_id,
+            root_path=str(root),
+            total_files=1,
+            total_symbols=0,
+        )
+    )
+    code_storage.upsert_file(indexed_file)
+
+    collection = f"code_symbols_{project_id}"
+    vector_store = RecoveringVectorStore()
+    vector_store.collections.add(collection)
+    vector_store.items = [
+        (
+            "stale-symbol-id",
+            [0.1, 0.2, 0.3, 0.4],
+            {"file_path": file_path, "project_id": project_id},
+        ),
+        (
+            "other-symbol-id",
+            [0.4, 0.3, 0.2, 0.1],
+            {"file_path": "src/other.py", "project_id": project_id},
+        ),
+    ]
+
+    did_sync = await _sync_file(
+        storage=code_storage,
+        vector_store=vector_store,
+        gcode_gateway=None,
+        config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+        embed_model=FakeEmbedModel(),
+        project_id=project_id,
+        root=root,
+        file=indexed_file,
+        embedding_dim=4,
+    )
+
+    assert did_sync is True
+    assert vector_store.calls == [
+        ("delete", collection, {"file_path": file_path, "project_id": project_id})
+    ]
+    assert [item[0] for item in vector_store.items] == ["other-symbol-id"]
     synced_file = code_storage.get_file(project_id, file_path)
     assert synced_file is not None
     assert synced_file.vectors_synced is True
