@@ -16,6 +16,7 @@ from gobby.code_index.models import (
     ProjectionCleanupStore,
     Symbol,
 )
+from gobby.code_index.summary_safety import sanitize_symbol_summary
 from gobby.search.keyword import fetch_all, pick_search_backend, placeholder
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -724,12 +725,16 @@ class CodeIndexStorage:
 
     def update_symbol_summary(self, symbol_id: str, content_hash: str, summary: str) -> bool:
         """Set the summary for a symbol if the content hash still matches."""
+        sanitized_summary = sanitize_symbol_summary(summary)
+        if sanitized_summary is None:
+            return False
+
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_symbols
                    SET summary = %s, summary_attempted_at = NULL
                    WHERE id = %s AND content_hash = %s""",
-                (summary, symbol_id, content_hash),
+                (sanitized_summary, symbol_id, content_hash),
             )
             return cursor.rowcount > 0
 
