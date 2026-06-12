@@ -7,6 +7,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi import FastAPI
 
+from gobby.hooks.envelope_dedupe import (
+    ENVELOPE_ID_HEADER,
+    is_envelope_processed,
+    mark_envelope_processed,
+)
 from gobby.hooks.inbox import (
     _compute_sleep_seconds,
     _load_envelope,
@@ -48,11 +53,51 @@ async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_
 
     assert replayed == 1
     assert not envelope_path.exists()
+    assert is_envelope_processed(
+        "n-0000000000001-abcd",
+        processed_dir=inbox_dir / "processed",
+    )
     mock_client.post.assert_awaited_once_with(
         "/api/hooks/execute",
         json=envelope,
-        headers=envelope["headers"],
+        headers={
+            **envelope["headers"],
+            ENVELOPE_ID_HEADER: "n-0000000000001-abcd",
+        },
     )
+
+
+@pytest.mark.asyncio
+async def test_drain_hook_inbox_skips_already_processed_envelope(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": False,
+        "hook_type": "session-start",
+        "input_data": {"session_id": "sess-123"},
+        "source": "claude",
+        "headers": {},
+    }
+    envelope_path = inbox_dir / "n-0000000000001-abcd.json"
+    envelope_path.write_text(json.dumps(envelope))
+    mark_envelope_processed(
+        "n-0000000000001-abcd",
+        processed_dir=inbox_dir / "processed",
+    )
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client):
+        replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
+
+    assert replayed == 0
+    assert not envelope_path.exists()
+    mock_client.post.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -13,6 +13,13 @@ from typing import Any
 import httpx
 
 from gobby.cli.utils import get_gobby_home
+from gobby.hooks.envelope_dedupe import (
+    ENVELOPE_ID_HEADER,
+    envelope_id_from_inbox_path,
+    get_processed_envelope_dir,
+    is_envelope_processed,
+    mark_envelope_processed,
+)
 from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
 
 logger = logging.getLogger(__name__)
@@ -121,7 +128,12 @@ def _load_envelope(path: Path) -> dict[str, Any] | None:
     return raw
 
 
-async def _post_envelope(app: Any, envelope: dict[str, Any]) -> httpx.Response:
+async def _post_envelope(
+    app: Any,
+    envelope: dict[str, Any],
+    *,
+    envelope_id: str | None = None,
+) -> httpx.Response:
     """Replay an inbox envelope through the real hook ingress route."""
     headers = envelope.get("headers")
     request_headers = (
@@ -129,6 +141,8 @@ async def _post_envelope(app: Any, envelope: dict[str, Any]) -> httpx.Response:
         if isinstance(headers, dict)
         else {}
     )
+    if envelope_id:
+        request_headers[ENVELOPE_ID_HEADER] = envelope_id
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(
@@ -153,18 +167,27 @@ async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
         return 0
 
     replayed = 0
+    processed_dir = get_processed_envelope_dir(pending_dir)
     for path in _iter_inbox_files(pending_dir):
+        envelope_id = envelope_id_from_inbox_path(path)
+        if envelope_id and is_envelope_processed(envelope_id, processed_dir=processed_dir):
+            logger.info("Skipping already-processed hook inbox envelope %s", path.name)
+            path.unlink(missing_ok=True)
+            continue
+
         envelope = _load_envelope(path)
         if envelope is None:
             continue
 
         try:
-            response = await _post_envelope(app, envelope)
+            response = await _post_envelope(app, envelope, envelope_id=envelope_id)
         except Exception as exc:
             logger.warning("Hook inbox replay failed for %s: %s", path.name, exc)
             continue
 
         if response.status_code == 200:
+            if envelope_id:
+                mark_envelope_processed(envelope_id, processed_dir=processed_dir)
             path.unlink(missing_ok=True)
             replayed += 1
             continue

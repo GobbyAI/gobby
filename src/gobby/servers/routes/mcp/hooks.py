@@ -17,6 +17,11 @@ from starlette.requests import ClientDisconnect
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
 from gobby.adapters.claude_contract import get_claude_contract
 from gobby.adapters.degradation import AdapterDegradationKind, record_adapter_degradation
+from gobby.hooks.envelope_dedupe import (
+    ENVELOPE_ID_HEADER,
+    is_envelope_processed,
+    mark_envelope_processed,
+)
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
     get_global_approval_rules,
@@ -492,6 +497,19 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             "critical": None,
             "enqueued_at": None,
         }
+        envelope_id = request.headers.get(ENVELOPE_ID_HEADER, "").strip()
+
+        def mark_processed_and_return(response: dict[str, Any]) -> dict[str, Any]:
+            if envelope_id:
+                try:
+                    mark_envelope_processed(envelope_id)
+                except Exception as exc:
+                    logger.warning(
+                        "Failed to mark hook envelope %s processed: %s",
+                        envelope_id,
+                        exc,
+                    )
+            return response
 
         try:
             # Parse request
@@ -520,6 +538,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             # Project context is set by ProjectContextMiddleware from
             # X-Gobby-Project-Id / X-Gobby-Session-Id headers.
+
+            if envelope_id and is_envelope_processed(envelope_id):
+                logger.info("Skipping already-processed hook envelope %s", envelope_id)
+                return {"continue": True, "decision": "approve", "reason": "duplicate envelope"}
 
             # Get HookManager from app.state
             if not hasattr(request.app.state, "hook_manager"):
@@ -591,7 +613,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         server=server,
                     )
                     if hold_open_result is not None:
-                        return hold_open_result
+                        return mark_processed_and_return(hold_open_result)
 
                 response_time_ms = (time.perf_counter() - start_time) * 1000
                 inc_counter("hooks_succeeded_total")
@@ -606,7 +628,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     ),
                 )
 
-                return result
+                return mark_processed_and_return(result)
 
             except ValueError as e:
                 # Invalid request - still return graceful response
@@ -621,7 +643,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         f"Invalid hook request: {hook_type}",
                         extra=_hook_log_extra(hook_type, request_metadata, error=str(e)),
                     )
-                return _graceful_error_response(hook_type, str(e), source=source)
+                return mark_processed_and_return(
+                    _graceful_error_response(hook_type, str(e), source=source)
+                )
 
             except TimeoutError:
                 inc_counter("hooks_failed_total")
@@ -636,7 +660,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         timeout_seconds=timeout_seconds,
                     ),
                 )
-                return _hook_timeout_response(adapter, hook_type, source, timeout_seconds)
+                return mark_processed_and_return(
+                    _hook_timeout_response(adapter, hook_type, source, timeout_seconds)
+                )
 
             except Exception as e:
                 # Hook execution error - return graceful response so tool proceeds
@@ -647,7 +673,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     exc_info=True,
                     extra=_hook_log_extra(hook_type, request_metadata),
                 )
-                return _graceful_error_response(hook_type, str(e), source=source)
+                return mark_processed_and_return(
+                    _graceful_error_response(hook_type, str(e), source=source)
+                )
 
         except HTTPException:
             # Re-raise 400 errors (bad request) - these are client errors
@@ -661,7 +689,9 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 extra=_hook_log_extra(hook_type, request_metadata),
             )
             if hook_type:
-                return _graceful_error_response(hook_type, str(e), source=source)
+                return mark_processed_and_return(
+                    _graceful_error_response(hook_type, str(e), source=source)
+                )
             # Fallback: return basic success to prevent CLI hook failure
             return {"continue": True, "decision": "approve"}
 
