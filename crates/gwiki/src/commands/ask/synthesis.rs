@@ -4,12 +4,17 @@ use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::WikiError;
 use crate::commands::ask::citation::citation_check;
-use crate::commands::ask::dedup::AskOutputDedup;
+use crate::commands::ask::evidence::EvidencePlan;
 use crate::commands::ask::narration::strip_leading_model_narration;
 use crate::output::{AskAiOutput, AskOutput, AskSynthesisOutput};
 
+/// Run the single bounded-prompt completion over the planned evidence.
+/// Transport is the daemon route or the direct OpenAI-compatible endpoint
+/// (`ai.text_generate.api_base`/`api_key`, including LM Studio), resolved by
+/// the same gcore routing every other gwiki capability uses.
 pub(super) fn synthesize(
     output: &mut AskOutput,
+    plan: &EvidencePlan,
     requested_mode: AiRouting,
     require_ai: bool,
 ) -> Result<(), WikiError> {
@@ -33,20 +38,21 @@ pub(super) fn synthesize(
     });
 
     match route {
-        AiRouting::Direct => generate_direct(output, &context, require_ai),
-        AiRouting::Daemon => generate_daemon(output, &context, require_ai),
+        AiRouting::Direct => generate_direct(output, plan, &context, require_ai),
+        AiRouting::Daemon => generate_daemon(output, plan, &context, require_ai),
         AiRouting::Auto | AiRouting::Off => mark_ai_unavailable(output, require_ai, None),
     }
 }
 
 fn generate_direct(
     output: &mut AskOutput,
+    plan: &EvidencePlan,
     context: &AiContext,
     require_ai: bool,
 ) -> Result<(), WikiError> {
-    match text::generate_text(context, &synthesis_prompt(output), Some(synthesis_system())) {
+    match text::generate_text(context, &plan.prompt, Some(synthesis_system())) {
         Ok(result) => {
-            record_synthesis(output, "direct", result.text, result.model);
+            record_synthesis(output, &plan.excerpts, "direct", result.text, result.model);
             Ok(())
         }
         Err(error) => mark_ai_unavailable(output, require_ai, Some(error.to_string())),
@@ -55,13 +61,13 @@ fn generate_direct(
 
 fn generate_daemon(
     output: &mut AskOutput,
+    plan: &EvidencePlan,
     context: &AiContext,
     require_ai: bool,
 ) -> Result<(), WikiError> {
-    match daemon::generate_via_daemon(context, &synthesis_prompt(output), Some(synthesis_system()))
-    {
+    match daemon::generate_via_daemon(context, &plan.prompt, Some(synthesis_system())) {
         Ok(result) => {
-            record_synthesis(output, "daemon", result.text, result.model);
+            record_synthesis(output, &plan.excerpts, "daemon", result.text, result.model);
             Ok(())
         }
         Err(error) => mark_ai_unavailable(output, require_ai, Some(error.to_string())),
@@ -70,6 +76,7 @@ fn generate_daemon(
 
 pub(super) fn record_synthesis(
     output: &mut AskOutput,
+    evidence_excerpts: &[String],
     route: &'static str,
     answer: String,
     model: Option<String>,
@@ -88,13 +95,13 @@ pub(super) fn record_synthesis(
         model: model.clone(),
         error: None,
     });
-    let citation_check = citation_check(&answer, output);
-    let mut dedup = AskOutputDedup::from_output(output);
+    let citation_check = citation_check(&answer, output, evidence_excerpts);
     for claim in &citation_check.unsupported_claims {
-        dedup.push_warning(
-            output,
-            format!("synthesis claim lacks citation support in retrieved evidence: {claim}"),
-        );
+        let warning =
+            format!("synthesis claim lacks citation support in retrieved evidence: {claim}");
+        if !output.warnings.contains(&warning) {
+            output.warnings.push(warning);
+        }
     }
     output.synthesis = Some(AskSynthesisOutput {
         answer,
@@ -137,49 +144,8 @@ fn mark_ai_unavailable(
     Ok(())
 }
 
-pub(super) fn synthesis_prompt(output: &AskOutput) -> String {
-    let mut prompt = format!("Question: {}\n\nWiki hits:\n", output.query);
-    if output.hits.is_empty() {
-        prompt.push_str("No wiki hits were found.\n");
-    } else {
-        for (index, hit) in output.hits.iter().enumerate() {
-            let title = hit.title.as_deref().unwrap_or("Untitled");
-            prompt.push_str(&format!(
-                "{}. {} ({})\nSource: {}\nSnippet: {}\n\n",
-                index + 1,
-                title,
-                hit.wiki_page.display(),
-                hit.source_path.display(),
-                hit.snippet
-            ));
-        }
-    }
-    if !output.related_pages.is_empty() || !output.code_citations.is_empty() {
-        prompt.push_str("Unified graph context:\n");
-        for page in &output.related_pages {
-            let title = page.title.as_deref().unwrap_or("Untitled");
-            prompt.push_str(&format!("- {} ({})\n", title, page.path.display()));
-        }
-        prompt.push('\n');
-    }
-    if !output.code_citations.is_empty() {
-        prompt.push_str("Code citations:\n");
-        for citation in &output.code_citations {
-            let symbol = citation.symbol.as_deref().unwrap_or("unknown symbol");
-            match citation.line {
-                Some(line) => {
-                    prompt.push_str(&format!("- {}:{} ({})\n", citation.file, line, symbol))
-                }
-                None => prompt.push_str(&format!("- {} ({})\n", citation.file, symbol)),
-            }
-        }
-        prompt.push('\n');
-    }
-    prompt
-}
-
 fn synthesis_system() -> &'static str {
-    "Answer the user's question using only the provided wiki hits, unified graph context, and code citations. Write only the final answer; do not describe your process, plan, search, or retrieval steps. Be concise. Say when the evidence is insufficient."
+    "Answer the user's question using only the provided evidence excerpts and code citations. Write only the final answer; do not describe your process, plan, search, or retrieval steps. Be concise. Say when the evidence is insufficient."
 }
 
 fn routing_label(route: AiRouting) -> &'static str {
@@ -195,16 +161,21 @@ fn routing_label(route: AiRouting) -> &'static str {
 mod tests {
     use super::*;
     use crate::ScopeIdentity;
-    use crate::commands::ask::assembly::ask_output_from_search;
-    use crate::commands::ask::test_support::output_with_hooks_hit;
+    use crate::commands::ask::assembly::ask_output_from_retrieval;
+    use crate::commands::ask::evidence::plan_evidence;
+    use crate::commands::ask::test_support::retrieval_with_hooks_hit;
+    use crate::commands::search::SearchRetrieval;
     use crate::output::SearchOutput;
 
     #[test]
     fn synthesis_with_ungrounded_claim_is_flagged_in_json() {
-        let mut output = output_with_hooks_hit();
+        let retrieval = retrieval_with_hooks_hit();
+        let plan = plan_evidence(&retrieval);
+        let mut output = ask_output_from_retrieval(retrieval.output, &plan);
 
         record_synthesis(
             &mut output,
+            &plan.excerpts,
             "direct",
             "Hooks run at turn boundaries and dispatch envelopes to the daemon. \
                  Kubernetes pods restart the scheduler cluster nightly."
@@ -247,10 +218,13 @@ mod tests {
 
     #[test]
     fn synthesis_strips_leading_model_narration_before_recording() {
-        let mut output = output_with_hooks_hit();
+        let retrieval = retrieval_with_hooks_hit();
+        let plan = plan_evidence(&retrieval);
+        let mut output = ask_output_from_retrieval(retrieval.output, &plan);
 
         record_synthesis(
                 &mut output,
+                &plan.excerpts,
                 "daemon",
                 "I'm checking the codewiki docs just enough to answer which page types it emits, \
                  then I'll summarize the set precisely.I've got the documented page categories already. \
@@ -281,10 +255,13 @@ mod tests {
 
     #[test]
     fn synthesis_grounded_in_hits_passes_citation_check() {
-        let mut output = output_with_hooks_hit();
+        let retrieval = retrieval_with_hooks_hit();
+        let plan = plan_evidence(&retrieval);
+        let mut output = ask_output_from_retrieval(retrieval.output, &plan);
 
         record_synthesis(
             &mut output,
+            &plan.excerpts,
             "daemon",
             "Hooks dispatch envelopes to the daemon at turn boundaries. \
                  The evidence is thin."
@@ -300,14 +277,19 @@ mod tests {
     }
 
     #[test]
-    fn ask_unified_graph_model_unavailable_marks_degraded() {
-        let mut output = ask_output_from_search(SearchOutput::new(
-            ScopeIdentity::project("project-1"),
-            "Can this synthesize?",
-            10,
-            Vec::new(),
-            Vec::new(),
-        ));
+    fn ask_model_unavailable_marks_degraded() {
+        let retrieval = SearchRetrieval {
+            output: SearchOutput::new(
+                ScopeIdentity::project("project-1"),
+                "Can this synthesize?",
+                10,
+                Vec::new(),
+                Vec::new(),
+            ),
+            evidence: Vec::new(),
+        };
+        let plan = plan_evidence(&retrieval);
+        let mut output = ask_output_from_retrieval(retrieval.output, &plan);
 
         mark_ai_unavailable(&mut output, false, Some("no model".to_string()))
             .expect("model unavailable should degrade without require_ai");

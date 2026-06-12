@@ -63,11 +63,6 @@ pub struct WorkflowAsset {
 
 const WORKFLOW_ASSETS: &[WorkflowAsset] = &[
     WorkflowAsset {
-        name: "research",
-        filename: "research.md",
-        contents: include_str!("../assets/skills/research.md"),
-    },
-    WorkflowAsset {
         name: "compile",
         filename: "compile.md",
         contents: include_str!("../assets/skills/compile.md"),
@@ -308,7 +303,7 @@ mod tests {
                 .iter()
                 .map(|asset| asset.name)
                 .collect::<Vec<_>>(),
-            vec!["research", "compile", "query", "audit"]
+            vec!["compile", "query", "audit"]
         );
 
         let bundle_artifact =
@@ -319,7 +314,7 @@ mod tests {
         );
         let bundle = fs::read_to_string(root.join("outputs/workflow-assets.md")).expect("bundle");
         assert!(bundle.contains("# GWiki Workflow Assets"));
-        assert!(bundle.contains("## research"));
+        assert!(bundle.contains("## compile"));
 
         let report = root.join("meta/health/latest.md");
         fs::create_dir_all(report.parent().expect("report parent")).expect("report dir");

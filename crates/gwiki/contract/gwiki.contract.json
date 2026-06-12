@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 4,
+  "contract_version": 5,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -126,13 +126,17 @@
         "query",
         "limit",
         "results",
-        "degradations",
-        "fusion_key",
-        "result_type",
-        "path",
         "title",
-        "summary",
-        "score"
+        "fusion_key",
+        "wiki_page",
+        "source_path",
+        "result_type",
+        "snippet",
+        "score",
+        "sources",
+        "explanations",
+        "code_citations",
+        "degradations"
       ]
     },
     {
@@ -185,15 +189,13 @@
         "degraded",
         "degraded_sources",
         "hits",
-        "related_pages",
         "sources",
-        "code_edges",
         "code_citations",
+        "evidence",
+        "prompt_token_budget",
+        "prompt_tokens_estimated",
         "truncated",
         "truncated_components",
-        "gaps",
-        "stale_candidates",
-        "suggested_questions",
         "warnings",
         "ai",
         "synthesis"
@@ -203,13 +205,12 @@
       ],
       "optional_dependencies": [
         "model synthesis",
-        "code graph",
         "Qdrant+embeddings",
-        "FalkorDB"
+        "FalkorDB graph boost"
       ],
       "multimodal": "none",
       "degradation": {
-        "output_shape": "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
+        "output_shape": "model off emits retrieval-only hits with grounded citations; signal loss falls back to BM25-only evidence",
         "metadata_keys": [
           "degraded",
           "degraded_sources[]",
@@ -424,120 +425,6 @@
         "changed_paths",
         "status"
       ]
-    },
-    {
-      "name": "research",
-      "summary": "Run wiki research enrichment or deterministic audit checks.",
-      "daemon_consumed": true,
-      "positionals": [
-        {
-          "name": "QUESTION",
-          "required": false,
-          "repeatable": false
-        }
-      ],
-      "flags": [
-        {
-          "name": "--audit",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--source-constraint",
-          "takes_value": true,
-          "value_name": "TEXT",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": true
-        },
-        {
-          "name": "--max-steps",
-          "takes_value": true,
-          "value_name": "N",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--max-tokens",
-          "takes_value": true,
-          "value_name": "N",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--max-sources",
-          "takes_value": true,
-          "value_name": "N",
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--ai",
-          "takes_value": true,
-          "value_name": "auto|daemon|direct|off",
-          "allowed_values": [
-            "auto",
-            "daemon",
-            "direct",
-            "off"
-          ],
-          "required": false,
-          "repeatable": false
-        },
-        {
-          "name": "--require-ai",
-          "takes_value": false,
-          "value_name": null,
-          "allowed_values": [],
-          "required": false,
-          "repeatable": false
-        }
-      ],
-      "json_output_keys": [
-        "command",
-        "scope",
-        "query",
-        "audit",
-        "stop_reason",
-        "steps_used",
-        "tokens_used",
-        "max_steps",
-        "max_tokens",
-        "max_sources",
-        "max_wall_time_seconds",
-        "max_note_bytes",
-        "write_conflict",
-        "sources_added",
-        "accepted_notes",
-        "findings",
-        "gaps",
-        "warnings",
-        "changed_paths",
-        "session_id",
-        "status"
-      ],
-      "hard_dependencies": [
-        "PostgreSQL"
-      ],
-      "optional_dependencies": [
-        "model multi-step synthesis loop",
-        "code graph/index",
-        "Qdrant+embeddings"
-      ],
-      "multimodal": "none",
-      "degradation": {
-        "output_shape": "model off emits a retrieval-only research scaffold with candidate sources and citations but no synthesized notes; code graph/index off emits docs-only output",
-        "metadata_keys": [
-          "accepted_notes[].degradation",
-          "report.degradation"
-        ]
-      }
     },
     {
       "name": "compile",

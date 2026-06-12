@@ -16,6 +16,23 @@ For one command, use `gwiki ingest-file --no-ai` to keep media ingest on the
 privacy path. Use `--transcription-routing`, `--vision-routing`, and
 `--text-routing` to override configured AI routing for a single ingest.
 
+## Retrieval
+
+`gwiki search` is the retrieval primitive for humans and agents: hybrid
+BM25 + semantic + graph-boosted hits with bounded query-token snippets,
+provenance (`wiki_page`, `source_path`, `result_type`, `sources`), and
+`code_citations` tied to the returned hits. Full document bodies never appear
+in search output; follow a hit with `gwiki read --path <wiki_page>`. Agents
+compose `search` + `read` for research loops and deposit results back through
+`collect`/`ingest-file`.
+
+`gwiki ask` is a thin RAG layer over the same retrieval: top-k hits become a
+bounded evidence prompt (~12K-token cap, reported via `prompt_token_budget` /
+`prompt_tokens_estimated`), one completion runs through the daemon route or a
+direct OpenAI-compatible endpoint (`--ai daemon|direct|auto`, including
+LM Studio), and the answer is checked against the evidence with grounded
+citations.
+
 ## Source Refresh
 
 `gwiki index` rebuilds derived search state from files already on disk.

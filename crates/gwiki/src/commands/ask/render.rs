@@ -70,14 +70,19 @@ fn render_text(query: &str, scope: &ScopeIdentity, output: &AskOutput) -> String
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::commands::ask::assembly::ask_output_from_retrieval;
+    use crate::commands::ask::evidence::plan_evidence;
     use crate::commands::ask::synthesis::record_synthesis;
-    use crate::commands::ask::test_support::output_with_hooks_hit;
+    use crate::commands::ask::test_support::retrieval_with_hooks_hit;
 
     #[test]
     fn unverified_synthesis_is_flagged_in_text_render() {
-        let mut output = output_with_hooks_hit();
+        let retrieval = retrieval_with_hooks_hit();
+        let plan = plan_evidence(&retrieval);
+        let mut output = ask_output_from_retrieval(retrieval.output, &plan);
         record_synthesis(
             &mut output,
+            &plan.excerpts,
             "direct",
             "Kubernetes pods restart the scheduler cluster nightly.".to_string(),
             None,
@@ -90,9 +95,12 @@ mod tests {
         );
         assert!(text.contains("[unverified] 1 claim(s) lack citation support"));
 
-        let mut grounded = output_with_hooks_hit();
+        let retrieval = retrieval_with_hooks_hit();
+        let plan = plan_evidence(&retrieval);
+        let mut grounded = ask_output_from_retrieval(retrieval.output, &plan);
         record_synthesis(
             &mut grounded,
+            &plan.excerpts,
             "direct",
             "Hooks run at turn boundaries.".to_string(),
             None,

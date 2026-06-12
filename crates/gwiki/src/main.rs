@@ -27,7 +27,6 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "link-suggest",
     "benchmark",
     "citation-quality",
-    "research",
     "compile",
     "export",
     "graph",
@@ -121,8 +120,6 @@ enum CliCommand {
     LinkSuggest(LinkSuggestArgs),
     /// Report benchmark metrics for an indexed seeded project.
     Benchmark(BenchmarkArgs),
-    /// Dispatch research workers and checkpoint wiki research state.
-    Research(ResearchArgs),
     /// Compile accepted research notes into wiki articles.
     Compile(CompileArgs),
     /// Export generated bundles and reports under outputs/.
@@ -321,33 +318,6 @@ struct BacklinksArgs {
 struct LinkSuggestArgs {
     #[arg(long, default_value = "10")]
     limit: usize,
-}
-
-#[derive(Debug, Args)]
-struct ResearchArgs {
-    #[arg(value_name = "QUESTION")]
-    question: Option<String>,
-
-    #[arg(long = "source-constraint", value_name = "TEXT")]
-    source_constraints: Vec<String>,
-
-    #[arg(long)]
-    audit: bool,
-
-    #[arg(long = "max-steps", default_value_t = 12, value_name = "N")]
-    max_steps: usize,
-
-    #[arg(long = "max-tokens", default_value_t = 24_000, value_name = "N")]
-    max_tokens: usize,
-
-    #[arg(long = "max-sources", default_value_t = 8, value_name = "N")]
-    max_sources: usize,
-
-    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
-    ai: AiRouting,
-
-    #[arg(long = "require-ai")]
-    require_ai: bool,
 }
 
 #[derive(Debug, Args)]
@@ -655,31 +625,6 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 retrieval_candidates: args.retrieval_candidates,
             },
         }),
-        CliCommand::Research(args) => {
-            let question = match (args.audit, args.question) {
-                (_, Some(question)) => question,
-                (true, None) => "Audit wiki scope".to_string(),
-                (false, None) => {
-                    return Err(WikiError::InvalidInput {
-                        field: "research",
-                        message: "QUESTION is required unless --audit is set".to_string(),
-                    });
-                }
-            };
-            let research_scope = gobby_wiki::resolve_research_scope(&scope)?;
-            Ok(Command::Research(gobby_wiki::research::ResearchOptions {
-                question,
-                scope: research_scope,
-                source_constraints: args.source_constraints,
-                audit: args.audit,
-                max_steps: args.max_steps,
-                max_tokens: args.max_tokens,
-                max_sources: args.max_sources,
-                ai: args.ai,
-                require_ai: args.require_ai,
-                accepted_notes: Vec::new(),
-            }))
-        }
         CliCommand::Compile(args) => Ok(Command::Compile {
             topic: args.topic,
             outline: args.outline,

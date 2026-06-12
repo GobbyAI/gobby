@@ -207,18 +207,6 @@ impl SourceManifest {
         })
     }
 
-    /// Run an action while holding the source manifest lock.
-    ///
-    /// Callers must not invoke public APIs that acquire this same lock from inside
-    /// the action. Methods on `SourceManifest` use `write_unlocked` internally
-    /// after acquiring the lock.
-    pub(crate) fn with_lock<T>(
-        vault_root: &Path,
-        action: impl FnOnce() -> Result<T, WikiError>,
-    ) -> Result<T, WikiError> {
-        with_manifest_lock(vault_root, action)
-    }
-
     pub fn index_path(vault_root: &Path) -> PathBuf {
         vault_root.join("raw").join("INDEX.md")
     }

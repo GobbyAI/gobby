@@ -1,20 +1,10 @@
 use std::collections::BTreeSet;
 
-use crate::commands::ask::dedup::ordered_unique_strings;
-use crate::output::{AskCodeCitationOutput, AskOutput, SearchOutput, SearchResultOutput};
+use crate::commands::ask::evidence::{ASK_PROMPT_TOKEN_BUDGET, EvidencePlan};
+use crate::output::{AskOutput, SearchOutput};
 
-pub(super) fn ask_output_from_search(search: SearchOutput) -> AskOutput {
-    let related_pages = search
-        .results
-        .iter()
-        .map(|hit| crate::output::AskRelatedPageOutput {
-            title: hit.title.clone(),
-            path: hit.wiki_page.clone(),
-            score: hit.score,
-        })
-        .collect::<Vec<_>>();
+pub(super) fn ask_output_from_retrieval(search: SearchOutput, plan: &EvidencePlan) -> AskOutput {
     let sources = unique_sources(&search);
-    let code_citations = code_citations_from_results(&search.results);
     let degraded_sources = ordered_unique_strings(search.degradations.clone());
     let warnings = ordered_unique_strings(search.degradations);
     let status = if search.results.is_empty() {
@@ -22,6 +12,7 @@ pub(super) fn ask_output_from_search(search: SearchOutput) -> AskOutput {
     } else {
         "retrieved"
     };
+    let truncated = plan.dropped_hits > 0;
     AskOutput {
         command: "ask",
         scope: search.scope,
@@ -30,15 +21,17 @@ pub(super) fn ask_output_from_search(search: SearchOutput) -> AskOutput {
         degraded: !degraded_sources.is_empty(),
         degraded_sources,
         hits: search.results,
-        related_pages,
         sources,
-        code_edges: Vec::new(),
-        code_citations,
-        truncated: false,
-        truncated_components: Vec::new(),
-        gaps: Vec::new(),
-        stale_candidates: Vec::new(),
-        suggested_questions: Vec::new(),
+        code_citations: search.code_citations,
+        evidence: plan.items.clone(),
+        prompt_token_budget: ASK_PROMPT_TOKEN_BUDGET,
+        prompt_tokens_estimated: plan.prompt_tokens_estimated,
+        truncated,
+        truncated_components: if truncated {
+            vec!["evidence".to_string()]
+        } else {
+            Vec::new()
+        },
         warnings,
         ai: None,
         synthesis: None,
@@ -56,28 +49,12 @@ fn unique_sources(search: &SearchOutput) -> Vec<String> {
     seen.into_iter().collect()
 }
 
-fn code_citations_from_results(results: &[SearchResultOutput]) -> Vec<AskCodeCitationOutput> {
+pub(super) fn ordered_unique_strings(values: Vec<String>) -> Vec<String> {
     let mut seen = BTreeSet::new();
-    let mut citations = Vec::new();
-    for hit in results {
-        if !is_code_result(hit) {
-            continue;
-        }
-        let file = hit.source_path.display().to_string();
-        let symbol = hit.title.clone();
-        if seen.insert((file.clone(), symbol.clone())) {
-            citations.push(AskCodeCitationOutput {
-                file,
-                line: None,
-                symbol,
-            });
-        }
-    }
-    citations
-}
-
-fn is_code_result(hit: &SearchResultOutput) -> bool {
-    hit.result_type.is_code()
+    values
+        .into_iter()
+        .filter(|value| seen.insert(value.clone()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -85,51 +62,59 @@ mod tests {
     use std::path::PathBuf;
 
     use crate::ScopeIdentity;
+    use crate::commands::ask::evidence::plan_evidence;
+    use crate::commands::search::SearchRetrieval;
     use crate::output::{SearchResultOutput, SearchResultType};
 
     use super::*;
 
     #[test]
-    fn ask_output_keeps_full_retrieval_shape() {
-        let output = ask_output_from_search(SearchOutput::new(
-            ScopeIdentity::topic("docs"),
-            "How do hooks work?",
-            10,
-            vec![SearchResultOutput {
-                title: Some("Hooks".to_string()),
-                fusion_key: "topic:docs:wiki/hooks.md".to_string(),
-                wiki_page: PathBuf::from("wiki/hooks.md"),
-                source_path: PathBuf::from("raw/hooks.md"),
-                result_type: SearchResultType::Wiki,
-                snippet: "Hooks run at turn boundaries.".to_string(),
-                score: 0.9,
-                sources: vec!["bm25".to_string()],
-                explanations: Vec::new(),
-            }],
-            vec![
-                "semantic_unavailable".to_string(),
-                "semantic_unavailable".to_string(),
-            ],
-        ));
+    fn ask_output_keeps_bounded_retrieval_shape() {
+        let retrieval = SearchRetrieval {
+            output: SearchOutput::new(
+                ScopeIdentity::topic("docs"),
+                "How do hooks work?",
+                10,
+                vec![SearchResultOutput {
+                    title: Some("Hooks".to_string()),
+                    fusion_key: "topic:docs:wiki/hooks.md".to_string(),
+                    wiki_page: PathBuf::from("wiki/hooks.md"),
+                    source_path: PathBuf::from("raw/hooks.md"),
+                    result_type: SearchResultType::Wiki,
+                    snippet: "Hooks run at turn boundaries.".to_string(),
+                    score: 0.9,
+                    sources: vec!["bm25".to_string()],
+                    explanations: Vec::new(),
+                }],
+                vec![
+                    "semantic_unavailable".to_string(),
+                    "semantic_unavailable".to_string(),
+                ],
+            ),
+            evidence: vec!["Hooks run at turn boundaries and dispatch envelopes.".to_string()],
+        };
+        let plan = plan_evidence(&retrieval);
+        let output = ask_output_from_retrieval(retrieval.output, &plan);
 
         assert_eq!(output.command, "ask");
         assert_eq!(output.status, "retrieved");
         assert_eq!(output.query, "How do hooks work?");
         assert_eq!(output.hits.len(), 1);
-        assert_eq!(output.related_pages[0].path, PathBuf::from("wiki/hooks.md"));
         assert_eq!(
             output.sources,
             vec!["bm25".to_string(), "raw/hooks.md".to_string()]
         );
-        assert!(output.code_edges.is_empty());
+        assert_eq!(output.evidence.len(), 1);
+        assert_eq!(output.evidence[0].wiki_page, PathBuf::from("wiki/hooks.md"));
+        assert_eq!(output.prompt_token_budget, ASK_PROMPT_TOKEN_BUDGET);
+        assert!(output.prompt_tokens_estimated > 0);
+        assert!(!output.truncated);
+        assert!(output.truncated_components.is_empty());
         assert_eq!(output.warnings, vec!["semantic_unavailable".to_string()]);
         assert_eq!(
             output.degraded_sources,
             vec!["semantic_unavailable".to_string()]
         );
-        assert!(output.gaps.is_empty());
-        assert!(output.stale_candidates.is_empty());
-        assert!(output.suggested_questions.is_empty());
         assert!(output.ai.is_none());
         assert!(output.synthesis.is_none());
     }

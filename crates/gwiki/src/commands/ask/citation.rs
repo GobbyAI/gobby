@@ -19,11 +19,15 @@ const MIN_CLAIM_TOKENS: usize = 3;
 ///
 /// The synthesis prompt only *asks* the model to stay grounded; this is the
 /// post-generation verification. Each sentence-level claim is tokenized and
-/// must overlap the evidence corpus (hit titles/snippets/paths, related pages,
-/// code citations) above [`CLAIM_SUPPORT_THRESHOLD`], mirroring the spirit of
-/// `audit`'s provenance check for persisted prose.
-pub(super) fn citation_check(answer: &str, output: &AskOutput) -> AskCitationCheckOutput {
-    let evidence = evidence_tokens(output);
+/// must overlap the evidence corpus (hit titles/snippets/paths, the prompt's
+/// evidence excerpts, code citations) above [`CLAIM_SUPPORT_THRESHOLD`],
+/// mirroring the spirit of `audit`'s provenance check for persisted prose.
+pub(super) fn citation_check(
+    answer: &str,
+    output: &AskOutput,
+    evidence_excerpts: &[String],
+) -> AskCitationCheckOutput {
+    let evidence = evidence_tokens(output, evidence_excerpts);
     let claims = answer_claims(answer);
     let checked_claims = claims.len();
     let unsupported_claims: Vec<String> = claims
@@ -71,7 +75,7 @@ fn claim_is_supported(claim: &str, evidence: &HashSet<String>) -> bool {
     (supported as f64 / tokens.len() as f64) >= CLAIM_SUPPORT_THRESHOLD
 }
 
-fn evidence_tokens(output: &AskOutput) -> HashSet<String> {
+fn evidence_tokens(output: &AskOutput, evidence_excerpts: &[String]) -> HashSet<String> {
     let mut evidence = HashSet::new();
     for hit in &output.hits {
         if let Some(title) = &hit.title {
@@ -81,11 +85,8 @@ fn evidence_tokens(output: &AskOutput) -> HashSet<String> {
         collect_tokens(&hit.wiki_page.display().to_string(), &mut evidence);
         collect_tokens(&hit.source_path.display().to_string(), &mut evidence);
     }
-    for page in &output.related_pages {
-        if let Some(title) = &page.title {
-            collect_tokens(title, &mut evidence);
-        }
-        collect_tokens(&page.path.display().to_string(), &mut evidence);
+    for excerpt in evidence_excerpts {
+        collect_tokens(excerpt, &mut evidence);
     }
     for citation in &output.code_citations {
         collect_tokens(&citation.file, &mut evidence);

@@ -1,7 +1,6 @@
 mod assembly;
 mod citation;
-mod dedup;
-mod graph_enrichment;
+mod evidence;
 mod narration;
 mod render;
 mod synthesis;
@@ -16,6 +15,8 @@ use crate::{CommandOutcome, ScopeSelection, WikiError};
 
 const DEFAULT_ASK_HIT_LIMIT: usize = 10;
 
+/// Thin RAG over `search`: top-k retrieval, a bounded evidence prompt, one
+/// completion, grounded citations. No whole-scope context expansion.
 pub(crate) fn execute(
     query: String,
     selection: ScopeSelection,
@@ -30,11 +31,11 @@ pub(crate) fn execute(
         });
     }
 
-    let search = search::retrieve(query, selection.clone(), DEFAULT_ASK_HIT_LIMIT, true)?;
-    let mut output = assembly::ask_output_from_search(search);
-    graph_enrichment::enrich_with_attached_unified_graph_context(&mut output, &selection)?;
+    let retrieval = search::retrieve(query, selection, DEFAULT_ASK_HIT_LIMIT, true)?;
+    let plan = evidence::plan_evidence(&retrieval);
+    let mut output = assembly::ask_output_from_retrieval(retrieval.output, &plan);
     if llm {
-        synthesis::synthesize(&mut output, ai, require_ai)?;
+        synthesis::synthesize(&mut output, &plan, ai, require_ai)?;
     }
     render::render(output)
 }

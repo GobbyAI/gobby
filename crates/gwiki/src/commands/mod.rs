@@ -15,7 +15,6 @@ pub(crate) mod librarian;
 pub(crate) mod lint;
 pub(crate) mod read;
 pub(crate) mod refresh;
-pub(crate) mod research;
 pub(crate) mod review_report;
 pub(crate) mod search;
 pub(crate) mod setup;
@@ -69,7 +68,6 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Backlinks { page, scope } => backlinks::execute(page, scope),
         Command::LinkSuggest { scope, limit } => backlinks::execute_link_suggest(scope, limit),
         Command::Benchmark { scope, options } => benchmark::execute(scope, options),
-        Command::Research(options) => research::execute(options),
         Command::Compile {
             topic,
             outline,

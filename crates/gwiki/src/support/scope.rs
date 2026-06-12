@@ -2,7 +2,7 @@ use std::path::Path;
 
 use crate::{
     ScopeIdentity, ScopeKind, ScopeSelection, WikiError, indexer, scope as wiki_scope, search,
-    session, store,
+    store,
 };
 
 use super::config;
@@ -84,15 +84,6 @@ pub(crate) fn resolve_command_scope(
         source: error,
     })?;
     wiki_scope::resolve(selection, &cwd)
-}
-
-pub(crate) fn research_scope_identity(scope: &session::ResearchScope) -> ScopeIdentity {
-    match scope {
-        session::ResearchScope::Project { project_id, .. } => {
-            ScopeIdentity::project(project_id.clone())
-        }
-        session::ResearchScope::Topic { name, .. } => ScopeIdentity::topic(name.clone()),
-    }
 }
 
 pub(crate) fn resolved_scope_identity(scope: &wiki_scope::ResolvedScope) -> ScopeIdentity {

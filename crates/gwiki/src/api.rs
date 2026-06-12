@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use gobby_core::ai_context::AiContext;
 use gobby_core::config::AiRouting;
 
-use crate::{exports, research, synthesis};
+use crate::{exports, synthesis};
 
 /// Parsed gwiki command passed in from the binary.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -74,7 +74,6 @@ pub enum Command {
         scope: ScopeSelection,
         options: BenchmarkOptions,
     },
-    Research(research::ResearchOptions),
     Compile {
         topic: Option<String>,
         outline: Vec<String>,

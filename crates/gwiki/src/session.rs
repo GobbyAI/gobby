@@ -153,10 +153,6 @@ impl ResearchCodeCitation {
     pub fn provenance(&self) -> &[String] {
         &self.provenance
     }
-
-    pub(crate) fn provenance_mut(&mut self) -> &mut Vec<String> {
-        &mut self.provenance
-    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

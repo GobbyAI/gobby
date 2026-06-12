@@ -5,8 +5,8 @@ use std::path::PathBuf;
 use gobby_wiki::{
     ScopeIdentity,
     output::{
-        AskAiOutput, AskCitationCheckOutput, AskCodeCitationOutput, AskCodeEdgeOutput, AskOutput,
-        AskRelatedPageOutput, AskSynthesisOutput, SearchResultOutput, SearchResultType,
+        AskAiOutput, AskCitationCheckOutput, AskEvidenceOutput, AskOutput, AskSynthesisOutput,
+        CodeCitationOutput, SearchOutput, SearchResultOutput, SearchResultType,
         SearchSourceExplanationOutput,
     },
 };
@@ -118,45 +118,22 @@ fn representative_ask_output() -> AskOutput {
         status: "answered",
         degraded: false,
         degraded_sources: Vec::new(),
-        hits: vec![SearchResultOutput {
-            title: Some("Contract guardrails".to_string()),
-            fusion_key: "wiki:contract-guardrails".to_string(),
-            wiki_page: PathBuf::from("knowledge/topics/contract-guardrails.md"),
-            source_path: PathBuf::from("crates/gwiki/src/contract.rs"),
-            result_type: SearchResultType::Wiki,
-            snippet: "Contracts must describe serialized command output.".to_string(),
-            score: 0.98,
-            sources: vec!["fts".to_string(), "semantic".to_string()],
-            explanations: vec![SearchSourceExplanationOutput {
-                source: "fts".to_string(),
-                rank: 1,
-                score: 0.91,
-            }],
-        }],
-        related_pages: vec![AskRelatedPageOutput {
-            title: Some("CLI contracts".to_string()),
-            path: PathBuf::from("knowledge/topics/cli-contracts.md"),
-            score: 0.72,
-        }],
+        hits: vec![representative_search_hit()],
         sources: vec!["knowledge/topics/contract-guardrails.md".to_string()],
-        code_edges: vec![AskCodeEdgeOutput {
-            source: "crates/gwiki/src/contract.rs:contract".to_string(),
-            target: "crates/gwiki/src/output.rs:AskOutput".to_string(),
-            kind: "references".to_string(),
-            direction: "outgoing".to_string(),
-            line: Some(42),
-            provenance: "gcode_falkor".to_string(),
-        }],
-        code_citations: vec![AskCodeCitationOutput {
+        code_citations: vec![CodeCitationOutput {
             file: "crates/gwiki/src/output.rs".to_string(),
             line: Some(102),
             symbol: Some("AskOutput".to_string()),
         }],
-        truncated: false,
-        truncated_components: Vec::new(),
-        gaps: vec!["No daemon fixture covered this output shape.".to_string()],
-        stale_candidates: vec!["knowledge/topics/old-contract-keys.md".to_string()],
-        suggested_questions: vec!["Which commands publish json_output_keys?".to_string()],
+        evidence: vec![AskEvidenceOutput {
+            wiki_page: PathBuf::from("knowledge/topics/contract-guardrails.md"),
+            source_path: PathBuf::from("crates/gwiki/src/contract.rs"),
+            excerpt_chars: 51,
+        }],
+        prompt_token_budget: 12_000,
+        prompt_tokens_estimated: 64,
+        truncated: true,
+        truncated_components: vec!["evidence".to_string()],
         warnings: vec!["semantic search degraded".to_string()],
         ai: Some(AskAiOutput {
             requested: true,
@@ -180,6 +157,52 @@ fn representative_ask_output() -> AskOutput {
     }
 }
 
+fn representative_search_hit() -> SearchResultOutput {
+    SearchResultOutput {
+        title: Some("Contract guardrails".to_string()),
+        fusion_key: "wiki:contract-guardrails".to_string(),
+        wiki_page: PathBuf::from("knowledge/topics/contract-guardrails.md"),
+        source_path: PathBuf::from("crates/gwiki/src/contract.rs"),
+        result_type: SearchResultType::Code,
+        snippet: "Contracts must describe serialized command output.".to_string(),
+        score: 0.98,
+        sources: vec!["fts".to_string(), "semantic".to_string()],
+        explanations: vec![SearchSourceExplanationOutput {
+            source: "fts".to_string(),
+            rank: 1,
+            score: 0.91,
+        }],
+    }
+}
+
+#[test]
+fn search_contract_keys_serialize_from_representative_output() {
+    let contract = gobby_wiki::contract::contract();
+    let search = contract
+        .commands
+        .iter()
+        .find(|command| command.name == "search")
+        .expect("search command contract");
+    let output = serde_json::to_value(SearchOutput::new(
+        ScopeIdentity::topic("contract-guardrails"),
+        "contract keys",
+        5,
+        vec![representative_search_hit()],
+        vec!["semantic_unavailable".to_string()],
+    ))
+    .expect("representative search output JSON");
+
+    let missing_key = missing_json_output_key(&search.json_output_keys, &output);
+    assert!(
+        missing_key.is_none(),
+        "command `{}` declares json_output_key `{}`, but representative output does not serialize \
+         that key:\n{}",
+        search.name,
+        missing_key.unwrap_or("<none>"),
+        serde_json::to_string_pretty(&output).expect("serialize output context")
+    );
+}
+
 fn missing_json_output_key<'a>(keys: &'a [&str], output: &Value) -> Option<&'a str> {
     keys.iter()
         .copied()
@@ -199,7 +222,7 @@ fn json_contains_key(value: &Value, key: &str) -> bool {
 #[test]
 fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let contract = pinned_contract();
-    assert_eq!(contract["contract_version"], 4);
+    assert_eq!(contract["contract_version"], 5);
 
     let ask = command(&contract, "ask");
     assert_classification(
@@ -207,12 +230,11 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
         serde_json::json!(["PostgreSQL"]),
         serde_json::json!([
             "model synthesis",
-            "code graph",
             "Qdrant+embeddings",
-            "FalkorDB"
+            "FalkorDB graph boost"
         ]),
         serde_json::json!({
-            "output_shape": "model off emits an extractive citation-list answer; signal loss falls back to wiki-only grounding",
+            "output_shape": "model off emits retrieval-only hits with grounded citations; signal loss falls back to BM25-only evidence",
             "metadata_keys": [
                 "degraded",
                 "degraded_sources[]",
@@ -231,15 +253,13 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
             "degraded",
             "degraded_sources",
             "hits",
-            "related_pages",
             "sources",
-            "code_edges",
             "code_citations",
+            "evidence",
+            "prompt_token_budget",
+            "prompt_tokens_estimated",
             "truncated",
             "truncated_components",
-            "gaps",
-            "stale_candidates",
-            "suggested_questions",
             "warnings",
             "ai",
             "synthesis"
@@ -281,19 +301,13 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
         ])
     );
 
-    let research = command(&contract, "research");
-    assert_classification(
-        research,
-        serde_json::json!(["PostgreSQL"]),
-        serde_json::json!([
-            "model multi-step synthesis loop",
-            "code graph/index",
-            "Qdrant+embeddings"
-        ]),
-        serde_json::json!({
-            "output_shape": "model off emits a retrieval-only research scaffold with candidate sources and citations but no synthesized notes; code graph/index off emits docs-only output",
-            "metadata_keys": ["accepted_notes[].degradation", "report.degradation"]
-        }),
+    assert!(
+        !contract["commands"]
+            .as_array()
+            .expect("commands array")
+            .iter()
+            .any(|command| command["name"] == "research"),
+        "research command must be absent from the contract"
     );
 
     let librarian = command(&contract, "librarian");

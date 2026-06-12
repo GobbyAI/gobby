@@ -18,7 +18,6 @@ pub mod contract;
 pub(crate) mod credibility;
 pub(crate) mod daemon;
 pub mod document;
-pub(crate) mod events;
 pub mod exports;
 pub(crate) mod falkor_graph;
 pub(crate) mod frontmatter;
@@ -37,8 +36,6 @@ pub mod output;
 pub(crate) mod paths;
 pub(crate) mod provenance;
 pub(crate) mod registry;
-pub mod research;
-pub(crate) mod research_loop;
 pub(crate) mod schema;
 pub(crate) mod scope;
 pub(crate) mod search;
@@ -58,4 +55,4 @@ pub use api::{
     ReviewReportOptions, ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions,
 };
 pub use error::WikiError;
-pub use runner::{resolve_research_scope, run};
+pub use runner::run;

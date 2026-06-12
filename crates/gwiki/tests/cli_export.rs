@@ -36,7 +36,6 @@ fn export_workflow_assets_writes_outputs_without_mutating_wiki_pages() {
     let export_path = vault.join("outputs/workflow-bundle.md");
     let exported = fs::read_to_string(&export_path).expect("read export");
     assert!(exported.contains("# GWiki Workflow Assets"));
-    assert!(exported.contains("## research"));
     assert!(exported.contains("## compile"));
     assert_eq!(fs::read_to_string(&wiki_page).expect("read after"), before);
 

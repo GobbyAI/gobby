@@ -12,11 +12,11 @@ use serde_json::json;
 
 use crate::code_graph::{AffectedPage, CodeChangeSet, CodeGraphEdge, CodeGraphQuery};
 use crate::provenance::ProvenanceGraph;
-use crate::research::sanitize_code_path;
 use crate::search::SearchScope;
 use crate::support::env::database_url_for;
 use crate::support::scope::resolve_selection_context;
 use crate::support::search::PostgresConfigSource;
+use crate::support::text::sanitize_code_path;
 use crate::{
     CommandOutcome, ReviewReportOptions, ScopeIdentity, ScopeSelection, WikiError, exports,
 };

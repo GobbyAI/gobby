@@ -21,6 +21,30 @@ pub(crate) fn keyword_score(text: &str, tokens: &[String]) -> usize {
         .sum()
 }
 
+/// Normalize a model- or report-supplied code path to a safe repo-relative
+/// form: reject absolute paths and parent traversal, drop `.` components.
+pub(crate) fn sanitize_code_path(path: &str) -> Option<String> {
+    use std::path::Component;
+
+    let trimmed = path.trim();
+    if trimmed.is_empty() {
+        return None;
+    }
+    let path = Path::new(trimmed);
+    if path.is_absolute() {
+        return None;
+    }
+    let mut components = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::Normal(value) => components.push(value.to_string_lossy().to_string()),
+            Component::CurDir => {}
+            Component::ParentDir | Component::RootDir | Component::Prefix(_) => return None,
+        }
+    }
+    (!components.is_empty()).then(|| components.join("/"))
+}
+
 pub(crate) fn snippet_from_text(text: &str) -> String {
     let snippet = text
         .lines()
@@ -111,6 +135,21 @@ mod tests {
 
         assert!(snippet.ends_with("..."));
         assert_eq!(snippet.chars().count(), 240);
+    }
+
+    #[test]
+    fn sanitize_code_path_strips_current_dir_components() {
+        assert_eq!(
+            sanitize_code_path("./src/./lib.rs"),
+            Some("src/lib.rs".to_string())
+        );
+        assert_eq!(
+            sanitize_code_path("src//nested/./mod.rs"),
+            Some("src/nested/mod.rs".to_string())
+        );
+        assert_eq!(sanitize_code_path("./"), None);
+        assert_eq!(sanitize_code_path("/abs/path.rs"), None);
+        assert_eq!(sanitize_code_path("../escape.rs"), None);
     }
 
     #[test]

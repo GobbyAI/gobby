@@ -20,13 +20,22 @@ use crate::support::search as search_support;
 use crate::support::text::degradation_label;
 use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError};
 
+/// Retrieval result pairing the command output with the raw per-hit content
+/// the snippets were derived from. `evidence[i]` belongs to
+/// `output.results[i]`; `ask` consumes it to build its bounded prompt while
+/// search output itself only ever carries bounded snippets.
+pub(crate) struct SearchRetrieval {
+    pub(crate) output: SearchOutput,
+    pub(crate) evidence: Vec<String>,
+}
+
 pub(crate) fn execute(
     query: String,
     selection: ScopeSelection,
     limit: usize,
     include_semantic: bool,
 ) -> Result<CommandOutcome, WikiError> {
-    render(retrieve(query, selection, limit, include_semantic)?)
+    render(retrieve(query, selection, limit, include_semantic)?.output)
 }
 
 pub(crate) fn retrieve(
@@ -34,7 +43,7 @@ pub(crate) fn retrieve(
     selection: ScopeSelection,
     limit: usize,
     include_semantic: bool,
-) -> Result<SearchOutput, WikiError> {
+) -> Result<SearchRetrieval, WikiError> {
     if let Some(database_url) = database_url_for("gwiki search")? {
         let scope = resolve_command_scope(&selection)?;
         return run_search_attached(
@@ -75,7 +84,7 @@ fn run_search_attached(
     query: String,
     limit: usize,
     include_semantic: bool,
-) -> Result<SearchOutput, WikiError> {
+) -> Result<SearchRetrieval, WikiError> {
     let mut conn = gobby_core::postgres::connect_readonly(database_url).map_err(|error| {
         WikiError::Config {
             detail: format!("failed to connect to PostgreSQL for gwiki search: {error}"),
@@ -243,7 +252,7 @@ fn run_search_with_backends<B, S, G>(
     semantic_backend: &mut S,
     graph_backend: &mut G,
     input: SearchExecutionInput,
-) -> Result<SearchOutput, WikiError>
+) -> Result<SearchRetrieval, WikiError>
 where
     B: wiki_search::bm25::Bm25SearchBackend,
     S: wiki_search::semantic::SemanticSearchBackend,
@@ -261,15 +270,18 @@ where
         },
     )?;
     let mut results = Vec::with_capacity(response.results.len());
+    let mut evidence = Vec::with_capacity(response.results.len());
     for result in response.results {
         let fusion_key = result.fusion_key()?;
+        let snippet = bounded_snippet(&result.snippet, &input.query);
+        evidence.push(result.snippet);
         results.push(SearchResultOutput {
             title: result.title,
             fusion_key,
             result_type: SearchResultType::from_wiki_page(&result.path),
             wiki_page: result.path,
             source_path: result.source_path,
-            snippet: result.snippet,
+            snippet,
             score: result.score,
             sources: result
                 .sources
@@ -292,19 +304,58 @@ where
         .iter()
         .map(degradation_label)
         .collect::<Vec<_>>();
-    Ok(SearchOutput::new(
-        input.output_scope,
-        input.query,
-        input.limit,
-        results,
-        degradations,
-    ))
+    Ok(SearchRetrieval {
+        output: SearchOutput::new(
+            input.output_scope,
+            input.query,
+            input.limit,
+            results,
+            degradations,
+        ),
+        evidence,
+    })
+}
+
+/// Max characters of a search display snippet (query-token window).
+const SNIPPET_BEFORE_CHARS: usize = 60;
+const SNIPPET_AFTER_CHARS: usize = 120;
+
+/// Compact query-token snippet for command output: a whitespace-collapsed
+/// window around the first query-token match. Backends hand us chunk content
+/// or whole document bodies; output never carries them in full.
+fn bounded_snippet(content: &str, query: &str) -> String {
+    let window = query_window(content, query, SNIPPET_BEFORE_CHARS, SNIPPET_AFTER_CHARS);
+    window.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+/// Character window around the earliest query-token match, falling back to
+/// the head of the content when no token matches.
+pub(crate) fn query_window(content: &str, query: &str, before: usize, after: usize) -> String {
+    let lower_content = content.to_lowercase();
+    let match_char_at = query
+        .split_whitespace()
+        .map(str::to_lowercase)
+        .filter(|token| !token.is_empty())
+        .filter_map(|token| {
+            // The byte index is a char boundary of `lower_content`; its char
+            // count approximates the same position in `content` (exact for
+            // ASCII, off by at most the rare lowercase expansions).
+            lower_content
+                .find(&token)
+                .map(|byte_index| lower_content[..byte_index].chars().count())
+        })
+        .min()
+        .unwrap_or(0);
+    let start = match_char_at.saturating_sub(before);
+    let content_len = content.chars().count();
+    let end = match_char_at.saturating_add(after).min(content_len);
+    content.chars().skip(start).take(end - start).collect()
 }
 
 fn render(output: SearchOutput) -> Result<CommandOutcome, WikiError> {
     let scope = output.scope.clone();
     let query = output.query.clone();
-    let text = render_text(&query, &scope, &output.results);
+    let text = render_text(&query, &scope, &output.results, &output.degradations);
     let payload = serde_json::to_value(&output).map_err(|error| WikiError::Json {
         action: "serialize search output",
         path: None,
@@ -314,8 +365,16 @@ fn render(output: SearchOutput) -> Result<CommandOutcome, WikiError> {
     Ok(super::scoped_outcome("search", &scope, payload, text))
 }
 
-fn render_text(query: &str, scope: &ScopeIdentity, results: &[SearchResultOutput]) -> String {
+fn render_text(
+    query: &str,
+    scope: &ScopeIdentity,
+    results: &[SearchResultOutput],
+    degradations: &[String],
+) -> String {
     let mut text = format!("Search results for \"{query}\"\nScope: {scope}\n");
+    if !degradations.is_empty() {
+        text.push_str(&format!("Degraded: {}\n", degradations.join(", ")));
+    }
     if results.is_empty() {
         text.push_str("No results");
         return text;
@@ -373,5 +432,36 @@ mod tests {
             format!("{degradation:?}")
                 .contains("FalkorDB required infrastructure is not configured")
         );
+    }
+
+    #[test]
+    fn bounded_snippet_windows_around_first_query_token() {
+        let body = format!(
+            "{}ghook enqueues the hook envelope to the inbox before posting.{}",
+            "filler ".repeat(200),
+            " trailer".repeat(200),
+        );
+        let snippet = bounded_snippet(&body, "inbox enqueue");
+
+        assert!(snippet.contains("enqueues"));
+        assert!(snippet.chars().count() <= SNIPPET_BEFORE_CHARS + SNIPPET_AFTER_CHARS);
+    }
+
+    #[test]
+    fn bounded_snippet_never_emits_full_document_body() {
+        let body = "word ".repeat(5_000);
+        let snippet = bounded_snippet(&body, "zzz-no-match");
+
+        assert!(snippet.chars().count() <= SNIPPET_BEFORE_CHARS + SNIPPET_AFTER_CHARS);
+        assert!(snippet.starts_with("word"));
+    }
+
+    #[test]
+    fn query_window_handles_multibyte_content() {
+        let body = format!("{}évidence enqueue ici{}", "préfixe ".repeat(50), " fin");
+        let window = query_window(&body, "enqueue", 10, 20);
+
+        assert!(window.contains("enqueue"));
+        assert!(window.chars().count() <= 30);
     }
 }

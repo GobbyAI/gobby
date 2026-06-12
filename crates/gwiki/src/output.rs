@@ -76,6 +76,7 @@ pub struct SearchOutput {
     pub query: String,
     pub limit: usize,
     pub results: Vec<SearchResultOutput>,
+    pub code_citations: Vec<CodeCitationOutput>,
     pub degradations: Vec<String>,
 }
 
@@ -87,17 +88,45 @@ impl SearchOutput {
         results: Vec<SearchResultOutput>,
         degradations: Vec<String>,
     ) -> Self {
+        let code_citations = code_citations_from_results(&results);
         Self {
             command: "search",
             scope,
             query: query.into(),
             limit,
             results,
+            code_citations,
             degradations,
         }
     }
 }
 
+/// Derive code citations from the returned hits only — code-typed results map
+/// to their indexed source file. Citations never expand beyond the hits the
+/// search returned.
+pub fn code_citations_from_results(results: &[SearchResultOutput]) -> Vec<CodeCitationOutput> {
+    let mut seen = std::collections::BTreeSet::new();
+    let mut citations = Vec::new();
+    for hit in results {
+        if !hit.result_type.is_code() {
+            continue;
+        }
+        let file = hit.source_path.display().to_string();
+        let symbol = hit.title.clone();
+        if seen.insert((file.clone(), symbol.clone())) {
+            citations.push(CodeCitationOutput {
+                file,
+                line: None,
+                symbol,
+            });
+        }
+    }
+    citations
+}
+
+/// Bounded-evidence ask output: retrieval hits plus the prompt-budget
+/// accounting for the single synthesis completion. Evidence excerpts are
+/// in-memory only; the output records which pages contributed and how much.
 #[derive(Debug, Clone, PartialEq, serde::Serialize)]
 pub struct AskOutput {
     pub command: &'static str,
@@ -107,15 +136,13 @@ pub struct AskOutput {
     pub degraded: bool,
     pub degraded_sources: Vec<String>,
     pub hits: Vec<SearchResultOutput>,
-    pub related_pages: Vec<AskRelatedPageOutput>,
     pub sources: Vec<String>,
-    pub code_edges: Vec<AskCodeEdgeOutput>,
-    pub code_citations: Vec<AskCodeCitationOutput>,
+    pub code_citations: Vec<CodeCitationOutput>,
+    pub evidence: Vec<AskEvidenceOutput>,
+    pub prompt_token_budget: usize,
+    pub prompt_tokens_estimated: usize,
     pub truncated: bool,
     pub truncated_components: Vec<String>,
-    pub gaps: Vec<String>,
-    pub stale_candidates: Vec<String>,
-    pub suggested_questions: Vec<String>,
     pub warnings: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ai: Option<AskAiOutput>,
@@ -123,19 +150,16 @@ pub struct AskOutput {
     pub synthesis: Option<AskSynthesisOutput>,
 }
 
+/// One evidence excerpt included in the bounded synthesis prompt.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct AskCodeEdgeOutput {
-    pub source: String,
-    pub target: String,
-    pub kind: String,
-    pub direction: String,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub line: Option<usize>,
-    pub provenance: String,
+pub struct AskEvidenceOutput {
+    pub wiki_page: PathBuf,
+    pub source_path: PathBuf,
+    pub excerpt_chars: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
-pub struct AskCodeCitationOutput {
+pub struct CodeCitationOutput {
     pub file: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub line: Option<usize>,
@@ -184,13 +208,6 @@ pub struct SearchResultOutput {
     pub explanations: Vec<SearchSourceExplanationOutput>,
 }
 
-#[derive(Debug, Clone, PartialEq, serde::Serialize)]
-pub struct AskRelatedPageOutput {
-    pub title: Option<String>,
-    pub path: PathBuf,
-    pub score: f64,
-}
-
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct AskAiOutput {
     pub requested: bool,
@@ -209,9 +226,9 @@ pub struct AskSynthesisOutput {
 }
 
 /// Post-generation grounding verdict for a synthesized answer. Unlike persisted
-/// wiki prose (validated by research-note linting and `audit`), `ask --llm`
-/// output is ephemeral, so the claim check runs inline against the retrieved
-/// evidence and flags any claim it cannot ground.
+/// wiki prose (validated by `lint` and `audit`), `ask --llm` output is
+/// ephemeral, so the claim check runs inline against the retrieved evidence
+/// and flags any claim it cannot ground.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct AskCitationCheckOutput {
     pub status: &'static str,
@@ -385,6 +402,7 @@ mod tests {
                         "score": 0.016666666666666666
                     }]
                 }],
+                "code_citations": [],
                 "degradations": ["semantic_unavailable"]
             })
         );
@@ -412,6 +430,48 @@ mod tests {
                 "report_path": "outputs/audit-20260529.json",
                 "source_paths": ["raw/INDEX.md"]
             })
+        );
+    }
+
+    #[test]
+    fn search_output_derives_code_citations_from_code_hits_only() {
+        let wiki_hit = SearchResultOutput {
+            title: Some("Ownership".to_string()),
+            fusion_key: "topic:rust:knowledge/topics/ownership.md".to_string(),
+            wiki_page: "knowledge/topics/ownership.md".into(),
+            source_path: "raw/INDEX.md".into(),
+            result_type: SearchResultType::Wiki,
+            snippet: "Ownership rules move values.".to_string(),
+            score: 0.91,
+            sources: vec!["bm25".to_string()],
+            explanations: Vec::new(),
+        };
+        let code_hit = SearchResultOutput {
+            title: Some("dispatch".to_string()),
+            fusion_key: "project:p1:code/files/src/lib.rs.md".to_string(),
+            wiki_page: "code/files/src/lib.rs.md".into(),
+            source_path: "src/lib.rs".into(),
+            result_type: SearchResultType::Code,
+            snippet: "fn dispatch()".to_string(),
+            score: 0.88,
+            sources: vec!["bm25".to_string()],
+            explanations: Vec::new(),
+        };
+        let output = SearchOutput::new(
+            ScopeIdentity::project("p1"),
+            "dispatch",
+            5,
+            vec![wiki_hit, code_hit.clone(), code_hit],
+            Vec::new(),
+        );
+
+        assert_eq!(
+            output.code_citations,
+            vec![CodeCitationOutput {
+                file: "src/lib.rs".to_string(),
+                line: None,
+                symbol: Some("dispatch".to_string()),
+            }]
         );
     }
 

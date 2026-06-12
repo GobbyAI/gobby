@@ -21,6 +21,59 @@ fn cli_subcommands_match_clap_variants() {
 }
 
 #[test]
+fn research_subcommand_is_removed() {
+    use clap::Parser;
+
+    assert!(!CLI_SUBCOMMANDS.contains(&"research"));
+    let error = Cli::try_parse_from(["gwiki", "research", "How does indexing work?"])
+        .expect_err("research must no longer parse");
+    assert_eq!(error.kind(), clap::error::ErrorKind::InvalidSubcommand);
+}
+
+#[test]
+fn ask_flag_surface_is_unchanged() {
+    use clap::Parser;
+
+    let cli = Cli::try_parse_from([
+        "gwiki",
+        "ask",
+        "--llm",
+        "--ai",
+        "daemon",
+        "--require-ai",
+        "How does indexing work?",
+    ])
+    .expect("ask flags parse");
+    let CliCommand::Ask(args) = cli.command else {
+        panic!("expected ask command");
+    };
+    assert!(args.llm);
+    assert_eq!(args.ai, AiRouting::Daemon);
+    assert!(args.require_ai);
+}
+
+#[test]
+fn search_flag_surface_supports_limit_and_semantic_toggle() {
+    use clap::Parser;
+
+    let cli = Cli::try_parse_from([
+        "gwiki",
+        "search",
+        "--limit",
+        "5",
+        "--no-semantic",
+        "ownership",
+    ])
+    .expect("search flags parse");
+    let CliCommand::Search(args) = cli.command else {
+        panic!("expected search command");
+    };
+    assert_eq!(args.limit, 5);
+    assert!(args.no_semantic);
+    assert_eq!(args.query, "ownership");
+}
+
+#[test]
 fn project_flag_normalization_handles_every_subcommand() {
     for subcommand in CLI_SUBCOMMANDS {
         let normalized = normalize_project_flag_args(["gwiki", "--project", subcommand]);

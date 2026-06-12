@@ -161,23 +161,6 @@ fn public_cli_smoke_uses_gwiki_modules() {
 
     seed_accepted_research_checkpoint(&vault);
 
-    let research = gwiki(
-        &fixture,
-        fixture.root(),
-        &[
-            "--format", "json", "--topic", "rust", "research", "--audit", "--ai", "off",
-        ],
-    );
-    common::assert_success(&research, "research");
-    let research_payload = common::json_stdout(&research);
-    assert_eq!(research_payload["command"], "research");
-    assert_eq!(research_payload["audit"], true);
-    // `--ai off` exercises the deterministic audit path, so the loop should
-    // stop because model-backed research is intentionally unavailable.
-    assert_eq!(research_payload["stop_reason"], "ai_unavailable");
-    assert_eq!(research_payload["scope"]["kind"], "topic");
-    assert_eq!(research_payload["scope"]["id"], "rust");
-
     let compile = gwiki(
         &fixture,
         fixture.root(),
@@ -218,7 +201,7 @@ fn public_cli_smoke_uses_gwiki_modules() {
 }
 
 #[test]
-fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
+fn public_cli_smoke_compiles_accepted_notes_and_audits_in_topic_scope() {
     let fixture = common::GwikiFixture::new();
 
     let init = gwiki(
@@ -257,22 +240,6 @@ fn public_cli_smoke_continues_research_compile_audit_in_topic_scope() {
         degradation: None,
     });
     session.save_checkpoint().expect("save checkpoint");
-
-    let research = gwiki(
-        &fixture,
-        fixture.root(),
-        &[
-            "--format", "json", "--topic", "rust", "research", "--audit", "--ai", "off",
-        ],
-    );
-    common::assert_success(&research, "research");
-    let research_payload = common::json_stdout(&research);
-    assert_eq!(research_payload["command"], "research");
-    assert_eq!(research_payload["scope"]["kind"], "topic");
-    assert_eq!(research_payload["scope"]["id"], "rust");
-    assert_eq!(research_payload["audit"], true);
-    assert_eq!(research_payload["stop_reason"], "ai_unavailable");
-    assert!(vault.join(".gwiki/session-events.jsonl").exists());
 
     let compile = gwiki(
         &fixture,
