@@ -9,6 +9,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+
+#### gwiki
+
+- **`ask` narration stripping hardened** (#720, follow-up to #702) — the
+  first-person detector now handles discourse markers ("First I'll…",
+  "Next I'm…"), more openers ("I found…", "I still need…"), and a broader
+  investigation vocabulary; the stripper also cuts a narration preamble with
+  interleaved declarative asides when narration dominates the leading region
+  (≥2/3 sentence density, bounded window, anchored on a narration opener).
+  A content opener still disables stripping entirely.
+
 ## [1.1.0] — gcode
 
 ### Added
