@@ -5,6 +5,7 @@
 //! preserve downstream stdout bytes exactly and must never expose transport
 //! failures to Claude as hook failures.
 
+use crate::json_value::is_python_truthy;
 use serde_json::{Value, json};
 use std::ffi::OsStr;
 use std::io::{Read, Write};
@@ -67,7 +68,7 @@ fn handle_with(
 
 fn extract_payload(input: &Value) -> Option<Value> {
     let session_id = input.get("session_id")?;
-    if !python_truthy(session_id) {
+    if !is_python_truthy(session_id) {
         return None;
     }
 
@@ -100,21 +101,6 @@ fn extract_payload(input: &Value) -> Option<Value> {
             .unwrap_or_else(|| json!(0)),
         "context_window_size": context_window.get("size").cloned().unwrap_or_else(|| json!(0)),
     }))
-}
-
-fn python_truthy(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => {
-            number.as_i64().is_some_and(|n| n != 0)
-                || number.as_u64().is_some_and(|n| n != 0)
-                || number.as_f64().is_some_and(|n| n != 0.0)
-        }
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
-    }
 }
 
 fn post_to_daemon_best_effort(payload: Value, daemon_url: &str) {
@@ -217,7 +203,8 @@ fn downstream_shell_command(command: &OsStr) -> Command {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::io::{Read, Write};
+    use crate::test_http::read_http_request;
+    use std::io::Write;
     use std::net::TcpListener;
 
     const VALID_INPUT: &str = include_str!("../tests/fixtures/statusline/full-input.json");
@@ -225,44 +212,6 @@ mod tests {
     const DEFAULT_INPUT: &str = include_str!("../tests/fixtures/statusline/defaults-input.json");
     const DEFAULT_PAYLOAD: &str =
         include_str!("../tests/fixtures/statusline/defaults-payload.json");
-
-    fn read_http_request(stream: &mut impl Read) -> String {
-        let mut request = Vec::new();
-        let mut chunk = [0_u8; 1024];
-        let mut header_end = None;
-        let mut content_length = None;
-
-        loop {
-            let n = stream.read(&mut chunk).unwrap();
-            assert!(n > 0, "client closed before request body was fully read");
-            request.extend_from_slice(&chunk[..n]);
-
-            if header_end.is_none()
-                && let Some(pos) = request.windows(4).position(|window| window == b"\r\n\r\n")
-            {
-                let end = pos + 4;
-                header_end = Some(end);
-                let headers = String::from_utf8_lossy(&request[..end]);
-                content_length = Some(
-                    headers
-                        .lines()
-                        .find_map(|line| {
-                            let (name, value) = line.split_once(':')?;
-                            name.eq_ignore_ascii_case("Content-Length")
-                                .then(|| value.trim().parse::<usize>().ok())
-                                .flatten()
-                        })
-                        .unwrap_or(0),
-                );
-            }
-
-            if let (Some(end), Some(len)) = (header_end, content_length)
-                && request.len() >= end + len
-            {
-                return String::from_utf8(request).unwrap();
-            }
-        }
-    }
 
     #[test]
     fn recognizes_only_claude_statusline_hook() {

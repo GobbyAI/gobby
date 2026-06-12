@@ -26,15 +26,19 @@ mod cli_config;
 mod detach;
 mod diagnose;
 mod envelope;
+mod json_value;
 mod output;
 mod planned_shutdown;
 mod source;
 mod statusline;
 mod terminal_context;
+#[cfg(test)]
+mod test_http;
 mod transport;
 
 use cli_config::CliConfig;
 use envelope::Envelope;
+use json_value::is_python_truthy;
 use source::detect_source;
 
 #[derive(Debug, PartialEq, Eq)]
@@ -375,7 +379,7 @@ fn action_from_success_response(
 
         return Ok(HookAction {
             exit_code: 0,
-            stdout_json: json_value_is_meaningful(&result).then_some(serialized),
+            stdout_json: is_python_truthy(&result).then_some(serialized),
             stderr_message: None,
         });
     }
@@ -397,7 +401,7 @@ fn action_from_success_response(
 
     Ok(HookAction {
         exit_code: 0,
-        stdout_json: json_value_is_meaningful(&result).then_some(serialized),
+        stdout_json: is_python_truthy(&result).then_some(serialized),
         stderr_message: None,
     })
 }
@@ -418,7 +422,7 @@ fn action_from_droid_success(result: Value, serialized: String) -> HookAction {
 
     HookAction {
         exit_code: 0,
-        stdout_json: json_value_is_meaningful(&result).then_some(serialized),
+        stdout_json: is_python_truthy(&result).then_some(serialized),
         stderr_message: None,
     }
 }
@@ -537,25 +541,6 @@ fn extract_reason(result: &Value) -> String {
     }
 
     "Blocked by hook".to_string()
-}
-
-fn json_value_is_meaningful(value: &Value) -> bool {
-    match value {
-        Value::Null => false,
-        Value::Bool(flag) => *flag,
-        Value::Number(number) => {
-            if let Some(i) = number.as_i64() {
-                i != 0
-            } else if let Some(u) = number.as_u64() {
-                u != 0
-            } else {
-                number.as_f64().is_some_and(|f| f != 0.0)
-            }
-        }
-        Value::String(text) => !text.is_empty(),
-        Value::Array(items) => !items.is_empty(),
-        Value::Object(map) => !map.is_empty(),
-    }
 }
 
 fn write_runtime_stamp() -> Result<()> {
