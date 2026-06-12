@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, call, patch
 
+import psycopg
 import pytest
 
 from gobby.hooks.event_handlers import EventHandlers
@@ -782,6 +783,53 @@ class TestSessionStartNewSession:
         assert call_kwargs.kwargs.get("parent_session_id") is None or (
             call_kwargs[1].get("parent_session_id") is None if call_kwargs[1] else True
         )
+
+    def test_handoff_db_error_still_returns_session_banner(
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
+    ) -> None:
+        """A handoff-variable DB error must not abort session-start injection."""
+        new_session = MagicMock()
+        new_session.id = "new-sess-db-error"
+        new_session.seq_num = 77
+        new_session.project_id = "proj-123"
+        new_session.parent_session_id = "parent-sess-123"
+        new_session.agent_depth = 0
+        new_session.agent_run_id = None
+        new_session.title = None
+        new_session.terminal_context = {}
+
+        mock_parent = MagicMock()
+        mock_parent.id = "parent-sess-123"
+        mock_parent.terminal_context = {}
+
+        mock_dependencies["session_storage"].get.side_effect = [None, new_session]
+        mock_dependencies["session_storage"].find_parent.return_value = mock_parent
+        mock_dependencies["session_manager"].register_session.return_value = new_session.id
+        mock_dependencies["task_manager"].list_tasks.return_value = []
+
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="ext-db-error",
+            data={
+                "source": "clear",
+                "cwd": "/some/dir",
+                "skip_default_agent_activation": True,
+            },
+            metadata={},
+        )
+
+        with (
+            patch("gobby.hooks.event_handlers._session_start.flow.seed_user_profile_content"),
+            patch(
+                "gobby.hooks.event_handlers._session_start.flow.populate_handoff_session_variables",
+                side_effect=psycopg.OperationalError("handoff vars unavailable"),
+            ),
+        ):
+            response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        assert response.system_message == "\nGobby Session ID: #77 (new-sess-db-error)"
 
     def test_new_session_start_renames_captured_tmux_pane(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock

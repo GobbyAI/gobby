@@ -411,7 +411,9 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
 
         try:
             accepted = bool(
-                request_refresh(
+                await _run_db(
+                    server,
+                    request_refresh,
                     root_path=root_value,
                     project_id=body.project_id,
                     out_dir=body.out_dir,

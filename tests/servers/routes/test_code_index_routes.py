@@ -111,6 +111,36 @@ def test_codewiki_refresh_schedules_trigger(client: TestClient, mock_server: Mag
     )
 
 
+def test_codewiki_refresh_runs_trigger_through_db_bridge(
+    client: TestClient, mock_server: MagicMock
+) -> None:
+    trigger = MagicMock()
+    trigger.request_refresh.return_value = True
+    mock_server.services.codewiki_trigger = trigger
+    calls: list[tuple[Any, tuple[Any, ...], dict[str, Any]]] = []
+
+    async def run_db(func: Any, *args: Any, **kwargs: Any) -> Any:
+        calls.append((func, args, kwargs))
+        return func(*args, **kwargs)
+
+    mock_server.run_db = run_db
+
+    response = client.post(
+        "/api/code-index/codewiki/refresh",
+        json={"root_path": "/repo", "project_id": "proj-1", "ai": "daemon"},
+    )
+
+    assert response.status_code == 202
+    assert response.json()["accepted"] is True
+    assert calls == [
+        (
+            trigger.request_refresh,
+            (),
+            {"root_path": "/repo", "project_id": "proj-1", "out_dir": None, "ai": "daemon"},
+        )
+    ]
+
+
 def test_codewiki_refresh_reports_disabled(client: TestClient, mock_server: MagicMock) -> None:
     trigger = MagicMock()
     trigger.request_refresh.return_value = False
