@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import stat
 from pathlib import Path
 
 import pytest
@@ -73,6 +74,26 @@ async def test_current_target_branch_returns_none_without_project_repo_or_git(
     project_id, _repo_path = _project(temp_db, tmp_path)
 
     assert await _current_target_branch(temp_db, project_id) is None
+
+
+@pytest.mark.asyncio
+async def test_current_target_branch_resolves_git_from_fallback_path(
+    monkeypatch: pytest.MonkeyPatch, temp_db, tmp_path: Path
+) -> None:
+    from gobby.build.target_branch import _current_target_branch
+
+    project_id, repo_path = _project(temp_db, tmp_path)
+    (repo_path / ".git").mkdir()
+    fallback_bin = tmp_path / "fallback-bin"
+    fallback_bin.mkdir()
+    fake_git = fallback_bin / "git"
+    fake_git.write_text("#!/bin/sh\nprintf 'fallback-main\\n'\n", encoding="utf-8")
+    fake_git.chmod(fake_git.stat().st_mode | stat.S_IXUSR)
+
+    monkeypatch.setattr("gobby.utils.git.GIT_FALLBACK_PATHS", (str(fallback_bin),))
+    monkeypatch.setenv("PATH", "")
+
+    assert await _current_target_branch(temp_db, project_id) == "fallback-main"
 
 
 @pytest.mark.asyncio
