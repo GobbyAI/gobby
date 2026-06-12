@@ -101,7 +101,14 @@ async def _run_maintenance(
             proc: asyncio.subprocess.Process | None = None
             purge_project = False
             try:
-                command = [gcode_bin, "index", "--project", str(root), "--quiet"]
+                command = [
+                    gcode_bin,
+                    "index",
+                    "--project",
+                    str(root),
+                    "--quiet",
+                    "--sync-projections",
+                ]
                 proc = await asyncio.create_subprocess_exec(
                     *command,
                     stdout=asyncio.subprocess.DEVNULL,
@@ -154,9 +161,87 @@ async def _run_maintenance(
                 )
                 continue
 
+        await _reconcile_orphan_files(context, project.id, root)
+
         # Generate summaries for unsummarized symbols
         if summarizer:
             await _summarize_unsummarized(context, project, summarizer, summary_batch_size)
+
+
+async def _reconcile_orphan_files(
+    context: CodeIndexContext,
+    project_id: str,
+    root: Path,
+) -> None:
+    indexed_files = await context.run_db(context.storage.list_files, project_id)
+    current_paths = {
+        file.file_path
+        for file in indexed_files
+        if await asyncio.to_thread((root / file.file_path).exists)
+    }
+    orphan_paths = await context.run_db(context.storage.get_orphan_files, project_id, current_paths)
+    if not orphan_paths:
+        return
+
+    collection = f"{context.config.qdrant_collection_prefix}{project_id}"
+    cleaned_paths: list[str] = []
+    for file_path in orphan_paths:
+        if context.vector_store is not None:
+            try:
+                await context.vector_store.delete(
+                    filters={"file_path": file_path, "project_id": project_id},
+                    collection_name=collection,
+                )
+            except Exception as e:
+                logger.warning(
+                    "Vector cleanup failed for orphaned code index file %s:%s: %s",
+                    project_id,
+                    file_path,
+                    e,
+                    exc_info=True,
+                )
+                continue
+
+        await context.run_db(context.storage.delete_imports_for_file, project_id, file_path)
+        await context.run_db(context.storage.delete_calls_for_file, project_id, file_path)
+        await context.run_db(context.storage.delete_content_chunks_for_file, project_id, file_path)
+        await context.run_db(context.storage.delete_symbols_for_file, project_id, file_path)
+        await context.run_db(context.storage.delete_file, project_id, file_path)
+        cleaned_paths.append(file_path)
+
+    if not cleaned_paths or not context.config.graph_enabled:
+        return
+
+    try:
+        result = await context.clear_graph(project_id)
+        if not result.get("success", False):
+            error = str(result.get("error", "unknown error"))
+            await context.run_db(
+                context.storage.record_projection_cleanup_failure,
+                project_id,
+                "graph",
+                error,
+            )
+            logger.warning(
+                "Graph cleanup reported failure for orphan files in %s: %s", project_id, error
+            )
+            return
+    except Exception as e:
+        await context.run_db(
+            context.storage.record_projection_cleanup_failure,
+            project_id,
+            "graph",
+            str(e),
+        )
+        logger.warning(
+            "Graph cleanup failed for orphan files in %s: %s",
+            project_id,
+            e,
+            exc_info=True,
+        )
+        return
+
+    await context.run_db(context.storage.reset_graph_sync_for_project, project_id)
 
 
 async def _retry_pending_projection_cleanups(
