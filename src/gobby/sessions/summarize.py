@@ -86,6 +86,7 @@ class LLMServiceProtocol(Protocol):
         max_tokens: int | None = None,
         *,
         caller: str | None = None,
+        cwd: str | None = None,
     ) -> str: ...
 
 
@@ -633,6 +634,7 @@ async def _build_summary_prompt_context(
         "external_id": session.id[:12],
         "session_id": session.id,
         "session_source": source,
+        "project_path": project_path,
     }
 
 
@@ -742,6 +744,7 @@ async def _generate_full_summary(
                 "You are a session summary generator. Create comprehensive, actionable summaries."
             ),
             caller="sessions.summary",
+            cwd=project_path,
         )
         if not is_summary_markdown_valid(full_markdown):
             if full_markdown and full_markdown.strip():
@@ -800,6 +803,7 @@ async def _generate_delta_summary(
                 "You are a session summary merger. Return one complete replacement handoff."
             ),
             caller="sessions.summary.delta",
+            cwd=summary_context.get("project_path"),
         )
         if not is_summary_markdown_valid(merged_markdown):
             if merged_markdown and merged_markdown.strip():

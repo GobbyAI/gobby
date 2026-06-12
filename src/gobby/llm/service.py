@@ -42,6 +42,7 @@ def _feature_request(
     system_prompt: str | None,
     max_tokens: int | None = None,
     caller: str | None,
+    cwd: str | None = None,
 ) -> TextGenerationRequest:
     candidates = tuple(getattr(feature_config, "candidates", ()) or ())
     profile = getattr(feature_config, "profile", None)
@@ -52,6 +53,7 @@ def _feature_request(
         system_prompt=system_prompt,
         max_tokens=max_tokens,
         caller=caller,
+        cwd=cwd,
     )
 
 
@@ -87,6 +89,7 @@ class LLMService:
         max_tokens: int | None = None,
         *,
         caller: str | None = None,
+        cwd: str | None = None,
     ) -> str:
         """Call text generation for a feature config through profile candidates.
 
@@ -107,6 +110,7 @@ class LLMService:
                 system_prompt=system_prompt,
                 max_tokens=max_tokens,
                 caller=caller,
+                cwd=cwd,
             )
         )
 
@@ -117,6 +121,7 @@ class LLMService:
         system_prompt: str | None = None,
         *,
         caller: str | None = None,
+        cwd: str | None = None,
     ) -> dict[str, Any]:
         """Call JSON generation for an LLM-backed feature.
 
@@ -129,6 +134,7 @@ class LLMService:
                 prompt,
                 system_prompt=system_prompt,
                 caller=caller,
+                cwd=cwd,
             )
         )
 

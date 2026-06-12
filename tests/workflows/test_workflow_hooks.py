@@ -1,3 +1,4 @@
+import subprocess
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -200,13 +201,15 @@ class TestProjectPathResolution:
     """Verify project_path for dirty file checks uses event.cwd."""
 
     @pytest.mark.asyncio
-    async def test_dirty_files_uses_event_cwd_for_worktree(self) -> None:
+    async def test_dirty_files_uses_event_cwd_for_worktree(self, tmp_path) -> None:
         """get_dirty_files should receive event.cwd, not None or metadata.project_path.
 
         This ensures worktree agents get dirty file checks scoped to their
         worktree directory, not the daemon's cwd.
         """
-        worktree_path = "/tmp/worktrees/agent-worktree-123"
+        worktree_path = tmp_path / "agent-worktree-123"
+        worktree_path.mkdir()
+        subprocess.run(["git", "init"], cwd=worktree_path, check=True, capture_output=True)
         handler = WorkflowHookHandler(loop=None)
         # Wire up a mock rule engine with async evaluate
         mock_engine = MagicMock()
@@ -220,7 +223,7 @@ class TestProjectPathResolution:
             source=SessionSource.CLAUDE,
             timestamp=None,
             data={"tool_name": "Edit"},
-            cwd=worktree_path,
+            cwd=str(worktree_path),
         )
 
         with patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty:
@@ -238,7 +241,40 @@ class TestProjectPathResolution:
             assert mock_dirty.call_count >= 1
             # Every call should use event.cwd, not None
             for call in mock_dirty.call_args_list:
-                assert call[0][0] == worktree_path
+                assert call[0][0] == str(worktree_path.resolve())
+
+    @pytest.mark.asyncio
+    async def test_dirty_files_prefers_valid_repo_path_over_unusable_cwd(self, tmp_path) -> None:
+        non_repo = tmp_path / "plain"
+        non_repo.mkdir()
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+        handler = WorkflowHookHandler(loop=None)
+        mock_engine = MagicMock()
+        mock_engine.evaluate = AsyncMock(return_value=HookResponse(decision="allow"))
+        mock_engine.db = MagicMock()
+        handler.rule_engine = mock_engine
+
+        event = HookEvent(
+            event_type=HookEventType.BEFORE_TOOL,
+            session_id=MOCK_EXTERNAL_ID,
+            source=SessionSource.CLAUDE,
+            timestamp=None,
+            data={"tool_name": "Edit"},
+            cwd=str(non_repo),
+            metadata={"project_path": str(repo)},
+        )
+
+        with patch("gobby.workflows.git_utils.get_dirty_files_categorized") as mock_dirty:
+            mock_dirty.return_value = DirtyFiles(set(), set())
+            await handler._evaluate_rules(event)
+
+            eval_context = mock_engine.evaluate.call_args.kwargs.get("eval_context", {})
+            bool(eval_context["has_dirty_files"])
+            assert mock_dirty.call_args_list
+            for call in mock_dirty.call_args_list:
+                assert call[0][0] == str(repo.resolve())
 
     def test_dirty_files_none_returns_empty_without_git_status(self) -> None:
         from gobby.workflows.git_utils import get_dirty_files_categorized

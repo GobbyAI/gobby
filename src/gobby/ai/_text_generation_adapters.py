@@ -38,6 +38,7 @@ if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
 
 logger = logging.getLogger("gobby.ai.text_generation")
+_BORROWED_THREAD_ARCHIVE_TIMEOUT_SECONDS = 2.0
 
 
 _GEMINI_DENY_ALL_POLICY = """[[rule]]
@@ -480,8 +481,25 @@ class CodexAppServerTextGenerateAdapter:
     async def _archive_borrowed_thread(
         self, client: CodexAppServerClientLike, thread_id: str
     ) -> None:
+        try:
+            await asyncio.wait_for(
+                client.archive_thread(thread_id),
+                timeout=_BORROWED_THREAD_ARCHIVE_TIMEOUT_SECONDS,
+            )
+        except Exception:
+            logger.debug("Best-effort Codex borrowed thread archive failed", exc_info=True)
+        finally:
+            _discard_codex_thread_state(client, thread_id)
+
+
+def _discard_codex_thread_state(client: CodexAppServerClientLike, thread_id: str) -> None:
+    """Forget local client bookkeeping for best-effort ephemeral thread cleanup."""
+    for attr in ("_threads", "_thread_cwds", "_thread_terminal_contexts"):
+        mapping = getattr(client, attr, None)
+        if mapping is None:
+            continue
         with contextlib.suppress(Exception):
-            await client.archive_thread(thread_id)
+            mapping.pop(thread_id, None)
 
 
 class DroidCLITextGenerateAdapter:

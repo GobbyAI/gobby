@@ -1599,6 +1599,45 @@ async def test_codex_app_server_text_generate_adapter_borrows_connected_client()
 
 
 @pytest.mark.asyncio
+async def test_codex_app_server_text_generate_adapter_swallows_borrowed_archive_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class HangingArchiveCodexClient(FakeCodexAppServerClient):
+        def __init__(self) -> None:
+            super().__init__(connected=True)
+            self._threads = {"thread-1": object()}
+            self._thread_cwds = {"thread-1": "/tmp/project"}
+            self._thread_terminal_contexts = {"thread-1": {"source": "test"}}
+            self.archive_attempted_thread_ids: list[str] = []
+
+        async def archive_thread(self, thread_id: str) -> None:
+            self.archive_attempted_thread_ids.append(thread_id)
+            await asyncio.Event().wait()
+
+    shared_client = HangingArchiveCodexClient()
+    adapter = CodexAppServerTextGenerateAdapter(
+        lambda: FakeCodexAppServerClient(),
+        shared_client_provider=lambda: shared_client,
+    )
+    monkeypatch.setattr(
+        text_generation_adapters,
+        "_BORROWED_THREAD_ARCHIVE_TIMEOUT_SECONDS",
+        0.01,
+    )
+    caplog.set_level(logging.ERROR, logger=text_generation_adapters.logger.name)
+
+    response = await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
+
+    assert response == "hello world"
+    assert shared_client.archive_attempted_thread_ids == ["thread-1"]
+    assert shared_client._threads == {}
+    assert shared_client._thread_cwds == {}
+    assert shared_client._thread_terminal_contexts == {}
+    assert [record for record in caplog.records if record.levelno >= logging.ERROR] == []
+
+
+@pytest.mark.asyncio
 async def test_codex_app_server_text_generate_adapter_falls_back_when_borrowed_unavailable() -> (
     None
 ):
@@ -2238,7 +2277,7 @@ async def test_gemini_cli_text_generate_adapter_deletes_headless_session(
         ("/usr/local/bin/gemini", "--delete-session", session_id),
     ]
     assert policy_contents == [
-        '\n'.join(
+        "\n".join(
             [
                 "[[rule]]",
                 'toolName = "*"',

@@ -38,6 +38,8 @@ When running pytest as an agent, always prefix pytest commands with `GOBBY_TEST_
 Pytest must be isolated from the user’s running Gobby daemon and real local daemon state. Tests that need daemon behavior must start/use an isolated test
 daemon with temporary state and ports; they must not talk to the existing user daemon.
 
+Daemon logs are in `~/.gobby/logs/`.
+
 ## Plan Mode
 
 Task management MCP calls (gobby-tasks) are allowed during plan mode. Planning includes organizing work, not just designing it.
