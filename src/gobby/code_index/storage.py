@@ -378,14 +378,14 @@ class CodeIndexStorage:
         )
         return [IndexedFile.from_row(r) for r in rows]
 
-    def mark_vectors_synced(self, file_id: str) -> bool:
-        """Mark a file's vectors as synced. Returns True if updated."""
+    def mark_vectors_synced(self, file_id: str, content_hash: str) -> bool:
+        """Mark a file's vectors as synced if the content hash still matches."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
                    SET vectors_synced = TRUE, vector_sync_attempted_at = %s
-                   WHERE id = %s""",
-                (datetime.now(UTC).isoformat(), file_id),
+                   WHERE id = %s AND content_hash = %s""",
+                (datetime.now(UTC).isoformat(), file_id, content_hash),
             )
             return cursor.rowcount > 0
 
@@ -401,15 +401,15 @@ class CodeIndexStorage:
             )
             return cursor.rowcount > 0
 
-    def mark_graph_synced(self, file_id: str) -> bool:
-        """Mark a file's graph edges as synced. Returns True if updated."""
+    def mark_graph_synced(self, file_id: str, content_hash: str) -> bool:
+        """Mark a file's graph edges as synced if the content hash still matches."""
         now = datetime.now(UTC).isoformat()
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """UPDATE code_indexed_files
                    SET graph_synced = TRUE, graph_sync_attempted_at = %s
-                   WHERE id = %s""",
-                (now, file_id),
+                   WHERE id = %s AND content_hash = %s""",
+                (now, file_id, content_hash),
             )
             return cursor.rowcount > 0
 
@@ -722,12 +722,14 @@ class CodeIndexStorage:
         )
         return [Symbol.from_row(r) for r in rows]
 
-    def update_symbol_summary(self, symbol_id: str, summary: str) -> bool:
-        """Set the summary for a symbol. Returns True if updated."""
+    def update_symbol_summary(self, symbol_id: str, content_hash: str, summary: str) -> bool:
+        """Set the summary for a symbol if the content hash still matches."""
         with self.db.transaction() as conn:
             cursor = conn.execute(
-                "UPDATE code_symbols SET summary = %s, summary_attempted_at = NULL WHERE id = %s",
-                (summary, symbol_id),
+                """UPDATE code_symbols
+                   SET summary = %s, summary_attempted_at = NULL
+                   WHERE id = %s AND content_hash = %s""",
+                (summary, symbol_id, content_hash),
             )
             return cursor.rowcount > 0
 

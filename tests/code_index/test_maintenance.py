@@ -450,7 +450,7 @@ async def test_summary_updates_are_concurrency_limited() -> None:
     release_updates = threading.Event()
     waits_completed: list[bool] = []
 
-    def update_symbol_summary(_symbol_id: str, _summary: str) -> None:
+    def update_symbol_summary(_symbol_id: str, _content_hash: str, _summary: str) -> None:
         nonlocal active, max_active
         with lock:
             active += 1
@@ -471,8 +471,9 @@ async def test_summary_updates_are_concurrency_limited() -> None:
         run_db=asyncio.to_thread,
     )
     results = {f"sym-{index}": f"summary-{index}" for index in range(12)}
+    content_hashes = {symbol_id: f"hash-{index}" for index, symbol_id in enumerate(results)}
 
-    update_task = asyncio.create_task(_update_symbol_summaries(context, results))
+    update_task = asyncio.create_task(_update_symbol_summaries(context, results, content_hashes))
     assert await asyncio.to_thread(all_slots_busy.wait, 1)
     release_updates.set()
     await update_task
@@ -491,12 +492,30 @@ async def test_summarize_unsummarized_marks_failures_and_logs_aggregate(
     source.parent.mkdir()
     source.write_text("def ok():\n    return 1\n\ndef fail():\n    return 2\n", encoding="utf-8")
     symbols = [
-        SimpleNamespace(id="sym-ok", file_path="src/app.py", line_start=1, line_end=2),
-        SimpleNamespace(id="sym-fail", file_path="src/app.py", line_start=4, line_end=5),
-        SimpleNamespace(id="sym-missing", file_path="src/missing.py", line_start=1, line_end=1),
+        SimpleNamespace(
+            id="sym-ok",
+            file_path="src/app.py",
+            line_start=1,
+            line_end=2,
+            content_hash="hash-ok",
+        ),
+        SimpleNamespace(
+            id="sym-fail",
+            file_path="src/app.py",
+            line_start=4,
+            line_end=5,
+            content_hash="hash-fail",
+        ),
+        SimpleNamespace(
+            id="sym-missing",
+            file_path="src/missing.py",
+            line_start=1,
+            line_end=1,
+            content_hash="hash-missing",
+        ),
     ]
     attempts: list[list[str]] = []
-    updates: dict[str, str] = {}
+    updates: dict[str, tuple[str, str]] = {}
 
     class Storage:
         def get_unsummarized_symbols(self, _project_id: str, limit: int) -> list[Any]:
@@ -506,8 +525,8 @@ async def test_summarize_unsummarized_marks_failures_and_logs_aggregate(
             attempts.append(symbol_ids)
             return len(symbol_ids)
 
-        def update_symbol_summary(self, symbol_id: str, summary: str) -> bool:
-            updates[symbol_id] = summary
+        def update_symbol_summary(self, symbol_id: str, content_hash: str, summary: str) -> bool:
+            updates[symbol_id] = (content_hash, summary)
             return True
 
     class Summarizer:
@@ -542,7 +561,7 @@ async def test_summarize_unsummarized_marks_failures_and_logs_aggregate(
         )
 
     assert attempts == [["sym-fail"]]
-    assert updates == {"sym-ok": "Returns one."}
+    assert updates == {"sym-ok": ("hash-ok", "Returns one.")}
     assert "Summary generation failed for 1/2 symbol(s) in project proj-1" in caplog.text
 
 
@@ -551,7 +570,7 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
     """One summary write failure does not cancel the rest of the batch."""
     updated: list[str] = []
 
-    def update_symbol_summary(symbol_id: str, _summary: str) -> None:
+    def update_symbol_summary(symbol_id: str, _content_hash: str, _summary: str) -> None:
         updated.append(symbol_id)
         if symbol_id == "sym-bad":
             raise RuntimeError("write failed")
@@ -571,6 +590,7 @@ async def test_summary_update_logs_per_symbol_failures(caplog: pytest.LogCapture
         await _update_symbol_summaries(
             context,
             {"sym-ok": "ok", "sym-bad": "bad", "sym-later": "later"},
+            {"sym-ok": "hash-ok", "sym-bad": "hash-bad", "sym-later": "hash-later"},
         )
 
     assert set(updated) == {"sym-ok", "sym-bad", "sym-later"}

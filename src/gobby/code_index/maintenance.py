@@ -359,7 +359,8 @@ async def _summarize_unsummarized(
             project.id,
         )
 
-    await _update_symbol_summaries(context, results)
+    content_hash_by_symbol_id = {symbol.id: symbol.content_hash for symbol in symbols}
+    await _update_symbol_summaries(context, results, content_hash_by_symbol_id)
 
     if results:
         logger.debug(
@@ -375,6 +376,7 @@ def _read_symbol_sources(root: Path, symbols: list[Any]) -> dict[str, str | None
 async def _update_symbol_summaries(
     context: CodeIndexContext,
     results: dict[str, str],
+    content_hash_by_symbol_id: dict[str, str],
     *,
     concurrency: int = _SUMMARY_DB_WRITE_CONCURRENCY,
 ) -> None:
@@ -383,7 +385,15 @@ async def _update_symbol_summaries(
 
     async def update_one(symbol_id: str, summary: str) -> None:
         async with semaphore:
-            await context.run_db(context.storage.update_symbol_summary, symbol_id, summary)
+            content_hash = content_hash_by_symbol_id.get(symbol_id)
+            if content_hash is None:
+                return
+            await context.run_db(
+                context.storage.update_symbol_summary,
+                symbol_id,
+                content_hash,
+                summary,
+            )
 
     items = list(results.items())
     write_results = await asyncio.gather(

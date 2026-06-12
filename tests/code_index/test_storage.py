@@ -654,7 +654,7 @@ def test_upsert_nulls_summary_on_hash_change(
     """When content_hash changes, summary is cleared for regeneration."""
     sym = sample_symbols[0]
     code_storage.upsert_symbols([sym])
-    code_storage.update_symbol_summary(sym.id, "Greets a person by name.")
+    code_storage.update_symbol_summary(sym.id, sym.content_hash, "Greets a person by name.")
 
     # Verify summary is set
     retrieved = code_storage.get_symbol(sym.id)
@@ -676,7 +676,7 @@ def test_upsert_preserves_summary_on_same_hash(
     """When content_hash stays the same, summary is preserved."""
     sym = sample_symbols[0]
     code_storage.upsert_symbols([sym])
-    code_storage.update_symbol_summary(sym.id, "Greets a person by name.")
+    code_storage.update_symbol_summary(sym.id, sym.content_hash, "Greets a person by name.")
 
     # Re-upsert with same content_hash
     code_storage.upsert_symbols([sym])
@@ -697,7 +697,11 @@ def test_get_unsummarized_symbols(
     assert len(unsummarized) == 3
 
     # Summarize one
-    code_storage.update_symbol_summary(sample_symbols[0].id, "A greeting function.")
+    code_storage.update_symbol_summary(
+        sample_symbols[0].id,
+        sample_symbols[0].content_hash,
+        "A greeting function.",
+    )
 
     unsummarized = code_storage.get_unsummarized_symbols("proj-1")
     assert len(unsummarized) == 2
@@ -768,7 +772,11 @@ def test_update_symbol_summary(
     sym = sample_symbols[0]
     code_storage.upsert_symbols([sym])
 
-    result = code_storage.update_symbol_summary(sym.id, "Returns a greeting string.")
+    result = code_storage.update_symbol_summary(
+        sym.id,
+        sym.content_hash,
+        "Returns a greeting string.",
+    )
     assert result is True
 
     retrieved = code_storage.get_symbol(sym.id)
@@ -779,5 +787,45 @@ def test_update_symbol_summary(
 
 def test_update_symbol_summary_nonexistent(code_storage: CodeIndexStorage) -> None:
     """update_symbol_summary returns False for nonexistent symbol."""
-    result = code_storage.update_symbol_summary("nonexistent-id", "Some summary.")
+    result = code_storage.update_symbol_summary("nonexistent-id", "missing", "Some summary.")
     assert result is False
+
+
+def test_stale_content_hash_rejects_sync_marks_and_summary(
+    code_storage: CodeIndexStorage,
+    sample_symbols: list[Symbol],
+) -> None:
+    """Stale snapshot writes should leave reindexed rows pending."""
+    indexed_file = IndexedFile(
+        id=IndexedFile.make_id("proj-1", "src/app.py"),
+        project_id="proj-1",
+        file_path="src/app.py",
+        language="python",
+        content_hash="old-hash",
+        symbol_count=1,
+    )
+    code_storage.upsert_file(indexed_file)
+    stale_file_hash = indexed_file.content_hash
+
+    indexed_file.content_hash = "new-hash"
+    code_storage.upsert_file(indexed_file)
+
+    assert code_storage.mark_vectors_synced(indexed_file.id, stale_file_hash) is False
+    assert code_storage.mark_graph_synced(indexed_file.id, stale_file_hash) is False
+
+    pending = code_storage.get_pending_sync_files("proj-1")
+    assert len(pending) == 1
+    assert pending[0].content_hash == "new-hash"
+    assert pending[0].vectors_synced is False
+    assert pending[0].graph_synced is False
+
+    sym = sample_symbols[0]
+    code_storage.upsert_symbols([sym])
+    stale_symbol_hash = sym.content_hash
+    sym.content_hash = "changed-hash"
+    code_storage.upsert_symbols([sym])
+
+    assert code_storage.update_symbol_summary(sym.id, stale_symbol_hash, "Stale summary.") is False
+    retrieved = code_storage.get_symbol(sym.id)
+    assert retrieved is not None
+    assert retrieved.summary is None

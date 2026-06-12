@@ -254,7 +254,7 @@ async def _sync_file(
                     embedding_dim=embedding_dim,
                     run_db=run_db,
                 )
-                await _run_db(run_db, storage.mark_vectors_synced, current.id)
+                await _run_db(run_db, storage.mark_vectors_synced, current.id, current.content_hash)
                 await _run_db(
                     run_db,
                     storage.clear_projection_cleanup_pending,
@@ -281,7 +281,9 @@ async def _sync_file(
                     file=current,
                 )
                 if graph_synced:
-                    await _run_db(run_db, storage.mark_graph_synced, current.id)
+                    await _run_db(
+                        run_db, storage.mark_graph_synced, current.id, current.content_hash
+                    )
                     await _run_db(
                         run_db,
                         storage.clear_projection_cleanup_pending,
