@@ -1074,6 +1074,45 @@ class TestWorktreeGitManagerDeleteWorktreeEdgeCases:
         )
 
     @patch("subprocess.run")
+    def test_delete_missing_path_prunes_and_deletes_explicit_branch(
+        self, mock_run, manager, tmp_path
+    ) -> None:
+        """Delete missing worktree paths by pruning the stale registration and branch."""
+        worktree_path = tmp_path / "worktrees" / "feature-test"
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(
+                args=["git", "worktree", "remove"],
+                returncode=128,
+                stdout="",
+                stderr="fatal: not a working tree",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "worktree", "prune"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+            subprocess.CompletedProcess(
+                args=["git", "branch", "-D"],
+                returncode=0,
+                stdout="",
+                stderr="",
+            ),
+        ]
+
+        result = manager.delete_worktree(
+            worktree_path,
+            force=True,
+            delete_branch=True,
+            branch_name="feature/test",
+        )
+
+        assert result.success is True
+        assert "and branch feature/test" in result.message
+        assert mock_run.call_args_list[1].args[0][-2:] == ["worktree", "prune"]
+        assert mock_run.call_args_list[2].args[0][-3:] == ["branch", "-D", "feature/test"]
+
+    @patch("subprocess.run")
     def test_delete_timeout(self, mock_run, manager, tmp_path) -> None:
         """Delete worktree handles timeout."""
         worktree_path = tmp_path / "worktrees" / "feature-test"

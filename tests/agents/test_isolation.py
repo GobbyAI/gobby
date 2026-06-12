@@ -566,7 +566,7 @@ class TestWorktreeIsolationHandler:
                 new=AsyncMock(),
             ) as repair,
             patch(
-                "gobby.agents.isolation.sync_reused_worktree_to_base",
+                "gobby.agents.isolation.worktree_reuse.sync_reused_worktree_to_base",
                 new=AsyncMock(),
             ) as sync,
         ):
@@ -586,6 +586,83 @@ class TestWorktreeIsolationHandler:
         )
         # Should NOT create a new worktree
         mock_git_manager.create_worktree.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_prepare_environment_cleans_stale_record_before_recreate(self) -> None:
+        """Test stale worktree records are pruned before recreating the deterministic path."""
+        mock_git_manager = MagicMock()
+        mock_git_manager.repo_path = "/path/to/main/repo"
+        mock_git_manager.get_current_branch.return_value = "main"
+        mock_git_manager.has_unpushed_commits.return_value = (False, 0)
+        mock_git_manager.create_worktree.return_value = MagicMock(success=True)
+        mock_git_manager.delete_worktree.return_value = MagicMock(success=True, error=None)
+
+        mock_worktree_storage = MagicMock()
+        mock_worktree_storage.get_by_branch.return_value = MagicMock(
+            id="stale-wt-456",
+            worktree_path="/tmp/worktrees/stale-branch",
+            branch_name="stale-branch",
+        )
+        mock_worktree_storage.create.return_value = MagicMock(
+            id="new-wt-789",
+            worktree_path="/tmp/worktrees/stale-branch",
+            branch_name="stale-branch",
+        )
+
+        handler = WorktreeIsolationHandler(
+            git_manager=mock_git_manager,
+            worktree_storage=mock_worktree_storage,
+        )
+        handler._generate_worktree_path = MagicMock(return_value="/tmp/worktrees/stale-branch")
+
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="stale-branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        with (
+            patch("pathlib.Path.is_dir", return_value=False),
+            patch("gobby.agents.isolation.repair_isolation_environment", new=AsyncMock()) as repair,
+        ):
+            ctx = await handler.prepare_environment(config)
+
+        assert ctx.worktree_id == "new-wt-789"
+        assert ctx.cwd == "/tmp/worktrees/stale-branch"
+        mock_git_manager.delete_worktree.assert_called_once_with(
+            worktree_path="/tmp/worktrees/stale-branch",
+            force=True,
+            delete_branch=True,
+            branch_name="stale-branch",
+        )
+        mock_worktree_storage.delete.assert_called_once_with("stale-wt-456")
+        mock_git_manager.create_worktree.assert_called_once_with(
+            worktree_path="/tmp/worktrees/stale-branch",
+            branch_name="stale-branch",
+            base_branch="main",
+            create_branch=True,
+            use_local=False,
+        )
+        mock_worktree_storage.create.assert_called_once_with(
+            project_id="proj-123",
+            branch_name="stale-branch",
+            worktree_path="/tmp/worktrees/stale-branch",
+            base_branch="main",
+            task_id=None,
+        )
+        repair.assert_awaited_once_with(
+            main_repo_path="/path/to/main/repo",
+            isolated_path="/tmp/worktrees/stale-branch",
+            provider="claude",
+        )
 
     def test_build_context_prompt_prepends_warning(self) -> None:
         """Test build_context_prompt prepends CRITICAL: Worktree Context warning."""

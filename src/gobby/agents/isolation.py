@@ -9,7 +9,6 @@ This module provides the abstraction layer for different isolation modes:
 Each handler implements the IsolationHandler ABC to provide:
 - Environment preparation (worktree/clone creation)
 - Context prompt building (adding isolation warnings)
-- Branch name generation
 """
 
 import asyncio
@@ -24,11 +23,11 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
 
+from gobby.agents import worktree_reuse
 from gobby.agents.code_index import CodeIndexPreflightResult
 from gobby.agents.code_index import ensure_isolation_code_index as _ensure_isolation_code_index
 from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene
 from gobby.agents.python_env_seed import preseed_isolated_python_environment
-from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.storage.tasks import TaskArtifactManager
 
 logger = logging.getLogger(__name__)
@@ -222,7 +221,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         )
         if existing:
             if Path(existing.worktree_path).is_dir():
-                sync_result = await sync_reused_worktree_to_base(
+                sync_result = await worktree_reuse.sync_reused_worktree_to_base(
                     git_manager=self._git_manager,
                     worktree_path=existing.worktree_path,
                     base_branch=base_branch,
@@ -246,11 +245,15 @@ class WorktreeIsolationHandler(IsolationHandler):
                 )
             else:
                 # Stale record — directory gone, clean up and fall through to create new
-
                 logger.warning(
                     f"Worktree directory missing: {existing.worktree_path} (cleaning up stale record {existing.id})",
                 )
-                await asyncio.to_thread(self._worktree_storage.delete, existing.id)
+                await asyncio.to_thread(
+                    worktree_reuse.cleanup_stale_worktree_registration,
+                    self._git_manager,
+                    self._worktree_storage,
+                    existing,
+                )
 
         use_local = False
 
@@ -303,7 +306,11 @@ class WorktreeIsolationHandler(IsolationHandler):
         created_base_commit_sha: str | None = None
         if config.task_id is not None:
             created_base_commit_sha = await asyncio.to_thread(
-                _capture_base_commit_sha, worktree_path
+                worktree_reuse.capture_worktree_base_commit_sha,
+                git_manager=self._git_manager,
+                worktree_path=worktree_path,
+                base_branch=base_branch,
+                use_local=use_local,
             )
             await asyncio.to_thread(
                 TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic,

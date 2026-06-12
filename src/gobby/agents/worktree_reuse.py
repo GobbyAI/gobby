@@ -61,6 +61,39 @@ async def sync_reused_worktree_to_base(
     )
 
 
+def capture_worktree_base_commit_sha(
+    *,
+    git_manager: Any,
+    worktree_path: str,
+    base_branch: str,
+    use_local: bool,
+) -> str:
+    base_ref = base_branch if use_local else f"origin/{base_branch}"
+    result = _run_git(git_manager, ["merge-base", base_ref, "HEAD"], cwd=Path(worktree_path))
+    if result.returncode != 0:
+        detail = _detail(result)
+        raise RuntimeError(f"Failed to capture base_commit_sha from {base_ref}: {detail}")
+    return result.stdout.strip()
+
+
+def cleanup_stale_worktree_registration(
+    git_manager: Any,
+    worktree_storage: Any,
+    worktree: Any,
+) -> None:
+    delete_result = git_manager.delete_worktree(
+        worktree_path=worktree.worktree_path,
+        force=True,
+        delete_branch=True,
+        branch_name=worktree.branch_name,
+    )
+    if not delete_result.success:
+        raise RuntimeError(f"Failed to clean up stale worktree: {delete_result.error}")
+    if delete_result.error and "not found" not in delete_result.error:
+        raise RuntimeError(f"Failed to delete stale worktree branch: {delete_result.error}")
+    worktree_storage.delete(worktree.id)
+
+
 def _sync_reused_worktree_to_base_sync(
     git_manager: Any,
     worktree_path: str,
