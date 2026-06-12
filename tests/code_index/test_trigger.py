@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from pathlib import Path
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
 
 import pytest
 
@@ -27,6 +27,9 @@ async def trigger() -> CodeIndexTrigger:
     t = CodeIndexTrigger(
         loop=loop,
         debounce_seconds=0.05,  # Fast debounce for tests
+        retry_base_seconds=0.05,
+        retry_max_seconds=0.2,
+        index_timeout_seconds=0.01,
     )
     return t
 
@@ -209,20 +212,65 @@ async def test_pending_paths_resolve_under_root_key_cwd(
 
 
 @pytest.mark.asyncio
-async def test_gcode_failure_does_not_propagate(trigger: CodeIndexTrigger, tmp_path: Path) -> None:
-    """gcode failure is logged but doesn't raise."""
+async def test_gcode_failure_requeues_pending_files_with_backoff(
+    trigger: CodeIndexTrigger, tmp_path: Path
+) -> None:
+    """gcode failure is logged, requeued, and retried with backoff."""
+    root_key = trigger._root_key("/repo")
+    trigger._pending_by_root[root_key] = {"src/foo.py"}
     mock_proc = _make_mock_proc(returncode=1)
 
     with (
         patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
         patch("asyncio.create_subprocess_exec", return_value=mock_proc),
     ):
-        trigger._schedule_file("/src/foo.py", "proj-1", "/repo")
+        result = await trigger._flush(root_key, "proj-1")
 
-        result = await trigger._flush(trigger._root_key("/repo"), "proj-1")
+        retry_timer = trigger._flush_timers_by_root.pop(root_key)
+        retry_timer.cancel()
+
+        await trigger._flush(root_key, "proj-1")
+        second_retry_timer = trigger._flush_timers_by_root.pop(root_key)
+        second_retry_timer.cancel()
 
     assert result is None
-    assert mock_proc.communicate.await_count == 1
+    assert mock_proc.communicate.await_count == 2
+    assert trigger._pending_by_root[root_key] == {"src/foo.py"}
+    assert trigger._retry_delay_by_root[root_key] == 0.2
+
+
+@pytest.mark.asyncio
+async def test_gcode_timeout_requeues_pending_files_with_backoff(
+    trigger: CodeIndexTrigger, tmp_path: Path
+) -> None:
+    """gcode timeout kills the process, requeues files, and schedules retry."""
+    root_key = trigger._root_key("/repo")
+    trigger._pending_by_root[root_key] = {"src/foo.py"}
+
+    never_finishes: asyncio.Future[tuple[bytes, bytes]] = asyncio.Future()
+
+    async def _communicate() -> tuple[bytes, bytes]:
+        return await never_finishes
+
+    mock_proc = AsyncMock()
+    mock_proc.communicate = AsyncMock(side_effect=_communicate)
+    mock_proc.kill = Mock()
+    mock_proc.wait = AsyncMock(return_value=0)
+
+    with (
+        patch("gobby.code_index.trigger.resolve_native_bin", return_value="/tmp/gcode"),
+        patch("asyncio.create_subprocess_exec", return_value=mock_proc),
+    ):
+        await trigger._flush(root_key, "proj-1")
+
+    retry_timer = trigger._flush_timers_by_root.pop(root_key)
+    retry_timer.cancel()
+    never_finishes.cancel()
+
+    assert trigger._pending_by_root[root_key] == {"src/foo.py"}
+    assert trigger._retry_delay_by_root[root_key] == 0.1
+    mock_proc.kill.assert_called_once_with()
+    assert mock_proc.wait.await_count == 1
 
 
 # ── No gcode binary ─────────────────────────────────────────────────
