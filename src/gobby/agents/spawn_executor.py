@@ -5,6 +5,8 @@ This module consolidates the spawn dispatch logic from agents.py, worktrees.py,
 and clones.py into a single executor. All agents spawn via tmux.
 """
 
+import asyncio
+import inspect
 import json
 import logging
 import shutil
@@ -15,6 +17,8 @@ from typing import TYPE_CHECKING, cast
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.sandbox import (
+    ClaudeSandboxResolver,
+    QwenSandboxResolver,
     compute_sandbox_paths,
     get_sandbox_resolver,
 )
@@ -28,6 +32,7 @@ from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn as _sandbox_config_for_spawn,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
+from gobby.agents.spawners.base import SpawnResult as TerminalSpawnResult
 from gobby.agents.trust import pre_approve_directory
 from gobby.providers import AGY_UNAVAILABLE_REASON
 
@@ -63,9 +68,21 @@ def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
     daemon_config = request.daemon_config
     tmux_config = getattr(daemon_config, "tmux", None)
     if not isinstance(tmux_config, TmuxConfig):
-        raise RuntimeError("daemon tmux config is required to spawn tmux agents")
+        tmux_config = TmuxConfig()
 
     return TmuxSpawner(config=tmux_config)
+
+
+async def _spawn_terminal(
+    spawner: TmuxSpawner,
+    *,
+    command: list[str],
+    cwd: str,
+    env: dict[str, str],
+) -> TerminalSpawnResult:
+    if inspect.iscoroutinefunction(getattr(spawner, "spawn_async", None)):
+        return await spawner.spawn_async(command=command, cwd=cwd, env=env)
+    return await asyncio.to_thread(spawner.spawn, command=command, cwd=cwd, env=env)
 
 
 def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
@@ -315,7 +332,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if sandbox_config and sandbox_config.enabled:
-        resolver = get_sandbox_resolver("claude")
+        resolver = ClaudeSandboxResolver()
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,
@@ -358,7 +375,8 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
 
     # Spawn in terminal with env vars
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -486,7 +504,8 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
 
     # Spawn in terminal with env vars
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -565,7 +584,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if sandbox_config and sandbox_config.enabled:
-        resolver = get_sandbox_resolver("qwen")
+        resolver = QwenSandboxResolver()
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,
@@ -606,7 +625,8 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("qwen", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -714,7 +734,8 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("grok", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -830,7 +851,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("codex", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -946,7 +968,8 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("droid", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,

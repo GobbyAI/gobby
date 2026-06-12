@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -149,6 +150,28 @@ class TestRequireBuildCoordinatorForGobbyBuild:
         assert response.reason is not None
         assert "require-build-coordinator-for-gobby-build" in response.reason
         assert 'Call get_skill(name="build-coordinator") on gobby-skills' in response.reason
+
+    @pytest.mark.asyncio
+    async def test_normalized_bash_gobby_build_triggers_build_coordinator_rule(
+        self, temp_db: HubDatabase
+    ) -> None:
+        _sync_bundled(temp_db)
+        data: dict[str, object] = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "uv run gobby build #15117 --clone"},
+        }
+        normalize_tool_fields(data)
+
+        response = await RuleEngine(temp_db).evaluate(
+            _event(data),
+            session_id="sid",
+            variables={"is_spawned_agent": True},
+        )
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "require-build-coordinator-for-gobby-build" in response.reason
 
     @pytest.mark.asyncio
     async def test_blocks_web_chat_gobby_build_before_skill_load(

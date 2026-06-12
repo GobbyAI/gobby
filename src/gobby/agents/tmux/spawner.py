@@ -74,6 +74,16 @@ class TmuxSpawner(TerminalSpawnerBase):
             return False
         return self._session_manager.is_available()
 
+    async def spawn_async(
+        self,
+        command: list[str],
+        cwd: str | Path,
+        env: dict[str, str] | None = None,
+        title: str | None = None,
+    ) -> SpawnResult:
+        """Spawn a command inside a new tmux session."""
+        return await self._async_spawn(command, cwd, env, title)
+
     def spawn(
         self,
         command: list[str],
@@ -81,27 +91,8 @@ class TmuxSpawner(TerminalSpawnerBase):
         env: dict[str, str] | None = None,
         title: str | None = None,
     ) -> SpawnResult:
-        """Spawn a command inside a new tmux session (sync wrapper).
-
-        The heavy lifting is async; we bridge to the running event loop
-        or create a temporary one for sync callers.
-        """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    self._async_spawn(command, cwd, env, title),
-                )
-                return future.result(timeout=30)
-        else:
-            return asyncio.run(self._async_spawn(command, cwd, env, title))
+        """Spawn a command inside a new tmux session for sync callers."""
+        return asyncio.run(self.spawn_async(command, cwd, env, title))
 
     async def _async_spawn(
         self,

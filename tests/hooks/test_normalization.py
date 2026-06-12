@@ -674,6 +674,19 @@ class TestCanonicalToolMetadata:
         assert data["canonical_code_navigation_action"] == "search"
         assert data["canonical_code_navigation_broad"] is True
 
+    def test_exec_command_unclassified_shell_sets_canonical_execute_kind(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "uv run gobby build #15117"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "execute"
+        assert data["canonical_tool_confidence"] == "high"
+        assert "canonical_repo_mutation" not in data
+
     @pytest.mark.parametrize(
         ("command", "expected_kind"),
         [
