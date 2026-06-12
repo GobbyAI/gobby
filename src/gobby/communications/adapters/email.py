@@ -207,10 +207,23 @@ class EmailAdapter(BaseChannelAdapter):
         """Authenticate IMAP with password or XOAUTH2."""
         if self._auth_method == "oauth2":
             token = await self._get_oauth2_token()
-            auth_string = self._build_xoauth2_string(token)
-            await imap_client.authenticate("XOAUTH2", lambda: auth_string)
+            response = await imap_client.xoauth2(self._from_address, token.encode())
+            if response.result != "OK":
+                raise ValueError(f"IMAP XOAUTH2 login failed: {response.result}")
         else:
             await imap_client.login(self._from_address, self._password)
+
+    @staticmethod
+    def _message_bytes_from_fetch_lines(lines: list[Any]) -> bytes | None:
+        """Extract the RFC822 payload from aioimaplib's flat fetch response lines."""
+        for index, line in enumerate(lines):
+            if not isinstance(line, bytes) or b"RFC822" not in line:
+                continue
+            if index + 1 < len(lines):
+                payload = lines[index + 1]
+                if isinstance(payload, bytes):
+                    return payload
+        return None
 
     async def _ensure_smtp_connected(self) -> None:
         """Ensure SMTP connection is active."""
@@ -395,8 +408,8 @@ class EmailAdapter(BaseChannelAdapter):
 
         async def _search_unseen() -> tuple[str, list[bytes]]:
             await imap.select("INBOX")
-            status, response = await imap.search("UNSEEN")
-            return status, response
+            response = await imap.search("UNSEEN")
+            return response.result, response.lines
 
         status, response = await self._retry(_search_unseen)
         if status != "OK" or not response[0]:
@@ -409,68 +422,69 @@ class EmailAdapter(BaseChannelAdapter):
             num_str = num.decode()
 
             async def _fetch_msg(n: str = num_str) -> tuple[str, list[Any]]:
-                result: tuple[str, list[Any]] = await imap.fetch(n, "(RFC822)")
-                return result
+                response = await imap.fetch(n, "(RFC822)")
+                return response.result, response.lines
 
             status, fetch_data = await self._retry(_fetch_msg)
             if status != "OK":
                 continue
 
-            for part in fetch_data:
-                if isinstance(part, tuple):
-                    msg_bytes = part[1]
-                    email_msg = email.message_from_bytes(msg_bytes)
+            msg_bytes = self._message_bytes_from_fetch_lines(fetch_data)
+            if msg_bytes is None:
+                continue
 
-                    msg_id = email_msg.get("Message-ID", "")
-                    thread_id = email_msg.get("In-Reply-To", "")
-                    sender = email_msg.get("From", "")
-                    subject = email_msg.get("Subject", "")
+            email_msg = email.message_from_bytes(msg_bytes)
 
-                    content = ""
-                    content_type = "text"
-                    if email_msg.is_multipart():
-                        for payload_part in email_msg.walk():
-                            if payload_part.get_content_type() == "text/plain":
-                                payload = payload_part.get_payload(decode=True)
-                                if isinstance(payload, bytes):
-                                    content = payload.decode(errors="replace")
-                                break
-                            elif payload_part.get_content_type() == "text/html" and not content:
-                                payload = payload_part.get_payload(decode=True)
-                                if isinstance(payload, bytes):
-                                    content = payload.decode(errors="replace")
-                                content_type = "html"
-                    else:
-                        payload = email_msg.get_payload(decode=True)
+            msg_id = email_msg.get("Message-ID", "")
+            thread_id = email_msg.get("In-Reply-To", "")
+            sender = email_msg.get("From", "")
+            subject = email_msg.get("Subject", "")
+
+            content = ""
+            content_type = "text"
+            if email_msg.is_multipart():
+                for payload_part in email_msg.walk():
+                    if payload_part.get_content_type() == "text/plain":
+                        payload = payload_part.get_payload(decode=True)
                         if isinstance(payload, bytes):
                             content = payload.decode(errors="replace")
-                        elif isinstance(payload, str):
-                            content = payload
-                        if email_msg.get_content_type() == "text/html":
-                            content_type = "html"
+                        break
+                    elif payload_part.get_content_type() == "text/html" and not content:
+                        payload = payload_part.get_payload(decode=True)
+                        if isinstance(payload, bytes):
+                            content = payload.decode(errors="replace")
+                        content_type = "html"
+            else:
+                payload = email_msg.get_payload(decode=True)
+                if isinstance(payload, bytes):
+                    content = payload.decode(errors="replace")
+                elif isinstance(payload, str):
+                    content = payload
+                if email_msg.get_content_type() == "text/html":
+                    content_type = "html"
 
-                    messages.append(
-                        CommsMessage(
-                            id=msg_id or f"{datetime.now(UTC).timestamp()}-{uuid.uuid4().hex[:8]}",
-                            channel_id="",
-                            direction="inbound",
-                            content=content,
-                            created_at=datetime.now(UTC).isoformat(),
-                            identity_id=sender,
-                            platform_message_id=msg_id,
-                            platform_thread_id=thread_id,
-                            content_type=content_type,
-                            metadata_json={
-                                "subject": subject,
-                                "platform_destination": sender,
-                                "platform_channel_id": sender,
-                            },
-                        )
-                    )
+            messages.append(
+                CommsMessage(
+                    id=msg_id or f"{datetime.now(UTC).timestamp()}-{uuid.uuid4().hex[:8]}",
+                    channel_id="",
+                    direction="inbound",
+                    content=content,
+                    created_at=datetime.now(UTC).isoformat(),
+                    identity_id=sender,
+                    platform_message_id=msg_id,
+                    platform_thread_id=thread_id,
+                    content_type=content_type,
+                    metadata_json={
+                        "subject": subject,
+                        "platform_destination": sender,
+                        "platform_channel_id": sender,
+                    },
+                )
+            )
 
             async def _mark_seen(n: str = num_str) -> tuple[str, list[Any]]:
-                result: tuple[str, list[Any]] = await imap.store(n, "+FLAGS", "(\\Seen)")
-                return result
+                response = await imap.store(n, "+FLAGS", "(\\Seen)")
+                return response.result, response.lines
 
             await self._retry(_mark_seen)
 
