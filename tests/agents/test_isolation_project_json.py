@@ -156,6 +156,40 @@ async def test_repair_excludes_untracked_project_json(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_repair_excludes_generated_droid_hook_file(tmp_path: Path) -> None:
+    """Generated Droid hook files should not dirty repaired isolated roots."""
+    parent = tmp_path / "parent"
+    isolated = tmp_path / "isolated"
+    parent.mkdir()
+    isolated.mkdir()
+    (parent / ".gobby").mkdir()
+    (parent / ".gobby" / "project.json").write_text(
+        json.dumps({"id": "parent-proj", "name": "parent"}) + "\n",
+        encoding="utf-8",
+    )
+    _git(isolated, "init", "-b", "main")
+    _git(isolated, "config", "user.email", "test@example.com")
+    _git(isolated, "config", "user.name", "Test User")
+    (isolated / "README.md").write_text("# isolated\n", encoding="utf-8")
+    _git(isolated, "add", "README.md")
+    _git(isolated, "commit", "-m", "initial")
+
+    await repair_isolation_environment(
+        main_repo_path=str(parent),
+        isolated_path=str(isolated),
+        provider="droid",
+    )
+
+    hooks_file = isolated / ".factory" / "hooks" / "hooks.json"
+    assert hooks_file.exists()
+    assert _git(isolated, "status", "--porcelain").stdout == ""
+    exclude_path = (
+        isolated / _git(isolated, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+    )
+    assert ".factory/hooks/hooks.json" in exclude_path.read_text(encoding="utf-8")
+
+
+@pytest.mark.asyncio
 async def test_clone_and_parent_can_index_same_relative_file_without_collision(
     tmp_path: Path,
 ) -> None:

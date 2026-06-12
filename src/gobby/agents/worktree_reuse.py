@@ -10,13 +10,20 @@ from pathlib import Path
 from typing import Any, cast
 
 from gobby.agents.isolation_git_hygiene import (
-    MCP_CONFIG_RELATIVE_PATH,
+    GENERATED_ISOLATION_EXCLUDE_PATHS,
     PROJECT_JSON_RELATIVE_PATH,
     apply_isolation_git_hygiene,
     is_generated_isolation_project_json,
 )
 
 logger = logging.getLogger(__name__)
+
+GENERATED_ISOLATION_UNTRACKED_STATUS_PREFIXES = (
+    ".claude/",
+    ".codex/",
+    ".factory/",
+    ".gemini/",
+)
 
 
 class ReusedWorktreeRebaseConflict(RuntimeError):
@@ -213,7 +220,7 @@ def _blocking_status_lines(
     blocking: list[str] = []
     for line in status_output.splitlines():
         relative_path = _porcelain_path(line)
-        if relative_path == MCP_CONFIG_RELATIVE_PATH:
+        if _is_generated_isolation_status_path(line, relative_path):
             continue
         if relative_path == PROJECT_JSON_RELATIVE_PATH and is_generated_isolation_project_json(
             worktree_path / PROJECT_JSON_RELATIVE_PATH,
@@ -222,6 +229,17 @@ def _blocking_status_lines(
             continue
         blocking.append(line)
     return blocking
+
+
+def _is_generated_isolation_status_path(line: str, relative_path: str) -> bool:
+    if relative_path in GENERATED_ISOLATION_EXCLUDE_PATHS:
+        return True
+    if not line.startswith("?? "):
+        return False
+    return any(
+        relative_path == prefix or relative_path.startswith(prefix)
+        for prefix in GENERATED_ISOLATION_UNTRACKED_STATUS_PREFIXES
+    )
 
 
 def _porcelain_path(line: str) -> str:

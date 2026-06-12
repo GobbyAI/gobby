@@ -12,6 +12,13 @@ logger = logging.getLogger(__name__)
 
 MCP_CONFIG_RELATIVE_PATH = ".mcp.json"
 PROJECT_JSON_RELATIVE_PATH = ".gobby/project.json"
+GENERATED_ISOLATION_EXCLUDE_PATHS = (
+    MCP_CONFIG_RELATIVE_PATH,
+    ".claude/",
+    ".codex/",
+    ".factory/hooks/hooks.json",
+    ".gemini/",
+)
 
 
 def apply_isolation_git_hygiene(
@@ -29,10 +36,11 @@ def apply_isolation_git_hygiene(
     if not workspace.is_dir():
         return
 
-    _add_local_exclude(workspace, MCP_CONFIG_RELATIVE_PATH)
-    _unstage_path(workspace, MCP_CONFIG_RELATIVE_PATH)
-    if _git_path_is_tracked(workspace, MCP_CONFIG_RELATIVE_PATH):
-        _mark_skip_worktree(workspace, MCP_CONFIG_RELATIVE_PATH)
+    for relative_path in GENERATED_ISOLATION_EXCLUDE_PATHS:
+        _add_local_exclude(workspace, relative_path)
+        _unstage_path(workspace, relative_path)
+        if _git_path_is_tracked(workspace, relative_path):
+            _mark_skip_worktree(workspace, relative_path)
 
     project_json = workspace / PROJECT_JSON_RELATIVE_PATH
     if not is_generated_isolation_project_json(project_json, main_repo_path=main_repo_path):

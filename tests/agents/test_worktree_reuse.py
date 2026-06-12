@@ -101,6 +101,35 @@ async def test_sync_reused_worktree_rejects_dirty_worktree(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
+async def test_sync_reused_worktree_allows_generated_hook_status_lines(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    git = FakeGitManager(
+        [
+            _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
+            _result(
+                ["git", "status"],
+                0,
+                stdout="?? .factory/\n?? .codex/\n?? .claude/\n?? .gemini/\n",
+            ),
+            _result(["git", "merge-base"], 0),
+        ]
+    )
+
+    result = await sync_reused_worktree_to_base(
+        git_manager=git,
+        worktree_path=str(worktree),
+        base_branch="0.4.7",
+    )
+
+    assert result.status == "already_current"
+    assert len(git.calls) == 3
+
+
+@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_sync_reused_worktree_allows_generated_isolation_metadata(
     tmp_path: Path,
