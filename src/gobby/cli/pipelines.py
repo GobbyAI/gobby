@@ -123,6 +123,61 @@ def _try_daemon_run(name: str, inputs: dict[str, str], project_id: str) -> dict[
         return None
 
 
+def _try_daemon_approval(action: str, token: str) -> dict[str, Any] | None:
+    """Try to approve/reject via daemon. Returns None only if daemon is unavailable."""
+    try:
+        from gobby.config.app import load_config
+        from gobby.utils.daemon_client import DaemonClient
+
+        config = load_config()
+        client = DaemonClient(port=config.daemon_port)
+        is_healthy, health_error = client.check_health()
+        if not is_healthy:
+            logger.debug("Daemon %s skipped: %s", action, health_error)
+            return None
+
+        response = client.call_http_api(
+            f"/api/pipelines/{action}/{token}",
+            method="POST",
+            timeout=300.0,
+        )
+        if response.status_code in (200, 202):
+            try:
+                result: dict[str, Any] = response.json()
+            except Exception as e:
+                click.echo(f"Pipeline {action} failed in daemon: invalid response: {e}", err=True)
+                raise SystemExit(1) from None
+            return result
+        click.echo(
+            f"Pipeline {action} failed in daemon: {_daemon_error_message(response)}",
+            err=True,
+        )
+        raise SystemExit(1)
+    except (httpx.RequestError, ConnectionError, OSError) as e:
+        logger.debug("Daemon %s failed: %s", action, e, exc_info=True)
+        return None
+
+
+def _pipeline_result_dict(execution: Any) -> dict[str, Any]:
+    return {
+        "execution_id": execution.id,
+        "pipeline_name": execution.pipeline_name,
+        "status": execution.status.value,
+    }
+
+
+def _echo_approval_result(action: str, result: dict[str, Any], json_format: bool) -> None:
+    if json_format:
+        click.echo(json.dumps(result, indent=2))
+        return
+
+    icon = "✓" if action == "approve" else "✗"
+    verb = "approved" if action == "approve" else "rejected"
+    click.echo(f"{icon} Pipeline {verb}")
+    click.echo(f"  Execution ID: {result.get('execution_id', '')}")
+    click.echo(f"  Status: {result.get('status', '')}")
+
+
 def parse_input(input_str: str) -> tuple[str, str]:
     """Parse a key=value input string."""
     if "=" not in input_str:
@@ -480,22 +535,15 @@ def approve_pipeline(ctx: click.Context, token: str, json_format: bool) -> None:
 
         gobby pipelines approve approval-token-xyz --json
     """
-    executor = get_pipeline_executor()
-
     try:
-        execution = asyncio.run(executor.approve(token, approved_by=None))
+        daemon_result = _try_daemon_approval("approve", token)
+        if daemon_result is not None:
+            _echo_approval_result("approve", daemon_result, json_format)
+            return
 
-        if json_format:
-            result = {
-                "execution_id": execution.id,
-                "pipeline_name": execution.pipeline_name,
-                "status": execution.status.value,
-            }
-            click.echo(json.dumps(result, indent=2))
-        else:
-            click.echo("✓ Pipeline approved")
-            click.echo(f"  Execution ID: {execution.id}")
-            click.echo(f"  Status: {execution.status.value}")
+        executor = get_pipeline_executor()
+        execution = asyncio.run(executor.approve(token, approved_by=None))
+        _echo_approval_result("approve", _pipeline_result_dict(execution), json_format)
 
     except ValueError as e:
         click.echo(f"Invalid token: {e}", err=True)
@@ -518,22 +566,15 @@ def reject_pipeline(ctx: click.Context, token: str, json_format: bool) -> None:
 
         gobby pipelines reject approval-token-xyz --json
     """
-    executor = get_pipeline_executor()
-
     try:
-        execution = asyncio.run(executor.reject(token, rejected_by=None))
+        daemon_result = _try_daemon_approval("reject", token)
+        if daemon_result is not None:
+            _echo_approval_result("reject", daemon_result, json_format)
+            return
 
-        if json_format:
-            result = {
-                "execution_id": execution.id,
-                "pipeline_name": execution.pipeline_name,
-                "status": execution.status.value,
-            }
-            click.echo(json.dumps(result, indent=2))
-        else:
-            click.echo("✗ Pipeline rejected")
-            click.echo(f"  Execution ID: {execution.id}")
-            click.echo(f"  Status: {execution.status.value}")
+        executor = get_pipeline_executor()
+        execution = asyncio.run(executor.reject(token, rejected_by=None))
+        _echo_approval_result("reject", _pipeline_result_dict(execution), json_format)
 
     except ValueError as e:
         click.echo(f"Invalid token: {e}", err=True)
