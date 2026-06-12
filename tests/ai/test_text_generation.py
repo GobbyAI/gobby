@@ -24,6 +24,7 @@ from gobby.ai import (
     TextGenerationService,
     build_daemon_text_generation_service,
 )
+from gobby.ai.text_generation import ONE_SHOT_DIRECTIVE
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureProfile
 from gobby.llm.base import LLMProviderCancellation, LLMTextResult
@@ -73,6 +74,22 @@ class FailingAdapter:
     async def generate(self, request: TextGenerationRequest) -> str:
         self.requests.append(request)
         raise RuntimeError(self.message)
+
+
+class SlowAdapter:
+    def __init__(self, delay: float = 30.0) -> None:
+        self.delay = delay
+        self.requests: list[TextGenerationRequest] = []
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        await asyncio.sleep(self.delay)
+        return "slow text"
+
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        self.requests.append(request)
+        await asyncio.sleep(self.delay)
+        return {"slow": True}
 
 
 class ProviderFailureAdapter:
@@ -1377,6 +1394,13 @@ class FakeACPClient:
             yield event
 
 
+class HangingACPClient(FakeACPClient):
+    async def send(self, message: str, **kwargs: object) -> AsyncIterator[StreamEvent]:
+        self.sent.append({"message": message, **kwargs})
+        await asyncio.Event().wait()
+        yield StreamEvent(event_type="content_delta", data={"content": "unreachable"})
+
+
 class FakeCodexAppServerClient:
     def __init__(self, events: list[dict[str, Any]] | None = None) -> None:
         self.started = False
@@ -1406,7 +1430,12 @@ class FakeCodexAppServerClient:
         sandbox: str | None = None,
         terminal_context: dict[str, Any] | None = None,
     ) -> SimpleNamespace:
-        self.thread_kwargs = {"cwd": cwd, "model": model}
+        self.thread_kwargs = {
+            "cwd": cwd,
+            "model": model,
+            "approval_policy": approval_policy,
+            "sandbox": sandbox,
+        }
         return SimpleNamespace(id="thread-1")
 
     async def run_turn(
@@ -1462,12 +1491,17 @@ async def test_codex_app_server_text_generate_adapter_runs_one_shot_turn() -> No
     assert response == "hello world"
     assert client.started is True
     assert client.stopped is True
-    assert client.thread_kwargs == {"cwd": "/tmp/project", "model": "gpt-5.4"}
+    assert client.thread_kwargs == {
+        "cwd": "/tmp/project",
+        "model": "gpt-5.4",
+        "approval_policy": "never",
+        "sandbox": "readOnly",
+    }
     assert client.turn_kwargs == {
         "thread_id": "thread-1",
         "prompt": "user prompt",
         "images": None,
-        "context_prefix": "system prompt",
+        "context_prefix": f"system prompt\n\n{ONE_SHOT_DIRECTIVE}",
     }
 
 
@@ -1539,7 +1573,7 @@ async def test_codex_app_server_text_generate_adapter_times_out_and_stops_client
         "thread_id": "thread-1",
         "prompt": "user prompt",
         "images": None,
-        "context_prefix": None,
+        "context_prefix": ONE_SHOT_DIRECTIVE,
     }
 
 
@@ -1624,12 +1658,18 @@ async def test_acp_text_generate_adapter_runs_one_shot_prompt_turn(provider: str
         "cwd": "/tmp/project",
         "model": "model-a",
     }
-    assert client.sent == [
-        {
-            "message": "system prompt\n\nuser prompt",
-            "model": "model-a",
-        }
-    ]
+    assert len(client.sent) == 1
+    sent = dict(client.sent[0])
+    pre_tool_callback = sent.pop("pre_tool_callback")
+    assert sent == {
+        "message": f"system prompt\n\n{ONE_SHOT_DIRECTIVE}\n\nuser prompt",
+        "model": "model-a",
+    }
+    decision = await pre_tool_callback({"tool_name": "read_file", "tool_input": {}})
+    assert decision == {
+        "decision": "deny",
+        "reason": "Tool use is disabled for one-shot text generation.",
+    }
     assert client.stopped is True
 
 
@@ -1675,6 +1715,190 @@ async def test_text_generation_service_falls_back_when_acp_candidate_errors() ->
 
     assert result.text == "claude:summarize"
     assert acp_client.stopped is True
+
+
+@pytest.mark.asyncio
+async def test_acp_one_shot_directive_composes_with_json_instruction() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.ACP,
+                available=True,
+                models=("gemini-pro",),
+            )
+        ]
+    )
+    acp_client = FakeACPClient(
+        [StreamEvent(event_type="content_delta", data={"content": '{"ok": true}'})]
+    )
+    service = TextGenerationService(
+        registry,
+        {"gemini": ACPTextGenerateAdapter(lambda: acp_client)},  # type: ignore[dict-item]
+    )
+
+    result = await service.generate_json(
+        TextGenerationRequest(
+            prompt="classify",
+            system_prompt="caller prompt",
+            provider="gemini",
+            model="gemini-pro",
+        )
+    )
+
+    assert result == {"ok": True}
+    message = str(acp_client.sent[0]["message"])
+    assert message.startswith("caller prompt")
+    json_instruction_index = message.index("Respond with a single valid JSON object")
+    directive_index = message.index(ONE_SHOT_DIRECTIVE)
+    assert json_instruction_index < directive_index
+
+
+def _two_candidate_registry(slow_provider: str, good_provider: str) -> AICapabilityRegistry:
+    return AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider=slow_provider,
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("slow-model",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider=good_provider,
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("good-model",),
+            ),
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_times_out_slow_candidate_and_falls_back(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = TextGenerationService(
+        _two_candidate_registry("local:slow", "local:good"),
+        {"local:slow": SlowAdapter(), "local:good": RecordingAdapter("local:good")},
+        candidate_timeout_seconds=0.01,
+    )
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=("local:slow/slow-model", "local:good/good-model"),
+        )
+    )
+
+    assert result.provider == "local:good"
+    records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
+    assert [record.levelno for record in records] == [logging.WARNING, logging.DEBUG]
+    assert records[0].success is False
+    assert "candidate timed out after 0.01s" in records[0].error
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_times_out_slow_json_candidate_and_falls_back(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    service = TextGenerationService(
+        _two_candidate_registry("local:slow", "local:good"),
+        {"local:slow": SlowAdapter(), "local:good": JSONAdapter("local:good")},
+        candidate_timeout_seconds=0.01,
+    )
+    caplog.set_level(logging.DEBUG, logger=TEXT_GENERATION_LOGGER)
+
+    result = await service.generate_json(
+        TextGenerationRequest(
+            prompt="classify",
+            candidates=("local:slow/slow-model", "local:good/good-model"),
+        )
+    )
+
+    assert result == {"provider": "local:good", "model": "good-model"}
+    records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
+    assert records[0].success is False
+    assert "candidate timed out after 0.01s" in records[0].error
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_terminal_candidate_timeout_raises() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:slow",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("slow-model",),
+            )
+        ]
+    )
+    service = TextGenerationService(
+        registry,
+        {"local:slow": SlowAdapter()},
+        candidate_timeout_seconds=0.01,
+    )
+
+    with pytest.raises(RuntimeError, match="candidate timed out after 0.01s"):
+        await service.generate_result(
+            TextGenerationRequest(prompt="summarize", provider="local:slow", model="slow-model")
+        )
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_no_candidate_timeout_when_unset() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:slow",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("slow-model",),
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"local:slow": SlowAdapter(delay=0.05)})
+
+    result = await service.generate_result(
+        TextGenerationRequest(prompt="summarize", provider="local:slow", model="slow-model")
+    )
+
+    assert result.text == "slow text"
+
+
+@pytest.mark.asyncio
+async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = HangingACPClient()
+    monkeypatch.setattr("gobby.ai.text_generation._gemini_acp_client", lambda: client)
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.ACP,
+                available=True,
+            )
+        ]
+    )
+    service = build_daemon_text_generation_service(
+        DaemonConfig(ai={"generation": {"candidate_timeout_seconds": 0.01}}),
+        registry=registry,
+    )
+
+    with pytest.raises(RuntimeError, match="candidate timed out after 0.01s"):
+        await service.generate(
+            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="never completes")
+        )
+
+    assert client.stopped is True
 
 
 class FakeProcess:

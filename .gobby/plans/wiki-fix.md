@@ -59,15 +59,19 @@
  ---
  WP1 — Daemon: bounded one-shot LLM lanes
 
- Repo: /Users/josh/Projects/gobby (Python). Worker files/claims a gobby task there; commits [gobby-#NNNNN] fix: …;
- explicit-path staging; no push (Josh pushes).
+ Repo: /Users/josh/Projects/gobby (Python). STATUS: implemented by Claude in-session 2026-06-12 (daemon task #17061),
+ per Josh's revised call — the Codex worker's scope is WP2–WP5. Commits [gobby-#NNNNN] fix: …; explicit-path staging;
+ no push (Josh pushes).
 
  1. Codex adapter one-shot contract (CodexAppServerTextGenerateAdapter.generate): start_thread(...,
- approval_policy="never", sandbox="readOnly"); pass effort="minimal" through run_turn → start_turn; append a
- direct-answer/no-tools/no-narration directive to context_prefix. Use any thread/turn-level tool-disable params the
- app-server protocol offers (codex_impl/client.py).
- 2. Gemini ACP adapter, same contract (ACPTextGenerateAdapter.generate): most restrictive non-interactive no-tools
- session options in adapters/acp_client.py/gemini_acp_client.py; same directive via _compose_prompt.
+ approval_policy="never", sandbox="readOnly"); append a direct-answer/no-tools/no-narration directive to
+ context_prefix. Reasoning effort stays auto — no effort override (Josh: "that's what we did for haiku"); the latency
+ win comes from removing the agentic turn, not clamping reasoning. approvalPolicy/sandbox at thread/start is the
+ tool-restriction surface the app-server protocol offers (codex_impl/client_api.py).
+ 2. Gemini ACP adapter, same contract (ACPTextGenerateAdapter.generate): deny-all pre_tool_callback passed through
+ ACPClient.send (ACP permission requests answer {"outcome": "cancelled"} instead of auto-approve; mcpServers already
+ []); same directive via _compose_prompt. Applies to all ACP lanes (gemini/grok/qwen); managed web-chat sessions
+ (pre_tool_callback=None) keep auto-approve.
  3. Per-candidate timeout in _try_generate_result_candidates AND _try_generate_json_candidates: asyncio.wait_for(...,
  timeout≈60s) (single config knob); on timeout, log and continue to next candidate.
  4. Unit tests (tests/ai/): adapters pass the one-shot options (fake client factories); slow candidate times out into
@@ -128,14 +132,14 @@
  Workspace: ~/Projects/wiki-bakeoff/ with per-tool clones + the shared .env (see API key placement above). Run each tool
  via its Docker/docker-compose setup when the repo ships one (Josh's preference — avoid local installs of one-off
  software); fall back to local install only if no container path exists, and note it in SETUP.md. Containers reach LM
- Studio on the host via OPENAI_BASE_URL=http://host.docker.internal:1234/v1 (macOS Docker); non-container runs use
- http://localhost:1234/v1. Model: google/gemma-4-26b-a4b-qat. Mount the gobby-cli repo read-only into the container and
- bind-mount outputs to ~/Projects/wiki-bakeoff/outputs/<tool>/. Record per-tool config quirks (model-name mapping,
+ Studio on the host via `OPENAI_BASE_URL=http://host.docker.internal:1234/v1` (macOS Docker); non-container runs use
+ `http://localhost:1234/v1`. Model: google/gemma-4-26b-a4b-qat. Mount the gobby-cli repo read-only into the container and
+ bind-mount outputs to `~/Projects/wiki-bakeoff/outputs/<tool>/`. Record per-tool config quirks (model-name mapping,
  embedding settings) in a SETUP.md per clone. After the bake-off, containers/images are disposable — list them in
  SETUP.md for cleanup.
 
  1. Run each tool against the gobby-cli repo; capture full generated output per tool under
- ~/Projects/wiki-bakeoff/outputs/<tool>/.
+ `~/Projects/wiki-bakeoff/outputs/<tool>/`.
  2. Record per-tool: wall-clock, pages generated, diagrams count, citation/grounding mechanism (if any), broken links,
  coverage (files/modules documented vs total).
  3. Fairness note in the artifact: competitors run gemma-4-26b locally while gobby runs its configured lanes — comparison
@@ -161,4 +165,3 @@
  3. WP3: regenerated wiki passes DeepWiki-bar spot-checks; lint/health/audit clean; ask <10s clean+cited.
  4. WP4: three complete competitor outputs + metrics.
  5. WP5: re-scored matrix with disk-traceable evidence.
-

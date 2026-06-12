@@ -103,6 +103,8 @@ class ACPClientLike(Protocol):
         session_id: str | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        pre_tool_callback: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
+        | None = None,
     ) -> AsyncIterator[ACPStreamEventLike]:
         """Send a prompt and stream normalized events."""
 
@@ -114,6 +116,10 @@ class _InvalidTextGenerationOutputError(RuntimeError):
     """Recoverable invalid output from one text generation candidate."""
 
 
+class _CandidateTimeoutError(RuntimeError):
+    """A single candidate attempt exceeded the per-candidate timeout."""
+
+
 class TextGenerationService:
     """Select and execute daemon text_generate capability bindings."""
 
@@ -123,16 +129,29 @@ class TextGenerationService:
         adapters: Mapping[str, TextGenerateAdapter] | None = None,
         adapter_factories: Mapping[str, TextGenerateAdapterFactory] | None = None,
         profile_defaults: Mapping[FeatureProfile, Sequence[str]] | None = None,
+        *,
+        candidate_timeout_seconds: float | None = None,
     ) -> None:
         self._registry = registry
         self._adapters = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
+        self._candidate_timeout_seconds = candidate_timeout_seconds
         self._profile_defaults = {
             FeatureProfile(profile): tuple(
                 normalize_feature_candidate(candidate) for candidate in candidates
             )
             for profile, candidates in (profile_defaults or {}).items()
         }
+
+    async def _await_candidate[T](self, awaitable: Awaitable[T]) -> T:
+        """Bound one candidate attempt by the per-candidate timeout."""
+        timeout = self._candidate_timeout_seconds
+        if timeout is None:
+            return await awaitable
+        try:
+            return await asyncio.wait_for(awaitable, timeout=timeout)
+        except TimeoutError as exc:
+            raise _CandidateTimeoutError(f"candidate timed out after {timeout:g}s") from exc
 
     @property
     def registry(self) -> AICapabilityRegistry:
@@ -219,7 +238,7 @@ class TextGenerationService:
             try:
                 binding = self._select_binding(candidate)
                 adapter = self._adapter_for_provider(binding.provider)
-                result = await adapter.generate(candidate)
+                result = await self._await_candidate(adapter.generate(candidate))
                 text_result = _coerce_text_result(result)
                 _validate_text_generation_output(candidate, text_result.text)
                 self._log_generation_event(
@@ -280,10 +299,10 @@ class TextGenerationService:
                         Callable[[TextGenerationRequest], Awaitable[dict[str, Any]]],
                         json_adapter,
                     )
-                    result = await typed_json_adapter(candidate)
+                    result = await self._await_candidate(typed_json_adapter(candidate))
                     parse_outcome = "provider_structured"
                 else:
-                    text = await adapter.generate(_json_request(candidate))
+                    text = await self._await_candidate(adapter.generate(_json_request(candidate)))
                     raw = _coerce_text_result(text).text
                     result = _parse_json_text(raw)
                     parse_outcome = "parsed_text"
@@ -497,6 +516,7 @@ class ACPTextGenerateAdapter:
         self._client_factory = client_factory
 
     async def generate(self, request: TextGenerationRequest) -> str:
+        request = _with_one_shot_directive(request)
         client = self._client_factory()
         await client.start(
             auto_session=True,
@@ -505,7 +525,13 @@ class ACPTextGenerateAdapter:
         )
         try:
             prompt = _compose_prompt(request)
-            return await _collect_acp_text(client.send(prompt, model=request.model))
+            return await _collect_acp_text(
+                client.send(
+                    prompt,
+                    model=request.model,
+                    pre_tool_callback=_deny_one_shot_tool_use,
+                )
+            )
         finally:
             await client.stop()
 
@@ -576,8 +602,14 @@ class CodexAppServerTextGenerateAdapter:
     async def _generate_with_client(
         self, client: CodexAppServerClientLike, request: TextGenerationRequest
     ) -> str:
+        request = _with_one_shot_directive(request)
         await client.start()
-        thread = await client.start_thread(cwd=request.cwd, model=request.model)
+        thread = await client.start_thread(
+            cwd=request.cwd,
+            model=request.model,
+            approval_policy="never",
+            sandbox="readOnly",
+        )
         chunks: list[str] = []
         fallback_chunks: list[str] = []
         async for event in client.run_turn(
@@ -672,6 +704,7 @@ def build_daemon_text_generation_service(
         registry or build_daemon_ai_capability_registry(config),
         adapter_factories=_daemon_text_generation_adapter_factories(config),
         profile_defaults=config.ai.generation.profile_defaults,
+        candidate_timeout_seconds=config.ai.generation.candidate_timeout_seconds,
     )
 
 
@@ -829,6 +862,28 @@ def _compose_prompt(request: TextGenerationRequest) -> str:
     if not request.system_prompt:
         return request.prompt
     return f"{request.system_prompt}\n\n{request.prompt}"
+
+
+ONE_SHOT_DIRECTIVE = (
+    "Non-interactive one-shot request: answer directly from the information "
+    "in this prompt. Do not use tools, run commands, read or write files, or "
+    "explore the workspace; any tool request will be denied. Do not narrate "
+    "plans or actions. Reply with only the requested output."
+)
+
+_ONE_SHOT_DENIAL_REASON = "Tool use is disabled for one-shot text generation."
+
+
+async def _deny_one_shot_tool_use(_payload: dict[str, Any]) -> dict[str, Any]:
+    """Deny every agent tool request during one-shot text generation."""
+    return {"decision": "deny", "reason": _ONE_SHOT_DENIAL_REASON}
+
+
+def _with_one_shot_directive(request: TextGenerationRequest) -> TextGenerationRequest:
+    """Append the one-shot no-tools directive to the request's system prompt."""
+    if request.system_prompt:
+        return replace(request, system_prompt=f"{request.system_prompt}\n\n{ONE_SHOT_DIRECTIVE}")
+    return replace(request, system_prompt=ONE_SHOT_DIRECTIVE)
 
 
 async def _collect_acp_text(events: AsyncIterator[ACPStreamEventLike]) -> str:

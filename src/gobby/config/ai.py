@@ -77,6 +77,14 @@ class GenerationConfig(BaseModel):
         gt=0.0,
         description="Maximum seconds to wait for a daemon-owned text generation attempt.",
     )
+    candidate_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0.0,
+        description=(
+            "Maximum seconds for a single text-generation candidate attempt "
+            "before falling back to the next candidate."
+        ),
+    )
     local: LocalGenerationConfig = Field(
         default_factory=LocalGenerationConfig,
         description="Named local OpenAI-compatible generation endpoints.",

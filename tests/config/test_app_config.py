@@ -11,6 +11,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from gobby.config.ai import GenerationConfig
 from gobby.config.app import (
     DaemonConfig,
     apply_cli_overrides,
@@ -1656,6 +1657,20 @@ class TestBinFreshnessConfig:
             BinFreshnessConfig(jitter_seconds=-1)
         with pytest.raises(ValidationError):
             BinFreshnessConfig(github_timeout_seconds=0)
+
+
+class TestGenerationConfig:
+    """Tests for daemon text generation config."""
+
+    def test_candidate_timeout_default(self) -> None:
+        config = GenerationConfig()
+        assert config.candidate_timeout_seconds == 60.0
+
+    def test_candidate_timeout_validation(self) -> None:
+        with pytest.raises(ValidationError):
+            GenerationConfig(candidate_timeout_seconds=0)
+        with pytest.raises(ValidationError):
+            GenerationConfig(candidate_timeout_seconds=-1)
 
 
 # ==============================================================================
