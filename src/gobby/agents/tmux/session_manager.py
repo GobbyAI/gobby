@@ -369,7 +369,7 @@ class TmuxSessionManager:
                 ";",
                 "set-option",
                 "-t",
-                safe_name,
+                _exact_session_target(safe_name),
                 "destroy-unattached",
                 "off",
             ]
@@ -381,7 +381,7 @@ class TmuxSessionManager:
                 ";",
                 "set-option",
                 "-t",
-                safe_name,
+                _exact_session_target(safe_name),
                 "history-limit",
                 str(self._config.history_limit),
             ]
@@ -394,7 +394,7 @@ class TmuxSessionManager:
                 "set-option",
                 "-w",
                 "-t",
-                safe_name,
+                _exact_session_target(safe_name),
                 "remain-on-exit",
                 "on",
             ]
@@ -481,7 +481,7 @@ class TmuxSessionManager:
 
     async def has_session(self, name: str) -> bool:
         """Check whether a session with *name* exists."""
-        rc, _stdout, _stderr = await self._run("has-session", "-t", name)
+        rc, _stdout, _stderr = await self._run("has-session", "-t", _exact_session_target(name))
         return rc == 0
 
     @staticmethod

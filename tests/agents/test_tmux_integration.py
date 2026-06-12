@@ -81,6 +81,21 @@ async def test_get_session_requires_exact_session_name(
     assert exact.name == "agent-extra"
 
 
+async def test_kill_session_requires_exact_session_name(
+    tmux_manager: TmuxSessionManager,
+) -> None:
+    await tmux_manager.create_session(
+        name="agent-157",
+        command="tail -f /dev/null",
+    )
+
+    assert await tmux_manager.kill_session("agent-15", missing_ok=True, timeout=0.1) is True
+
+    exact = await tmux_manager.get_session("agent-157")
+    assert exact is not None
+    assert exact.name == "agent-157"
+
+
 async def test_create_session_preserves_env_value_with_trailing_semicolon(
     tmux_manager: TmuxSessionManager,
     tmp_path: Path,
