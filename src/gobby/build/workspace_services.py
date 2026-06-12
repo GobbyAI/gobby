@@ -18,6 +18,7 @@ from gobby.build.workspace_git import (
 from gobby.build.workspace_recovery import (
     _is_promotable_workspace,
     _is_recoverable_workspace,
+    ensure_no_active_workspace_run,
     recover_stale_integration_artifact,
 )
 from gobby.clones.git import CloneGitManager
@@ -140,6 +141,7 @@ class _WorkspaceServices:
             else:
                 self._validate_record(existing, branch_name=branch_name, backend="worktree")
                 assert existing is not None
+                ensure_no_active_workspace_run(self.db, "worktree", existing.id)
                 _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
                 return existing
 
@@ -161,13 +163,15 @@ class _WorkspaceServices:
                     self.worktree_storage.delete(existing.id)
                     existing = None
             if existing is not None and _is_promotable_workspace(existing, task.id, "worktree"):
+                ensure_no_active_workspace_run(self.db, "worktree", existing.id)
+                _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
                 promoted = self.worktree_storage.update(existing.id, workspace_role="integration")
                 if promoted is None:
                     raise BuildWorkspaceError("failed to promote task worktree to integration")
-                _refresh_clean_git_dir(promoted.worktree_path, branch_name, base_branch)
                 return promoted
             if existing is not None:
                 self._validate_record(existing, branch_name=branch_name, backend="worktree")
+                ensure_no_active_workspace_run(self.db, "worktree", existing.id)
                 _refresh_clean_git_dir(existing.worktree_path, branch_name, base_branch)
                 return existing
 
@@ -176,6 +180,7 @@ class _WorkspaceServices:
             stored = self.worktree_storage.get_by_path(unmanaged.path)
             if stored is not None:
                 self._validate_record(stored, branch_name=branch_name, backend="worktree")
+                ensure_no_active_workspace_run(self.db, "worktree", stored.id)
                 _refresh_clean_git_dir(stored.worktree_path, branch_name, base_branch)
                 return stored
             _refresh_clean_git_dir(unmanaged.path, branch_name, base_branch)
@@ -233,6 +238,7 @@ class _WorkspaceServices:
             else:
                 self._validate_record(existing, branch_name=branch_name, backend="clone")
                 assert existing is not None
+                ensure_no_active_workspace_run(self.db, "clone", existing.id)
                 _refresh_clean_git_dir(
                     existing.clone_path,
                     branch_name,
@@ -258,17 +264,19 @@ class _WorkspaceServices:
                     self.clone_storage.delete(existing.id)
                     existing = None
             if existing is not None and _is_promotable_workspace(existing, task.id, "clone"):
+                ensure_no_active_workspace_run(self.db, "clone", existing.id)
+                _refresh_clean_git_dir(
+                    existing.clone_path,
+                    branch_name,
+                    _clone_base_ref(existing.clone_path, base_branch),
+                )
                 promoted = self.clone_storage.update(existing.id, workspace_role="integration")
                 if promoted is None:
                     raise BuildWorkspaceError("failed to promote task clone to integration")
-                _refresh_clean_git_dir(
-                    promoted.clone_path,
-                    branch_name,
-                    _clone_base_ref(promoted.clone_path, base_branch),
-                )
                 return promoted
             if existing is not None:
                 self._validate_record(existing, branch_name=branch_name, backend="clone")
+                ensure_no_active_workspace_run(self.db, "clone", existing.id)
                 _refresh_clean_git_dir(
                     existing.clone_path,
                     branch_name,
