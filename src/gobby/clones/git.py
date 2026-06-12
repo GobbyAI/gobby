@@ -260,6 +260,8 @@ class CloneGitManager:
                     output=result.stdout,
                 )
             else:
+                if clone_path.exists():
+                    shutil.rmtree(clone_path, ignore_errors=True)
                 return GitOperationResult(
                     success=False,
                     message=f"Clone failed: {result.stderr}",
@@ -345,6 +347,8 @@ class CloneGitManager:
                     output=result.stdout,
                 )
             else:
+                if clone_path.exists():
+                    shutil.rmtree(clone_path, ignore_errors=True)
                 return GitOperationResult(
                     success=False,
                     message=f"Clone failed: {result.stderr}",

@@ -151,10 +151,20 @@ class TestCloneGitManagerShallowClone:
 
     def test_shallow_clone_handles_git_error(self, manager, mock_run, tmp_path: Path) -> None:
         """Shallow clone handles git command failure."""
-        mock_run.return_value = MagicMock(
-            returncode=128, stdout="", stderr="fatal: repository not found"
-        )
         clone_path = tmp_path / "test_clone"
+
+        run_count = 0
+
+        def run_clone_with_partial_dir(*_args: object, **_kwargs: object) -> MagicMock:
+            nonlocal run_count
+            run_count += 1
+            if run_count == 1:
+                clone_path.mkdir()
+                (clone_path / ".git").mkdir()
+                return MagicMock(returncode=128, stdout="", stderr="fatal: repository not found")
+            return MagicMock(returncode=0, stdout="Cloning into 'test_clone'...", stderr="")
+
+        mock_run.side_effect = run_clone_with_partial_dir
 
         result = manager.shallow_clone(
             remote_url="https://github.com/user/nonexistent.git",
@@ -164,6 +174,15 @@ class TestCloneGitManagerShallowClone:
 
         assert result.success is False
         assert "repository" in result.message.lower() or "failed" in result.message.lower()
+        assert not clone_path.exists()
+
+        retry_result = manager.shallow_clone(
+            remote_url="https://github.com/user/repo.git",
+            clone_path=clone_path,
+            branch="main",
+        )
+
+        assert retry_result.success is True
 
     def test_shallow_clone_handles_timeout(self, manager, mock_run, tmp_path: Path) -> None:
         """Shallow clone handles command timeout."""
