@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import uuid
 from dataclasses import replace
@@ -18,6 +19,7 @@ from gobby.agents.worktree_reuse import (
     ReusedWorktreeSyncResult,
     sync_reused_worktree_to_base,
 )
+from gobby.storage.tasks import TaskArtifactManager
 
 logger = logging.getLogger(__name__)
 
@@ -58,6 +60,16 @@ async def prepare_reused_worktree(
     extra = {"main_repo_path": main_repo_path, "reused_worktree": True}
     if sync_result.base_commit_sha:
         extra["base_commit_sha"] = sync_result.base_commit_sha
+        if spawn_config.task_id is not None:
+            await asyncio.to_thread(
+                TaskArtifactManager(worktree_storage.db).set_artifacts_atomic,
+                spawn_config.task_id,
+                worktree_path=existing_worktree.worktree_path,
+                worktree_id=existing_worktree.id,
+                clone_path=None,
+                clone_id=None,
+                base_commit_sha=sync_result.base_commit_sha,
+            )
     return (
         IsolationContext(
             cwd=existing_worktree.worktree_path,
