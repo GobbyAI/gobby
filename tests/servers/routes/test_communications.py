@@ -19,11 +19,15 @@ def comms_manager():
     manager.update_channel = AsyncMock()
     manager.remove_channel = AsyncMock()
     manager._store = MagicMock()
-    manager.channel_to_dict.side_effect = lambda channel: {
-        **asdict(channel),
-        "active": False,
-        "init_error": None,
-    }
+
+    def channel_to_dict(channel):
+        payload = asdict(channel)
+        payload.pop("webhook_secret", None)
+        payload["active"] = False
+        payload["init_error"] = None
+        return payload
+
+    manager.channel_to_dict.side_effect = channel_to_dict
 
     # Mock some store methods
     manager.list_channels.return_value = []
@@ -105,6 +109,7 @@ def test_list_channels(client, comms_manager):
         config_json={},
         created_at="2023-01-01T00:00:00Z",
         updated_at="2023-01-01T00:00:00Z",
+        webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MYSLACK",
     )
     comms_manager.list_channels.return_value = [ch]
 
@@ -112,6 +117,7 @@ def test_list_channels(client, comms_manager):
     assert response.status_code == 200
     assert len(response.json()) == 1
     assert response.json()[0]["id"] == "ch1"
+    assert "webhook_secret" not in response.json()[0]
 
 
 def test_create_channel(client, comms_manager):
@@ -123,6 +129,7 @@ def test_create_channel(client, comms_manager):
         config_json={"foo": "bar"},
         created_at="2023-01-01T00:00:00Z",
         updated_at="2023-01-01T00:00:00Z",
+        webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MYSLACK",
     )
     comms_manager.add_channel.return_value = ch
 
@@ -133,6 +140,7 @@ def test_create_channel(client, comms_manager):
 
     assert response.status_code == 200
     assert response.json()["id"] == "ch1"
+    assert "webhook_secret" not in response.json()
     comms_manager.add_channel.assert_called_once()
 
 
@@ -173,6 +181,7 @@ def test_update_channel(client, comms_manager):
         config_json={},
         created_at="2023-01-01T00:00:00Z",
         updated_at="2023-01-01T00:00:00Z",
+        webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MYSLACK",
     )
     comms_manager.get_channel.return_value = ch
     comms_manager.update_channel.return_value = ch
@@ -183,6 +192,7 @@ def test_update_channel(client, comms_manager):
 
     assert response.status_code == 200
     assert response.json()["id"] == "ch1"
+    assert "webhook_secret" not in response.json()
     comms_manager.update_channel.assert_called_once_with(ch)
     assert ch.config_json == {"foo": "baz"}
     assert ch.enabled is False

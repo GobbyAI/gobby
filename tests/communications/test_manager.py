@@ -353,6 +353,35 @@ async def test_handle_inbound_webhook_verification_failure():
 
 
 @pytest.mark.asyncio
+async def test_handle_inbound_resolves_webhook_secret_ref():
+    """handle_inbound() resolves webhook_secret refs before signature verification."""
+    channel = make_channel(webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK")
+    store = make_store([channel])
+    secret_store = make_secret_store()
+    secret_store.get.return_value = "mysecret"
+    manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
+
+    mock_adapter = make_adapter()
+    mock_adapter.verify_webhook.side_effect = (
+        lambda _payload, _headers, secret: secret == "mysecret"
+    )
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.start()
+
+    messages = await manager.handle_inbound("test-channel", b"payload", {"X-Signature": "ok"})
+
+    assert messages == []
+    secret_store.get.assert_called_once_with("COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK")
+    mock_adapter.verify_webhook.assert_called_once_with(
+        b"payload",
+        {"X-Signature": "ok"},
+        "mysecret",
+    )
+
+
+@pytest.mark.asyncio
 async def test_handle_inbound_resolves_identity():
     """handle_inbound() resolves identity and sets session_id."""
     channel = make_channel()
@@ -508,7 +537,7 @@ async def test_add_channel_returns_inactive_with_init_error_on_adapter_failure()
 
 @pytest.mark.asyncio
 async def test_add_channel_stores_secrets_in_secret_store():
-    """add_channel() stores non-webhook secrets in SecretStore and puts $secret: refs in config."""
+    """add_channel() stores secrets in SecretStore and puts refs in channel config."""
     store = make_store()
     secret_store = make_secret_store()
     manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
@@ -525,14 +554,14 @@ async def test_add_channel_stores_secrets_in_secret_store():
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         channel = await manager.add_channel("slack", "my-slack", {}, secrets=secrets)
 
-    # webhook_secret is on the channel config, not in SecretStore
-    assert channel.webhook_secret == "whsec_keep_separate"
+    assert channel.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK"
 
-    # bot_token and signing_secret stored in SecretStore
-    assert secret_store.set.call_count == 2
+    # bot_token, signing_secret, and webhook_secret stored in SecretStore
+    assert secret_store.set.call_count == 3
     set_calls = {call.kwargs["name"]: call for call in secret_store.set.call_args_list}
     assert "COMMS_SLACK_BOT_TOKEN_MY-SLACK" in set_calls
     assert "COMMS_SLACK_SIGNING_SECRET_MY-SLACK" in set_calls
+    assert "COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK" in set_calls
 
     # Config should have $secret: references
     created_channel = store.create_channel.call_args[0][0]
@@ -541,6 +570,21 @@ async def test_add_channel_stores_secrets_in_secret_store():
         created_channel.config_json["signing_secret"]
         == "$secret:COMMS_SLACK_SIGNING_SECRET_MY-SLACK"
     )
+    assert "webhook_secret" not in created_channel.config_json
+    assert created_channel.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK"
+    assert secret_store.set.call_args_list[-1].kwargs["plaintext_value"] == "whsec_keep_separate"
+
+
+def test_channel_to_dict_redacts_webhook_secret():
+    channel = make_channel(webhook_secret="$secret:COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK")
+    manager = CommunicationsManager(
+        make_config(), make_store([channel]), make_secret_store(), MagicMock()
+    )
+
+    payload = manager.channel_to_dict(channel)
+
+    assert "webhook_secret" not in payload
+    assert payload["active"] is False
 
 
 @pytest.mark.asyncio

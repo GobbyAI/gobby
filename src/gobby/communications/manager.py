@@ -583,8 +583,15 @@ class CommunicationsManager:
 
         channel = self._channel_by_name[channel_name]
 
+        webhook_secret = channel.webhook_secret
+        if webhook_secret and webhook_secret.startswith("$secret:"):
+            resolved = self._secret_store.get(webhook_secret.removeprefix("$secret:"))
+            if resolved is None:
+                raise ValueError(f"Webhook secret for channel {channel_name!r} is not configured")
+            webhook_secret = resolved
+
         # Verify webhook signature if a secret is configured
-        if channel.webhook_secret:
+        if webhook_secret:
             verify_bytes: bytes
             if raw_body is not None:
                 verify_bytes = raw_body
@@ -595,7 +602,7 @@ class CommunicationsManager:
                 # might differ from the original request body, breaking HMAC.
                 raise ValueError("raw_body must be provided for webhook signature verification")
 
-            if not adapter.verify_webhook(verify_bytes, headers, channel.webhook_secret):
+            if not adapter.verify_webhook(verify_bytes, headers, webhook_secret):
                 raise ValueError(
                     f"Webhook signature verification failed for channel {channel_name!r}"
                 )
@@ -633,11 +640,11 @@ class CommunicationsManager:
         """
         now = datetime.now(UTC).isoformat()
 
+        webhook_secret: str | None = None
+
         # Store secrets in SecretStore and replace with $secret: references
         if secrets:
             for key, value in secrets.items():
-                if key == "webhook_secret":
-                    continue  # Handled via channel_config field
                 if not value:
                     continue  # Skip empty values
                 # Channel-scoped secret name avoids collisions between channels
@@ -648,8 +655,12 @@ class CommunicationsManager:
                     category="integration",
                     description=f"{channel_type} channel '{name}': {key}",
                 )
-                # Put reference in config so adapter resolves it
-                config[key] = f"$secret:{secret_name}"
+                secret_ref = f"$secret:{secret_name}"
+                if key == "webhook_secret":
+                    webhook_secret = secret_ref
+                else:
+                    # Put reference in config so adapter resolves it
+                    config[key] = secret_ref
 
         channel_config = ChannelConfig(
             id=str(uuid.uuid4()),
@@ -659,7 +670,7 @@ class CommunicationsManager:
             config_json=config,
             created_at=now,
             updated_at=now,
-            webhook_secret=secrets.get("webhook_secret") if secrets else None,
+            webhook_secret=webhook_secret,
         )
 
         # Save to DB
@@ -787,6 +798,7 @@ class CommunicationsManager:
     def channel_to_dict(self, channel: ChannelConfig) -> dict[str, Any]:
         """Serialize a channel with runtime activity and initialization state."""
         payload = asdict(channel)
+        payload.pop("webhook_secret", None)
         payload["active"] = channel.name in self._adapters
         payload["init_error"] = self._channel_init_errors.get(channel.name)
         return payload
