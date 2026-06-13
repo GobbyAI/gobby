@@ -65,6 +65,8 @@ _TURN_END_EVENT_VALUES = frozenset(
         HookEventType.STOP_FAILURE.value,
     }
 )
+_COMPACT_TURN_END_BYPASS_PENDING = "_compact_turn_end_bypass_pending"
+_MANUAL_COMPACT_TRIGGERS = frozenset({"manual", "user", "clear", "compact", "compress"})
 
 
 def _get_tool_identity(event_data: dict[str, Any]) -> str:
@@ -106,6 +108,19 @@ def _project_id_from_event(event: HookEvent) -> str | None:
         return event.project_id
     project_id = event.data.get("project_id") if isinstance(event.data, dict) else None
     return project_id if isinstance(project_id, str) and project_id else None
+
+
+def _is_manual_compact_event(event: HookEvent) -> bool:
+    if _event_value(event.event_type) != HookEventType.PRE_COMPACT.value:
+        return False
+
+    data = event.data if isinstance(event.data, dict) else {}
+    trigger = data.get("trigger")
+    trigger_value = getattr(trigger, "value", trigger)
+    if isinstance(trigger_value, str) and trigger_value.lower() in _MANUAL_COMPACT_TRIGGERS:
+        return True
+
+    return "custom_instructions" in data and data.get("custom_instructions") is not None
 
 
 def _is_turn_start_event(event_type: HookEventType | str) -> bool:
@@ -286,11 +301,25 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if isinstance(event.data, dict):
                     normalize_tool_fields(event.data)
 
+                raw_event_value = _event_value(event.event_type)
                 resolved_rule_events = _resolve_rule_events(event.event_type)
+                if RuleTriggerEvent.TURN_START in resolved_rule_events:
+                    variables.pop(_COMPACT_TURN_END_BYPASS_PENDING, None)
+                elif RuleTriggerEvent.TURN_END in resolved_rule_events and variables.pop(
+                    _COMPACT_TURN_END_BYPASS_PENDING, False
+                ):
+                    resolved_rule_events = [
+                        trigger
+                        for trigger in resolved_rule_events
+                        if trigger != RuleTriggerEvent.TURN_END
+                    ]
+
+                if _is_manual_compact_event(event):
+                    variables[_COMPACT_TURN_END_BYPASS_PENDING] = True
+
                 if not resolved_rule_events:
                     return HookResponse(decision="allow")
 
-                raw_event_value = _event_value(event.event_type)
                 is_before_tool = raw_event_value == HookEventType.BEFORE_TOOL.value
                 is_after_tool = raw_event_value == HookEventType.AFTER_TOOL.value
                 is_turn_start = RuleTriggerEvent.TURN_START in resolved_rule_events
