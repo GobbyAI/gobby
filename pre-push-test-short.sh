@@ -15,13 +15,25 @@ echo ""
 
 # Track failures
 FAILED=0
+UV_EXTRA_FLAGS=()
+if [ "${GOBBY_UV_ALL_EXTRAS:-}" = "1" ]; then
+    UV_EXTRA_FLAGS=(--all-extras)
+fi
+
+uv_run() {
+    if [ "${#UV_EXTRA_FLAGS[@]}" -gt 0 ]; then
+        uv run "${UV_EXTRA_FLAGS[@]}" "$@"
+    else
+        uv run "$@"
+    fi
+}
 
 # Ruff - autofix safe changes only (no unsafe fixes)
 echo ">>> Running ruff check + format..."
-uv run ruff check src/ --fix --no-unsafe-fixes 2>&1 | tee "$REPORTS_DIR/ruff-$TIMESTAMP.txt"
+uv_run ruff check src/ --fix --no-unsafe-fixes 2>&1 | tee "$REPORTS_DIR/ruff-$TIMESTAMP.txt"
 ruff_status=${PIPESTATUS[0]}
 if [ "$ruff_status" -eq 0 ]; then
-    uv run ruff format src/
+    uv_run ruff format src/
     format_status=$?
     if [ "$format_status" -eq 0 ]; then
         echo "✓ Ruff passed"
@@ -37,7 +49,7 @@ echo ""
 
 # Mypy - strict mode
 echo ">>> Running mypy (strict)..."
-uv run mypy src/ --strict 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"
+uv_run mypy src/ --strict 2>&1 | tee "$REPORTS_DIR/mypy-$TIMESTAMP.txt"
 mypy_status=${PIPESTATUS[0]}
 if [ "$mypy_status" -eq 0 ]; then
     echo "✓ Mypy passed"
@@ -73,7 +85,7 @@ echo ""
 
 # Bandit - security linting
 echo ">>> Running bandit..."
-uv run bandit -c pyproject.toml -r src/ -q 2>&1 | tee "$REPORTS_DIR/bandit-$TIMESTAMP.txt"
+uv_run bandit -c pyproject.toml -r src/ -q 2>&1 | tee "$REPORTS_DIR/bandit-$TIMESTAMP.txt"
 bandit_status=${PIPESTATUS[0]}
 if [ "$bandit_status" -eq 0 ]; then
     echo "✓ Bandit passed"
@@ -85,7 +97,7 @@ echo ""
 
 # pip-audit - dependency CVE scanning
 echo ">>> Running pip-audit..."
-uv run pip-audit 2>&1 | tee "$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"
+uv_run pip-audit 2>&1 | tee "$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"
 pipaudit_status=${PIPESTATUS[0]}
 if [ "$pipaudit_status" -eq 0 ]; then
     echo "✓ pip-audit passed"
