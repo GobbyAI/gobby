@@ -5,6 +5,8 @@ This module consolidates the spawn dispatch logic from agents.py, worktrees.py,
 and clones.py into a single executor. All agents spawn via tmux.
 """
 
+import asyncio
+import inspect
 import json
 import logging
 import shutil
@@ -15,12 +17,12 @@ from typing import TYPE_CHECKING, cast
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.sandbox import (
-    CodexSandboxResolver,
-    GeminiSandboxResolver,
-    GrokSandboxResolver,
+    ClaudeSandboxResolver,
     QwenSandboxResolver,
     compute_sandbox_paths,
+    get_sandbox_resolver,
 )
+from gobby.agents.spawn import PreparedSpawn, build_cli_command, prepare_terminal_spawn
 from gobby.agents.spawn_cache_policy import (
     PATH_ENV_VAR,
     SPAWN_CACHE_ENV_VARS,
@@ -30,15 +32,12 @@ from gobby.agents.spawn_cache_policy import (
     sandbox_config_for_spawn as _sandbox_config_for_spawn,
 )
 from gobby.agents.spawn_models import SpawnRequest, SpawnResult
+from gobby.agents.spawners.base import SpawnResult as TerminalSpawnResult
 from gobby.agents.trust import pre_approve_directory
 from gobby.providers import AGY_UNAVAILABLE_REASON
 
 if TYPE_CHECKING:
     from gobby.agents.session import ChildSessionManager
-from gobby.agents.spawn import (
-    build_cli_command,
-    prepare_terminal_spawn,
-)
 from gobby.agents.tmux.spawner import TmuxSpawner
 from gobby.config.tmux import TmuxConfig
 
@@ -68,8 +67,22 @@ _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS = ["Workflow", "Task"]
 def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:
     daemon_config = request.daemon_config
     tmux_config = getattr(daemon_config, "tmux", None)
+    if not isinstance(tmux_config, TmuxConfig):
+        tmux_config = TmuxConfig()
 
-    return TmuxSpawner(config=tmux_config if isinstance(tmux_config, TmuxConfig) else None)
+    return TmuxSpawner(config=tmux_config)
+
+
+async def _spawn_terminal(
+    spawner: TmuxSpawner,
+    *,
+    command: list[str],
+    cwd: str,
+    env: dict[str, str],
+) -> TerminalSpawnResult:
+    if inspect.iscoroutinefunction(getattr(spawner, "spawn_async", None)):
+        return await spawner.spawn_async(command=command, cwd=cwd, env=env)
+    return await asyncio.to_thread(spawner.spawn, command=command, cwd=cwd, env=env)
 
 
 def _apply_extra_env(env: dict[str, str], request: SpawnRequest) -> None:
@@ -142,7 +155,11 @@ def _session_manager_validation_error(
         )
 
     has_storage_db = getattr(getattr(manager, "_storage", None), "db", None) is not None
-    required_methods = ("create_child_session", "update_terminal_pickup_metadata")
+    required_methods = (
+        "create_child_session",
+        "update_terminal_pickup_metadata",
+        "update_sandbox_enabled",
+    )
     missing_methods = [
         method for method in required_methods if not callable(getattr(manager, method, None))
     ]
@@ -163,6 +180,52 @@ def _session_manager_validation_error(
     )
 
 
+def _sandbox_requested(request: SpawnRequest) -> bool:
+    return bool(request.sandbox_config and request.sandbox_config.enabled)
+
+
+def _unsupported_sandbox_request_error(request: SpawnRequest) -> SpawnResult | None:
+    if not _sandbox_requested(request):
+        return None
+
+    try:
+        get_sandbox_resolver(request.provider)
+    except ValueError:
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error=(
+                f"Sandbox requested for provider '{request.provider}', but Gobby has no "
+                "sandbox enforcement resolver for that provider. Refusing to spawn unsandboxed."
+            ),
+        )
+    return None
+
+
+def _sandbox_was_enforced(
+    sandbox_args: list[str],
+    sandbox_env: Mapping[str, str] | None = None,
+) -> bool:
+    return bool(sandbox_args or sandbox_env)
+
+
+def _record_actual_sandbox_enforcement(
+    request: SpawnRequest,
+    spawn_context: "PreparedSpawn",
+    sandbox_args: list[str],
+    sandbox_env: Mapping[str, str] | None = None,
+) -> None:
+    manager = request.session_manager
+    if manager is None:
+        return
+    manager.update_sandbox_enabled(
+        spawn_context.session_id,
+        _sandbox_was_enforced(sandbox_args, sandbox_env),
+    )
+
+
 async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     """
     Unified spawn dispatch — all agents spawn via tmux.
@@ -175,6 +238,9 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     Returns:
         SpawnResult with spawn outcome and metadata
     """
+    if unsupported_sandbox := _unsupported_sandbox_request_error(request):
+        return unsupported_sandbox
+
     if request.provider == "gemini":
         return await _spawn_gemini_terminal(request)
     elif request.provider == "grok":
@@ -229,7 +295,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         model=request.model,
         is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        sandbox_enabled=False,
         requested_reasoning_effort=request.requested_reasoning_effort,
         effective_reasoning_effort=request.effective_reasoning_effort,
         reasoning_required=request.reasoning_required,
@@ -266,9 +332,6 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if sandbox_config and sandbox_config.enabled:
-        # Claude uses its own sandbox resolver
-        from gobby.agents.sandbox import ClaudeSandboxResolver
-
         resolver = ClaudeSandboxResolver()
         paths = compute_sandbox_paths(
             config=sandbox_config,
@@ -276,6 +339,7 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         )
         sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
         cmd.extend(sandbox_args)
+    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args, sandbox_env)
 
     if request.prompt:
         cmd.append(request.prompt)
@@ -311,7 +375,8 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
 
     # Spawn in terminal with env vars
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -376,7 +441,7 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
         model=request.model,
         is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        sandbox_enabled=False,
         requested_reasoning_effort=request.requested_reasoning_effort,
         effective_reasoning_effort=request.effective_reasoning_effort,
         reasoning_required=request.reasoning_required,
@@ -391,12 +456,13 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if sandbox_config and sandbox_config.enabled:
-        resolver = GeminiSandboxResolver()
+        resolver = get_sandbox_resolver("gemini")
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,
         )
         sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
+    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args, sandbox_env)
 
     # Build command for fresh Gemini session (not resume)
     # Session context is injected via additionalContext at SessionStart by the daemon.
@@ -438,7 +504,8 @@ async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
 
     # Spawn in terminal with env vars
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -502,7 +569,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
         model=request.model,
         is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        sandbox_enabled=False,
         requested_reasoning_effort=request.requested_reasoning_effort,
         effective_reasoning_effort=request.effective_reasoning_effort,
         reasoning_required=request.reasoning_required,
@@ -523,6 +590,7 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
             workspace_path=request.cwd,
         )
         sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
+    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args, sandbox_env)
 
     cmd, _cmd_env = build_cli_command(
         cli="qwen",
@@ -557,7 +625,8 @@ async def _spawn_qwen_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("qwen", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -610,7 +679,7 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
         model=request.model,
         is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        sandbox_enabled=False,
         requested_reasoning_effort=request.requested_reasoning_effort,
         effective_reasoning_effort=request.effective_reasoning_effort,
         reasoning_required=request.reasoning_required,
@@ -624,12 +693,13 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_args: list[str] = []
     sandbox_env: dict[str, str] = {}
     if sandbox_config and sandbox_config.enabled:
-        resolver = GrokSandboxResolver()
+        resolver = get_sandbox_resolver("grok")
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,
         )
         sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
+    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args, sandbox_env)
 
     cmd, _cmd_env = build_cli_command(
         cli="grok",
@@ -664,7 +734,8 @@ async def _spawn_grok_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("grok", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -729,7 +800,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         model=request.model,
         is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        sandbox_enabled=False,
         requested_reasoning_effort=request.requested_reasoning_effort,
         effective_reasoning_effort=request.effective_reasoning_effort,
         reasoning_required=request.reasoning_required,
@@ -743,12 +814,13 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
     sandbox_args: list[str] = []
     if sandbox_config and sandbox_config.enabled:
-        resolver = CodexSandboxResolver()
+        resolver = get_sandbox_resolver("codex")
         paths = compute_sandbox_paths(
             config=sandbox_config,
             workspace_path=request.cwd,
         )
         sandbox_args, _ = resolver.resolve(sandbox_config, paths)
+    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args)
 
     config_overrides = _codex_mcp_config_overrides(request.project_path)
     cmd, _cmd_env = build_cli_command(
@@ -779,7 +851,8 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("codex", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,
@@ -861,7 +934,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
         model=request.model,
         is_local=request.is_local,
         timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=bool(request.sandbox_config and request.sandbox_config.enabled),
+        sandbox_enabled=False,
         requested_reasoning_effort=request.requested_reasoning_effort,
         effective_reasoning_effort=request.effective_reasoning_effort,
         reasoning_required=request.reasoning_required,
@@ -871,6 +944,7 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     )
 
     gobby_session_id = spawn_context.session_id
+    _record_actual_sandbox_enforcement(request, spawn_context, [])
     cmd, _cmd_env = build_cli_command(
         cli="droid",
         prompt=request.prompt,
@@ -894,7 +968,8 @@ async def _spawn_droid_terminal(request: SpawnRequest) -> SpawnResult:
     pre_approve_directory("droid", request.cwd)
 
     terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = terminal_spawner.spawn(
+    terminal_result = await _spawn_terminal(
+        terminal_spawner,
         command=cmd,
         cwd=request.cwd,
         env=env,

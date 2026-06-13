@@ -44,6 +44,12 @@ class _AgentRun(Protocol):
     @property
     def error(self) -> str | None: ...
 
+    @property
+    def pid(self) -> int | None: ...
+
+    @property
+    def tmux_session_name(self) -> str | None: ...
+
 
 class _AgentRunManager(Protocol):
     def get(self, run_id: str) -> _AgentRun | None: ...
@@ -97,6 +103,7 @@ class TaskRecoveryHandler:
         agent_run_manager: _AgentRunManager,
         stall_classifier: _StallClassifier,
         failure_threshold: int | None = None,
+        terminal_agent_killer: Callable[[_AgentRun], Awaitable[dict[str, Any]]] | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         failure_threshold = (
@@ -108,6 +115,7 @@ class TaskRecoveryHandler:
         self._agent_run_manager = agent_run_manager
         self._stall_classifier = stall_classifier
         self._failure_threshold = failure_threshold
+        self._terminal_agent_killer = terminal_agent_killer
         self._run_db_callback = run_db
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
@@ -164,6 +172,9 @@ class TaskRecoveryHandler:
             task_id, task = resolved
             task_ref = f"#{task.seq_num}" if task.seq_num else task_id[:8]
             lifecycle_stage = projected_task_state(task)
+
+            if not await self._verify_agent_dead_before_recovery(db_run, task_ref):
+                return False
 
             if outcome == "cancelled":
                 await self._release_dispatch_mutex_for_run(db_run)
@@ -321,6 +332,28 @@ class TaskRecoveryHandler:
             )
             if fresh is None or getattr(fresh, "state", None) != "ready":
                 raise
+
+    async def _verify_agent_dead_before_recovery(self, db_run: _AgentRun, task_ref: str) -> bool:
+        if db_run.pid is None and db_run.tmux_session_name is None:
+            return True
+        if self._terminal_agent_killer is None:
+            logger.warning(
+                "Cannot recover task %s after agent %s without a terminal liveness verifier",
+                task_ref,
+                db_run.id,
+            )
+            return False
+
+        result = await self._terminal_agent_killer(db_run)
+        if result.get("success"):
+            return True
+        logger.warning(
+            "Cannot recover task %s after agent %s; terminal kill/verify failed: %s",
+            task_ref,
+            db_run.id,
+            result.get("error") or result.get("message"),
+        )
+        return False
 
     async def _release_dispatch_mutex_for_run(self, db_run: _AgentRun) -> None:
         if not self._task_manager:

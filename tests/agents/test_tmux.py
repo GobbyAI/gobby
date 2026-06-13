@@ -6,14 +6,18 @@ All tmux subprocess calls are mocked — no real tmux binary required.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
+import shlex
+import signal
 from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+import gobby.agents.tmux.output_reader as output_reader_mod
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.output_reader import TmuxOutputReader, _safe_fifo_component
 from gobby.agents.tmux.pty_bridge import TmuxPTYBridge
@@ -170,6 +174,7 @@ class TestTmuxTextInjection:
             *tmux_cmd,
             "paste-buffer",
             "-d",
+            "-p",
             "-b",
             buffer_name,
             "-t",
@@ -218,6 +223,7 @@ class TestTmuxTextInjection:
                 "tmux",
                 "paste-buffer",
                 "-d",
+                "-p",
                 "-b",
                 buffer_name,
                 "-t",
@@ -292,6 +298,7 @@ class TestTmuxTextInjection:
                 "tmux",
                 "paste-buffer",
                 "-d",
+                "-p",
                 "-b",
                 buffer_name,
                 "-t",
@@ -328,8 +335,8 @@ class TestTmuxTextInjection:
             )
 
         buffer_name = commands[0][3]
-        assert commands[1][:4] == ["tmux", "paste-buffer", "-d", "-b"]
-        assert commands[1][4] == buffer_name
+        assert commands[1][:5] == ["tmux", "paste-buffer", "-d", "-p", "-b"]
+        assert commands[1][5] == buffer_name
         assert commands[2] == ["tmux", "delete-buffer", "-b", buffer_name]
 
     @pytest.mark.asyncio
@@ -535,7 +542,7 @@ class TestTmuxSessionManager:
         mock_run.assert_awaited_once_with(
             "list-panes",
             "-t",
-            "session1",
+            "=session1:",
             "-F",
             "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}",
             timeout=2.0,
@@ -656,11 +663,11 @@ class TestTmuxSessionManager:
             new_callable=AsyncMock,
         ) as mock_send:
             assert await mgr.send_keys("test", "hello") is True
-        mock_send.assert_awaited_once_with(
-            "test",
-            "hello",
-            tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
-        )
+            mock_send.assert_awaited_once_with(
+                "=test:",
+                "hello",
+                tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
+            )
 
     @pytest.mark.asyncio
     async def test_get_pane_pid(self) -> None:
@@ -725,6 +732,46 @@ class TestTmuxOutputReader:
 
         assert reader._reader_tasks == {}
 
+    @pytest.mark.asyncio
+    async def test_read_loop_decodes_split_multibyte_utf8(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        reader = TmuxOutputReader()
+        stop_event = asyncio.Event()
+        chunks: list[str] = []
+        encoded = "\u2500".encode()
+        reads = [encoded[:2], encoded[2:]]
+
+        def fake_read(fd: int, size: int) -> bytes:
+            assert fd == 123
+            assert size == 4096
+            if reads:
+                return reads.pop(0)
+            stop_event.set()
+            return b""
+
+        monkeypatch.setattr(output_reader_mod.os, "open", lambda path, flags: 123)
+        monkeypatch.setattr(output_reader_mod.os, "read", fake_read)
+        monkeypatch.setattr(output_reader_mod.os, "close", lambda fd: None)
+        monkeypatch.setattr(
+            output_reader_mod.select, "select", lambda r, w, e, timeout: (r, [], [])
+        )
+
+        async def callback(run_id: str, text: str) -> None:
+            assert run_id == "run-1"
+            chunks.append(text)
+            stop_event.set()
+
+        reader.set_output_callback(callback)
+
+        await asyncio.wait_for(
+            reader._read_loop("run-1", "ignored.pipe", stop_event),
+            timeout=1.0,
+        )
+
+        assert chunks == ["\u2500"]
+        assert reads == []
+
 
 # =============================================================================
 # TmuxSessionInfo
@@ -754,15 +801,18 @@ class TestSingletons:
         """Reset module-level singletons before and after each test."""
         import gobby.agents.tmux as mod
 
+        mod._configured_tmux_config = None
         mod._session_manager = None
         mod._output_reader = None
         yield
+        mod._configured_tmux_config = None
         mod._session_manager = None
         mod._output_reader = None
 
     def test_get_tmux_session_manager_returns_same(self) -> None:
         import gobby.agents.tmux as mod
 
+        mod.configure_tmux(TmuxConfig())
         mgr1 = mod.get_tmux_session_manager()
         mgr2 = mod.get_tmux_session_manager()
         assert mgr1 is mgr2
@@ -770,6 +820,7 @@ class TestSingletons:
     def test_get_tmux_output_reader_returns_same(self) -> None:
         import gobby.agents.tmux as mod
 
+        mod.configure_tmux(TmuxConfig())
         r1 = mod.get_tmux_output_reader()
         r2 = mod.get_tmux_output_reader()
         assert r1 is r2
@@ -887,7 +938,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_virtual_env_cleared_in_extra_env(self) -> None:
         """VIRTUAL_ENV and VIRTUAL_ENV_PROMPT are set to empty via -e flags."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(
                 spawner._session_manager, "create_session", new_callable=AsyncMock
@@ -918,7 +969,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_uv_cache_dir_defaults_to_session_temp_path(self) -> None:
         """Spawned agents get a writable per-session uv cache by default."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(
                 spawner._session_manager, "create_session", new_callable=AsyncMock
@@ -948,7 +999,7 @@ class TestTmuxSpawner:
         """tmux receives PATH explicitly so ~/.gobby/bin is visible in the child shell."""
         monkeypatch.setattr(Path, "home", staticmethod(lambda: tmp_path))
         monkeypatch.setenv("PATH", "/usr/bin")
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(
                 spawner._session_manager, "create_session", new_callable=AsyncMock
@@ -974,7 +1025,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_uv_cache_dir_explicit_value_preserved(self) -> None:
         """Explicit UV_CACHE_DIR values are passed through unchanged."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(
                 spawner._session_manager, "create_session", new_callable=AsyncMock
@@ -1000,7 +1051,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_uv_cache_dir_empty_value_gets_default(self) -> None:
         """Empty UV_CACHE_DIR values are treated as missing."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(
                 spawner._session_manager, "create_session", new_callable=AsyncMock
@@ -1029,7 +1080,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_unset_in_shell_command(self) -> None:
         """Shell command is prefixed with unset VIRTUAL_ENV."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(
                 spawner._session_manager, "create_session", new_callable=AsyncMock
@@ -1056,7 +1107,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_spawn_returns_success(self) -> None:
         """Successful spawn returns SpawnResult with success=True."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(
                 spawner._session_manager, "create_session", new_callable=AsyncMock
@@ -1081,7 +1132,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_spawn_fails_when_verified_pane_is_dead(self) -> None:
         """A dead tmux pane is not a usable spawn."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(
                 spawner._session_manager, "create_session", new_callable=AsyncMock
@@ -1089,6 +1140,9 @@ class TestTmuxSpawner:
             patch.object(
                 spawner._session_manager, "get_session", new_callable=AsyncMock
             ) as mock_get,
+            patch.object(
+                spawner._session_manager, "kill_session", new_callable=AsyncMock
+            ) as mock_kill,
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
             mock_get.return_value = TmuxSessionInfo(
@@ -1100,11 +1154,12 @@ class TestTmuxSpawner:
 
         assert result.success is False
         assert result.error == "tmux session 'test-session' pane is dead"
+        mock_kill.assert_awaited_once_with("test-session", missing_ok=True)
 
     @pytest.mark.asyncio
     async def test_spawn_fails_when_verified_pane_pid_is_missing(self) -> None:
         """A tmux session without pane_pid fails live-pane verification."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.object(
                 spawner._session_manager, "create_session", new_callable=AsyncMock
@@ -1112,6 +1167,9 @@ class TestTmuxSpawner:
             patch.object(
                 spawner._session_manager, "get_session", new_callable=AsyncMock
             ) as mock_get,
+            patch.object(
+                spawner._session_manager, "kill_session", new_callable=AsyncMock
+            ) as mock_kill,
             patch("gobby.agents.tmux.spawner.time.monotonic", side_effect=[0.0, 2.1]),
         ):
             mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=None)
@@ -1120,11 +1178,35 @@ class TestTmuxSpawner:
 
         assert result.success is False
         assert result.error == "tmux session 'test-session' has no pane PID"
+        mock_kill.assert_awaited_once_with("test-session", missing_ok=True)
+
+    @pytest.mark.asyncio
+    async def test_spawn_kills_session_when_live_pane_verification_raises(self) -> None:
+        """Verification exceptions clean up the tmux session that was just created."""
+        spawner = TmuxSpawner(TmuxConfig())
+        with (
+            patch.object(
+                spawner._session_manager, "create_session", new_callable=AsyncMock
+            ) as mock_create,
+            patch.object(
+                spawner._session_manager, "get_session", new_callable=AsyncMock
+            ) as mock_get,
+            patch.object(
+                spawner._session_manager, "kill_session", new_callable=AsyncMock
+            ) as mock_kill,
+        ):
+            mock_create.return_value = TmuxSessionInfo(name="test-session", pane_pid=456)
+            mock_get.side_effect = RuntimeError("tmux exploded")
+            result = await spawner._async_spawn(command=["echo", "test"], cwd="/tmp")
+
+        assert result.success is False
+        assert result.error == "tmux session verification failed: tmux exploded"
+        mock_kill.assert_awaited_once_with("test-session", missing_ok=True)
 
     @pytest.mark.asyncio
     async def test_spawn_failure_returns_error(self) -> None:
         """Failed spawn returns SpawnResult with success=False."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with patch.object(
             spawner._session_manager, "create_session", new_callable=AsyncMock
         ) as mock_create:
@@ -1141,7 +1223,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_spawn_forwards_auth_env_from_daemon_environment(self) -> None:
         """tmux receives allowlisted auth env from the live daemon process."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         daemon_env = {
             "HOME": "/home/daemon",
             "ANTHROPIC_API_KEY": "sk-daemon",
@@ -1175,7 +1257,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_spawn_keeps_explicit_env_over_passthrough(self) -> None:
         """Command/sandbox env wins over daemon passthrough values."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.dict(os.environ, {"ANTHROPIC_API_KEY": "sk-daemon"}, clear=False),
             patch.object(
@@ -1198,7 +1280,7 @@ class TestTmuxSpawner:
     @pytest.mark.asyncio
     async def test_spawn_never_forwards_claude_oauth_token(self) -> None:
         """Claude OAuth env tokens are not forwarded into spawned tmux panes."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(TmuxConfig())
         with (
             patch.dict(os.environ, {"CLAUDE_CODE_OAUTH_TOKEN": "oauth-token"}, clear=False),
             patch.object(
@@ -1256,25 +1338,64 @@ class TestTmuxSessionManagerExtended:
         assert result is False
 
     @pytest.mark.asyncio
-    async def test_health_check_timeout_kills_server(self) -> None:
-        """health_check kills stale server on timeout and returns True."""
+    async def test_health_check_single_timeout_does_not_kill_server(self) -> None:
+        """health_check defers kill-server for an isolated timeout."""
         mgr = TmuxSessionManager()
         with (
             patch.object(mgr, "is_available", return_value=True),
             patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
         ):
-            # First call times out, second call (kill-server) succeeds
+            mock_run.side_effect = [TimeoutError("socket stuck")]
+            result = await mgr.health_check()
+        assert result is False
+        mock_run.assert_awaited_once_with("list-sessions", timeout=5.0)
+
+    @pytest.mark.asyncio
+    async def test_health_check_kills_server_after_consecutive_timeouts(self) -> None:
+        """health_check kills stale server after repeated timeout evidence."""
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
             mock_run.side_effect = [
+                TimeoutError("socket stuck"),
+                TimeoutError("socket stuck"),
                 TimeoutError("socket stuck"),
                 (0, "", ""),
             ]
-            result = await mgr.health_check()
-        assert result is True
-        assert mock_run.call_count == 2
+            results = [await mgr.health_check() for _ in range(3)]
+        assert results == [False, False, True]
+        assert mock_run.await_args_list[0].args == ("list-sessions",)
+        assert mock_run.await_args_list[0].kwargs == {"timeout": 5.0}
+        assert mock_run.await_args_list[1].args == ("list-sessions",)
+        assert mock_run.await_args_list[1].kwargs == {"timeout": 5.0}
+        assert mock_run.await_args_list[2].args == ("list-sessions",)
+        assert mock_run.await_args_list[2].kwargs == {"timeout": 5.0}
+        assert mock_run.await_args_list[3].args == ("kill-server",)
+        assert mock_run.await_args_list[3].kwargs == {"timeout": 5.0}
+
+    @pytest.mark.asyncio
+    async def test_health_check_generic_error_resets_timeout_count(self) -> None:
+        """health_check requires timeouts to be consecutive before kill-server."""
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.side_effect = [
+                TimeoutError("socket stuck"),
+                RuntimeError("transient"),
+                TimeoutError("socket stuck"),
+                TimeoutError("socket stuck"),
+            ]
+            results = [await mgr.health_check() for _ in range(4)]
+        assert results == [False, False, False, False]
+        assert mock_run.await_args_list[-1].args == ("list-sessions",)
 
     @pytest.mark.asyncio
     async def test_health_check_timeout_kill_fails(self) -> None:
-        """health_check returns False when kill-server also fails."""
+        """health_check returns False when kill-server also fails after repeated timeouts."""
         mgr = TmuxSessionManager()
         with (
             patch.object(mgr, "is_available", return_value=True),
@@ -1282,25 +1403,26 @@ class TestTmuxSessionManagerExtended:
         ):
             mock_run.side_effect = [
                 TimeoutError("socket stuck"),
+                TimeoutError("socket stuck"),
+                TimeoutError("socket stuck"),
                 RuntimeError("kill failed too"),
             ]
-            result = await mgr.health_check()
-        assert result is False
+            results = [await mgr.health_check() for _ in range(3)]
+        assert results == [False, False, False]
+        assert mock_run.await_args_list[-1].args == ("kill-server",)
 
     @pytest.mark.asyncio
-    async def test_health_check_generic_error_kills_server(self) -> None:
-        """health_check attempts kill-server on generic error."""
+    async def test_health_check_generic_error_does_not_kill_server(self) -> None:
+        """health_check does not use arbitrary exceptions as stale-server evidence."""
         mgr = TmuxSessionManager()
         with (
             patch.object(mgr, "is_available", return_value=True),
             patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
         ):
-            mock_run.side_effect = [
-                RuntimeError("unexpected"),
-                (0, "", ""),
-            ]
+            mock_run.side_effect = [RuntimeError("unexpected")]
             result = await mgr.health_check()
-        assert result is True
+        assert result is False
+        mock_run.assert_awaited_once_with("list-sessions", timeout=5.0)
 
     @pytest.mark.asyncio
     async def test_list_pane_ids(self) -> None:
@@ -1360,6 +1482,163 @@ class TestTmuxSessionManagerExtended:
         assert info.pane_pid == 999
 
     @pytest.mark.asyncio
+    async def test_create_session_routes_credentials_through_private_env_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Credential env vars are kept out of tmux new-session argv."""
+        env_file = tmp_path / "agent-env.sh"
+
+        def fake_mkstemp(*, prefix: str, suffix: str) -> tuple[int, str]:
+            assert prefix == "gobby-agent-env-"
+            assert suffix == ".sh"
+            fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            return fd, str(env_file)
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.session_manager.tempfile.mkstemp",
+            fake_mkstemp,
+        )
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.side_effect = [
+                (1, "", ""),  # has_session
+                (0, "", ""),  # new-session
+                (0, "999\n", ""),  # display-message for pane_pid
+            ]
+            await mgr.create_session(
+                name="test",
+                command=["claude", "--session-id=abc"],
+                cwd="/tmp",
+                env={
+                    "GOBBY_SESSION_ID": "session-123",
+                    "ANTHROPIC_AUTH_TOKEN": "anthropic secret",
+                    "QWEN_API_KEY": "qwen-secret",
+                    "XAI_API_KEY": "xai-secret",
+                    "FACTORY_API_KEY": "factory-secret",
+                },
+            )
+
+        new_session_args = mock_run.await_args_list[1].args
+        argv_text = "\0".join(str(arg) for arg in new_session_args)
+        assert "GOBBY_SESSION_ID=session-123" in argv_text
+        assert "ANTHROPIC_AUTH_TOKEN" not in argv_text
+        assert "anthropic secret" not in argv_text
+        assert "QWEN_API_KEY" not in argv_text
+        assert "qwen-secret" not in argv_text
+        assert "XAI_API_KEY" not in argv_text
+        assert "xai-secret" not in argv_text
+        assert "FACTORY_API_KEY" not in argv_text
+        assert "factory-secret" not in argv_text
+
+        command_arg = next(arg for arg in new_session_args if "__gobby_env_file=" in str(arg))
+        assert str(env_file) in command_arg
+        assert '. "$__gobby_env_file"' in command_arg
+        assert 'rm -f "$__gobby_env_file"' in command_arg
+
+        assert env_file.stat().st_mode & 0o777 == 0o600
+        env_file_text = env_file.read_text(encoding="utf-8")
+        assert "ANTHROPIC_AUTH_TOKEN='anthropic secret'\n" in env_file_text
+        assert "QWEN_API_KEY=qwen-secret\n" in env_file_text
+        assert "XAI_API_KEY=xai-secret\n" in env_file_text
+        assert "FACTORY_API_KEY=factory-secret\n" in env_file_text
+
+    @pytest.mark.parametrize("prompt", ["finish this;", "continue with this\\"])
+    @pytest.mark.asyncio
+    async def test_create_session_routes_tmux_unsafe_prompt_through_private_env_file(
+        self,
+        prompt: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """GOBBY_PROMPT values unsafe for tmux -e are kept out of new-session argv."""
+        env_file = tmp_path / "agent-env.sh"
+
+        def fake_mkstemp(*, prefix: str, suffix: str) -> tuple[int, str]:
+            assert prefix == "gobby-agent-env-"
+            assert suffix == ".sh"
+            fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            return fd, str(env_file)
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.session_manager.tempfile.mkstemp",
+            fake_mkstemp,
+        )
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.side_effect = [
+                (1, "", ""),  # has_session
+                (0, "", ""),  # new-session
+                (0, "999\n", ""),  # display-message for pane_pid
+            ]
+            await mgr.create_session(
+                name="test",
+                command=["claude", "--session-id=abc"],
+                cwd="/tmp",
+                env={
+                    "GOBBY_PROMPT": prompt,
+                    "GOBBY_SESSION_ID": "session-123",
+                },
+            )
+
+        new_session_args = mock_run.await_args_list[1].args
+        argv_text = "\0".join(str(arg) for arg in new_session_args)
+        assert f"GOBBY_PROMPT={prompt}" not in argv_text
+        assert "GOBBY_SESSION_ID=session-123" in argv_text
+
+        command_arg = next(arg for arg in new_session_args if "__gobby_env_file=" in str(arg))
+        assert str(env_file) in command_arg
+
+        env_file_text = env_file.read_text(encoding="utf-8")
+        assert f"GOBBY_PROMPT={shlex.quote(prompt)}\n" in env_file_text
+
+    @pytest.mark.asyncio
+    async def test_create_session_removes_private_env_file_when_tmux_create_fails(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Parent process removes the credential file if tmux rejects launch."""
+        env_file = tmp_path / "agent-env.sh"
+
+        def fake_mkstemp(*, prefix: str, suffix: str) -> tuple[int, str]:
+            fd = os.open(env_file, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            return fd, str(env_file)
+
+        monkeypatch.setattr(
+            "gobby.agents.tmux.session_manager.tempfile.mkstemp",
+            fake_mkstemp,
+        )
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+            pytest.raises(TmuxSessionError, match="launch failed"),
+        ):
+            mock_run.side_effect = [
+                (1, "", ""),  # has_session
+                (1, "", "launch failed"),  # new-session
+            ]
+            await mgr.create_session(
+                name="test",
+                command="claude",
+                cwd="/tmp",
+                env={"ANTHROPIC_AUTH_TOKEN": "anthropic secret"},
+            )
+
+        assert not env_file.exists()
+
+    @pytest.mark.asyncio
     async def test_capture_pane_success(self) -> None:
         """capture_pane returns captured output."""
         mgr = TmuxSessionManager()
@@ -1367,6 +1646,17 @@ class TestTmuxSessionManagerExtended:
             mock_run.return_value = (0, "line 1\nline 2\n", "")
             result = await mgr.capture_pane("my-session", lines=2)
         assert result == "line 1\nline 2\n"
+
+    @pytest.mark.asyncio
+    async def test_capture_pane_limits_output_to_requested_lines(self) -> None:
+        """capture_pane trims tmux history plus visible-screen output to the requested tail."""
+        mgr = TmuxSessionManager()
+        pane_output = "".join(f"line {idx}\n" for idx in range(1, 67))
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, pane_output, "")
+            result = await mgr.capture_pane("my-session", lines=15)
+        assert result == "".join(f"line {idx}\n" for idx in range(52, 67))
+        assert len(result.splitlines()) == 15
 
     @pytest.mark.asyncio
     async def test_capture_pane_failure(self) -> None:
@@ -1389,7 +1679,7 @@ class TestTmuxSessionManagerExtended:
             result = await mgr.send_keys("test-sess", "hello\n")
         assert result is True
         mock_send.assert_awaited_once_with(
-            "test-sess",
+            "=test-sess:",
             "hello\n",
             tmux_cmd=["tmux", "-S", "/tmp/tmux-501/gobby", "-f", "/dev/null"],
         )
@@ -1405,7 +1695,7 @@ class TestTmuxSessionManagerExtended:
             result = await mgr.send_keys("test-sess", "hello")
         assert result is True
         mock_send.assert_awaited_once_with(
-            "test-sess",
+            "=test-sess:",
             "hello",
             tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
         )
@@ -1435,7 +1725,7 @@ class TestTmuxSessionManagerExtended:
             mock_run.return_value = (0, "", "")
             result = await mgr.send_keys("test", "C-c", literal=False)
         assert result is True
-        mock_run.assert_awaited_once_with("send-keys", "-t", "test", "C-c")
+        mock_run.assert_awaited_once_with("send-keys", "-t", "=test:", "C-c")
 
     @pytest.mark.asyncio
     async def test_get_pane_pid_invalid_output(self) -> None:
@@ -1488,10 +1778,72 @@ class TestTmuxSessionManagerExtended:
                 (0, "12345\n", ""),  # list-panes for PIDs
                 (0, "", ""),  # kill-session
             ]
+            result = await mgr.kill_session("test", timeout=0)
+        assert result is True
+        mock_killpg.assert_any_call(12345, signal.SIGTERM)
+        mock_killpg.assert_any_call(12345, 0)
+        mock_killpg.assert_any_call(12345, signal.SIGKILL)
+
+    @pytest.mark.asyncio
+    async def test_kill_session_passes_timeout_to_process_group_wait(self) -> None:
+        """kill_session waits for process-group exit using the caller's timeout."""
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+            patch.object(
+                mgr, "_wait_for_process_groups_exit", new_callable=AsyncMock, return_value={12345}
+            ) as mock_wait,
+            patch("os.killpg") as mock_killpg,
+            patch("os.getpgid", return_value=12345),
+        ):
+            mock_run.side_effect = [
+                (0, "12345\n", ""),  # list-panes for PIDs
+                (0, "", ""),  # kill-session
+            ]
+            result = await mgr.kill_session("test", timeout=1.75)
+
+        assert result is True
+        mock_wait.assert_awaited_once_with({12345}, 1.75)
+        assert len(mock_run.await_args_list) == 2
+        assert mock_run.await_args_list[0].args == (
+            "list-panes",
+            "-t",
+            "=test:",
+            "-F",
+            "#{pane_pid}",
+        )
+        assert mock_run.await_args_list[1].args == ("kill-session", "-t", "=test:")
+        mock_killpg.assert_any_call(12345, signal.SIGTERM)
+        mock_killpg.assert_any_call(12345, signal.SIGKILL)
+
+    async def test_kill_session_skips_process_groups_for_wsl(self) -> None:
+        """kill_session avoids host process-group signals when tmux is running via WSL."""
+
+        mgr = TmuxSessionManager()
+        with (
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+            patch("gobby.agents.tmux.session_manager.needs_wsl", return_value=True),
+            patch("os.killpg") as mock_killpg,
+            patch("os.getpgid") as mock_getpgid,
+        ):
+            mock_run.side_effect = [
+                (0, "12345\n", ""),  # list-panes for PIDs
+                (0, "", ""),  # kill-session
+            ]
             result = await mgr.kill_session("test")
         assert result is True
-        # Should have called killpg with SIGTERM then SIGKILL
-        assert mock_killpg.call_count >= 2
+        assert len(mock_run.await_args_list) == 2
+        assert mock_run.await_args_list[0].args == (
+            "list-panes",
+            "-t",
+            "=test:",
+            "-F",
+            "#{pane_pid}",
+        )
+        assert mock_run.await_args_list[1].args == ("kill-session", "-t", "=test:")
+        mock_getpgid.assert_not_called()
+        mock_killpg.assert_not_called()
 
 
 class TestGetWindowAutomaticRename:

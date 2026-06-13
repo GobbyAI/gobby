@@ -20,6 +20,8 @@ class _Run:
     claimed_session_id: str | None
     provider: str = "codex"
     error: str | None = "failed"
+    pid: int | None = None
+    tmux_session_name: str | None = None
 
 
 class _RunManager:

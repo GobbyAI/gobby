@@ -8,7 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from gobby.agents.isolation import IsolationContext
+from gobby.agents.isolation import IsolationContext, SpawnConfig
+from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 
 pytestmark = pytest.mark.unit
 
@@ -294,6 +295,79 @@ class TestSpawnAgentImplErrorBranches:
             )
             assert result["success"] is False
             assert "prepare environment" in result["error"].lower()
+
+    @pytest.mark.asyncio
+    async def test_reused_worktree_persists_rebased_base_commit_sha(
+        self, temp_db, sample_project, tmp_path
+    ) -> None:
+        from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
+        from gobby.mcp_proxy.tools.spawn_agent._worktree_reuse import prepare_reused_worktree
+
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(
+            project_id=sample_project["id"],
+            title="Reused worktree",
+        )
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+        worktree = MagicMock(id="wt-1", worktree_path=str(worktree_path), branch_name="branch")
+        worktree_storage = MagicMock(db=temp_db)
+        git_manager = MagicMock()
+        spawn_config = SpawnConfig(
+            prompt="test",
+            task_id=task.id,
+            task_title=task.title,
+            task_seq_num=task.seq_num,
+            branch_name="branch",
+            branch_prefix=None,
+            base_branch="main",
+            project_id=sample_project["id"],
+            project_path=str(tmp_path / "repo"),
+            provider="gemini",
+            parent_session_id="sess-1",
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
+                new=AsyncMock(
+                    return_value=ReusedWorktreeSyncResult(
+                        status="already_current",
+                        base_ref="main",
+                        base_commit_sha="base-sha",
+                    )
+                ),
+            ) as sync,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",
+                new=AsyncMock(),
+            ) as repair,
+        ):
+            ctx, _handler = await prepare_reused_worktree(
+                existing_worktree=worktree,
+                git_manager=git_manager,
+                worktree_storage=worktree_storage,
+                clone_manager=None,
+                clone_storage=None,
+                spawn_config=spawn_config,
+                main_repo_path=str(tmp_path / "repo"),
+            )
+
+        artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+        assert ctx.extra["base_commit_sha"] == "base-sha"
+        assert artifacts.worktree_path == str(worktree_path)
+        assert artifacts.worktree_id == "wt-1"
+        assert artifacts.base_commit_sha == "base-sha"
+        sync.assert_awaited_once_with(
+            git_manager=git_manager,
+            worktree_path=str(worktree_path),
+            base_branch="main",
+        )
+        repair.assert_awaited_once_with(
+            main_repo_path=str(tmp_path / "repo"),
+            isolated_path=str(worktree_path),
+            provider="gemini",
+        )
 
     @pytest.mark.asyncio
     async def test_reused_worktree_repairs_isolation_before_spawn(self, tmp_path) -> None:

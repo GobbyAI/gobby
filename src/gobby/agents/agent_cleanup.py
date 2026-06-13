@@ -106,9 +106,10 @@ class AgentCleanupHandler:
         run: AgentRun,
         *,
         cleanup_session_id: str | None = None,
-        allow_parent_session_fallback: bool = True,
+        allow_parent_session_fallback: bool = False,
     ) -> None:
         """Release in-memory and isolation state for a terminal agent run."""
+        from gobby.agents.completion_subscribers import remove_agent_completion_subscribers
         from gobby.agents.runtime_cleanup import cleanup_agent_runtime_state
 
         session_id = cleanup_session_id
@@ -131,6 +132,9 @@ class AgentCleanupHandler:
         self._terminal_prompt_monitor.clear(run.id)
         self._stall_classifier.clear(run.id)
         self._loop_tracker.clear(run.id)
+        if self._completion_registry:
+            self._completion_registry.cleanup(run.id)
+        await self._run_db(remove_agent_completion_subscribers, db=self._db, run_id=run.id)
 
         if session_coordinator and session_id:
             try:
@@ -366,7 +370,11 @@ class AgentCleanupHandler:
             },
             message=f"Agent {db_run.id} cancelled",
         )
-        await self.post_terminal_cleanup(db_run)
+        await self.post_terminal_cleanup(
+            db_run,
+            cleanup_session_id=db_run.child_session_id,
+            allow_parent_session_fallback=False,
+        )
         from gobby.build.dispatch_tick import schedule_dispatcher_tick_for_task
 
         if db_run.task_id:
@@ -488,4 +496,8 @@ class AgentCleanupHandler:
             if current is not None:
                 terminal_run = current
 
-        await self.post_terminal_cleanup(terminal_run)
+        await self.post_terminal_cleanup(
+            terminal_run,
+            cleanup_session_id=terminal_run.child_session_id,
+            allow_parent_session_fallback=False,
+        )

@@ -15,9 +15,27 @@ from gobby.storage.agents import AgentRun
 pytestmark = pytest.mark.unit
 
 
+class RecordingDb:
+    def __init__(self) -> None:
+        self.executed: list[tuple[str, tuple[object, ...]]] = []
+
+    def execute(self, sql: str, params: tuple[object, ...] = ()) -> SimpleNamespace:
+        self.executed.append((sql, params))
+        return SimpleNamespace(rowcount=1)
+
+
+class RecordingCompletionRegistry:
+    def __init__(self) -> None:
+        self.cleaned: list[str] = []
+
+    def cleanup(self, completion_id: str) -> None:
+        self.cleaned.append(completion_id)
+
+
 def _run(
     task_id: str | None = "task-1",
     *,
+    child_session_id: str | None = "child-1",
     status: str = "success",
     tool_calls_count: int = 0,
     turns_used: int = 0,
@@ -25,7 +43,7 @@ def _run(
     return AgentRun(
         id="run-1",
         parent_session_id="parent-1",
-        child_session_id="child-1",
+        child_session_id=child_session_id,
         provider="codex",
         prompt="test",
         status=status,
@@ -43,7 +61,9 @@ def _handler(
     run_db=None,
     *,
     agent_run_manager=None,
+    completion_registry=None,
     session_manager=None,
+    session_coordinator=None,
     task_recovery=None,
 ) -> AgentCleanupHandler:
     async def default_run_db(func, *args, **kwargs):
@@ -54,9 +74,9 @@ def _handler(
         agent_run_manager=agent_run_manager or MagicMock(),
         db=db,
         get_session_manager=lambda: session_manager,
-        get_session_coordinator=lambda: None,
+        get_session_coordinator=lambda: session_coordinator,
         clone_storage=None,
-        completion_registry=None,
+        completion_registry=completion_registry,
         task_recovery=task_recovery or AsyncMock(),
         prompt_detector=clearable,
         terminal_prompt_monitor=clearable,
@@ -132,7 +152,7 @@ def test_cleanup_merged_task_artifacts_runs_when_merge_stage_done() -> None:
 async def test_post_terminal_cleanup_retries_merge_artifact_cleanup_for_task_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    db = object()
+    db = RecordingDb()
     calls: list[tuple[object, str]] = []
 
     def retry_cleanup(cleanup_db: object, task_id: str) -> list[SimpleNamespace]:
@@ -152,12 +172,16 @@ async def test_post_terminal_cleanup_retries_merge_artifact_cleanup_for_task_run
     await _handler(db).post_terminal_cleanup(_run())
 
     assert calls == [(db, "task-1")]
+    assert db.executed == [
+        ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
+    ]
 
 
 @pytest.mark.asyncio
 async def test_post_terminal_cleanup_skips_merge_artifact_cleanup_without_task(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    db = RecordingDb()
     cleanup = MagicMock(return_value=[])
     monkeypatch.setattr(
         agent_cleanup,
@@ -169,10 +193,57 @@ async def test_post_terminal_cleanup_skips_merge_artifact_cleanup_without_task(
         lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
     )
 
-    result = await _handler(object()).post_terminal_cleanup(_run(task_id=None))
+    result = await _handler(db).post_terminal_cleanup(_run(task_id=None))
 
     assert result is None
     cleanup.assert_not_called()
+    assert db.executed == [
+        ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_post_terminal_cleanup_clears_completion_registry_and_subscribers(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = RecordingDb()
+    registry = RecordingCompletionRegistry()
+    monkeypatch.setattr(
+        "gobby.agents.runtime_cleanup.cleanup_agent_runtime_state",
+        lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
+    )
+
+    await _handler(db, completion_registry=registry).post_terminal_cleanup(_run(task_id=None))
+
+    assert registry.cleaned == ["run-1"]
+    assert db.executed == [
+        ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
+    ]
+
+
+@pytest.mark.asyncio
+async def test_post_terminal_cleanup_missing_child_does_not_target_parent_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    db = RecordingDb()
+    session_manager = MagicMock()
+    session_coordinator = MagicMock()
+    monkeypatch.setattr(
+        "gobby.agents.runtime_cleanup.cleanup_agent_runtime_state",
+        lambda *args, **kwargs: SimpleNamespace(dispatch_mutex_rows=0, workflow_instance_rows=0),
+    )
+
+    await _handler(
+        db,
+        session_manager=session_manager,
+        session_coordinator=session_coordinator,
+    ).post_terminal_cleanup(_run(task_id=None, child_session_id=None))
+
+    session_coordinator.release_session_worktrees.assert_not_called()
+    session_manager.update_status.assert_not_called()
+    assert db.executed == [
+        ("DELETE FROM completion_subscribers WHERE completion_id = %s", ("run-1",))
+    ]
 
 
 @pytest.mark.asyncio
@@ -205,7 +276,7 @@ async def test_cleanup_agent_failure_persists_child_session_progress_stats() -> 
         task_recovery=TaskRecovery(),
     )
 
-    async def post_terminal_cleanup(run: AgentRun) -> None:
+    async def post_terminal_cleanup(run: AgentRun, **kwargs: object) -> None:
         cleanup_runs.append(run)
 
     handler.post_terminal_cleanup = post_terminal_cleanup  # type: ignore[method-assign]

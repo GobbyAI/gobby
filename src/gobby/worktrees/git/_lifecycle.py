@@ -191,7 +191,18 @@ def delete_worktree(
         remove_warning = ""
 
         if result.returncode != 0:
-            if path_existed_before_remove and not worktree_path.exists():
+            if not path_existed_before_remove:
+                prune_result = runner._run_git(["worktree", "prune"], timeout=10)
+                detail = result.stderr.strip() or result.stdout.strip()
+                remove_warning = f"; git remove reported: {detail}" if detail else ""
+                if prune_result.returncode != 0:
+                    prune_detail = prune_result.stderr.strip() or prune_result.stdout.strip()
+                    return GitOperationResult(
+                        success=False,
+                        message=f"Failed to prune missing worktree: {prune_detail}",
+                        error=prune_detail,
+                    )
+            elif path_existed_before_remove and not worktree_path.exists():
                 prune_result = runner._run_git(["worktree", "prune"], timeout=10)
                 detail = result.stderr.strip() or result.stdout.strip()
                 remove_warning = f"; git remove reported: {detail}" if detail else ""

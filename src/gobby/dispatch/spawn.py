@@ -72,6 +72,7 @@ async def spawn_agent(
     db: HubDatabase | None = None,
     context: object | None = None,
     services: object | None = None,
+    mutex: object | None = None,
 ) -> str:
     """Spawn an agent through daemon services and return its real agent run id."""
     if db is None:
@@ -228,6 +229,7 @@ async def spawn_agent(
         db=db,
         daemon_config=getattr(services, "config", None),
         code_index=getattr(services, "code_indexer", None),
+        held_task_mutex=mutex,
     )
     if not result.get("success"):
         raise DispatchSpawnFailed(str(result.get("error") or "spawn_failed"))

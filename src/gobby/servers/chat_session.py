@@ -216,7 +216,7 @@ class ChatSession(ChatSessionPermissionsMixin):
         try:
             from gobby.agents.local_model import ensure_local_model
 
-            resolved_model = await ensure_local_model(endpoint, registry=None)
+            resolved_model = await ensure_local_model(endpoint, run_manager=None)
         except Exception as e:
             raise RuntimeError(f"Local model pre-flight failed: {e}") from e
 

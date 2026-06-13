@@ -24,14 +24,16 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio
-async def test_worktree_handler_captures_base(temp_db, sample_project, tmp_path: Path) -> None:
+async def test_worktree_handler_captures_merge_base(
+    temp_db, sample_project, tmp_path: Path
+) -> None:
     task = LocalTaskManager(temp_db).create_task(
         project_id=sample_project["id"],
         title="Worktree base",
     )
     handler, worktree_path = _worktree_handler(temp_db, tmp_path)
 
-    ctx = await _prepare_with_git_head(
+    ctx = await _prepare_worktree_with_merge_base(
         handler,
         _config(task.id, sample_project["id"], tmp_path),
         expected_git_cwd=worktree_path,
@@ -40,8 +42,8 @@ async def test_worktree_handler_captures_base(temp_db, sample_project, tmp_path:
     artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
     assert artifacts.worktree_path == worktree_path
     assert artifacts.worktree_id == "wt-123"
-    assert artifacts.base_commit_sha == "abc123"
-    assert ctx.extra["base_commit_sha"] == "abc123"
+    assert artifacts.base_commit_sha == "base123"
+    assert ctx.extra["base_commit_sha"] == "base123"
 
 
 @pytest.mark.asyncio
@@ -76,6 +78,7 @@ async def test_base_captured_before_first_agent_run(
         title="Ordering",
     )
     handler, _worktree_path = _worktree_handler(temp_db, tmp_path)
+    handler._git_manager.run_git_command.return_value = _git_head("abc123")
 
     async def assert_base_before_hook_copy(*_args: object, **_kwargs: object) -> None:
         artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
@@ -87,7 +90,6 @@ async def test_base_captured_before_first_agent_run(
             new=AsyncMock(side_effect=assert_base_before_hook_copy),
         ),
         patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
-        patch("gobby.agents.isolation.subprocess.run", return_value=_git_head("abc123")),
     ):
         await handler.prepare_environment(_config(task.id, sample_project["id"], tmp_path))
 
@@ -139,6 +141,27 @@ async def _prepare_with_git_head(
 
     run.assert_called_once()
     assert run.call_args.args[0] == ["git", "-C", expected_git_cwd, "rev-parse", "HEAD"]
+    return ctx
+
+
+async def _prepare_worktree_with_merge_base(
+    handler: WorktreeIsolationHandler,
+    config: SpawnConfig,
+    *,
+    expected_git_cwd: str,
+) -> IsolationContext:
+    handler._git_manager.run_git_command.return_value = _git_head("base123")
+    with (
+        patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+    ):
+        ctx = await handler.prepare_environment(config)
+
+    handler._git_manager.run_git_command.assert_called_once_with(
+        ["merge-base", "origin/main", "HEAD"],
+        cwd=Path(expected_git_cwd),
+        timeout=30,
+    )
     return ctx
 
 

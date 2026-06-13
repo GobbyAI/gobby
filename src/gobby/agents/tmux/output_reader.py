@@ -7,6 +7,7 @@ both readers identically.
 from __future__ import annotations
 
 import asyncio
+import codecs
 import logging
 import os
 import select
@@ -217,6 +218,10 @@ class TmuxOutputReader:
         """
         loop = asyncio.get_running_loop()
         fd: int | None = None
+        # Incremental decoder buffers incomplete multi-byte UTF-8 sequences
+        # across read boundaries, preventing corruption when a character
+        # straddles two 4 KB chunks.
+        decoder = codecs.getincrementaldecoder("utf-8")("replace")
 
         try:
             # Open FIFO for reading (O_RDONLY | O_NONBLOCK so we don't
@@ -253,9 +258,9 @@ class TmuxOutputReader:
                     await asyncio.sleep(0.2)
                     continue
 
-                text = data.decode("utf-8", errors="replace")
+                text = decoder.decode(data)
 
-                if self._output_callback:
+                if text and self._output_callback:
                     try:
                         await self._output_callback(run_id, text)
                     except Exception as e:

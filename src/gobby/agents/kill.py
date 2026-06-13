@@ -12,6 +12,7 @@ import os
 import re
 import signal
 import sys
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from gobby.storage.agents import AgentRun
@@ -60,12 +61,80 @@ async def _run_subprocess(*args: str, timeout: float = 5.0) -> tuple[int, str, s
     )
 
 
+def _signal_process_group(pid: int, sig: int) -> None:
+    if sys.platform == "win32":
+        os.kill(pid, sig)
+        return
+    os.killpg(os.getpgid(pid), sig)
+
+
+def _configured_tmux_command_prefix() -> list[str]:
+    from gobby.agents.tmux import get_configured_tmux_command_prefix
+
+    return get_configured_tmux_command_prefix()
+
+
+async def _wait_for_pid_exit(pid: int, timeout: float) -> bool:
+    if timeout <= 0:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        return False
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+    while loop.time() < deadline:
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            return True
+        await asyncio.sleep(min(0.1, max(0.0, deadline - loop.time())))
+    return False
+
+
+async def pid_matches_agent_identity(
+    pid: int,
+    *,
+    provider: str,
+    session_id: str | None,
+    run_subprocess: Callable[..., Awaitable[tuple[int, str, str]]] | None = None,
+) -> bool:
+    """Verify a recorded PID still belongs to the expected provider/session."""
+    if not session_id or not _validate_terminal_value("session_id", session_id):
+        logger.warning("Refusing to signal PID %s: missing or invalid session id", pid)
+        return False
+
+    provider_marker = provider.strip().lower()
+    if not provider_marker:
+        logger.warning("Refusing to signal PID %s: missing provider", pid)
+        return False
+
+    runner = run_subprocess or _run_subprocess
+    try:
+        rc, stdout, _ = await runner("ps", "-p", str(pid), "-o", "args=", timeout=2.0)
+    except Exception as e:
+        logger.warning("Refusing to signal PID %s: cmdline lookup failed: %s", pid, e)
+        return False
+
+    cmdline = stdout.strip()
+    matches = rc == 0 and f"session-id {session_id}" in cmdline
+    matches = matches and provider_marker in cmdline.lower()
+    if not matches:
+        logger.warning(
+            "Refusing to signal PID %s: cmdline does not match provider/session identity",
+            pid,
+        )
+    return matches
+
+
 async def _close_terminal_window(
     session_id: str,
     db: HubDatabase,
     session_manager: SessionManager | None = None,
     signal_name: str = "TERM",
     timeout: float = 5.0,
+    provider: str | None = None,
 ) -> dict[str, Any]:
     """Close the terminal window/pane for an agent session.
 
@@ -92,14 +161,8 @@ async def _close_terminal_window(
     # Strategy 1: tmux kill-pane (primary — all agents use tmux)
     if ctx.get("tmux_pane"):
         try:
-            from gobby.config.tmux import TmuxConfig
-
-            tmux_socket = TmuxConfig().socket_name or "gobby"
-
             rc, stdout, _ = await _run_subprocess(
-                "tmux",
-                "-L",
-                tmux_socket,
+                *_configured_tmux_command_prefix(),
                 "display-message",
                 "-t",
                 ctx["tmux_pane"],
@@ -109,9 +172,7 @@ async def _close_terminal_window(
             )
             if rc == 0 and stdout.strip():
                 await _run_subprocess(
-                    "tmux",
-                    "-L",
-                    tmux_socket,
+                    *_configured_tmux_command_prefix(),
                     "kill-pane",
                     "-t",
                     ctx["tmux_pane"],
@@ -128,6 +189,17 @@ async def _close_terminal_window(
         parent_pid = ctx.get("parent_pid")
         if parent_pid:
             try:
+                if provider and not await pid_matches_agent_identity(
+                    int(parent_pid),
+                    provider=provider,
+                    session_id=session_id,
+                ):
+                    return {
+                        "success": False,
+                        "error": f"PID {parent_pid} does not match agent identity",
+                        "pid": parent_pid,
+                        "method": "taskkill_tree",
+                    }
                 await _run_subprocess(
                     "taskkill",
                     "/F",
@@ -145,6 +217,17 @@ async def _close_terminal_window(
     if parent_pid:
         try:
             pid = int(parent_pid)
+            if provider and not await pid_matches_agent_identity(
+                pid,
+                provider=provider,
+                session_id=session_id,
+            ):
+                return {
+                    "success": False,
+                    "error": f"PID {pid} does not match agent identity",
+                    "pid": pid,
+                    "method": "parent_pid",
+                }
             if is_windows:
                 await _run_subprocess(
                     "taskkill",
@@ -154,7 +237,7 @@ async def _close_terminal_window(
                     timeout=timeout,
                 )
             else:
-                os.kill(pid, signal.SIGTERM)
+                _signal_process_group(pid, signal.SIGTERM)
             return {"success": True, "method": "parent_pid", "pid": pid}
         except (ProcessLookupError, OSError, ValueError) as e:
             logger.debug(f"parent_pid kill failed: {e}")
@@ -162,18 +245,28 @@ async def _close_terminal_window(
     return {"success": False, "error": "No terminal close method available"}
 
 
-async def _close_tmux_session(session_name: str) -> dict[str, Any]:
+async def _close_tmux_session(session_name: str, *, timeout: float = 5.0) -> dict[str, Any]:
     """Close a persisted Gobby tmux session and its process groups."""
     try:
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.agents.tmux import get_tmux_session_manager
 
-        killed = await TmuxSessionManager().kill_session(session_name)
+        tmux = get_tmux_session_manager()
+        already_missing = not await tmux.has_session(session_name)
+        killed = await tmux.kill_session(session_name, missing_ok=True, timeout=timeout)
     except Exception as e:
         logger.debug("tmux session close failed for %s: %s", session_name, e)
         return {"success": False, "error": str(e)}
 
     if not killed:
-        return {"success": False, "error": f"tmux session '{session_name}' not found"}
+        return {"success": False, "error": f"failed to kill tmux session '{session_name}'"}
+    if already_missing:
+        return {
+            "success": True,
+            "message": f"tmux session '{session_name}' already dead",
+            "already_dead": True,
+            "method": "tmux_already_dead",
+            "tmux_session_name": session_name,
+        }
     return {"success": True, "method": "tmux_kill_session", "tmux_session_name": session_name}
 
 
@@ -201,25 +294,27 @@ async def kill_agent(
     Returns:
         Dict with success status and details.
     """
-    session_id = run.child_session_id or run.parent_session_id
+    session_id = run.child_session_id
     session_manager = SessionManager(db) if session_id else None
+    terminal_close_result: dict[str, Any] | None = None
 
     # Try terminal-specific close
     if close_terminal and run.tmux_session_name:
-        result = await _close_tmux_session(run.tmux_session_name)
+        result = await _close_tmux_session(run.tmux_session_name, timeout=timeout)
         if result.get("success"):
-            return result
+            terminal_close_result = result
 
-    if close_terminal and session_id:
+    if close_terminal and session_id and terminal_close_result is None:
         result = await _close_terminal_window(
             session_id,
             db,
             session_manager=session_manager,
             signal_name=signal_name,
             timeout=timeout,
+            provider=run.provider,
         )
         if result.get("success"):
-            return result
+            terminal_close_result = result
 
     # Find PID via multiple strategies
     target_pid = run.pid
@@ -266,27 +361,20 @@ async def kill_agent(
                             for pid_str in pids:
                                 try:
                                     candidate_pid = int(pid_str)
-                                    ps_rc, ps_stdout, _ = await _run_subprocess(
-                                        "ps",
-                                        "-p",
-                                        str(candidate_pid),
-                                        "-o",
-                                        "args=",
-                                        timeout=2.0,
+                                    is_matched = await pid_matches_agent_identity(
+                                        candidate_pid,
+                                        provider=run.provider,
+                                        session_id=session_id,
                                     )
-                                    if ps_rc == 0:
-                                        cmdline = ps_stdout.strip()
-                                        is_matched = run.provider in cmdline.lower()
-
-                                        if f"session-id {session_id}" in cmdline and is_matched:
-                                            if matched_pid is not None:
-                                                logger.info(
-                                                    f"Multiple PID matches ({matched_pid}, "
-                                                    f"{candidate_pid}) — picking highest"
-                                                )
-                                                matched_pid = max(matched_pid, candidate_pid)
-                                            else:
-                                                matched_pid = candidate_pid
+                                    if is_matched:
+                                        if matched_pid is not None:
+                                            logger.info(
+                                                f"Multiple PID matches ({matched_pid}, "
+                                                f"{candidate_pid}) - picking highest"
+                                            )
+                                            matched_pid = max(matched_pid, candidate_pid)
+                                        else:
+                                            matched_pid = candidate_pid
                                 except (ValueError, TimeoutError):
                                     continue
                             if matched_pid is not None:
@@ -301,19 +389,49 @@ async def kill_agent(
                     logger.warning(f"pgrep fallback failed: {e}")
 
     if not target_pid:
+        if terminal_close_result is not None and terminal_close_result.get("already_dead"):
+            return {
+                "success": True,
+                "message": "Terminal already dead and no target PID was found",
+                "already_dead": True,
+                "terminal_close": terminal_close_result,
+                "method": terminal_close_result.get("method"),
+            }
+        if terminal_close_result is not None:
+            return {
+                "success": False,
+                "error": "Terminal closed but no target PID was found to verify process death",
+                "terminal_close": terminal_close_result,
+            }
         return {"success": False, "error": "No target PID found"}
 
     # Check if process is alive
     try:
         os.kill(target_pid, 0)
     except ProcessLookupError:
-        return {
+        response = {
             "success": True,
             "message": f"Process {target_pid} already dead",
             "already_dead": True,
         }
+        if terminal_close_result is not None:
+            response["terminal_close"] = terminal_close_result
+            response["method"] = terminal_close_result.get("method")
+        return response
     except PermissionError:
         return {"success": False, "error": f"No permission to signal PID {target_pid}"}
+
+    if not await pid_matches_agent_identity(
+        target_pid,
+        provider=run.provider,
+        session_id=session_id,
+    ):
+        return {
+            "success": False,
+            "error": f"PID {target_pid} does not match agent identity",
+            "pid": target_pid,
+            "found_via": found_via,
+        }
 
     # Close PTY if embedded mode
     if master_fd is not None:
@@ -322,38 +440,60 @@ async def kill_agent(
         except OSError:
             pass
 
-    # Send signal
+    # Send signal, unless terminal close already requested termination.
     sig = getattr(signal, f"SIG{signal_name}", signal.SIGTERM)
-    try:
-        os.kill(target_pid, sig)
-    except ProcessLookupError:
-        return {
-            "success": True,
-            "message": "Process died during signal",
-            "already_dead": True,
-        }
+    if terminal_close_result is None or signal_name != "TERM":
+        try:
+            _signal_process_group(target_pid, sig)
+        except ProcessLookupError:
+            response = {
+                "success": True,
+                "message": "Process died during signal",
+                "already_dead": True,
+            }
+            if terminal_close_result is not None:
+                response["terminal_close"] = terminal_close_result
+                response["method"] = terminal_close_result.get("method")
+            return response
 
     # Wait for termination with optional SIGKILL escalation
-    if signal_name == "TERM" and timeout > 0:
-        loop = asyncio.get_running_loop()
-        deadline = loop.time() + timeout
-        while loop.time() < deadline:
+    if signal_name == "TERM":
+        should_escalate = terminal_close_result is not None and timeout <= 0
+        if timeout > 0:
+            should_escalate = not await _wait_for_pid_exit(target_pid, timeout)
+        if should_escalate:
             try:
-                os.kill(target_pid, 0)
-                await asyncio.sleep(0.1)
-            except ProcessLookupError:
-                break
-        else:
-            try:
-                os.kill(target_pid, signal.SIGKILL)
+                if not await pid_matches_agent_identity(
+                    target_pid,
+                    provider=run.provider,
+                    session_id=session_id,
+                ):
+                    return {
+                        "success": False,
+                        "error": f"PID {target_pid} no longer matches agent identity",
+                        "pid": target_pid,
+                        "found_via": found_via,
+                    }
+                _signal_process_group(target_pid, signal.SIGKILL)
                 logger.info(f"Escalated to SIGKILL for PID {target_pid}")
+                if not await _wait_for_pid_exit(target_pid, max(0.5, min(timeout, 1.0))):
+                    return {
+                        "success": False,
+                        "error": f"PID {target_pid} still alive after SIGKILL",
+                        "pid": target_pid,
+                        "found_via": found_via,
+                    }
             except ProcessLookupError:
                 pass
 
-    return {
+    response = {
         "success": True,
         "message": f"Sent SIG{signal_name} to PID {target_pid}",
         "pid": target_pid,
         "signal": signal_name,
         "found_via": found_via,
     }
+    if terminal_close_result is not None:
+        response["terminal_close"] = terminal_close_result
+        response["method"] = terminal_close_result.get("method")
+    return response

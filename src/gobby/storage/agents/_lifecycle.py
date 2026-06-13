@@ -116,14 +116,17 @@ class _AgentRunLifecycleMixin:
     def start(self: _AgentRunLifecycleHost, run_id: str) -> AgentRun | None:
         """Mark agent run as started."""
         now = utc_now_iso()
-        self.db.execute(
+        cursor = self.db.execute(
             """
             UPDATE agent_runs
             SET status = 'running', started_at = %s, updated_at = %s
             WHERE id = %s
+              AND status = 'pending'
             """,
             (now, now, run_id),
         )
+        if not _positive_rowcount(cursor):
+            return None
         return self.get(run_id)
 
     def _expire_sessions_for_run_ids(

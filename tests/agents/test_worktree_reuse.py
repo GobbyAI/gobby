@@ -15,7 +15,10 @@ from gobby.worktrees.git import WorktreeGitManager
 
 
 class FakeGitManager:
-    def __init__(self, responses: list[subprocess.CompletedProcess[str]]) -> None:
+    def __init__(
+        self,
+        responses: list[subprocess.CompletedProcess[str] | BaseException],
+    ) -> None:
         self.responses = responses
         self.calls: list[tuple[list[str], str | Path | None, int]] = []
 
@@ -27,7 +30,10 @@ class FakeGitManager:
         timeout: int = 30,
     ) -> subprocess.CompletedProcess[str]:
         self.calls.append((args, cwd, timeout))
-        return self.responses.pop(0)
+        response = self.responses.pop(0)
+        if isinstance(response, BaseException):
+            raise response
+        return response
 
 
 def _result(
@@ -101,6 +107,35 @@ async def test_sync_reused_worktree_rejects_dirty_worktree(tmp_path: Path) -> No
 
 
 @pytest.mark.asyncio
+@pytest.mark.unit
+async def test_sync_reused_worktree_allows_generated_hook_status_lines(
+    tmp_path: Path,
+) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    git = FakeGitManager(
+        [
+            _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
+            _result(
+                ["git", "status"],
+                0,
+                stdout="?? .factory/\n?? .codex/\n?? .claude/\n?? .gemini/\n",
+            ),
+            _result(["git", "merge-base"], 0),
+        ]
+    )
+
+    result = await sync_reused_worktree_to_base(
+        git_manager=git,
+        worktree_path=str(worktree),
+        base_branch="0.4.7",
+    )
+
+    assert result.status == "already_current"
+    assert len(git.calls) == 3
+
+
+@pytest.mark.asyncio
 @pytest.mark.integration
 async def test_sync_reused_worktree_allows_generated_isolation_metadata(
     tmp_path: Path,
@@ -121,6 +156,9 @@ async def test_sync_reused_worktree_allows_generated_isolation_metadata(
     _git(parent, "commit", "-m", "initial")
     base_sha = _git(parent, "rev-parse", "main").stdout.strip()
     _git(parent, "worktree", "add", "-b", "reuse", str(worktree), "main")
+    parent_exclude_path = parent / ".git" / "info" / "exclude"
+    parent_exclude_before = parent_exclude_path.read_text(encoding="utf-8")
+    (parent / ".mcp.json").write_text('{"mcpServers":{}}\n', encoding="utf-8")
 
     (worktree / ".gobby" / "project.json").write_text(
         (
@@ -139,11 +177,25 @@ async def test_sync_reused_worktree_allows_generated_isolation_metadata(
     )
 
     assert result.base_commit_sha == base_sha
-    assert _git(worktree, "status", "--porcelain").stdout == ""
-    exclude_path = (
-        worktree / _git(worktree, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+    assert parent_exclude_path.read_text(encoding="utf-8") == parent_exclude_before
+    assert (
+        "?? .mcp.json"
+        in _git(
+            parent,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ).stdout.splitlines()
     )
-    assert ".mcp.json" in exclude_path.read_text(encoding="utf-8")
+    assert (
+        "?? .mcp.json"
+        in _git(
+            worktree,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ).stdout.splitlines()
+    )
     ls_files = _git(worktree, "ls-files", "-v", ".gobby/project.json").stdout
     assert ls_files.startswith("S ")
     assert "parent_project_path" in (worktree / ".gobby" / "project.json").read_text(
@@ -206,3 +258,28 @@ async def test_sync_reused_worktree_aborts_failed_rebase(tmp_path: Path) -> None
         )
 
     assert git.calls[-1][0] == ["rebase", "--abort"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.unit
+async def test_sync_reused_worktree_aborts_timed_out_rebase(tmp_path: Path) -> None:
+    worktree = tmp_path / "worktree"
+    worktree.mkdir()
+    git = FakeGitManager(
+        [
+            _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
+            _result(["git", "status"], 0),
+            _result(["git", "merge-base"], 1),
+            subprocess.TimeoutExpired(cmd=["git", "rebase", "0.4.7"], timeout=120),
+            _result(["git", "rebase", "--abort"], 0),
+        ]
+    )
+
+    with pytest.raises(RuntimeError, match="Timed out rebasing reused worktree.*rebase aborted"):
+        await sync_reused_worktree_to_base(
+            git_manager=git,
+            worktree_path=str(worktree),
+            base_branch="0.4.7",
+        )
+
+    assert git.calls[-1] == (["rebase", "--abort"], worktree, 30)

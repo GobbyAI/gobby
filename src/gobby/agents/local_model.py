@@ -14,6 +14,7 @@ import httpx
 
 if TYPE_CHECKING:
     from gobby.config.ai import LocalGenerationEndpointConfig
+    from gobby.storage.agents import LocalAgentRunManager
 
 __all__ = ["ensure_local_model", "LocalModelError"]
 
@@ -24,20 +25,16 @@ class LocalModelError(Exception):
     """Raised when local model pre-flight fails."""
 
 
-def count_active_local_agents(registry: Any) -> int:
+def count_active_local_agents(run_manager: LocalAgentRunManager) -> int:
     """Count running agents that were spawned against a local endpoint.
 
     Args:
-        registry: AgentRegistry instance
+        run_manager: Agent run storage manager.
 
     Returns:
         Number of active agents using local models
     """
-    count = 0
-    for run in registry.list_running():
-        if bool(getattr(run, "is_local", False)):
-            count += 1
-    return count
+    return sum(1 for run in run_manager.list_active() if run.is_local)
 
 
 def _origin(api_base: str) -> str:
@@ -191,7 +188,7 @@ async def _set_ollama_keep_alive(
 
 async def ensure_local_model(
     config: LocalGenerationEndpointConfig,
-    registry: Any | None = None,
+    run_manager: LocalAgentRunManager | None = None,
 ) -> str:
     """Ensure the configured model is loaded at the local endpoint.
 
@@ -204,7 +201,7 @@ async def ensure_local_model(
 
     Args:
         config: Named local generation endpoint configuration
-        registry: Optional AgentRegistry for active-agent checking
+        run_manager: Optional agent run storage manager for active-agent checking.
 
     Returns:
         The resolved model name (important for auto mode)
@@ -223,9 +220,9 @@ async def ensure_local_model(
     async with httpx.AsyncClient() as client:
         try:
             if config.provider == "lmstudio":
-                return await _ensure_lmstudio_model(client, config, registry)
+                return await _ensure_lmstudio_model(client, config, run_manager)
             if config.provider == "ollama":
-                return await _ensure_ollama_model(client, config, registry)
+                return await _ensure_ollama_model(client, config, run_manager)
         except httpx.ConnectError as e:
             raise LocalModelError(
                 f"Cannot connect to local {config.provider} endpoint at {config.api_base}."
@@ -241,7 +238,7 @@ async def ensure_local_model(
 async def _ensure_lmstudio_model(
     client: httpx.AsyncClient,
     config: LocalGenerationEndpointConfig,
-    registry: Any | None,
+    run_manager: LocalAgentRunManager | None,
 ) -> str:
     models = await _lmstudio_models(client, config)
     loaded_ids = _lmstudio_loaded_instance_ids(models)
@@ -272,7 +269,7 @@ async def _ensure_lmstudio_model(
         return config.model
 
     if loaded_ids:
-        active_count = count_active_local_agents(registry) if registry else 0
+        active_count = count_active_local_agents(run_manager) if run_manager else 0
         if active_count > 0:
             raise LocalModelError(
                 f"Cannot swap local model: {active_count} local agent(s) still active "
@@ -297,7 +294,7 @@ async def _ensure_lmstudio_model(
 async def _ensure_ollama_model(
     client: httpx.AsyncClient,
     config: LocalGenerationEndpointConfig,
-    registry: Any | None,
+    run_manager: LocalAgentRunManager | None,
 ) -> str:
     loaded_ids = await _get_ollama_loaded_models(client, config)
 
@@ -316,7 +313,7 @@ async def _ensure_ollama_model(
         return config.model
 
     if loaded_ids:
-        active_count = count_active_local_agents(registry) if registry else 0
+        active_count = count_active_local_agents(run_manager) if run_manager else 0
         if active_count > 0:
             raise LocalModelError(
                 f"Cannot swap local model: {active_count} local agent(s) still active "

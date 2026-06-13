@@ -851,6 +851,25 @@ class LocalPipelineExecutionManager:
             (completion_id,),
         )
 
+    def remove_completion_subscribers_for_terminal_agent_runs(self) -> int:
+        """Remove subscriber rows whose completion ID is a terminal agent run."""
+        from gobby.storage.agents import TERMINAL_AGENT_RUN_STATUSES
+
+        status_placeholders = ", ".join("%s" for _ in TERMINAL_AGENT_RUN_STATUSES)
+        cursor = self.db.execute(
+            f"""
+            DELETE FROM completion_subscribers
+            WHERE completion_id IN (
+                SELECT id
+                FROM agent_runs
+                WHERE status IN ({status_placeholders})
+            )
+            """,
+            TERMINAL_AGENT_RUN_STATUSES,
+        )
+        rowcount = cursor.rowcount if cursor else 0
+        return rowcount if rowcount > 0 else 0
+
     def reset_steps_from(self, execution_id: str, from_step_id: str) -> int:
         """Reset a step and all subsequent steps to PENDING.
 

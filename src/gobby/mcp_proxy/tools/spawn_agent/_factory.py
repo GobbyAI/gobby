@@ -16,6 +16,7 @@ from gobby.utils.project_context import get_project_context
 from gobby.workflows.definitions import AgentDefinitionBody
 
 from ._implementation import spawn_agent_impl
+from ._spawn_guards import max_active_agents_for_project
 
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
@@ -520,7 +521,7 @@ def create_spawn_agent_registry(
         description=(
             "Dispatch multiple agents in parallel for non-conflicting tasks. "
             "Takes task briefs from suggest_next_task and spawns an agent for each. "
-            "Uses asyncio.gather for concurrent spawning."
+            "Bounds concurrent spawning by max_active_agents."
         ),
     )
     async def dispatch_batch(
@@ -562,6 +563,19 @@ def create_spawn_agent_registry(
 
         if not suggestions:
             return {"dispatched": 0, "results": []}
+        batch_project_ctx, batch_project_path = _resolve_spawn_project_context(
+            project_path=None,
+            parent_session_id=parent_session_id,
+            session_manager=session_manager,
+            db=db,
+        )
+        del batch_project_ctx
+        batch_cap = (
+            max_active_agents_for_project(batch_project_path)
+            if batch_project_path
+            else len(suggestions)
+        )
+        semaphore = asyncio.Semaphore(max(1, min(len(suggestions), batch_cap)))
 
         async def _spawn_one(suggestion: dict[str, Any]) -> dict[str, Any]:
             if not isinstance(suggestion, dict):
@@ -652,7 +666,11 @@ def create_spawn_agent_registry(
                     "error": str(e),
                 }
 
-        results = await asyncio.gather(*[_spawn_one(s) for s in suggestions])
+        async def _spawn_one_bounded(suggestion: dict[str, Any]) -> dict[str, Any]:
+            async with semaphore:
+                return await _spawn_one(suggestion)
+
+        results = await asyncio.gather(*[_spawn_one_bounded(s) for s in suggestions])
         dispatched = sum(1 for r in results if r["success"])
 
         return {

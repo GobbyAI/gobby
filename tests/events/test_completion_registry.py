@@ -104,6 +104,40 @@ class TestSubscribers:
         assert set(subs) == {"sess-1", "sess-2"}
 
     @pytest.mark.asyncio
+    async def test_register_merges_existing_subscribers_and_preserves_event(
+        self, registry: CompletionEventRegistry
+    ) -> None:
+        registry.register(
+            "pe-abc123",
+            subscribers=["sess-1", "sess-2"],
+            continuation_prompt="first prompt",
+        )
+        original_event = registry._events["pe-abc123"]
+
+        registry.register(
+            "pe-abc123",
+            subscribers=["sess-2", "sess-3"],
+            continuation_prompt="second prompt",
+        )
+
+        assert registry._events["pe-abc123"] is original_event
+        assert registry.get_subscribers("pe-abc123") == ["sess-1", "sess-2", "sess-3"]
+        assert registry.get_continuation_prompt("pe-abc123") == "first prompt"
+
+    @pytest.mark.asyncio
+    async def test_reregister_preserves_waiter_until_notify(
+        self, registry: CompletionEventRegistry
+    ) -> None:
+        registry.register("pe-abc123", subscribers=["sess-1"])
+        waiter = asyncio.create_task(registry.wait("pe-abc123", timeout=1))
+        await drain_asyncio_tasks()
+
+        registry.register("pe-abc123", subscribers=["sess-2"])
+        await registry.notify("pe-abc123", {"status": "done"})
+
+        assert await waiter == {"status": "done"}
+
+    @pytest.mark.asyncio
     async def test_subscribe_adds_to_existing(self, registry: CompletionEventRegistry) -> None:
         registry.register("pe-abc123", subscribers=["sess-1"])
         registry.subscribe("pe-abc123", "sess-2")

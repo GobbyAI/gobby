@@ -51,26 +51,47 @@ def _cleanup_persisted_completion_subscribers(
         runner.completion_registry.cleanup(completion_id)
 
 
+def _cleanup_terminal_agent_completion_subscribers(runner: GobbyRunner) -> int:
+    """Remove stale subscriber rows for agent runs already in a terminal state."""
+    manager = runner.pipeline_execution_manager
+    if manager is None:
+        return 0
+    cleanup = getattr(manager, "remove_completion_subscribers_for_terminal_agent_runs", None)
+    if cleanup is None:
+        return 0
+    try:
+        cleaned = cleanup()
+    except Exception:
+        logger.warning("Failed to clean terminal agent completion subscribers", exc_info=True)
+        return 0
+    if cleaned:
+        logger.info("Cleaned %s terminal agent completion subscriber row(s)", cleaned)
+    return int(cleaned)
+
+
 _RUN_REPLAY_PAGE_SIZE = 500
 
 
 async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
     """Rehydrate completion events for active agent rows after daemon restart."""
+    _cleanup_terminal_agent_completion_subscribers(runner)
     if runner.agent_runner is None or runner.completion_registry is None:
         return 0
 
     rehydrated = 0
     seen_ids: set[str] = set()
+    offset = 0
     while True:
-        batch = runner.agent_runner.run_storage.list_active(limit=_RUN_REPLAY_PAGE_SIZE)
+        batch = runner.agent_runner.run_storage.list_active(
+            limit=_RUN_REPLAY_PAGE_SIZE,
+            offset=offset,
+        )
         if not batch:
             break
-        new_in_batch = 0
         for run in batch:
             if run.id in seen_ids:
                 continue
             seen_ids.add(run.id)
-            new_in_batch += 1
             if runner.completion_registry.is_registered(run.id):
                 continue
             subscribers: list[str] = []
@@ -82,7 +103,8 @@ async def _recover_agent_runs_after_restart(runner: GobbyRunner) -> int:
                 continuation_prompt=getattr(run, "continuation_prompt", None),
             )
             rehydrated += 1
-        if new_in_batch < _RUN_REPLAY_PAGE_SIZE:
+        offset += len(batch)
+        if len(batch) < _RUN_REPLAY_PAGE_SIZE:
             break
 
     return rehydrated
@@ -105,9 +127,9 @@ async def _reconcile_agent_runs_after_restart(runner: GobbyRunner) -> int:
         return reconciled
 
     try:
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.agents.tmux import get_tmux_session_manager
 
-        live_sessions = await TmuxSessionManager().list_sessions()
+        live_sessions = await get_tmux_session_manager().list_sessions()
     except Exception as e:
         logger.warning("Failed to list tmux sessions during agent restart reconciliation: %s", e)
         return reconciled
@@ -188,19 +210,19 @@ def _list_active_agent_runs_once(runner: GobbyRunner) -> list[Any]:
     run_storage = runner.agent_runner.run_storage
     active_runs: list[Any] = []
     seen_ids: set[str] = set()
+    offset = 0
     while True:
-        batch = run_storage.list_active(limit=_RUN_REPLAY_PAGE_SIZE)
+        batch = run_storage.list_active(limit=_RUN_REPLAY_PAGE_SIZE, offset=offset)
         if not batch:
             break
-        new_in_batch = 0
         for run in batch:
             run_id = str(getattr(run, "id", ""))
             if not run_id or run_id in seen_ids:
                 continue
             seen_ids.add(run_id)
             active_runs.append(run)
-            new_in_batch += 1
-        if new_in_batch < _RUN_REPLAY_PAGE_SIZE:
+        offset += len(batch)
+        if len(batch) < _RUN_REPLAY_PAGE_SIZE:
             break
     return active_runs
 
@@ -242,18 +264,19 @@ async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int
 
     replayed = 0
     seen_ids: set[str] = set()
+    offset = 0
     while True:
         batch = runner.agent_runner.run_storage.list_by_status(
-            "cancelled", limit=_RUN_REPLAY_PAGE_SIZE
+            "cancelled",
+            limit=_RUN_REPLAY_PAGE_SIZE,
+            offset=offset,
         )
         if not batch:
             break
-        new_in_batch = 0
         for run in batch:
             if run.id in seen_ids:
                 continue
             seen_ids.add(run.id)
-            new_in_batch += 1
             if getattr(run, "terminal_reason", None) != "daemon_restart":
                 continue
 
@@ -297,7 +320,8 @@ async def _replay_daemon_restart_agent_cancellations(runner: GobbyRunner) -> int
 
             _cleanup_persisted_completion_subscribers(runner, run.id, subscribers)
             replayed += 1
-        if new_in_batch < _RUN_REPLAY_PAGE_SIZE:
+        offset += len(batch)
+        if len(batch) < _RUN_REPLAY_PAGE_SIZE:
             break
 
     return replayed
@@ -313,10 +337,10 @@ async def _cleanup_lingering_daemon_restart_tmux_session(
         return False
 
     try:
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.agents.tmux import get_tmux_session_manager
 
         session_name = str(tmux_session_name)
-        killed = await TmuxSessionManager().kill_session(session_name, missing_ok=True)
+        killed = await get_tmux_session_manager().kill_session(session_name, missing_ok=True)
         if killed:
             run_storage.clear_tmux_session_name(str(getattr(run, "id", "unknown")), session_name)
     except Exception as e:

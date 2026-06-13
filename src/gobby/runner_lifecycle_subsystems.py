@@ -216,9 +216,9 @@ async def _start_core_services(runner: GobbyRunner, tracker: StartupTracker | No
 
 async def _check_tmux_health(tracker: StartupTracker | None) -> None:
     try:
-        from gobby.agents.tmux.session_manager import TmuxSessionManager
+        from gobby.agents.tmux import get_tmux_session_manager
 
-        tmux_mgr = TmuxSessionManager()
+        tmux_mgr = get_tmux_session_manager()
         await tmux_mgr.health_check()
         if tracker:
             tracker.complete("tmux healthy")

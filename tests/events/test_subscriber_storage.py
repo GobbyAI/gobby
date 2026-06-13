@@ -4,8 +4,10 @@ from __future__ import annotations
 
 import pytest
 
+from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.pipelines import LocalPipelineExecutionManager
+from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
@@ -72,3 +74,41 @@ class TestCompletionSubscribers:
         manager.add_completion_subscribers("pe-abc123", ["sess-1", "sess-2", "sess-3"])
         subs = manager.get_completion_subscribers("pe-abc123")
         assert set(subs) == {"sess-1", "sess-2", "sess-3"}
+
+    def test_remove_completion_subscribers_for_terminal_agent_runs(
+        self,
+        manager: LocalPipelineExecutionManager,
+        db: HubDatabase,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Startup sweep removes only subscriber rows tied to terminal agent runs."""
+        session = session_manager.register(
+            external_id="terminal-sweep-session",
+            machine_id="machine-1",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        run_manager = LocalAgentRunManager(db)
+        terminal_run = run_manager.create(
+            parent_session_id=session.id,
+            provider="codex",
+            prompt="done",
+        )
+        active_run = run_manager.create(
+            parent_session_id=session.id,
+            provider="codex",
+            prompt="still active",
+        )
+        assert run_manager.complete(terminal_run.id, result="done") is not None
+
+        manager.add_completion_subscriber(terminal_run.id, "sess-terminal")
+        manager.add_completion_subscriber(active_run.id, "sess-active")
+        manager.add_completion_subscriber("pe-abc123", "sess-pipeline")
+
+        removed = manager.remove_completion_subscribers_for_terminal_agent_runs()
+
+        assert removed == 1
+        assert manager.get_completion_subscribers(terminal_run.id) == []
+        assert manager.get_completion_subscribers(active_run.id) == ["sess-active"]
+        assert manager.get_completion_subscribers("pe-abc123") == ["sess-pipeline"]

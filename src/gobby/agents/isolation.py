@@ -9,7 +9,6 @@ This module provides the abstraction layer for different isolation modes:
 Each handler implements the IsolationHandler ABC to provide:
 - Environment preparation (worktree/clone creation)
 - Context prompt building (adding isolation warnings)
-- Branch name generation
 """
 
 import asyncio
@@ -25,11 +24,11 @@ from pathlib import Path
 from typing import Any, Literal
 from uuid import uuid4
 
+from gobby.agents import worktree_reuse
 from gobby.agents.code_index import CodeIndexPreflightResult
 from gobby.agents.code_index import ensure_isolation_code_index as _ensure_isolation_code_index
 from gobby.agents.isolation_git_hygiene import apply_isolation_git_hygiene
 from gobby.agents.python_env_seed import preseed_isolated_python_environment
-from gobby.agents.worktree_reuse import sync_reused_worktree_to_base
 from gobby.storage.tasks import TaskArtifactManager
 
 logger = logging.getLogger(__name__)
@@ -200,12 +199,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         """
         Prepare worktree environment.
 
-        - Generate branch name if not provided
-        - Check for existing worktree for the branch
-        - Determine base branch (use parent's current branch if not specified)
-        - Check for unpushed commits and use local ref if needed
-        - Create new worktree if needed
-        - Return IsolationContext with worktree info
+        Prepare or reuse a git worktree and return isolation metadata.
         """
         # Reset partial state
         self._created_worktree_path = None
@@ -213,15 +207,22 @@ class WorktreeIsolationHandler(IsolationHandler):
 
         branch_name = generate_branch_name(config)
         base_branch = config.base_branch
-        current_branch = self._git_manager.get_current_branch()
+        current_branch = await asyncio.to_thread(self._git_manager.get_current_branch)
         if current_branch and base_branch == "main" and current_branch != "main":
             base_branch = current_branch
 
         # Check if worktree already exists for this branch
-        existing = self._worktree_storage.get_by_branch(config.project_id, branch_name)
+        existing = await asyncio.to_thread(
+            self._worktree_storage.get_by_branch, config.project_id, branch_name
+        )
         if existing:
             if Path(existing.worktree_path).is_dir():
-                sync_result = await sync_reused_worktree_to_base(
+                live_claim = await asyncio.to_thread(
+                    self._worktree_storage.is_claimed_by_live_session, existing.id
+                )
+                if live_claim:
+                    raise RuntimeError(f"Cannot reuse claimed live worktree: {existing.id}")
+                sync_result = await worktree_reuse.sync_reused_worktree_to_base(
                     git_manager=self._git_manager,
                     worktree_path=existing.worktree_path,
                     base_branch=base_branch,
@@ -245,16 +246,22 @@ class WorktreeIsolationHandler(IsolationHandler):
                 )
             else:
                 # Stale record — directory gone, clean up and fall through to create new
-
                 logger.warning(
                     f"Worktree directory missing: {existing.worktree_path} (cleaning up stale record {existing.id})",
                 )
-                self._worktree_storage.delete(existing.id)
+                await asyncio.to_thread(
+                    worktree_reuse.cleanup_stale_worktree_registration,
+                    self._git_manager,
+                    self._worktree_storage,
+                    existing,
+                )
 
         use_local = False
 
         # Check for unpushed commits on the base branch
-        has_unpushed, unpushed_count = self._git_manager.has_unpushed_commits(base_branch)
+        has_unpushed, unpushed_count = await asyncio.to_thread(
+            self._git_manager.has_unpushed_commits, base_branch
+        )
         if has_unpushed:
             # Use local branch ref to preserve unpushed commits
             use_local = True
@@ -269,7 +276,8 @@ class WorktreeIsolationHandler(IsolationHandler):
         worktree_path = self._generate_worktree_path(branch_name, project_name)
 
         # Create git worktree
-        result = self._git_manager.create_worktree(
+        result = await asyncio.to_thread(
+            self._git_manager.create_worktree,
             worktree_path=worktree_path,
             branch_name=branch_name,
             base_branch=base_branch,
@@ -284,7 +292,8 @@ class WorktreeIsolationHandler(IsolationHandler):
         self._created_worktree_path = worktree_path
 
         # Record in storage
-        worktree = self._worktree_storage.create(
+        worktree = await asyncio.to_thread(
+            self._worktree_storage.create,
             project_id=config.project_id,
             branch_name=branch_name,
             worktree_path=worktree_path,
@@ -298,7 +307,11 @@ class WorktreeIsolationHandler(IsolationHandler):
         created_base_commit_sha: str | None = None
         if config.task_id is not None:
             created_base_commit_sha = await asyncio.to_thread(
-                _capture_base_commit_sha, worktree_path
+                worktree_reuse.capture_worktree_base_commit_sha,
+                git_manager=self._git_manager,
+                worktree_path=worktree_path,
+                base_branch=base_branch,
+                use_local=use_local,
             )
             await asyncio.to_thread(
                 TaskArtifactManager(self._worktree_storage.db).set_artifacts_atomic,
@@ -430,7 +443,9 @@ class CloneIsolationHandler(IsolationHandler):
         branch_name = generate_branch_name(config)
 
         # Check if clone already exists for this branch
-        existing = self._clone_storage.get_by_branch(config.project_id, branch_name)
+        existing = await asyncio.to_thread(
+            self._clone_storage.get_by_branch, config.project_id, branch_name
+        )
         if existing:
             if Path(existing.clone_path).is_dir():
                 await repair_isolation_environment(
@@ -452,7 +467,7 @@ class CloneIsolationHandler(IsolationHandler):
                 logger.warning(
                     f"Clone directory missing: {existing.clone_path} (cleaning up stale record {existing.id})",
                 )
-                self._clone_storage.delete(existing.id)
+                await asyncio.to_thread(self._clone_storage.delete, existing.id)
 
         # Determine base branch - use parent's current branch if default "main" was passed
         base_branch = config.base_branch
@@ -460,7 +475,7 @@ class CloneIsolationHandler(IsolationHandler):
 
         # If base_branch is the default "main", check if parent is on a different branch
         if self._git_manager is not None:
-            current_branch = self._git_manager.get_current_branch()
+            current_branch = await asyncio.to_thread(self._git_manager.get_current_branch)
             if current_branch and base_branch == "main" and current_branch != "main":
                 # Use parent's current branch instead
                 base_branch = current_branch
@@ -469,7 +484,9 @@ class CloneIsolationHandler(IsolationHandler):
 
             # Check for unpushed commits on the base branch
             try:
-                has_unpushed, unpushed_count = self._git_manager.has_unpushed_commits(base_branch)
+                has_unpushed, unpushed_count = await asyncio.to_thread(
+                    self._git_manager.has_unpushed_commits, base_branch
+                )
                 if has_unpushed:
                     use_local = True
                     logger.info(
@@ -503,7 +520,8 @@ class CloneIsolationHandler(IsolationHandler):
         self._created_clone_path = clone_path
 
         # Record in storage
-        clone = self._clone_storage.create(
+        clone = await asyncio.to_thread(
+            self._clone_storage.create,
             project_id=config.project_id,
             branch_name=branch_name,
             clone_path=clone_path,
@@ -873,9 +891,8 @@ async def _patch_mcp_config_for_isolation(
                         data = {}
 
                 projects = data.setdefault("projects", {})
-                projects[isolated_path] = {
-                    "mcpServers": mcp_config["mcpServers"],
-                }
+                project_config = projects.setdefault(isolated_path, {})
+                project_config["mcpServers"] = mcp_config["mcpServers"]
 
                 # Atomic write via tempfile + os.replace to avoid TOCTOU race
                 fd, tmp_path = tempfile.mkstemp(dir=str(claude_json_path.parent), suffix=".tmp")

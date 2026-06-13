@@ -122,7 +122,7 @@ def test_resolve_spawn_reasoning_applies_codex_gpt_55_xhigh(
     assert result.message is None
 
 
-def test_resolve_spawn_reasoning_applies_gemini_high(
+def test_resolve_spawn_reasoning_rejects_gemini_terminal_reasoning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
@@ -142,9 +142,27 @@ def test_resolve_spawn_reasoning_applies_gemini_high(
         reasoning_required=False,
     )
 
+    assert result.status == "unsupported_provider"
+    assert result.requested_effort == "high"
+    assert result.effective_effort is None
+    assert result.message == (
+        "Requested reasoning 'high' was not applied because spawned-terminal reasoning "
+        "is not wired for provider 'gemini'."
+    )
+
+
+def test_resolve_spawn_reasoning_applies_droid_high() -> None:
+    result = resolve_spawn_reasoning(
+        provider="droid",
+        model=None,
+        requested_effort="high",
+        reasoning_required=True,
+    )
+
     assert result.status == "applied"
     assert result.requested_effort == "high"
     assert result.effective_effort == "high"
+    assert result.reasoning_required is True
     assert result.message is None
 
 

@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
@@ -501,6 +502,57 @@ class TestSyncBundledAgents:
 
         assert result["orphaned"] == 1
         assert LocalWorkflowDefinitionManager(db).get_by_name("test-agent") is None
+
+    @pytest.mark.unit
+    def test_sync_orphan_cleanup_preserves_non_sync_managed_agents(
+        self,
+        tmp_path: Path,
+        temp_db: HubDatabase,
+        sample_project: dict[str, Any],
+    ) -> None:
+        """Missing-on-disk agent rows survive unless bundled sync owns them."""
+        db = temp_db
+        agents_dir = tmp_path / "agents"
+        agents_dir.mkdir()
+        mgr = LocalWorkflowDefinitionManager(db)
+        definition_json = json.dumps(
+            {
+                "name": "orphan-agent",
+                "provider": "codex",
+                "mode": "interactive",
+            }
+        )
+
+        owned_orphan = mgr.create(
+            name="owned-orphan",
+            definition_json=definition_json,
+            workflow_type="agent",
+            source="installed",
+            tags=["gobby"],
+        )
+        project_orphan = mgr.create(
+            name="project-orphan",
+            definition_json=definition_json,
+            workflow_type="agent",
+            project_id=sample_project["id"],
+            source="installed",
+            tags=["gobby"],
+        )
+        custom_orphan = mgr.create(
+            name="custom-orphan",
+            definition_json=definition_json,
+            workflow_type="agent",
+            source="custom",
+            tags=["gobby"],
+        )
+
+        with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):
+            result = sync_bundled_agents(db)
+
+        assert result["orphaned"] == 1
+        assert mgr.get(owned_orphan.id, include_deleted=True).deleted_at is not None
+        assert mgr.get(project_orphan.id).deleted_at is None
+        assert mgr.get(custom_orphan.id).deleted_at is None
 
     @pytest.mark.integration
     def test_sync_with_real_bundled_agents(self, tmp_path: Path, temp_db: HubDatabase) -> None:

@@ -23,8 +23,6 @@ from collections.abc import Callable, Coroutine
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from gobby.config.tmux import TmuxConfig
-
 if TYPE_CHECKING:
     from gobby.sessions.processor import SessionMessageProcessor
     from gobby.storage.sessions import SessionManager
@@ -342,13 +340,19 @@ class SessionLivenessMonitor:
     @staticmethod
     def _list_tmux_panes(socket_path: str | None = None) -> set[str] | None:
         """Return live pane IDs for a tmux server, or None when the command failed."""
-        socket_names = [TmuxConfig().socket_name or "gobby"]
         candidate_commands: list[list[str]]
         if socket_path:
             candidate_commands = [["tmux", "-S", socket_path]]
         else:
             candidate_commands = [["tmux"]]
-            candidate_commands.extend([["tmux", "-L", socket_name] for socket_name in socket_names])
+            try:
+                from gobby.agents.tmux import get_configured_tmux_command_prefix
+
+                configured_command = get_configured_tmux_command_prefix()
+            except RuntimeError:
+                configured_command = ["tmux", "-L", "gobby"]
+            if configured_command not in candidate_commands:
+                candidate_commands.append(configured_command)
 
         live_panes: set[str] = set()
         for command in candidate_commands:
