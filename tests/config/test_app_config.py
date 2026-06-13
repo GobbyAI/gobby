@@ -707,7 +707,7 @@ class TestLoadConfig:
     def test_load_config_deletes_seeded_claude_only_feature_candidates(
         self, temp_dir: Path
     ) -> None:
-        """Old seeded Claude-only candidate rows fall through to profiles."""
+        """Old seeded Claude-only and Spark candidate rows fall through to profiles."""
 
         values = {
             "digest.candidates": ["claude/claude-haiku-4-5"],
@@ -716,9 +716,18 @@ class TestLoadConfig:
             "import_mcp_server.candidates": ["claude/haiku"],
             "skill_description.candidates": ["claude/haiku"],
             "code_index.summary_candidates": ["claude/haiku"],
-            "recommend_tools.candidates": ["claude/sonnet"],
+            "memory.dream.candidates": [
+                "gemini/gemini-3.5-flash",
+                "codex/gpt-5.3-codex-spark",
+                "claude/sonnet",
+            ],
+            "recommend_tools.candidates": ["codex/gpt-5.3-codex-spark", "claude/sonnet"],
             "merge_resolution.candidates": ["claude/claude-sonnet-4-5"],
-            "gobby-tasks.validation.candidates": ["claude/sonnet"],
+            "gobby-tasks.validation.candidates": [
+                "gemini/gemini-3.5-flash",
+                "codex/gpt-5.3-codex-spark",
+                "claude/sonnet",
+            ],
             "chat.candidates": ["claude/opus"],
             "gobby_tasks.expansion.candidates": ["claude/claude-opus-4-5"],
         }
@@ -771,7 +780,6 @@ class TestLoadConfig:
         low_candidates = ["codex/gpt-5.4-mini", "claude/haiku"]
         mid_candidates = [
             "gemini/gemini-3.5-flash",
-            "codex/gpt-5.3-codex-spark",
             "claude/sonnet",
         ]
         high_candidates = ["codex/gpt-5.5", "claude/opus"]
@@ -784,6 +792,7 @@ class TestLoadConfig:
         assert config.import_mcp_server.candidates == low_candidates
         assert config.skill_description.candidates == low_candidates
         assert config.code_index.summary_candidates == low_candidates
+        assert config.memory.dream.candidates == mid_candidates
         assert config.recommend_tools.candidates == mid_candidates
         assert config.merge_resolution.candidates == mid_candidates
         assert config.gobby_tasks.validation.candidates == mid_candidates
@@ -803,6 +812,10 @@ class TestLoadConfig:
             "tool_summarizer.candidates": [
                 "claude/claude-haiku-4-5",
                 "local:lm-studio/google/gemma-4-26b-a4b-qat",
+            ],
+            "recommend_tools.candidates": [
+                "codex/gpt-5.3-codex-spark",
+                "claude/sonnet",
             ],
             "gobby_tasks.expansion.profile": "feature_high",
         }
@@ -826,6 +839,11 @@ class TestLoadConfig:
                 "key": "tool_summarizer.candidates",
                 "value": json.dumps(values["tool_summarizer.candidates"]),
                 "source": "one-off-0.5.0-migration",
+            },
+            {
+                "key": "recommend_tools.candidates",
+                "value": json.dumps(values["recommend_tools.candidates"]),
+                "source": "user",
             },
             {
                 "key": "gobby_tasks.expansion.profile",
@@ -862,6 +880,10 @@ class TestLoadConfig:
         assert config.tool_summarizer.candidates == [
             "claude/haiku",
             "local:lm-studio/google/gemma-4-26b-a4b-qat",
+        ]
+        assert config.recommend_tools.candidates == [
+            "codex/gpt-5.3-codex-spark",
+            "claude/sonnet",
         ]
         assert config.gobby_tasks.expansion.profile == FeatureProfile.HIGH
 

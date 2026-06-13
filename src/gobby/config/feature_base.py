@@ -35,7 +35,6 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
     ),
     FeatureProfile.MID: (
         "gemini/gemini-3.5-flash",
-        "codex/gpt-5.3-codex-spark",
         "claude/sonnet",
     ),
     FeatureProfile.HIGH: (

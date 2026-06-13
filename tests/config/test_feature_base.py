@@ -36,7 +36,6 @@ class TestFeatureProfile:
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID] == (
             "gemini/gemini-3.5-flash",
-            "codex/gpt-5.3-codex-spark",
             "claude/sonnet",
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH] == (

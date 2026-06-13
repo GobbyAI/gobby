@@ -381,17 +381,17 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
     server_with_llm: MagicMock,
 ) -> None:
     prompt = "Summarize this module once from lower-level summaries."
-    candidates = ("codex/gpt-5.3-codex-spark", "claude/sonnet")
-    codex = _FakeTextAdapter(text=prompt)
+    candidates = ("gemini/gemini-3.5-flash", "claude/sonnet")
+    gemini = _FakeTextAdapter(text=prompt)
     claude = _FakeTextAdapter(text="Fallback prose")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="codex",
-                adapter_style=AIAdapterStyle.DAEMON,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.ACP,
                 available=True,
-                models=("gpt-5.3-codex-spark",),
+                models=("gemini-3.5-flash",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -402,7 +402,7 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
             ),
         ]
     )
-    service = TextGenerationService(registry, {"codex": codex, "claude": claude})
+    service = TextGenerationService(registry, {"gemini": gemini, "claude": claude})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
@@ -421,13 +421,13 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
         "provider": "claude",
         "model": "sonnet",
     }
-    assert codex.requests == [
+    assert gemini.requests == [
         TextGenerationRequest(
             prompt=prompt,
-            provider="codex",
+            provider="gemini",
             profile="feature_mid",
             candidates=candidates,
-            model="gpt-5.3-codex-spark",
+            model="gemini-3.5-flash",
             caller="llm-generate-route",
         )
     ]

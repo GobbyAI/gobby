@@ -442,10 +442,10 @@ async def test_text_generation_service_falls_back_when_candidate_echoes_prompt()
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="codex",
-                adapter_style=AIAdapterStyle.DAEMON,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.ACP,
                 available=True,
-                models=("gpt-5.3-codex-spark",),
+                models=("gemini-3.5-flash",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -456,22 +456,22 @@ async def test_text_generation_service_falls_back_when_candidate_echoes_prompt()
             ),
         ]
     )
-    codex = StaticTextAdapter(prompt)
+    gemini = StaticTextAdapter(prompt)
     claude = RecordingAdapter("claude")
-    service = TextGenerationService(registry, {"codex": codex, "claude": claude})
+    service = TextGenerationService(registry, {"gemini": gemini, "claude": claude})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt=prompt,
             profile="feature_mid",
-            candidates=("codex/gpt-5.3-codex-spark", "claude/sonnet"),
+            candidates=("gemini/gemini-3.5-flash", "claude/sonnet"),
         )
     )
 
     assert result.text == f"claude:{prompt}"
     assert result.provider == "claude"
     assert result.model == "sonnet"
-    assert codex.requests[0].model == "gpt-5.3-codex-spark"
+    assert gemini.requests[0].model == "gemini-3.5-flash"
     assert claude.requests[0].model == "sonnet"
 
 
@@ -484,10 +484,10 @@ async def test_text_generation_service_falls_back_when_long_output_starts_with_p
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="codex",
-                adapter_style=AIAdapterStyle.DAEMON,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.ACP,
                 available=True,
-                models=("gpt-5.3-codex-spark",),
+                models=("gemini-3.5-flash",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -498,23 +498,23 @@ async def test_text_generation_service_falls_back_when_long_output_starts_with_p
             ),
         ]
     )
-    codex = StaticTextAdapter(f"{echoed_prefix}\n\nGenerated prose after an echoed prompt.")
+    gemini = StaticTextAdapter(f"{echoed_prefix}\n\nGenerated prose after an echoed prompt.")
     claude = RecordingAdapter("claude")
-    service = TextGenerationService(registry, {"codex": codex, "claude": claude})
+    service = TextGenerationService(registry, {"gemini": gemini, "claude": claude})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt=prompt,
             system_prompt=system_prompt,
             profile="feature_mid",
-            candidates=("codex/gpt-5.3-codex-spark", "claude/sonnet"),
+            candidates=("gemini/gemini-3.5-flash", "claude/sonnet"),
         )
     )
 
     assert result.text == f"claude:{prompt}"
     assert result.provider == "claude"
     assert result.model == "sonnet"
-    assert codex.requests[0].model == "gpt-5.3-codex-spark"
+    assert gemini.requests[0].model == "gemini-3.5-flash"
     assert claude.requests[0].model == "sonnet"
 
 
