@@ -7,6 +7,7 @@ import {
   reduceToggleFromPanel,
   useActivityPanel,
 } from '../useActivityPanel'
+import { ACTIVITY_PANEL_TABS } from '../ActivityPanelTabs'
 
 const TAB_KEY = 'gobby-activity-panel-tab-v2'
 const LAYOUT_KEY = 'gobby-activity-panel-layout'
@@ -225,6 +226,17 @@ describe('useActivityPanel — mobile', () => {
 describe('useActivityPanel — tab persistence', () => {
   beforeEach(() => {
     localStorage.clear()
+  })
+
+  it('restores every registered activity tab from the versioned storage key', () => {
+    for (const { id } of ACTIVITY_PANEL_TABS) {
+      localStorage.setItem(TAB_KEY, id)
+
+      const { result, unmount } = renderHook(() => useActivityPanel(false))
+
+      expect(result.current.activeTab).toBe(id)
+      unmount()
+    }
   })
 
   it('keeps the MCP tab as a persisted activity tab', () => {

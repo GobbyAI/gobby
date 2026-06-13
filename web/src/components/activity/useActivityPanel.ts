@@ -8,6 +8,7 @@ const STORAGE_KEY_TAB = 'gobby-activity-panel-tab-v2'
 const VALID_TABS: ActivityTab[] = [
   'sessions',
   'mcp',
+  'wiki',
   'tasks',
   'plans',
   'changes',

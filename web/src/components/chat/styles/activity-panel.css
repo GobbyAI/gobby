@@ -257,6 +257,9 @@
   border-radius: 0.5rem;
   background: var(--bg-secondary);
   box-shadow: var(--shadow-lg);
+  max-height: min(24rem, calc(100vh - var(--activity-panel-bar-height) - 1rem));
+  overflow-y: auto;
+  overscroll-behavior: contain;
 }
 
 .activity-panel-mobile-menu__item {
@@ -273,6 +276,12 @@
   font-size: var(--text-base);
   font-weight: var(--font-weight-medium);
   text-align: left;
+}
+
+@media (max-width: 768px) {
+  .activity-panel-mobile-menu__item {
+    min-height: 2.75rem;
+  }
 }
 
 .activity-panel-mobile-menu__item:hover {
