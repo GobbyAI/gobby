@@ -50,7 +50,7 @@ export function KeyValueField({
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <div role="group" aria-label={ariaLabel} className="flex flex-col gap-2">
         {entries.map(([key, entryValue], index) => (
-          <div key={`${key}-${index}`} className="grid grid-cols-[1fr_1fr_auto] gap-2">
+          <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-2">
             <input
               type="text"
               aria-label={`Key ${index + 1}`}

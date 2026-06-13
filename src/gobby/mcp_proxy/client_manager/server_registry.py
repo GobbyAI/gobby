@@ -80,6 +80,9 @@ def load_initial_configs(
                 headers=server.headers,
                 enabled=server.enabled,
                 description=server.description,
+                requires_oauth=server.requires_oauth,
+                oauth_provider=server.oauth_provider,
+                connect_timeout=server.connect_timeout,
                 project_id=server.project_id,
                 tools=manager.load_tools_from_db(
                     manager.mcp_db_manager,
@@ -179,6 +182,9 @@ async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
             headers=config.headers,
             enabled=config.enabled,
             description=config.description,
+            requires_oauth=config.requires_oauth,
+            oauth_provider=config.oauth_provider,
+            connect_timeout=config.connect_timeout,
         )
 
     tool_schemas: list[dict[str, Any]] = []
@@ -217,6 +223,60 @@ async def remove_server(
 
     if manager.mcp_db_manager and effective_project_id:
         manager.mcp_db_manager.remove_server(name, effective_project_id)
+
+    return {"success": True, "name": name}
+
+
+async def update_server(
+    manager: Any,
+    name: str,
+    config: MCPServerConfig,
+    project_id: str | None = None,
+) -> dict[str, Any]:
+    """Update an external server config and reset stale runtime state."""
+    config = normalize_bundled_server_config(config)
+    if name not in manager._configs:
+        raise ValueError(f"MCP server '{name}' not found")
+    if config.name != name:
+        raise ValueError("MCP server names are registry keys and cannot be changed")
+
+    existing = manager._configs[name]
+    if existing.transport == "internal":
+        raise ValueError(f"Internal MCP server '{name}' cannot be edited")
+
+    config.enabled = existing.enabled
+    effective_project_id = project_id or config.project_id or existing.project_id
+    if not config.project_id:
+        config.project_id = effective_project_id
+
+    config.validate()
+
+    if name in manager._connections:
+        await manager._connections[name].disconnect()
+        del manager._connections[name]
+    manager.health.pop(name, None)
+    manager._lazy_connector.unregister_server(name)
+
+    manager._configs[name] = config
+    if config.enabled:
+        manager._lazy_connector.register_server(name)
+
+    if manager.mcp_db_manager and effective_project_id:
+        manager.mcp_db_manager.update_server(
+            name,
+            effective_project_id,
+            transport=config.transport,
+            url=config.url,
+            command=config.command,
+            args=config.args,
+            env=config.env,
+            headers=config.headers,
+            enabled=config.enabled,
+            description=config.description,
+            requires_oauth=config.requires_oauth,
+            oauth_provider=config.oauth_provider,
+            connect_timeout=config.connect_timeout,
+        )
 
     return {"success": True, "name": name}
 

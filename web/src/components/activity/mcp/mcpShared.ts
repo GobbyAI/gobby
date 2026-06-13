@@ -2,11 +2,12 @@ import type { McpServer } from "../../../hooks/useMcp";
 import type { StatusKind } from "../ActivityRowStatusDot";
 
 export type McpServerType = "internal" | "external";
+export type McpServerViewMode = "detail" | "fields" | "create";
 
 // A tool selection is a single unified view: schema + arguments + a Call Tool
 // action live together in the detail panel (no separate schema/execute modes).
 export type McpSelection =
-  | { kind: "server"; serverName: string }
+  | { kind: "server"; serverName: string; viewMode?: McpServerViewMode }
   | { kind: "tool"; serverName: string; toolName: string };
 
 export interface McpContextMenu {

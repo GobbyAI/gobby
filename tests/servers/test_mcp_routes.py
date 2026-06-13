@@ -158,6 +158,16 @@ class FakeServerConfig:
         self.name = name
         self.transport = transport
         self.enabled = enabled
+        self.url: str | None = None
+        self.command: str | None = None
+        self.args: list[str] | None = None
+        self.env: dict[str, str] | None = None
+        self.headers: dict[str, str] | None = None
+        self.project_id = "test-project"
+        self.description: str | None = None
+        self.requires_oauth = False
+        self.oauth_provider: str | None = None
+        self.connect_timeout = 30.0
 
 
 class FakeTool:
@@ -240,6 +250,18 @@ class FakeMCPManager:
             raise ValueError(f"Server not found: {name}")
         del self._configs[name]
         self.server_configs = [c for c in self.server_configs if c.name != name]
+
+    async def update_server(
+        self, name: str, config: Any, project_id: str | None = None
+    ) -> dict[str, Any]:
+        """Update a server configuration."""
+        self.last_project_id = project_id
+        if name not in self._configs:
+            raise ValueError(f"Server not found: {name}")
+        self._configs[name] = config
+        self.server_configs = [c for c in self.server_configs if c.name != name]
+        self.server_configs.append(config)
+        return {"success": True, "name": name}
 
     async def set_server_enabled(
         self, name: str, enabled: bool, project_id: str | None = None
@@ -1450,6 +1472,65 @@ class TestAddMCPServer:
         assert response.status_code == 200
         data = response.json()
         assert data["success"] is False
+
+
+# ============================================================================
+# update_mcp_server Endpoint Tests
+# ============================================================================
+
+
+class TestUpdateMCPServer:
+    """Tests for PUT /mcp/servers/{name} endpoint."""
+
+    def test_update_server_success(self, session_storage: SessionManager) -> None:
+        """Updating a server persists the full editable config through the manager."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        mcp_manager._configs["github"] = FakeServerConfig(name="github", transport="stdio")
+        server.mcp_manager = mcp_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "route-project"},
+            ),
+        ):
+            response = client.put(
+                "/api/mcp/servers/github",
+                json={
+                    "name": "github",
+                    "transport": "stdio",
+                    "command": "npx",
+                    "args": ["-y", "@modelcontextprotocol/server-github"],
+                    "env": {"GITHUB_TOKEN": "secret"},
+                    "headers": {"Authorization": "Bearer token"},
+                    "description": "GitHub tools",
+                    "project_id": "route-project",
+                    "enabled": False,
+                    "requires_oauth": True,
+                    "oauth_provider": "github",
+                    "connect_timeout": 45,
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is True
+        updated = mcp_manager._configs["github"]
+        assert updated.command == "npx"
+        assert updated.args == ["-y", "@modelcontextprotocol/server-github"]
+        assert updated.env == {"GITHUB_TOKEN": "secret"}
+        assert updated.headers == {"Authorization": "Bearer token"}
+        assert updated.description == "GitHub tools"
+        assert updated.requires_oauth is True
+        assert updated.oauth_provider == "github"
+        assert updated.connect_timeout == 45
+        assert mcp_manager.last_project_id == "route-project"
 
 
 # ============================================================================

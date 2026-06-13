@@ -18,6 +18,7 @@ from gobby.servers.routes.dependencies import get_internal_manager, get_mcp_mana
 
 if TYPE_CHECKING:
     from gobby.mcp_proxy.manager import MCPClientManager
+    from gobby.mcp_proxy.models import MCPServerConfig
     from gobby.mcp_proxy.registry_manager import InternalToolRegistryManager
     from gobby.servers.http import HTTPServer
 
@@ -57,6 +58,68 @@ def _current_project_id() -> str | None:
     return project_id if isinstance(project_id, str) and project_id else None
 
 
+def _body_project_id(body: Mapping[str, Any]) -> str | None:
+    project_id = body.get("project_id")
+    if isinstance(project_id, str) and project_id:
+        return project_id
+    return _current_project_id()
+
+
+def _string_dict(value: Any) -> dict[str, str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError("env and headers must be JSON objects")
+    return {str(key): str(item) for key, item in value.items() if str(key)}
+
+
+def _string_list(value: Any) -> list[str] | None:
+    if value is None:
+        return None
+    if not isinstance(value, list):
+        raise ValueError("args must be a JSON array")
+    return [str(item) for item in value]
+
+
+def _optional_string(value: Any) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        return str(value)
+    return value
+
+
+def _build_mcp_server_config(
+    body: Mapping[str, Any],
+    *,
+    name: str,
+    project_id: str,
+) -> "MCPServerConfig":
+    from gobby.mcp_proxy.models import MCPServerConfig
+
+    connect_timeout = body.get("connect_timeout", 30.0)
+    if connect_timeout is None:
+        connect_timeout = 30.0
+
+    config = MCPServerConfig(
+        name=name,
+        project_id=project_id,
+        transport=str(body.get("transport") or "http"),
+        url=_optional_string(body.get("url")),
+        command=_optional_string(body.get("command")),
+        args=_string_list(body.get("args")),
+        env=_string_dict(body.get("env")),
+        headers=_string_dict(body.get("headers")),
+        enabled=bool(body.get("enabled", True)),
+        description=_optional_string(body.get("description")),
+        requires_oauth=bool(body.get("requires_oauth", False)),
+        oauth_provider=_optional_string(body.get("oauth_provider")),
+        connect_timeout=float(connect_timeout),
+    )
+    config.validate()
+    return config
+
+
 async def list_mcp_servers(
     internal_manager: "InternalToolRegistryManager | None" = Depends(get_internal_manager),
     mcp_manager: "MCPClientManager | None" = Depends(get_mcp_manager),
@@ -83,6 +146,8 @@ async def list_mcp_servers(
                         "name": registry.name,
                         "state": "connected",
                         "transport": "internal",
+                        "connected": True,
+                        "available": True,
                     }
                 )
 
@@ -99,9 +164,20 @@ async def list_mcp_servers(
                     "name": config.name,
                     "state": state,
                     "transport": config.transport,
+                    "connected": is_connected,
+                    "available": True,
+                    "project_id": config.project_id,
+                    "description": config.description,
+                    "url": config.url,
+                    "command": config.command,
+                    "args": config.args,
+                    "env": config.env,
+                    "headers": config.headers,
+                    "enabled": config.enabled,
+                    "requires_oauth": config.requires_oauth,
+                    "oauth_provider": config.oauth_provider,
+                    "connect_timeout": config.connect_timeout,
                 }
-                if not config.enabled:
-                    entry["enabled"] = False
                 server_list.append(entry)
 
         return {
@@ -147,29 +223,19 @@ async def add_mcp_server(
                 detail={"success": False, "error": "Required fields: name, transport"},
             )
 
-        # Import here to avoid circular imports
-        from gobby.mcp_proxy.models import MCPServerConfig
-        from gobby.utils.project_context import get_project_context
+        if not isinstance(name, str):
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "error": "Required field: name (string)"},
+            )
 
-        project_ctx = get_project_context()
-        if not project_ctx or not project_ctx.get("id"):
+        project_id = _body_project_id(body)
+        if not project_id:
             raise HTTPException(
                 status_code=400,
                 detail={"success": False, "error": "No current project found. Run 'gobby init'."},
             )
-        project_id = project_ctx["id"]
-
-        config = MCPServerConfig(
-            name=name,
-            project_id=project_id,
-            transport=transport,
-            url=body.get("url"),
-            command=body.get("command"),
-            args=body.get("args"),
-            env=body.get("env"),
-            headers=body.get("headers"),
-            enabled=body.get("enabled", True),
-        )
+        config = _build_mcp_server_config(body, name=name, project_id=project_id)
 
         if server.mcp_manager is None:
             response_time_ms = (time.perf_counter() - start_time) * 1000
@@ -203,6 +269,75 @@ async def add_mcp_server(
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
     except Exception as e:
         logger.error(f"Add MCP server error: {e}", exc_info=True)
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+
+
+async def update_mcp_server(
+    name: str,
+    request: Request,
+    server: "HTTPServer" = Depends(get_server),
+) -> dict[str, Any]:
+    """
+    Update an existing MCP server configuration without renaming it.
+
+    Args:
+        name: Existing server registry key
+
+    Returns:
+        Success status
+    """
+    start_time = time.perf_counter()
+
+    try:
+        body = await _request_json_mapping(request)
+        body_name = body.get("name", name)
+        if body_name != name:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "error": "MCP server names cannot be changed"},
+            )
+
+        project_id = _body_project_id(body)
+        if not project_id:
+            raise HTTPException(
+                status_code=400,
+                detail={"success": False, "error": "No current project found. Run 'gobby init'."},
+            )
+
+        config = _build_mcp_server_config(body, name=name, project_id=project_id)
+
+        if server.mcp_manager is None:
+            response_time_ms = (time.perf_counter() - start_time) * 1000
+            return {
+                "success": False,
+                "error": "MCP manager not available",
+                "response_time_ms": response_time_ms,
+            }
+
+        await server.mcp_manager.update_server(name, config, project_id=project_id)
+
+        ws = server.services.websocket_server
+        if ws:
+            try:
+                await ws.broadcast_mcp_event("server_updated", name)
+            except Exception as e:
+                logger.debug(f"Failed to broadcast mcp event server_updated: {e}")
+
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+        return {
+            "success": True,
+            "message": f"Updated MCP server: {name}",
+            "response_time_ms": response_time_ms,
+        }
+
+    except HTTPException:
+        raise
+    except ValueError as e:
+        response_time_ms = (time.perf_counter() - start_time) * 1000
+        return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
+    except Exception as e:
+        logger.error(f"Update MCP server error: {e}", exc_info=True)
         response_time_ms = (time.perf_counter() - start_time) * 1000
         return {"success": False, "error": str(e), "response_time_ms": response_time_ms}
 
@@ -446,6 +581,7 @@ async def set_mcp_server_enabled(
 __all__ = [
     "list_mcp_servers",
     "add_mcp_server",
+    "update_mcp_server",
     "import_mcp_server",
     "remove_mcp_server",
     "set_mcp_server_enabled",

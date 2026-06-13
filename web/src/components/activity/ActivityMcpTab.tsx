@@ -14,7 +14,6 @@ import type {
 } from "../../hooks/useMcp";
 import { useConfirmDialog } from "../../hooks/useConfirmDialog";
 import { cn } from "../../lib/utils";
-import { McpAddServerModal } from "../mcp/McpServerForm";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
@@ -24,6 +23,12 @@ import { useRegisterActivityActions } from "./activityActions";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { McpDetailPanel, type McpExecutionResult } from "./mcp/McpDetailPanel";
 import { McpQuickMenu } from "./mcp/McpQuickMenu";
+import { McpServerFields, type McpServerDraft } from "./mcp/McpServerFields";
+import {
+  createMcpServerDraft,
+  mcpServerToDraft,
+  saveMcpServerDraft,
+} from "./mcp/McpTabActions";
 import { ChevronIcon, MoreIcon } from "./mcp/mcpIcons";
 import {
   getServerType,
@@ -50,6 +55,7 @@ export interface ActivityMcpTabProps {
   }) => Promise<boolean>;
   removeServer: (name: string) => Promise<boolean>;
   setServerEnabled: (name: string, enabled: boolean) => Promise<boolean>;
+  fetchServers?: () => Promise<void>;
   refreshToolCache: () => Promise<boolean>;
   fetchToolSchema: (
     serverName: string,
@@ -86,9 +92,9 @@ export function ActivityMcpTab({
   isLoading,
   searchText,
   setSearchText,
-  addServer,
   removeServer,
   setServerEnabled,
+  fetchServers,
   refreshToolCache,
   fetchToolSchema,
   callTool,
@@ -100,7 +106,6 @@ export function ActivityMcpTab({
   );
   const [selection, setSelection] = useState<McpSelection | null>(null);
   const [menu, setMenu] = useState<McpContextMenu | null>(null);
-  const [showAddServer, setShowAddServer] = useState(false);
   const [schemaLoading, setSchemaLoading] = useState(false);
   const [toolSchema, setToolSchema] = useState<McpToolSchema | null>(null);
   const [argumentValues, setArgumentValues] = useState<Record<string, unknown>>({});
@@ -147,6 +152,12 @@ export function ActivityMcpTab({
           (tool) => tool.name === selection.toolName,
         ) ?? null
       : null;
+  const serverDraftSource = useMemo(() => {
+    if (selection?.kind !== "server") return null;
+    if (selection.viewMode === "create") return createMcpServerDraft();
+    if (!selectedServer || getServerType(selectedServer) !== "external") return null;
+    return mcpServerToDraft(selectedServer);
+  }, [selectedServer, selection]);
 
   const toggleServer = useCallback((name: string) => {
     setExpandedServers((prev) => {
@@ -206,7 +217,42 @@ export function ActivityMcpTab({
     }
   }, [refreshToolCache]);
 
-  const handleOpenAddServer = useCallback(() => setShowAddServer(true), []);
+  const handleOpenAddServer = useCallback(() => {
+    setSelection({ kind: "server", serverName: "", viewMode: "create" });
+    setActionError(null);
+  }, []);
+
+  const handleSaveServerDraft = useCallback(
+    async (draft: McpServerDraft) => {
+      setActionError(null);
+      try {
+        const ok =
+          selection?.kind === "server" && selection.viewMode === "create"
+            ? await saveMcpServerDraft({ mode: "create", draft })
+            : selectedServer
+              ? await saveMcpServerDraft({
+                  mode: "edit",
+                  originalName: selectedServer.name,
+                  originalEnabled: selectedServer.enabled !== false,
+                  draft,
+                })
+              : false;
+
+        if (!ok) {
+          setActionError(`Failed to save ${draft.name || "MCP server"}`);
+          return false;
+        }
+
+        await fetchServers?.();
+        setSelection({ kind: "server", serverName: draft.name, viewMode: "fields" });
+        return true;
+      } catch (error) {
+        setActionError(actionErrorMessage(error, "Failed to save MCP server"));
+        return false;
+      }
+    },
+    [fetchServers, selectedServer, selection],
+  );
 
   // Register the shared header Add/Refresh actions for the MCP view.
   useRegisterActivityActions(
@@ -356,7 +402,11 @@ export function ActivityMcpTab({
                       aria-label={`Toggle ${server.name} server tools`}
                       aria-expanded={expanded}
                       onClick={() => {
-                        setSelection({ kind: "server", serverName: server.name });
+                        setSelection({
+                          kind: "server",
+                          serverName: server.name,
+                          viewMode: serverType === "external" ? "fields" : "detail",
+                        });
                         toggleServer(server.name);
                       }}
                     >
@@ -462,20 +512,32 @@ export function ActivityMcpTab({
             minHeight={15}
             maxHeight={80}
           />
-          <McpDetailPanel
-            selection={selection}
-            server={selectedServer}
-            tool={selectedTool}
-            schema={toolSchema}
-            schemaLoading={schemaLoading}
-            argumentValues={argumentValues}
-            onArgumentValuesChange={setArgumentValues}
-            executing={executing}
-            executionResult={executionResult}
-            onCallTool={handleExecute}
-            status={status}
-            toolsByServer={toolsByServer}
-          />
+          {selection.kind === "server" &&
+          (selection.viewMode === "create" || serverDraftSource) ? (
+            <McpServerFields
+              mode={selection.viewMode === "create" ? "create" : "edit"}
+              source={serverDraftSource}
+              onSave={handleSaveServerDraft}
+              onDiscard={() => {
+                if (selection.viewMode === "create") setSelection(null);
+              }}
+            />
+          ) : (
+            <McpDetailPanel
+              selection={selection}
+              server={selectedServer}
+              tool={selectedTool}
+              schema={toolSchema}
+              schemaLoading={schemaLoading}
+              argumentValues={argumentValues}
+              onArgumentValuesChange={setArgumentValues}
+              executing={executing}
+              executionResult={executionResult}
+              onCallTool={handleExecute}
+              status={status}
+              toolsByServer={toolsByServer}
+            />
+          )}
         </>
       )}
 
@@ -497,8 +559,9 @@ export function ActivityMcpTab({
           }}
           onViewServer={() => {
             const serverName = menu.serverName;
+            const viewMode = menu.isExternal ? "fields" : "detail";
             setMenu(null);
-            setSelection({ kind: "server", serverName });
+            setSelection({ kind: "server", serverName, viewMode });
           }}
           onRefreshServer={() => {
             setMenu(null);
@@ -509,12 +572,6 @@ export function ActivityMcpTab({
         />
       )}
 
-      {showAddServer && (
-        <McpAddServerModal
-          onAdd={addServer}
-          onClose={() => setShowAddServer(false)}
-        />
-      )}
     </div>
   );
 }

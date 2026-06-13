@@ -36,6 +36,9 @@ class MCPServer:
     headers: dict[str, str] | None
     enabled: bool
     description: str | None
+    requires_oauth: bool
+    oauth_provider: str | None
+    connect_timeout: float
     created_at: str
     updated_at: str
     project_id: str  # Required - all servers must belong to a project
@@ -54,6 +57,9 @@ class MCPServer:
             headers=json.loads(row["headers"]) if row["headers"] else None,
             enabled=bool(row["enabled"]),
             description=row["description"],
+            requires_oauth=bool(row.get("requires_oauth", False)),
+            oauth_provider=row.get("oauth_provider"),
+            connect_timeout=float(row.get("connect_timeout") or 30.0),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             project_id=row["project_id"],
@@ -73,6 +79,9 @@ class MCPServer:
             "headers": self.headers,
             "enabled": self.enabled,
             "description": self.description,
+            "requires_oauth": self.requires_oauth,
+            "oauth_provider": self.oauth_provider,
+            "connect_timeout": self.connect_timeout,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -98,6 +107,12 @@ class MCPServer:
             config["headers"] = self.headers
         if self.description:
             config["description"] = self.description
+        if self.requires_oauth:
+            config["requires_oauth"] = self.requires_oauth
+        if self.oauth_provider:
+            config["oauth_provider"] = self.oauth_provider
+        if self.connect_timeout:
+            config["connect_timeout"] = self.connect_timeout
         return config
 
 
@@ -159,6 +174,9 @@ class LocalMCPManager:
         headers: dict[str, str] | None = None,
         enabled: bool = True,
         description: str | None = None,
+        requires_oauth: bool = False,
+        oauth_provider: str | None = None,
+        connect_timeout: float = 30.0,
     ) -> MCPServer:
         """Persist a server row without applying bundled-server cleanup."""
         server_id = str(uuid.uuid4())
@@ -168,9 +186,10 @@ class LocalMCPManager:
             """
             INSERT INTO mcp_servers (
                 id, name, project_id, transport, url, command, args, env, headers,
-                enabled, description, created_at, updated_at
+                enabled, description, requires_oauth, oauth_provider, connect_timeout,
+                created_at, updated_at
             )
-            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
             ON CONFLICT(name, project_id) DO UPDATE SET
                 transport = excluded.transport,
                 url = excluded.url,
@@ -180,6 +199,9 @@ class LocalMCPManager:
                 headers = excluded.headers,
                 enabled = excluded.enabled,
                 description = COALESCE(excluded.description, mcp_servers.description),
+                requires_oauth = excluded.requires_oauth,
+                oauth_provider = excluded.oauth_provider,
+                connect_timeout = excluded.connect_timeout,
                 updated_at = excluded.updated_at
             """,
             (
@@ -194,6 +216,9 @@ class LocalMCPManager:
                 json.dumps(headers) if headers else None,
                 bool(enabled),
                 description,
+                bool(requires_oauth),
+                oauth_provider,
+                connect_timeout,
                 now,
                 now,
             ),
@@ -301,6 +326,9 @@ class LocalMCPManager:
         headers: dict[str, str] | None = None,
         enabled: bool = True,
         description: str | None = None,
+        requires_oauth: bool = False,
+        oauth_provider: str | None = None,
+        connect_timeout: float = 30.0,
     ) -> MCPServer:
         """
         Insert or update an MCP server in the database.
@@ -329,6 +357,9 @@ class LocalMCPManager:
             headers=headers,
             enabled=enabled,
             description=description,
+            requires_oauth=requires_oauth,
+            oauth_provider=oauth_provider,
+            connect_timeout=connect_timeout,
         )
         if is_bundled_external_mcp_server(name):
             self.normalize_bundled_servers([name])
@@ -542,6 +573,9 @@ class LocalMCPManager:
             "headers",
             "enabled",
             "description",
+            "requires_oauth",
+            "oauth_provider",
+            "connect_timeout",
         }
         fields = {k: v for k, v in fields.items() if k in allowed}
         if not fields:
@@ -558,6 +592,10 @@ class LocalMCPManager:
             fields["headers"] = json.dumps(fields["headers"])
         if "enabled" in fields:
             fields["enabled"] = bool(fields["enabled"])
+        if "requires_oauth" in fields:
+            fields["requires_oauth"] = bool(fields["requires_oauth"])
+        if "connect_timeout" in fields and fields["connect_timeout"] is not None:
+            fields["connect_timeout"] = float(fields["connect_timeout"])
 
         fields["updated_at"] = datetime.now(UTC).isoformat()
 

@@ -32,6 +32,7 @@ from gobby.servers.routes.mcp.endpoints.server import (
     list_mcp_servers,
     remove_mcp_server,
     set_mcp_server_enabled,
+    update_mcp_server,
 )
 
 
@@ -54,6 +55,7 @@ def create_mcp_router() -> APIRouter:
     router.get("/servers")(list_mcp_servers)
     router.post("/servers")(add_mcp_server)
     router.post("/servers/import")(import_mcp_server)
+    router.put("/servers/{name}")(update_mcp_server)
     router.patch("/servers/{name}")(set_mcp_server_enabled)
     router.delete("/servers/{name}")(remove_mcp_server)
 

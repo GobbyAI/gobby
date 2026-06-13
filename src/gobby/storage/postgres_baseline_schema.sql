@@ -31,6 +31,9 @@ CREATE TABLE mcp_servers (
     headers JSONB,
     enabled BOOLEAN DEFAULT TRUE,
     description TEXT,
+    requires_oauth BOOLEAN DEFAULT FALSE,
+    oauth_provider TEXT,
+    connect_timeout DOUBLE PRECISION DEFAULT 30.0,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );

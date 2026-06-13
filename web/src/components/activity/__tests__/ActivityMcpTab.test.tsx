@@ -167,13 +167,16 @@ describe("ActivityMcpTab", () => {
     expect(screen.queryByText("gobby-tasks")).toBeNull();
   });
 
-  it("opens the add-server modal from the shared header", async () => {
+  it("opens a new-server detail draft from the shared header", async () => {
     const user = userEvent.setup();
     renderMcp();
 
     await user.click(screen.getByRole("button", { name: "Add MCP server" }));
 
-    expect(screen.getByRole("heading", { name: "Add MCP Server" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Add MCP Server" })).toBeNull();
+    expect(screen.getByText("New MCP server")).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Server name" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Project")).toBeInTheDocument();
   });
 
   it("removes external servers through the server menu", async () => {

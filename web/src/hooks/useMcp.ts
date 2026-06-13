@@ -9,6 +9,16 @@ export interface McpServer {
   transport: string
   enabled?: boolean
   note?: string
+  description?: string | null
+  url?: string | null
+  command?: string | null
+  args?: string[] | null
+  env?: Record<string, string> | null
+  headers?: Record<string, string> | null
+  project_id?: string | null
+  requires_oauth?: boolean
+  oauth_provider?: string | null
+  connect_timeout?: number
 }
 
 export interface McpTool {
