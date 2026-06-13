@@ -21,7 +21,6 @@ const SET_STATE_IN_EFFECT_EXEMPTIONS = [
   "src/components/code-graph/CodeGraphExplorer.tsx",
   "src/components/command-browser/ToolBrowserModal.tsx",
   "src/components/integrations/ChannelDetail.tsx",
-  "src/components/mcp/McpToolDetail.tsx",
   "src/components/memory/KnowledgeGraph.tsx",
   "src/components/memory/MemoryGraph.tsx",
   "src/components/memory/MemoryPage.tsx",

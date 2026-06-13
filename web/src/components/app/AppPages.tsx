@@ -11,9 +11,6 @@ export const SkillsPage = lazy(() =>
     default: m.SkillsPage,
   })),
 );
-export const McpPage = lazy(() =>
-  import("../mcp/McpPage").then((m) => ({ default: m.McpPage })),
-);
 export const IntegrationsPage = lazy(() =>
   import("../integrations/IntegrationsPage").then((m) => ({
     default: m.IntegrationsPage,
