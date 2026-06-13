@@ -274,6 +274,10 @@ class TmuxSessionManager:
             logger.warning(f"Failed to kill stale tmux server: {e}")
             return False
 
+    async def shutdown(self) -> None:
+        """Stop the configured tmux server."""
+        await self._run("kill-server", timeout=5.0)
+
     async def create_session(
         self,
         name: str,

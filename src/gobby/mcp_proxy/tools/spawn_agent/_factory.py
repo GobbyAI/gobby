@@ -563,13 +563,12 @@ def create_spawn_agent_registry(
 
         if not suggestions:
             return {"dispatched": 0, "results": []}
-        batch_project_ctx, batch_project_path = _resolve_spawn_project_context(
+        _, batch_project_path = _resolve_spawn_project_context(
             project_path=None,
             parent_session_id=parent_session_id,
             session_manager=session_manager,
             db=db,
         )
-        del batch_project_ctx
         batch_cap = (
             max_active_agents_for_project(batch_project_path)
             if batch_project_path

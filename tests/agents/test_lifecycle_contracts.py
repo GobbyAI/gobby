@@ -30,7 +30,8 @@ def sample_session(
     return session.to_dict()
 
 
-def test_start_after_terminal_run_is_noop(
+@pytest.mark.asyncio
+async def test_start_after_terminal_run_is_noop(
     agent_manager: LocalAgentRunManager,
     sample_session: dict,
 ) -> None:

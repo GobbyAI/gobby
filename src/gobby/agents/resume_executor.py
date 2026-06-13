@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import shutil
 import uuid
@@ -226,8 +227,11 @@ async def resume_agent_run(
         logger.warning("Failed to persist resumed launch metadata for %s", run_id, exc_info=True)
 
     pre_approve_directory(provider, cwd)
-    terminal_result = _tmux_spawner(daemon_config, resume_metadata).spawn(
-        command=command, cwd=cwd, env=env
+    terminal_result = await asyncio.to_thread(
+        _tmux_spawner(daemon_config, resume_metadata).spawn,
+        command=command,
+        cwd=cwd,
+        env=env,
     )
     if not terminal_result.success:
         error = terminal_result.error or terminal_result.message or "resume_spawn_failed"

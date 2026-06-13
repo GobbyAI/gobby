@@ -134,7 +134,14 @@ class AgentCleanupHandler:
         self._loop_tracker.clear(run.id)
         if self._completion_registry:
             self._completion_registry.cleanup(run.id)
-        await self._run_db(remove_agent_completion_subscribers, db=self._db, run_id=run.id)
+        try:
+            await self._run_db(remove_agent_completion_subscribers, db=self._db, run_id=run.id)
+        except Exception:
+            logger.warning(
+                "Failed to remove completion subscribers for agent %s",
+                run.id,
+                exc_info=True,
+            )
 
         if session_coordinator and session_id:
             try:

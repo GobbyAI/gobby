@@ -199,6 +199,7 @@ class IdleCheckHandler:
                 await self._fail_idle_agent(run, reason="context window exhausted")
                 return 1
 
+            # Active output is liveness even when the session row looks stale.
             if status == "active":
                 if not session_stale or self._idle_detector.should_fail(
                     run.id, self._tmux_config.max_reprompt_attempts

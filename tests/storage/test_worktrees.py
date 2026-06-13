@@ -849,6 +849,7 @@ class TestLocalWorktreeManagerStatusTransitions:
         assert claimed is not None
         assert claimed.agent_session_id == resumed_owner.id
 
+    @pytest.mark.integration
     def test_is_claimed_by_live_session_checks_owner_status(
         self,
         temp_db: HubDatabase,

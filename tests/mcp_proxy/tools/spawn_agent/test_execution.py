@@ -750,6 +750,116 @@ class TestSpawnAgentPreRegistration:
         mock_handler.cleanup_environment.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_spawn_attach_failure_fails_run_and_cleans_child_session(
+        self,
+        temp_db,
+        sample_project: dict[str, object],
+        mock_runner,
+        agent_body,
+    ) -> None:
+        from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
+
+        task_manager = LocalTaskManager(temp_db)
+        task = task_manager.create_task(
+            project_id=str(sample_project["id"]),
+            title="Attach failure task",
+        )
+        session_manager = SessionManager(temp_db)
+        parent_session_id = _register_parent_session(temp_db, sample_project, "parent-attach")
+        child_manager = ChildSessionManager(session_manager)
+        run_storage = LocalAgentRunManager(temp_db)
+        mock_runner.child_session_manager = child_manager
+        mock_runner._child_session_manager = child_manager
+        mock_runner.run_storage = run_storage
+        captured: dict[str, str] = {}
+
+        async def execute_spawn(request) -> SimpleNamespace:
+            child_session_id = session_manager.register_session(
+                external_id=request.session_id,
+                machine_id="machine-1",
+                source="test-agent",
+                project_id=request.project_id,
+                parent_session_id=request.parent_session_id,
+                title="Child",
+            )
+            run_storage.create(
+                parent_session_id=request.parent_session_id,
+                provider=request.provider,
+                prompt=request.prompt,
+                child_session_id=child_session_id,
+                run_id=request.agent_run_id,
+                task_id=request.task_id,
+            )
+            captured["run_id"] = request.agent_run_id
+            captured["child_session_id"] = child_session_id
+            return SimpleNamespace(
+                success=True,
+                child_session_id=child_session_id,
+                status="pending",
+                terminal_type="none",
+                pid=None,
+                message="spawned",
+            )
+
+        registry = create_spawn_agent_registry(
+            mock_runner,
+            task_manager=task_manager,
+            db=temp_db,
+            session_manager=session_manager,
+        )
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body",
+                return_value=agent_body,
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_project_context"
+            ) as mock_ctx,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.get_isolation_handler"
+            ) as mock_get_handler,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
+                new=AsyncMock(side_effect=execute_spawn),
+            ),
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._implementation.TaskSpawnLease.attach",
+                return_value="dispatch mutex row disappeared",
+            ),
+        ):
+            mock_ctx.return_value = {
+                "id": str(sample_project["id"]),
+                "project_path": str(sample_project["repo_path"]),
+            }
+            mock_handler = MagicMock()
+            mock_handler.prepare_environment = AsyncMock(
+                return_value=IsolationContext(cwd=str(sample_project["repo_path"]))
+            )
+            mock_handler.cleanup_environment = AsyncMock()
+            mock_handler.build_context_prompt.return_value = "Test prompt"
+            mock_get_handler.return_value = mock_handler
+
+            result = await registry.call(
+                "spawn_agent",
+                {
+                    "prompt": "Test prompt",
+                    "parent_session_id": parent_session_id,
+                    "task_id": task.id,
+                    "isolation": "none",
+                },
+            )
+
+        error = "task spawn mutex attach failed: dispatch mutex row disappeared"
+        run = run_storage.get(captured["run_id"])
+        assert result == {"success": False, "error": error, "run_id": captured["run_id"]}
+        assert run is not None
+        assert run.status == "error"
+        assert run.error == error
+        assert run.child_session_id is None
+        assert session_manager.get(captured["child_session_id"]) is None
+        mock_handler.cleanup_environment.assert_awaited_once()
+
+    @pytest.mark.asyncio
     async def test_status_transitions_to_running_on_success(self, mock_runner, agent_body):
         """On successful spawn, run_storage.start(run_id) is called immediately.
 

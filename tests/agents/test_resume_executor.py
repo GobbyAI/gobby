@@ -347,7 +347,9 @@ async def test_resume_agent_run_kills_spawned_tmux_when_runtime_persistence_fail
     )
     monkeypatch.setattr(resume_executor, "_tmux_spawner", lambda *_args: spawner)
     monkeypatch.setattr(resume_executor, "pre_approve_directory", lambda *_args: None)
-    monkeypatch.setattr(resume_executor, "TmuxSessionManager", FakeTmuxSessionManager)
+    monkeypatch.setattr(
+        "gobby.agents.tmux.get_tmux_session_manager", lambda: FakeTmuxSessionManager()
+    )
 
     result = await resume_executor.resume_agent_run(
         original_run,

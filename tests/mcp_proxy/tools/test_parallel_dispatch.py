@@ -410,7 +410,9 @@ class TestDispatchBatch:
                 {"id": "task-3", "ref": "#3", "title": "Task 3"},
             ]
 
-            result = await dispatch(suggestions=suggestions, agent="default")
+            result = await asyncio.wait_for(
+                dispatch(suggestions=suggestions, agent="default"), timeout=5
+            )
 
         assert result["dispatched"] == 3
         assert len(result["results"]) == 3
@@ -459,7 +461,9 @@ class TestDispatchBatch:
                 {"id": f"task-{index}", "ref": f"#{index}", "title": f"Task {index}"}
                 for index in range(5)
             ]
-            result = await dispatch(suggestions=suggestions, agent="default")
+            result = await asyncio.wait_for(
+                dispatch(suggestions=suggestions, agent="default"), timeout=5
+            )
 
         assert result["dispatched"] == 5
         assert max_seen <= 2

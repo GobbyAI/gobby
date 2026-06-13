@@ -212,7 +212,13 @@ class KeywordAsyncSearchBackend:
         return self.search(query, top_k)
 
     def search(self, query: str, top_k: int = 10) -> list[tuple[str, float]]:
-        hits = [(hit.id, hit.score) for hit in self._backend.search(query, top_k)]
+        try:
+            hits = [(hit.id, hit.score) for hit in self._backend.search(query, top_k)]
+        except Exception:
+            if self._fitted_items is None:
+                raise
+            logger.debug("Keyword backend search failed; using fitted item fallback", exc_info=True)
+            hits = []
         if hits or self._fitted_items is None:
             return hits
         return _search_fitted_items(query, self._fitted_items, top_k)

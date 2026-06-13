@@ -507,6 +507,7 @@ class TestKeywordAsyncSearchBackend:
             [],
         ],
     )
+    @pytest.mark.asyncio
     async def test_mark_update_needs_refit_until_next_fit(
         self,
         updated_items: list[tuple[str, str]],
@@ -602,6 +603,7 @@ class TestEmbeddingBackend:
             [],
         ],
     )
+    @pytest.mark.asyncio
     async def test_mark_update_needs_refit_until_next_fit(
         self,
         updated_items: list[tuple[str, str]],

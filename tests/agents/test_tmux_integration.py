@@ -45,7 +45,7 @@ def tmux_config(tmux_socket_name: str) -> TmuxConfig:
 async def tmux_manager(tmux_config: TmuxConfig) -> AsyncIterator[TmuxSessionManager]:
     manager = TmuxSessionManager(tmux_config)
     yield manager
-    await manager._run("kill-server", timeout=5.0)
+    await manager.shutdown()
 
 
 async def _wait_for(

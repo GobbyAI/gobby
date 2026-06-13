@@ -60,6 +60,12 @@ class TaskSpawnLease:
                 "error": f"task {self._task_id} already has an agent spawn in progress",
                 "task_id": self._task_id,
             }
+        except Exception as exc:
+            try:
+                self._mutex.__exit__(type(exc), exc, exc.__traceback__)
+            finally:
+                self._mutex = None
+            raise
         self._owns_mutex = True
         return None
 
@@ -134,7 +140,7 @@ async def reserve_agent_slot(
     cap = max_active_agents_for_project(project_path)
     lock = _SLOT_LOCKS.setdefault(project_id, asyncio.Lock())
     async with lock:
-        active_count = _count_active_agents(db, project_id)
+        active_count = await asyncio.to_thread(_count_active_agents, db, project_id)
         if active_count >= cap:
             yield {
                 "success": False,

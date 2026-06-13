@@ -136,10 +136,10 @@ class TestAgentRestartReconciliation:
         runner.agent_lifecycle_monitor.get_cleanup_agent.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_reconcile_uses_configured_tmux_socket_for_live_agent(self) -> None:
+    async def test_reconcile_uses_configured_tmux_socket_for_live_agent(self, tmp_path) -> None:
         config = TmuxConfig(
             socket_name="unused-name",
-            socket_path="/tmp/gobby-test-reconcile-configured.sock",
+            socket_path=str(tmp_path / "gobby-test-reconcile-configured.sock"),
         )
         run = SimpleNamespace(id="run-1", tmux_session_name="gobby-run-1", pid=111)
         run_storage = SimpleNamespace(

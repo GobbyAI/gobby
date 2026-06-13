@@ -727,16 +727,19 @@ async def spawn_agent_impl(
             attach_error = task_spawn_lease.attach(run_id)
             if attach_error is not None:
                 task_spawn_lease.release_unattached()
-                try:
-                    runner.run_storage.fail(
-                        run_id,
-                        error=f"task spawn mutex attach failed: {attach_error}",
-                    )
-                except Exception as e:
-                    logger.warning(f"Failed to mark agent_run {run_id} as failed: {e}")
+                error = f"task spawn mutex attach failed: {attach_error}"
+                await cleanup_failed_spawn(
+                    runner,
+                    run_id,
+                    error,
+                    handler,
+                    spawn_config,
+                    cleanup_isolation=cleanup_isolation_on_failure,
+                    child_session_id=spawn_result.child_session_id,
+                )
                 return {
                     "success": False,
-                    "error": f"task spawn mutex attach failed: {attach_error}",
+                    "error": error,
                     "run_id": run_id,
                 }
     tmux_session_name = getattr(spawn_result, "tmux_session_name", None)

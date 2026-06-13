@@ -59,6 +59,8 @@ class CompletionEventRegistry:
                     seen.add(session_id)
             if continuation_prompt and completion_id not in self._continuation_prompts:
                 self._continuation_prompts[completion_id] = continuation_prompt
+            elif continuation_prompt:
+                logger.debug("Ignoring duplicate continuation prompt for %s", completion_id)
             return
 
         self._events[completion_id] = asyncio.Event()
