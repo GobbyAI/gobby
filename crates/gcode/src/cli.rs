@@ -335,6 +335,11 @@ pub(crate) enum Command {
         /// Maximum graph edges to fetch from FalkorDB
         #[arg(long, default_value_t = DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT, value_parser = positive_usize)]
         edge_limit: usize,
+        /// Also document content-only files (markdown, plain text). By default
+        /// codewiki documents only code and structured config (json/yaml);
+        /// narrative markdown belongs to gwiki.
+        #[arg(long)]
+        include_docs: bool,
     },
 
     // ── Dependency Graph (requires graph backend) ──────────────────────

@@ -19,3 +19,24 @@ mod onboarding;
 mod progress;
 mod provenance;
 mod reuse;
+
+#[test]
+fn documents_code_and_config_excludes_content_only_by_default() {
+    // Code and structured config (json/yaml) are documented.
+    assert!(should_document_file("crates/gcode/src/lib.rs", false));
+    assert!(should_document_file("crates/gsqz/config.yaml", false));
+    assert!(should_document_file(
+        "crates/gcode/contract/gcode.contract.json",
+        false
+    ));
+
+    // Content-only files (markdown, plain text, license) are gwiki's domain
+    // and are skipped by default.
+    assert!(!should_document_file("README.md", false));
+    assert!(!should_document_file("docs/guides/codewiki.md", false));
+    assert!(!should_document_file("LICENSE", false));
+
+    // --include-docs opts content-only files back in.
+    assert!(should_document_file("README.md", true));
+    assert!(should_document_file("docs/guides/codewiki.md", true));
+}

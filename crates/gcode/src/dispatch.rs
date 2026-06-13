@@ -506,6 +506,7 @@ fn run() -> anyhow::Result<()> {
             ai_depth,
             ai_aggregate_profile,
             edge_limit,
+            include_docs,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::codewiki::run(
@@ -518,6 +519,7 @@ fn run() -> anyhow::Result<()> {
                     aggregate_profile: ai_aggregate_profile,
                 },
                 edge_limit,
+                include_docs,
                 format,
                 cli.verbose,
             )

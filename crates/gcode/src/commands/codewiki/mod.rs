@@ -518,12 +518,16 @@ impl SourceSpan {
     }
 }
 
+// CLI entry point: each parameter maps to a distinct codewiki flag, so the
+// argument count tracks the command surface rather than hidden coupling.
+#[allow(clippy::too_many_arguments)]
 pub fn run(
     ctx: &Context,
     out: Option<String>,
     scope_args: Vec<String>,
     ai: CodewikiAiOptions,
     edge_limit: usize,
+    include_docs: bool,
     format: Format,
     verbose: bool,
 ) -> anyhow::Result<()> {
@@ -540,6 +544,7 @@ pub fn run(
     progress.emit("loading indexed files");
     let files = visibility::visible_tree(&mut conn, ctx)?
         .into_iter()
+        .filter(|file| should_document_file(&file.file_path, include_docs))
         .map(|file| file.file_path)
         .filter(|file| in_scope(file, &scopes))
         .collect::<Vec<_>>();
@@ -654,6 +659,19 @@ fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
         return Ok(());
     }
     anyhow::bail!("codewiki --edge-limit must be between 1 and {MAX_EDGE_LIMIT}, got {edge_limit}")
+}
+
+/// codewiki documents code and structured config — any file the indexer
+/// recognizes as an AST or json/yaml language. Content-only files (markdown,
+/// plain text, license/lock files) are gwiki's domain, so codewiki skips them.
+fn documents_file(file_path: &str) -> bool {
+    crate::index::languages::detect_language(file_path).is_some()
+}
+
+/// Whether codewiki should emit a file doc for `file_path`. Content-only files
+/// are skipped unless the caller opts back in with `--include-docs`.
+fn should_document_file(file_path: &str, include_docs: bool) -> bool {
+    include_docs || documents_file(file_path)
 }
 
 fn load_symbols_for_codewiki(
