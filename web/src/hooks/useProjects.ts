@@ -41,6 +41,7 @@ function getBaseUrl(): string {
 export function useProjects() {
   const [projects, setProjects] = useState<ProjectWithStats[]>([])
   const [isLoading, setIsLoading] = useState(false)
+  const [error, setError] = useState<Error | null>(null)
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(null)
   const [activeSubTab, setActiveSubTab] = useState<ProjectSubTab>('overview')
   const [searchText, setSearchText] = useState('')
@@ -51,11 +52,14 @@ export function useProjects() {
     setIsLoading(true)
     try {
       const res = await fetch(`${baseUrl}/api/projects`)
-      if (res.ok) {
-        const data: ProjectWithStats[] = await res.json()
-        setProjects(data)
+      if (!res.ok) {
+        throw new Error(`Failed to fetch projects: ${res.status}`)
       }
+      const data: ProjectWithStats[] = await res.json()
+      setProjects(data)
+      setError(null)
     } catch (e) {
+      setError(e instanceof Error ? e : new Error('Failed to fetch projects'))
       console.error('Failed to fetch projects:', e)
     } finally {
       setIsLoading(false)
@@ -152,6 +156,7 @@ export function useProjects() {
     projects: filteredProjects,
     allProjects: projects,
     isLoading,
+    error,
     selectedProject,
     selectedProjectId,
     activeSubTab,
