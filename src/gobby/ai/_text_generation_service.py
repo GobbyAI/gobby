@@ -77,9 +77,12 @@ class TextGenerationService:
             for profile, candidates in (profile_defaults or {}).items()
         }
 
-    async def _await_candidate[T](self, awaitable: Awaitable[T]) -> T:
+    def _candidate_timeout(self, request: TextGenerationRequest) -> float | None:
+        return request.candidate_timeout_seconds or self._candidate_timeout_seconds
+
+    async def _await_candidate[T](self, awaitable: Awaitable[T], request: TextGenerationRequest) -> T:
         """Bound one candidate attempt by the per-candidate timeout."""
-        timeout = self._candidate_timeout_seconds
+        timeout = self._candidate_timeout(request)
         if timeout is None:
             return await awaitable
         try:
@@ -172,7 +175,7 @@ class TextGenerationService:
             try:
                 binding = self._select_binding(candidate)
                 adapter = self._adapter_for_provider(binding.provider)
-                result = await self._await_candidate(adapter.generate(candidate))
+                result = await self._await_candidate(adapter.generate(candidate), candidate)
                 text_result = _coerce_text_result(result)
                 _validate_text_generation_output(candidate, text_result.text)
                 self._log_generation_event(
@@ -233,10 +236,13 @@ class TextGenerationService:
                         Callable[[TextGenerationRequest], Awaitable[dict[str, Any]]],
                         json_adapter,
                     )
-                    result = await self._await_candidate(typed_json_adapter(candidate))
+                    result = await self._await_candidate(typed_json_adapter(candidate), candidate)
                     parse_outcome = "provider_structured"
                 else:
-                    text = await self._await_candidate(adapter.generate(_json_request(candidate)))
+                    text = await self._await_candidate(
+                        adapter.generate(_json_request(candidate)),
+                        candidate,
+                    )
                     raw = _coerce_text_result(text).text
                     try:
                         result = _parse_json_text(raw)

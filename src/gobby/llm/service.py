@@ -52,6 +52,7 @@ def _feature_request(
         candidates=candidates,
         system_prompt=system_prompt,
         max_tokens=max_tokens,
+        candidate_timeout_seconds=getattr(feature_config, "candidate_timeout_seconds", None),
         caller=caller,
         cwd=cwd,
     )

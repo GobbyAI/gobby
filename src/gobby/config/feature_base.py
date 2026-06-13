@@ -123,6 +123,14 @@ class FeatureDefaultConfig(BaseModel):
             "'local:lm-studio/google/gemma-4-26b-a4b-qat']."
         ),
     )
+    candidate_timeout_seconds: float | None = Field(
+        default=None,
+        gt=0.0,
+        description=(
+            "Optional per-candidate timeout override for this feature. "
+            "Unset uses ai.generation.candidate_timeout_seconds."
+        ),
+    )
 
     @model_validator(mode="after")
     def populate_and_validate_candidates(self) -> "FeatureDefaultConfig":

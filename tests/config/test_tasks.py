@@ -262,6 +262,7 @@ class TestTaskValidationConfigDefaults:
             "gemini/gemini-3.5-flash",
             "claude/sonnet",
         ]
+        assert config.candidate_timeout_seconds == 180.0
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.max_consecutive_errors == 3
@@ -291,6 +292,13 @@ class TestTaskValidationConfigCustom:
 
         config = TaskValidationConfig(build_command="uv run pytest")
         assert config.build_command == "uv run pytest"
+
+    def test_custom_candidate_timeout(self) -> None:
+        """Test setting a custom per-candidate validation timeout."""
+        from gobby.config.tasks import TaskValidationConfig
+
+        config = TaskValidationConfig(candidate_timeout_seconds=240.0)
+        assert config.candidate_timeout_seconds == 240.0
 
     def test_escalation_webhook(self) -> None:
         """Test escalation with webhook."""
@@ -358,6 +366,15 @@ class TestTaskValidationConfigValidation:
 
         config = TaskValidationConfig(issue_similarity_threshold=1.0)
         assert config.issue_similarity_threshold == 1.0
+
+    def test_candidate_timeout_must_be_positive(self) -> None:
+        """Test that candidate_timeout_seconds must be positive when set."""
+        from gobby.config.tasks import TaskValidationConfig
+
+        with pytest.raises(ValidationError):
+            TaskValidationConfig(candidate_timeout_seconds=0)
+        with pytest.raises(ValidationError):
+            TaskValidationConfig(candidate_timeout_seconds=-1)
 
     def test_invalid_escalation_notify(self) -> None:
         """Test that invalid escalation_notify raises ValidationError."""

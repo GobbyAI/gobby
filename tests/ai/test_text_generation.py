@@ -1897,6 +1897,36 @@ async def test_text_generation_service_no_candidate_timeout_when_unset() -> None
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_request_timeout_overrides_global_timeout() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="local:slow",
+                adapter_style=AIAdapterStyle.OPENAI_COMPATIBLE,
+                available=True,
+                models=("slow-model",),
+            )
+        ]
+    )
+    service = TextGenerationService(
+        registry,
+        {"local:slow": SlowAdapter(delay=0.05)},
+        candidate_timeout_seconds=0.01,
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=("local:slow/slow-model",),
+            candidate_timeout_seconds=0.2,
+        )
+    )
+
+    assert result.text == "slow text"
+
+
+@pytest.mark.asyncio
 async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
