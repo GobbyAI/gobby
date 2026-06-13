@@ -260,16 +260,23 @@ def test_pre_push_fails_if_postgres_skip_reason_reaches_pytest_report(
 def test_pre_push_supports_local_all_extras_uv_run_opt_in(repo_root: Path) -> None:
     script = _load_pre_push_script(repo_root)
 
-    assert "UV_EXTRA_FLAGS=()" in script
-    assert 'if [ "${GOBBY_UV_ALL_EXTRAS:-}" = "1" ]; then' in script
-    assert "UV_EXTRA_FLAGS=(--all-extras)" in script
-    assert "uv_run()" in script
-    assert 'uv run "${UV_EXTRA_FLAGS[@]}" "$@"' in script
+    _assert_uv_run_all_extras_helper(script)
     assert "uv_run ruff check src/ --fix --no-unsafe-fixes" in script
     assert "uv_run mypy src/ --strict --no-incremental" in script
     assert "uv_run bandit -c pyproject.toml -r src/ -q" in script
     assert "uv_run pip-audit" in script
     assert "uv_run gobby test-quality audit" in script
+
+
+def test_pre_push_short_supports_local_all_extras_uv_run_opt_in(repo_root: Path) -> None:
+    script = _load_pre_push_short_script(repo_root)
+
+    _assert_uv_run_all_extras_helper(script)
+    assert "uv_run ruff check src/ --fix --no-unsafe-fixes" in script
+    assert "uv_run ruff format src/" in script
+    assert "uv_run mypy src/ --strict" in script
+    assert "uv_run bandit -c pyproject.toml -r src/ -q" in script
+    assert "uv_run pip-audit" in script
 
 
 def test_pre_push_excludes_live_opt_in_tests_by_default(repo_root: Path) -> None:
@@ -301,6 +308,20 @@ def _load_yaml(path: Path) -> Mapping[str, Any]:
 
 def _load_pre_push_script(repo_root: Path) -> str:
     return (repo_root / "pre-push-test.sh").read_text()
+
+
+def _load_pre_push_short_script(repo_root: Path) -> str:
+    return (repo_root / "pre-push-test-short.sh").read_text()
+
+
+def _assert_uv_run_all_extras_helper(script: str) -> None:
+    assert "UV_EXTRA_FLAGS=()" in script
+    assert 'if [ "${GOBBY_UV_ALL_EXTRAS:-}" = "1" ]; then' in script
+    assert "UV_EXTRA_FLAGS=(--all-extras)" in script
+    assert "uv_run()" in script
+    assert 'if [ "${#UV_EXTRA_FLAGS[@]}" -gt 0 ]; then' in script
+    assert 'uv run "${UV_EXTRA_FLAGS[@]}" "$@"' in script
+    assert 'uv run "$@"' in script
 
 
 def _load_pg_search_manifest(repo_root: Path) -> Mapping[str, Any]:

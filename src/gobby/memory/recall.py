@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
+import math
 import re
 import time
 from dataclasses import dataclass
@@ -402,6 +403,13 @@ class MemoryRecallRunner:
         seen: set[str] = set()
         filtered: list[dict[str, Any]] = []
         for memory in candidates:
+            similarity = getattr(memory, "similarity", None)
+            if not isinstance(similarity, int | float) or isinstance(similarity, bool):
+                continue
+            score = float(similarity)
+            if not math.isfinite(score) or score < self.config.min_score:
+                continue
+
             memory_id = getattr(memory, "id", None)
             if not isinstance(memory_id, str) or not memory_id:
                 continue
