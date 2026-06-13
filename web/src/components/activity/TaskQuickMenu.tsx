@@ -1,7 +1,6 @@
-import { useCallback, useEffect, useRef } from "react";
-import type { CSSProperties, KeyboardEvent } from "react";
 import type { BuildState, GobbyTask } from "../../hooks/useTasks";
 import { getCanonicalTaskState, getTaskDisplayState } from "../../lib/taskState";
+import { QuickMenu, type QuickMenuItem } from "./QuickMenu";
 
 export type TaskMenuAction =
   | "assign"
@@ -21,6 +20,8 @@ export interface ActiveTaskAction {
 export interface TaskContextMenu {
   x: number;
   y: number;
+  width?: number;
+  height?: number;
   task: GobbyTask;
 }
 
@@ -54,8 +55,6 @@ export function TaskQuickMenu({
   onReopenTask,
 }: TaskQuickMenuProps) {
   const task = menu.task;
-  const menuRef = useRef<HTMLDivElement>(null);
-  const enabledItemsRef = useRef<HTMLButtonElement[]>([]);
   const busy = activeAction?.taskId === task.id;
   const isClosed = getTaskDisplayState(task) === "closed";
   const isClaimed = getCanonicalTaskState(task).is_claimed;
@@ -64,149 +63,64 @@ export function TaskQuickMenu({
   const showStopBuild = !isClosed && buildState === "running";
   const showResumeBuild = !isClosed && buildState === "paused";
   const showBuildControls = showStartBuild || showStopBuild || showResumeBuild;
-  const menuStyle: CSSProperties = {
-    position: "fixed",
-    left: menu.x,
-    top: menu.y,
-  };
-  const refreshEnabledMenuItems = useCallback(() => {
-    enabledItemsRef.current = Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitem"]:not(:disabled)',
-      ) ?? [],
+  const items: QuickMenuItem[] = [
+    {
+      label: "Assign to Main Chat",
+      onSelect: onAssignToMainChat,
+      disabled: !chatSessionId || busy,
+    },
+  ];
+
+  if (showBuildControls) {
+    items.push({ type: "separator" });
+    if (showStartBuild) {
+      items.push(
+        { label: "Build", onSelect: onBuild, disabled: busy },
+        { label: "Build Quick", onSelect: onBuildQuick, disabled: busy },
+      );
+    }
+    if (showStopBuild) {
+      items.push({ label: "Stop Build", onSelect: onStopBuild, disabled: busy });
+    }
+    if (showResumeBuild) {
+      items.push({ label: "Resume Build", onSelect: onResumeBuild, disabled: busy });
+    }
+  }
+
+  if (isClaimed) {
+    items.push(
+      { type: "separator" },
+      {
+        label: "Release Claim",
+        onSelect: onReleaseClaim,
+        disabled: isClosed || busy,
+      },
     );
-    return enabledItemsRef.current;
-  }, []);
+  }
 
-  const focusMenuItem = (index: number) => {
-    const items = enabledItemsRef.current;
-    if (!items.length) return;
-    const nextIndex = (index + items.length) % items.length;
-    items[nextIndex]?.focus();
-  };
-
-  useEffect(() => {
-    const items = refreshEnabledMenuItems();
-    items[0]?.focus();
-  }, [menu.task.id, menu.x, menu.y, refreshEnabledMenuItems]);
-
-  useEffect(() => {
-    refreshEnabledMenuItems();
-  }, [
-    busy,
-    chatSessionId,
-    isClaimed,
-    isClosed,
-    refreshEnabledMenuItems,
-    showBuildControls,
-    showResumeBuild,
-    showStartBuild,
-    showStopBuild,
-  ]);
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    const items = enabledItemsRef.current;
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-      return;
-    }
-    if (!items.length) return;
-    const currentIndex = items.indexOf(document.activeElement as HTMLButtonElement);
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      focusMenuItem(currentIndex === -1 ? 0 : currentIndex + 1);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      focusMenuItem(currentIndex === -1 ? items.length - 1 : currentIndex - 1);
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      focusMenuItem(0);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      focusMenuItem(items.length - 1);
-    }
-  };
+  items.push(
+    { type: "separator" },
+    isClosed
+      ? { label: "Reopen", onSelect: onReopenTask, disabled: busy }
+      : {
+          label: "Close...",
+          onSelect: onCloseTask,
+          disabled: busy,
+          destructive: true,
+        },
+  );
 
   return (
-    <>
-      <div className="session-ctx-backdrop" onClick={onClose} />
-      <div
-        ref={menuRef}
-        className="session-ctx-menu"
-        style={menuStyle}
-        role="menu"
-        aria-label="Task actions"
-        tabIndex={-1}
-        onKeyDown={handleKeyDown}
-      >
-        <button
-          className="session-ctx-item"
-          role="menuitem"
-          onClick={onAssignToMainChat}
-          disabled={!chatSessionId || busy}
-        >
-          Assign to Main Chat
-        </button>
-        {showBuildControls && (
-          <>
-            <div className="session-ctx-divider" role="separator" />
-            {showStartBuild && (
-              <>
-                <button className="session-ctx-item" role="menuitem" onClick={onBuild} disabled={busy}>
-                  Build
-                </button>
-                <button
-                  className="session-ctx-item"
-                  role="menuitem"
-                  onClick={onBuildQuick}
-                  disabled={busy}
-                >
-                  Build Quick
-                </button>
-              </>
-            )}
-            {showStopBuild && (
-              <button className="session-ctx-item" role="menuitem" onClick={onStopBuild} disabled={busy}>
-                Stop Build
-              </button>
-            )}
-            {showResumeBuild && (
-              <button className="session-ctx-item" role="menuitem" onClick={onResumeBuild} disabled={busy}>
-                Resume Build
-              </button>
-            )}
-          </>
-        )}
-        {isClaimed && (
-          <>
-            <div className="session-ctx-divider" role="separator" />
-            <button
-              className="session-ctx-item"
-              role="menuitem"
-              onClick={onReleaseClaim}
-              disabled={isClosed || busy}
-            >
-              Release Claim
-            </button>
-          </>
-        )}
-        <div className="session-ctx-divider" role="separator" />
-        {isClosed ? (
-          <button className="session-ctx-item" role="menuitem" onClick={onReopenTask} disabled={busy}>
-            Reopen
-          </button>
-        ) : (
-          <button
-            className="session-ctx-item session-ctx-item--destructive"
-            role="menuitem"
-            onClick={onCloseTask}
-            disabled={busy}
-          >
-            Close...
-          </button>
-        )}
-      </div>
-    </>
+    <QuickMenu
+      anchor={{
+        x: menu.x,
+        y: menu.y,
+        width: menu.width ?? 0,
+        height: menu.height ?? 0,
+      }}
+      menuLabel="Task actions"
+      items={items}
+      onClose={onClose}
+    />
   );
 }

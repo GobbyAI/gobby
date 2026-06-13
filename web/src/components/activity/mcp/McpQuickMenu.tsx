@@ -1,10 +1,4 @@
-import {
-  useEffect,
-  useRef,
-  type CSSProperties,
-  type KeyboardEvent,
-} from "react";
-
+import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import type { McpContextMenu } from "./mcpShared";
 
 export interface McpQuickMenuProps {
@@ -28,112 +22,41 @@ export function McpQuickMenu({
   onToggleEnabled,
   onRemoveServer,
 }: McpQuickMenuProps) {
-  const menuRef = useRef<HTMLDivElement>(null);
-  const menuStyle: CSSProperties = {
-    position: "fixed",
-    left: menu.x,
-    top: menu.y,
-  };
-
-  useEffect(() => {
-    const first = menuRef.current?.querySelector<HTMLButtonElement>(
-      '[role="menuitem"]:not(:disabled)',
-    );
-    first?.focus();
-  }, [menu.kind, menu.serverName, menu.toolName, menu.x, menu.y]);
-
-  const focusMenuItem = (index: number) => {
-    const items = Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitem"]:not(:disabled)',
-      ) ?? [],
-    );
-    items[index]?.focus();
-  };
-
-  const handleKeyDown = (event: KeyboardEvent<HTMLDivElement>) => {
-    if (event.key === "Escape") {
-      event.preventDefault();
-      onClose();
-      return;
-    }
-    const items = Array.from(
-      menuRef.current?.querySelectorAll<HTMLButtonElement>(
-        '[role="menuitem"]:not(:disabled)',
-      ) ?? [],
-    );
-    if (items.length === 0) return;
-    const activeIndex = items.findIndex((item) => item === document.activeElement);
-    if (event.key === "ArrowDown") {
-      event.preventDefault();
-      focusMenuItem(activeIndex >= 0 ? (activeIndex + 1) % items.length : 0);
-    } else if (event.key === "ArrowUp") {
-      event.preventDefault();
-      focusMenuItem(activeIndex >= 0 ? (activeIndex - 1 + items.length) % items.length : 0);
-    } else if (event.key === "Home") {
-      event.preventDefault();
-      focusMenuItem(0);
-    } else if (event.key === "End") {
-      event.preventDefault();
-      focusMenuItem(items.length - 1);
-    }
-  };
+  const items: QuickMenuItem[] =
+    menu.kind === "tool"
+      ? [
+          { label: "View schema", onSelect: onViewSchema },
+          { label: "Call Tool", onSelect: onCallTool },
+        ]
+      : [
+          { label: "View details", onSelect: onViewServer },
+          { label: "Refresh tools", onSelect: onRefreshServer },
+          ...(menu.isExternal
+            ? [
+                {
+                  label: menu.enabled === false ? "Enable server" : "Disable server",
+                  onSelect: onToggleEnabled,
+                },
+                {
+                  label: "Remove server...",
+                  onSelect: onRemoveServer,
+                  destructive: true,
+                },
+              ]
+            : []),
+        ];
 
   return (
-    <>
-      <div
-        className="session-ctx-backdrop"
-        role="presentation"
-        tabIndex={-1}
-        onClick={onClose}
-      />
-      <div
-        ref={menuRef}
-        className="session-ctx-menu"
-        style={menuStyle}
-        role="menu"
-        aria-label={menu.kind === "tool" ? "MCP tool actions" : "MCP server actions"}
-        tabIndex={-1}
-        onKeyDown={handleKeyDown}
-      >
-        {menu.kind === "tool" ? (
-          <>
-            <button className="session-ctx-item" role="menuitem" onClick={onViewSchema}>
-              View schema
-            </button>
-            <button className="session-ctx-item" role="menuitem" onClick={onCallTool}>
-              Call Tool
-            </button>
-          </>
-        ) : (
-          <>
-            <button className="session-ctx-item" role="menuitem" onClick={onViewServer}>
-              View details
-            </button>
-            <button className="session-ctx-item" role="menuitem" onClick={onRefreshServer}>
-              Refresh tools
-            </button>
-            {menu.isExternal && (
-              <>
-                <button
-                  className="session-ctx-item"
-                  role="menuitem"
-                  onClick={onToggleEnabled}
-                >
-                  {menu.enabled === false ? "Enable server" : "Disable server"}
-                </button>
-                <button
-                  className="session-ctx-item session-ctx-item--destructive"
-                  role="menuitem"
-                  onClick={onRemoveServer}
-                >
-                  Remove server...
-                </button>
-              </>
-            )}
-          </>
-        )}
-      </div>
-    </>
+    <QuickMenu
+      anchor={{
+        x: menu.x,
+        y: menu.y,
+        width: menu.width ?? 0,
+        height: menu.height ?? 0,
+      }}
+      menuLabel={menu.kind === "tool" ? "MCP tool actions" : "MCP server actions"}
+      items={items}
+      onClose={onClose}
+    />
   );
 }

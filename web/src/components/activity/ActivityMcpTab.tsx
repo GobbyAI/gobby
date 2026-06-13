@@ -182,11 +182,12 @@ export function ActivityMcpTab({
     ) => {
       event.stopPropagation();
       const rect = event.currentTarget.getBoundingClientRect();
-      const menuWidth = 190;
       setMenu({
         ...nextMenu,
-        x: Math.max(0, Math.min(rect.right - menuWidth, window.innerWidth - menuWidth)),
-        y: rect.bottom + 4,
+        x: rect.left,
+        y: rect.top,
+        width: rect.width,
+        height: rect.height,
       });
     },
     [],

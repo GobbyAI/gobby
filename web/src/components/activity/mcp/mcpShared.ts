@@ -12,6 +12,8 @@ export type McpSelection =
 export interface McpContextMenu {
   x: number;
   y: number;
+  width?: number;
+  height?: number;
   kind: "server" | "tool";
   serverName: string;
   toolName?: string;

@@ -675,12 +675,11 @@ export const TasksTab = memo(function TasksTab({
     (event: MouseEvent<HTMLButtonElement>, task: GobbyTask) => {
       event.stopPropagation();
       const rect = event.currentTarget.getBoundingClientRect();
-      const menuWidth = 180;
-      const candidateX = rect.left - menuWidth;
-      const x = Math.max(0, Math.min(candidateX, window.innerWidth - menuWidth));
       setTaskMenu({
-        x,
+        x: rect.left,
         y: rect.top,
+        width: rect.width,
+        height: rect.height,
         task,
       });
     },
