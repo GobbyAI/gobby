@@ -720,6 +720,44 @@ class TestVectorStoreIntegration:
         assert mock_vs.upsert.call_args is not None
 
 
+class TestLifecycleService:
+    """Service-level tests for memory lifecycle side effects."""
+
+    @pytest.mark.asyncio
+    async def test_create_update_delete_updates_secondary_indices(
+        self,
+        db,
+        memory_config,
+    ) -> None:
+        """Lifecycle service handles vector side effects without manager logic."""
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock()
+        mock_vs.delete = AsyncMock()
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        manager = MemoryManager(
+            db=db,
+            config=memory_config,
+            vector_store=mock_vs,
+            embed_fn=mock_embed,
+        )
+        manager._dedup_service = None
+
+        memory = await manager._lifecycle_service.create_memory(
+            content="Lifecycle service memory",
+            project_id="proj-1",
+        )
+        updated = await manager._lifecycle_service.update_memory(
+            memory.id,
+            content="Updated lifecycle service memory",
+        )
+        deleted = await manager._lifecycle_service.delete_memory(memory.id)
+
+        assert updated.content == "Updated lifecycle service memory"
+        assert deleted is True
+        assert mock_vs.upsert.await_count == 2
+        mock_vs.delete.assert_awaited_once_with(memory.id)
+
+
 # =============================================================================
 # Test: delete_memory with VectorStore and KG
 # =============================================================================
