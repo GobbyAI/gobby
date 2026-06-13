@@ -1073,6 +1073,70 @@ class TestCodexAppServerClientRunTurn:
         assert [event["threadId"] for event in second_events] == ["second", "second"]
 
     @pytest.mark.asyncio
+    async def test_run_turn_interrupts_unfinished_turn_when_cancelled(self):
+        """Cancelled streams interrupt the in-progress app-server turn."""
+        client = CodexAppServerClient()
+        event_methods = [
+            "turn/started",
+            "turn/completed",
+            "turn/failed",
+            "thread/closed",
+            "item/started",
+            "item/completed",
+            "item/agentMessage/delta",
+        ]
+
+        with patch.object(client, "_send_request", new_callable=AsyncMock) as send_request:
+            send_request.side_effect = [
+                {"turn": {"id": "turn-cancel", "status": "inProgress", "items": []}},
+                {},
+            ]
+            stream = client.run_turn("thr-1", "Test")
+
+            assert (await anext(stream))["type"] == "turn/created"
+            pending_event = asyncio.create_task(anext(stream))
+            await asyncio.sleep(0)
+
+            pending_event.cancel()
+
+            with pytest.raises(asyncio.CancelledError):
+                await pending_event
+
+        assert send_request.await_count == 2
+        assert send_request.await_args_list[1].args == (
+            "turn/interrupt",
+            {"threadId": "thr-1", "turnId": "turn-cancel"},
+        )
+        assert all(client._notification_handlers.get(method) == [] for method in event_methods)
+
+    @pytest.mark.asyncio
+    async def test_run_turn_does_not_interrupt_after_terminal_event(self):
+        """Completed streams do not send a redundant app-server interrupt."""
+        client = CodexAppServerClient()
+
+        with patch.object(client, "_send_request", new_callable=AsyncMock) as send_request:
+            send_request.return_value = {
+                "turn": {"id": "turn-complete", "status": "inProgress", "items": []}
+            }
+            stream = client.run_turn("thr-1", "Test")
+
+            assert (await anext(stream))["type"] == "turn/created"
+            for handler in client._notification_handlers.get("turn/completed", []):
+                handler(
+                    "turn/completed",
+                    {
+                        "threadId": "thr-1",
+                        "turn": {"id": "turn-complete", "status": "completed"},
+                    },
+                )
+
+            assert (await anext(stream))["type"] == "turn/completed"
+            with pytest.raises(StopAsyncIteration):
+                await anext(stream)
+
+        assert send_request.await_count == 1
+
+    @pytest.mark.asyncio
     async def test_run_turn_raises_on_turn_failed(self):
         """run_turn raises when the app-server reports a failed turn."""
         client = CodexAppServerClient()

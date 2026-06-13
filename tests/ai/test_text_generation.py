@@ -12,14 +12,13 @@ import pytest
 import gobby.ai._text_generation_adapters as text_generation_adapters
 from gobby.adapters.acp_client import StreamEvent
 from gobby.ai import (
-    ACPTextGenerateAdapter,
     AIAdapterStyle,
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
     CapabilityUnavailableError,
     ClaudeTextGenerateAdapter,
-    CodexAppServerTextGenerateAdapter,
+    CodexCLITextGenerateAdapter,
     DroidCLITextGenerateAdapter,
     LocalTextGenerateAdapter,
     TextGenerationRequest,
@@ -121,15 +120,21 @@ class JSONTextAdapter(RecordingAdapter):
         return '```json\n{"ok": true, "model": "%s"}\n```' % (request.model or "")
 
 
+class EmptyTextAdapter(RecordingAdapter):
+    async def generate(self, request: TextGenerationRequest) -> str:
+        self.requests.append(request)
+        return ""
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_selects_available_registry_binding() -> None:
     providers = {
         "claude": AIAdapterStyle.LLM_PROVIDER,
         "codex": AIAdapterStyle.DAEMON,
         "local:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
-        "gemini": AIAdapterStyle.ACP,
-        "grok": AIAdapterStyle.ACP,
-        "qwen": AIAdapterStyle.ACP,
+        "gemini": AIAdapterStyle.CLI,
+        "grok": AIAdapterStyle.CLI,
+        "qwen": AIAdapterStyle.CLI,
         "droid": AIAdapterStyle.CLI,
     }
     registry = AICapabilityRegistry(
@@ -1162,6 +1167,33 @@ async def test_text_generation_service_parses_json_text_fallback() -> None:
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_json_parse_failure_reports_raw_preview() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-3.5-flash",),
+            )
+        ]
+    )
+    adapter = EmptyTextAdapter("gemini")
+    service = TextGenerationService(registry, {"gemini": adapter})
+
+    with pytest.raises(ValueError) as exc_info:
+        await service.generate_json(
+            TextGenerationRequest(prompt="classify", provider="gemini", model="gemini-3.5-flash")
+        )
+
+    message = str(exc_info.value)
+    assert "Generated JSON parse failed" in message
+    assert "raw_len=0" in message
+    assert "raw_preview='<empty>'" in message
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_resolves_only_selected_adapter() -> None:
     providers = ("claude", "codex", "local:lm-studio", "gemini", "grok", "qwen", "droid")
     registry = AICapabilityRegistry(
@@ -1276,19 +1308,18 @@ def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> 
     } == set(providers)
 
 
-def test_daemon_text_generation_builder_maps_feature_providers_to_cli_adapters() -> None:
+def test_daemon_text_generation_builder_maps_feature_providers_to_one_shot_adapters() -> None:
     factories = _daemon_text_generation_adapter_factories(DaemonConfig())
 
+    codex_adapter = factories["codex"]()
     gemini_adapter = factories["gemini"]()
     grok_adapter = factories["grok"]()
     qwen_adapter = factories["qwen"]()
 
+    assert isinstance(codex_adapter, CodexCLITextGenerateAdapter)
     assert isinstance(gemini_adapter, text_generation_adapters._GeminiCLITextGenerateAdapter)
     assert isinstance(grok_adapter, text_generation_adapters._GrokCLITextGenerateAdapter)
     assert isinstance(qwen_adapter, text_generation_adapters._QwenCLITextGenerateAdapter)
-    assert not isinstance(gemini_adapter, ACPTextGenerateAdapter)
-    assert not isinstance(grok_adapter, ACPTextGenerateAdapter)
-    assert not isinstance(qwen_adapter, ACPTextGenerateAdapter)
 
 
 class FakeNativeTextProvider:
@@ -1547,295 +1578,97 @@ class DisconnectingCodexAppServerClient(FakeCodexAppServerClient):
 
 
 @pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_runs_one_shot_turn() -> None:
-    client = FakeCodexAppServerClient()
-    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
+async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls: list[dict[str, Any]] = []
+
+    async def fake_run_cli(
+        provider_name: str,
+        command: list[str],
+        *,
+        cwd: str | None,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+    ) -> str:
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text("final answer\n", encoding="utf-8")
+        calls.append(
+            {
+                "provider_name": provider_name,
+                "command": command,
+                "cwd": cwd,
+                "timeout_seconds": timeout_seconds,
+                "env_overrides": env_overrides,
+            }
+        )
+        return "stdout is ignored"
+
+    monkeypatch.setattr(text_generation_adapters, "_run_cli_text_generation_command", fake_run_cli)
+    adapter = CodexCLITextGenerateAdapter(
+        command_path="/bin/codex",
+        timeout_seconds=12.0,
+        env={"EXTRA": "1"},
+    )
 
     response = await adapter.generate(
         TextGenerationRequest(
             provider="codex",
             prompt="user prompt",
             system_prompt="system prompt",
-            model="gpt-5.4",
+            model="gpt-5.4-mini",
             cwd="/tmp/project",
         )
     )
 
-    assert response == "hello world"
-    assert client.started is True
-    assert client.stopped is True
-    assert client.thread_kwargs == {
-        "cwd": "/tmp/project",
-        "model": "gpt-5.4",
-        "approval_policy": "never",
-        "sandbox": "readOnly",
-        "ephemeral": True,
-    }
-    assert client.turn_kwargs == {
-        "thread_id": "thread-1",
-        "prompt": "user prompt",
-        "images": None,
-        "context_prefix": f"system prompt\n\n{ONE_SHOT_DIRECTIVE}",
-    }
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_borrows_connected_client() -> None:
-    shared_client = FakeCodexAppServerClient(connected=True)
-    owned_client = FakeCodexAppServerClient()
-    adapter = CodexAppServerTextGenerateAdapter(
-        lambda: owned_client,
-        shared_client_provider=lambda: shared_client,
-    )
-
-    response = await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
-
-    assert response == "hello world"
-    assert shared_client.start_calls == 0
-    assert shared_client.stop_calls == 0
-    assert shared_client.archived_thread_ids == ["thread-1"]
-    assert owned_client.start_calls == 0
-    assert owned_client.stop_calls == 0
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_swallows_borrowed_archive_timeout(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    class HangingArchiveCodexClient(FakeCodexAppServerClient):
-        def __init__(self) -> None:
-            super().__init__(connected=True)
-            self._threads = {"thread-1": object()}
-            self._thread_cwds = {"thread-1": "/tmp/project"}
-            self._thread_terminal_contexts = {"thread-1": {"source": "test"}}
-            self.archive_attempted_thread_ids: list[str] = []
-
-        async def archive_thread(self, thread_id: str) -> None:
-            self.archive_attempted_thread_ids.append(thread_id)
-            await asyncio.Event().wait()
-
-    shared_client = HangingArchiveCodexClient()
-    adapter = CodexAppServerTextGenerateAdapter(
-        lambda: FakeCodexAppServerClient(),
-        shared_client_provider=lambda: shared_client,
-    )
-    monkeypatch.setattr(
-        text_generation_adapters,
-        "_BORROWED_THREAD_ARCHIVE_TIMEOUT_SECONDS",
-        0.01,
-    )
-    caplog.set_level(logging.ERROR, logger=text_generation_adapters.logger.name)
-
-    response = await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
-
-    assert response == "hello world"
-    assert shared_client.archive_attempted_thread_ids == ["thread-1"]
-    assert shared_client._threads == {}
-    assert shared_client._thread_cwds == {}
-    assert shared_client._thread_terminal_contexts == {}
-    assert [record for record in caplog.records if record.levelno >= logging.ERROR] == []
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_falls_back_when_borrowed_unavailable() -> (
-    None
-):
-    shared_client = FakeCodexAppServerClient(connected=False)
-    owned_client = FakeCodexAppServerClient()
-    adapter = CodexAppServerTextGenerateAdapter(
-        lambda: owned_client,
-        shared_client_provider=lambda: shared_client,
-    )
-
-    response = await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
-
-    assert response == "hello world"
-    assert shared_client.start_calls == 0
-    assert shared_client.stop_calls == 0
-    assert shared_client.archived_thread_ids == []
-    assert owned_client.start_calls == 1
-    assert owned_client.stop_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_retries_owned_after_connection_loss() -> None:
-    shared_client = DisconnectingCodexAppServerClient(connected=True)
-    owned_client = FakeCodexAppServerClient()
-    adapter = CodexAppServerTextGenerateAdapter(
-        lambda: owned_client,
-        shared_client_provider=lambda: shared_client,
-    )
-
-    response = await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
-
-    assert response == "hello world"
-    assert shared_client.start_calls == 0
-    assert shared_client.stop_calls == 0
-    assert shared_client.archived_thread_ids == ["thread-1"]
-    assert owned_client.start_calls == 1
-    assert owned_client.stop_calls == 1
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_keeps_connected_borrowed_errors() -> None:
-    shared_client = FakeCodexAppServerClient(
-        [
-            {
-                "type": "turn/completed",
-                "error": {"message": "bad model"},
-            }
-        ],
-        connected=True,
-    )
-    owned_client = FakeCodexAppServerClient()
-    adapter = CodexAppServerTextGenerateAdapter(
-        lambda: owned_client,
-        shared_client_provider=lambda: shared_client,
-    )
-
-    with pytest.raises(RuntimeError, match="bad model"):
-        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
-
-    assert shared_client.archived_thread_ids == ["thread-1"]
-    assert owned_client.start_calls == 0
-    assert owned_client.stop_calls == 0
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_isolates_concurrent_borrowed_threads() -> (
-    None
-):
-    class PerThreadCodexClient(FakeCodexAppServerClient):
-        async def run_turn(
-            self,
-            thread_id: str,
-            prompt: str,
-            images: list[str] | None = None,
-            **config_overrides: Any,
-        ) -> AsyncIterator[dict[str, Any]]:
-            self.turn_kwargs = {
-                "thread_id": thread_id,
-                "prompt": prompt,
-                "images": images,
-                **config_overrides,
-            }
-            self.turn_kwargs_list.append(self.turn_kwargs)
-            yield {"type": "item/agentMessage/delta", "delta": f"{thread_id}:{prompt}"}
-
-    shared_client = PerThreadCodexClient(
-        connected=True,
-        thread_ids=["thread-a", "thread-b"],
-    )
-    adapter = CodexAppServerTextGenerateAdapter(
-        lambda: FakeCodexAppServerClient(),
-        shared_client_provider=lambda: shared_client,
-    )
-
-    first, second = await asyncio.gather(
-        adapter.generate(TextGenerationRequest(provider="codex", prompt="first")),
-        adapter.generate(TextGenerationRequest(provider="codex", prompt="second")),
-    )
-
-    assert first == "thread-a:first"
-    assert second == "thread-b:second"
-    assert shared_client.start_calls == 0
-    assert shared_client.stop_calls == 0
-    assert shared_client.archived_thread_ids == ["thread-a", "thread-b"]
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_ignores_completed_user_messages() -> None:
-    client = FakeCodexAppServerClient(
-        [
-            {
-                "type": "item/completed",
-                "item": {"type": "userMessage", "content": [{"text": "user prompt"}]},
-            },
-            {
-                "type": "item/completed",
-                "item": {"type": "plan", "text": "plan text"},
-            },
-            {
-                "type": "item/completed",
-                "item": {"type": "agentMessage", "text": "final answer"},
-            },
-        ]
-    )
-    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
-
-    response = await adapter.generate(
-        TextGenerationRequest(
-            provider="codex",
-            prompt="user prompt",
-            model="gpt-5.3-codex-spark",
-        )
-    )
-
     assert response == "final answer"
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_raises_on_completed_error() -> None:
-    client = FakeCodexAppServerClient(
-        [
-            {
-                "type": "turn/completed",
-                "turn": {
-                    "id": "turn-1",
-                    "status": "error",
-                    "error": "quota exceeded",
-                    "items": [],
-                },
-            }
-        ]
-    )
-    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
-
-    with pytest.raises(RuntimeError, match="quota exceeded"):
-        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
-
-    assert client.stopped is True
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_times_out_and_stops_client() -> None:
-    client = HangingCodexAppServerClient()
-    adapter = CodexAppServerTextGenerateAdapter(lambda: client, timeout_seconds=0.01)
-
-    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
-        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
-
-    assert client.started is True
-    assert client.stopped is True
-    assert client.turn_kwargs == {
-        "thread_id": "thread-1",
-        "prompt": "user prompt",
-        "images": None,
-        "context_prefix": ONE_SHOT_DIRECTIVE,
+    assert len(calls) == 1
+    call = calls[0]
+    command = call["command"]
+    assert call == {
+        "provider_name": "Codex",
+        "command": command,
+        "cwd": "/tmp/project",
+        "timeout_seconds": 12.0,
+        "env_overrides": {"EXTRA": "1"},
     }
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_enforces_configured_deadline() -> None:
-    client = HangingCodexAppServerClient()
-    adapter = CodexAppServerTextGenerateAdapter(lambda: client, timeout_seconds=0.01)
-
-    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
-        await adapter.generate(TextGenerationRequest(provider="codex", prompt="never completes"))
-
-    assert client.started is True
-    assert client.stopped is True
+    assert command[:9] == [
+        "/bin/codex",
+        "--ask-for-approval",
+        "never",
+        "exec",
+        "--ephemeral",
+        "--ignore-user-config",
+        "--ignore-rules",
+        "--sandbox",
+        "read-only",
+    ]
+    assert "--output-last-message" in command
+    assert command[command.index("--model") + 1] == "gpt-5.4-mini"
+    assert command[command.index("--cd") + 1] == "/tmp/project"
+    assert command[-1] == f"system prompt\n\n{ONE_SHOT_DIRECTIVE}\n\nuser prompt"
 
 
 @pytest.mark.asyncio
 async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    client = HangingCodexAppServerClient()
-    monkeypatch.setattr(
-        "gobby.ai._text_generation_adapters._codex_app_server_client", lambda: client
-    )
+    recorded_timeouts: list[float] = []
+
+    async def fake_run_cli(
+        provider_name: str,
+        command: list[str],
+        *,
+        cwd: str | None,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+    ) -> str:
+        recorded_timeouts.append(timeout_seconds)
+        output_path = Path(command[command.index("--output-last-message") + 1])
+        output_path.write_text("ok", encoding="utf-8")
+        return "ignored"
+
+    monkeypatch.setattr(text_generation_adapters, "_run_cli_text_generation_command", fake_run_cli)
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -1851,118 +1684,30 @@ async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
         registry=registry,
     )
 
-    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
-        await service.generate(
-            TextGenerationRequest(
-                provider="codex",
-                model="gpt-5",
-                prompt="never completes",
-            )
-        )
-
-    assert client.started is True
-    assert client.stopped is True
-
-
-@pytest.mark.asyncio
-async def test_build_daemon_text_generation_service_plumbs_codex_client_provider() -> None:
-    shared_client = HangingCodexAppServerClient(connected=True)
-    provider_calls = 0
-
-    def shared_client_provider() -> FakeCodexAppServerClient:
-        nonlocal provider_calls
-        provider_calls += 1
-        return shared_client
-
-    registry = AICapabilityRegistry(
-        [
-            CapabilityBinding(
-                capability=AICapability.TEXT_GENERATE,
-                provider="codex",
-                adapter_style=AIAdapterStyle.DAEMON,
-                available=True,
-            )
-        ]
-    )
-    service = build_daemon_text_generation_service(
-        DaemonConfig(ai={"generation": {"timeout_seconds": 0.01}}),
-        registry=registry,
-        codex_client_provider=shared_client_provider,
-    )
-
-    with pytest.raises(RuntimeError, match="timed out after 0.01s"):
-        await service.generate(
-            TextGenerationRequest(
-                provider="codex",
-                model="gpt-5",
-                prompt="never completes",
-            )
-        )
-
-    assert provider_calls == 1
-    assert shared_client.start_calls == 0
-    assert shared_client.stop_calls == 0
-    assert shared_client.archived_thread_ids == ["thread-1"]
-
-
-@pytest.mark.asyncio
-async def test_codex_app_server_text_generate_adapter_raises_when_turn_has_no_output() -> None:
-    client = FakeCodexAppServerClient(
-        [{"type": "turn/completed", "turn": {"id": "turn-1", "status": "completed", "items": []}}]
-    )
-    adapter = CodexAppServerTextGenerateAdapter(lambda: client)
-
-    with pytest.raises(RuntimeError, match="returned no output"):
-        await adapter.generate(TextGenerationRequest(provider="codex", prompt="user prompt"))
-
-    assert client.stopped is True
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("provider", ["gemini", "grok", "qwen"])
-async def test_acp_text_generate_adapter_runs_one_shot_prompt_turn(provider: str) -> None:
-    client = FakeACPClient()
-    adapter = ACPTextGenerateAdapter(lambda: client)  # type: ignore[arg-type]
-
-    response = await adapter.generate(
+    result = await service.generate_result(
         TextGenerationRequest(
-            provider=provider,
-            prompt="user prompt",
-            system_prompt="system prompt",
-            model="model-a",
-            cwd="/tmp/project",
+            provider="codex",
+            model="gpt-5",
+            prompt="complete",
         )
     )
 
-    assert response == "hello world"
-    assert client.started == {
-        "auto_session": True,
-        "cwd": "/tmp/project",
-        "model": "model-a",
-    }
-    assert len(client.sent) == 1
-    sent = dict(client.sent[0])
-    pre_tool_callback = sent.pop("pre_tool_callback")
-    assert sent == {
-        "message": f"system prompt\n\n{ONE_SHOT_DIRECTIVE}\n\nuser prompt",
-        "model": "model-a",
-    }
-    decision = await pre_tool_callback({"tool_name": "read_file", "tool_input": {}})
-    assert decision == {
-        "decision": "deny",
-        "reason": "Tool use is disabled for one-shot text generation.",
-    }
-    assert client.stopped is True
+    assert result.text == "ok"
+    assert recorded_timeouts == [0.01]
 
 
 @pytest.mark.asyncio
-async def test_text_generation_service_falls_back_when_acp_candidate_errors() -> None:
+async def test_text_generation_service_falls_back_when_candidate_errors() -> None:
+    class FailingAdapter:
+        async def generate(self, request: TextGenerationRequest) -> str:
+            raise RuntimeError("provider unavailable")
+
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider="gemini",
-                adapter_style=AIAdapterStyle.ACP,
+                adapter_style=AIAdapterStyle.CLI,
                 available=True,
                 models=("gemini-pro",),
             ),
@@ -1975,14 +1720,11 @@ async def test_text_generation_service_falls_back_when_acp_candidate_errors() ->
             ),
         ]
     )
-    acp_client = FakeACPClient(
-        [StreamEvent(event_type="error", data={"message": "provider unavailable"})]
-    )
     claude = RecordingAdapter("claude")
     service = TextGenerationService(
         registry,
         {
-            "gemini": ACPTextGenerateAdapter(lambda: acp_client),  # type: ignore[arg-type]
+            "gemini": FailingAdapter(),
             "claude": claude,
         },
     )
@@ -1996,29 +1738,31 @@ async def test_text_generation_service_falls_back_when_acp_candidate_errors() ->
     )
 
     assert result.text == "claude:summarize"
-    assert acp_client.stopped is True
 
 
 @pytest.mark.asyncio
-async def test_acp_one_shot_directive_composes_with_json_instruction() -> None:
+async def test_json_text_generation_composes_json_instruction() -> None:
+    class RecordingJSONTextAdapter:
+        def __init__(self) -> None:
+            self.requests: list[TextGenerationRequest] = []
+
+        async def generate(self, request: TextGenerationRequest) -> str:
+            self.requests.append(request)
+            return '{"ok": true}'
+
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider="gemini",
-                adapter_style=AIAdapterStyle.ACP,
+                adapter_style=AIAdapterStyle.CLI,
                 available=True,
                 models=("gemini-pro",),
             )
         ]
     )
-    acp_client = FakeACPClient(
-        [StreamEvent(event_type="content_delta", data={"content": '{"ok": true}'})]
-    )
-    service = TextGenerationService(
-        registry,
-        {"gemini": ACPTextGenerateAdapter(lambda: acp_client)},  # type: ignore[dict-item]
-    )
+    adapter = RecordingJSONTextAdapter()
+    service = TextGenerationService(registry, {"gemini": adapter})
 
     result = await service.generate_json(
         TextGenerationRequest(
@@ -2030,11 +1774,9 @@ async def test_acp_one_shot_directive_composes_with_json_instruction() -> None:
     )
 
     assert result == {"ok": True}
-    message = str(acp_client.sent[0]["message"])
-    assert message.startswith("caller prompt")
-    json_instruction_index = message.index("Respond with a single valid JSON object")
-    directive_index = message.index(ONE_SHOT_DIRECTIVE)
-    assert json_instruction_index < directive_index
+    assert adapter.requests[0].system_prompt == (
+        "caller prompt\n\nRespond with a single valid JSON object. Do not include markdown."
+    )
 
 
 def _two_candidate_registry(slow_provider: str, good_provider: str) -> AICapabilityRegistry:
@@ -2162,14 +1904,14 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     monkeypatch.setattr(
         text_generation_adapters,
         "_GeminiCLITextGenerateAdapter",
-        lambda: slow_adapter,
+        lambda **_kwargs: slow_adapter,
     )
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
                 provider="gemini",
-                adapter_style=AIAdapterStyle.DAEMON,
+                adapter_style=AIAdapterStyle.CLI,
                 available=True,
             )
         ]
@@ -2190,9 +1932,15 @@ class FakeProcess:
         self._stdout = stdout
         self._stderr = stderr
         self.returncode = returncode
+        self.pid = 4242
+        self.terminated = False
 
     async def communicate(self) -> tuple[bytes, bytes]:
         return self._stdout, self._stderr
+
+    def terminate(self) -> None:
+        self.terminated = True
+        self.returncode = -15
 
     def kill(self) -> None:
         self.returncode = -9
@@ -2215,6 +1963,108 @@ class HangingProcess(FakeProcess):
         super().kill()
 
 
+@pytest.mark.asyncio
+async def test_run_cli_text_generation_command_cleans_up_process_when_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+
+    class ObservableHangingProcess(HangingProcess):
+        async def communicate(self) -> tuple[bytes, bytes]:
+            started.set()
+            await asyncio.sleep(10)
+            return b"", b""
+
+    process = ObservableHangingProcess()
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        assert start_new_session is True
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    task = asyncio.create_task(
+        text_generation_adapters._run_cli_text_generation_command(
+            "Gemini",
+            ("/usr/local/bin/gemini", "--prompt", "slow"),
+            cwd=None,
+            timeout_seconds=30,
+            env_overrides={},
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert process.terminated is True
+    assert process.killed is False
+
+
+@pytest.mark.asyncio
+async def test_run_cli_text_generation_command_signals_process_group_when_cancelled(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    started = asyncio.Event()
+
+    class ObservableHangingProcess(HangingProcess):
+        async def communicate(self) -> tuple[bytes, bytes]:
+            started.set()
+            await asyncio.sleep(10)
+            return b"", b""
+
+    process = ObservableHangingProcess()
+    signals: list[tuple[int, object]] = []
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        assert start_new_session is True
+        return process
+
+    def fake_signal_process_group(process_arg: FakeProcess, signal_arg: object) -> bool:
+        signals.append((process_arg.pid, signal_arg))
+        process_arg.returncode = -15
+        return True
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(
+        text_generation_adapters,
+        "_signal_cli_process_group",
+        fake_signal_process_group,
+    )
+    task = asyncio.create_task(
+        text_generation_adapters._run_cli_text_generation_command(
+            "Qwen",
+            ("/usr/local/bin/qwen", "--model", "slow"),
+            cwd=None,
+            timeout_seconds=30,
+            env_overrides={},
+        )
+    )
+    await asyncio.wait_for(started.wait(), timeout=1)
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert signals == [(process.pid, text_generation_adapters.signal.SIGTERM)]
+    assert process.terminated is False
+    assert process.killed is False
+
+
 def _assert_droid_isolated_env(env: dict[str, str]) -> Path:
     temp_home = Path(env["HOME"])
     assert temp_home.name.startswith("gobby-droid-feature-")
@@ -2227,14 +2077,12 @@ def _assert_droid_isolated_env(env: dict[str, str]) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_gemini_cli_text_generate_adapter_deletes_headless_session(
+async def test_gemini_cli_text_generate_adapter_runs_non_session_prompt(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     commands: list[tuple[str, ...]] = []
-    policy_contents: list[str] = []
     cwds: list[str | None] = []
     envs: list[dict[str, str]] = []
-    session_id = "11111111-1111-4111-8111-111111111111"
 
     async def fake_create_subprocess_exec(
         *command: str,
@@ -2242,20 +2090,16 @@ async def test_gemini_cli_text_generate_adapter_deletes_headless_session(
         stderr: int,
         cwd: str | None,
         env: dict[str, str],
+        start_new_session: bool,
     ) -> FakeProcess:
         commands.append(command)
         cwds.append(cwd)
         envs.append(env)
-        if "--admin-policy" in command:
-            policy_path = Path(command[command.index("--admin-policy") + 1])
-            policy_contents.append(policy_path.read_text(encoding="utf-8"))
-            return FakeProcess(b"gemini text\n")
-        return FakeProcess(b"deleted\n")
+        return FakeProcess(b"gemini text\n")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
         command_path="/usr/local/bin/gemini",
-        session_id_factory=lambda: session_id,
     )
 
     response = await adapter.generate(
@@ -2268,47 +2112,26 @@ async def test_gemini_cli_text_generate_adapter_deletes_headless_session(
     )
 
     assert response == "gemini text"
-    policy_path = commands[0][commands[0].index("--admin-policy") + 1]
     assert commands == [
         (
             "/usr/local/bin/gemini",
             "--output-format",
             "text",
-            "--session-id",
-            session_id,
-            "--admin-policy",
-            policy_path,
-            "--approval-mode",
-            "plan",
             "--model",
             "gemini-3-pro",
             "--prompt",
             f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain",
         ),
-        ("/usr/local/bin/gemini", "--delete-session", session_id),
     ]
-    assert policy_contents == [
-        "\n".join(
-            [
-                "[[rule]]",
-                'toolName = "*"',
-                'decision = "deny"',
-                "priority = 999",
-                'denyMessage = "Tool use is disabled for one-shot text generation."',
-                "",
-            ]
-        )
-    ]
-    assert cwds == ["/tmp/project", "/tmp/project"]
+    assert cwds == ["/tmp/project"]
     assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
 
 
 @pytest.mark.asyncio
-async def test_gemini_cli_text_generate_adapter_fails_when_cleanup_fails(
+async def test_gemini_cli_text_generate_adapter_parses_json_output_wrapper(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     commands: list[tuple[str, ...]] = []
-    session_id = "22222222-2222-4222-8222-222222222222"
 
     async def fake_create_subprocess_exec(
         *command: str,
@@ -2316,25 +2139,58 @@ async def test_gemini_cli_text_generate_adapter_fails_when_cleanup_fails(
         stderr: int,
         cwd: str | None,
         env: dict[str, str],
+        start_new_session: bool,
     ) -> FakeProcess:
         commands.append(command)
-        if "--delete-session" in command:
-            return FakeProcess(b"", b"cleanup denied", returncode=1)
-        return FakeProcess(b"gemini text\n")
+        return FakeProcess(b'{"response":"{\\"ok\\":true,\\"name\\":\\"Ada\\"}","stats":{}}\n')
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
         command_path="/usr/local/bin/gemini",
-        session_id_factory=lambda: session_id,
     )
 
-    with pytest.raises(
-        RuntimeError,
-        match="Gemini session cleanup CLI failed with exit code 1: cleanup denied",
-    ):
-        await adapter.generate(TextGenerationRequest(prompt="explain"))
+    response = await adapter.generate_json(
+        TextGenerationRequest(prompt="extract", model="gemini-3-pro")
+    )
 
-    assert commands[1] == ("/usr/local/bin/gemini", "--delete-session", session_id)
+    assert response == {"ok": True, "name": "Ada"}
+    assert commands == [
+        (
+            "/usr/local/bin/gemini",
+            "--output-format",
+            "json",
+            "--model",
+            "gemini-3-pro",
+            "--prompt",
+            (
+                "Respond with a single valid JSON object. Do not include markdown."
+                f"\n\n{ONE_SHOT_DIRECTIVE}\n\nextract"
+            ),
+        ),
+    ]
+
+
+@pytest.mark.asyncio
+async def test_gemini_cli_text_generate_adapter_reports_json_wrapper_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def fake_create_subprocess_exec(
+        *_command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        return FakeProcess(b'{"error":{"message":"quota exceeded"}}\n')
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
+        command_path="/usr/local/bin/gemini",
+    )
+
+    with pytest.raises(RuntimeError, match="quota exceeded"):
+        await adapter.generate_json(TextGenerationRequest(prompt="extract"))
 
 
 @pytest.mark.asyncio
@@ -2351,6 +2207,7 @@ async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
         stderr: int,
         cwd: str | None,
         env: dict[str, str],
+        start_new_session: bool,
     ) -> FakeProcess:
         commands.append(command)
         cwds.append(cwd)
@@ -2408,6 +2265,7 @@ async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
         stderr: int,
         cwd: str | None,
         env: dict[str, str],
+        start_new_session: bool,
     ) -> FakeProcess:
         commands.append(command)
         cwds.append(cwd)
@@ -2472,7 +2330,9 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
         stderr: int,
         cwd: str | None,
         env: dict[str, str],
+        start_new_session: bool,
     ) -> FakeProcess:
+        assert start_new_session is True
         calls.append((command, cwd, env))
         return FakeProcess(b"done\n")
 
@@ -2521,7 +2381,9 @@ async def test_droid_cli_text_generate_adapter_reports_exec_failure(
         stderr: int,
         cwd: str | None,
         env: dict[str, str],
+        start_new_session: bool,
     ) -> FakeProcess:
+        assert start_new_session is True
         temp_homes.append(Path(env["HOME"]))
         return FakeProcess(b"", b"bad auth", returncode=2)
 
@@ -2553,7 +2415,9 @@ async def test_droid_cli_text_generate_adapter_reports_timeout_with_command(
         stderr: int,
         cwd: str | None,
         env: dict[str, str],
+        start_new_session: bool,
     ) -> FakeProcess:
+        assert start_new_session is True
         temp_homes.append(Path(env["HOME"]))
         return process
 
@@ -2566,7 +2430,8 @@ async def test_droid_cli_text_generate_adapter_reports_timeout_with_command(
     with pytest.raises(RuntimeError) as exc_info:
         await adapter.generate(TextGenerationRequest(prompt="hello world"))
 
-    assert process.killed is True
+    assert process.terminated is True
+    assert process.killed is False
     assert "Droid exec timed out after 0.01s" in str(exc_info.value)
     assert "/usr/local/bin/droid exec --output-format text 'hello world'" in str(exc_info.value)
     assert temp_homes
@@ -2590,7 +2455,9 @@ async def test_droid_cli_text_generate_adapter_cleans_temp_home_after_setup_fail
         stderr: int,
         cwd: str | None,
         env: dict[str, str],
+        start_new_session: bool,
     ) -> FakeProcess:
+        assert start_new_session is True
         temp_home = Path(env["HOME"])
         temp_homes.append(temp_home)
         (temp_home / ".factory" / "sessions").mkdir(parents=True)
@@ -2659,7 +2526,9 @@ async def test_droid_cli_text_generate_adapter_seeds_auth_config_without_history
         stderr: int,
         cwd: str | None,
         env: dict[str, str],
+        start_new_session: bool,
     ) -> FakeProcess:
+        assert start_new_session is True
         temp_home = Path(env["HOME"])
         temp_homes.append(temp_home)
         seeded_factory = temp_home / ".factory"

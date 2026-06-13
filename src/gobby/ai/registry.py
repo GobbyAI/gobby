@@ -828,7 +828,7 @@ def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
     if provider == "codex":
         return AIAdapterStyle.DAEMON
     if provider in {"gemini", "grok", "qwen"}:
-        return AIAdapterStyle.ACP
+        return AIAdapterStyle.CLI
     if provider == "droid":
         return AIAdapterStyle.CLI
     return None

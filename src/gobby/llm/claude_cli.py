@@ -20,6 +20,17 @@ from gobby.llm.stream_json_parser import ResultEvent, StreamEvent, parse_stream
 logger = logging.getLogger(__name__)
 
 
+def _signal_process_group(process: asyncio.subprocess.Process, sig: signal.Signals) -> bool:
+    pid = getattr(process, "pid", None)
+    if not isinstance(pid, int):
+        return False
+    try:
+        os.killpg(pid, sig)
+    except (ProcessLookupError, PermissionError):
+        return False
+    return True
+
+
 def find_cli_path() -> str | None:
     """
     Find Claude CLI path.
@@ -176,6 +187,7 @@ class CLISession:
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
             env=env,
+            start_new_session=True,
         )
 
     async def send(self, message: str) -> AsyncIterator[StreamEvent]:
@@ -202,22 +214,25 @@ class CLISession:
     async def interrupt(self) -> None:
         """Send interrupt signal to CLI process."""
         if self._process:
-            self._process.send_signal(signal.SIGINT)
+            if not _signal_process_group(self._process, signal.SIGINT):
+                self._process.send_signal(signal.SIGINT)
 
     async def stop(self) -> None:
         """Terminate CLI process."""
         if self._process:
-            try:
-                self._process.terminate()
-            except ProcessLookupError:
-                return
+            if not _signal_process_group(self._process, signal.SIGTERM):
+                try:
+                    self._process.terminate()
+                except ProcessLookupError:
+                    return
             try:
                 await asyncio.wait_for(self._process.wait(), timeout=self._stop_timeout)
             except TimeoutError:
-                try:
-                    self._process.kill()
-                except ProcessLookupError:
-                    return
+                if not _signal_process_group(self._process, signal.SIGKILL):
+                    try:
+                        self._process.kill()
+                    except ProcessLookupError:
+                        return
                 await self._process.wait()
             except OSError:
                 logger.debug("Claude CLI process was already gone during stop()", exc_info=True)

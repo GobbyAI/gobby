@@ -13,6 +13,7 @@ if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
 
 logger = logging.getLogger(__name__)
+_CANCELLED_TURN_INTERRUPT_TIMEOUT_SECONDS = 2.0
 
 
 async def start_thread(
@@ -295,6 +296,40 @@ async def interrupt_turn(client: CodexAppServerClient, thread_id: str, turn_id: 
     logger.debug(f"Interrupted turn {turn_id}")
 
 
+async def _interrupt_cancelled_turn(
+    client: CodexAppServerClient,
+    thread_id: str,
+    turn_id: str | None,
+    turn_completed: asyncio.Event,
+) -> None:
+    if turn_id is None:
+        logger.debug("Codex run_turn cancellation cleanup skipped; turn was not started")
+        return
+    if turn_completed.is_set():
+        logger.debug("Codex run_turn cancellation cleanup skipped; turn %s is terminal", turn_id)
+        return
+
+    try:
+        await asyncio.wait_for(
+            interrupt_turn(client, thread_id, turn_id),
+            timeout=_CANCELLED_TURN_INTERRUPT_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Codex run_turn cancellation cleanup failed; turn %s did not interrupt within %.1fs",
+            turn_id,
+            _CANCELLED_TURN_INTERRUPT_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        logger.warning(
+            "Codex run_turn cancellation cleanup failed for turn %s",
+            turn_id,
+            exc_info=True,
+        )
+    else:
+        logger.debug("Codex run_turn cancellation cleanup completed for turn %s", turn_id)
+
+
 async def run_turn(
     client: CodexAppServerClient,
     thread_id: str,
@@ -402,6 +437,9 @@ async def run_turn(
             yield event
             raise_for_terminal_error(event)
 
+    except asyncio.CancelledError:
+        await _interrupt_cancelled_turn(client, thread_id, turn_id, turn_completed)
+        raise
     finally:
         # Unregister handlers
         for method in event_methods:

@@ -4,11 +4,10 @@ from __future__ import annotations
 
 import json
 import time
-from collections.abc import AsyncIterator, Mapping
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.ai._text_generation_contracts import ACPStreamEventLike, TextGenerationRequest
+from gobby.ai._text_generation_contracts import TextGenerationRequest
 from gobby.config.feature_base import parse_feature_candidate
 
 if TYPE_CHECKING:
@@ -129,122 +128,11 @@ ONE_SHOT_DIRECTIVE = (
 )
 
 
-_ONE_SHOT_DENIAL_REASON = "Tool use is disabled for one-shot text generation."
-
-
-async def _deny_one_shot_tool_use(_payload: dict[str, Any]) -> dict[str, Any]:
-    """Deny every agent tool request during one-shot text generation."""
-    return {"decision": "deny", "reason": _ONE_SHOT_DENIAL_REASON}
-
-
 def _with_one_shot_directive(request: TextGenerationRequest) -> TextGenerationRequest:
     """Append the one-shot no-tools directive to the request's system prompt."""
     if request.system_prompt:
         return replace(request, system_prompt=f"{request.system_prompt}\n\n{ONE_SHOT_DIRECTIVE}")
     return replace(request, system_prompt=ONE_SHOT_DIRECTIVE)
-
-
-async def _collect_acp_text(events: AsyncIterator[ACPStreamEventLike]) -> str:
-    chunks: list[str] = []
-    result_chunks: list[str] = []
-    async for event in events:
-        if event.event_type == "error":
-            raise RuntimeError(f"ACP text generation failed: {_event_error_message(event.data)}")
-        text = _stream_event_text(event)
-        if not text:
-            continue
-        if event.event_type == "content_delta":
-            chunks.append(text)
-        elif event.event_type == "result":
-            result_chunks.append(text)
-
-    return "".join(chunks or result_chunks).strip()
-
-
-def _event_error_message(data: Mapping[str, Any]) -> str:
-    for key in ("message", "error", "details", "code"):
-        value = data.get(key)
-        if value:
-            if isinstance(value, str):
-                return value
-            return json.dumps(value, sort_keys=True, default=str)
-    return "unknown error"
-
-
-def _stream_event_text(event: ACPStreamEventLike) -> str:
-    for key in ("content", "output", "text", "message"):
-        value = event.data.get(key)
-        if isinstance(value, str):
-            return value
-    return ""
-
-
-def _codex_event_text(event: dict[str, Any]) -> str:
-    delta = event.get("delta")
-    if isinstance(delta, str) and delta:
-        return delta
-
-    item = event.get("item")
-    if not isinstance(item, dict):
-        return ""
-
-    text = item.get("text")
-    if isinstance(text, str) and text:
-        return text
-
-    content = item.get("content")
-    if isinstance(content, str) and content:
-        return content
-    if not isinstance(content, list):
-        return ""
-
-    chunks: list[str] = []
-    for block in content:
-        if isinstance(block, dict):
-            text = block.get("text") or block.get("delta") or ""
-            if isinstance(text, str) and text:
-                chunks.append(text)
-    return "".join(chunks)
-
-
-def _raise_for_codex_error_event(event: dict[str, Any]) -> None:
-    event_type = event.get("type")
-    if event_type not in {"turn/created", "turn/completed"}:
-        return
-
-    for payload in _codex_turn_payloads(event):
-        error = payload.get("error")
-        if error:
-            raise RuntimeError(f"Codex text generation failed: {_codex_error_message(error)}")
-        status = payload.get("status")
-        if isinstance(status, str) and status.lower() in {"error", "failed"}:
-            raise RuntimeError(
-                f"Codex text generation failed with status {status}: "
-                f"{_codex_error_message(payload)}"
-            )
-
-
-def _codex_turn_payloads(event: dict[str, Any]) -> tuple[dict[str, Any], ...]:
-    turn = event.get("turn")
-    if isinstance(turn, dict):
-        return event, turn
-    return (event,)
-
-
-def _codex_error_message(error: object) -> str:
-    if isinstance(error, str):
-        return error
-    if isinstance(error, Mapping):
-        return _event_error_message(error)
-    return json.dumps(error, sort_keys=True, default=str)
-
-
-def _codex_completed_item_type(event: dict[str, Any]) -> str | None:
-    item = event.get("item")
-    if not isinstance(item, dict):
-        return None
-    item_type = item.get("type")
-    return item_type if isinstance(item_type, str) else None
 
 
 def _decode(data: bytes | str) -> str:

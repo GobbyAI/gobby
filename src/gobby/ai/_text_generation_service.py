@@ -44,6 +44,16 @@ if TYPE_CHECKING:
 logger = logging.getLogger("gobby.ai.text_generation")
 
 
+def _json_parse_failure(raw: str, exc: Exception) -> ValueError:
+    preview = raw[:240].replace("\n", "\\n").replace("\r", "\\r")
+    if not preview:
+        preview = "<empty>"
+    return ValueError(
+        f"Generated JSON parse failed: {type(exc).__name__}: {exc}; "
+        f"raw_len={len(raw)}; raw_preview={preview!r}"
+    )
+
+
 class TextGenerationService:
     """Select and execute daemon text_generate capability bindings."""
 
@@ -228,7 +238,10 @@ class TextGenerationService:
                 else:
                     text = await self._await_candidate(adapter.generate(_json_request(candidate)))
                     raw = _coerce_text_result(text).text
-                    result = _parse_json_text(raw)
+                    try:
+                        result = _parse_json_text(raw)
+                    except (ValueError, json.JSONDecodeError) as exc:
+                        raise _json_parse_failure(raw, exc) from exc
                     parse_outcome = "parsed_text"
                 self._log_generation_event(
                     request=candidate,

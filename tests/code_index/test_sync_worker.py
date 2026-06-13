@@ -260,14 +260,16 @@ def _indexed_file(
     *,
     vectors_synced: bool = False,
     graph_synced: bool = False,
+    symbol_count: int = 1,
+    language: str = "python",
 ) -> IndexedFile:
     return IndexedFile(
         id=IndexedFile.make_id("proj-1", "src/app.py"),
         project_id="proj-1",
         file_path="src/app.py",
-        language="python",
+        language=language,
         content_hash="abc123",
-        symbol_count=1,
+        symbol_count=symbol_count,
         vectors_synced=vectors_synced,
         graph_synced=graph_synced,
     )
@@ -398,6 +400,79 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
 
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
     storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
+    storage.mark_graph_synced.assert_called_once_with(
+        pending_file.id,
+        pending_file.content_hash,
+    )
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
+
+
+@pytest.mark.asyncio
+async def test_sync_file_marks_zero_symbol_file_graph_synced_without_gcode(
+    tmp_path: Path,
+) -> None:
+    """Content-only files have no graph projection work and should not call gcode."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=True, graph_synced=False, symbol_count=0)
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
+    gcode_gateway = RecordingGcodeGateway()
+
+    did_sync = await _sync_file(
+        storage=storage,
+        vector_store=None,
+        gcode_gateway=gcode_gateway,
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        embed_model=None,
+        project_id="proj-1",
+        root=tmp_path,
+        file=pending_file,
+        embedding_dim=4,
+        run_db=RecordingRunDb(),
+    )
+
+    assert did_sync is True
+    assert gcode_gateway.synced_files == []
+    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_graph_synced.assert_called_once_with(
+        pending_file.id,
+        pending_file.content_hash,
+    )
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
+
+
+@pytest.mark.asyncio
+async def test_sync_file_marks_non_graph_language_graph_synced_without_gcode(
+    tmp_path: Path,
+) -> None:
+    """Content-search languages can have symbols but no call/import graph projection."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(
+        vectors_synced=True,
+        graph_synced=False,
+        symbol_count=1,
+        language="json",
+    )
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
+    gcode_gateway = RecordingGcodeGateway()
+
+    did_sync = await _sync_file(
+        storage=storage,
+        vector_store=None,
+        gcode_gateway=gcode_gateway,
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        embed_model=None,
+        project_id="proj-1",
+        root=tmp_path,
+        file=pending_file,
+        embedding_dim=4,
+        run_db=RecordingRunDb(),
+    )
+
+    assert did_sync is True
+    assert gcode_gateway.synced_files == []
+    storage.mark_graph_sync_attempted.assert_not_called()
     storage.mark_graph_synced.assert_called_once_with(
         pending_file.id,
         pending_file.content_hash,
@@ -1075,6 +1150,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
         file_path=file_path,
         language="python",
         content_hash="new",
+        symbol_count=1,
         vectors_synced=True,
         graph_synced=False,
     )

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -16,7 +15,6 @@ import pytest
 from gobby.adapters import acp_client_requests
 from gobby.adapters.gemini_acp_client import StreamEvent
 from gobby.agents.sandbox import SandboxConfig
-from gobby.ai import CodexAppServerTextGenerateAdapter, TextGenerationRequest
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.llm.claude_models import DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
@@ -607,7 +605,7 @@ class TestCodexBackend:
         assert session._transcript_path == "/tmp/codex.jsonl"
 
     @pytest.mark.asyncio
-    async def test_web_chat_and_one_shot_share_client_without_event_leakage(self) -> None:
+    async def test_web_chat_shared_client_handles_chat_without_event_leakage(self) -> None:
         class SharedCodexClient:
             def __init__(self) -> None:
                 self.is_connected = True
@@ -666,15 +664,6 @@ class TestCodexBackend:
                         handler(method, params)
                 return SimpleNamespace(id="chat-turn")
 
-            async def run_turn(
-                self,
-                thread_id: str,
-                prompt: str,
-                images: list[str] | None = None,
-                **_config_overrides: Any,
-            ) -> AsyncIterator[dict[str, Any]]:
-                yield {"type": "item/agentMessage/delta", "delta": "one-shot ok"}
-
             async def archive_thread(self, thread_id: str) -> None:
                 self.archived_thread_ids.append(thread_id)
 
@@ -691,20 +680,10 @@ class TestCodexBackend:
         session._get_transcript_offset = AsyncMock(return_value=0)
         session._get_transcript_records_since = AsyncMock(return_value=[])
         session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
-        adapter = CodexAppServerTextGenerateAdapter(
-            shared_client_provider=lambda: client,
-            timeout_seconds=1,
-        )
-
-        chat_task = asyncio.create_task(collect_text_chunks(backend.send_message(session, "chat")))
-        one_shot_task = asyncio.create_task(
-            adapter.generate(TextGenerationRequest(provider="codex", prompt="one-shot"))
-        )
-        chat_text, one_shot_text = await asyncio.gather(chat_task, one_shot_task)
+        chat_text = await collect_text_chunks(backend.send_message(session, "chat"))
 
         assert chat_text == ["chat ok"]
-        assert one_shot_text == "one-shot ok"
-        assert client.archived_thread_ids == ["one-shot-thread"]
+        assert client.archived_thread_ids == []
 
     @pytest.mark.asyncio
     async def test_attach_session_passes_codex_sandbox_policy(self) -> None:

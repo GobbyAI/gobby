@@ -48,7 +48,6 @@ def _init_llm_service(runner: GobbyRunner) -> None:
     try:
         runner.text_generation_service = build_daemon_text_generation_service(
             runner.config,
-            codex_client_provider=lambda: getattr(runner, "codex_client", None),
         )
         runner.llm_service = create_llm_service(
             runner.config,

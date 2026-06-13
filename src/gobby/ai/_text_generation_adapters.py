@@ -4,32 +4,23 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import json
 import logging
 import os
 import shlex
 import shutil
+import signal
 import tempfile
-import uuid
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from gobby.ai._text_generation_contracts import (
-    ACPClientFactory,
-    CodexAppServerClientFactory,
-    CodexAppServerClientLike,
-    CodexAppServerClientProvider,
-    TextGenerateAdapter,
-    TextGenerationRequest,
-)
+from gobby.ai._text_generation_contracts import TextGenerateAdapter, TextGenerationRequest
 from gobby.ai._text_generation_helpers import (
-    _codex_completed_item_type,
-    _codex_event_text,
-    _collect_acp_text,
     _compose_prompt,
     _decode,
-    _deny_one_shot_tool_use,
-    _raise_for_codex_error_event,
+    _json_request,
+    _parse_json_text,
     _with_one_shot_directive,
 )
 from gobby.config.app import DaemonConfig
@@ -38,7 +29,7 @@ if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
 
 logger = logging.getLogger("gobby.ai.text_generation")
-_BORROWED_THREAD_ARCHIVE_TIMEOUT_SECONDS = 2.0
+_CLI_PROCESS_CLEANUP_TIMEOUT_SECONDS = 2.0
 _DROID_AUTH_ERROR_HINT = (
     "Droid ran in an isolated temporary home; set FACTORY_API_KEY for headless auth "
     "without reusing your real Droid session state."
@@ -66,14 +57,6 @@ _DROID_FACTORY_ALLOWED_PLUGIN_DIRS = frozenset({("plugins", "marketplaces")})
 _DROID_FACTORY_ALLOWED_FILE_KEYWORDS = frozenset(
     {"auth", "cert", "config", "credential", "hint", "host", "mcp", "setting", "token"}
 )
-
-
-_GEMINI_DENY_ALL_POLICY = """[[rule]]
-toolName = "*"
-decision = "deny"
-priority = 999
-denyMessage = "Tool use is disabled for one-shot text generation."
-"""
 
 
 class ClaudeTextGenerateAdapter:
@@ -128,33 +111,6 @@ class LocalTextGenerateAdapter:
         )
 
 
-class ACPTextGenerateAdapter:
-    """One-shot text_generate adapter for ACP-backed CLIs."""
-
-    def __init__(self, client_factory: ACPClientFactory) -> None:
-        self._client_factory = client_factory
-
-    async def generate(self, request: TextGenerationRequest) -> str:
-        request = _with_one_shot_directive(request)
-        client = self._client_factory()
-        await client.start(
-            auto_session=True,
-            cwd=request.cwd,
-            model=request.model,
-        )
-        try:
-            prompt = _compose_prompt(request)
-            return await _collect_acp_text(
-                client.send(
-                    prompt,
-                    model=request.model,
-                    pre_tool_callback=_deny_one_shot_tool_use,
-                )
-            )
-        finally:
-            await client.stop()
-
-
 async def _run_cli_text_generation_command(
     provider_name: str,
     command: Sequence[str],
@@ -172,6 +128,7 @@ async def _run_cli_text_generation_command(
         stderr=asyncio.subprocess.PIPE,
         cwd=cwd,
         env=env,
+        start_new_session=True,
     )
     try:
         stdout, stderr = await asyncio.wait_for(
@@ -179,20 +136,92 @@ async def _run_cli_text_generation_command(
             timeout=timeout_seconds,
         )
     except TimeoutError as exc:
-        if process.returncode is None:
-            with contextlib.suppress(ProcessLookupError):
-                process.kill()
-            with contextlib.suppress(TimeoutError):
-                await asyncio.wait_for(process.wait(), timeout=2.0)
+        await _cleanup_cli_process(provider_name, process, reason="timeout")
         raise RuntimeError(
             f"{provider_name} CLI timed out after {timeout_seconds:g}s: {shlex.join(command)}"
         ) from exc
+    except asyncio.CancelledError:
+        await _cleanup_cli_process(provider_name, process, reason="cancellation")
+        raise
 
     returncode = process.returncode
     if returncode:
         message = _decode(stderr).strip() or _decode(stdout).strip()
         raise RuntimeError(f"{provider_name} CLI failed with exit code {returncode}: {message}")
     return _decode(stdout).strip()
+
+
+def _signal_cli_process_group(process: Any, sig: signal.Signals) -> bool:
+    pid = getattr(process, "pid", None)
+    if not isinstance(pid, int):
+        return False
+    with contextlib.suppress(ProcessLookupError, PermissionError):
+        os.killpg(pid, sig)
+        return True
+    return False
+
+
+async def _cleanup_cli_process(provider_name: str, process: Any, *, reason: str) -> None:
+    if process.returncode is not None:
+        logger.debug(
+            "%s CLI process cleanup skipped after %s; process already exited with code %s",
+            provider_name,
+            reason,
+            process.returncode,
+        )
+        return
+
+    if not _signal_cli_process_group(process, signal.SIGTERM):
+        terminate = getattr(process, "terminate", None)
+        if callable(terminate):
+            with contextlib.suppress(ProcessLookupError):
+                terminate()
+
+    try:
+        await asyncio.wait_for(
+            process.wait(),
+            timeout=_CLI_PROCESS_CLEANUP_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        if not _signal_cli_process_group(process, signal.SIGKILL):
+            with contextlib.suppress(ProcessLookupError):
+                process.kill()
+        try:
+            await asyncio.wait_for(
+                process.wait(),
+                timeout=_CLI_PROCESS_CLEANUP_TIMEOUT_SECONDS,
+            )
+        except TimeoutError:
+            logger.warning(
+                "%s CLI process cleanup failed after %s; process did not exit within %.1fs",
+                provider_name,
+                reason,
+                _CLI_PROCESS_CLEANUP_TIMEOUT_SECONDS * 2,
+            )
+            return
+        except Exception:
+            logger.warning(
+                "%s CLI process forced cleanup failed after %s",
+                provider_name,
+                reason,
+                exc_info=True,
+            )
+            return
+    except Exception:
+        logger.warning(
+            "%s CLI process cleanup failed after %s",
+            provider_name,
+            reason,
+            exc_info=True,
+        )
+        return
+
+    logger.debug(
+        "%s CLI process cleanup completed after %s; returncode=%s",
+        provider_name,
+        reason,
+        process.returncode,
+    )
 
 
 class _GeminiCLITextGenerateAdapter:
@@ -204,12 +233,10 @@ class _GeminiCLITextGenerateAdapter:
         command_path: str | None = None,
         timeout_seconds: float = 600.0,
         env: Mapping[str, str] | None = None,
-        session_id_factory: Callable[[], str] | None = None,
     ) -> None:
         self._command_path = command_path
         self._timeout_seconds = timeout_seconds
         self._env = dict(env or {})
-        self._session_id_factory = session_id_factory or (lambda: str(uuid.uuid4()))
 
     def _resolve_command_path(self) -> str:
         path = self._command_path or shutil.which("gemini")
@@ -218,55 +245,50 @@ class _GeminiCLITextGenerateAdapter:
         return path
 
     def build_command(
-        self, request: TextGenerationRequest, *, session_id: str, policy_path: Path
+        self, request: TextGenerationRequest, *, output_format: str = "text"
     ) -> list[str]:
         path = self._resolve_command_path()
         command = [
             path,
             "--output-format",
-            "text",
-            "--session-id",
-            session_id,
-            "--admin-policy",
-            str(policy_path),
-            "--approval-mode",
-            "plan",
+            output_format,
         ]
         if request.model:
             command.extend(["--model", request.model])
         command.extend(["--prompt", _compose_prompt(request)])
         return command
 
-    def build_cleanup_command(self, session_id: str) -> list[str]:
-        return [self._resolve_command_path(), "--delete-session", session_id]
-
     async def generate(self, request: TextGenerationRequest) -> str:
         request = _with_one_shot_directive(request)
-        session_id = self._session_id_factory()
-        if not session_id:
-            raise RuntimeError("Gemini CLI session ID factory returned an empty session ID")
+        return await _run_cli_text_generation_command(
+            "Gemini",
+            self.build_command(request),
+            cwd=request.cwd,
+            timeout_seconds=self._timeout_seconds,
+            env_overrides=self._env,
+        )
 
-        with tempfile.TemporaryDirectory(prefix="gobby-gemini-textgen-") as temp_dir:
-            policy_path = Path(temp_dir) / "deny-all-tools.toml"
-            policy_path.write_text(_GEMINI_DENY_ALL_POLICY, encoding="utf-8")
-            command = self.build_command(request, session_id=session_id, policy_path=policy_path)
-            cleanup_command = self.build_cleanup_command(session_id)
-            try:
-                return await _run_cli_text_generation_command(
-                    "Gemini",
-                    command,
-                    cwd=request.cwd,
-                    timeout_seconds=self._timeout_seconds,
-                    env_overrides=self._env,
-                )
-            finally:
-                await _run_cli_text_generation_command(
-                    "Gemini session cleanup",
-                    cleanup_command,
-                    cwd=request.cwd,
-                    timeout_seconds=self._timeout_seconds,
-                    env_overrides=self._env,
-                )
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        request = _with_one_shot_directive(_json_request(request))
+        raw = await _run_cli_text_generation_command(
+            "Gemini",
+            self.build_command(request, output_format="json"),
+            cwd=request.cwd,
+            timeout_seconds=self._timeout_seconds,
+            env_overrides=self._env,
+        )
+        try:
+            wrapper = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise ValueError(f"Gemini CLI returned invalid JSON wrapper: {exc}") from exc
+        if not isinstance(wrapper, dict):
+            raise ValueError("Gemini CLI JSON output must be an object")
+        if error := wrapper.get("error"):
+            raise RuntimeError(f"Gemini CLI returned an error: {error}")
+        response = wrapper.get("response")
+        if not isinstance(response, str):
+            raise ValueError("Gemini CLI JSON output missing string response")
+        return _parse_json_text(response)
 
 
 class _QwenCLITextGenerateAdapter:
@@ -369,164 +391,59 @@ class _GrokCLITextGenerateAdapter:
             )
 
 
-class CodexAppServerTextGenerateAdapter:
-    """One-shot text_generate adapter backed by Codex app-server."""
+class CodexCLITextGenerateAdapter:
+    """One-shot text_generate adapter for Codex noninteractive CLI mode."""
 
     def __init__(
         self,
-        client_factory: CodexAppServerClientFactory | None = None,
         *,
-        shared_client_provider: CodexAppServerClientProvider | None = None,
+        command_path: str | None = None,
         timeout_seconds: float = 600.0,
+        env: Mapping[str, str] | None = None,
     ) -> None:
-        self._client_factory = client_factory or _codex_app_server_client
-        self._shared_client_provider = shared_client_provider
+        self._command_path = command_path
         self._timeout_seconds = timeout_seconds
+        self._env = dict(env or {})
+
+    def _resolve_command_path(self) -> str:
+        path = self._command_path or shutil.which("codex")
+        if not path:
+            raise FileNotFoundError("Codex CLI not found in PATH")
+        return path
+
+    def build_command(self, request: TextGenerationRequest, *, output_path: Path) -> list[str]:
+        command = [
+            self._resolve_command_path(),
+            "--ask-for-approval",
+            "never",
+            "exec",
+            "--ephemeral",
+            "--ignore-user-config",
+            "--ignore-rules",
+            "--sandbox",
+            "read-only",
+            "--output-last-message",
+            str(output_path),
+        ]
+        if request.model:
+            command.extend(["--model", request.model])
+        if request.cwd:
+            command.extend(["--cd", request.cwd])
+        command.append(_compose_prompt(request))
+        return command
 
     async def generate(self, request: TextGenerationRequest) -> str:
-        shared_client = self._connected_shared_client()
-        if shared_client is not None:
-            try:
-                return await self._generate_with_deadline(
-                    shared_client,
-                    request,
-                    start_client=False,
-                    archive_thread=True,
-                )
-            except TimeoutError as exc:
-                if shared_client.is_connected:
-                    raise RuntimeError(
-                        "Codex app-server text generation timed out after "
-                        f"{self._timeout_seconds:g}s"
-                    ) from exc
-                logger.info("Borrowed Codex app-server disconnected during generation")
-            except Exception:
-                if shared_client.is_connected:
-                    raise
-                logger.info("Borrowed Codex app-server disconnected during generation")
-
-        return await self._generate_with_owned_client(request)
-
-    async def _generate_with_owned_client(self, request: TextGenerationRequest) -> str:
-        client = self._client_factory()
-        try:
-            return await self._generate_with_deadline(
-                client,
-                request,
-                start_client=True,
-                archive_thread=False,
-            )
-        except TimeoutError as exc:
-            raise RuntimeError(
-                f"Codex app-server text generation timed out after {self._timeout_seconds:g}s"
-            ) from exc
-        finally:
-            await client.stop()
-
-    async def _generate_with_deadline(
-        self,
-        client: CodexAppServerClientLike,
-        request: TextGenerationRequest,
-        *,
-        start_client: bool,
-        archive_thread: bool,
-    ) -> str:
-        return await asyncio.wait_for(
-            self._generate_with_client(
-                client,
-                request,
-                start_client=start_client,
-                archive_thread=archive_thread,
-            ),
-            timeout=self._timeout_seconds,
-        )
-
-    async def _generate_with_client(
-        self,
-        client: CodexAppServerClientLike,
-        request: TextGenerationRequest,
-        *,
-        start_client: bool,
-        archive_thread: bool,
-    ) -> str:
         request = _with_one_shot_directive(request)
-        if start_client:
-            await client.start()
-        thread_id: str | None = None
-        try:
-            thread = await client.start_thread(
+        with tempfile.TemporaryDirectory(prefix="gobby-codex-textgen-") as temp_dir:
+            output_path = Path(temp_dir) / "last-message.txt"
+            await _run_cli_text_generation_command(
+                "Codex",
+                self.build_command(request, output_path=output_path),
                 cwd=request.cwd,
-                model=request.model,
-                approval_policy="never",
-                sandbox="readOnly",
-                ephemeral=True,
+                timeout_seconds=self._timeout_seconds,
+                env_overrides=self._env,
             )
-            thread_id = thread.id
-            chunks: list[str] = []
-            fallback_chunks: list[str] = []
-            async for event in client.run_turn(
-                thread.id,
-                request.prompt,
-                context_prefix=request.system_prompt,
-            ):
-                _raise_for_codex_error_event(event)
-                event_type = event.get("type")
-                text = _codex_event_text(event)
-                if not text:
-                    continue
-                if event_type in {"agent/messageDelta", "item/agentMessage/delta"}:
-                    chunks.append(text)
-                elif (
-                    event_type == "item/completed"
-                    and _codex_completed_item_type(event) == "agentMessage"
-                ):
-                    fallback_chunks.append(text)
-            output = "".join(chunks or fallback_chunks).strip()
-            if not output:
-                raise RuntimeError("Codex text generation returned no output")
-            return output
-        finally:
-            if archive_thread and thread_id is not None:
-                await self._archive_borrowed_thread(client, thread_id)
-
-    def _connected_shared_client(self) -> CodexAppServerClientLike | None:
-        if self._shared_client_provider is None:
-            return None
-        try:
-            client = self._shared_client_provider()
-        except Exception:
-            logger.debug("Shared Codex app-server provider failed", exc_info=True)
-            return None
-        if client is None:
-            return None
-        try:
-            return client if client.is_connected else None
-        except Exception:
-            logger.debug("Shared Codex app-server connection check failed", exc_info=True)
-            return None
-
-    async def _archive_borrowed_thread(
-        self, client: CodexAppServerClientLike, thread_id: str
-    ) -> None:
-        try:
-            await asyncio.wait_for(
-                client.archive_thread(thread_id),
-                timeout=_BORROWED_THREAD_ARCHIVE_TIMEOUT_SECONDS,
-            )
-        except Exception:
-            logger.debug("Best-effort Codex borrowed thread archive failed", exc_info=True)
-        finally:
-            _discard_codex_thread_state(client, thread_id)
-
-
-def _discard_codex_thread_state(client: CodexAppServerClientLike, thread_id: str) -> None:
-    """Forget local client bookkeeping for best-effort ephemeral thread cleanup."""
-    for attr in ("_threads", "_thread_cwds", "_thread_terminal_contexts"):
-        mapping = getattr(client, attr, None)
-        if mapping is None:
-            continue
-        with contextlib.suppress(Exception):
-            mapping.pop(thread_id, None)
+            return output_path.read_text(encoding="utf-8").strip()
 
 
 def _droid_isolated_env(base_env: Mapping[str, str], temp_home: Path) -> dict[str, str]:
@@ -667,6 +584,7 @@ class DroidCLITextGenerateAdapter:
                 stderr=asyncio.subprocess.PIPE,
                 cwd=request.cwd,
                 env=isolated_env,
+                start_new_session=True,
             )
             try:
                 stdout, stderr = await asyncio.wait_for(
@@ -674,14 +592,13 @@ class DroidCLITextGenerateAdapter:
                     timeout=self._timeout_seconds,
                 )
             except TimeoutError as exc:
-                if process.returncode is None:
-                    with contextlib.suppress(ProcessLookupError):
-                        process.kill()
-                    with contextlib.suppress(TimeoutError):
-                        await asyncio.wait_for(process.wait(), timeout=2.0)
+                await _cleanup_cli_process("Droid", process, reason="timeout")
                 raise RuntimeError(
                     f"Droid exec timed out after {self._timeout_seconds:g}s: {shlex.join(command)}"
                 ) from exc
+            except asyncio.CancelledError:
+                await _cleanup_cli_process("Droid", process, reason="cancellation")
+                raise
             returncode = process.returncode
             if returncode:
                 message = _decode(stderr).strip() or _decode(stdout).strip()
@@ -697,9 +614,3 @@ def _claude_text_generate_adapter(config: DaemonConfig) -> TextGenerateAdapter:
 
 def _local_text_generate_adapter(config: DaemonConfig, endpoint_name: str) -> TextGenerateAdapter:
     return LocalTextGenerateAdapter(config, endpoint_name)
-
-
-def _codex_app_server_client() -> CodexAppServerClientLike:
-    from gobby.adapters.codex_impl.client import CodexAppServerClient
-
-    return CodexAppServerClient()

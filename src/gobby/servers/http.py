@@ -90,7 +90,6 @@ class HTTPServer:
                 if services.text_generation_service is None:
                     services.text_generation_service = build_daemon_text_generation_service(
                         services.config,
-                        codex_client_provider=lambda: self.codex_client,
                     )
                 services.llm_service = create_llm_service(
                     services.config,

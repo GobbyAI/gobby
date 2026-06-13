@@ -30,12 +30,37 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _VECTOR_EMBEDDING_PROBE_TEXT = "gobby code index embedding probe"
+_GRAPH_SYNC_LANGUAGES = frozenset(
+    {
+        "c",
+        "cpp",
+        "csharp",
+        "dart",
+        "elixir",
+        "go",
+        "java",
+        "javascript",
+        "javascriptreact",
+        "jsx",
+        "php",
+        "python",
+        "ruby",
+        "rust",
+        "tsx",
+        "typescript",
+        "typescriptreact",
+    }
+)
 
 
 @dataclass
 class _MissingProject:
     id: str
     root_path: str | None
+
+
+def _file_needs_graph_sync(file: IndexedFile) -> bool:
+    return file.symbol_count > 0 and file.language.lower() in _GRAPH_SYNC_LANGUAGES
 
 
 async def _run_db(
@@ -266,13 +291,7 @@ async def _sync_file(
     if not current.graph_synced and config.graph_enabled:
         if gcode_gateway is not None:
             try:
-                await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
-                graph_synced = await _sync_graph(
-                    gcode_gateway=gcode_gateway,
-                    project_root=root,
-                    file=current,
-                )
-                if graph_synced:
+                if not _file_needs_graph_sync(current):
                     await _run_db(
                         run_db, storage.mark_graph_synced, current.id, current.content_hash
                     )
@@ -283,6 +302,24 @@ async def _sync_file(
                         "graph",
                     )
                     did_work = True
+                else:
+                    await _run_db(run_db, storage.mark_graph_sync_attempted, current.id)
+                    graph_synced = await _sync_graph(
+                        gcode_gateway=gcode_gateway,
+                        project_root=root,
+                        file=current,
+                    )
+                    if graph_synced:
+                        await _run_db(
+                            run_db, storage.mark_graph_synced, current.id, current.content_hash
+                        )
+                        await _run_db(
+                            run_db,
+                            storage.clear_projection_cleanup_pending,
+                            project_id,
+                            "graph",
+                        )
+                        did_work = True
             except GcodeIndexedFileNotFoundError as e:
                 refreshed = await _run_db(run_db, storage.get_file, project_id, e.file_path)
                 if refreshed is None:

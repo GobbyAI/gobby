@@ -80,6 +80,7 @@ class TestCLISession:
             await session.start()
             mock_exec.assert_called_once()
             cmd = mock_exec.call_args[0]
+            assert mock_exec.call_args.kwargs["start_new_session"] is True
             assert cmd[0] == "/usr/bin/claude"
             assert "--output-format" in cmd
             assert "stream-json" in cmd
@@ -191,6 +192,26 @@ class TestCLISession:
         assert mock_process.send_signal.call_args is not None
 
     @pytest.mark.asyncio
+    async def test_interrupt_signals_process_group(self) -> None:
+        mock_process = MagicMock()
+        mock_process.pid = 12345
+        mock_process.stdin = AsyncMock()
+        mock_process.stdout = asyncio.StreamReader()
+        mock_process.stderr = asyncio.StreamReader()
+
+        cli = ClaudeCLI(cli_path="/usr/bin/claude")
+        session = cli.session()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+            await session.start()
+
+        with patch("gobby.llm.claude_cli._signal_process_group", return_value=True) as signal_group:
+            await session.interrupt()
+
+        signal_group.assert_called_once_with(mock_process, signal.SIGINT)
+        mock_process.send_signal.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_stop_terminates_process(self) -> None:
         mock_process = AsyncMock()
         mock_process.stdin = AsyncMock()
@@ -211,6 +232,28 @@ class TestCLISession:
         mock_process.wait.assert_called_once()
         assert mock_process.wait.call_count == 1
         assert mock_process.wait.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_stop_signals_process_group(self) -> None:
+        mock_process = AsyncMock()
+        mock_process.pid = 12345
+        mock_process.stdin = AsyncMock()
+        mock_process.stdout = asyncio.StreamReader()
+        mock_process.stderr = asyncio.StreamReader()
+        mock_process.wait = AsyncMock()
+
+        cli = ClaudeCLI(cli_path="/usr/bin/claude")
+        session = cli.session()
+
+        with patch("asyncio.create_subprocess_exec", return_value=mock_process):
+            await session.start()
+
+        with patch("gobby.llm.claude_cli._signal_process_group", return_value=True) as signal_group:
+            await session.stop()
+
+        signal_group.assert_called_once_with(mock_process, signal.SIGTERM)
+        mock_process.terminate.assert_not_called()
+        mock_process.wait.assert_called_once()
 
     @pytest.mark.asyncio
     async def test_interrupt_noop_when_no_process(self) -> None:

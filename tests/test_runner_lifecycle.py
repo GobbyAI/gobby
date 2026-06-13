@@ -215,13 +215,12 @@ class TestInitSubsystems:
     """Tests for subsystem initialization helpers."""
 
     @pytest.mark.asyncio
-    async def test_init_servers_wires_shared_codex_client_to_text_generation(self) -> None:
+    async def test_init_servers_wires_shared_codex_client_to_chat_backends(self) -> None:
         from gobby.ai import (
             AIAdapterStyle,
             AICapability,
             AICapabilityRegistry,
             CapabilityBinding,
-            TextGenerationRequest,
             build_daemon_text_generation_service,
         )
         from gobby.config.app import DaemonConfig
@@ -303,7 +302,6 @@ class TestInitSubsystems:
         runner.text_generation_service = build_daemon_text_generation_service(
             config,
             registry=registry,
-            codex_client_provider=lambda: getattr(runner, "codex_client", None),
         )
         runner.database = object()
         runner.db_executor = None
@@ -360,15 +358,9 @@ class TestInitSubsystems:
         assert web_chat_init["codex_client"] is fake_client
         assert http_init["codex_client"] is fake_client
         assert http_init["services"].text_generation_service is runner.text_generation_service
-        assert (
-            await runner.text_generation_service.generate(
-                TextGenerationRequest(provider="codex", model="gpt-5", prompt="hello")
-            )
-            == "wired"
-        )
         assert fake_client.start_calls == 0
         assert fake_client.stop_calls == 0
-        assert fake_client.archived_thread_ids == ["one-shot-thread"]
+        assert fake_client.archived_thread_ids == []
 
     @pytest.mark.asyncio
     async def test_init_subsystems_uses_embedding_readiness_helper_and_stays_alive(self) -> None:
