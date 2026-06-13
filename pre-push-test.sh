@@ -58,7 +58,11 @@ if [ "${GOBBY_RUN_E2E_SESSION_LIFECYCLE:-}" != "1" ]; then
 fi
 
 uv_run() {
-    uv run "${UV_EXTRA_FLAGS[@]}" "$@"
+    if [ "${#UV_EXTRA_FLAGS[@]}" -gt 0 ]; then
+        uv run "${UV_EXTRA_FLAGS[@]}" "$@"
+    else
+        uv run "$@"
+    fi
 }
 
 cleanup() {

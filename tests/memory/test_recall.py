@@ -119,6 +119,7 @@ def _memory(
     memory_id: str,
     content: str = "Useful project convention",
     *,
+    similarity: Any = 0.91,
     tags: list[str] | None = None,
 ) -> Memory:
     return Memory(
@@ -128,7 +129,7 @@ def _memory(
         created_at="2026-01-01T00:00:00+00:00",
         updated_at="2026-01-01T00:00:00+00:00",
         tags=tags if tags is not None else ["test"],
-        similarity=0.91,
+        similarity=similarity,
         search_via="semantic",
     )
 
@@ -267,7 +268,7 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
         ]
     )
     llm = FakeLLMService({"memory_ids": ["mem-1", "mem-1", "mem-2"]})
-    config = MemoryRecallConfig(candidate_limit=8, selected_limit=1, min_score=0.5)
+    config = MemoryRecallConfig(candidate_limit=8, selected_limit=1, min_score=0.7)
     runner = MemoryRecallRunner(
         db=temp_db,
         memory_manager=memory_manager,  # type: ignore[arg-type]
@@ -295,7 +296,7 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
             "query": "please use project memory to fix this regression today",
             "project_id": "project-1",
             "limit": 8,
-            "min_score": 0.5,
+            "min_score": 0.7,
             "tags_none": ["review-lesson"],
         }
     ]
@@ -398,7 +399,7 @@ async def test_runner_excludes_review_lessons_from_prompt_recall(
         ]
     )
     llm = FakeLLMService({"memory_ids": ["review-1", "mem-1"]})
-    config = MemoryRecallConfig(candidate_limit=8, selected_limit=2, min_score=0.5)
+    config = MemoryRecallConfig(candidate_limit=8, selected_limit=2, min_score=0.7)
     runner = MemoryRecallRunner(
         db=temp_db,
         memory_manager=memory_manager,  # type: ignore[arg-type]
@@ -412,6 +413,38 @@ async def test_runner_excludes_review_lessons_from_prompt_recall(
     assert [memory["id"] for memory in payload.memories] == ["mem-1"]
     assert raw_review_lesson not in llm.calls[0]["prompt"]
     assert memory_manager.calls[0]["tags_none"] == ["review-lesson"]
+
+
+@pytest.mark.asyncio
+async def test_runner_filters_low_missing_and_nonnumeric_scores_before_llm(
+    temp_db: HubDatabase,
+) -> None:
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    memory_manager = FakeMemoryManager(
+        [
+            _memory("weak", "Weak match should stay out.", similarity=0.42),
+            _memory("missing", "Missing score should stay out.", similarity=None),
+            _memory("nonnumeric", "Nonnumeric score should stay out.", similarity="high"),
+            _memory("strong", "Strong match should reach recall.", similarity=0.91),
+        ]
+    )
+    llm = FakeLLMService({"memory_ids": ["weak", "missing", "nonnumeric", "strong"]})
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=memory_manager,  # type: ignore[arg-type]
+        llm_service=llm,
+        config=MemoryRecallConfig(candidate_limit=8, selected_limit=3, min_score=0.7),
+    )
+
+    payload = await runner.run(_event(), SESSION_ID, _variables())
+
+    assert payload is not None
+    assert [memory["id"] for memory in payload.memories] == ["strong"]
+    prompt = llm.calls[0]["prompt"]
+    assert '"strong"' in prompt
+    assert '"weak"' not in prompt
+    assert '"missing"' not in prompt
+    assert '"nonnumeric"' not in prompt
 
 
 @pytest.mark.asyncio
