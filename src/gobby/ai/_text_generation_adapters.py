@@ -12,6 +12,7 @@ import shutil
 import signal
 import tempfile
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +58,15 @@ _DROID_FACTORY_ALLOWED_PLUGIN_DIRS = frozenset({("plugins", "marketplaces")})
 _DROID_FACTORY_ALLOWED_FILE_KEYWORDS = frozenset(
     {"auth", "cert", "config", "credential", "hint", "host", "mcp", "setting", "token"}
 )
+
+
+@dataclass(frozen=True)
+class _QwenOpenAIEndpoint:
+    """OpenAI-compatible endpoint settings used to isolate Qwen feature calls."""
+
+    api_base: str
+    model: str
+    api_key: str | None = None
 
 
 class ClaudeTextGenerateAdapter:
@@ -300,10 +310,12 @@ class _QwenCLITextGenerateAdapter:
         command_path: str | None = None,
         timeout_seconds: float = 600.0,
         env: Mapping[str, str] | None = None,
+        openai_endpoints: Mapping[str, Any] | None = None,
     ) -> None:
         self._command_path = command_path
         self._timeout_seconds = timeout_seconds
         self._env = dict(env or {})
+        self._openai_endpoints = _normalize_qwen_openai_endpoints(openai_endpoints or {})
 
     def build_command(self, request: TextGenerationRequest) -> list[str]:
         path = self._command_path or shutil.which("qwen")
@@ -312,6 +324,7 @@ class _QwenCLITextGenerateAdapter:
 
         command = [
             path,
+            "--bare",
             "--chat-recording=false",
             "--max-tool-calls",
             "0",
@@ -320,20 +333,59 @@ class _QwenCLITextGenerateAdapter:
             "--output-format",
             "text",
         ]
-        if request.model:
-            command.extend(["--model", request.model])
+        endpoint = self._select_openai_endpoint(request)
+        if endpoint is not None:
+            command.extend(["--auth-type", "openai", "--openai-base-url", endpoint.api_base])
+        model = endpoint.model if endpoint is not None else request.model
+        if model:
+            command.extend(["--model", model])
         command.append(_compose_prompt(request))
         return command
 
     async def generate(self, request: TextGenerationRequest) -> str:
         request = _with_one_shot_directive(request)
+        env = dict(self._env)
+        endpoint = self._select_openai_endpoint(request)
+        if endpoint is not None:
+            env["OPENAI_API_KEY"] = endpoint.api_key or "not-needed"
+            env["OPENAI_BASE_URL"] = endpoint.api_base
+            env["OPENAI_MODEL"] = endpoint.model
         return await _run_cli_text_generation_command(
             "Qwen",
             self.build_command(request),
             cwd=request.cwd,
             timeout_seconds=self._timeout_seconds,
-            env_overrides=self._env,
+            env_overrides=env,
         )
+
+    def _select_openai_endpoint(self, request: TextGenerationRequest) -> _QwenOpenAIEndpoint | None:
+        if not self._openai_endpoints:
+            return None
+        if request.model:
+            for endpoint in self._openai_endpoints.values():
+                if request.model == endpoint.model:
+                    return endpoint
+        if len(self._openai_endpoints) == 1:
+            return next(iter(self._openai_endpoints.values()))
+        return None
+
+
+def _normalize_qwen_openai_endpoints(
+    endpoints: Mapping[str, Any],
+) -> dict[str, _QwenOpenAIEndpoint]:
+    normalized: dict[str, _QwenOpenAIEndpoint] = {}
+    for name, endpoint in endpoints.items():
+        api_base = str(getattr(endpoint, "api_base", "") or "").strip()
+        model = str(getattr(endpoint, "model", "") or "").strip()
+        if not api_base or not model:
+            continue
+        api_key = getattr(endpoint, "api_key", None)
+        normalized[name] = _QwenOpenAIEndpoint(
+            api_base=api_base,
+            model=model,
+            api_key=str(api_key).strip() if api_key else None,
+        )
+    return normalized
 
 
 class _GrokCLITextGenerateAdapter:

@@ -1309,7 +1309,21 @@ def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> 
 
 
 def test_daemon_text_generation_builder_maps_feature_providers_to_one_shot_adapters() -> None:
-    factories = _daemon_text_generation_adapter_factories(DaemonConfig())
+    config = DaemonConfig(
+        ai={
+            "generation": {
+                "local": {
+                    "endpoints": {
+                        "ollama": {
+                            "api_base": "http://localhost:11434/v1",
+                            "model": "llama3.2",
+                        }
+                    }
+                }
+            }
+        }
+    )
+    factories = _daemon_text_generation_adapter_factories(config)
 
     codex_adapter = factories["codex"]()
     gemini_adapter = factories["gemini"]()
@@ -1320,6 +1334,10 @@ def test_daemon_text_generation_builder_maps_feature_providers_to_one_shot_adapt
     assert isinstance(gemini_adapter, text_generation_adapters._GeminiCLITextGenerateAdapter)
     assert isinstance(grok_adapter, text_generation_adapters._GrokCLITextGenerateAdapter)
     assert isinstance(qwen_adapter, text_generation_adapters._QwenCLITextGenerateAdapter)
+    qwen_command = qwen_adapter.build_command(TextGenerationRequest(prompt="x", model="stale-model"))
+    assert "--openai-base-url" in qwen_command
+    assert "http://localhost:11434/v1" in qwen_command
+    assert qwen_command[qwen_command.index("--model") + 1] == "llama3.2"
 
 
 class FakeNativeTextProvider:
@@ -2280,6 +2298,7 @@ async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
     assert commands == [
         (
             "/usr/local/bin/qwen",
+            "--bare",
             "--chat-recording=false",
             "--max-tool-calls",
             "0",
@@ -2297,6 +2316,67 @@ async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
     assert "--session-id" not in commands[0]
     assert cwds == ["/tmp/project"]
     assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
+
+
+@pytest.mark.asyncio
+async def test_qwen_cli_text_generate_adapter_uses_configured_openai_endpoint(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    envs: list[dict[str, str]] = []
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        commands.append(command)
+        envs.append(env)
+        return FakeProcess(b"qwen text\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = text_generation_adapters._QwenCLITextGenerateAdapter(
+        command_path="/usr/local/bin/qwen",
+        openai_endpoints={
+            "ollama": SimpleNamespace(
+                api_base="http://localhost:11434/v1",
+                model="llama3.2",
+                api_key=None,
+            )
+        },
+    )
+
+    response = await adapter.generate(TextGenerationRequest(prompt="explain", model="qwen3-coder"))
+
+    assert response == "qwen text"
+    assert commands == [
+        (
+            "/usr/local/bin/qwen",
+            "--bare",
+            "--chat-recording=false",
+            "--max-tool-calls",
+            "0",
+            "--max-session-turns",
+            "1",
+            "--output-format",
+            "text",
+            "--auth-type",
+            "openai",
+            "--openai-base-url",
+            "http://localhost:11434/v1",
+            "--model",
+            "llama3.2",
+            f"{ONE_SHOT_DIRECTIVE}\n\nexplain",
+        )
+    ]
+    assert "qwen3-coder" not in commands[0]
+    assert "--openai-api-key" not in commands[0]
+    assert envs[0]["OPENAI_API_KEY"] == "not-needed"
+    assert envs[0]["OPENAI_BASE_URL"] == "http://localhost:11434/v1"
+    assert envs[0]["OPENAI_MODEL"] == "llama3.2"
 
 
 @pytest.mark.asyncio

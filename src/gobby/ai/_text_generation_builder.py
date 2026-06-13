@@ -39,6 +39,7 @@ def _daemon_text_generation_adapter_factories(
         ),
         "qwen": lambda: _adapters._QwenCLITextGenerateAdapter(
             timeout_seconds=config.ai.generation.timeout_seconds,
+            openai_endpoints=config.ai.generation.local.endpoints,
         ),
         "droid": _adapters.DroidCLITextGenerateAdapter,
     }
