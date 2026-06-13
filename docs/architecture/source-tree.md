@@ -60,8 +60,9 @@ src/gobby/
 │                                       #   codex_impl/ (package), ACP client modules,
 │                                       #   base.py (BaseAdapter), capabilities.py
 ├── agents/                             # Agent spawning and lifecycle: spawn.py,
-│                                       #   runner.py (AgentRunner), registry.py,
-│                                       #   isolation.py, session.py, spawners/, tmux/
+│                                       #   runner.py (AgentRunner), runner_queries.py,
+│                                       #   lifecycle_monitor.py, kill.py, isolation.py,
+│                                       #   session.py, spawners/, tmux/
 │                                       #   (definition models: workflows/definitions.py)
 ├── ai/                                 # AI feature configuration support
 ├── autonomous/                         # Autonomous execution support (progress
