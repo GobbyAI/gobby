@@ -31,7 +31,7 @@ Link each section epic to its worktree.
 Branch names: `review-fixes/<section-slug>`.
 
 Concurrency:
-Run at most 10 active section worktrees.
+Run at most 6 active developer workers total.
 Run at most one active developer worker per section worktree.
 
 Coordinator manifest:
