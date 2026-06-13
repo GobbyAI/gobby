@@ -718,24 +718,34 @@ class ClaudeLLMProvider:
         # Build async generator yielding structured message with image content
         # The SDK accepts AsyncIterable[dict] for multimodal input
         async def _message_generator() -> Any:
+            # The SDK streaming-input protocol expects each item wrapped as
+            # {"type": "user", "message": {"role": ..., "content": ...}} (see
+            # claude_agent_sdk.query docstring). Yielding a bare
+            # {"role", "content"} dict is silently dropped by the SDK, which is
+            # why vision extraction returned empty text for every model.
             yield {
-                "role": "user",
-                "content": [
-                    {"type": "text", "text": text_prompt},
-                    {
-                        "type": "image",
-                        "source": {
-                            "type": "base64",
-                            "media_type": mime_type,
-                            "data": image_base64,
+                "type": "user",
+                "message": {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": text_prompt},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": mime_type,
+                                "data": image_base64,
+                            },
                         },
-                    },
-                ],
+                    ],
+                },
             }
 
         async def _run_query() -> str:
             result_text = ""
+            message_count = 0
             async for message in query(prompt=_message_generator(), options=options):
+                message_count += 1
                 if isinstance(message, AssistantMessage):
                     for block in message.content:
                         if isinstance(block, TextBlock):
@@ -743,6 +753,11 @@ class ClaudeLLMProvider:
                 elif isinstance(message, ResultMessage):
                     if message.result:
                         result_text = message.result
+            if not result_text:
+                self.logger.warning(
+                    "describe_image: SDK returned no text content (messages=%d)",
+                    message_count,
+                )
             return result_text
 
         try:
