@@ -1,4 +1,5 @@
 use super::*;
+use crate::explainer::{ExplainerPrompt, ExplainerResponse};
 use crate::provenance::ProvenanceGraph;
 use crate::session::{AcceptedResearchNote, ResearchScope, ResearchSession};
 use crate::synthesis::SynthesizedPage;
@@ -384,6 +385,7 @@ fn index_update_uses_structural_heading_and_link_checks() {
         path: temp.path().join("knowledge/topics/exact.md"),
         title: "Exact".to_string(),
         markdown: "# Exact\n\n".to_string(),
+        explainer: None,
     };
     std::fs::write(
         temp.path().join("_index.md"),
@@ -438,4 +440,144 @@ fn write_target_page_rejects_existing_page_without_overwrite_race() {
         std::fs::read_to_string(&target).expect("existing page retained"),
         "human-authored wiki page"
     );
+}
+
+#[test]
+fn compile_explainer_generates_grounded_prose_sections() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(
+        &note_path,
+        "---\ntitle: Compile behavior\n---\n\nCompile turns accepted notes into grounded articles.",
+    )
+    .expect("note written");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+    let mut prompts = Vec::new();
+    let outcome = {
+        let mut generator = |prompt: &ExplainerPrompt| {
+            prompts.push(prompt.user.clone());
+            Ok(ExplainerResponse {
+                text: "## Overview\nCompile grounds articles in accepted notes \
+                       [source: raw/research/compile.md]. It never keeps invented citations \
+                       [source: raw/research/invented.md].\n"
+                    .to_string(),
+                model: Some("mock-model".to_string()),
+                route: "daemon",
+            })
+        };
+        compile_to_wiki_with_options(
+            &mut session,
+            CompileRequest {
+                topic: "Durable Compile".to_string(),
+                outline: vec!["Overview".to_string()],
+                target_page: None,
+                write_intent: false,
+            },
+            WikiCompileOptions::default(),
+            Some(&mut generator),
+        )
+        .expect("wiki article compiled")
+    };
+
+    let page = std::fs::read_to_string(&outcome.article_path).expect("article written");
+    assert!(page.contains("synthesis_mode: \"daemon\""), "{page}");
+    assert!(!page.contains("degraded:"), "{page}");
+    assert!(page.contains("## Overview"), "{page}");
+    assert!(
+        page.contains("accepted notes [[knowledge/sources/compile-behavior|Compile behavior]]."),
+        "{page}"
+    );
+    assert!(!page.contains("[source:"), "{page}");
+    assert!(!page.contains("invented.md"), "{page}");
+
+    let report = outcome.explainer.expect("explainer report");
+    assert_eq!(report.status, "generated");
+    assert_eq!(report.route, Some("daemon"));
+    assert_eq!(report.model.as_deref(), Some("mock-model"));
+    assert_eq!(report.citations_kept, 1);
+    assert_eq!(report.citations_stripped, 1);
+
+    assert!(outcome.prompt.tokens_estimated > 0);
+    assert_eq!(outcome.prompt.truncated_sources, 0);
+    let prompt_user = prompts.first().expect("explainer prompt captured");
+    assert!(
+        prompt_user.contains("[source: raw/research/compile.md]"),
+        "{prompt_user}"
+    );
+    assert!(
+        prompt_user.contains("Compile turns accepted notes"),
+        "{prompt_user}"
+    );
+}
+
+#[test]
+fn compile_explainer_failure_degrades_and_keeps_structural_skeleton() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Accepted compile evidence.").expect("note written");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+    let mut generator = |_prompt: &ExplainerPrompt| {
+        Err::<ExplainerResponse, _>("text lane unavailable".to_string())
+    };
+    let outcome = compile_to_wiki_with_options(
+        &mut session,
+        CompileRequest {
+            topic: "Degraded Compile".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: None,
+            write_intent: false,
+        },
+        WikiCompileOptions::default(),
+        Some(&mut generator),
+    )
+    .expect("wiki article compiled despite explainer failure");
+
+    let page = std::fs::read_to_string(&outcome.article_path).expect("article written");
+    assert!(page.contains("synthesis_mode: \"fallback\""), "{page}");
+    assert!(page.contains("degraded: true"), "{page}");
+    assert!(page.contains("degraded_sources:"), "{page}");
+    assert!(page.contains("  - model_provider_unavailable"), "{page}");
+    assert!(page.contains("## Overview"), "{page}");
+
+    let report = outcome.explainer.expect("explainer report");
+    assert_eq!(report.status, "failed");
+    assert_eq!(report.error.as_deref(), Some("text lane unavailable"));
+    assert_eq!(report.citations_kept, 0);
+}
+
+#[test]
+fn compile_without_generator_stays_structural_without_degradation() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Accepted compile evidence.").expect("note written");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+    let outcome = compile_to_wiki_with_options(
+        &mut session,
+        CompileRequest {
+            topic: "Structural Compile".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: None,
+            write_intent: false,
+        },
+        WikiCompileOptions::default(),
+        None,
+    )
+    .expect("wiki article compiled");
+
+    let page = std::fs::read_to_string(&outcome.article_path).expect("article written");
+    assert!(page.contains("synthesis_mode: \"fallback\""), "{page}");
+    assert!(!page.contains("degraded:"), "{page}");
+    assert!(page.contains("## Overview"), "{page}");
+
+    let report = outcome.explainer.expect("explainer report");
+    assert_eq!(report.status, "skipped");
 }

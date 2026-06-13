@@ -6,6 +6,7 @@ use std::path::{Component, Path, PathBuf};
 use serde::Serialize;
 
 use crate::WikiError;
+use crate::explainer::{CitationTarget, ExplainerGeneration, ExplainerReport, ground_explainer};
 
 const MAX_SLUG_TRIES: usize = 500;
 
@@ -52,7 +53,6 @@ pub struct SynthesisInput {
     pub citations: Vec<String>,
     pub conflicting_claims: Vec<String>,
     pub missing_evidence: Vec<String>,
-    pub daemon_synthesis_available: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
@@ -60,6 +60,8 @@ pub struct SynthesisPrompt {
     pub system: String,
     pub user: String,
     pub daemon_synthesis_available: bool,
+    pub tokens_estimated: usize,
+    pub truncated_sources: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -67,6 +69,8 @@ pub struct SynthesizedPage {
     pub path: PathBuf,
     pub title: String,
     pub markdown: String,
+    /// Explainer accounting for the compiled article; `None` on source pages.
+    pub explainer: Option<ExplainerReport>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -88,45 +92,11 @@ pub struct PageWriteOutcome {
     pub kind: PageWriteKind,
 }
 
-pub fn build_synthesis_prompt(input: &SynthesisInput) -> SynthesisPrompt {
-    let synthesis_mode = if input.daemon_synthesis_available {
-        "daemon completion endpoint is available"
-    } else {
-        "daemon completion endpoint is unavailable; use deterministic source excerpts"
-    };
-    let mut user = format!(
-        "Compile topic: {}\nHandoff: {}\nMode: {synthesis_mode}\n",
-        input.topic, input.handoff_id
-    );
-    if !input.outline.is_empty() {
-        user.push_str("Outline:\n");
-        for item in &input.outline {
-            user.push_str("- ");
-            user.push_str(item);
-            user.push('\n');
-        }
-    }
-    user.push_str("Accepted sources:\n");
-    for source in &input.accepted_sources {
-        user.push_str("- ");
-        user.push_str(&source.title);
-        user.push_str(" (");
-        user.push_str(&source.path.to_string_lossy());
-        user.push_str(")\n");
-    }
-
-    SynthesisPrompt {
-        system: "Create Obsidian-compatible markdown grounded only in accepted sources."
-            .to_string(),
-        user,
-        daemon_synthesis_available: input.daemon_synthesis_available,
-    }
-}
-
 pub fn synthesize_article(
     vault_root: &Path,
     input: &SynthesisInput,
     target_page: Option<PathBuf>,
+    explainer: &ExplainerGeneration,
 ) -> Result<SynthesizedPage, WikiError> {
     let path = target_page.unwrap_or_else(|| {
         let directory = vault_root.join(input.target_kind.directory());
@@ -136,39 +106,58 @@ pub fn synthesize_article(
         directory.join(format!("{slug}.md"))
     });
     ensure_synthesized_path_inside_vault(vault_root, &path, "article_path")?;
+
+    let source_paths = source_page_paths(vault_root, &path, &input.accepted_sources);
+    let source_links = source_links(vault_root, &input.accepted_sources, &source_paths);
+    let (explainer_body, report) =
+        ground_article_explainer(vault_root, input, &source_links, explainer);
+    let degraded_sources: &[&str] = if report.status == "failed" {
+        &["model_provider_unavailable"]
+    } else {
+        &[]
+    };
+
     let mut markdown = String::new();
     render_frontmatter(
         &mut markdown,
         &input.topic,
         input.target_kind.source_kind(),
         &input.handoff_id,
-        if input.daemon_synthesis_available {
-            "daemon"
-        } else {
-            "fallback"
-        },
+        report.route.unwrap_or("fallback"),
+        degraded_sources,
     );
     markdown.push_str("# ");
     markdown.push_str(&input.topic);
     markdown.push_str("\n\n");
 
-    let source_paths = source_page_paths(vault_root, &path, &input.accepted_sources);
-    let source_links = source_links(vault_root, &input.accepted_sources, &source_paths);
     if !source_links.is_empty() {
         markdown.push_str("Sources: ");
         markdown.push_str(&source_links.join(", "));
         markdown.push_str("\n\n");
     }
 
-    let headings = if input.outline.is_empty() {
-        vec!["Overview".to_string()]
-    } else {
-        input.outline.clone()
-    };
-    for heading in &headings {
-        markdown.push_str("## ");
-        markdown.push_str(heading);
-        markdown.push_str("\n\n");
+    match &explainer_body {
+        Some(body) => {
+            markdown.push_str(body);
+            if !markdown.ends_with("\n\n") {
+                markdown.push('\n');
+                if !markdown.ends_with("\n\n") {
+                    markdown.push('\n');
+                }
+            }
+        }
+        None => {
+            let headings = if input.outline.is_empty() {
+                vec!["Overview".to_string()]
+            } else {
+                input.outline.clone()
+            };
+            for heading in &headings {
+                markdown.push_str("## ");
+                markdown.push_str(heading);
+                markdown.push_str("\n\n");
+            }
+        }
     }
     markdown.push_str("## Source excerpts\n\n");
     render_source_excerpts(&mut markdown, &input.accepted_sources);
@@ -188,7 +177,56 @@ pub fn synthesize_article(
         path,
         title: input.topic.clone(),
         markdown,
+        explainer: Some(report),
     })
+}
+
+/// Ground the generated explainer against the accepted sources and produce
+/// the per-article report. Failure keeps the structural skeleton (`None`
+/// body) and is reported as degraded; skipped synthesis is structural by
+/// intent and records nothing.
+fn ground_article_explainer(
+    vault_root: &Path,
+    input: &SynthesisInput,
+    source_links: &[String],
+    explainer: &ExplainerGeneration,
+) -> (Option<String>, ExplainerReport) {
+    match explainer {
+        ExplainerGeneration::Generated { body, model, route } => {
+            let targets: Vec<CitationTarget> = input
+                .accepted_sources
+                .iter()
+                .zip(source_links)
+                .map(|(source, link)| CitationTarget {
+                    key: relative_path(vault_root, &source.path),
+                    link: link.clone(),
+                    corpus: format!(
+                        "{} {}",
+                        source.title,
+                        source.chunks.first().map(String::as_str).unwrap_or("")
+                    ),
+                })
+                .collect();
+            let grounded = ground_explainer(body, &targets);
+            let report = ExplainerReport {
+                status: "generated",
+                route: Some(*route),
+                model: model.clone(),
+                error: None,
+                citations_kept: grounded.citations_kept,
+                citations_stripped: grounded.citations_stripped,
+                fallback_sections: grounded.fallback_sections,
+            };
+            (Some(grounded.body), report)
+        }
+        ExplainerGeneration::Failed { error } => {
+            let mut report = ExplainerReport::skipped();
+            report.status = "failed";
+            report.error = Some(error.clone());
+            (None, report)
+        }
+        ExplainerGeneration::Skipped => (None, ExplainerReport::skipped()),
+    }
 }
 
 pub fn synthesize_source_pages(
@@ -208,6 +246,7 @@ pub fn synthesize_source_pages(
             ArticleKind::Source.source_kind(),
             &input.handoff_id,
             "source",
+            &[],
         );
         markdown.push_str("# ");
         markdown.push_str(&source.title);
@@ -226,6 +265,7 @@ pub fn synthesize_source_pages(
             path,
             title: source.title.clone(),
             markdown,
+            explainer: None,
         });
     }
     Ok(pages)
@@ -502,6 +542,7 @@ fn render_frontmatter(
     source_kind: &str,
     handoff_id: &str,
     synthesis_mode: &str,
+    degraded_sources: &[&str],
 ) {
     markdown.push_str("---\n");
     markdown.push_str("title: ");
@@ -518,7 +559,17 @@ fn render_frontmatter(
     markdown.push('\n');
     markdown.push_str("synthesis_mode: ");
     markdown.push_str(&yaml_scalar(synthesis_mode));
-    markdown.push_str("\n---\n\n");
+    markdown.push('\n');
+    if !degraded_sources.is_empty() {
+        markdown.push_str("degraded: true\n");
+        markdown.push_str("degraded_sources:\n");
+        for source in degraded_sources {
+            markdown.push_str("  - ");
+            markdown.push_str(source);
+            markdown.push('\n');
+        }
+    }
+    markdown.push_str("---\n\n");
 }
 
 fn render_source_excerpts(markdown: &mut String, sources: &[SynthesisSource]) {
@@ -694,6 +745,7 @@ mod tests {
             path: page_path.clone(),
             title: "Existing".to_string(),
             markdown: "---\ntitle: Existing\n---\n# Existing\nNew synthesis.\n".to_string(),
+            explainer: None,
         };
 
         let error = write_synthesized_page(temp.path(), &page, WritePolicy::RequireMergeIntent)
@@ -720,6 +772,7 @@ mod tests {
             path: page_path.clone(),
             title: "New".to_string(),
             markdown: "# New\n".to_string(),
+            explainer: None,
         };
 
         let created =
@@ -773,7 +826,6 @@ mod tests {
             citations: vec![],
             conflicting_claims: vec![],
             missing_evidence: vec![],
-            daemon_synthesis_available: false,
         };
         let outside_name = format!(
             "{}-outside.md",
@@ -784,8 +836,13 @@ mod tests {
         );
         let target = temp.path().join("..").join(outside_name);
 
-        let error = synthesize_article(temp.path(), &input, Some(target))
-            .expect_err("escaping target must be rejected");
+        let error = synthesize_article(
+            temp.path(),
+            &input,
+            Some(target),
+            &ExplainerGeneration::Skipped,
+        )
+        .expect_err("escaping target must be rejected");
 
         assert!(matches!(
             error,
@@ -811,6 +868,7 @@ mod tests {
             path: outside.clone(),
             title: "Outside".to_string(),
             markdown: "# Outside\n".to_string(),
+            explainer: None,
         };
 
         let error =
@@ -841,6 +899,7 @@ mod tests {
             path: link.join("nested/page.md"),
             title: "Outside".to_string(),
             markdown: "# Outside\n".to_string(),
+            explainer: None,
         };
 
         let error =

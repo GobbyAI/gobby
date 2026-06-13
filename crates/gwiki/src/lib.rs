@@ -18,6 +18,7 @@ pub mod contract;
 pub(crate) mod credibility;
 pub(crate) mod daemon;
 pub mod document;
+pub mod explainer;
 pub mod exports;
 pub(crate) mod falkor_graph;
 pub(crate) mod frontmatter;

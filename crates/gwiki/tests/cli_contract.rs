@@ -62,6 +62,7 @@ fn compile_contract_tracks_compile_json_payload_keys() {
         "handoff_id",
         "page_writes",
         "prompt",
+        "ai",
     ];
 
     assert_eq!(compile.json_output_keys, expected_keys);

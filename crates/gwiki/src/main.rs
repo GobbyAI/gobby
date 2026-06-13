@@ -339,6 +339,10 @@ struct CompileArgs {
 
     #[arg(long = "write-intent")]
     write_intent: bool,
+
+    /// AI routing for explainer synthesis over accepted sources.
+    #[arg(long, default_value = "auto", value_name = "auto|daemon|direct|off")]
+    ai: AiRouting,
 }
 
 #[derive(Debug, Args)]
@@ -631,6 +635,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             target_kind: args.kind.into(),
             target_page: args.target,
             write_intent: args.write_intent,
+            ai: args.ai,
             scope,
         }),
         CliCommand::Export(args) => Ok(Command::Export {

@@ -473,6 +473,19 @@
           "allowed_values": [],
           "required": false,
           "repeatable": false
+        },
+        {
+          "name": "--ai",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -487,8 +500,23 @@
         "index_path",
         "handoff_id",
         "page_writes",
-        "prompt"
-      ]
+        "prompt",
+        "ai"
+      ],
+      "optional_dependencies": [
+        "model synthesis",
+        "daemon text lane or direct OpenAI-compatible endpoint"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "explainer failure keeps the deterministic skeleton with degradation markers; AI off compiles the structural article without markers",
+        "metadata_keys": [
+          "ai.status",
+          "ai.error",
+          "page frontmatter degraded",
+          "page frontmatter degraded_sources[]"
+        ]
+      }
     },
     {
       "name": "audit",

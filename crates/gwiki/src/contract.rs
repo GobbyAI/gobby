@@ -194,6 +194,7 @@ pub fn contract() -> CliContract {
                         .allowed(vec!["source", "concept", "topic"]),
                     FlagContract::value("--target", "PAGE"),
                     FlagContract::switch("--write-intent"),
+                    ai_flag("--ai"),
                 ],
                 json_output_keys: scoped_keys(vec![
                     "status",
@@ -206,7 +207,24 @@ pub fn contract() -> CliContract {
                     "handoff_id",
                     "page_writes",
                     "prompt",
+                    "ai",
                 ]),
+                optional_dependencies: vec![
+                    "model synthesis",
+                    "daemon text lane or direct OpenAI-compatible endpoint",
+                ],
+                multimodal: Some("none"),
+                degradation: Some(DegradationContract {
+                    output_shape: "explainer failure keeps the deterministic skeleton with \
+                                   degradation markers; AI off compiles the structural article \
+                                   without markers",
+                    metadata_keys: vec![
+                        "ai.status",
+                        "ai.error",
+                        "page frontmatter degraded",
+                        "page frontmatter degraded_sources[]",
+                    ],
+                }),
                 ..CommandContract::new(
                     "compile",
                     "Compile accepted research notes into wiki articles.",

@@ -6,10 +6,13 @@ use serde::Serialize;
 
 use crate::WikiError;
 use crate::citations::render_source_citations;
+use crate::explainer::{
+    ExplainerGenerator, ExplainerReport, build_explainer_prompt, generate_explainer,
+};
 use crate::session::{CompileState, ResearchSession};
 use crate::synthesis::{
     ArticleKind, PageWriteOutcome, SynthesisInput, SynthesisPrompt, SynthesisSource, WritePolicy,
-    build_synthesis_prompt, synthesize_article, synthesize_source_pages, write_synthesized_page,
+    synthesize_article, synthesize_source_pages, write_synthesized_page,
 };
 
 mod collect;
@@ -60,6 +63,7 @@ pub struct WikiCompileOutcome {
     pub index_path: PathBuf,
     pub page_writes: Vec<PageWriteOutcome>,
     pub prompt: SynthesisPrompt,
+    pub explainer: Option<ExplainerReport>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -95,13 +99,14 @@ pub fn compile_to_wiki(
     session: &mut ResearchSession,
     request: CompileRequest,
 ) -> Result<WikiCompileOutcome, WikiError> {
-    compile_to_wiki_with_options(session, request, WikiCompileOptions::default())
+    compile_to_wiki_with_options(session, request, WikiCompileOptions::default(), None)
 }
 
 pub fn compile_to_wiki_with_options(
     session: &mut ResearchSession,
     request: CompileRequest,
     options: WikiCompileOptions,
+    generator: Option<ExplainerGenerator<'_>>,
 ) -> Result<WikiCompileOutcome, WikiError> {
     let target_page = normalize_target_page(session.scope.root(), request.target_page.as_deref())?;
     let write_intent = request.write_intent;
@@ -155,10 +160,17 @@ pub fn compile_to_wiki_with_options(
         citations,
         conflicting_claims: handoff.bundle.conflicting_claims.clone(),
         missing_evidence: handoff.bundle.missing_evidence.clone(),
-        daemon_synthesis_available: options.daemon_synthesis_available,
     };
-    let prompt = build_synthesis_prompt(&input);
-    let article = synthesize_article(vault_root, &input, target_page)?;
+    let explainer_prompt = build_explainer_prompt(vault_root, &input);
+    let prompt = SynthesisPrompt {
+        system: explainer_prompt.system.to_string(),
+        user: explainer_prompt.user.clone(),
+        daemon_synthesis_available: options.daemon_synthesis_available,
+        tokens_estimated: explainer_prompt.tokens_estimated,
+        truncated_sources: explainer_prompt.truncated_sources,
+    };
+    let explainer = generate_explainer(&input, &explainer_prompt, generator);
+    let article = synthesize_article(vault_root, &input, target_page, &explainer)?;
     let mut pages = vec![article.clone()];
     pages.extend(synthesize_source_pages(vault_root, &input, &article.path)?);
 
@@ -187,6 +199,7 @@ pub fn compile_to_wiki_with_options(
         index_path: vault_root.join("_index.md"),
         page_writes,
         prompt,
+        explainer: article.explainer,
     })
 }
 

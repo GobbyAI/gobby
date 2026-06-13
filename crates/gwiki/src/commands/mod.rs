@@ -74,6 +74,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             target_kind,
             target_page,
             write_intent,
+            ai,
             scope,
         } => compile::execute(
             topic,
@@ -81,6 +82,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             target_kind,
             target_page,
             write_intent,
+            ai,
             scope,
         ),
         Command::Export { scope, command } => export::execute(scope, command),

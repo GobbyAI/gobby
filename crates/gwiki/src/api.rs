@@ -80,6 +80,7 @@ pub enum Command {
         target_kind: synthesis::ArticleKind,
         target_page: Option<PathBuf>,
         write_intent: bool,
+        ai: AiRouting,
         scope: ScopeSelection,
     },
     Export {
