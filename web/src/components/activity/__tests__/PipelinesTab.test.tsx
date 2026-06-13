@@ -7,9 +7,12 @@ vi.mock('../../chat/artifacts/ResizeHandle', () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
 }))
 
-vi.mock('../../workflows/execution-utils', () => ({
+vi.mock('../../shared/executions/execution-utils', () => ({
   PipelineStatusDot: ({ status }: { status: string }) => <span>{status}</span>,
   StepDisplay: () => null,
+}))
+
+vi.mock('../../shared/executions/executionFormatters', () => ({
   formatDateTime: (value: string) => value,
   formatDuration: () => '1m',
 }))

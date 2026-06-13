@@ -1,7 +1,7 @@
 import { memo, useState, useEffect, useCallback, useRef, useMemo } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
-import { PipelineStatusDot, StepDisplay, type StepData } from '../workflows/execution-utils'
-import { formatDateTime, formatDuration } from '../workflows/executionFormatters'
+import { PipelineStatusDot, StepDisplay, type StepData } from '../shared/executions/execution-utils'
+import { formatDateTime, formatDuration } from '../shared/executions/executionFormatters'
 import { DEFAULT_TOP_PANEL_PERCENT } from './constants'
 import { ActivityPanelEmpty, PipelinesEmptyIcon } from './ActivityPanelEmpty'
 import { ActivityFilterDropdown } from './ActivityFilterDropdown'
@@ -319,4 +319,3 @@ export const PipelinesTab = memo(function PipelinesTab({ projectId }: PipelinesT
     </div>
   )
 })
-

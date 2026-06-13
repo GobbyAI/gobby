@@ -1,7 +1,7 @@
 import { memo, useMemo, useState } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
-import { formatTime } from '../workflows/executionFormatters'
+import { formatTime } from '../shared/executions/executionFormatters'
 import { useTraces, useTraceDetail } from '../../hooks/useTraces'
 import type { TraceRecord, SpanRecord } from '../../hooks/useTraces'
 import { ActivityPanelEmpty, TracesEmptyIcon } from './ActivityPanelEmpty'

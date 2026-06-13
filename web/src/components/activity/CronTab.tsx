@@ -1,7 +1,7 @@
 import { memo, useEffect, useMemo, useState } from 'react'
 import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
-import { formatDateTime } from '../workflows/executionFormatters'
+import { formatDateTime } from '../shared/executions/executionFormatters'
 import { useCronJobs } from '../../hooks/useCronJobs'
 import type { CronJob, CronRun } from '../../hooks/useCronJobs'
 import { cronRunStatusKind } from './cronRunStatus'
