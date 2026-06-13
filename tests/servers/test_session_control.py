@@ -268,10 +268,6 @@ class TestContinueInChatTerminalKill:
         host.session_manager = session_manager
         host.agent_run_manager = None
 
-        # Mock the agent registry to return nothing
-        mock_registry = MagicMock()
-        mock_registry.get_by_session.return_value = None
-
         async def fake_create_chat_session(
             conv_id,
             model=None,
@@ -286,10 +282,6 @@ class TestContinueInChatTerminalKill:
         host._send_error = AsyncMock()
 
         with (
-            patch(
-                "gobby.agents.registry.get_running_agent_registry",
-                return_value=mock_registry,
-            ),
             patch(
                 "gobby.servers.websocket.handlers.session_observe.kill_terminal_session",
                 new_callable=AsyncMock,

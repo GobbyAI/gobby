@@ -112,7 +112,11 @@ class AgentLifecycleMonitor:
         self._check_interval = check_interval_seconds
         self._completion_registry = completion_registry
         self._task_manager = task_manager
-        self._tmux_config = tmux_config or TmuxConfig()
+        if tmux_config is None:
+            from gobby.agents.tmux import get_configured_tmux_config
+
+            tmux_config = get_configured_tmux_config()
+        self._tmux_config = tmux_config
         self._tmux = TmuxSessionManager(config=self._tmux_config)
         self._idle_detector = IdleDetector()
         self._prompt_detector = PromptDetector()
@@ -126,6 +130,14 @@ class AgentLifecycleMonitor:
             task_manager=task_manager,
             agent_run_manager=agent_run_manager,
             stall_classifier=self._stall_classifier,
+            terminal_agent_killer=lambda run: kill_agent(
+                cast("AgentRun", run),
+                db,
+                master_fd=self._master_fds.get(run.id),
+                signal_name="TERM",
+                timeout=5.0,
+                close_terminal=True,
+            ),
             run_db=run_db,
         )
         self._terminal_prompt_monitor = TerminalPromptMonitor(
@@ -162,6 +174,7 @@ class AgentLifecycleMonitor:
             cleanup_handler=self._cleanup_handler,
             tmux_config=self._tmux_config,
             run_db=run_db,
+            checkpoint_agent_work=lambda run: self._checkpoint_agent_work(run),
         )
         self._idle_check_handler = IdleCheckHandler(
             agent_run_manager=agent_run_manager,
@@ -467,24 +480,7 @@ class AgentLifecycleMonitor:
 
     async def _checkpoint_and_kill_looping_agent(self, run: AgentRun) -> None:
         """Checkpoint work, kill tmux, then full cleanup for a doom-looping agent."""
-        if self._checkpoint_manager and run.task_id:
-            cwd = await self._resolve_agent_cwd(run)
-            if cwd:
-                try:
-                    checkpoint = await asyncio.to_thread(
-                        self._checkpoint_manager.create_checkpoint,
-                        cwd,
-                        run.task_id,
-                        run.child_session_id or run.parent_session_id,
-                        run.id,
-                    )
-                    if checkpoint:
-                        logger.info(
-                            f"Checkpointed agent {run.id} work: {checkpoint.ref_name} "
-                            f"({checkpoint.files_changed} files)"
-                        )
-                except Exception as e:
-                    logger.warning(f"Failed to checkpoint agent {run.id}: {e}")
+        await self._checkpoint_agent_work(run)
 
         if run.tmux_session_name:
             await self._tmux.kill_session(run.tmux_session_name)
@@ -499,6 +495,27 @@ class AgentLifecycleMonitor:
             run,
             terminal_payload=f"doom loop: dismissed loop prompt {threshold}+ times",
         )
+
+    async def _checkpoint_agent_work(self, run: AgentRun) -> None:
+        """Checkpoint agent work when checkpoint storage is available."""
+        if self._checkpoint_manager and run.task_id:
+            cwd = await self._resolve_agent_cwd(run)
+            if cwd:
+                try:
+                    checkpoint = await asyncio.to_thread(
+                        self._checkpoint_manager.create_checkpoint,
+                        cwd,
+                        run.task_id,
+                        run.child_session_id,
+                        run.id,
+                    )
+                    if checkpoint:
+                        logger.info(
+                            f"Checkpointed agent {run.id} work: {checkpoint.ref_name} "
+                            f"({checkpoint.files_changed} files)"
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to checkpoint agent {run.id}: {e}")
 
     async def _resolve_agent_cwd(self, run: AgentRun) -> str | None:
         """Resolve the working directory for an agent run."""

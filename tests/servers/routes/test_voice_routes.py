@@ -93,14 +93,16 @@ class TestVoiceRoutes:
     def test_status_voice_enabled_no_whisper(
         self, client: TestClient, server_with_voice: MagicMock
     ) -> None:
-        """Voice enabled but faster-whisper not installed."""
+        """Voice enabled but faster-whisper is missing from the daemon environment."""
         server_with_voice.config.voice = VoiceConfig(enabled=True)
         with patch.dict("sys.modules", {"faster_whisper": None}):
             response = client.get("/api/voice/status")
         data = response.json()
         assert data["enabled"] is True
         assert data["stt_available"] is False
-        assert "faster-whisper" in data["stt_reason"]
+        assert data["stt_reason"] == (
+            "daemon environment is missing required package faster-whisper; run uv sync"
+        )
 
     def test_status_voice_enabled_with_whisper(
         self, client: TestClient, server_with_voice: MagicMock

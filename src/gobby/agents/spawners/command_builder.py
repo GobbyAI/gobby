@@ -6,6 +6,8 @@ Codex, and Droid with proper flags for prompts, permissions, and session managem
 
 from __future__ import annotations
 
+from gobby.agents.provider_capabilities import provider_reasoning_flag
+
 
 def build_cli_command(
     cli: str,
@@ -39,8 +41,7 @@ def build_cli_command(
     Gemini CLI:
     - gemini --approval-mode yolo "prompt" (one-shot)
     - gemini --acp (interactive ACP mode)
-    - reasoning effort is resolved before command construction; current Gemini
-      terminal mode relies on the selected model/settings rather than a stable flag
+    - spawned-terminal reasoning is unsupported because there is no stable flag
 
     Codex CLI:
     - codex --ask-for-approval never --disable guardian_approval -C <dir> [PROMPT]
@@ -71,6 +72,7 @@ def build_cli_command(
     """
     command = [cli]
     env: dict[str, str] = {}
+    reasoning_flag = provider_reasoning_flag(cli)
     sandbox_args_consumed = False
     if env_overrides:
         env.update(env_overrides)
@@ -83,7 +85,7 @@ def build_cli_command(
             command.extend(["--session-id", session_id])
         if model:
             command.extend(["--model", model])
-        if reasoning_effort:
+        if reasoning_effort and reasoning_flag == "claude-effort":
             command.extend(["--effort", reasoning_effort])
         if disallowed_tools:
             command.extend(["--disallowedTools", *disallowed_tools])
@@ -111,7 +113,7 @@ def build_cli_command(
             command.extend(["agent", "--no-leader", "--always-approve"])
             if model:
                 command.extend(["--model", model])
-            if reasoning_effort:
+            if reasoning_effort and reasoning_flag == "reasoning-effort":
                 command.extend(["--reasoning-effort", reasoning_effort])
             command.append("stdio")
         else:
@@ -122,7 +124,7 @@ def build_cli_command(
                 command.extend(["--cwd", working_directory])
             if model:
                 command.extend(["--model", model])
-            if reasoning_effort:
+            if reasoning_effort and reasoning_flag == "reasoning-effort":
                 command.extend(["--reasoning-effort", reasoning_effort])
             if resume_session_id:
                 command.extend(["--resume", resume_session_id])
@@ -137,7 +139,7 @@ def build_cli_command(
             command.append("resume")
         if model:
             command.extend(["--model", model])
-        if cli == "codex" and reasoning_effort:
+        if reasoning_effort and reasoning_flag == "codex-config":
             command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
         if auto_approve:
             command.extend(["--ask-for-approval", "never", "--disable", "guardian_approval"])
@@ -155,7 +157,7 @@ def build_cli_command(
             command.extend(["--cwd", working_directory])
         if model:
             command.extend(["--model", model])
-        if reasoning_effort:
+        if reasoning_effort and reasoning_flag == "reasoning-effort":
             command.extend(["--reasoning-effort", reasoning_effort])
         command.extend(["--auto", "high" if auto_approve else "low"])
 

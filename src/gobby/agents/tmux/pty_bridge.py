@@ -70,11 +70,15 @@ class TmuxPTYBridge:
         Raises:
             RuntimeError: If attach fails.
         """
-        cfg = config or TmuxConfig()
-
         async with self._lock:
             if streaming_id in self._bridges:
                 raise RuntimeError(f"Bridge {streaming_id} already exists")
+
+        if config is None:
+            from gobby.agents.tmux import get_configured_tmux_config
+
+            config = get_configured_tmux_config()
+        cfg = config
 
         master_fd, slave_fd = os.openpty()
 

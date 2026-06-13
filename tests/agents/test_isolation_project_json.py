@@ -173,6 +173,9 @@ async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -
     _git(parent, "add", ".gobby/project.json")
     _git(parent, "commit", "-m", "initial")
     _git(parent, "worktree", "add", "-b", "isolation", str(worktree), "main")
+    parent_exclude_path = parent / ".git" / "info" / "exclude"
+    parent_exclude_before = parent_exclude_path.read_text(encoding="utf-8")
+    (parent / ".mcp.json").write_text('{"mcpServers":{}}\n', encoding="utf-8")
 
     await repair_isolation_environment(
         main_repo_path=str(parent),
@@ -183,11 +186,25 @@ async def test_repair_marks_tracked_project_json_skip_worktree(tmp_path: Path) -
     data = json.loads((worktree / ".gobby" / "project.json").read_text(encoding="utf-8"))
     assert data["parent_project_path"] == str(parent.resolve())
     assert data["parent_project_id"] == "parent-proj"
-    assert _git(worktree, "status", "--porcelain").stdout == ""
-    exclude_path = (
-        worktree / _git(worktree, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+    assert parent_exclude_path.read_text(encoding="utf-8") == parent_exclude_before
+    assert (
+        "?? .mcp.json"
+        in _git(
+            parent,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ).stdout.splitlines()
     )
-    assert ".mcp.json" in exclude_path.read_text(encoding="utf-8")
+    assert (
+        "?? .mcp.json"
+        in _git(
+            worktree,
+            "status",
+            "--porcelain",
+            "--untracked-files=all",
+        ).stdout.splitlines()
+    )
     assert _git(worktree, "ls-files", "-v", ".gobby/project.json").stdout.startswith("S ")
 
 
@@ -223,6 +240,40 @@ async def test_repair_excludes_untracked_project_json(tmp_path: Path) -> None:
     exclude_text = exclude_path.read_text(encoding="utf-8")
     assert ".mcp.json" in exclude_text
     assert ".gobby/project.json" in exclude_text
+
+
+@pytest.mark.asyncio
+async def test_repair_excludes_generated_droid_hook_file(tmp_path: Path) -> None:
+    """Generated Droid hook files should not dirty repaired isolated roots."""
+    parent = tmp_path / "parent"
+    isolated = tmp_path / "isolated"
+    parent.mkdir()
+    isolated.mkdir()
+    (parent / ".gobby").mkdir()
+    (parent / ".gobby" / "project.json").write_text(
+        json.dumps({"id": "parent-proj", "name": "parent"}) + "\n",
+        encoding="utf-8",
+    )
+    _git(isolated, "init", "-b", "main")
+    _git(isolated, "config", "user.email", "test@example.com")
+    _git(isolated, "config", "user.name", "Test User")
+    (isolated / "README.md").write_text("# isolated\n", encoding="utf-8")
+    _git(isolated, "add", "README.md")
+    _git(isolated, "commit", "-m", "initial")
+
+    await repair_isolation_environment(
+        main_repo_path=str(parent),
+        isolated_path=str(isolated),
+        provider="droid",
+    )
+
+    hooks_file = isolated / ".factory" / "hooks" / "hooks.json"
+    assert hooks_file.exists()
+    assert _git(isolated, "status", "--porcelain").stdout == ""
+    exclude_path = (
+        isolated / _git(isolated, "rev-parse", "--git-path", "info/exclude").stdout.strip()
+    )
+    assert ".factory/hooks/hooks.json" in exclude_path.read_text(encoding="utf-8")
 
 
 @pytest.mark.asyncio

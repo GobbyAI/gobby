@@ -9,6 +9,7 @@ previously owned by the terminal orchestration layer.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import logging
 import re
 import shlex
@@ -55,9 +56,9 @@ class TmuxSpawner(TerminalSpawnerBase):
 
     def __init__(
         self,
-        config: TmuxConfig | None = None,
+        config: TmuxConfig,
     ) -> None:
-        self._config = config or TmuxConfig()
+        self._config = config
         self._session_manager = TmuxSessionManager(self._config)
 
     @property
@@ -73,6 +74,16 @@ class TmuxSpawner(TerminalSpawnerBase):
             return False
         return self._session_manager.is_available()
 
+    async def spawn_async(
+        self,
+        command: list[str],
+        cwd: str | Path,
+        env: dict[str, str] | None = None,
+        title: str | None = None,
+    ) -> SpawnResult:
+        """Spawn a command inside a new tmux session."""
+        return await self._async_spawn(command, cwd, env, title)
+
     def spawn(
         self,
         command: list[str],
@@ -80,27 +91,8 @@ class TmuxSpawner(TerminalSpawnerBase):
         env: dict[str, str] | None = None,
         title: str | None = None,
     ) -> SpawnResult:
-        """Spawn a command inside a new tmux session (sync wrapper).
-
-        The heavy lifting is async; we bridge to the running event loop
-        or create a temporary one for sync callers.
-        """
-        try:
-            loop = asyncio.get_running_loop()
-        except RuntimeError:
-            loop = None
-
-        if loop and loop.is_running():
-            import concurrent.futures
-
-            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as pool:
-                future = pool.submit(
-                    asyncio.run,
-                    self._async_spawn(command, cwd, env, title),
-                )
-                return future.result(timeout=30)
-        else:
-            return asyncio.run(self._async_spawn(command, cwd, env, title))
+        """Spawn a command inside a new tmux session for sync callers."""
+        return asyncio.run(self.spawn_async(command, cwd, env, title))
 
     async def _async_spawn(
         self,
@@ -165,12 +157,16 @@ class TmuxSpawner(TerminalSpawnerBase):
         try:
             verified_info, verification_error = await self._verify_live_pane(info.name)
         except Exception as e:
+            with contextlib.suppress(Exception):
+                await self._session_manager.kill_session(info.name, missing_ok=True)
             return SpawnResult(
                 success=False,
                 message=f"tmux session '{info.name}' failed live-pane verification",
                 error=f"tmux session verification failed: {e}",
             )
         if verified_info is None:
+            with contextlib.suppress(Exception):
+                await self._session_manager.kill_session(info.name, missing_ok=True)
             return SpawnResult(
                 success=False,
                 message=f"tmux session '{info.name}' failed live-pane verification",

@@ -85,6 +85,7 @@ class EmbeddingBackend:
         self._item_embeddings: list[list[float]] = []
         self._item_contents: dict[str, str] = {}  # For reindexing
         self._fitted = False
+        self._needs_refit = False
 
     @classmethod
     def from_config(cls, config: EmbeddingsConfig) -> EmbeddingBackend:
@@ -118,7 +119,8 @@ class EmbeddingBackend:
             self._item_ids = []
             self._item_embeddings = []
             self._item_contents = {}
-            self._fitted = False
+            self._fitted = True
+            self._needs_refit = False
             logger.debug("Embedding index cleared (no items)")
             return
 
@@ -139,6 +141,7 @@ class EmbeddingBackend:
                 expected_dim=self._dim,
             )
             self._fitted = True
+            self._needs_refit = False
             logger.info(f"Embedding index built with {len(items)} items")
         except Exception as e:
             # Clear stale state to prevent inconsistent data
@@ -146,6 +149,7 @@ class EmbeddingBackend:
             self._item_contents = {}
             self._item_embeddings = []
             self._fitted = False
+            self._needs_refit = False
             logger.error(f"Failed to build embedding index: {e}")
             raise
 
@@ -203,7 +207,11 @@ class EmbeddingBackend:
 
     def needs_refit(self) -> bool:
         """Check if the search index needs rebuilding."""
-        return not self._fitted
+        return not self._fitted or self._needs_refit
+
+    def mark_update(self) -> None:
+        """Mark that indexed item data changed after the last fit."""
+        self._needs_refit = True
 
     def get_stats(self) -> dict[str, Any]:
         """Get statistics about the search index."""
@@ -221,6 +229,7 @@ class EmbeddingBackend:
         self._item_embeddings = []
         self._item_contents = {}
         self._fitted = False
+        self._needs_refit = False
 
     def get_item_contents(self) -> dict[str, str]:
         """Get stored item contents.

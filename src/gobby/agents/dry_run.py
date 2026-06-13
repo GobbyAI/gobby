@@ -279,9 +279,10 @@ async def evaluate_spawn(
 
     # Terminal availability check (all agents use tmux)
     try:
+        from gobby.agents.tmux import get_configured_tmux_config
         from gobby.agents.tmux.spawner import TmuxSpawner
 
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(get_configured_tmux_config())
         if not spawner.is_available():
             result.items.append(
                 EvaluationItem(

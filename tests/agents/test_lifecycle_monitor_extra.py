@@ -2,12 +2,17 @@
 
 import json
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from unittest.mock import ANY, AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from gobby.agents.idle_check_handler import IdleCheckHandler
+from gobby.agents.idle_detector import IdleDetector
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
+from gobby.agents.tmux import configure_tmux
+from gobby.config.tmux import TmuxConfig as ConfiguredTmuxConfig
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -16,6 +21,8 @@ from gobby.storage.tasks._models import Task
 from gobby.workflows.definitions import WorkflowInstance
 from gobby.workflows.state_manager import SessionVariableManager, WorkflowInstanceManager
 from gobby.workflows.task_claim_state import add_claimed_task
+
+configure_tmux(ConfiguredTmuxConfig())
 
 pytestmark = pytest.mark.unit
 
@@ -76,6 +83,7 @@ class TestRecoverTaskFromFailedAgent:
         db_run = AgentRun(
             id="run-1",
             parent_session_id="parent-1",
+            child_session_id="owner-1",
             task_id="task-123",
             provider="claude",
             prompt="do it",
@@ -177,6 +185,7 @@ class TestRecoverTaskFromFailedAgent:
         db_run = AgentRun(
             id="run-review",
             parent_session_id="p",
+            child_session_id="reviewer-1",
             task_id="task-review",
             provider="claude",
             prompt="review it",
@@ -265,6 +274,7 @@ class TestRecoverTaskFromFailedAgent:
         db_run = AgentRun(
             id="run-1",
             parent_session_id="p",
+            child_session_id="owner-1",
             task_id="task-1",
             provider="claude",
             prompt="p",
@@ -312,6 +322,7 @@ class TestRecoverTaskFromFailedAgent:
         db_run = AgentRun(
             id="run-1",
             parent_session_id="p",
+            child_session_id="owner-1",
             task_id="task-1",
             provider="claude",
             prompt="p",
@@ -339,8 +350,10 @@ class TestRecoverTaskFromFailedAgent:
         assert mock_task_mgr.release_task_claim.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_recover_task_uses_persisted_claimed_session_id(self) -> None:
-        """Recovery should not release a task claimed by a different live session."""
+    async def test_recover_task_ignores_persisted_claimed_session_when_child_missing(
+        self,
+    ) -> None:
+        """Recovery should not release a task when the child session is unknown."""
         mock_run_mgr = MagicMock()
         mock_task_mgr = MagicMock()
         mock_stall = MagicMock()
@@ -368,7 +381,7 @@ class TestRecoverTaskFromFailedAgent:
 
         mock_task = _task(
             task_id="task-1",
-            owner="different-owner",
+            owner="original-owner",
             seq_num=10,
         )
         mock_task_mgr.get_task.return_value = mock_task
@@ -395,9 +408,70 @@ class TestRecoverTaskFromFailedAgent:
         assert cleaned == 5
         mock_run_mgr.cleanup_stale_pending_runs.assert_called_once()
 
+    @pytest.mark.asyncio
+    async def test_idle_check_does_not_probe_parent_session_when_child_missing(self) -> None:
+        db_run = AgentRun(
+            id="run-1",
+            parent_session_id="parent-session",
+            child_session_id=None,
+            provider="codex",
+            prompt="test",
+            status="running",
+            created_at="2024-01-01T00:00:00+00:00",
+            updated_at="2024-01-01T00:00:00+00:00",
+            task_id="task-1",
+            tmux_session_name="agent-run-1",
+        )
+        mock_run_mgr = MagicMock()
+        mock_run_mgr.get.return_value = db_run
+        session_manager = MagicMock()
+        tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="working")
+        idle_detector = IdleDetector()
+        cleanup_handler = AsyncMock()
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        handler = IdleCheckHandler(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(spec=HubDatabase),
+            get_session_manager=lambda: session_manager,
+            tmux=tmux,
+            idle_detector=idle_detector,
+            cleanup_handler=cleanup_handler,
+            tmux_config=SimpleNamespace(
+                idle_timeout_seconds=60,
+                idle_reprompt_delay_seconds=60,
+                max_reprompt_attempts=2,
+            ),
+            run_db=run_db,
+        )
+
+        result = await handler._handle_idle_check(db_run)
+
+        assert result == 0
+        session_manager.get.assert_not_called()
+        tmux.capture_pane.assert_awaited_once_with("agent-run-1", lines=15)
+        assert idle_detector.get_state("run-1").reprompt_count == 0
+
 
 class TestLoopPromptEscalation:
     """Tests for loop prompt counting and escalation in check_loop_prompts."""
+
+    @staticmethod
+    def _run(run_id: str = "run-1") -> AgentRun:
+        return AgentRun(
+            id=run_id,
+            parent_session_id="p",
+            provider="claude",
+            prompt="p",
+            status="running",
+            created_at="2024-01-01",
+            updated_at="2024-01-01",
+            tmux_session_name="gobby-test",
+            pid=12345,
+        )
 
     @pytest.mark.asyncio
     async def test_dismisses_below_threshold(self) -> None:
@@ -410,17 +484,7 @@ class TestLoopPromptEscalation:
         )
         monitor._tmux = mock_tmux
 
-        run = AgentRun(
-            id="run-1",
-            parent_session_id="p",
-            provider="claude",
-            prompt="p",
-            status="running",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
-            tmux_session_name="gobby-test",
-            pid=12345,
-        )
+        run = self._run()
         mock_run_mgr.list_active.return_value = [run]
         mock_tmux.capture_pane.return_value = "stuck in a loop\nContinue? (y/n)"
         mock_tmux.send_keys.return_value = True
@@ -432,7 +496,7 @@ class TestLoopPromptEscalation:
 
     @pytest.mark.asyncio
     async def test_escalates_at_threshold(self) -> None:
-        """After 3 dismissals, agent is killed instead of dismissed."""
+        """After 3 successful dismissals, agent is killed."""
         mock_run_mgr = MagicMock()
         mock_tmux = AsyncMock()
         monitor = AgentLifecycleMonitor(
@@ -441,19 +505,10 @@ class TestLoopPromptEscalation:
         )
         monitor._tmux = mock_tmux
 
-        run = AgentRun(
-            id="run-1",
-            parent_session_id="p",
-            provider="claude",
-            prompt="p",
-            status="running",
-            created_at="2024-01-01",
-            updated_at="2024-01-01",
-            tmux_session_name="gobby-test",
-            pid=12345,
-        )
+        run = self._run()
         mock_run_mgr.list_active.return_value = [run]
-        mock_tmux.capture_pane.return_value = "stuck in a loop"
+        mock_tmux.capture_pane.return_value = "stuck in a loop\nContinue? (y/n)"
+        mock_tmux.send_keys.return_value = True
 
         # Pre-load 2 dismissals
         monitor._loop_tracker.record_dismissal("run-1")
@@ -467,10 +522,110 @@ class TestLoopPromptEscalation:
             assert mock_kill.call_count == 1
             assert mock_kill.call_args is not None
 
-        # send_keys should NOT have been called (escalated instead)
+        mock_tmux.send_keys.assert_called_once_with("gobby-test", PromptDetector.LOOP_DISMISS_KEYS)
+        assert monitor._loop_tracker.get_count("run-1") == 3
+
+    @pytest.mark.asyncio
+    async def test_static_loop_prose_without_dialog_chrome_is_ignored(self) -> None:
+        """Static prose matching loop terms never sends keys or escalates."""
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+        )
+        monitor._tmux = mock_tmux
+
+        run = self._run()
+        mock_run_mgr.list_active.return_value = [run]
+        mock_tmux.capture_pane.return_value = "It seems like I'm stuck in a loop.\n"
+
+        with patch.object(
+            monitor, "_checkpoint_and_kill_looping_agent", new_callable=AsyncMock
+        ) as mock_kill:
+            for _ in range(3):
+                handled = await monitor.check_loop_prompts()
+                assert handled == 0
+
         mock_tmux.send_keys.assert_not_called()
-        assert mock_tmux.send_keys.call_count == 0
-        assert not mock_tmux.send_keys.called
+        mock_kill.assert_not_called()
+        assert monitor._loop_tracker.get_count("run-1") == 0
+
+    @pytest.mark.asyncio
+    async def test_deduplicates_same_loop_prompt_fingerprint(self) -> None:
+        """A repeated visible loop prompt is dismissed once per run."""
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+        )
+        monitor._tmux = mock_tmux
+        now = 0.0
+        monitor._terminal_prompt_monitor._monotonic = lambda: now
+
+        run = self._run()
+        mock_run_mgr.list_active.return_value = [run]
+        mock_tmux.capture_pane.return_value = "Potential loop detected\nContinue? (y/n)"
+        mock_tmux.send_keys.return_value = True
+
+        assert await monitor.check_loop_prompts() == 1
+        now = 120.0
+        assert await monitor.check_loop_prompts() == 0
+
+        mock_tmux.send_keys.assert_called_once_with("gobby-test", PromptDetector.LOOP_DISMISS_KEYS)
+        assert monitor._loop_tracker.get_count("run-1") == 1
+
+    @pytest.mark.asyncio
+    async def test_throttles_distinct_loop_prompts_by_minimum_interval(self) -> None:
+        """Distinct loop prompts still cannot increment the count too quickly."""
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+        )
+        monitor._tmux = mock_tmux
+        now = 0.0
+        monitor._terminal_prompt_monitor._monotonic = lambda: now
+
+        run = self._run()
+        mock_run_mgr.list_active.return_value = [run]
+        mock_tmux.capture_pane.side_effect = [
+            "Potential loop detected\nContinue? (y/n)",
+            "It seems to be stuck\nContinue? (y/n)",
+        ]
+        mock_tmux.send_keys.return_value = True
+
+        assert await monitor.check_loop_prompts() == 1
+        now = 30.0
+        assert await monitor.check_loop_prompts() == 0
+
+        mock_tmux.send_keys.assert_called_once_with("gobby-test", PromptDetector.LOOP_DISMISS_KEYS)
+        assert monitor._loop_tracker.get_count("run-1") == 1
+
+    @pytest.mark.asyncio
+    async def test_send_failure_does_not_count_or_fingerprint_loop_prompt(self) -> None:
+        """Loop dismissals are counted only after keys are actually sent."""
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = AgentLifecycleMonitor(
+            agent_run_manager=mock_run_mgr,
+            db=MagicMock(),
+        )
+        monitor._tmux = mock_tmux
+
+        run = self._run()
+        mock_run_mgr.list_active.return_value = [run]
+        pane_output = "Potential loop detected\nContinue? (y/n)"
+        mock_tmux.capture_pane.return_value = pane_output
+        mock_tmux.send_keys.return_value = False
+
+        handled = await monitor.check_loop_prompts()
+
+        assert handled == 0
+        assert monitor._loop_tracker.get_count("run-1") == 0
+        assert monitor._prompt_detector.was_loop_prompt_dismissed("run-1", pane_output) is False
 
 
 class TestApprovalPromptAutoEnter:
@@ -649,6 +804,7 @@ class TestPeriodicAgentTerminalEnter:
         *,
         enabled: bool = True,
         interval: int = 30,
+        auto_enter_approval_prompts: bool = True,
         db: HubDatabase | None = None,
     ) -> AgentLifecycleMonitor:
         from gobby.config.tmux import TmuxConfig
@@ -657,10 +813,12 @@ class TestPeriodicAgentTerminalEnter:
             agent_run_manager=mock_run_mgr,
             db=db or MagicMock(),
             tmux_config=TmuxConfig(
+                auto_enter_approval_prompts=auto_enter_approval_prompts,
                 auto_enter_agent_terminals=enabled,
                 auto_enter_agent_interval_seconds=interval,
             ),
         )
+        mock_tmux.capture_pane.return_value = ""
         monitor._tmux = mock_tmux
         monitor._terminal_prompt_monitor._get_tmux = lambda: mock_tmux
         return monitor
@@ -685,6 +843,60 @@ class TestPeriodicAgentTerminalEnter:
             call("gobby-claude", PromptDetector.ENTER_KEY, literal=False),
             call("gobby-gemini", PromptDetector.ENTER_KEY, literal=False),
         ]
+
+    @pytest.mark.asyncio
+    async def test_periodic_enter_skips_approval_prompt_when_gate_disabled(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(
+            mock_run_mgr,
+            mock_tmux,
+            interval=30,
+            auto_enter_approval_prompts=False,
+        )
+        mock_run_mgr.list_active.return_value = [self._run()]
+        mock_tmux.capture_pane.return_value = (
+            "Tool call needs your approval.\n"
+            "› 1. Allow   Run the tool and continue.\n"
+            "  2. Cancel  Cancel this tool call\n"
+            "enter to submit | esc to cancel\n"
+        )
+        current_time = 100.0
+        monitor._terminal_prompt_monitor._monotonic = lambda: current_time
+
+        handled_1 = await monitor.check_periodic_enters()
+        current_time = 131.0
+        handled_2 = await monitor.check_periodic_enters()
+
+        assert (handled_1, handled_2) == (0, 0)
+        assert mock_tmux.capture_pane.call_count == 2
+        mock_tmux.send_keys.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_periodic_enter_skips_known_dialogs_owned_by_specific_handlers(self) -> None:
+        mock_run_mgr = MagicMock()
+        mock_tmux = AsyncMock()
+        monitor = self._monitor(mock_run_mgr, mock_tmux)
+        mock_run_mgr.list_active.return_value = [
+            self._run(run_id="run-trust", tmux_session_name="gobby-trust"),
+            self._run(run_id="run-loop", tmux_session_name="gobby-loop"),
+            self._run(run_id="run-normal", tmux_session_name="gobby-normal"),
+        ]
+        mock_tmux.capture_pane.side_effect = [
+            "Do you trust the files in this folder?\n❯ 1. Trust Folder\n",
+            "Potential loop detected. Continue anyway? (yes/no)\n",
+            "ready for input\n",
+        ]
+        mock_tmux.send_keys.return_value = True
+
+        handled = await monitor.check_periodic_enters()
+
+        assert handled == 1
+        mock_tmux.send_keys.assert_called_once_with(
+            "gobby-normal",
+            PromptDetector.ENTER_KEY,
+            literal=False,
+        )
 
     @pytest.mark.asyncio
     async def test_periodic_enter_reaches_active_step_workflow_agents(

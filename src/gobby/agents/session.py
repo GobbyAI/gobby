@@ -237,6 +237,10 @@ class ChildSessionManager:
             **kwargs,
         )
 
+    def update_sandbox_enabled(self, session_id: str, sandbox_enabled: bool) -> Any:
+        """Persist the actual sandbox enforcement state for a child session."""
+        return self._storage.update(session_id=session_id, sandbox_enabled=sandbox_enabled)
+
     def get_child_sessions(self, parent_session_id: str) -> list[Session]:
         """
         Get all child sessions of a parent.

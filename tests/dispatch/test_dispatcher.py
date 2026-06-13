@@ -606,14 +606,39 @@ async def test_max_active_agents_cap(
 
 
 @pytest.mark.asyncio
+async def test_heartbeat_reaps_stale_pending_runs_before_agent_cap(
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+) -> None:
+    from gobby.dispatch import dispatcher
+
+    _task(temp_db, sample_project)
+    calls: list[str] = []
+
+    class FakeAgentRunManager:
+        def __init__(self, _db: HubDatabase) -> None:
+            pass
+
+        def cleanup_stale_pending_runs(self) -> int:
+            calls.append("cleanup")
+            return 1
+
+    monkeypatch.setattr(dispatcher, "LocalAgentRunManager", FakeAgentRunManager)
+    monkeypatch.setattr(dispatcher, "count_active_agents", lambda *args, **kwargs: 2)
+    monkeypatch.setattr(dispatcher, "MAX_ACTIVE_AGENTS", 2)
+
+    result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
+
+    assert result.cap_reached is True
+    assert calls == ["cleanup"]
+
+
+@pytest.mark.asyncio
 async def test_concurrent_heartbeats_serialize_agent_cap_admission(
     monkeypatch: pytest.MonkeyPatch,
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
 ) -> None:
     """Concurrent heartbeats cannot spawn past the active-agent cap."""
-    import threading
-
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
@@ -631,58 +656,60 @@ async def test_concurrent_heartbeats_serialize_agent_cap_admission(
     agents = LocalAgentRunManager(temp_db)
     agents.create(parent_session_id=parent_session.id, provider="codex", prompt="existing")
 
-    first_spawn_started = threading.Event()
-    second_count_observed = threading.Event()
-    release_first_spawn = threading.Event()
+    first_spawn_started = asyncio.Event()
+    second_unlocked_entered = asyncio.Event()
+    release_first_spawn = asyncio.Event()
     spawned_task_ids: list[str] = []
-    spawned_lock = threading.Lock()
-    first_spawn_thread_id: int | None = None
     original_count_active_agents = dispatcher.count_active_agents
+    original_run_heartbeat_unlocked = dispatcher._run_heartbeat_unlocked
 
-    def observed_count_active_agents(db: HubDatabase | None, project_id: str | None = None) -> int:
-        active = original_count_active_agents(db, project_id=project_id)
-        if first_spawn_started.is_set() and threading.get_ident() != first_spawn_thread_id:
-            second_count_observed.set()
-        return active
+    async def observed_run_heartbeat_unlocked(
+        **kwargs: Any,
+    ) -> dispatcher.HeartbeatResult:
+        if first_spawn_started.is_set():
+            second_unlocked_entered.set()
+        return await original_run_heartbeat_unlocked(**kwargs)
 
     async def fake_spawn_agent(action: SpawnAgentAction, **_kwargs: object) -> str:
-        nonlocal first_spawn_thread_id
-
         run = agents.create(
             parent_session_id=parent_session.id,
             provider="codex",
             prompt=action.prompt,
             task_id=action.task_id,
         )
-        with spawned_lock:
-            spawned_task_ids.append(action.task_id)
-            is_first_spawn = len(spawned_task_ids) == 1
-            if is_first_spawn:
-                first_spawn_thread_id = threading.get_ident()
-                first_spawn_started.set()
+        spawned_task_ids.append(action.task_id)
+        is_first_spawn = len(spawned_task_ids) == 1
         if is_first_spawn:
-            await asyncio.to_thread(release_first_spawn.wait)
+            first_spawn_started.set()
+        if is_first_spawn:
+            await release_first_spawn.wait()
         return run.id
 
-    def run_dispatch() -> dispatcher.HeartbeatResult:
-        return asyncio.run(
-            dispatcher.run_heartbeat(
-                db=temp_db,
-                project_id=sample_project["id"],
-                max_active_agents=2,
-                max_actions=1,
-            )
+    async def run_dispatch() -> dispatcher.HeartbeatResult:
+        return await dispatcher.run_heartbeat(
+            db=temp_db,
+            project_id=sample_project["id"],
+            max_active_agents=2,
+            max_actions=1,
         )
 
-    monkeypatch.setattr(dispatcher, "count_active_agents", observed_count_active_agents)
+    monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", observed_run_heartbeat_unlocked)
     monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
 
-    first = asyncio.create_task(asyncio.to_thread(run_dispatch))
-    assert await asyncio.to_thread(first_spawn_started.wait, 5)
-    second = asyncio.create_task(asyncio.to_thread(run_dispatch))
-    assert await asyncio.to_thread(second_count_observed.wait, 5)
-    release_first_spawn.set()
-    first_result, second_result = await asyncio.gather(first, second)
+    first = asyncio.create_task(run_dispatch())
+    second: asyncio.Task[dispatcher.HeartbeatResult] | None = None
+    try:
+        await asyncio.wait_for(first_spawn_started.wait(), 5)
+        second = asyncio.create_task(run_dispatch())
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(second_unlocked_entered.wait(), 0.1)
+        release_first_spawn.set()
+        first_result, second_result = await asyncio.gather(first, second)
+    finally:
+        release_first_spawn.set()
+        pending = [task for task in (first, second) if task is not None and not task.done()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
 
     assert first_result.executed == 1
     assert second_result.executed == 0

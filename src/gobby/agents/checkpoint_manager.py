@@ -57,17 +57,20 @@ class CheckpointManager:
 
         files_changed = len(status.strip().splitlines())
 
-        # 2. Capture pre-existing staged files so we can restore them in finally
-        pre_staged_output = self._run_git(["diff", "--name-only", "--cached"], cwd_str)
-        pre_staged = pre_staged_output.strip().splitlines() if pre_staged_output else []
-
-        # 3. Stage tracked files only (needed for write-tree).
-        # Uses -u to avoid capturing untracked artifacts.
-        if self._run_git(["add", "-u"], cwd_str) is None:
-            logger.error(f"Failed to stage files for checkpoint in {cwd_str}")
+        # 2. Snapshot the original index so divergent staged blobs survive temporary staging.
+        original_index_tree = self._run_git(["write-tree"], cwd_str)
+        if not original_index_tree:
+            logger.error(f"Failed to snapshot index before checkpoint in {cwd_str}")
             return None
+        original_index_tree = original_index_tree.strip()
 
         try:
+            # 3. Stage tracked files only (needed for write-tree).
+            # Uses -u to avoid capturing untracked artifacts.
+            if self._run_git(["add", "-u"], cwd_str) is None:
+                logger.error(f"Failed to stage files for checkpoint in {cwd_str}")
+                return None
+
             # 4. Write tree (captures staged state as a tree object)
             tree_sha = self._run_git(["write-tree"], cwd_str)
             if not tree_sha:
@@ -122,17 +125,12 @@ class CheckpointManager:
             return checkpoint
 
         finally:
-            # 9. Unstage our temporary staging, then restore pre-existing staged files
+            # 9. Restore the exact index we had before temporary staging.
             # Best-effort: must not propagate exceptions from cleanup
             try:
-                self._run_git(["reset", "HEAD"], cwd_str)
+                self._run_git(["read-tree", original_index_tree], cwd_str)
             except Exception as e:
-                logger.warning(f"Failed to reset staging after checkpoint in {cwd_str}: {e}")
-            try:
-                if pre_staged:
-                    self._run_git(["add", "--", *pre_staged], cwd_str)
-            except Exception as e:
-                logger.warning(f"Failed to restore pre-staged files in {cwd_str}: {e}")
+                logger.warning(f"Failed to restore index after checkpoint in {cwd_str}: {e}")
 
     def _run_git(self, args: list[str], cwd: str, timeout: int = 30) -> str | None:
         """Run a git command synchronously. Returns stdout or None on failure."""

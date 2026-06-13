@@ -901,10 +901,23 @@ class TestGeminiSandboxResolver:
 
         assert _include_dirs(args) == [str(external.resolve(strict=False))]
 
-    def test_more_than_five_external_write_paths_raise_clear_error(self, tmp_path: Path) -> None:
+    def test_more_than_five_external_write_paths_are_compacted(self, tmp_path: Path) -> None:
         workspace = tmp_path / "workspace"
         workspace.mkdir()
-        external_paths = [tmp_path / f"external-{index}" for index in range(6)]
+        git_dir = tmp_path / "repo" / ".git"
+        git_worktree_dir = git_dir / "worktrees" / "agent"
+        uv_cache_dir = tmp_path / "gobby" / "uv-cache" / "child"
+        cargo_home_dir = tmp_path / "gobby" / "cargo-home" / "child"
+        hook_inbox_dir = tmp_path / "gobby" / "hooks" / "inbox"
+        extra_dir = tmp_path / "extra" / "path"
+        external_paths = [
+            git_dir,
+            git_worktree_dir,
+            uv_cache_dir,
+            cargo_home_dir,
+            hook_inbox_dir,
+            extra_dir,
+        ]
         paths = ResolvedSandboxPaths(
             workspace_path=str(workspace),
             read_paths=[],
@@ -912,8 +925,17 @@ class TestGeminiSandboxResolver:
             allow_external_network=True,
         )
 
-        with pytest.raises(ValueError, match="at most 5 external --include-directories paths"):
-            GeminiSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+        args, _env = GeminiSandboxResolver().resolve(SandboxConfig(enabled=True), paths)
+
+        include_dirs = [Path(path) for path in _include_dirs(args)]
+        assert len(include_dirs) <= 5
+        for external_path in external_paths:
+            resolved_external_path = external_path.resolve(strict=False)
+            assert any(
+                resolved_external_path == include_dir
+                or resolved_external_path.is_relative_to(include_dir)
+                for include_dir in include_dirs
+            )
 
 
 @pytest.mark.unit
@@ -983,6 +1005,11 @@ class TestGetSandboxResolver:
         """Test that 'qwen' returns QwenSandboxResolver."""
         resolver = get_sandbox_resolver("qwen")
         assert isinstance(resolver, QwenSandboxResolver)
+
+    def test_droid_raises_value_error(self) -> None:
+        """Test that providers without sandbox support raise ValueError."""
+        with pytest.raises(ValueError, match="Unknown CLI"):
+            get_sandbox_resolver("droid")
 
     def test_unknown_cli_raises_value_error(self) -> None:
         """Test that unknown CLI raises ValueError."""

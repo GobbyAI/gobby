@@ -472,13 +472,13 @@ def _run_voice_install(
 ) -> None:
     """Interactive voice chat setup.
 
-    Installs voice dependencies (faster-whisper, chatterbox-tts) and enables
-    voice in daemon config. Skipped by default in non-interactive mode.
+    Enables voice in daemon config. Voice dependencies are installed by normal
+    project sync. Skipped by default in non-interactive mode.
 
     Args:
         results: Results dict to accumulate install outcomes
-        voice_flag: If True, install voice deps without prompting
-        no_interactive: If True, skip the prompt (only install if voice_flag is set)
+        voice_flag: If True, enable voice without prompting
+        no_interactive: If True, skip the prompt (only enable if voice_flag is set)
     """
     install_voice = voice_flag
 
@@ -502,60 +502,30 @@ def _run_voice_install(
         return
 
     click.echo("-" * 40)
-    click.echo("Installing Voice Dependencies")
+    click.echo("Enabling Voice Chat")
     click.echo("-" * 40)
 
-    import subprocess
-    import sys
-
     try:
-        proc = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "uv",
-                "pip",
-                "install",
-                "faster-whisper>=1.0.0",
-                "chatterbox-tts",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=600,
-        )
+        from gobby.storage.config_store import ConfigStore
 
-        if proc.returncode == 0:
-            click.echo("Voice packages installed successfully")
-            results["voice"] = {"success": True}
-
-            # Enable voice in daemon config
-            try:
-                from gobby.storage.config_store import ConfigStore
-
-                with _ensure_db_and_secrets(db, None) as (_db, _store):
-                    ConfigStore(_db).set("voice.enabled", True)
-                click.echo("Voice enabled in daemon config")
-            except Exception as e:
-                logger.warning(f"Failed to update daemon config: {e}")
-                click.echo(f"  Warning: Could not enable voice in config: {e}")
-                click.echo("  Enable manually: set voice.enabled=true in config")
-
-            click.echo("")
-            click.echo("Next: place a 10-20s voice reference WAV at:")
-            click.echo("  ~/.gobby/voice/reference.wav")
-            click.echo("")
-            click.echo("See docs/guides/voice.md for how to sample from YouTube.")
-        else:
-            click.echo("Failed to install voice packages:", err=True)
-            click.echo(proc.stderr[:500] if proc.stderr else "(no error output)", err=True)
-            results["voice"] = {"success": False, "error": "pip install failed"}
-    except subprocess.TimeoutExpired:
-        click.echo("Voice package installation timed out (10 min limit)", err=True)
-        results["voice"] = {"success": False, "error": "install timeout"}
+        with _ensure_db_and_secrets(db, None) as (_db, _store):
+            ConfigStore(_db).set("voice.enabled", True)
+        click.echo("Voice enabled in daemon config")
+        results["voice"] = {"success": True}
     except Exception as e:
-        click.echo(f"Failed: {e}", err=True)
+        logger.warning(f"Failed to update daemon config: {e}")
+        click.echo(f"  Warning: Could not enable voice in config: {e}")
+        click.echo("  Enable manually: set voice.enabled=true in config")
         results["voice"] = {"success": False, "error": str(e)}
 
+    click.echo("")
+    click.echo("Voice dependencies are installed by normal project sync.")
+    click.echo("If the daemon reports a missing voice package, run: uv sync")
+    click.echo("")
+    click.echo("Next: place a 10-20s voice reference WAV at:")
+    click.echo("  ~/.gobby/voice/reference.wav")
+    click.echo("")
+    click.echo("See docs/guides/voice.md for how to sample from YouTube.")
     click.echo("")
 
 

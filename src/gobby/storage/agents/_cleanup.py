@@ -48,6 +48,8 @@ class _AgentRunCleanupMixin:
                 SELECT
                     ar.id,
                     ar.timeout_seconds,
+                    ar.pid,
+                    ar.tmux_session_name,
                     COALESCE(child.updated_at, ar.updated_at, ar.started_at) AS last_activity_at,
                     COALESCE(child.tool_call_count, parent.tool_call_count, ar.tool_calls_count, 0)
                         AS tool_calls_count,
@@ -63,14 +65,18 @@ class _AgentRunCleanupMixin:
                 tool_calls_count,
                 turns_used
             FROM run_activity
-            WHERE (
-                timeout_seconds IS NOT NULL
-                AND {explicit_timeout_sql}
-            )
-            OR (
-                timeout_seconds IS NULL
-                AND {default_timeout_sql}
-            )
+            WHERE pid IS NULL
+              AND tmux_session_name IS NULL
+              AND (
+                (
+                    timeout_seconds IS NOT NULL
+                    AND {explicit_timeout_sql}
+                )
+                OR (
+                    timeout_seconds IS NULL
+                    AND {default_timeout_sql}
+                )
+              )
             """,  # nosec B608 # timeout expressions are selected by storage dialect.
             (default_timeout_minutes,),
         )

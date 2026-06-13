@@ -7,10 +7,10 @@ import inspect
 import json
 import logging
 import uuid
-from collections.abc import Awaitable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any, ParamSpec, TypeVar, cast
 
 import psycopg
 
@@ -83,12 +83,20 @@ from gobby.workflows.pipeline.renderer import StepRenderer
 from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
+_HEARTBEAT_LOCK = asyncio.Lock()
+_P = ParamSpec("_P")
+_T = TypeVar("_T")
 
 _PIPELINE_ATTACH_DATABASE_ERRORS = (
     psycopg.IntegrityError,
     psycopg.OperationalError,
     psycopg.Error,
 )
+
+
+async def run_db(func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
+    """Run synchronous storage work outside the event loop."""
+    return await asyncio.to_thread(func, *args, **kwargs)
 
 
 @dataclass(frozen=True)
@@ -142,6 +150,31 @@ async def run_heartbeat(
     services: object | None = None,
     max_actions: int | None = None,
 ) -> HeartbeatResult:
+    """Serialize heartbeat entry points before scanning and dispatching tasks."""
+    async with _HEARTBEAT_LOCK:
+        return await _run_heartbeat_unlocked(
+            db=db,
+            project_id=project_id,
+            startup=startup,
+            max_active_agents=max_active_agents,
+            holder=holder,
+            ttl_seconds=ttl_seconds,
+            services=services,
+            max_actions=max_actions,
+        )
+
+
+async def _run_heartbeat_unlocked(
+    *,
+    db: HubDatabase | None = None,
+    project_id: str | None = None,
+    startup: bool = False,
+    max_active_agents: int | None = None,
+    holder: str = DISPATCH_HOLDER,
+    ttl_seconds: int = DISPATCH_TTL_SECONDS,
+    services: object | None = None,
+    max_actions: int | None = None,
+) -> HeartbeatResult:
     """Scan automation candidates, acquire per-task leases, and execute first-match actions."""
     from gobby.agents.readiness import spawn_readiness_blocker
 
@@ -153,35 +186,40 @@ async def run_heartbeat(
     if db is None:
         from gobby.storage.hub.runtime import open_runtime_hub_database
 
-        resolved_db = open_runtime_hub_database(apply_migrations=False)
+        resolved_db = await run_db(open_runtime_hub_database, apply_migrations=False)
     else:
         resolved_db = db
     mutex_storage = TaskDispatchMutexManager(resolved_db)
     if startup:
         await sweep_expired_leases(mutex_storage)
-    orphan_mutexes = sweep_orphan_no_run_dispatch_mutexes(
+    orphan_mutexes = await run_db(
+        sweep_orphan_no_run_dispatch_mutexes,
         mutex_storage,
         resolved_db,
         project_id=project_id,
     )
     if orphan_mutexes:
         logger.info("Dispatcher cleared %d orphan no-run mutex(es)", orphan_mutexes)
-    reclaimed = sweep_stale_claims(resolved_db, project_id=project_id)
+    reclaimed = await run_db(sweep_stale_claims, resolved_db, project_id=project_id)
     if reclaimed:
         logger.info("Dispatcher reclaimed %d task(s) from dead sessions", reclaimed)
+    pending_reaped = await run_db(LocalAgentRunManager(resolved_db).cleanup_stale_pending_runs)
+    if pending_reaped:
+        logger.info("Dispatcher failed %d stale pending agent run(s)", pending_reaped)
 
     cap = MAX_ACTIVE_AGENTS if max_active_agents is None else max_active_agents
-    candidates = list_automation_candidates(resolved_db, project_id=project_id)
-    write_set_guard = DispatchWriteSetGuard.load(resolved_db, project_id=project_id)
+    candidates = await run_db(list_automation_candidates, resolved_db, project_id=project_id)
+    write_set_guard = await run_db(DispatchWriteSetGuard.load, resolved_db, project_id=project_id)
     result = HeartbeatResult(scanned=len(candidates))
 
     for candidate in candidates:
         if _action_cap_reached(result, max_actions):
             return _cap_reached(result)
-        if count_active_agents(resolved_db, project_id=project_id) >= cap:
+        if await run_db(count_active_agents, resolved_db, project_id=project_id) >= cap:
             return _cap_reached(result)
 
-        snapshot_candidate = _candidate_for_stage_snapshot(
+        snapshot_candidate = await run_db(
+            _candidate_for_stage_snapshot,
             candidate,
             db=resolved_db,
             project_id=project_id,
@@ -207,34 +245,37 @@ async def run_heartbeat(
             ),
         )
         try:
-            mutex.__enter__()
+            await run_db(mutex.__enter__)
         except (DispatchMutexUnavailableError, DispatchCandidateChangedError):
             result = _skipped(result)
             continue
 
         try:
-            current = reload_candidate(candidate.id, db=resolved_db, project_id=project_id)
+            current = await run_db(
+                reload_candidate, candidate.id, db=resolved_db, project_id=project_id
+            )
             if current is None or not _candidate_matches_mutex_snapshot(mutex, current):
-                result = _release_and_skip(mutex, result)
+                result = await _release_and_skip(mutex, result)
                 continue
 
-            context = build_context(resolved_db, current, services=services)
-            if find_child_development_ancestor_gate(
+            context = await run_db(build_context, resolved_db, current, services=services)
+            if await run_db(
+                find_child_development_ancestor_gate,
                 resolved_db,
                 current,
                 current_stage=getattr(context, "current_stage", None),
             ):
-                result = _release_and_skip(mutex, result)
+                result = await _release_and_skip(mutex, result)
                 continue
             action = dispatch_rules.evaluate(current, context, _rules())
             if action is None:
-                result = _release_and_skip(mutex, result)
+                result = await _release_and_skip(mutex, result)
                 continue
             if write_set_guard.action_reserves_write_set(action, current):
                 overlap = write_set_guard.conflict_for(action.task_id)
                 if overlap is not None:
                     _log_write_set_overlap(overlap)
-                    result = _release_and_skip(mutex, result)
+                    result = await _release_and_skip(mutex, result)
                     continue
 
             action_result = await _execute_action_with_agent_cap(
@@ -254,10 +295,10 @@ async def run_heartbeat(
                 write_set_guard.reserve(action.task_id)
             result = HeartbeatResult(result.scanned, result.executed + 1, result.skipped)
         except (TypeError, AttributeError, psycopg.Error):
-            mutex.release()
+            await run_db(mutex.release)
             raise
         except DispatchSpawnUnavailable as exc:
-            mutex.release()
+            await run_db(mutex.release)
             logger.info("Dispatcher heartbeat unavailable: %s", exc)
             return _unavailable(result, str(exc))
         except Exception as exc:
@@ -271,7 +312,7 @@ async def run_heartbeat(
                 )
             except Exception:
                 logger.debug("Failed to append dispatch failure audit marker", exc_info=True)
-            mutex.release()
+            await run_db(mutex.release)
             result = _skipped(result)
             continue
 
@@ -308,8 +349,10 @@ def _candidate_matches_mutex_snapshot(
     return mutex.candidate_stage_snapshot_matches(*_candidate_stage_snapshot(candidate))
 
 
-def _release_and_skip(mutex: RuntimeDispatchMutex, result: HeartbeatResult) -> HeartbeatResult:
-    mutex.release()
+async def _release_and_skip(
+    mutex: RuntimeDispatchMutex, result: HeartbeatResult
+) -> HeartbeatResult:
+    await run_db(mutex.release)
     return _skipped(result)
 
 
@@ -387,11 +430,17 @@ async def _execute_spawn_action(
     if resume_result.handled:
         return resume_result.run_id
     try:
-        raw_run_id: object = spawn_agent(action, db=db, context=context, services=services)
+        raw_run_id: object = spawn_agent(
+            action,
+            db=db,
+            context=context,
+            services=services,
+            mutex=mutex,
+        )
         if inspect.isawaitable(raw_run_id):
             raw_run_id = await cast(Awaitable[str | None], raw_run_id)
     except DispatchSpawnUnavailable:
-        mutex.release()
+        await run_db(mutex.release)
         raise
     except DispatchSpawnFailed as exc:
         await _handle_spawn_failure(
@@ -405,12 +454,12 @@ async def _execute_spawn_action(
         return None
     except BaseException:
         if mutex.run_id is None:
-            mutex.release()
+            await run_db(mutex.release)
         raise
     if raw_run_id:
         run_id = str(raw_run_id)
         try:
-            mutex.attach(run_id)
+            await run_db(mutex.attach, run_id)
         except RuntimeDispatchMutexError as exc:
             await _cleanup_unattached_spawned_run(run_id, db=db, error=str(exc))
             await _handle_spawn_failure(
@@ -481,50 +530,44 @@ async def execute_action(
 
     try:
         if isinstance(action, StartStageAction):
-            mutex.release()
+            await run_db(mutex.release)
             manager = _stage_states_manager(db=db, services=services)
-            return cast(
-                object,
-                manager.start_stage(
-                    action.task_id,
-                    action.stage_name,
-                    by_session_id="dispatcher",
-                ),
+            return await run_db(
+                manager.start_stage,
+                action.task_id,
+                action.stage_name,
+                by_session_id="dispatcher",
             )
         if isinstance(action, AdvanceStageAction):
-            mutex.release()
+            await run_db(mutex.release)
             manager = _stage_states_manager(db=db, services=services)
             if action.method == "complete_stage":
-                return cast(
-                    object,
-                    manager.complete_stage(
-                        action.task_id,
-                        action.stage_name,
-                        by_session_id=action.by_session_id,
-                        validation_override_reason=action.validation_override_reason,
-                    ),
+                return await run_db(
+                    manager.complete_stage,
+                    action.task_id,
+                    action.stage_name,
+                    by_session_id=action.by_session_id,
+                    validation_override_reason=action.validation_override_reason,
                 )
             if action.method == "approve_review":
-                return cast(
-                    object,
-                    manager.approve_review(
-                        action.task_id,
-                        action.stage_name,
-                        by_session_id=action.by_session_id,
-                    ),
+                return await run_db(
+                    manager.approve_review,
+                    action.task_id,
+                    action.stage_name,
+                    by_session_id=action.by_session_id,
                 )
         if isinstance(action, AppendAuditMarkerAction):
             return await append_audit_marker(db, action.task_id, action.heading, action.body)
         if isinstance(action, EscalateAction):
-            return escalate_task(db=db, task_id=action.task_id, reason=action.reason)
+            return await run_db(escalate_task, db=db, task_id=action.task_id, reason=action.reason)
         if isinstance(action, MergeWorkspaceAction):
-            mutex.release()
+            await run_db(mutex.release)
             return cast(object, await execute_merge_workspace(action, db=db, services=services))
         if isinstance(action, CreateIsolationAction):
             return cast(object | None, await create_isolation(action, db=db, context=context))
         raise TypeError(f"Unsupported dispatcher action: {type(action).__name__}")
     finally:
-        mutex.release()
+        await run_db(mutex.release)
 
 
 async def _start_pipeline_action(

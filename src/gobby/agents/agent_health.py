@@ -8,7 +8,7 @@ from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.agents.kill import kill_agent
+from gobby.agents.kill import kill_agent, pid_matches_agent_identity
 from gobby.agents.stall_classifier import StallStatus
 from gobby.utils.datetime import parse_stored_datetime
 
@@ -44,6 +44,7 @@ class AgentHealthMonitor:
         cleanup_handler: AgentCleanupHandler,
         tmux_config: TmuxConfig,
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        checkpoint_agent_work: Callable[[AgentRun], Awaitable[None]] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -53,6 +54,7 @@ class AgentHealthMonitor:
         self._cleanup_handler = cleanup_handler
         self._tmux_config = tmux_config
         self._run_db_callback = run_db
+        self._checkpoint_agent_work = checkpoint_agent_work
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -212,6 +214,18 @@ class AgentHealthMonitor:
                         continue
                     await self._clear_tmux_session_name(run)
                 elif run.pid:
+                    session_id = run.child_session_id or run.parent_session_id
+                    if not await pid_matches_agent_identity(
+                        run.pid,
+                        provider=run.provider,
+                        session_id=session_id,
+                    ):
+                        logger.warning(
+                            "Skipping cleanup for run %s: PID %s does not match identity",
+                            run.id,
+                            run.pid,
+                        )
+                        continue
                     try:
                         os.kill(run.pid, signal.SIGTERM)
                     except ProcessLookupError:
@@ -256,7 +270,7 @@ class AgentHealthMonitor:
                 if age < self._tmux_config.init_timeout_seconds:
                     continue
 
-                session_id = run.child_session_id or run.parent_session_id
+                session_id = run.child_session_id
                 if not session_id or not session_manager:
                     continue
 
@@ -281,6 +295,17 @@ class AgentHealthMonitor:
                     await self._tmux.kill_session(run.tmux_session_name)
                     await self._clear_tmux_session_name(run)
                 elif run.pid:
+                    if not await pid_matches_agent_identity(
+                        run.pid,
+                        provider=run.provider,
+                        session_id=session_id,
+                    ):
+                        logger.warning(
+                            "Skipping init-timeout cleanup for run %s: PID %s does not match identity",
+                            run.id,
+                            run.pid,
+                        )
+                        continue
                     try:
                         os.kill(run.pid, signal.SIGTERM)
                     except ProcessLookupError:
@@ -329,6 +354,16 @@ class AgentHealthMonitor:
                         classification.reason,
                         classification.consecutive_hits,
                     )
+
+                    if self._checkpoint_agent_work is not None:
+                        try:
+                            await self._checkpoint_agent_work(run)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to checkpoint provider-stalled agent %s: %s",
+                                run.id,
+                                e,
+                            )
 
                     await self._tmux.kill_session(tmux_name)
                     await self._clear_tmux_session_name(run)

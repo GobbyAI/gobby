@@ -147,9 +147,7 @@ def is_task_actively_claimed(task: Any, session_id: str | None = None) -> bool:
         return False
 
     owner = get_claimed_session_id(task)
-    if session_id is None:
-        return bool(owner)
-    return owner == session_id
+    return session_id is not None and owner == session_id
 
 
 def _current_stage_payload(task: Any) -> dict[str, str] | None:

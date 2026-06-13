@@ -19,15 +19,15 @@ def needs_wsl() -> bool:
 def convert_windows_path_to_wsl(path: str) -> str:
     """Convert a Windows path to its WSL ``/mnt/`` equivalent.
 
-    Handles standard paths (``C:\\Users\\foo`` -> ``/mnt/c/Users/foo``)
-    and bare drive letters (``C:`` -> ``/mnt/c``).
+    Handles absolute drive paths (``C:\\Users\\foo`` -> ``/mnt/c/Users/foo``)
+    and UNC paths (``\\\\server\\share`` -> ``//server/share``).
 
     Examples::
 
         >>> convert_windows_path_to_wsl("C:\\\\Users\\\\foo")
         '/mnt/c/Users/foo'
-        >>> convert_windows_path_to_wsl("C:")
-        '/mnt/c'
+        >>> convert_windows_path_to_wsl(r"\\server\\share")
+        '//server/share'
         >>> convert_windows_path_to_wsl("/already/unix")
         '/already/unix'
 
@@ -38,10 +38,13 @@ def convert_windows_path_to_wsl(path: str) -> str:
         The path in WSL format.  If the path is already Unix-style it is
         returned unchanged.
     """
-    # Match drive letter pattern like C:\, D:/, or bare C:
-    m = re.match(r"^([A-Za-z]):(?:[/\\]|$)", path)
+    if path.startswith(("\\\\", "//")):
+        return f"//{path.lstrip('/\\').replace('\\', '/')}"
+
+    # Match absolute drive paths like C:\ or D:/.
+    m = re.match(r"^([A-Za-z]):([/\\].*)", path)
     if m:
         drive = m.group(1).lower()
-        rest = path[2:].replace("\\", "/")
+        rest = m.group(2).replace("\\", "/")
         return f"/mnt/{drive}{rest}"
     return path

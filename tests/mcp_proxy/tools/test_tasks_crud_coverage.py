@@ -236,7 +236,7 @@ class TestUpdateTaskTool:
                 "description": "New Description",
                 # "status" is blocked for all values - must use lifecycle tools
                 "priority": 1,
-                    "labels": ["urgent"],
+                "labels": ["urgent"],
                 "validation_criteria": "Must pass",
                 "parent_task_id": "550e8400-e29b-41d4-a716-446655440010",
                 "category": "automated",

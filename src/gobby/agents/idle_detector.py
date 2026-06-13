@@ -64,11 +64,15 @@ class IdleDetector:
     )
 
     CONTEXT_FULL_PATTERNS: tuple[re.Pattern[str], ...] = (
-        re.compile(r"context.*window.*full", re.IGNORECASE),
-        re.compile(r"would you like to continue", re.IGNORECASE),
-        re.compile(r"run out of context", re.IGNORECASE),
-        re.compile(r"conversation is too long", re.IGNORECASE),
+        re.compile(
+            r"The context window is full\. Would you like to start a new conversation\?",
+            re.IGNORECASE,
+        ),
+        re.compile(r"The context window is full\.", re.IGNORECASE),
+        re.compile(r"I've run out of context space\.", re.IGNORECASE),
+        re.compile(r"This conversation is too long to continue\.", re.IGNORECASE),
     )
+    CONTEXT_FULL_BOTTOM_LINE_COUNT = 4
 
     # Claude Code status bar lines — skip these when searching for the prompt
     STATUS_BAR_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -124,11 +128,14 @@ class IdleDetector:
         if not lines:
             return "active"
 
-        # Check all lines for context-full patterns (takes priority)
         full_text = "\n".join(lines)
-        for pattern in self.CONTEXT_FULL_PATTERNS:
-            if pattern.search(full_text):
-                return "context_full"
+
+        # Context-full is destructive, so only honor exact CLI limit errors near the prompt.
+        bottom_lines = [line.strip() for line in lines if line.strip()]
+        for line in bottom_lines[-self.CONTEXT_FULL_BOTTOM_LINE_COUNT :]:
+            for pattern in self.CONTEXT_FULL_PATTERNS:
+                if pattern.fullmatch(line):
+                    return "context_full"
 
         # Check all lines for stop-hook-blocked patterns (agent tried to exit)
         for pattern in self.STOP_HOOK_BLOCKED_PATTERNS:
@@ -206,3 +213,5 @@ class IdleDetector:
         """Reset idle tracking when agent becomes active again."""
         state = self.get_state(run_id)
         state.first_idle_at = None
+        state.reprompt_count = 0
+        state.last_reprompt_at = None

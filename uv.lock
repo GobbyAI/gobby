@@ -1277,6 +1277,7 @@ dependencies = [
     { name = "aiofiles" },
     { name = "aiohttp" },
     { name = "anthropic" },
+    { name = "chatterbox-tts" },
     { name = "claude-agent-sdk" },
     { name = "clawcare" },
     { name = "click" },
@@ -1284,6 +1285,7 @@ dependencies = [
     { name = "cryptography" },
     { name = "falkordb" },
     { name = "fastapi" },
+    { name = "faster-whisper" },
     { name = "fastmcp" },
     { name = "httpx" },
     { name = "jinja2" },
@@ -1320,10 +1322,6 @@ email = [
     { name = "aioimaplib" },
     { name = "aiosmtplib" },
 ]
-voice = [
-    { name = "chatterbox-tts" },
-    { name = "faster-whisper" },
-]
 
 [package.dev-dependencies]
 dev = [
@@ -1355,7 +1353,7 @@ requires-dist = [
     { name = "aioimaplib", marker = "extra == 'email'", specifier = ">=1.0" },
     { name = "aiosmtplib", marker = "extra == 'email'", specifier = ">=2.0" },
     { name = "anthropic", specifier = ">=0.75.0" },
-    { name = "chatterbox-tts", marker = "extra == 'voice'" },
+    { name = "chatterbox-tts" },
     { name = "claude-agent-sdk", specifier = ">=0.1.81" },
     { name = "clawcare", specifier = ">=0.9.0" },
     { name = "click", specifier = ">=8.1.0" },
@@ -1363,7 +1361,7 @@ requires-dist = [
     { name = "cryptography", specifier = ">=46.0.7" },
     { name = "falkordb", specifier = ">=1.1.0" },
     { name = "fastapi", specifier = ">=0.136.0,!=0.136.3" },
-    { name = "faster-whisper", marker = "extra == 'voice'", specifier = ">=1.0.0" },
+    { name = "faster-whisper", specifier = ">=1.0.0" },
     { name = "fastmcp", specifier = ">=3.2.0" },
     { name = "httpx", specifier = ">=0.27.0" },
     { name = "jinja2", specifier = ">=3.1.0" },

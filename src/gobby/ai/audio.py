@@ -270,7 +270,9 @@ class WhisperAudioAdapter:
 
     def _ensure_available(self) -> None:
         if not self._stt.is_available:
-            raise AudioProviderUnavailableError("faster-whisper not installed")
+            raise AudioProviderUnavailableError(
+                "daemon environment is missing required package faster-whisper; run uv sync"
+            )
 
 
 class OpenAICompatibleAudioAdapter:

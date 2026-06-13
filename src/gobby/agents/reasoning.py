@@ -7,6 +7,11 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.agents.provider_capabilities import (
+    provider_reasoning_efforts,
+    provider_supports_terminal_reasoning,
+)
+
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
     from gobby.servers.provider_models import ProviderModelCatalog
@@ -19,13 +24,6 @@ ReasoningStatus = Literal[
     "unsupported_model",
 ]
 
-_TERMINAL_REASONING_PROVIDERS = frozenset({"claude", "codex", "gemini", "grok"})
-_FALLBACK_REASONING_EFFORTS: dict[str, frozenset[str]] = {
-    "claude": frozenset({"low", "medium", "high", "xhigh", "max"}),
-    "codex": frozenset({"low", "medium", "high", "xhigh"}),
-    "gemini": frozenset({"low", "medium", "high"}),
-    "grok": frozenset({"low", "medium", "high"}),
-}
 _fallback_catalog: ProviderModelCatalog | None = None
 _fallback_catalog_config: DaemonConfig | None = None
 _fallback_catalog_lock = threading.Lock()
@@ -140,7 +138,7 @@ def _supported_efforts(models: list[dict[str, Any]], provider: str) -> set[str]:
         )
     if supported:
         return supported
-    return set(_FALLBACK_REASONING_EFFORTS.get(provider, frozenset()))
+    return set(provider_reasoning_efforts(provider))
 
 
 def resolve_spawn_reasoning(
@@ -191,7 +189,7 @@ def resolve_spawn_reasoning(
             ),
         )
 
-    if provider not in _TERMINAL_REASONING_PROVIDERS:
+    if not provider_supports_terminal_reasoning(provider):
         return SpawnReasoningResolution(
             requested_effort=normalized_request,
             effective_effort=None,

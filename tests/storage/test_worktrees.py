@@ -7,6 +7,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager
 from gobby.storage.worktrees import LocalWorktreeManager, Worktree, WorktreeStatus
 
@@ -803,6 +804,77 @@ class TestLocalWorktreeManagerStatusTransitions:
         params = call_args[0][1]
         # First param is None (agent_session_id), followed by updated_at
         assert None in params
+
+    def test_claim_if_available_rejects_unallowed_owner(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        session_manager = SessionManager(temp_db)
+        current_owner = session_manager.register(
+            machine_id="test-machine",
+            source="claude",
+            project_id=str(sample_project["id"]),
+            external_id="worktree-current-owner",
+        )
+        resumed_owner = session_manager.register(
+            machine_id="test-machine",
+            source="codex",
+            project_id=str(sample_project["id"]),
+            external_id="worktree-resumed-owner",
+        )
+        manager = LocalWorktreeManager(temp_db)
+        worktree = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/resume-claim",
+            worktree_path="/tmp/gobby-resume-claim",
+            agent_session_id=current_owner.id,
+        )
+
+        blocked = manager.claim_if_available(
+            worktree.id,
+            resumed_owner.id,
+            allowed_existing_session_ids={None, "previous-owner"},
+        )
+
+        assert blocked is None
+        assert manager.get(worktree.id).agent_session_id == current_owner.id
+
+        claimed = manager.claim_if_available(
+            worktree.id,
+            resumed_owner.id,
+            allowed_existing_session_ids={current_owner.id},
+        )
+
+        assert claimed is not None
+        assert claimed.agent_session_id == resumed_owner.id
+
+    @pytest.mark.integration
+    def test_is_claimed_by_live_session_checks_owner_status(
+        self,
+        temp_db: HubDatabase,
+        sample_project: dict[str, object],
+    ) -> None:
+        session_manager = SessionManager(temp_db)
+        owner = session_manager.register(
+            machine_id="test-machine",
+            source="claude",
+            project_id=str(sample_project["id"]),
+            external_id="worktree-live-owner",
+        )
+        manager = LocalWorktreeManager(temp_db)
+        worktree = manager.create(
+            project_id=str(sample_project["id"]),
+            branch_name="feature/live-claim",
+            worktree_path="/tmp/gobby-live-claim",
+            agent_session_id=owner.id,
+        )
+
+        assert manager.is_claimed_by_live_session(worktree.id) is True
+
+        session_manager.update_status(owner.id, "expired")
+
+        assert manager.is_claimed_by_live_session(worktree.id) is False
 
     def test_mark_stale_sets_status(
         self,

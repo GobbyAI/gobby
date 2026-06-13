@@ -45,19 +45,19 @@ The installer asks whether to enable voice chat. Say yes, or pass `--voice`:
 gobby install --voice
 ```
 
-That installs `faster-whisper` and `chatterbox-tts` into the active environment
-and sets `voice.enabled=true` in daemon config when the config store is
-available.
+The voice packages are installed by normal project sync. This command sets
+`voice.enabled=true` in daemon config when the config store is available.
 
-### Manual dependency install
+### Dependency health
 
 ```bash
-uv sync --extra voice
+uv sync
 ```
 
-Voice also has a runtime dependency check. When voice is enabled and a required
-STT or TTS package is missing, the daemon attempts a bounded `uv pip install`
-for the missing package during first voice use or warmup.
+Voice packages are normal project dependencies. Voice also has a runtime
+dependency check. When voice is enabled and a required STT or TTS package is
+missing, the daemon reports the broken environment and asks you to run
+`uv sync`.
 
 ## Configuration
 

@@ -40,12 +40,9 @@ class _RunState:
     last_status: StallStatus = StallStatus.HEALTHY
 
 
-# Patterns that indicate provider-side errors (not the agent's fault).
-#
-# IMPORTANT: These patterns are matched against tmux pane output, which
-# includes the agent's own working text (code, task descriptions, file
-# contents). Patterns must be specific enough to avoid matching agents
-# working on code *about* rate limiting, error handling, etc.
+# Broad patterns that indicate provider-side errors in trusted stored errors.
+# Live tmux panes use stricter line-anchored patterns below because panes can
+# contain source/test text about provider errors.
 _PROVIDER_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
     # HTTP status codes with error context — specific enough as-is
     re.compile(r"\b429\b.*(?:rate|limit|too many|quota)", re.IGNORECASE),
@@ -72,6 +69,76 @@ _PROVIDER_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(r"APIStatusError", re.IGNORECASE),
     re.compile(r"InternalServerError", re.IGNORECASE),
     re.compile(r"anthropic\..*Error", re.IGNORECASE),
+)
+
+_PANE_PROVIDER_ERROR_PREFIX = (
+    r"(?:(?:error|fatal|failed|warning|exception|provider(?:\s+api)?\s+error|api\s+error)"
+    r"\s*[:\-]\s*)?"
+)
+
+_PANE_PROVIDER_ERROR_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b429\b.*(?:rate|limit|too many|quota)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b503\b.*(?:service|unavailable|overloaded)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b502\b.*(?:bad gateway|upstream)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b500\b.*internal server error",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"^{_PANE_PROVIDER_ERROR_PREFIX}\b529\b.*(?:overloaded|server-side|server side)",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"^{_PANE_PROVIDER_ERROR_PREFIX}(?:provider\s+)?"
+        r"(?:request|connection|read)\s+timed?\s*out\b.*",
+        re.IGNORECASE,
+    ),
+    re.compile(rf"^{_PANE_PROVIDER_ERROR_PREFIX}network\s+error\b.*", re.IGNORECASE),
+    re.compile(
+        rf"^{_PANE_PROVIDER_ERROR_PREFIX}(?:ETIMEDOUT|ECONNREFUSED|ECONNRESET)\b.*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"^{_PANE_PROVIDER_ERROR_PREFIX}(?:overloaded_error|ResourceExhausted|capacity\s+exceeded)\b.*",
+        re.IGNORECASE,
+    ),
+    re.compile(
+        rf"^{_PANE_PROVIDER_ERROR_PREFIX}"
+        r"(?:(?:openai|anthropic|google(?:\.api_core)?|google\.genai)\.)?"
+        r"(?:APIConnectionError|APIStatusError|InternalServerError|RateLimitError|"
+        r"APITimeoutError|APIError)\b.*",
+        re.IGNORECASE,
+    ),
+    re.compile(rf"^{_PANE_PROVIDER_ERROR_PREFIX}anthropic\.\w*Error\b.*", re.IGNORECASE),
+)
+
+_ANSI_ESCAPE_RE = re.compile(r"\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])")
+_CONTROL_CHARS_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+
+_SOURCE_SHAPED_LINE_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(r"^(?:#|//|/\*|\*|--|-|\+)\s*"),
+    re.compile(r"^(?:from\s+\S+\s+import|import\s+\S+)"),
+    re.compile(
+        r"^(?:assert|return|raise|yield|with|if|elif|else:|for|while|try:|except\b|"
+        r"class\b|def\b|async\s+def\b)\b"
+    ),
+    re.compile(r"^@"),
+    re.compile(r"^(?:self|cls|mock|logger|pytest|re)\."),
+    re.compile(r"^(?:const|let|var|final)\s+\w+\s*="),
+    re.compile(r"^[A-Za-z_][\w.]*\s*(?::\s*[^=]+)?[+\-*/%|&^]?="),
+    re.compile(r"^(?:r|u|b|f|fr|rf|br|rb)?[\"'].*[\"']\s*,?\s*$", re.IGNORECASE),
+    re.compile(r"^/(?:\\.|[^/])+/[a-z]*[,;]?$"),
+    re.compile(r"^\w+\(.*\)\s*$"),
+    re.compile(r"^[}\]\)],?\s*$"),
 )
 
 _BOOTSTRAP_STALL_PATTERNS: tuple[re.Pattern[str], ...] = (
@@ -117,21 +184,17 @@ class StallClassifier:
         state = self._states.setdefault(run_id, _RunState())
         now = time.monotonic()
 
-        # Combine sources for pattern matching
-        text = ""
-        if pane_output:
-            text += pane_output
-        if error:
-            text += "\n" + error
-
-        if not text.strip():
+        has_pane_output = bool(pane_output and pane_output.strip())
+        has_error = bool(error and error.strip())
+        if not has_pane_output and not has_error:
             state.consecutive_provider_hits = 0
             state.last_status = StallStatus.HEALTHY
             state.last_check_at = now
             return StallClassification(status=StallStatus.HEALTHY)
 
-        # Check for provider error patterns
-        matched_reason = self._match_provider_error(text)
+        matched_reason = self._match_provider_error(error or "")
+        if matched_reason is None:
+            matched_reason = self._match_pane_provider_error(pane_output or "")
 
         if matched_reason:
             # First hit always counts; subsequent hits require enough elapsed time
@@ -201,3 +264,27 @@ class StallClassifier:
             if match:
                 return match.group(0)
         return None
+
+    @staticmethod
+    def _match_pane_provider_error(pane_output: str) -> str | None:
+        """Return provider error evidence from live pane output, or None."""
+        for raw_line in pane_output.splitlines():
+            line = StallClassifier._normalize_pane_line(raw_line)
+            if not line or StallClassifier._is_source_shaped_line(line):
+                continue
+            for pattern in _PANE_PROVIDER_ERROR_PATTERNS:
+                match = pattern.search(line)
+                if match:
+                    return match.group(0)
+        return None
+
+    @staticmethod
+    def _normalize_pane_line(line: str) -> str:
+        """Strip terminal controls before matching visible pane text."""
+        without_ansi = _ANSI_ESCAPE_RE.sub("", line)
+        return _CONTROL_CHARS_RE.sub("", without_ansi).strip()
+
+    @staticmethod
+    def _is_source_shaped_line(line: str) -> bool:
+        """Return true for lines that look like code or test fixtures."""
+        return any(pattern.search(line) for pattern in _SOURCE_SHAPED_LINE_PATTERNS)

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,6 +12,18 @@ from gobby.agents.checkpoint_manager import CheckpointManager
 from gobby.storage.checkpoints import Checkpoint, LocalCheckpointManager
 
 pytestmark = pytest.mark.unit
+
+
+def _git(cwd: Path, *args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=cwd,
+        capture_output=True,
+        check=True,
+        text=True,
+        timeout=30,
+    )
+    return result.stdout
 
 
 @pytest.fixture
@@ -56,6 +69,8 @@ class TestCreateCheckpoint:
             cmd = args[0]
             if cmd == "status":
                 return " M file1.py\n M file2.py\n"
+            elif cmd == "write-tree" and git_calls.count(["write-tree"]) == 1:
+                return "original-index-tree\n"
             elif cmd == "add":
                 return ""
             elif cmd == "write-tree":
@@ -66,9 +81,7 @@ class TestCreateCheckpoint:
                 return "commit-sha-789\n"
             elif cmd == "update-ref":
                 return ""
-            elif cmd == "diff":
-                return ""
-            elif cmd == "reset":
+            elif cmd == "read-tree":
                 return ""
             return None
 
@@ -84,13 +97,13 @@ class TestCreateCheckpoint:
 
         # Verify git command sequence
         assert git_calls[0] == ["status", "--porcelain"]
-        assert git_calls[1] == ["diff", "--name-only", "--cached"]
+        assert git_calls[1] == ["write-tree"]
         assert git_calls[2] == ["add", "-u"]
         assert git_calls[3] == ["write-tree"]
         assert git_calls[4] == ["rev-parse", "HEAD"]
         assert git_calls[5][0] == "commit-tree"
         assert git_calls[6][0] == "update-ref"
-        assert git_calls[7] == ["reset", "HEAD"]
+        assert git_calls[7] == ["read-tree", "original-index-tree"]
 
         # Verify DB storage
         mock_storage.create.assert_called_once()
@@ -101,20 +114,20 @@ class TestCreateCheckpoint:
     def test_always_unstages_on_failure(
         self, manager: CheckpointManager, mock_storage: MagicMock
     ) -> None:
-        """Ensures git reset HEAD is called even when write-tree fails."""
+        """Ensures the original index is restored even when write-tree fails."""
         call_log: list[str] = []
 
         def mock_run_git(args: list[str], cwd: str, timeout: int = 30) -> str | None:
             call_log.append(args[0])
             if args[0] == "status":
                 return " M file.py\n"
-            elif args[0] == "diff":
-                return ""
+            elif args[0] == "write-tree" and call_log.count("write-tree") == 1:
+                return "original-index-tree\n"
             elif args[0] == "add":
                 return ""
             elif args[0] == "write-tree":
                 return None  # Simulate failure
-            elif args[0] == "reset":
+            elif args[0] == "read-tree":
                 return ""
             return None
 
@@ -122,18 +135,50 @@ class TestCreateCheckpoint:
             result = manager.create_checkpoint("/tmp/repo", "task-1", "sess-1", "run-1")
 
         assert result is None
-        assert "reset" in call_log  # Reset still called in finally
+        assert "read-tree" in call_log  # Original index is still restored in finally
+
+    def test_restores_divergent_pre_existing_staged_blob(
+        self,
+        manager: CheckpointManager,
+        tmp_path: Path,
+    ) -> None:
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        file_path = repo / "file.txt"
+
+        _git(repo, "init")
+        _git(repo, "config", "user.email", "test@example.com")
+        _git(repo, "config", "user.name", "Test User")
+        file_path.write_text("base\n")
+        _git(repo, "add", "file.txt")
+        _git(repo, "commit", "-m", "initial")
+
+        file_path.write_text("staged\n")
+        _git(repo, "add", "file.txt")
+        staged_blob_before = _git(repo, "rev-parse", ":file.txt").strip()
+        file_path.write_text("worktree\n")
+
+        result = manager.create_checkpoint(repo, "task-1", "sess-1", "run-1")
+
+        assert result is not None
+        assert _git(repo, "rev-parse", ":file.txt").strip() == staged_blob_before
+        assert _git(repo, "show", ":file.txt") == "staged\n"
+        assert file_path.read_text() == "worktree\n"
+        assert _git(repo, "show", f"{result.commit_sha}:file.txt") == "worktree\n"
 
     def test_increments_seq_from_storage_count(
         self, manager: CheckpointManager, mock_storage: MagicMock
     ) -> None:
         mock_storage.count_for_task.return_value = 3
+        index_snapshotted = False
 
         def mock_run_git(args: list[str], cwd: str, timeout: int = 30) -> str | None:
+            nonlocal index_snapshotted
             if args[0] == "status":
                 return " M file.py\n"
-            elif args[0] == "diff":
-                return ""
+            elif args[0] == "write-tree" and not index_snapshotted:
+                index_snapshotted = True
+                return "original-index-tree\n"
             elif args[0] == "add":
                 return ""
             elif args[0] == "write-tree":
@@ -144,7 +189,7 @@ class TestCreateCheckpoint:
                 return "commit\n"
             elif args[0] == "update-ref":
                 return ""
-            elif args[0] == "reset":
+            elif args[0] == "read-tree":
                 return ""
             return None
 

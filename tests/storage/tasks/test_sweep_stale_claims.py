@@ -35,7 +35,14 @@ def _make_session(temp_db, sample_project, session_id: str, status: str) -> None
     )
 
 
-def _claimed_task(temp_db, sample_project, *, claimed_by: str, stage_state: str = "ready"):
+def _claimed_task(
+    temp_db,
+    sample_project,
+    *,
+    claimed_by: str,
+    stage_state: str = "ready",
+    allow_automation: bool = True,
+):
     task = create_task(
         temp_db,
         sample_project,
@@ -46,8 +53,8 @@ def _claimed_task(temp_db, sample_project, *, claimed_by: str, stage_state: str 
     initialize_manifest(temp_db, task.id, [spec("planning", 0)])
     set_stage_state(temp_db, task.id, "planning", stage_state)
     temp_db.execute(
-        "UPDATE tasks SET allow_automation = TRUE, isolation = %s, claimed_by_session_id = %s WHERE id = %s",
-        (Isolation.none.value, claimed_by, task.id),
+        "UPDATE tasks SET allow_automation = %s, isolation = %s, claimed_by_session_id = %s WHERE id = %s",
+        (allow_automation, Isolation.none.value, claimed_by, task.id),
     )
     return task
 
@@ -69,6 +76,27 @@ def test_sweep_reclaims_task_claimed_by_inactive_session(temp_db, sample_project
         t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
     }
     assert task.id in candidate_ids
+
+
+def test_sweep_reclaims_non_automation_task_claimed_by_inactive_session(
+    temp_db, sample_project
+) -> None:
+    _make_session(temp_db, sample_project, "sess-dead", "expired")
+    task = _claimed_task(
+        temp_db,
+        sample_project,
+        claimed_by="sess-dead",
+        allow_automation=False,
+    )
+
+    reclaimed = sweep_stale_claims(temp_db, project_id=sample_project["id"])
+
+    assert reclaimed >= 1
+    assert _claim(temp_db, task.id) is None
+    candidate_ids = {
+        t.id for t in list_automation_candidates(temp_db, project_id=sample_project["id"])
+    }
+    assert task.id not in candidate_ids
 
 
 def test_sweep_keeps_task_claimed_by_active_session(temp_db, sample_project) -> None:

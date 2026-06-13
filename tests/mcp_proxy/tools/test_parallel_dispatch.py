@@ -7,6 +7,7 @@ Tests for:
 - update_observed_files post-hoc annotation
 """
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -409,11 +410,63 @@ class TestDispatchBatch:
                 {"id": "task-3", "ref": "#3", "title": "Task 3"},
             ]
 
-            result = await dispatch(suggestions=suggestions, agent="default")
+            result = await asyncio.wait_for(
+                dispatch(suggestions=suggestions, agent="default"), timeout=5
+            )
 
         assert result["dispatched"] == 3
         assert len(result["results"]) == 3
         assert all(r["success"] for r in result["results"])
+
+    @pytest.mark.asyncio
+    async def test_dispatch_batch_bounds_concurrent_spawns(self, registry_deps) -> None:
+        runner, tm, db, session_manager = registry_deps
+        in_flight = 0
+        max_seen = 0
+        release = asyncio.Event()
+
+        async def mock_impl(**_kwargs):
+            nonlocal in_flight, max_seen
+            in_flight += 1
+            max_seen = max(max_seen, in_flight)
+            if max_seen >= 2:
+                release.set()
+            await release.wait()
+            in_flight -= 1
+            return {"success": True, "run_id": f"run-{max_seen}"}
+
+        with (
+            patch("gobby.mcp_proxy.tools.spawn_agent._factory.get_project_context") as mock_ctx,
+            patch("gobby.mcp_proxy.tools.spawn_agent._factory._load_agent_body", return_value=None),
+            patch("gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl") as mock_impl_patch,
+            patch(
+                "gobby.mcp_proxy.tools.spawn_agent._factory.max_active_agents_for_project",
+                return_value=2,
+            ),
+        ):
+            mock_ctx.return_value = {"id": "proj-1", "project_path": "/tmp/proj-1"}
+            mock_impl_patch.side_effect = mock_impl
+
+            from gobby.mcp_proxy.tools.spawn_agent._factory import create_spawn_agent_registry
+
+            registry = create_spawn_agent_registry(
+                runner=runner,
+                task_manager=tm,
+                db=db,
+                session_manager=session_manager,
+            )
+            dispatch = registry.get_tool("dispatch_batch")
+
+            suggestions = [
+                {"id": f"task-{index}", "ref": f"#{index}", "title": f"Task {index}"}
+                for index in range(5)
+            ]
+            result = await asyncio.wait_for(
+                dispatch(suggestions=suggestions, agent="default"), timeout=5
+            )
+
+        assert result["dispatched"] == 5
+        assert max_seen <= 2
 
     @pytest.mark.asyncio
     async def test_empty_suggestions(self, registry_deps) -> None:

@@ -409,6 +409,21 @@ class TestUnifiedSearcher:
         await searcher.fit_async([("id1", "test")])
         assert not searcher.needs_refit()
 
+    def test_mark_update_marks_keyword_and_embedding_backends_stale(self, db) -> None:
+        config = SearchConfig(mode="hybrid")
+        searcher = _make_searcher(db, config)
+        keyword_backend = KeywordAsyncSearchBackend(db, "skills")
+        embedding_backend = EmbeddingBackend()
+        embedding_backend._fitted = True
+        searcher._keyword_backend = keyword_backend
+        searcher._embedding_backend = embedding_backend
+        searcher._fitted = True
+
+        searcher.mark_update()
+
+        assert keyword_backend.needs_refit()
+        assert embedding_backend.needs_refit()
+
     @pytest.mark.asyncio
     async def test_search_unfitted_returns_empty(self, db) -> None:
         """Test search before fitting returns empty."""
@@ -483,6 +498,31 @@ class TestDeprecatedSqliteKeywordSearch:
         ]
 
 
+class TestKeywordAsyncSearchBackend:
+    @pytest.mark.parametrize(
+        "updated_items",
+        [
+            [("id1", "alpha"), ("id2", "beta")],
+            [("id1", "alpha updated")],
+            [],
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_mark_update_needs_refit_until_next_fit(
+        self,
+        updated_items: list[tuple[str, str]],
+    ) -> None:
+        backend = KeywordAsyncSearchBackend(SimpleNamespace(dialect="postgres"), "skills")
+        await backend.fit_async([("id1", "alpha")])
+        assert not backend.needs_refit()
+
+        backend.mark_update()
+
+        assert backend.needs_refit()
+        await backend.fit_async(updated_items)
+        assert not backend.needs_refit()
+
+
 class TestEmbeddingBackend:
     """Tests for EmbeddingBackend."""
 
@@ -550,9 +590,41 @@ class TestEmbeddingBackend:
         backend = EmbeddingBackend()
         await backend.fit_async([])
 
-        assert not backend._fitted
+        assert backend._fitted
+        assert not backend.needs_refit()
         results = await backend.search_async("test")
         assert results == []
+
+    @pytest.mark.parametrize(
+        "updated_items",
+        [
+            [("id1", "alpha"), ("id2", "beta")],
+            [("id1", "alpha updated")],
+            [],
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_mark_update_needs_refit_until_next_fit(
+        self,
+        updated_items: list[tuple[str, str]],
+    ) -> None:
+        backend = EmbeddingBackend()
+
+        async def fit_vectors(
+            texts: list[str],
+            **_: object,
+        ) -> list[list[float]]:
+            return [[float(index + 1)] for index, _text in enumerate(texts)]
+
+        with patch("gobby.search.embeddings.generate_embeddings", side_effect=fit_vectors):
+            await backend.fit_async([("id1", "alpha")])
+            assert not backend.needs_refit()
+
+            backend.mark_update()
+
+            assert backend.needs_refit()
+            await backend.fit_async(updated_items)
+            assert not backend.needs_refit()
 
     def test_get_stats(self) -> None:
         """Test get_stats returns expected keys."""

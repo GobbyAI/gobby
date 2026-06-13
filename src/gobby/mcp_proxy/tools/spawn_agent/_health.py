@@ -7,7 +7,6 @@ import logging
 import os
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
-from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
 
@@ -36,7 +35,9 @@ async def _check_tmux_session_alive(
     socket_path: str | None = None,
 ) -> bool:
     """Check if a tmux session is still alive after spawn."""
-    config = TmuxConfig()
+    from gobby.agents.tmux import get_configured_tmux_config
+
+    config = get_configured_tmux_config()
     if socket_name is not None or socket_path is not None:
         config = config.model_copy(
             update={

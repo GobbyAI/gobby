@@ -138,6 +138,7 @@ async def send_literal_text_to_tmux_target(
                     *base_cmd,
                     "paste-buffer",
                     "-d",
+                    "-p",
                     "-b",
                     buffer_name,
                     "-t",

@@ -31,6 +31,7 @@ from gobby.agents.spawn import (
 )
 from gobby.agents.spawners.base import SpawnResult
 from gobby.agents.tmux.spawner import TmuxSpawner
+from gobby.config.tmux import TmuxConfig
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager, Project
 from gobby.storage.session_models import Session
@@ -351,7 +352,7 @@ class TestTmuxSpawnerDetection:
 
     def test_is_available(self) -> None:
         """Test checking tmux availability."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(config=TmuxConfig())
         available = spawner.is_available()
 
         # Should return a bool (may be False in CI without tmux)
@@ -359,7 +360,7 @@ class TestTmuxSpawnerDetection:
 
     def test_spawn_when_unavailable(self) -> None:
         """Test spawning when tmux is not available."""
-        spawner = TmuxSpawner()
+        spawner = TmuxSpawner(config=TmuxConfig())
 
         with patch.object(spawner._session_manager, "is_available", return_value=False):
             result = spawner.spawn(

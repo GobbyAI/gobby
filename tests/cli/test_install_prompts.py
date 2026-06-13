@@ -297,15 +297,15 @@ class TestInstallSummary:
 class TestVoiceInstall:
     def test_uses_injected_db_for_voice_config_write(self) -> None:
         db = MagicMock()
-        proc = MagicMock(returncode=0, stderr="")
         results: dict[str, dict[str, object]] = {}
 
         with (
-            patch("subprocess.run", return_value=proc),
+            patch("subprocess.run") as mock_subprocess_run,
             patch("gobby.storage.config_store.ConfigStore") as mock_config_store,
         ):
             _run_voice_install(results, voice_flag=True, db=db)
 
+        mock_subprocess_run.assert_not_called()
         mock_config_store.assert_called_once_with(db)
         assert mock_config_store.call_count == 1
         assert mock_config_store.call_args is not None

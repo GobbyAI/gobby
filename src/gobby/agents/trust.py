@@ -21,6 +21,7 @@ import logging
 import os
 import re
 import tempfile
+import threading
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
@@ -37,6 +38,8 @@ _CLAUDE_COMPATIBLE_CLIS = frozenset({"claude"})
 _GEMINI_COMPATIBLE_CLIS = frozenset({"gemini", "qwen"})
 _MODEL_DISCOVERY_TRUST_LOCKS: dict[str, asyncio.Lock] = {}
 _LOCK_DICT_LOCK = asyncio.Lock()
+_TRUST_STORE_LOCKS: dict[str, threading.Lock] = {}
+_TRUST_STORE_LOCKS_LOCK = threading.Lock()
 _WINDOWS_ABSOLUTE_RE = re.compile(r"^[A-Za-z]:[\\/]")
 
 type PathValue = str | os.PathLike[str]
@@ -175,6 +178,24 @@ def seed_cli_trust(
     respect_folder_trust_setting: bool = False,
 ) -> TrustSeedResult:
     """Seed trust for a CLI and return structured details about the writes."""
+    with _TRUST_STORE_LOCKS_LOCK:
+        lock = _TRUST_STORE_LOCKS.setdefault(cli, threading.Lock())
+
+    with lock:
+        return _seed_cli_trust_unlocked(
+            cli,
+            directory,
+            respect_folder_trust_setting=respect_folder_trust_setting,
+        )
+
+
+def _seed_cli_trust_unlocked(
+    cli: str,
+    directory: PathValue,
+    *,
+    respect_folder_trust_setting: bool = False,
+) -> TrustSeedResult:
+    """Seed trust for a CLI. Caller must hold the per-CLI trust-store lock."""
     paths = _trust_path_strings(directory)
     result = TrustSeedResult(cli=cli, paths=paths)
 

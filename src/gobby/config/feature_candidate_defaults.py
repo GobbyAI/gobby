@@ -77,8 +77,7 @@ def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
         logger.debug("Failed to delete stale feature candidate keys %s: %s", stale_keys, exc)
         joined = ", ".join(stale_keys)
         raise ValueError(
-            "Failed to delete stale seeded feature candidate rows "
-            f"from config_store: {joined}."
+            f"Failed to delete stale seeded feature candidate rows from config_store: {joined}."
         ) from exc
 
     joined = ", ".join(stale_keys)

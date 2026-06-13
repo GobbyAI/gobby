@@ -42,6 +42,18 @@ class TestConvertWindowsPathToWsl:
     def test_root_of_drive(self) -> None:
         assert convert_windows_path_to_wsl("C:\\") == "/mnt/c/"
 
+    def test_unc_path(self) -> None:
+        assert convert_windows_path_to_wsl("\\\\server\\share\\dir") == "//server/share/dir"
+
+    def test_unc_path_with_forward_slashes(self) -> None:
+        assert convert_windows_path_to_wsl("//server/share/dir") == "//server/share/dir"
+
+    def test_bare_drive_letter_is_drive_relative(self) -> None:
+        assert convert_windows_path_to_wsl("C:") == "C:"
+
+    def test_drive_relative_path(self) -> None:
+        assert convert_windows_path_to_wsl("C:Users\\foo") == "C:Users\\foo"
+
     def test_already_unix(self) -> None:
         assert convert_windows_path_to_wsl("/already/unix") == "/already/unix"
 

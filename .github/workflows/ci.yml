@@ -340,7 +340,7 @@ jobs:
           CODECOV_TOKEN: ${{ secrets.CODECOV_TOKEN }}
 
   voice-extra:
-    name: Voice Extra (safetensors rc0)
+    name: Voice Stack (safetensors rc0)
     needs: changes
     if: needs.changes.outputs.requires_full_ci == 'true'
     runs-on: ubuntu-latest
@@ -357,8 +357,8 @@ jobs:
       - name: Set up Python
         run: uv python install 3.13
 
-      - name: Install voice extra dependencies
-        run: uv sync --dev --extra voice
+      - name: Install dependencies
+        run: uv sync --dev
 
       - name: Run focused voice tests
         run: uv run pytest tests/voice tests/servers/routes/test_voice_routes.py
@@ -624,7 +624,7 @@ jobs:
             check_success "Type Check (Frontend)" "${{ needs['typecheck-frontend'].result }}"
             check_success "Test (Frontend)" "${{ needs['test-frontend'].result }}"
             check_success "Test (Python)" "${{ needs.test.result }}"
-            check_success "Voice Extra" "${{ needs['voice-extra'].result }}"
+            check_success "Voice Stack" "${{ needs['voice-extra'].result }}"
             check_success "Security Scan" "${{ needs.security.result }}"
             check_success "Build Package" "${{ needs.build.result }}"
           fi

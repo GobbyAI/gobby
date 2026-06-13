@@ -125,16 +125,9 @@ async def _cleanup_terminal_artifacts(
 
     if not debug and tmux_session_name:
         try:
-            import subprocess
+            from gobby.agents.tmux import get_tmux_session_manager
 
-            from gobby.config.tmux import TmuxConfig
-
-            tmux_cfg = TmuxConfig()
-            kill_cmd = [tmux_cfg.command]
-            if tmux_cfg.socket_name:
-                kill_cmd.extend(["-L", tmux_cfg.socket_name])
-            kill_cmd.extend(["kill-session", "-t", tmux_session_name])
-            subprocess.run(kill_cmd, capture_output=True, timeout=5)
+            await get_tmux_session_manager().kill_session(tmux_session_name, missing_ok=True)
             result["tmux_session_killed"] = True
         except Exception as e:
             logger.debug(f"tmux session cleanup failed for {tmux_session_name}: {e}")

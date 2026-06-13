@@ -199,7 +199,9 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
                 importlib.import_module("faster_whisper")
                 stt_available = True
             except ImportError:
-                stt_reason = "faster-whisper not installed (uv sync --extra voice)"
+                stt_reason = (
+                    "daemon environment is missing required package faster-whisper; run uv sync"
+                )
 
         from gobby.voice.providers import get_tts_status_for_config
 

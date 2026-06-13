@@ -106,11 +106,14 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     except ValueError:
         return {}
 
-    if not parts or any(token in _SHELL_CHAIN_TOKENS for token in parts):
+    if not parts:
         return {}
 
+    if any(token in _SHELL_CHAIN_TOKENS for token in parts):
+        return _build_canonical_tool_metadata("execute")
+
     if any(token in _SHELL_INPUT_REDIRECTION_TOKENS for token in parts):
-        return {}
+        return _build_canonical_tool_metadata("execute")
 
     cmd = shell_command_name(parts[0])
     gcode_metadata = gcode_navigation_metadata(parts)
@@ -128,7 +131,7 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
 
     if cmd in {"rg", "grep", "git"}:
         if cmd == "git" and len(parts) > 1 and parts[1] != "grep":
-            return {}
+            return _build_canonical_tool_metadata("execute")
         return _build_canonical_tool_metadata("search", extra=search_navigation_metadata())
 
     if cmd == "find":
@@ -218,7 +221,7 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
             repo_mutation=True,
         )
 
-    return {}
+    return _build_canonical_tool_metadata("execute")
 
 
 def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:

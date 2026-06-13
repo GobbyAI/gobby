@@ -9,7 +9,6 @@ This directory implements agent spawning, process management, isolation, and lif
 | `AgentSpawner` | `spawn.py` | Prepares agent spawns: session creation, isolation, prompt building |
 | `SpawnExecutor` | `spawn_executor.py` | Executes the prepared spawn (process creation) |
 | `AgentRunner` | `runner.py` | Manages running agent processes, completion tracking |
-| `AgentRegistry` | `registry.py` | In-memory registry of running agents |
 | `IsolationHandler` | `isolation.py` | Worktree/clone/none isolation handlers |
 
 ## File Index
@@ -22,7 +21,7 @@ This directory implements agent spawning, process management, isolation, and lif
 ### Process Management
 - `runner.py` — `AgentRunner`: process lifecycle, completion detection, result publishing
 - `runner_models.py` — Data models for agent runs
-- `runner_queries.py` — Database queries for agent run records
+- `runner_queries.py` — Database-backed agent run state queries
 - `runner_tracking.py` — Token/turn tracking for running agents
 
 ### Isolation
@@ -33,10 +32,10 @@ This directory implements agent spawning, process management, isolation, and lif
 - `context.py` — Prompt context building (preamble from agent definition + spawn prompt)
 - `definitions.py` — Agent definition resolution from database
 
-### Registry & Lifecycle
-- `registry.py` — In-memory agent registry (tracks running processes)
+### Lifecycle
 - `lifecycle_monitor.py` — Background monitor for agent health and timeouts
 - `sync.py` — Agent state synchronization
+- `kill.py` — DB-backed agent termination helpers
 
 ### Terminal Backend
 - `tmux/` — Tmux spawner subdirectory:

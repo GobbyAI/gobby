@@ -9,16 +9,21 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import shlex
 import shutil
 import signal
+import tempfile
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
+from gobby.agents.spawners.auth_env import split_credential_env
 from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.text_injection import (
     TmuxTextInjectionError,
     send_literal_text_to_tmux_target,
 )
+from gobby.agents.tmux.wsl_compat import needs_wsl
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
@@ -31,12 +36,55 @@ _MISSING_TARGET_ERRORS = (
     "no such pane",
 )
 TMUX_COMMAND_TIMEOUT_SECONDS = 10.0
+TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT = 3
+
+
+def _write_secret_env_file(env: dict[str, str]) -> Path:
+    """Write env vars that should not ride in tmux ``-e`` to a private shell file."""
+    fd, tmp_path = tempfile.mkstemp(prefix="gobby-agent-env-", suffix=".sh")
+    path = Path(tmp_path)
+    with os.fdopen(fd, "w", encoding="utf-8") as handle:
+        for key, value in env.items():
+            handle.write(f"{key}={shlex.quote(value)}\n")
+    path.chmod(0o600)
+    return path
+
+
+def _requires_tmux_env_file(value: str) -> bool:
+    return ";" in value or value.endswith("\\")
+
+
+def _split_tmux_env(env: dict[str, str]) -> tuple[dict[str, str], dict[str, str]]:
+    """Split env into values safe for tmux ``-e`` and values requiring shell sourcing."""
+    public_env, file_env = split_credential_env(env)
+    for key, value in list(public_env.items()):
+        if _requires_tmux_env_file(value):
+            file_env[key] = public_env.pop(key)
+    return public_env, file_env
+
+
+def _source_secret_env_command(command: str | None, env_file: str) -> str:
+    env_file_arg = shlex.quote(env_file)
+    command_text = command or 'exec "${SHELL:-/bin/sh}"'
+    return (
+        f"__gobby_env_file={env_file_arg}; "
+        'set -a; . "$__gobby_env_file"; __gobby_env_status=$?; set +a; '
+        'rm -f "$__gobby_env_file"; unset __gobby_env_file; '
+        'if [ "$__gobby_env_status" -ne 0 ]; then exit "$__gobby_env_status"; fi; '
+        "unset __gobby_env_status; "
+        f"{command_text}"
+    )
 
 
 def _is_missing_tmux_target_error(stderr: str) -> bool:
     """Return True for tmux errors that mean the target disappeared."""
     message = stderr.lower()
     return any(fragment in message for fragment in _MISSING_TARGET_ERRORS)
+
+
+def _exact_session_target(name: str) -> str:
+    """Return a tmux target that requires an exact session-name match."""
+    return f"={name}:"
 
 
 @dataclass
@@ -61,6 +109,7 @@ class TmuxSessionManager:
 
     def __init__(self, config: TmuxConfig | None = None) -> None:
         self._config = config or TmuxConfig()
+        self._health_check_timeout_failures = 0
 
     @property
     def config(self) -> TmuxConfig:
@@ -185,26 +234,49 @@ class TmuxSessionManager:
         Returns True if healthy (or recovered), False if tmux is unavailable.
         """
         if not self.is_available():
+            self._health_check_timeout_failures = 0
             return False
 
         try:
             rc, _stdout, stderr = await self._run("list-sessions", timeout=5.0)
             # rc=1 with "no server running" is fine — server will start on next create
             if rc == 0 or "no server running" in stderr:
+                self._health_check_timeout_failures = 0
                 return True
+            self._health_check_timeout_failures = 0
+            logger.warning("tmux health check returned rc=%s: %s", rc, stderr.strip())
+            return False
         except TimeoutError:
-            logger.warning("tmux socket unresponsive (timeout). Killing stale server.")
+            self._health_check_timeout_failures += 1
+            if self._health_check_timeout_failures < TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT:
+                logger.warning(
+                    "tmux socket unresponsive (timeout %s/%s); deferring kill-server.",
+                    self._health_check_timeout_failures,
+                    TMUX_HEALTH_CHECK_TIMEOUT_FAILURE_LIMIT,
+                )
+                return False
+            logger.warning(
+                "tmux socket unresponsive after %s consecutive timeouts. Killing stale server.",
+                self._health_check_timeout_failures,
+            )
         except Exception as e:
+            self._health_check_timeout_failures = 0
             logger.warning(f"tmux health check failed: {e}")
+            return False
 
         # Attempt to kill the stale server and let it restart on next use
         try:
             await self._run("kill-server", timeout=5.0)
+            self._health_check_timeout_failures = 0
             logger.info(f"Killed stale tmux server on socket '{self._config.socket_name}'")
             return True
         except Exception as e:
             logger.warning(f"Failed to kill stale tmux server: {e}")
             return False
+
+    async def shutdown(self) -> None:
+        """Stop the configured tmux server."""
+        await self._run("kill-server", timeout=5.0)
 
     async def create_session(
         self,
@@ -269,19 +341,31 @@ class TmuxSessionManager:
             ]
         )
 
+        secret_env_file: Path | None = None
+        secret_env_file_arg: str | None = None
+
         # Inject env vars via -e (tmux 3.2+)
         if env:
-            for key, val in env.items():
+            public_env, credential_env = _split_tmux_env(env)
+            for key, val in public_env.items():
                 args.extend(["-e", f"{key}={val}"])
+            if credential_env:
+                secret_env_file = _write_secret_env_file(credential_env)
+                secret_env_file_arg = str(secret_env_file)
+                if needs_wsl():
+                    secret_env_file_arg = convert_windows_path_to_wsl(secret_env_file_arg)
 
         # Append shell command
+        command_text: str | None = None
         if command:
             if isinstance(command, list):
-                import shlex
-
-                args.append(shlex.join(command))
+                command_text = shlex.join(command)
             else:
-                args.append(command)
+                command_text = command
+        if secret_env_file_arg:
+            command_text = _source_secret_env_command(command_text, secret_env_file_arg)
+        if command_text:
+            args.append(command_text)
 
         # Chain set-option to disable destroy-unattached atomically
         args.extend(
@@ -289,7 +373,7 @@ class TmuxSessionManager:
                 ";",
                 "set-option",
                 "-t",
-                safe_name,
+                _exact_session_target(safe_name),
                 "destroy-unattached",
                 "off",
             ]
@@ -301,7 +385,7 @@ class TmuxSessionManager:
                 ";",
                 "set-option",
                 "-t",
-                safe_name,
+                _exact_session_target(safe_name),
                 "history-limit",
                 str(self._config.history_limit),
             ]
@@ -314,14 +398,21 @@ class TmuxSessionManager:
                 "set-option",
                 "-w",
                 "-t",
-                safe_name,
+                _exact_session_target(safe_name),
                 "remain-on-exit",
                 "on",
             ]
         )
 
-        rc, _stdout, stderr = await self._run(*args)
+        try:
+            rc, _stdout, stderr = await self._run(*args)
+        except Exception:
+            if secret_env_file:
+                secret_env_file.unlink(missing_ok=True)
+            raise
         if rc != 0:
+            if secret_env_file:
+                secret_env_file.unlink(missing_ok=True)
             raise TmuxSessionError(
                 f"Failed to create session (rc={rc}): {stderr.strip()}",
                 session_name=safe_name,
@@ -362,7 +453,7 @@ class TmuxSessionManager:
         rc, stdout, _stderr = await self._run(
             "list-panes",
             "-t",
-            name,
+            _exact_session_target(name),
             "-F",
             "#{session_name}\t#{pane_pid}\t#{pane_id}\t#{window_name}\t#{pane_title}\t#{pane_dead}",
             timeout=2.0,
@@ -394,10 +485,40 @@ class TmuxSessionManager:
 
     async def has_session(self, name: str) -> bool:
         """Check whether a session with *name* exists."""
-        rc, _stdout, _stderr = await self._run("has-session", "-t", name)
+        rc, _stdout, _stderr = await self._run("has-session", "-t", _exact_session_target(name))
         return rc == 0
 
-    async def kill_session(self, name: str, *, missing_ok: bool = False) -> bool:
+    @staticmethod
+    def _live_process_groups(pgids: set[int]) -> set[int]:
+        live_pgids: set[int] = set()
+        for pgid in pgids:
+            try:
+                os.killpg(pgid, 0)
+                live_pgids.add(pgid)
+            except ProcessLookupError:
+                continue
+            except PermissionError:
+                live_pgids.add(pgid)
+            except OSError:
+                continue
+        return live_pgids
+
+    @classmethod
+    async def _wait_for_process_groups_exit(cls, pgids: set[int], timeout: float) -> set[int]:
+        if not pgids or timeout <= 0:
+            return cls._live_process_groups(pgids)
+
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout
+        live_pgids = cls._live_process_groups(pgids)
+        while live_pgids and loop.time() < deadline:
+            await asyncio.sleep(min(0.1, max(0.0, deadline - loop.time())))
+            live_pgids = cls._live_process_groups(live_pgids)
+        return live_pgids
+
+    async def kill_session(
+        self, name: str, *, missing_ok: bool = False, timeout: float = 5.0
+    ) -> bool:
         """Kill a tmux session and all processes in it.
 
         Collects pane PIDs before destroying the session, then sends SIGTERM
@@ -408,7 +529,8 @@ class TmuxSessionManager:
         pids = await self._get_session_pids(name)
 
         # Kill the tmux session
-        rc, _stdout, stderr = await self._run("kill-session", "-t", name)
+        target = _exact_session_target(name)
+        rc, _stdout, stderr = await self._run("kill-session", "-t", target)
         if rc != 0:
             message = stderr.strip()
             if any(error in message.lower() for error in _MISSING_SESSION_ERRORS):
@@ -422,28 +544,40 @@ class TmuxSessionManager:
             logger.warning("Failed to kill tmux session '%s': %s", name, message)
             return False
 
+        if needs_wsl():
+            logger.info("Killed tmux session '%s' via WSL tmux", name)
+            return True
+
         # Kill process groups rooted at each pane shell
+        pgids: set[int] = set()
         for pid in pids:
             try:
-                os.killpg(os.getpgid(pid), signal.SIGTERM)
+                pgid = os.getpgid(pid)
+                os.killpg(pgid, signal.SIGTERM)
+                pgids.add(pgid)
             except (ProcessLookupError, PermissionError, OSError):
                 pass
 
-        # Brief grace period, then SIGKILL stragglers
-        if pids:
-            await asyncio.sleep(0.5)
-            for pid in pids:
-                try:
-                    os.killpg(os.getpgid(pid), signal.SIGKILL)
-                except (ProcessLookupError, PermissionError, OSError):
-                    pass
+        # Honor the caller's grace period, then SIGKILL straggling process groups.
+        live_pgids = await self._wait_for_process_groups_exit(pgids, timeout)
+        for pgid in live_pgids:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except (ProcessLookupError, PermissionError, OSError):
+                pass
 
         logger.info(f"Killed tmux session '{name}' (pids: {pids})")
         return True
 
     async def _get_session_pids(self, name: str) -> list[int]:
         """Get all pane PIDs in a tmux session."""
-        rc, stdout, _ = await self._run("list-panes", "-t", name, "-F", "#{pane_pid}")
+        rc, stdout, _ = await self._run(
+            "list-panes",
+            "-t",
+            _exact_session_target(name),
+            "-F",
+            "#{pane_pid}",
+        )
         if rc != 0:
             return []
         pids: list[int] = []
@@ -457,7 +591,11 @@ class TmuxSessionManager:
     async def get_pane_pid(self, session_name: str) -> int | None:
         """Get the PID of the process running in the first pane."""
         rc, stdout, _stderr = await self._run(
-            "display-message", "-t", session_name, "-p", "#{pane_pid}"
+            "display-message",
+            "-t",
+            _exact_session_target(session_name),
+            "-p",
+            "#{pane_pid}",
         )
         if rc != 0 or not stdout.strip():
             return None
@@ -576,14 +714,16 @@ class TmuxSessionManager:
         rc, stdout, _stderr = await self._run(
             "capture-pane",
             "-t",
-            session_name,
+            _exact_session_target(session_name),
             "-p",  # print to stdout
             "-J",  # join wrapped lines
-            f"-S-{lines}",  # start N lines from bottom
+            f"-S-{max(lines, 0)}",  # tmux returns history plus the visible pane
         )
         if rc != 0:
             return None
-        return stdout
+        if lines <= 0:
+            return ""
+        return "".join(stdout.splitlines(keepends=True)[-lines:])
 
     async def send_keys(self, session_name: str, keys: str, *, literal: bool = True) -> bool:
         """Send keys to a tmux session.
@@ -608,7 +748,7 @@ class TmuxSessionManager:
             rc, _stdout, stderr = await self._run(
                 "send-keys",
                 "-t",
-                session_name,
+                _exact_session_target(session_name),
                 keys,
             )
             if rc != 0:
@@ -620,7 +760,7 @@ class TmuxSessionManager:
 
         try:
             await send_literal_text_to_tmux_target(
-                session_name,
+                _exact_session_target(session_name),
                 keys,
                 tmux_cmd=self._base_args(),
             )
