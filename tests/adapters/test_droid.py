@@ -212,3 +212,30 @@ class TestDroidHandleNative:
         handled_event = hook_manager.handle.call_args.args[0]
         assert handled_event.source is SessionSource.DROID
         assert handled_event.event_type is HookEventType.BEFORE_TOOL
+
+    def test_flattened_hook_event_name_preserves_block_contract(self) -> None:
+        hook_manager = MagicMock()
+        hook_manager.handle.return_value = HookResponse(decision="block", reason="No writes")
+        adapter = DroidAdapter(hook_manager=hook_manager)
+
+        result = adapter.handle_native(
+            {
+                "hook_event_name": "PreToolUse",
+                "source": "droid",
+                "session_id": "direct-session",
+                "tool_name": "Write",
+            },
+            hook_manager,
+        )
+
+        assert result == {
+            "continue": True,
+            "hookSpecificOutput": {
+                "hookEventName": "PreToolUse",
+                "permissionDecision": "deny",
+                "permissionDecisionReason": "No writes",
+            },
+        }
+        handled_event = hook_manager.handle.call_args.args[0]
+        assert handled_event.event_type is HookEventType.BEFORE_TOOL
+        assert handled_event.session_id == "direct-session"

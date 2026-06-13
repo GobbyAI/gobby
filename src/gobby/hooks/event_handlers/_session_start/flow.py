@@ -406,7 +406,10 @@ def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     if context_decision.mode == "full":
         _reset_agent_context_injection(handler, session_id)
 
-    populate_handoff_session_variables(handler, session_id, parent_session_id, session_source)
+    try:
+        populate_handoff_session_variables(handler, session_id, parent_session_id, session_source)
+    except (KeyError, json.JSONDecodeError, psycopg.Error) as e:
+        handler.logger.warning(f"Failed to populate handoff session vars: {e}")
 
     if session_id and project_id and not event.task_id:
         claimed_ctx = handler._build_claimed_task_context(

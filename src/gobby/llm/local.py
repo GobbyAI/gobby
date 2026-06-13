@@ -1,17 +1,13 @@
-"""
-Local LLM provider implementation.
+"""Local LLM provider implementation.
 
-Routes LLM calls to a local OpenAI-compatible endpoint (LM Studio, Ollama,
-vLLM, llama.cpp server, etc.) via the ``openai`` Python SDK.
+Routes LLM calls to a configured local endpoint provider.
 
 Used when feature candidate routing selects a ``local:<endpoint>/<model>``
 candidate, giving lightweight, zero-cost inference while preserving profile
 fallback to the next configured candidate when the local server is down.
 """
 
-import json
 import logging
-from pathlib import Path
 from typing import Any
 
 from gobby.ai.local_endpoints import (
@@ -19,6 +15,7 @@ from gobby.ai.local_endpoints import (
     resolve_local_generation_endpoint,
 )
 from gobby.llm.base import AuthMode, LLMTextResult
+from gobby.llm.local_provider_adapters import create_local_provider_adapter
 
 logger = logging.getLogger(__name__)
 
@@ -41,42 +38,15 @@ _CLOUD_MODEL_ALIASES: frozenset[str] = frozenset(
         "o4-mini",
     }
 )
-_USAGE_FIELDS = (
-    "prompt_tokens",
-    "completion_tokens",
-    "total_tokens",
-    "input_tokens",
-    "output_tokens",
-)
-
-
-def _usage_dict(usage: Any) -> dict[str, int] | None:
-    if usage is None:
-        return None
-    if isinstance(usage, dict):
-        data = usage
-    elif hasattr(usage, "model_dump"):
-        data = usage.model_dump()
-    else:
-        data = {field: getattr(usage, field, None) for field in _USAGE_FIELDS}
-
-    result = {
-        field: value
-        for field, value in data.items()
-        if isinstance(value, int) and not isinstance(value, bool)
-    }
-    return result or None
 
 
 class LocalLLMProvider:
-    """LLM provider for local OpenAI-compatible endpoints.
-
-    Talks to any server that implements the ``/v1/chat/completions``
-    endpoint (LM Studio, Ollama, vLLM, etc.) using the ``openai`` SDK.
+    """LLM provider for configured local endpoints.
 
     Feature and non-feature local generation pass a named
     ``DaemonConfig.ai.generation.local`` endpoint:
-    - ``api_base``: Base URL (e.g. ``http://localhost:1234/v1``)
+    - ``provider``: Backend adapter (``openai-compatible``, ``lmstudio``, ``ollama``)
+    - ``api_base``: Base URL (e.g. ``http://localhost:1234``)
     - ``model``: Default model name to request
     - ``api_key``: Optional API key (some local servers require one)
     """
@@ -111,24 +81,14 @@ class LocalLLMProvider:
         self._url = str(url)
         self._default_model = str(model)
         self._api_key = str(getattr(local_cfg, "api_key", None) or "not-needed")
-        self._client: Any | None = None
-
-        try:
-            from openai import AsyncOpenAI
-
-            self._client = AsyncOpenAI(
-                base_url=self._url,
-                api_key=self._api_key,
-            )
-            logger.debug(
-                "Local LLM provider initialised (url=%s, model=%s)",
-                self._url,
-                self._default_model,
-            )
-        except ImportError:
-            logger.error("openai package not found — install with: uv add openai")
-        except Exception as e:
-            logger.error("Failed to initialise local LLM client: %s", e)
+        self._adapter = create_local_provider_adapter(local_cfg)
+        self._client: Any | None = self._adapter.client
+        logger.debug(
+            "Local LLM provider initialised (provider=%s, url=%s, model=%s)",
+            local_cfg.provider,
+            self._url,
+            self._default_model,
+        )
 
     # ------------------------------------------------------------------
     # Model resolution
@@ -185,26 +145,14 @@ class LocalLLMProvider:
         *,
         caller: str | None = None,
     ) -> LLMTextResult:
-        if not self._client:
-            raise RuntimeError("Local LLM client not initialised")
-
         if caller:
             logger.debug("Local LLM text request from %s", caller)
         resolved = self._resolve_model(model)
-        response = await self._client.chat.completions.create(
+        return await self._adapter.generate_text_result(
+            prompt,
+            system_prompt=system_prompt,
             model=resolved,
-            messages=[
-                {
-                    "role": "system",
-                    "content": system_prompt or "You are a helpful assistant.",
-                },
-                {"role": "user", "content": prompt},
-            ],
-            max_tokens=max_tokens or 8000,
-        )
-        return LLMTextResult(
-            text=response.choices[0].message.content or "",
-            usage=_usage_dict(getattr(response, "usage", None)),
+            max_tokens=max_tokens,
         )
 
     async def generate_json(
@@ -215,69 +163,14 @@ class LocalLLMProvider:
         *,
         caller: str | None = None,
     ) -> dict[str, Any]:
-        if not self._client:
-            raise RuntimeError("Local LLM client not initialised")
-
         if caller:
             logger.debug("Local LLM JSON request from %s", caller)
         resolved = self._resolve_model(model)
-
-        # Try structured JSON mode first; fall back if the server rejects it.
-        try:
-            response = await self._client.chat.completions.create(
-                model=resolved,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                        or "You are a helpful assistant. Respond with valid JSON.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=8000,
-                response_format={"type": "json_object"},
-            )
-        except Exception as json_mode_err:
-            # Many local models don't support response_format — retry without.
-            logger.debug(
-                "json_object mode rejected (%s), retrying without response_format",
-                json_mode_err,
-            )
-            response = await self._client.chat.completions.create(
-                model=resolved,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                        or "You are a helpful assistant. Respond with valid JSON only.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=8000,
-            )
-
-        content = response.choices[0].message.content
-        if not content:
-            raise ValueError("Empty response from local LLM")
-
-        # Strip markdown fences that some models wrap JSON in.
-        # Only strip the *outermost* opening/closing fences — internal fence
-        # lines (e.g. inside a code block embedded in a JSON string) must be
-        # preserved.
-        stripped = content.strip()
-        if stripped.startswith("```"):
-            lines = stripped.splitlines()
-            if lines and lines[0].strip().startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip().startswith("```"):
-                lines = lines[:-1]
-            stripped = "\n".join(lines)
-
-        try:
-            result: dict[str, Any] = json.loads(stripped)
-            return result
-        except json.JSONDecodeError as e:
-            raise ValueError(f"Failed to parse local LLM response as JSON: {e}") from e
+        return await self._adapter.generate_json(
+            prompt,
+            system_prompt=system_prompt,
+            model=resolved,
+        )
 
     async def describe_image(
         self,
@@ -285,51 +178,9 @@ class LocalLLMProvider:
         context: str | None = None,
         model: str | None = None,
     ) -> str:
-        import base64
-        import mimetypes
-
-        if not self._client:
-            return "Image description unavailable (local LLM client not initialised)"
-
-        path = Path(image_path)
-        if not path.exists():
-            return f"Image not found: {image_path}"
-
-        try:
-            image_data = path.read_bytes()
-            image_base64 = base64.standard_b64encode(image_data).decode("utf-8")
-
-            mime_type, _ = mimetypes.guess_type(str(path))
-            if mime_type not in ("image/jpeg", "image/png", "image/gif", "image/webp"):
-                mime_type = "image/png"
-
-            prompt = (
-                "Please describe this image in detail, focusing on key visual elements, "
-                "any text visible, and the overall context or meaning."
-            )
-            if context:
-                prompt = f"{context}\n\n{prompt}"
-
-            resolved = self._resolve_model(model)
-            response = await self._client.chat.completions.create(
-                model=resolved,
-                messages=[
-                    {
-                        "role": "user",
-                        "content": [
-                            {
-                                "type": "image_url",
-                                "image_url": {
-                                    "url": f"data:{mime_type};base64,{image_base64}",
-                                },
-                            },
-                            {"type": "text", "text": prompt},
-                        ],
-                    }
-                ],
-                max_tokens=1024,
-            )
-            return response.choices[0].message.content or "No description generated"
-        except Exception as e:
-            logger.error("Failed to describe image with local LLM: %s", e)
-            return f"Image description failed: {e}"
+        resolved = self._resolve_model(model)
+        return await self._adapter.describe_image(
+            image_path,
+            context=context,
+            model=resolved,
+        )

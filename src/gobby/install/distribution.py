@@ -15,12 +15,11 @@ from gobby.utils.native_bin import is_native_bin_usable, local_native_bin_path, 
 HOMEBREW_DISTRIBUTION = "homebrew"
 GOBBY_DISTRIBUTION_ENV = "GOBBY_DISTRIBUTION"
 
-HOMEBREW_HELPERS: tuple[str, ...] = ("gcode", "gsqz", "ghook", "gloc", "gwiki")
+HOMEBREW_HELPERS: tuple[str, ...] = ("gcode", "gsqz", "ghook", "gwiki")
 HOMEBREW_HELPER_FORMULAE: dict[str, str] = {
     "gcode": "gobby-code",
     "gsqz": "gobby-squeeze",
     "ghook": "gobby-hooks",
-    "gloc": "gobby-local",
     "gwiki": "gobby-wiki",
 }
 

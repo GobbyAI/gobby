@@ -107,6 +107,27 @@ class StageStatesManager:
             by_session_id=by_session_id,
         )
 
+    def replace_manifest(
+        self,
+        task_id: str,
+        specs: Sequence[StageManifestSpec],
+        *,
+        expected_existing_shape: Sequence[tuple[str, int, int | None, int | None]],
+        from_state: str,
+        reason: str,
+        by_session_id: str | None,
+        by_actor: str,
+    ) -> list[StageState] | None:
+        return self._manifest.replace_manifest(
+            task_id,
+            specs,
+            expected_existing_shape=expected_existing_shape,
+            from_state=from_state,
+            reason=reason,
+            by_session_id=by_session_id,
+            by_actor=by_actor,
+        )
+
     def add_stage(
         self,
         task_id: str,

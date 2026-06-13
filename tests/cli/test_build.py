@@ -39,7 +39,9 @@ def test_build_command_is_registered_with_phase_3_flags() -> None:
     assert "--stage" in result.output
     assert "Stage cap/settings override" in result.output
     assert "Stage selector" not in result.output
-    assert "--profile" not in result.output
+    assert "--profile" in result.output
+    assert "--delivery-mode" in result.output
+    assert "--delivery-target-repo" in result.output
     assert "--unattended" not in result.output
     assert "--yolo" not in result.output
     assert "--stages" not in result.output
@@ -90,10 +92,16 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
             [
                 "build",
                 str(plan_file),
+                "--profile",
+                "submit",
                 "--quick",
                 "--skip-stage",
                 "qa,pr",
                 "--clone",
+                "--delivery-mode",
+                "auto",
+                "--delivery-target-repo",
+                "owner/repo",
                 "--no-merge",
                 "--pr",
                 "123",
@@ -130,10 +138,15 @@ def test_build_cli_parses_flags_and_calls_shared_service(tmp_path: Path) -> None
     call = build.call_args
     assert call.args[0] == str(plan_file)
     opts = call.args[1]
+    assert opts.profile == "submit"
     assert opts.quick is True
     assert opts.skip_stages == ["qa", "pr"]
     assert opts.isolation == "clone"
     assert opts.isolation_explicit is True
+    assert opts.delivery_mode == "auto"
+    assert opts.delivery_mode_explicit is True
+    assert opts.delivery_target_repo == "owner/repo"
+    assert opts.delivery_target_repo_explicit is True
     assert opts.no_merge is True
     assert opts.pr == "123"
     assert [
@@ -292,6 +305,26 @@ def test_build_payload_includes_dry_run() -> None:
     payload = _build_payload(BuildOptions(dry_run=True), "plan.md")
 
     assert payload["dry_run"] is True
+
+
+def test_build_payload_includes_explicit_profile_and_delivery_fields() -> None:
+    from gobby.build.service import BuildOptions
+    from gobby.cli.build import _build_payload
+
+    payload = _build_payload(
+        BuildOptions(
+            profile="submit",
+            delivery_mode="pull_request",
+            delivery_mode_explicit=True,
+            delivery_target_repo="owner/repo",
+            delivery_target_repo_explicit=True,
+        ),
+        "#42",
+    )
+
+    assert payload["profile"] == "submit"
+    assert payload["delivery_mode"] == "pull_request"
+    assert payload["delivery_target_repo"] == "owner/repo"
 
 
 def test_build_payload_includes_coordinator() -> None:
@@ -606,6 +639,15 @@ def test_daemon_profile_error_detection_uses_strict_message_fallback() -> None:
     assert _is_profile_error("Task description mentions build profile but is unrelated") is False
 
 
+def test_daemon_build_control_rejects_legacy_bare_payload() -> None:
+    from gobby.cli._build_daemon import _control_payload_from_daemon
+
+    assert _control_payload_from_daemon({"action": "stop", "enabled": False}) is None
+    assert _control_payload_from_daemon(
+        {"success": True, "result": {"action": "stop", "enabled": False}, "error": None}
+    ) == {"action": "stop", "enabled": False}
+
+
 def test_build_cli_without_input_invokes_interactive_build_skill() -> None:
     from gobby.cli import cli
 
@@ -895,6 +937,42 @@ def test_build_clean_cli_requires_task_ref() -> None:
 
     assert result.exit_code != 0
     assert "requires a task ref" in result.output
+
+
+def test_build_clean_cli_forwards_dirty_worktree_override() -> None:
+    from gobby.build.controls import BuildTargetControlResult, BuildTaskSummary
+    from gobby.cli import cli
+
+    control_result = BuildTargetControlResult(
+        action="clean",
+        project_id="project-1",
+        root_task_id="task-1",
+        affected_tasks=[
+            BuildTaskSummary("task-1", "#1", "Task", "task"),
+        ],
+        force=True,
+    )
+
+    with (
+        patch("gobby.cli.build.resolve_project_id", return_value="project-1"),
+        patch("gobby.cli.build._open_database") as open_db,
+        patch("gobby.cli.build._try_daemon_build_control", return_value=None),
+        patch("gobby.cli.build.asyncio.run", return_value=control_result) as run,
+        patch("gobby.cli.build.build_clean_target", new=AsyncMock()) as clean_target,
+    ):
+        result = CliRunner().invoke(
+            cli,
+            ["build", "clean", "#1", "--yes", "--force", "--delete-dirty-worktrees"],
+        )
+
+    assert result.exit_code == 0
+    run.assert_called_once()
+    call = clean_target.call_args
+    assert call.args[0] == "#1"
+    assert call.kwargs["force"] is True
+    assert call.kwargs["delete_dirty_worktrees"] is True
+    assert call.kwargs["yes"] is True
+    open_db.return_value.close.assert_called_once_with()
 
 
 def test_build_restart_cli_forwards_dry_run_force_and_confirmation() -> None:

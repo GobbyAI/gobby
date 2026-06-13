@@ -41,7 +41,7 @@ def is_qdrant_installed(*, gobby_home: Path | None = None) -> bool:
 
     Checks for the unified Docker Compose file (which always includes Qdrant).
     """
-    home = gobby_home or Path("~/.gobby").expanduser()
+    home = gobby_home if gobby_home is not None else get_gobby_home()
     compose = home / "services" / "docker-compose.yml"
     return compose.exists()
 

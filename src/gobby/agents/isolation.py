@@ -23,6 +23,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Literal
+from uuid import uuid4
 
 from gobby.agents.code_index import CodeIndexPreflightResult
 from gobby.agents.code_index import ensure_isolation_code_index as _ensure_isolation_code_index
@@ -486,7 +487,8 @@ class CloneIsolationHandler(IsolationHandler):
         clone_path = self._generate_clone_path(branch_name, project_name)
 
         # Create clone (full when use_local, shallow otherwise)
-        result = self._clone_manager.create_clone(
+        result = await asyncio.to_thread(
+            self._clone_manager.create_clone,
             clone_path=clone_path,
             branch_name=branch_name,
             base_branch=base_branch,
@@ -591,9 +593,10 @@ Push your changes when ready to share with the original.
 
     def _generate_clone_path(self, branch_name: str, project_name: str) -> str:
         """Generate a unique clone path in ~/.gobby/clones/."""
-        # Sanitize branch name for use in path
         safe_branch = branch_name.replace("/", "-").replace("\\", "-")
-        return str(Path.home() / ".gobby" / "clones" / project_name / safe_branch)
+        return str(
+            Path.home() / ".gobby" / "clones" / project_name / f"{safe_branch}-{uuid4().hex[:8]}"
+        )
 
 
 async def repair_isolation_environment(

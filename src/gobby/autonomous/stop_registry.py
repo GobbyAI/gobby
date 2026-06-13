@@ -76,38 +76,52 @@ class StopRegistry:
         now = datetime.now(UTC)
 
         with self._lock:
-            # Check if there's already a pending signal
-            existing = self.get_signal(session_id)
-            if existing and existing.is_pending:
-                logger.debug(
-                    f"Stop signal already pending for session {session_id} from {existing.source}"
-                )
-                return existing
-
-            # Insert new signal
-            self.db.execute(
+            row = self.db.fetchone(
                 """
                 INSERT INTO session_stop_signals (session_id, source, reason, requested_at)
                 VALUES (%s, %s, %s, %s)
                 ON CONFLICT(session_id) DO UPDATE SET
-                    source = excluded.source,
-                    reason = excluded.reason,
-                    requested_at = excluded.requested_at,
-                    acknowledged_at = NULL
+                    session_id = session_stop_signals.session_id
+                WHERE session_stop_signals.acknowledged_at IS NULL
+                RETURNING session_id, source, reason, requested_at, acknowledged_at
                 """,
                 (session_id, source, reason, now.isoformat()),
             )
 
-            logger.info(
-                f"Stop signal sent for session {session_id} from {source}: {reason or 'no reason'}"
+            if row is None:
+                row = self.db.fetchone(
+                    """
+                    SELECT session_id, source, reason, requested_at, acknowledged_at
+                    FROM session_stop_signals
+                    WHERE session_id = %s
+                    """,
+                    (session_id,),
+                )
+                if row is None:
+                    raise RuntimeError(f"Failed to record stop signal for session {session_id}")
+
+            signal = StopSignal(
+                session_id=row["session_id"],
+                source=row["source"],
+                reason=row["reason"],
+                requested_at=datetime.fromisoformat(row["requested_at"]),
+                acknowledged_at=(
+                    datetime.fromisoformat(row["acknowledged_at"])
+                    if row["acknowledged_at"]
+                    else None
+                ),
             )
 
-            return StopSignal(
-                session_id=session_id,
-                source=source,
-                reason=reason,
-                requested_at=now,
-            )
+            if signal.is_pending:
+                logger.info(
+                    "Stop signal pending for session %s from %s: %s",
+                    session_id,
+                    signal.source,
+                    signal.reason or "no reason",
+                )
+            else:
+                logger.debug("Stop signal already acknowledged for session %s", session_id)
+            return signal
 
     def get_signal(self, session_id: str) -> StopSignal | None:
         """Get the stop signal for a session if one exists.
@@ -242,10 +256,10 @@ class StopRegistry:
         ]
 
     def cleanup_stale(self, max_age_hours: int = 24) -> int:
-        """Clean up old acknowledged signals.
+        """Clean up old acknowledged and abandoned pending signals.
 
         Args:
-            max_age_hours: Remove acknowledged signals older than this
+            max_age_hours: Remove signals older than this
 
         Returns:
             Number of signals cleaned up
@@ -258,10 +272,10 @@ class StopRegistry:
             result = self.db.execute(
                 """
                 DELETE FROM session_stop_signals
-                WHERE acknowledged_at IS NOT NULL
-                AND acknowledged_at < %s
+                WHERE (acknowledged_at IS NOT NULL AND acknowledged_at < %s)
+                OR (acknowledged_at IS NULL AND requested_at < %s)
                 """,
-                (threshold.isoformat(),),
+                (threshold.isoformat(), threshold.isoformat()),
             )
 
             if result.rowcount > 0:

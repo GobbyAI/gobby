@@ -6,6 +6,7 @@ import json
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
+from unittest.mock import AsyncMock
 
 import pytest
 
@@ -186,6 +187,86 @@ async def test_request_permission_cancels_when_no_allow_option() -> None:
     response = messages[0]
     assert "error" not in response
     assert response["result"] == {"outcome": {"outcome": "cancelled"}}
+
+
+@pytest.mark.asyncio
+async def test_request_permission_cancels_when_pre_tool_blocks() -> None:
+    """A Gobby pre-tool block declines the ACP permission grant."""
+    client = _recording_client()
+    pre_tool_callback = AsyncMock(return_value={"decision": "block", "reason": "policy denied"})
+
+    await acp_client_requests._handle_request_permission_request(
+        client,
+        _permission_request(_REAL_PERMISSION_OPTIONS),
+        pre_tool_callback=pre_tool_callback,
+    )
+
+    pre_tool_callback.assert_awaited_once_with(
+        {
+            "tool_name": "list_mcp_servers",
+            "tool_input": {"toolCallId": "tc-1", "title": "list_mcp_servers"},
+        }
+    )
+    response = _written_messages(client)[0]
+    assert "error" not in response
+    assert response["result"] == {"outcome": {"outcome": "cancelled"}}
+
+
+@pytest.mark.asyncio
+async def test_terminal_create_does_not_execute_when_pre_tool_blocks(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    """A Gobby pre-tool block returns a cancelled terminal result without execution."""
+    client = _recording_client()
+    pre_tool_callback = AsyncMock(return_value={"decision": "deny", "reason": "no shell"})
+    run_terminal = AsyncMock()
+    monkeypatch.setattr(acp_client_requests, "_run_terminal_create", run_terminal)
+    request = {
+        "jsonrpc": "2.0",
+        "id": "terminal-1",
+        "method": "terminal/create",
+        "params": {
+            "command": "printf nope",
+            "cwd": str(tmp_path),
+            "timeout": 1,
+            "outputByteLimit": 4096,
+        },
+    }
+
+    events = [
+        event
+        async for event in acp_client_requests._handle_terminal_create_request(
+            client,
+            request,
+            pre_tool_callback=pre_tool_callback,
+        )
+    ]
+
+    assert events == []
+    run_terminal.assert_not_awaited()
+    pre_tool_callback.assert_awaited_once_with(
+        {
+            "tool_name": "run_terminal_command",
+            "tool_input": {
+                "command": "printf nope",
+                "cwd": str(tmp_path),
+                "timeout": 1.0,
+                "outputByteLimit": 4096,
+            },
+        }
+    )
+    response = _written_messages(client)[0]
+    assert response["id"] == "terminal-1"
+    assert response["result"] == {
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": "no shell",
+        "error": "no shell",
+        "timedOut": False,
+        "truncated": False,
+        "cancelled": True,
+    }
 
 
 @pytest.mark.asyncio

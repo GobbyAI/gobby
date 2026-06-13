@@ -17,6 +17,7 @@ _OLD_CLAUDE_ONLY_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
     FeatureProfile.MID: ("claude/sonnet",),
     FeatureProfile.HIGH: ("claude/opus",),
 }
+_OLD_SPARK_CANDIDATE = "codex/gpt-5.3-codex-spark"
 
 _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
     "session_summary.candidates": FeatureProfile.LOW,
@@ -39,7 +40,7 @@ _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
 
 
 def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> None:
-    """Delete old seeded Claude-only candidates so profile defaults apply."""
+    """Delete old seeded candidates so profile defaults apply."""
     db = getattr(config_store, "db", None)
     if db is None:
         return
@@ -64,7 +65,7 @@ def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
     if not callable(delete):
         joined = ", ".join(stale_keys)
         raise ValueError(
-            "Stale seeded Claude-only feature candidate rows found in "
+            "Stale seeded feature candidate rows found in "
             f"config_store but cannot be deleted: {joined}."
         )
 
@@ -76,13 +77,13 @@ def delete_stale_default_feature_candidate_rows(config_store: Any | None) -> Non
         logger.debug("Failed to delete stale feature candidate keys %s: %s", stale_keys, exc)
         joined = ", ".join(stale_keys)
         raise ValueError(
-            "Failed to delete stale seeded Claude-only feature candidate rows "
+            "Failed to delete stale seeded feature candidate rows "
             f"from config_store: {joined}."
         ) from exc
 
     joined = ", ".join(stale_keys)
     logger.warning(
-        "Deleted stale seeded Claude-only feature candidate rows so profile defaults apply: %s",
+        "Deleted stale seeded feature candidate rows so profile defaults apply: %s",
         joined,
     )
 
@@ -94,7 +95,10 @@ def _get_stale_candidate_key(row: Any) -> str | None:
     value = _normalized_candidate_list(_decoded_value(_row_value(row, "value", 1)))
     if value is None:
         return None
-    expected = _OLD_CLAUDE_ONLY_CANDIDATES[_FEATURE_CANDIDATE_PROFILES[key]]
+    profile = _FEATURE_CANDIDATE_PROFILES[key]
+    if profile == FeatureProfile.MID and _OLD_SPARK_CANDIDATE in value:
+        return key
+    expected = _OLD_CLAUDE_ONLY_CANDIDATES[profile]
     return key if tuple(value) == expected else None
 
 

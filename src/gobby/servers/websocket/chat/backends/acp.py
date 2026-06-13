@@ -14,7 +14,7 @@ import logging
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from gobby.adapters.acp_client import ACPClient, StreamEvent
 from gobby.agents.sandbox import SandboxConfig
@@ -190,11 +190,27 @@ class ACPWebChatBackend:
         if not session.sdk_session_id:
             raise RuntimeError(f"{self.display_name} session missing sessionId")
 
+        async def _apply_pre_tool(data: dict[str, Any]) -> dict[str, Any] | None:
+            tool_name = data.get("tool_name")
+            tool_input = data.get("tool_input")
+            if not isinstance(tool_name, str):
+                logger.warning(
+                    "%s emitted non-string tool_name %r; using safe empty name",
+                    self.display_name,
+                    tool_name,
+                )
+                tool_name = ""
+            return await session._apply_pre_tool_lifecycle(
+                tool_name,
+                tool_input if isinstance(tool_input, dict) else {},
+            )
+
         async for event in self._client.send(
             prompt,
             session_id=session.sdk_session_id,
             model=session._model,
             reasoning_effort=session.reasoning_effort,
+            pre_tool_callback=_apply_pre_tool,
         ):
             yield event
 

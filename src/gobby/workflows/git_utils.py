@@ -205,6 +205,49 @@ class DirtyFiles:
         return bool(self.tracked or self.untracked)
 
 
+def resolve_git_worktree_root(*candidate_paths: str | Path | None) -> str | None:
+    """Return the first candidate path that belongs to a git worktree."""
+    for raw_path in candidate_paths:
+        if raw_path is None:
+            continue
+        path_text = str(raw_path).strip()
+        if not path_text:
+            logger.debug("resolve_git_worktree_root: ignoring empty candidate path")
+            continue
+        if not Path(path_text).is_dir():
+            logger.debug("resolve_git_worktree_root: candidate is not a directory: %s", path_text)
+            continue
+
+        try:
+            result = subprocess.run(  # nosec B603 B607 # hardcoded git command
+                ["git", "rev-parse", "--show-toplevel"],
+                cwd=path_text,
+                capture_output=True,
+                text=True,
+                timeout=5,
+            )
+        except Exception as exc:
+            logger.debug(
+                "resolve_git_worktree_root: could not inspect candidate %s: %s",
+                path_text,
+                exc,
+            )
+            continue
+
+        if result.returncode != 0:
+            logger.debug(
+                "resolve_git_worktree_root: candidate is not a git worktree: %s",
+                path_text,
+            )
+            continue
+
+        worktree_root = result.stdout.strip()
+        if worktree_root:
+            return worktree_root
+
+    return None
+
+
 def get_dirty_files(project_path: str | None = None) -> set[str]:
     """
     Get the set of dirty files from git status --porcelain.
@@ -234,45 +277,18 @@ def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
     Returns:
         DirtyFiles with .tracked and .untracked sets
     """
-    # Normalize empty string to None — "" is falsy but subprocess.run(cwd="")
-    # raises FileNotFoundError. Treat it the same as None (use daemon's cwd).
-    if project_path is not None and not project_path.strip():
-        # Include session/project context for diagnosis if available.
-        diag = ""
-        try:
-            from gobby.utils.session_context import get_current_session_id
-
-            sid = get_current_session_id()
-            if sid:
-                diag += f" session={sid}"
-            from gobby.utils.project_context import _current_project_context
-
-            ctx = _current_project_context.get()
-            if ctx:
-                diag += f" project={ctx.get('id', '?')} name={ctx.get('name', '?')}"
-        except Exception:
-            pass
-        logger.warning(
-            f"get_dirty_files: called with empty string cwd — normalizing to None.{diag}",
-            stack_info=True,
+    worktree_root = resolve_git_worktree_root(project_path)
+    if worktree_root is None:
+        logger.debug(
+            "get_dirty_files: no git worktree resolved for project_path=%r; treating as no-repo",
+            project_path,
         )
-        project_path = None
-
-    if project_path is None:
-        logger.debug("get_dirty_files: project_path is None, treating session as no-repo")
-        return DirtyFiles(set(), set())
-
-    # Validate cwd exists before shelling out — subprocess.run raises
-    # FileNotFoundError for both missing binary AND missing cwd, and the
-    # latter is the common case (stale session with deleted project path).
-    if project_path and not Path(project_path).is_dir():
-        logger.debug(f"get_dirty_files: project_path does not exist: {project_path}")
         return DirtyFiles(set(), set())
 
     try:
         result = subprocess.run(  # nosec B603 B607 # hardcoded git command
             ["git", "status", "--porcelain"],
-            cwd=project_path,
+            cwd=worktree_root,
             capture_output=True,
             text=True,
             timeout=10,
@@ -308,7 +324,9 @@ def get_dirty_files_categorized(project_path: str | None = None) -> DirtyFiles:
         logger.warning("get_dirty_files: git status timed out")
         return DirtyFiles(set(), set())
     except FileNotFoundError:
-        logger.warning(f"get_dirty_files: git binary not found or cwd invalid (cwd={project_path})")
+        logger.warning(
+            f"get_dirty_files: git binary not found or cwd invalid (cwd={worktree_root})"
+        )
         return DirtyFiles(set(), set())
     except Exception as e:
         logger.error(f"get_dirty_files: Error running git status: {e}")

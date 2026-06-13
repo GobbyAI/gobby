@@ -77,11 +77,39 @@ def test_reload_workflows_success(runner) -> None:
                 assert "Triggered daemon workflow reload" in result.output
 
 
+def test_reload_workflows_daemon_failure_exits_nonzero(runner) -> None:
+    with patch("gobby.config.app.load_config") as mock_conf:
+        mock_conf.return_value.daemon_port = 60887
+
+        with patch("psutil.process_iter") as mock_iter:
+            proc = Mock()
+            proc.cmdline.return_value = ["python", "-m", "gobby", "start"]
+            mock_iter.return_value = [proc]
+
+            with (
+                patch("httpx.post") as mock_post,
+                patch("gobby.cli.workflows.common.get_workflow_loader") as m_loader,
+            ):
+                mock_post.return_value.status_code = 200
+                mock_post.return_value.json.return_value = {
+                    "status": "error",
+                    "message": "bad yaml",
+                }
+
+                result = runner.invoke(workflows, ["reload"])
+                assert result.exit_code != 0
+                assert "Daemon reload failed: bad yaml" in result.output
+                m_loader.return_value.clear_cache.assert_not_called()
+
+
 def test_reload_workflows_fallback(runner) -> None:
     with patch("gobby.config.app.load_config") as mock_conf:
-        mock_conf.side_effect = Exception("Config error")
+        mock_conf.return_value.daemon_port = 60887
 
-        with patch("gobby.cli.workflows.common.get_workflow_loader") as m_loader:
+        with (
+            patch("psutil.process_iter", return_value=[]),
+            patch("gobby.cli.workflows.common.get_workflow_loader") as m_loader,
+        ):
             result = runner.invoke(workflows, ["reload"])
             assert result.exit_code == 0
             assert "Cleared local workflow cache" in result.output

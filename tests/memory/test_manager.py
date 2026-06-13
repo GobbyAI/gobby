@@ -11,7 +11,7 @@ Tests cover:
 import inspect
 import uuid
 from datetime import UTC, datetime
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -159,6 +159,93 @@ class TestCreateMemory:
         assert memory.memory_type == "fact"
         assert memory.source_type == "agent"
         assert memory.tags == []
+
+
+class TestFixNullProjectIds:
+    """Tests for repairing NULL memory project assignments."""
+
+    @pytest.mark.asyncio
+    async def test_fix_null_project_ids_routes_through_storage_and_invalidates(
+        self,
+        mock_db,
+        memory_config,
+    ):
+        """The manager repair path routes updates through storage and invalidation hooks."""
+        mock_db.fetchall.side_effect = [
+            [{"id": "mem-1", "content": "Needs project assignment", "source_session_id": "sess-1"}],
+            [{"id": "sess-1", "project_id": "proj-1"}],
+        ]
+        manager = MemoryManager(db=mock_db, config=memory_config)
+        updated = Memory(
+            id="mem-1",
+            memory_type="fact",
+            content="Needs project assignment",
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+            project_id="proj-1",
+        )
+        manager.storage = MagicMock(spec=LocalMemoryManager)
+        manager.storage.update_memory_project.return_value = updated
+
+        with patch.object(manager, "_embed_and_upsert", new=AsyncMock()) as embed:
+            result = await manager.fix_null_project_ids_from_sessions()
+
+        assert result.total == 1
+        assert result.fixable == 1
+        assert result.fixed == 1
+        manager.storage.update_memory_project.assert_called_once_with("mem-1", "proj-1")
+        manager.storage.mark_pending_graph.assert_called_once_with("mem-1")
+        embed.assert_awaited_once_with(
+            "mem-1",
+            "Needs project assignment",
+            payload={"project_id": "proj-1"},
+        )
+
+    @pytest.mark.asyncio
+    async def test_fix_null_project_ids_updates_and_invalidates(self, db, memory_config):
+        """Repairing project IDs notifies storage and refreshes secondary indexes."""
+        db.execute(
+            "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",
+            ("proj-123", "test-project", "/tmp/test"),
+        )
+        now = datetime.now(UTC).isoformat()
+        db.execute(
+            """INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at)
+               VALUES (%s, %s, %s, %s, %s, %s)""",
+            ("sess-123", "ext-123", "machine-123", "claude", "proj-123", now),
+        )
+
+        manager = MemoryManager(db=db, config=memory_config)
+        memory = manager.storage.create_memory(
+            content="Needs project assignment",
+            project_id=None,
+            source_type="agent",
+            source_session_id="sess-123",
+        )
+        listener_calls: list[str] = []
+        manager.storage.add_change_listener(lambda: listener_calls.append("changed"))
+
+        with patch.object(manager, "_embed_and_upsert", new=AsyncMock()) as embed:
+            result = await manager.fix_null_project_ids_from_sessions()
+
+        updated = manager.get_memory(memory.id)
+        graph_row = db.fetchone(
+            "SELECT graph_processed FROM memories WHERE id = %s",
+            (memory.id,),
+        )
+
+        assert result.total == 1
+        assert result.fixable == 1
+        assert result.fixed == 1
+        assert updated is not None
+        assert updated.project_id == "proj-123"
+        assert listener_calls == ["changed"]
+        embed.assert_awaited_once_with(
+            memory.id,
+            "Needs project assignment",
+            payload={"project_id": "proj-123"},
+        )
+        assert graph_row["graph_processed"] in (False, 0)
 
 
 # =============================================================================
@@ -631,6 +718,44 @@ class TestVectorStoreIntegration:
         mock_vs.upsert.assert_called_once()
         assert mock_vs.upsert.call_count == 1
         assert mock_vs.upsert.call_args is not None
+
+
+class TestLifecycleService:
+    """Service-level tests for memory lifecycle side effects."""
+
+    @pytest.mark.asyncio
+    async def test_create_update_delete_updates_secondary_indices(
+        self,
+        db,
+        memory_config,
+    ) -> None:
+        """Lifecycle service handles vector side effects without manager logic."""
+        mock_vs = MagicMock()
+        mock_vs.upsert = AsyncMock()
+        mock_vs.delete = AsyncMock()
+        mock_embed = AsyncMock(return_value=[0.1, 0.2])
+        manager = MemoryManager(
+            db=db,
+            config=memory_config,
+            vector_store=mock_vs,
+            embed_fn=mock_embed,
+        )
+        manager._dedup_service = None
+
+        memory = await manager._lifecycle_service.create_memory(
+            content="Lifecycle service memory",
+            project_id="proj-1",
+        )
+        updated = await manager._lifecycle_service.update_memory(
+            memory.id,
+            content="Updated lifecycle service memory",
+        )
+        deleted = await manager._lifecycle_service.delete_memory(memory.id)
+
+        assert updated.content == "Updated lifecycle service memory"
+        assert deleted is True
+        assert mock_vs.upsert.await_count == 2
+        mock_vs.delete.assert_awaited_once_with(memory.id)
 
 
 # =============================================================================

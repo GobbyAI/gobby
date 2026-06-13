@@ -31,7 +31,14 @@ def make_external_symbol_id(project_id: str, callee_name: str, module: str | Non
 
 @dataclass
 class Symbol:
-    """A code symbol extracted from AST parsing."""
+    """A code symbol extracted from AST parsing.
+
+    ``qualified_name`` is a container-qualified symbol path within one file, not
+    a module- or package-qualified import path. Top-level symbols use ``name``
+    unchanged; nested class/type members use ``Parent.member``. The Rust
+    ``gcode`` writer is the production writer, and ``CodeIndexStorage`` tests
+    use these model helpers as the Python reference contract.
+    """
 
     id: str
     project_id: str
@@ -49,6 +56,7 @@ class Symbol:
     parent_symbol_id: str | None = None
     content_hash: str = ""
     summary: str | None = None
+    summary_attempted_at: str | None = None
     created_at: str = ""
     updated_at: str = ""
 
@@ -60,7 +68,7 @@ class Symbol:
 
     @staticmethod
     def make_id(project_id: str, file_path: str, name: str, kind: str, byte_start: int) -> str:
-        """Generate deterministic UUID5 for a symbol."""
+        """Generate the UUID5 ID shared by Python tests and the Rust ``gcode`` writer."""
         key = f"{project_id}:{file_path}:{name}:{kind}:{byte_start}"
         return str(uuid.uuid5(CODE_INDEX_UUID_NAMESPACE, key))
 
@@ -83,6 +91,9 @@ class Symbol:
             parent_symbol_id=row["parent_symbol_id"],
             content_hash=row["content_hash"],
             summary=row["summary"] if "summary" in row.keys() else None,
+            summary_attempted_at=(
+                row["summary_attempted_at"] if "summary_attempted_at" in row.keys() else None
+            ),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )
@@ -105,6 +116,7 @@ class Symbol:
             "parent_symbol_id": self.parent_symbol_id,
             "content_hash": self.content_hash,
             "summary": self.summary,
+            "summary_attempted_at": self.summary_attempted_at,
             "created_at": self.created_at,
             "updated_at": self.updated_at,
         }
@@ -133,7 +145,12 @@ class Symbol:
 
 @dataclass
 class IndexedFile:
-    """A file that has been indexed."""
+    """A file that has been indexed.
+
+    Re-indexing a file marks graph/vector projections stale; the Rust ``gcode``
+    writer and ``CodeIndexStorage.upsert_file`` must keep that flag contract in
+    sync.
+    """
 
     id: str
     project_id: str
@@ -145,6 +162,7 @@ class IndexedFile:
     graph_synced: bool = False
     vectors_synced: bool = False
     graph_sync_attempted_at: str | None = None
+    vector_sync_attempted_at: str | None = None
     indexed_at: str = ""
 
     def __post_init__(self) -> None:
@@ -171,6 +189,11 @@ class IndexedFile:
             graph_sync_attempted_at=(
                 row["graph_sync_attempted_at"] if "graph_sync_attempted_at" in row.keys() else None
             ),
+            vector_sync_attempted_at=(
+                row["vector_sync_attempted_at"]
+                if "vector_sync_attempted_at" in row.keys()
+                else None
+            ),
             indexed_at=row["indexed_at"],
         )
 
@@ -186,6 +209,7 @@ class IndexedFile:
             "graph_synced": self.graph_synced,
             "vectors_synced": self.vectors_synced,
             "graph_sync_attempted_at": self.graph_sync_attempted_at,
+            "vector_sync_attempted_at": self.vector_sync_attempted_at,
             "indexed_at": self.indexed_at,
         }
 
@@ -221,6 +245,32 @@ class IndexedProject:
             "last_indexed_at": self.last_indexed_at,
             "index_duration_ms": self.index_duration_ms,
         }
+
+
+ProjectionCleanupStore = Literal["graph", "vector"]
+
+
+@dataclass
+class ProjectionCleanupPending:
+    """Project-level projection cleanup that must be retried."""
+
+    project_id: str
+    store: ProjectionCleanupStore
+    attempts: int = 0
+    last_error: str | None = None
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> ProjectionCleanupPending:
+        return cls(
+            project_id=row["project_id"],
+            store=row["store"],
+            attempts=row["attempts"],
+            last_error=row["last_error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
 
 
 @dataclass

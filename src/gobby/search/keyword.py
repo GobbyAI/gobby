@@ -8,9 +8,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Literal, Protocol
 
-logger = logging.getLogger(__name__)
-
 SearchMode = Literal["keyword", "semantic"]
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -159,8 +159,10 @@ class BM25SearchBackend:
         try:
             rows = fetch_all(self._hub, sql, params)
         except Exception as exc:
-            logger.debug("pg_search BM25 search failed on %s: %s", self._config.table, exc)
-            return []
+            if is_pg_search_parse_error(exc):
+                logger.debug("pg_search keyword query parse failed: %s", exc)
+                return []
+            raise
 
         raw_scores = [float(row_value(row, "score")) for row in rows]
         normalized = normalize_positive_scores(raw_scores)
@@ -315,8 +317,14 @@ def _table_config(table: str) -> _TableConfig:
 
 def sanitize_pg_search_query(query: str) -> str:
     """Sanitize user input for pg_search's BM25 query DSL."""
-    cleaned = "".join(ch if ch.isalnum() or ch in (" ", "_", "-") else " " for ch in query)
-    return " ".join(token for token in cleaned.split() if token)
+    cleaned = "".join(ch if ch.isalnum() or ch in (" ", "_") else " " for ch in query)
+    return " ".join(token for token in cleaned.split() if token.strip("_"))
+
+
+def is_pg_search_parse_error(error: BaseException) -> bool:
+    """Return whether an exception is a known pg_search query parser failure."""
+    message = str(error).lower()
+    return "could not parse query string" in message
 
 
 def normalize_positive_scores(raw_scores: list[float]) -> list[float]:

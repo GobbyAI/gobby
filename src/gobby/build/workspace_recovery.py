@@ -40,15 +40,23 @@ def recover_stale_integration_artifact(
         if path is not None and _is_git_workspace_dir(path):
             return False
 
-    active_run = _active_workspace_run(db, backend, workspace_id)
-    if active_run is not None:
-        raise BuildWorkspaceError(_active_workspace_message(backend, workspace_id, active_run))
+    ensure_no_active_workspace_run(db, backend, workspace_id)
 
     if backend == "worktree":
         task_manager.artifacts.set_artifacts_atomic(task_id, integration_workspace_id=None)
     else:
         task_manager.artifacts.set_artifacts_atomic(task_id, integration_clone_id=None)
     return True
+
+
+def ensure_no_active_workspace_run(
+    db: HubDatabase,
+    backend: WorkspaceBackend,
+    workspace_id: str,
+) -> None:
+    active_run = _active_workspace_run(db, backend, workspace_id)
+    if active_run is not None:
+        raise BuildWorkspaceError(_active_workspace_message(backend, workspace_id, active_run))
 
 
 def _is_promotable_workspace(

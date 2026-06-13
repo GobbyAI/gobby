@@ -479,7 +479,9 @@ class TestEnsureDefaults:
         assert result["success"] is True
         assert "gobby-tasks.validation.candidates" in result["keys_inserted"]
         assert "gobby_tasks.validation.candidates" not in result["keys_inserted"]
-        assert config_store.get("gobby-tasks.validation.candidates")[0].startswith("codex/")
+        assert config_store.get("gobby-tasks.validation.candidates")[0] == (
+            "gemini/gemini-3.5-flash"
+        )
         assert config_store.get("gobby_tasks.validation.candidates") is None
 
 

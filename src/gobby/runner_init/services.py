@@ -7,6 +7,7 @@ from collections.abc import Callable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.ai import build_daemon_text_generation_service
 from gobby.config.embedding_keys import EMBEDDING_API_KEY_SECRET_NAME
 from gobby.config.persistence import EmbeddingsConfig, is_falkordb_enabled
 from gobby.llm import create_llm_service
@@ -41,9 +42,17 @@ def init_services(runner: GobbyRunner) -> None:
 
 
 def _init_llm_service(runner: GobbyRunner) -> None:
+    runner.codex_client = None
+    runner.text_generation_service = None
     runner.llm_service = None
     try:
-        runner.llm_service = create_llm_service(runner.config)
+        runner.text_generation_service = build_daemon_text_generation_service(
+            runner.config,
+        )
+        runner.llm_service = create_llm_service(
+            runner.config,
+            text_generation=runner.text_generation_service,
+        )
         logger.debug(f"LLM service initialized: {runner.llm_service.enabled_providers}")
     except Exception as e:
         logger.error(f"Failed to initialize LLM service: {e}")

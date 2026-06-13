@@ -20,7 +20,7 @@ from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.tasks.state_semantics import ACTIVE_STAGE_STATES
-from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 from gobby.workflows.sync_rules import sync_bundled_rules
@@ -49,6 +49,35 @@ def _sync_bundled(db):
 def _get_rule(manager, name):
     """Get a bundled rule by name."""
     return manager.get_by_name(name)
+
+
+def _insert_rule(
+    manager: LocalWorkflowDefinitionManager,
+    name: str,
+    body: RuleDefinitionBody,
+    priority: int = 100,
+) -> str:
+    """Insert a test rule into the database."""
+    row = manager.create(
+        name=name,
+        definition_json=body.model_dump_json(),
+        workflow_type="rule",
+        priority=priority,
+        enabled=True,
+    )
+    return row.id
+
+
+def _claimed_task_variables() -> dict[str, object]:
+    return {
+        "mode_level": 2,
+        "task_claimed": True,
+        "claimed_tasks": {"task-123": "#1"},
+        "stop_attempts": 0,
+    }
+
+
+COMPACT_TURN_END_BYPASS_PENDING = "_compact_turn_end_bypass_pending"
 
 
 STOP_GATES_RULES = {
@@ -160,6 +189,130 @@ class TestStopAttemptsPlumbing:
 
         assert response.decision == "block"
         assert variables.get("stop_attempts") == 2
+
+
+class TestManualCompactionTurnEndBypass:
+    """Manual compact provider noise should not trip semantic stop gates."""
+
+    @pytest.mark.parametrize(
+        "precompact_data",
+        [
+            pytest.param({"trigger": "manual"}, id="manual-trigger"),
+            pytest.param({"trigger": "compress"}, id="compress-trigger"),
+            pytest.param({"custom_instructions": "preserve state"}, id="custom-instructions"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_manual_pre_compact_stop_allows_without_stop_attempt(
+        self,
+        db,
+        precompact_data: dict[str, object],
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = _claimed_task_variables()
+
+        precompact = _make_event(HookEventType.PRE_COMPACT, data=precompact_data)
+        precompact_response = await engine.evaluate(precompact, "sess-1", variables)
+
+        assert precompact_response.decision == "allow"
+        assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is True
+
+        stop = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(stop, "sess-1", variables)
+
+        assert response.decision == "allow"
+        assert variables.get("stop_attempts") == 0
+        assert COMPACT_TURN_END_BYPASS_PENDING not in variables
+
+    @pytest.mark.asyncio
+    async def test_manual_pre_compact_after_agent_allows_but_keeps_raw_event(
+        self,
+        db,
+        manager,
+    ) -> None:
+        _sync_bundled(db)
+        _insert_rule(
+            manager,
+            "raw-after-agent-marker",
+            RuleDefinitionBody(
+                event=RuleTriggerEvent.AFTER_AGENT,
+                effects=[
+                    RuleEffect(
+                        type="set_variable",
+                        variable="raw_after_agent_seen",
+                        value=True,
+                    )
+                ],
+            ),
+        )
+        engine = RuleEngine(db)
+        variables = _claimed_task_variables()
+
+        precompact = _make_event(HookEventType.PRE_COMPACT, data={"trigger": "manual"})
+        await engine.evaluate(precompact, "sess-1", variables)
+
+        after_agent = _make_event(
+            HookEventType.AFTER_AGENT,
+            source=SessionSource.GEMINI,
+        )
+        response = await engine.evaluate(after_agent, "sess-1", variables)
+
+        assert response.decision == "allow"
+        assert variables.get("stop_attempts") == 0
+        assert variables.get("raw_after_agent_seen") is True
+        assert COMPACT_TURN_END_BYPASS_PENDING not in variables
+
+    @pytest.mark.parametrize(
+        "precompact_data",
+        [
+            pytest.param({"trigger": "auto"}, id="auto-trigger"),
+            pytest.param({}, id="missing-trigger"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_auto_pre_compact_does_not_bypass_require_task_close(
+        self,
+        db,
+        precompact_data: dict[str, object],
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = _claimed_task_variables()
+
+        precompact = _make_event(HookEventType.PRE_COMPACT, data=precompact_data)
+        await engine.evaluate(precompact, "sess-1", variables)
+
+        assert COMPACT_TURN_END_BYPASS_PENDING not in variables
+
+        stop = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(stop, "sess-1", variables)
+
+        assert response.decision == "block"
+        assert "require-task-close" in (response.reason or "")
+        assert variables.get("stop_attempts") == 1
+
+    @pytest.mark.asyncio
+    async def test_stale_manual_pre_compact_bypass_clears_on_turn_start(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = _claimed_task_variables()
+
+        precompact = _make_event(HookEventType.PRE_COMPACT, data={"trigger": "manual"})
+        await engine.evaluate(precompact, "sess-1", variables)
+        assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is True
+
+        before_agent = _make_event(HookEventType.BEFORE_AGENT)
+        await engine.evaluate(before_agent, "sess-1", variables)
+
+        assert COMPACT_TURN_END_BYPASS_PENDING not in variables
+
+        stop = _make_event(HookEventType.STOP)
+        response = await engine.evaluate(stop, "sess-1", variables)
+
+        assert response.decision == "block"
+        assert "require-task-close" in (response.reason or "")
+        assert variables.get("stop_attempts") == 1
 
 
 class TestRequireTaskClose:
@@ -1366,7 +1519,9 @@ class TestClaimedTaskReconciliation:
 
         def get_task_side_effect(task_id):
             if task_id == "uuid-valid":
-                return _make_task("uuid-valid", status="in_progress", claimed_by_session_id="sess-1")
+                return _make_task(
+                    "uuid-valid", status="in_progress", claimed_by_session_id="sess-1"
+                )
             elif task_id == "uuid-closed":
                 return _make_task("uuid-closed", status="closed", claimed_by_session_id="sess-1")
             else:
@@ -1433,7 +1588,9 @@ class TestClaimedTaskReconciliation:
 
         task_manager = MagicMock()
         db_task = _make_task(
-            "abcdef12-3456-7890-abcd-ef1234567890", status="in_progress", claimed_by_session_id="sess-1"
+            "abcdef12-3456-7890-abcd-ef1234567890",
+            status="in_progress",
+            claimed_by_session_id="sess-1",
         )
         db_task.seq_num = None
         task_manager.list_tasks.return_value = [db_task]
@@ -1454,7 +1611,9 @@ class TestClaimedTaskReconciliation:
         from gobby.workflows.observers import reconcile_claimed_tasks
 
         task_manager = MagicMock()
-        db_task = _make_task("uuid-review-db", status="needs_review", claimed_by_session_id="sess-1")
+        db_task = _make_task(
+            "uuid-review-db", status="needs_review", claimed_by_session_id="sess-1"
+        )
         db_task.seq_num = 77
         task_manager.list_tasks.return_value = [db_task]
 

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,6 +12,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from gobby.adapters import acp_client_requests
 from gobby.adapters.gemini_acp_client import StreamEvent
 from gobby.agents.sandbox import SandboxConfig
 from gobby.config.ai import LocalGenerationEndpointConfig
@@ -25,6 +27,7 @@ from gobby.servers.websocket.chat.backends import (
     QwenManagedChatSession,
     QwenWebChatBackend,
 )
+from gobby.servers.websocket.chat.backends.base import ProviderBackendHealth
 from gobby.servers.websocket.chat.runtime_manager import WebChatRuntimeManager
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.skills.formatting import skill_fetch_directive
@@ -255,6 +258,135 @@ class TestGeminiBackend:
         assert PYTHON_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
         assert TASK_TRANSITIONS_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
 
+    @pytest.mark.asyncio
+    async def test_managed_session_suppresses_tool_call_when_pre_tool_blocks(self) -> None:
+        backend = MagicMock()
+        backend.attach_session = AsyncMock()
+        backend.send_message = MagicMock(
+            return_value=_async_stream(
+                StreamEvent(
+                    event_type="tool_call",
+                    data={
+                        "tool_name": "Write",
+                        "tool_input": {"file_path": "/tmp/example.py"},
+                        "call_id": "call-1",
+                    },
+                ),
+                StreamEvent(
+                    event_type="tool_result",
+                    data={"call_id": "call-1", "success": True, "result": "ok"},
+                ),
+                StreamEvent(event_type="result", data={}),
+            )
+        )
+        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
+        session._connected = True
+        session.sdk_session_id = "sess-1"
+        session._on_pre_tool = AsyncMock(
+            return_value={"decision": "block", "context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
+        )
+        session._on_post_tool = AsyncMock()
+
+        events = [event async for event in session.send_message("first")]
+
+        assert not any(isinstance(event, ToolCallEvent) for event in events)
+        assert not any(isinstance(event, ToolResultEvent) for event in events)
+        assert isinstance(events[-1], DoneEvent)
+        session._on_pre_tool.assert_awaited_once_with(
+            {"tool_name": "Write", "tool_input": {"file_path": "/tmp/example.py"}}
+        )
+        session._on_post_tool.assert_not_awaited()
+        assert session._consume_deferred_context() == TASK_TRANSITIONS_SKILL_DIRECTIVE
+
+    @pytest.mark.asyncio
+    async def test_managed_session_declines_acp_request_permission_when_pre_tool_blocks(
+        self,
+    ) -> None:
+        class RecordingStdin:
+            def __init__(self) -> None:
+                self.buffer = b""
+
+            def write(self, data: bytes) -> None:
+                self.buffer += data
+
+            async def drain(self) -> None:
+                return None
+
+        class FakeACPClient:
+            cli_name = "gemini"
+            display_name = "Gemini"
+            is_started = True
+
+            def __init__(self) -> None:
+                self._process = SimpleNamespace(stdin=RecordingStdin())
+
+            async def send(
+                self,
+                _prompt: str,
+                *,
+                session_id: str | None = None,
+                model: str | None = None,
+                reasoning_effort: str | None = None,
+                pre_tool_callback: Any = None,
+            ):
+                del session_id, model, reasoning_effort
+                request = {
+                    "jsonrpc": "2.0",
+                    "id": 99,
+                    "method": "session/request_permission",
+                    "params": {
+                        "sessionId": "sess-1",
+                        "options": [
+                            {"optionId": "proceed_once", "kind": "allow_once"},
+                            {"optionId": "cancel", "kind": "reject_once"},
+                        ],
+                        "toolCall": {
+                            "toolCallId": "tc-1",
+                            "title": "list_mcp_servers",
+                        },
+                    },
+                }
+                async for event in acp_client_requests.handle_client_request(
+                    self,
+                    request,
+                    pre_tool_callback=pre_tool_callback,
+                ):
+                    yield event
+                yield StreamEvent(event_type="result", data={})
+
+        client = FakeACPClient()
+        backend = GeminiWebChatBackend(client=client)
+        backend._health = ProviderBackendHealth(provider="gemini", available=True)
+        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
+        session._connected = True
+        session.sdk_session_id = "sess-1"
+        session._model = "gemini-ctx"
+        session._on_pre_tool = AsyncMock(
+            return_value={"decision": "block", "context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
+        )
+
+        events = [event async for event in session.send_message("first")]
+
+        assert isinstance(events[-1], DoneEvent)
+        session._on_pre_tool.assert_awaited_once_with(
+            {
+                "tool_name": "list_mcp_servers",
+                "tool_input": {"toolCallId": "tc-1", "title": "list_mcp_servers"},
+            }
+        )
+        messages = [
+            json.loads(line)
+            for line in client._process.stdin.buffer.decode().splitlines()
+            if line.strip()
+        ]
+        assert messages == [
+            {
+                "jsonrpc": "2.0",
+                "id": 99,
+                "result": {"outcome": {"outcome": "cancelled"}},
+            }
+        ]
+
     def test_plan_mode_context_teaches_gcode(self) -> None:
         session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=MagicMock())
         session.chat_mode = "plan"
@@ -471,6 +603,87 @@ class TestCodexBackend:
         assert session.sdk_session_id == "thread-1"
         assert session._thread_id == "thread-1"
         assert session._transcript_path == "/tmp/codex.jsonl"
+
+    @pytest.mark.asyncio
+    async def test_web_chat_shared_client_handles_chat_without_event_leakage(self) -> None:
+        class SharedCodexClient:
+            def __init__(self) -> None:
+                self.is_connected = True
+                self.handlers: dict[str, list[Any]] = {}
+                self.archived_thread_ids: list[str] = []
+
+            async def start(self) -> None:
+                self.is_connected = True
+
+            async def stop(self) -> None:
+                self.is_connected = False
+
+            def register_approval_handler(self, _handler: Any) -> None:
+                return None
+
+            def add_notification_handler(self, method: str, handler: Any) -> None:
+                self.handlers.setdefault(method, []).append(handler)
+
+            def remove_notification_handler(self, method: str, handler: Any) -> None:
+                self.handlers.get(method, []).remove(handler)
+
+            async def start_thread(
+                self,
+                cwd: str | None = None,
+                model: str | None = None,
+                approval_policy: str | None = None,
+                sandbox: str | None = None,
+                terminal_context: dict[str, Any] | None = None,
+            ) -> SimpleNamespace:
+                return SimpleNamespace(id="one-shot-thread")
+
+            async def start_turn(
+                self,
+                thread_id: str,
+                prompt: str,
+                **_config_overrides: Any,
+            ) -> SimpleNamespace:
+                notifications = [
+                    (
+                        "agent/messageDelta",
+                        {
+                            "threadId": "one-shot-thread",
+                            "turnId": "one-shot-turn",
+                            "delta": "one-shot leak",
+                        },
+                    ),
+                    ("turn/started", {"threadId": thread_id, "turnId": "chat-turn"}),
+                    (
+                        "agent/messageDelta",
+                        {"threadId": thread_id, "turnId": "chat-turn", "delta": "chat ok"},
+                    ),
+                    ("turn/completed", {"threadId": thread_id, "turnId": "chat-turn", "usage": {}}),
+                ]
+                for method, params in notifications:
+                    for handler in list(self.handlers.get(method, [])):
+                        handler(method, params)
+                return SimpleNamespace(id="chat-turn")
+
+            async def archive_thread(self, thread_id: str) -> None:
+                self.archived_thread_ids.append(thread_id)
+
+        async def collect_text_chunks(events: AsyncIterator[Any]) -> list[str]:
+            return [event.content async for event in events if isinstance(event, TextChunk)]
+
+        client = SharedCodexClient()
+        backend = CodexWebChatBackend(client=client)
+        await backend.start()
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session._connected = True
+        session._thread_id = "chat-thread"
+        session.sdk_session_id = "chat-thread"
+        session._get_transcript_offset = AsyncMock(return_value=0)
+        session._get_transcript_records_since = AsyncMock(return_value=[])
+        session._get_transcript_assistant_text_since = AsyncMock(return_value=None)
+        chat_text = await collect_text_chunks(backend.send_message(session, "chat"))
+
+        assert chat_text == ["chat ok"]
+        assert client.archived_thread_ids == []
 
     @pytest.mark.asyncio
     async def test_attach_session_passes_codex_sandbox_policy(self) -> None:

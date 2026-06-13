@@ -63,8 +63,10 @@ class TestValidateCommandWithNewFlags:
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
     @patch("gobby.config.app.load_config")
+    @patch("gobby.tasks.validation.TaskValidator")
     def test_validate_with_max_iterations(
         self,
+        mock_validator_cls: MagicMock,
         mock_load_config: MagicMock,
         mock_resolve: MagicMock,
         mock_get_manager: MagicMock,
@@ -72,11 +74,20 @@ class TestValidateCommandWithNewFlags:
         mock_task: MagicMock,
     ) -> None:
         """Test validate with --max-iterations flag."""
+        mock_task.validation_fail_count = 1
         mock_resolve.return_value = mock_task
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []  # No children
         mock_get_manager.return_value = mock_manager
         mock_load_config.return_value = MagicMock()
+        validation_result = MagicMock()
+        validation_result.status = "invalid"
+        validation_result.feedback = "Still broken"
+
+        async def async_result(*args: object, **kwargs: object) -> MagicMock:
+            return validation_result
+
+        mock_validator_cls.return_value.validate_task.side_effect = async_result
 
         result = runner.invoke(
             cli,
@@ -85,17 +96,21 @@ class TestValidateCommandWithNewFlags:
                 "validate",
                 "gt-test123",
                 "--max-iterations",
-                "5",
+                "2",
                 "--summary",
                 "test changes",
             ],
         )
 
-        # Command should accept the flag (even if validation is mocked)
-        # We're testing the CLI accepts the flag, not the implementation
-        # Exit code 2 means Click rejected the flag as unrecognized
-        assert result.exit_code != 2, f"Flag --max-iterations was rejected: {result.output}"
-        assert "No such option" not in result.output
+        assert result.exit_code == 0
+        assert "Exceeded max retries" in result.output
+        mock_manager.create_task.assert_not_called()
+        mock_manager.escalate_task.assert_called_once_with(
+            mock_task.id,
+            reason="exceeded_validation_retries (2)",
+        )
+        call_kwargs = mock_manager.update_task.call_args.kwargs
+        assert "Exceeded max retries (2)" in call_kwargs["validation_feedback"]
 
     @patch("gobby.cli.tasks.ai.get_task_manager")
     @patch("gobby.cli.tasks.ai.resolve_task_id")
@@ -698,7 +713,7 @@ class TestValidateTaskNotFound:
             ["tasks", "validate", "gt-nonexistent", "--history"],
         )
 
-        # Should handle gracefully - resolve_task_id prints "not found"
+        assert result.exit_code == 1
         assert "not found" in result.output.lower()
 
     @patch("gobby.cli.tasks.crud.get_task_manager")

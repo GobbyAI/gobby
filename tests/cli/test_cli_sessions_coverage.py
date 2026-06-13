@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -625,3 +626,90 @@ def test_create_handoff_full_success(mock_session_manager, mock_resolve_session)
         args, kwargs = mock_session_manager.update_summary.call_args
         assert args[0] == "s1"
         assert kwargs.get("summary_markdown") == "Full Summary Content"
+
+
+def test_create_handoff_notes_persist_to_db_and_file(
+    tmp_path: Path,
+    mock_session_manager,
+    mock_resolve_session,
+) -> None:
+    transcript_path = tmp_path / "transcript.jsonl"
+    transcript_path.write_text('{"message": {"role": "user", "content": "hello"}}\n')
+    notes = "Operator notes that must survive handoff persistence."
+
+    session = Session(
+        id="s1",
+        project_id=None,
+        status="active",
+        source="claude",
+        created_at="",
+        updated_at="",
+        transcript_path=str(transcript_path),
+        title=None,
+        external_id=None,
+        machine_id=None,
+        summary_path=None,
+        summary_markdown=None,
+        git_branch=None,
+        parent_session_id=None,
+    )
+    updated_session = Session(
+        id="s1",
+        project_id=None,
+        status="active",
+        source="claude",
+        created_at="",
+        updated_at="",
+        transcript_path=str(transcript_path),
+        title=None,
+        external_id=None,
+        machine_id=None,
+        summary_path=None,
+        summary_markdown="# Handoff Summary\nDurable content",
+        git_branch=None,
+        parent_session_id=None,
+    )
+    mock_session_manager.get.side_effect = [session, updated_session]
+
+    with (
+        patch("gobby.sessions.analyzer.TranscriptAnalyzer") as mock_analyzer,
+        patch("subprocess.run"),
+        patch(
+            "gobby.cli.sessions.asyncio.run",
+            return_value={"success": True, "full_length": 100},
+        ),
+    ):
+        mock_ctx = MagicMock()
+        mock_ctx.active_gobby_task = None
+        mock_ctx.files_modified = []
+        mock_ctx.git_commits = []
+        mock_ctx.initial_goal = None
+        mock_ctx.git_status = ""
+        mock_analyzer.return_value.extract_handoff_context.return_value = mock_ctx
+
+        runner = CliRunner()
+        result = runner.invoke(
+            sessions,
+            [
+                "create-handoff",
+                "-s",
+                "s1",
+                "--output",
+                "all",
+                "--path",
+                str(tmp_path),
+                "--notes",
+                notes,
+            ],
+        )
+
+    assert result.exit_code == 0
+    expected_notes_section = f"## Notes\n{notes}"
+
+    mock_session_manager.update_summary.assert_called_once()
+    _, kwargs = mock_session_manager.update_summary.call_args
+    assert expected_notes_section in kwargs["summary_markdown"]
+
+    files = list(tmp_path.glob("session_*_s1.md"))
+    assert len(files) == 1
+    assert expected_notes_section in files[0].read_text()

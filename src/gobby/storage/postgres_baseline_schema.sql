@@ -1406,6 +1406,7 @@ CREATE TABLE code_indexed_files (
     graph_synced BOOLEAN NOT NULL DEFAULT FALSE,
     vectors_synced BOOLEAN NOT NULL DEFAULT FALSE,
     graph_sync_attempted_at TIMESTAMPTZ,
+    vector_sync_attempted_at TIMESTAMPTZ,
     indexed_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     UNIQUE(project_id, file_path)
 );
@@ -1433,6 +1434,7 @@ CREATE TABLE code_symbols (
     parent_symbol_id TEXT,
     content_hash TEXT NOT NULL,
     summary TEXT,
+    summary_attempted_at TIMESTAMPTZ,
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
@@ -1503,6 +1505,21 @@ CREATE TABLE code_content_chunks (
 CREATE INDEX idx_ccc_project ON code_content_chunks(project_id);
 
 CREATE INDEX idx_ccc_file ON code_content_chunks(project_id, file_path);
+
+CREATE TABLE code_index_projection_cleanup_pending (
+    project_id TEXT NOT NULL,
+    store TEXT NOT NULL,
+    attempts INTEGER NOT NULL DEFAULT 0,
+    last_error TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    PRIMARY KEY(project_id, store),
+    CONSTRAINT code_index_projection_cleanup_store
+        CHECK (store IN ('graph', 'vector'))
+);
+
+CREATE INDEX idx_cipcp_updated
+    ON code_index_projection_cleanup_pending(updated_at, created_at);
 
 CREATE TABLE spans (
     span_id TEXT PRIMARY KEY,

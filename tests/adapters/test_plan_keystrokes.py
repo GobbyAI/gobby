@@ -139,13 +139,14 @@ class TestPlanKeystrokeRegistry:
         # A pure resolver has no static entries.
         assert registry.resolve("example", "approve_yolo") is None
 
-    def test_resolve_for_pane_falls_back_to_static(self) -> None:
+    def test_static_resolution_can_require_matching_pane_text(self) -> None:
         registry = PlanKeystrokeRegistry()
         seq = PlanKeystrokeSequence((PlanKeystroke("1"),))
         registry.register("static", "approve_yolo", seq)
-        # No resolver, so pane_text is ignored and the static map is used.
-        assert registry.requires_pane("static") is False
-        assert registry.resolve_for_pane("static", "approve_yolo", "anything") is seq
+        registry.register_menu_matcher("static", lambda pane_text: "menu" in pane_text)
+        assert registry.requires_pane("static") is True
+        assert registry.resolve_for_pane("static", "approve_yolo", "menu") is seq
+        assert registry.resolve_for_pane("static", "approve_yolo", "anything") is None
 
     def test_resolve_for_pane_falsy_inputs_return_none(self) -> None:
         registry = PlanKeystrokeRegistry()
@@ -179,8 +180,8 @@ class TestResolveActionOptionId:
     def test_approve_with_unknown_option_is_none(self) -> None:
         assert resolve_action_option_id("codex", "approve", "approve_bogus") is None
 
-    def test_approve_without_option_is_none(self) -> None:
-        assert resolve_action_option_id("codex", "approve", None) is None
+    def test_approve_without_option_uses_generic_act_default(self) -> None:
+        assert resolve_action_option_id("codex", "approve", None) == "approve_act"
 
     @pytest.mark.parametrize("decision", ["", "deny", None])
     def test_unknown_decision_is_none(self, decision: str | None) -> None:
@@ -360,12 +361,11 @@ _CODEX_PLAN_MENU_PANE = """\
 
 
 class TestCodexPlanMenu:
-    """Codex's single-shape plan-mode approval menu -- a static (non-pane) map."""
+    """Codex's single-shape plan-mode approval menu -- a guarded static map."""
 
     def test_codex_is_registered_static(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.has_source("codex") is True
-        # One always-present menu shape -> static map, no live-pane inspection.
-        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("codex") is False
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("codex") is True
 
     def test_registered_options(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.registered_options("codex") == frozenset(
@@ -398,15 +398,13 @@ class TestCodexPlanMenu:
         assert [s.keys for s in seq.strokes] == [digit]
         assert all(s.literal for s in seq.strokes)
 
-    def test_static_resolution_ignores_pane_text(self) -> None:
-        # No pane-aware resolver for codex, so resolve_for_pane falls back to the
-        # static map and returns the same sequence regardless of pane content.
+    def test_static_resolution_requires_matching_pane_text(self) -> None:
         assert (
             DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("codex", "approve_yolo", _CODEX_PLAN_MENU_PANE)
             == DEFAULT_PLAN_KEYSTROKES.resolve("codex", "approve_yolo")
             == _codex("1")
         )
-        assert DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("codex", "approve_act", "") == _codex("1")
+        assert DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("codex", "approve_act", "") is None
 
     def test_unknown_option_returns_none(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("codex", "approve_bogus") is None
@@ -425,12 +423,11 @@ _DROID_PLAN_MENU_PANE = """\
 
 
 class TestDroidPlanMenu:
-    """Droid's single-shape spec-mode approval menu -- a static (non-pane) map."""
+    """Droid's single-shape spec-mode approval menu -- a guarded static map."""
 
     def test_droid_is_registered_static(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.has_source("droid") is True
-        # One always-present menu shape -> static map, no live-pane inspection.
-        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("droid") is False
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("droid") is True
 
     def test_registered_options(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.registered_options("droid") == frozenset(
@@ -463,15 +460,13 @@ class TestDroidPlanMenu:
         assert [s.keys for s in seq.strokes] == [digit]
         assert all(s.literal for s in seq.strokes)
 
-    def test_static_resolution_ignores_pane_text(self) -> None:
-        # No pane-aware resolver for droid, so resolve_for_pane falls back to the
-        # static map and returns the same sequence regardless of pane content.
+    def test_static_resolution_requires_matching_pane_text(self) -> None:
         assert (
             DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("droid", "approve_yolo", _DROID_PLAN_MENU_PANE)
             == DEFAULT_PLAN_KEYSTROKES.resolve("droid", "approve_yolo")
             == _droid("1")
         )
-        assert DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("droid", "approve_act", "") == _droid("1")
+        assert DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("droid", "approve_act", "") is None
 
     def test_unknown_option_returns_none(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("droid", "approve_bogus") is None
@@ -505,9 +500,7 @@ class TestGeminiPlanMenu:
 
     def test_gemini_is_registered_static(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.has_source("gemini") is True
-        # Stable approve positions (1/2) + Esc reject resolve every menu shape, so
-        # no live-pane inspection is needed.
-        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("gemini") is False
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("gemini") is True
 
     def test_registered_options(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.registered_options("gemini") == frozenset(
@@ -549,9 +542,7 @@ class TestGeminiPlanMenu:
         assert [s.keys for s in seq.strokes] == ["Escape"]
         assert all(not s.literal for s in seq.strokes)
 
-    def test_static_resolution_ignores_pane_text(self) -> None:
-        # No pane-aware resolver: resolve_for_pane returns the same static
-        # sequence for both the edit-menu and shell-menu shapes (and empty text).
+    def test_static_resolution_requires_matching_pane_text(self) -> None:
         assert (
             DEFAULT_PLAN_KEYSTROKES.resolve_for_pane(
                 "gemini", "approve_yolo", _GEMINI_EDIT_MENU_PANE
@@ -564,7 +555,7 @@ class TestGeminiPlanMenu:
         )
         assert (
             DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("gemini", REQUEST_CHANGES_OPTION_ID, "")
-            == _gemini_escape()
+            is None
         )
 
     def test_unknown_option_returns_none(self) -> None:
@@ -603,8 +594,7 @@ class TestGrokPlanMenu:
 
     def test_grok_is_registered_static(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.has_source("grok") is True
-        # Stable digit positions across menu shapes -> no live-pane inspection.
-        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("grok") is False
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("grok") is True
 
     def test_registered_options(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.registered_options("grok") == frozenset(
@@ -645,9 +635,7 @@ class TestGrokPlanMenu:
         assert [s.keys for s in seq.strokes] == ["4"]
         assert all(s.literal for s in seq.strokes)
 
-    def test_static_resolution_ignores_pane_text(self) -> None:
-        # No pane-aware resolver: resolve_for_pane returns the same static
-        # sequence for both the edit-menu and shell-menu shapes (and empty text).
+    def test_static_resolution_requires_matching_pane_text(self) -> None:
         assert (
             DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("grok", "approve_act", _GROK_EDIT_MENU_PANE)
             == DEFAULT_PLAN_KEYSTROKES.resolve_for_pane(
@@ -656,9 +644,9 @@ class TestGrokPlanMenu:
             == DEFAULT_PLAN_KEYSTROKES.resolve("grok", "approve_act")
             == _grok("3")
         )
-        assert DEFAULT_PLAN_KEYSTROKES.resolve_for_pane(
-            "grok", REQUEST_CHANGES_OPTION_ID, ""
-        ) == _grok("4")
+        assert (
+            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("grok", REQUEST_CHANGES_OPTION_ID, "") is None
+        )
 
     def test_unknown_option_returns_none(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("grok", "approve_bogus") is None
@@ -691,9 +679,7 @@ class TestQwenPlanMenu:
 
     def test_qwen_is_registered_static(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.has_source("qwen") is True
-        # Stable option positions + shape-independent Escape reject -> no
-        # live-pane inspection is needed.
-        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("qwen") is False
+        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("qwen") is True
 
     def test_registered_options(self) -> None:
         assert DEFAULT_PLAN_KEYSTROKES.registered_options("qwen") == frozenset(
@@ -736,17 +722,14 @@ class TestQwenPlanMenu:
         assert [s.keys for s in seq.strokes] == ["Escape"]
         assert all(not s.literal for s in seq.strokes)
 
-    def test_static_resolution_ignores_pane_text(self) -> None:
-        # No pane-aware resolver: resolve_for_pane returns the same static
-        # sequence for the captured write-menu shape and for empty text.
+    def test_static_resolution_requires_matching_pane_text(self) -> None:
         assert (
             DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("qwen", "approve_act", _QWEN_EDIT_MENU_PANE)
             == DEFAULT_PLAN_KEYSTROKES.resolve("qwen", "approve_act")
             == _qwen("1")
         )
         assert (
-            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("qwen", REQUEST_CHANGES_OPTION_ID, "")
-            == _qwen_escape()
+            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("qwen", REQUEST_CHANGES_OPTION_ID, "") is None
         )
 
     def test_unknown_option_returns_none(self) -> None:

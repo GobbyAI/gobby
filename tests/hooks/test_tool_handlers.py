@@ -138,6 +138,30 @@ class TestToolHandlerEdgeCases:
 
         assert response.decision == "allow"
 
+    def test_after_tool_records_autonomous_progress(self, mock_dependencies: dict) -> None:
+        """AFTER_TOOL feeds normalized tool traffic to the progress tracker."""
+        progress_tracker = MagicMock()
+        handlers = EventHandlers(**mock_dependencies, progress_tracker=progress_tracker)
+        event = make_event(
+            HookEventType.AFTER_TOOL,
+            data={
+                "tool_name": "Bash",
+                "tool_input": {"command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/foo.py"},
+                "tool_output": "1 passed",
+            },
+            metadata={"_platform_session_id": "sess-123"},
+        )
+
+        response = handlers.handle_after_tool(event)
+
+        assert response.decision == "allow"
+        progress_tracker.record_tool_call.assert_called_once_with(
+            session_id="sess-123",
+            tool_name="Bash",
+            tool_args={"command": "GOBBY_TEST_PROTECT=1 uv run pytest tests/foo.py"},
+            tool_result="1 passed",
+        )
+
     def test_after_tool_edit_marks_had_edits(self, mock_dependencies: dict) -> None:
         """Test AFTER_TOOL marks had_edits for edit tools on regular files."""
         mock_dependencies["task_manager"].list_tasks.return_value = [

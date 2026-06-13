@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Mapping, Sequence
 from pathlib import Path
@@ -151,7 +152,8 @@ async def spawn_agent(
         action=action,
         agent_body=agent_body,
     )
-    artifacts = _prepare_spawn_artifacts(
+    artifacts = await asyncio.to_thread(
+        _prepare_spawn_artifacts,
         db=db,
         action=action,
         task=task,
@@ -160,14 +162,16 @@ async def spawn_agent(
         services=services,
         isolation=effective_isolation,
     )
-    artifacts = _sanitize_reusable_spawn_artifacts(
+    artifacts = await asyncio.to_thread(
+        _sanitize_reusable_spawn_artifacts,
         db=db,
         task=task,
         artifacts=artifacts,
         services=services,
         isolation=effective_isolation,
     )
-    artifacts = _repair_leaf_target_branch(
+    artifacts = await asyncio.to_thread(
+        _repair_leaf_target_branch,
         db=db,
         task=task,
         task_manager=task_manager,
@@ -176,7 +180,8 @@ async def spawn_agent(
         artifacts=artifacts,
         isolation=effective_isolation,
     )
-    _guard_merge_ready_leaf_branch(
+    await asyncio.to_thread(
+        _guard_merge_ready_leaf_branch,
         db=db,
         action=action,
         task=task,

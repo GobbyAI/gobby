@@ -9,13 +9,18 @@ Commands for managing merge operations:
 - abort: Abort the merge operation
 """
 
+import asyncio
 import json
+from collections.abc import Iterator
+from contextlib import contextmanager
+from pathlib import Path
 from typing import Any
 
 import click
 
+from gobby.mcp_proxy.tools.merge_conflict_hydration import conflict_hunks_for_ai
 from gobby.storage.hub.runtime import open_runtime_hub_database
-from gobby.storage.merge_resolutions import MergeResolutionManager
+from gobby.storage.merge_resolutions import ConflictStatus, MergeResolutionManager
 
 
 def get_merge_manager() -> MergeResolutionManager:
@@ -29,6 +34,117 @@ def get_merge_resolver() -> Any:
     from gobby.worktrees.merge import MergeResolver
 
     return MergeResolver()
+
+
+def get_worktree_manager() -> Any:
+    """Get initialized worktree storage manager."""
+    from gobby.storage.worktrees import LocalWorktreeManager
+
+    db = open_runtime_hub_database(apply_migrations=False)
+    return LocalWorktreeManager(db)
+
+
+@contextmanager
+def worktree_manager_context() -> Iterator[Any]:
+    """Yield a short-lived worktree manager and close its owned database."""
+    manager = get_worktree_manager()
+    try:
+        yield manager
+    finally:
+        manager.db.close()
+
+
+def get_git_manager(worktree_path: str) -> Any:
+    """Get git manager rooted at the worktree path being merged."""
+    from gobby.worktrees.git import WorktreeGitManager
+
+    return WorktreeGitManager(worktree_path)
+
+
+def _get_resolution_worktree_path(
+    manager: MergeResolutionManager,
+    resolution_id: str,
+) -> str:
+    resolution = manager.get_resolution(resolution_id)
+    if not resolution:
+        raise RuntimeError(f"Resolution '{resolution_id}' not found")
+
+    with worktree_manager_context() as worktree_manager:
+        worktree = worktree_manager.get(resolution.worktree_id)
+    if not worktree or not worktree.worktree_path:
+        raise RuntimeError(f"Worktree '{resolution.worktree_id}' not found or has no path")
+    return str(worktree.worktree_path)
+
+
+async def _resolve_conflict_with_ai(
+    manager: MergeResolutionManager,
+    conflict: Any,
+) -> dict[str, Any]:
+    worktree_path = _get_resolution_worktree_path(manager, conflict.resolution_id)
+    resolver = get_merge_resolver()
+    result = await resolver.resolve_file(
+        path=conflict.file_path,
+        conflict_hunks=await conflict_hunks_for_ai(conflict, worktree_path),
+        worktree_path=worktree_path,
+    )
+
+    if not result.success:
+        return {
+            "success": False,
+            "error": "AI resolution failed",
+            "needs_human_review": result.needs_human_review,
+            "failure_reason": result.failure_reason,
+        }
+
+    resolved = result.resolved_content_by_file.get(conflict.file_path)
+    if not resolved:
+        return {
+            "success": False,
+            "error": (
+                f"AI resolver returned success but produced no content for {conflict.file_path}"
+            ),
+            "needs_human_review": True,
+        }
+
+    target = Path(worktree_path) / conflict.file_path
+    await asyncio.to_thread(target.parent.mkdir, parents=True, exist_ok=True)
+    await asyncio.to_thread(target.write_text, resolved, encoding="utf-8")
+    updated = manager.update_conflict(
+        conflict_id=conflict.id,
+        status=ConflictStatus.RESOLVED.value,
+        resolved_content=resolved,
+    )
+
+    return {
+        "success": True,
+        "conflict": updated.to_dict() if updated else None,
+        "resolution_method": "ai",
+        "tier": result.tier.value,
+    }
+
+
+async def _apply_active_resolution(
+    manager: MergeResolutionManager,
+    resolution_id: str,
+) -> dict[str, Any]:
+    worktree_path = _get_resolution_worktree_path(manager, resolution_id)
+
+    from gobby.mcp_proxy.tools.merge import create_merge_registry
+
+    with worktree_manager_context() as worktree_manager:
+        registry = create_merge_registry(
+            merge_storage=manager,
+            merge_resolver=get_merge_resolver(),
+            git_manager=get_git_manager(worktree_path),
+            worktree_manager=worktree_manager,
+        )
+        result = await registry.call("merge_apply", {"resolution_id": resolution_id})
+    return result if isinstance(result, dict) else {"success": False, "error": str(result)}
+
+
+def _echo_tool_error(prefix: str, result: dict[str, Any]) -> None:
+    message = result.get("error") or result.get("failure_reason") or "unknown error"
+    click.echo(f"{prefix}: {message}", err=True)
 
 
 def get_project_context() -> dict[str, Any] | None:
@@ -247,11 +363,11 @@ def merge_resolve(file_path: str, strategy: str, json_format: bool) -> None:
             raise SystemExit(1)
 
         if strategy == "ai":
-            # AI resolution
-            get_merge_resolver()  # Validates resolver is available
-            # Would call AI resolver here
             click.echo(f"Resolving {file_path} with AI...")
-            manager.update_conflict(conflict.id, status="resolved")
+            result = asyncio.run(_resolve_conflict_with_ai(manager, conflict))
+            if not result.get("success"):
+                _echo_tool_error("Error resolving conflict", result)
+                raise SystemExit(1)
         else:
             # Human resolution - just mark as pending human review
             click.echo(f"Marked {file_path} for human resolution")
@@ -264,10 +380,6 @@ def merge_resolve(file_path: str, strategy: str, json_format: bool) -> None:
 
         click.echo(f"Resolved: {file_path}")
 
-    except AttributeError:
-        # get_conflict_by_path may not exist
-        click.echo(f"Error: Conflict not found for '{file_path}'", err=True)
-        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error resolving conflict: {e}", err=True)
         raise SystemExit(1) from None
@@ -291,10 +403,12 @@ def merge_apply(force: bool, json_format: bool) -> None:
         raise SystemExit(1)
 
     manager = get_merge_manager()
+    worktree = get_worktree_context()
+    worktree_id = worktree["id"] if worktree else None
 
     try:
         # Get active resolution
-        resolution = manager.get_active_resolution()
+        resolution = manager.get_active_resolution(worktree_id=worktree_id)
         if not resolution:
             click.echo("Error: No active merge operation found.", err=True)
             raise SystemExit(1)
@@ -311,22 +425,24 @@ def merge_apply(force: bool, json_format: bool) -> None:
             )
             raise SystemExit(1)
 
-        # Apply merge
-        manager.update_resolution(resolution.id, status="resolved")
+        result = asyncio.run(_apply_active_resolution(manager, resolution.id))
+        if not result.get("success"):
+            if json_format:
+                click.echo(json.dumps(result, indent=2, default=str))
+            else:
+                _echo_tool_error("Error applying merge", result)
+            raise SystemExit(1)
 
         if json_format:
-            updated = manager.get_resolution(resolution.id)
-            if updated:
-                click.echo(json.dumps(updated.to_dict(), indent=2, default=str))
+            click.echo(json.dumps(result, indent=2, default=str))
             return
 
+        files_merged = result.get("files_merged", [])
         click.echo(f"Applied merge: {resolution.id}")
-        click.echo(f"  {len(conflicts)} file(s) merged")
+        click.echo(f"  {len(files_merged)} file(s) merged")
+        if result.get("commit_sha"):
+            click.echo(f"  commit: {result['commit_sha']}")
 
-    except AttributeError:
-        # get_active_resolution may not exist
-        click.echo("Error: No active merge operation found.", err=True)
-        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error applying merge: {e}", err=True)
         raise SystemExit(1) from None
@@ -347,10 +463,12 @@ def merge_abort(json_format: bool) -> None:
         raise SystemExit(1)
 
     manager = get_merge_manager()
+    worktree = get_worktree_context()
+    worktree_id = worktree["id"] if worktree else None
 
     try:
         # Get active resolution
-        resolution = manager.get_active_resolution()
+        resolution = manager.get_active_resolution(worktree_id=worktree_id)
         if not resolution:
             click.echo("Error: No active merge operation to abort.", err=True)
             raise SystemExit(1)
@@ -374,10 +492,6 @@ def merge_abort(json_format: bool) -> None:
             click.echo("Failed to abort merge.", err=True)
             raise SystemExit(1)
 
-    except AttributeError:
-        # get_active_resolution may not exist
-        click.echo("Error: No active merge operation to abort.", err=True)
-        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error aborting merge: {e}", err=True)
         raise SystemExit(1) from None

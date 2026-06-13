@@ -6,7 +6,7 @@ import asyncio
 import json
 import logging
 import os
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -17,6 +17,8 @@ DEFAULT_TERMINAL_REQUEST_TIMEOUT_SECONDS = 30.0
 MAX_TERMINAL_OUTPUT_BYTES = 200_000
 _TERMINAL_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", UV_CACHE_DIR)
 logger = logging.getLogger(__name__)
+PreToolCallback = Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
+_PRE_TOOL_DENY_DECISIONS = {"deny", "block"}
 
 
 def _coerce_terminal_timeout(value: Any) -> float:
@@ -80,15 +82,21 @@ async def _write_json_rpc_response(process: Any, response: dict[str, Any]) -> No
 async def handle_client_request(
     client: Any,
     request: dict[str, Any],
+    *,
+    pre_tool_callback: PreToolCallback | None = None,
 ) -> AsyncIterator[StreamEvent]:
     method = request.get("method")
     if method == "terminal/create":
-        async for event in _handle_terminal_create_request(client, request):
+        async for event in _handle_terminal_create_request(
+            client, request, pre_tool_callback=pre_tool_callback
+        ):
             yield event
         return
 
     if method == "session/request_permission":
-        await _handle_request_permission_request(client, request)
+        await _handle_request_permission_request(
+            client, request, pre_tool_callback=pre_tool_callback
+        )
         return
 
     await write_json_rpc_error(
@@ -97,6 +105,77 @@ async def handle_client_request(
         code=-32601,
         message=f"Unknown client request method: {method}",
     )
+
+
+def is_pre_tool_decision_denied(response: Any) -> bool:
+    decision = (
+        response.get("decision")
+        if isinstance(response, dict)
+        else getattr(response, "decision", None)
+    )
+    return decision in _PRE_TOOL_DENY_DECISIONS
+
+
+def pre_tool_denial_reason(response: Any) -> str:
+    reason = (
+        response.get("reason") if isinstance(response, dict) else getattr(response, "reason", None)
+    )
+    if isinstance(reason, str) and reason.strip():
+        return reason.strip()
+    return "Blocked by Gobby before_tool policy"
+
+
+async def _apply_pre_tool_decision(
+    pre_tool_callback: PreToolCallback | None,
+    *,
+    tool_name: str,
+    tool_input: dict[str, Any],
+) -> dict[str, Any] | None:
+    if pre_tool_callback is None:
+        return None
+    try:
+        return await pre_tool_callback({"tool_name": tool_name, "tool_input": tool_input})
+    except Exception:
+        logger.exception(
+            "ACP pre-tool callback failed for %s with input keys %s",
+            tool_name,
+            sorted(str(key) for key in tool_input),
+        )
+        return {"decision": "deny", "reason": "Gobby pre-tool callback failed"}
+
+
+def _permission_tool_details(params: dict[str, Any]) -> tuple[str, dict[str, Any]]:
+    tool_call = params.get("toolCall")
+    if not isinstance(tool_call, dict):
+        return "acp_tool", {}
+
+    for key in ("name", "title", "kind"):
+        value = tool_call.get(key)
+        if isinstance(value, str) and value.strip():
+            tool_name = value.strip()
+            break
+    else:
+        tool_name = "acp_tool"
+
+    raw_input = dict(tool_call)
+    for input_key in ("rawInput", "input", "arguments"):
+        if input_key in tool_call:
+            raw_input = tool_call[input_key]
+            break
+    tool_input = raw_input if isinstance(raw_input, dict) else dict(tool_call)
+    return tool_name, tool_input
+
+
+def _denied_terminal_result(reason: str) -> dict[str, Any]:
+    return {
+        "exitCode": 1,
+        "stdout": "",
+        "stderr": reason,
+        "error": reason,
+        "timedOut": False,
+        "truncated": False,
+        "cancelled": True,
+    }
 
 
 # Permission-option kinds we treat as approval, in preference order. We prefer
@@ -134,6 +213,8 @@ def _select_permission_option(options: Any) -> tuple[str | None, str | None]:
 async def _handle_request_permission_request(
     client: Any,
     request: dict[str, Any],
+    *,
+    pre_tool_callback: PreToolCallback | None = None,
 ) -> None:
     """Answer an ACP ``session/request_permission`` request.
 
@@ -159,6 +240,27 @@ async def _handle_request_permission_request(
         )
         return
 
+    tool_name, tool_input = _permission_tool_details(params if isinstance(params, dict) else {})
+    pre_tool_response = await _apply_pre_tool_decision(
+        pre_tool_callback,
+        tool_name=tool_name,
+        tool_input=tool_input,
+    )
+    if is_pre_tool_decision_denied(pre_tool_response):
+        reason = pre_tool_denial_reason(pre_tool_response)
+        logger.debug(
+            "%s ACP declined tool permission (%s): %s",
+            getattr(client, "display_name", "ACP"),
+            tool_name,
+            reason,
+        )
+        await write_json_rpc_result(
+            client,
+            request.get("id"),
+            {"outcome": {"outcome": "cancelled"}},
+        )
+        return
+
     tool_call = params.get("toolCall") if isinstance(params, dict) else None
     tool_title = tool_call.get("title") if isinstance(tool_call, dict) else None
     logger.debug(
@@ -177,6 +279,8 @@ async def _handle_request_permission_request(
 async def _handle_terminal_create_request(
     client: Any,
     request: dict[str, Any],
+    *,
+    pre_tool_callback: PreToolCallback | None = None,
 ) -> AsyncIterator[StreamEvent]:
     params = request.get("params")
     if not isinstance(params, dict):
@@ -208,6 +312,15 @@ async def _handle_terminal_create_request(
         "timeout": timeout_seconds,
         "outputByteLimit": output_limit,
     }
+    pre_tool_response = await _apply_pre_tool_decision(
+        pre_tool_callback,
+        tool_name="run_terminal_command",
+        tool_input=tool_input,
+    )
+    if is_pre_tool_decision_denied(pre_tool_response):
+        result = _denied_terminal_result(pre_tool_denial_reason(pre_tool_response))
+        await write_json_rpc_result(client, request.get("id"), result)
+        return
 
     yield StreamEvent(
         event_type="tool_call",
@@ -216,6 +329,7 @@ async def _handle_terminal_create_request(
             "tool_name": "run_terminal_command",
             "tool_input": tool_input,
             "mcp_server": getattr(client, "cli_name", "terminal"),
+            "pre_tool_checked": pre_tool_callback is not None,
         },
     )
 

@@ -48,11 +48,17 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
         updated_at="now",
         merged_at=None,
     )
-    result = await registry.call(
-        "create_worktree", {"branch_name": "feature/test", "worktree_path": "/tmp/wt/feature-test"}
-    )
+    with patch(
+        "gobby.mcp_proxy.tools.worktrees._create.emit_worktree_event",
+        return_value={"event_type": "worktree_created", "worktree_id": "wt-123"},
+    ) as emit_event:
+        result = await registry.call(
+            "create_worktree",
+            {"branch_name": "feature/test", "worktree_path": "/tmp/wt/feature-test"},
+        )
     assert result["success"] is True
     assert result["worktree_path"] == "/tmp/wt/feature-test"
+    assert result["event"]["event_type"] == "worktree_created"
     mock_git_manager.create_worktree.assert_called_once_with(
         worktree_path="/tmp/wt/feature-test",
         branch_name="feature/test",
@@ -61,6 +67,15 @@ async def test_create_worktree_success(registry, mock_worktree_storage, mock_git
         use_local=False,
     )
     mock_worktree_storage.create.assert_called_once()
+    emit_event.assert_called_once_with(
+        "worktree_created",
+        worktree_id="wt-123",
+        project_id="proj-1",
+        branch_name="feature/test",
+        worktree_path="/tmp/wt/feature-test",
+        base_branch="main",
+        task_id=None,
+    )
 
 
 @pytest.mark.asyncio

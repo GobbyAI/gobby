@@ -9,6 +9,7 @@ Covers:
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -65,7 +66,14 @@ def _mock_process(
 
     # stderr
     proc.stderr = MagicMock()
-    proc.stderr.read = AsyncMock(return_value=stderr_text.encode())
+    stderr_chunks = [stderr_text.encode()] if stderr_text else []
+
+    async def _read_stderr(_limit: int = -1) -> bytes:
+        if stderr_chunks:
+            return stderr_chunks.pop(0)
+        return b""
+
+    proc.stderr.read = AsyncMock(side_effect=_read_stderr)
 
     # wait / terminate / kill
     proc.wait = AsyncMock()
@@ -395,6 +403,41 @@ class TestStart:
                 ):
                     await client.start(auto_session=False)
 
+    @pytest.mark.asyncio
+    async def test_start_cleans_up_process_when_handshake_fails(self) -> None:
+        error_response = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "error": {"code": -32000, "message": "bad initialize"},
+                }
+            )
+            + "\n"
+        )
+        proc = _mock_process(stdout_lines=[error_response], returncode=None)
+
+        async def wait_and_exit() -> int:
+            proc.returncode = 0
+            return 0
+
+        proc.wait = AsyncMock(side_effect=wait_and_exit)
+
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient()
+                with pytest.raises(RuntimeError, match="ACP initialize error: bad initialize"):
+                    await client.start(auto_session=False)
+
+        assert not client.is_started
+        assert client._process is None
+        proc.stdin.close.assert_called_once()
+        proc.wait.assert_awaited_once()
+
 
 # ---------------------------------------------------------------------------
 # Send -- session/prompt + notification parsing
@@ -634,6 +677,94 @@ class TestSend:
                 with pytest.raises(TimeoutError, match="after 0.0s"):
                     async for _ in client.send("slow"):
                         pass
+
+    async def test_send_ignores_late_response_after_prompt_timeout(self) -> None:
+        stale_response = (
+            json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {"source": "stale"}}}) + "\n"
+        )
+        current_response = (
+            json.dumps({"jsonrpc": "2.0", "id": 4, "result": {"stats": {"source": "current"}}})
+            + "\n"
+        )
+        handshake_iter = iter(_handshake_lines())
+        response_iter = iter([stale_response, current_response])
+        timed_out = False
+
+        async def _readline() -> bytes:
+            nonlocal timed_out
+            try:
+                return next(handshake_iter).encode()
+            except StopIteration:
+                pass
+            if not timed_out:
+                timed_out = True
+                await wait_forever()
+            return next(response_iter).encode()
+
+        proc = _mock_process()
+        proc.stdout.readline = AsyncMock(side_effect=_readline)
+
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient(prompt_timeout=0.01)
+                await client.start()
+                with pytest.raises(TimeoutError, match="after 0.0s"):
+                    async for _ in client.send("slow"):
+                        pass
+                events = [event async for event in client.send("next")]
+
+        assert [event.event_type for event in events] == ["result"]
+        assert events[0].data == {"stats": {"source": "current"}}
+        assert proc.stdin.write.call_count == 4
+
+    @pytest.mark.asyncio
+    async def test_setup_phase_client_request_routes_to_handler(self) -> None:
+        client_request = (
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "id": 99,
+                    "method": "session/request_permission",
+                    "params": {
+                        "options": [{"optionId": "allow-once", "kind": "allow_once"}],
+                        "toolCall": {"title": "Read file"},
+                    },
+                }
+            )
+            + "\n"
+        )
+        final_response = json.dumps({"jsonrpc": "2.0", "id": 1, "result": {"ok": True}}) + "\n"
+        proc = _mock_process(stdout_lines=[client_request, final_response])
+        client = GeminiACPClient()
+        client._process = proc
+
+        result = await client._send_request_locked("session/load", {"sessionId": "sess-1"})
+
+        assert result == {"ok": True}
+        handler_response = json.loads(proc.stdin.write.call_args_list[1][0][0].decode())
+        assert handler_response == {
+            "jsonrpc": "2.0",
+            "id": 99,
+            "result": {"outcome": {"outcome": "selected", "optionId": "allow-once"}},
+        }
+
+    @pytest.mark.asyncio
+    async def test_read_stream_reraises_cancelled_error(self) -> None:
+        proc = _mock_process()
+        client = GeminiACPClient()
+        client._process = proc
+
+        with patch(
+            "gobby.adapters.acp_client.asyncio.wait_for",
+            side_effect=asyncio.CancelledError,
+        ):
+            with pytest.raises(asyncio.CancelledError):
+                async for _ in client._read_stream(expected_response_id=1):
+                    pass
 
 
 # ---------------------------------------------------------------------------

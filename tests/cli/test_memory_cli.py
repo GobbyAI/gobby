@@ -1,6 +1,7 @@
 """Tests for the memory CLI module."""
 
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,6 +10,7 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.memory.main import memory as memory_cli
+from gobby.sync.memories import MemoryImportError
 
 pytestmark = pytest.mark.unit
 
@@ -22,6 +24,43 @@ class _FakeHTTPResponse:
 
     def json(self) -> dict[str, Any]:
         return self.payload
+
+
+class TestMemoryCreateCommand:
+    """Tests for gobby memory create command."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI test runner."""
+        return CliRunner()
+
+    @patch("gobby.cli.memory.resolve_project_ref")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_create_without_project_uses_current_project_context(
+        self,
+        mock_get_manager: MagicMock,
+        mock_resolve_project: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Test create resolves current project when --project is omitted."""
+        mock_resolve_project.return_value = "proj-current"
+        mock_manager = MagicMock()
+        mock_manager.create_memory = AsyncMock(
+            return_value=SimpleNamespace(id="mem-1", content="remember this")
+        )
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["memory", "create", "remember this"])
+
+        assert result.exit_code == 0
+        assert "Created memory: mem-1 - remember this" in result.output
+        mock_resolve_project.assert_called_once_with(None)
+        mock_manager.create_memory.assert_awaited_once_with(
+            content="remember this",
+            memory_type="fact",
+            project_id="proj-current",
+            source_type="user",
+        )
 
 
 class TestMemoryShowCommand:
@@ -686,6 +725,72 @@ class TestMemoryRestoreCommand:
         assert "Memory backup not found:" in result.output
         assert "missing.jsonl" in result.output
 
+    @patch("gobby.sync.memories.MemoryBackupManager")
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_restore_import_error_fails(
+        self,
+        mock_get_manager: MagicMock,
+        mock_backup_manager_cls: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """Restore exits nonzero when backup import fails."""
+        mock_manager = MagicMock()
+        mock_manager.db = MagicMock()
+        mock_get_manager.return_value = mock_manager
+        mock_backup_manager = MagicMock()
+        mock_backup_manager.import_sync.side_effect = MemoryImportError("corrupt JSONL")
+        mock_backup_manager_cls.return_value = mock_backup_manager
+
+        with runner.isolated_filesystem():
+            restore_path = Path("memories.jsonl")
+            restore_path.write_text("{", encoding="utf-8")
+            result = runner.invoke(cli, ["memory", "restore", "--input", str(restore_path)])
+
+        assert result.exit_code == 1
+        assert "corrupt JSONL" in result.output
+
+
+class TestMemoryFixNullProjectCommand:
+    """Tests for gobby memory fix-null-project."""
+
+    @pytest.fixture
+    def runner(self) -> CliRunner:
+        """Create a CLI test runner."""
+        return CliRunner()
+
+    @patch("gobby.cli.memory.get_memory_manager")
+    def test_fix_null_project_dry_run_delegates_to_manager(
+        self,
+        mock_get_manager: MagicMock,
+        runner: CliRunner,
+    ) -> None:
+        """The repair command delegates mutation planning to MemoryManager."""
+        mock_manager = MagicMock()
+        mock_manager.fix_null_project_ids_from_sessions = AsyncMock(
+            return_value=SimpleNamespace(
+                total=1,
+                fixable=1,
+                fixed=0,
+                repairs=[
+                    SimpleNamespace(
+                        memory_id="mem-123456789",
+                        content="Needs project assignment",
+                        source_session_id="sess-123",
+                        project_id="proj-123456789",
+                    )
+                ],
+            )
+        )
+        mock_get_manager.return_value = mock_manager
+
+        result = runner.invoke(cli, ["memory", "fix-null-project", "--dry-run"])
+
+        assert result.exit_code == 0
+        mock_manager.fix_null_project_ids_from_sessions.assert_awaited_once_with(dry_run=True)
+        assert "Found 1 memories with NULL project_id from sessions/agents." in result.output
+        assert "Would fix mem-12345678: set project_id=proj-1234567" in result.output
+        assert "Would fix 1 memories. Run without --dry-run to apply." in result.output
+
 
 class TestResolveMemoryId:
     """Tests for resolve_memory_id function."""
@@ -776,7 +881,7 @@ class TestMemoryDeleteNotFound:
 
         result = runner.invoke(cli, ["memory", "delete", "nonexistent"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Memory not found" in result.output
 
 
@@ -804,7 +909,7 @@ class TestMemoryShowNotFound:
 
         result = runner.invoke(cli, ["memory", "show", "nonexistent"])
 
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Memory not found" in result.output
 
     @patch("gobby.cli.memory.resolve_memory_id")

@@ -22,6 +22,14 @@ class CodeIndexConfig(BaseModel):
         default=300,
         description="Background reindex interval in seconds",
     )
+    missing_root_purge_observations: int = Field(
+        default=3,
+        ge=1,
+        description=(
+            "Consecutive maintenance passes that must observe a missing project root "
+            "before purging its index"
+        ),
+    )
     max_file_size_bytes: int = Field(
         default=1_000_000,
         description="Skip files larger than this",

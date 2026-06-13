@@ -115,12 +115,10 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gsqz")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
-    @patch("gobby.cli.install_setup._install_gloc")
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_titles")
     def test_run_daemon_setup_success(
         self,
         mock_ide,
-        mock_gloc,
         mock_ghook,
         mock_gcode,
         mock_gsqz,
@@ -137,7 +135,6 @@ class TestRunDaemonSetup:
         mock_gsqz.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_gcode.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ghook.return_value = {"installed": True, "version": "1.0", "method": "github"}
-        mock_gloc.return_value = {"installed": True, "version": "1.0", "method": "github"}
         mock_ide.return_value = {"Code": {"added": True}}
 
         mock_run.return_value = MagicMock(returncode=0)
@@ -165,9 +162,6 @@ class TestRunDaemonSetup:
         mock_ghook.assert_called_once()
         assert mock_ghook.call_count == 1
         assert mock_ghook.call_args is not None
-        mock_gloc.assert_called_once()
-        assert mock_gloc.call_count == 1
-        assert mock_gloc.call_args is not None
         mock_ide.assert_called_once()
         assert mock_ide.call_count == 1
         assert mock_ide.call_args is not None
@@ -179,12 +173,10 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gsqz")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
-    @patch("gobby.cli.install_setup._install_gloc")
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_titles")
     def test_run_daemon_setup_makes_same_run_hook_generation_use_ghook(
         self,
         mock_ide,
-        mock_gloc,
         mock_ghook,
         mock_gcode,
         mock_gsqz,
@@ -200,7 +192,6 @@ class TestRunDaemonSetup:
         mock_mcp.return_value = {"success": True, "servers_added": [], "servers_skipped": []}
         mock_gsqz.return_value = {"skipped": True}
         mock_gcode.return_value = {"skipped": True}
-        mock_gloc.return_value = {"skipped": True}
         mock_ide.return_value = {"Code": {"added": False}}
         mock_run.return_value = MagicMock(returncode=0)
 
@@ -231,14 +222,12 @@ class TestRunDaemonSetup:
     @patch("gobby.cli.install_setup._install_gsqz")
     @patch("gobby.cli.install_setup._install_gcode")
     @patch("gobby.cli.install_setup._install_ghook")
-    @patch("gobby.cli.install_setup._install_gloc")
     @patch("gobby.cli.installers.ide_config.configure_vscode_family_terminal_titles")
     @patch("gobby.cli.install_setup.verify_homebrew_managed_bins")
     def test_homebrew_mode_skips_npm_and_managed_helper_installs(
         self,
         mock_verify: MagicMock,
         mock_ide: MagicMock,
-        mock_gloc: MagicMock,
         mock_ghook: MagicMock,
         mock_gcode: MagicMock,
         mock_gsqz: MagicMock,
@@ -264,7 +253,7 @@ class TestRunDaemonSetup:
                 version="1.0.0",
                 ok=True,
             )
-            for name in ("gcode", "gsqz", "ghook", "gloc")
+            for name in ("gcode", "gsqz", "ghook", "gwiki")
         ]
 
         run_daemon_setup(tmp_path)
@@ -276,7 +265,6 @@ class TestRunDaemonSetup:
         mock_gsqz.assert_not_called()
         mock_gcode.assert_not_called()
         mock_ghook.assert_not_called()
-        mock_gloc.assert_not_called()
 
 
 class TestRunNpmInstall:

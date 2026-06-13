@@ -184,9 +184,13 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeo
     if project_id:
         query_params["project_id"] = str(project_id)
     params = f"?{urllib.parse.urlencode(query_params)}"
-    response = client.call_http_api(
-        f"/api/memories/graph/rebuild{params}", method="POST", timeout=30.0
-    )
+    try:
+        response = client.call_http_api(
+            f"/api/memories/graph/rebuild{params}", method="POST", timeout=30.0
+        )
+    except (httpx.HTTPError, ConnectionError, OSError, ValueError) as e:
+        click.echo(f"Error: Could not reach daemon — is it running? ({e})")
+        raise SystemExit(1) from e
     if not response.is_success:
         raise click.ClickException(f"Rebuild failed (HTTP {response.status_code}): {response.text}")
     try:
@@ -213,17 +217,21 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeo
     click.echo("Polling knowledge graph rebuild progress...")
     last_snapshot: tuple[object, ...] | None = None
     status_params = urllib.parse.urlencode({"job_id": str(job_id)})
-    start_time = time.time()
+    deadline = time.monotonic() + timeout
 
     while True:
-        elapsed = time.time() - start_time
-        if elapsed > timeout:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
             raise click.ClickException(f"Rebuild job {job_id} timed out after {timeout} seconds")
-        status_response = client.call_http_api(
-            f"/api/memories/graph/rebuild/status?{status_params}",
-            method="GET",
-            timeout=30.0,
-        )
+        try:
+            status_response = client.call_http_api(
+                f"/api/memories/graph/rebuild/status?{status_params}",
+                method="GET",
+                timeout=min(30.0, remaining),
+            )
+        except (httpx.HTTPError, ConnectionError, OSError, ValueError) as e:
+            click.echo(f"Error: Could not reach daemon — is it running? ({e})")
+            raise SystemExit(1) from e
         if not status_response.is_success:
             raise click.ClickException(
                 f"Status check failed (HTTP {status_response.status_code}): {status_response.text}"
@@ -274,7 +282,7 @@ def rebuild_graph(ctx: click.Context, project_ref: str | None, wait: bool, timeo
             detail = status_data.get("error") or "unknown error"
             raise click.ClickException(f"Rebuild job {job_id} failed: {detail}")
 
-        time.sleep(3)
+        time.sleep(min(3, max(0.0, deadline - time.monotonic())))
 
 
 @click.command("invalidate")

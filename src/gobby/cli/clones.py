@@ -15,6 +15,7 @@ import json
 import click
 import httpx
 
+from gobby.cli.utils import resolve_project_ref
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.runtime import open_runtime_hub_database
 
@@ -118,13 +119,13 @@ def create_clone(
         result = response.json()
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+        raise SystemExit(1) from None
     except httpx.HTTPStatusError as e:
         click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
-        return
+        raise SystemExit(1) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -136,6 +137,7 @@ def create_clone(
         click.echo(f"  Branch: {clone_info.get('branch_name', 'unknown')}")
     else:
         click.echo(f"Failed to create clone: {result.get('error')}", err=True)
+        raise SystemExit(1)
 
 
 @clones.command("spawn")
@@ -178,7 +180,7 @@ def spawn_agent(
 
     if not clone_id:
         click.echo(f"Clone not found: {clone_ref}", err=True)
-        return
+        raise SystemExit(1)
 
     daemon_url = get_daemon_url()
 
@@ -205,13 +207,13 @@ def spawn_agent(
         result = response.json()
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+        raise SystemExit(1) from None
     except httpx.HTTPStatusError as e:
         click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
-        return
+        raise SystemExit(1) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -226,6 +228,7 @@ def spawn_agent(
             click.echo(f"  Reasoning: {reasoning['message']}")
     else:
         click.echo(f"Failed to spawn agent: {result.get('error')}", err=True)
+        raise SystemExit(1)
 
 
 @clones.command("sync")
@@ -246,7 +249,7 @@ def sync_clone(clone_ref: str, direction: str, json_format: bool) -> None:
 
     if not clone_id:
         click.echo(f"Clone not found: {clone_ref}", err=True)
-        return
+        raise SystemExit(1)
 
     daemon_url = get_daemon_url()
 
@@ -260,13 +263,13 @@ def sync_clone(clone_ref: str, direction: str, json_format: bool) -> None:
         result = response.json()
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+        raise SystemExit(1) from None
     except httpx.HTTPStatusError as e:
         click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
-        return
+        raise SystemExit(1) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -276,6 +279,7 @@ def sync_clone(clone_ref: str, direction: str, json_format: bool) -> None:
         click.echo(f"Synced clone {clone_id}")
     else:
         click.echo(f"Failed to sync clone: {result.get('error')}", err=True)
+        raise SystemExit(1)
 
 
 @clones.command("merge")
@@ -296,7 +300,7 @@ def merge_clone(clone_ref: str, target_branch: str, json_format: bool) -> None:
 
     if not clone_id:
         click.echo(f"Clone not found: {clone_ref}", err=True)
-        return
+        raise SystemExit(1)
 
     daemon_url = get_daemon_url()
 
@@ -310,13 +314,13 @@ def merge_clone(clone_ref: str, target_branch: str, json_format: bool) -> None:
         result = response.json()
     except httpx.ConnectError:
         click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+        raise SystemExit(1) from None
     except httpx.HTTPStatusError as e:
         click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise SystemExit(1) from None
     except Exception as e:
         click.echo(f"Error: {e}", err=True)
-        return
+        raise SystemExit(1) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -333,6 +337,7 @@ def merge_clone(clone_ref: str, target_branch: str, json_format: bool) -> None:
                 click.echo(f"  {f}", err=True)
         else:
             click.echo(f"Failed to merge clone: {result.get('error')}", err=True)
+        raise SystemExit(1)
 
 
 @clones.command("delete")
@@ -357,9 +362,27 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
             click.echo(json.dumps({"success": False, "error": f"Clone not found: {clone_ref}"}))
         else:
             click.echo(f"Clone not found: {clone_ref}", err=True)
-        return
+        raise SystemExit(1)
 
-    if not yes and not json_format:
+    if force and not yes:
+        error = "Force deleting a clone requires --yes"
+        if json_format:
+            click.echo(json.dumps({"success": False, "error": error}))
+        else:
+            click.echo(f"Error: {error}", err=True)
+        raise SystemExit(1)
+
+    if not yes:
+        if json_format:
+            click.echo(
+                json.dumps(
+                    {
+                        "success": False,
+                        "error": "Deleting a clone requires --yes or interactive confirmation",
+                    }
+                )
+            )
+            raise SystemExit(1)
         click.confirm("Are you sure you want to delete this clone?", abort=True)
 
     daemon_url = get_daemon_url()
@@ -377,7 +400,7 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
             click.echo(json.dumps({"success": False, "error": "Cannot connect to Gobby daemon"}))
         else:
             click.echo("Error: Cannot connect to Gobby daemon. Is it running?", err=True)
-        return
+        raise SystemExit(1) from None
     except httpx.HTTPStatusError as e:
         if json_format:
             click.echo(
@@ -391,13 +414,13 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
             )
         else:
             click.echo(f"HTTP Error {e.response.status_code}: {e.response.text}", err=True)
-        return
+        raise SystemExit(1) from None
     except Exception as e:
         if json_format:
             click.echo(json.dumps({"success": False, "error": str(e)}))
         else:
             click.echo(f"Error: {e}", err=True)
-        return
+        raise SystemExit(1) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -407,6 +430,7 @@ def delete_clone(clone_ref: str, force: bool, yes: bool, json_format: bool) -> N
         click.echo(f"Deleted clone: {clone_id}")
     else:
         click.echo(f"Failed to delete clone: {result.get('error')}", err=True)
+        raise SystemExit(1)
 
 
 def resolve_clone_id(manager: LocalCloneManager, clone_ref: str) -> str | None:
@@ -416,7 +440,8 @@ def resolve_clone_id(manager: LocalCloneManager, clone_ref: str) -> str | None:
         return clone_ref
 
     # Try prefix match
-    all_clones = manager.list_clones()
+    project_id = resolve_project_ref(None, exit_on_not_found=False)
+    all_clones = manager.list_clones(project_id=project_id)
     matches = [c for c in all_clones if c.id.startswith(clone_ref)]
 
     if not matches:

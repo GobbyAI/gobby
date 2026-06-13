@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 VALID_WORKFLOW_TYPES = ("rule", "workflow", "pipeline", "agent", "variable")
+GOBBY_OWNED_WORKFLOW_SOURCES = ("installed", "template")
 
 
 @click.command("reinstall")
@@ -29,27 +30,31 @@ VALID_WORKFLOW_TYPES = ("rule", "workflow", "pipeline", "agent", "variable")
 )
 @click.option("--force", "-f", is_flag=True, help="Skip confirmation prompt")
 def reinstall_workflows(workflow_type: str | None, force: bool) -> None:
-    """Delete all workflow definitions and reinstall from bundled templates."""
+    """Delete bundled workflow definitions and reinstall from bundled templates."""
     from gobby.storage.hub.runtime import open_runtime_hub_database
 
     type_label = workflow_type or "all"
     if not force:
         click.confirm(
-            f"This will delete and reinstall {type_label} workflow definitions. Continue?",
+            f"This will delete and reinstall only bundled {type_label} workflow definitions. "
+            "User and project definitions will be preserved. Continue?",
             abort=True,
         )
 
     db = open_runtime_hub_database(apply_migrations=False)
 
-    # 1. Hard-delete existing rows
+    # 1. Hard-delete Gobby-owned rows; preserve user/project-authored definitions.
     with db.transaction() as conn:
         if workflow_type:
             cursor = conn.execute(
-                "DELETE FROM workflow_definitions WHERE workflow_type = %s",
-                (workflow_type,),
+                "DELETE FROM workflow_definitions WHERE workflow_type = %s AND source IN (%s, %s)",
+                (workflow_type, *GOBBY_OWNED_WORKFLOW_SOURCES),
             )
         else:
-            cursor = conn.execute("DELETE FROM workflow_definitions")
+            cursor = conn.execute(
+                "DELETE FROM workflow_definitions WHERE source IN (%s, %s)",
+                GOBBY_OWNED_WORKFLOW_SOURCES,
+            )
         deleted = cursor.rowcount
     click.echo(f"Deleted {deleted} existing definitions")
 
@@ -244,16 +249,17 @@ def reload_workflows(ctx: click.Context) -> None:
                     if data.get("status") == "success":
                         click.echo("✓ Triggered daemon workflow reload")
                         return
-                    else:
-                        click.echo(f"Daemon reload failed: {data.get('message')}", err=True)
+                    click.echo(f"Daemon reload failed: {data.get('message')}", err=True)
                 else:
                     click.echo(f"Daemon returned status {response.status_code}", err=True)
             except httpx.ConnectError:
                 click.echo("Could not reach daemon; reload may not have occurred.", err=True)
             except httpx.RequestError as e:
                 click.echo(f"Failed to communicate with daemon: {e}", err=True)
+            raise SystemExit(1)
     except Exception as e:
         logger.debug(f"Error checking daemon status: {e}", exc_info=True)
+        raise click.ClickException(f"Failed to check daemon status: {e}") from None
 
     # Fallback: Clear local cache (useful if running in same process or just validating)
     # This also helps if the user just wants to verify the command runs

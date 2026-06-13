@@ -58,7 +58,9 @@ class ACPHookAdapter(BaseAdapter):
     3. Calls HookManager.handle() with unified HookEvent model
     """
 
-    source = SessionSource.GEMINI
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.GEMINI
 
     # Event type mapping: Gemini CLI hook names -> unified HookEventType
     # Gemini CLI uses PascalCase hook names in the payload's "hook_event_name" field
@@ -300,7 +302,8 @@ class ACPHookAdapter(BaseAdapter):
 
         Gemini CLI expects responses in this format:
         {
-            "decision": "allow" | "deny",     # Whether to allow the action
+            "decision": "allow" | "deny" | "block",
+            "continue": True/False,            # False for deny/block decisions
             "reason": "...",                   # Optional reason for decision
             "hookSpecificOutput": {            # Hook-specific response data
                 "additionalContext": "...",    # Context to inject
@@ -310,7 +313,8 @@ class ACPHookAdapter(BaseAdapter):
         }
 
         Exit codes: always 0 — Gemini CLI treats non-zero as "hook failed".
-        Block decisions are conveyed via decision="block" in the JSON body.
+        Block decisions are conveyed via decision="block" and continue=false
+        in the JSON body.
 
         Args:
             response: Unified HookResponse from HookManager.
@@ -320,7 +324,8 @@ class ACPHookAdapter(BaseAdapter):
         Returns:
             Dict in Gemini CLI's expected format.
         """
-        should_continue = response.decision != "deny"
+        is_denied = response.decision in ("deny", "block")
+        should_continue = not is_denied
         capabilities = get_provider_capabilities(self.source)
         capability = capabilities.get_hook(hook_type)
         event_logger = self._event_logger()
@@ -466,12 +471,8 @@ class ACPHookAdapter(BaseAdapter):
         # alive. But when the user interrupts the turn (ESC) Gemini still fires
         # AfterAgent without a completed prompt_response; in that case, kill the
         # loop so the cancel doesn't get trapped in a retry cycle.
-        if (
-            hook_type == "AfterAgent"
-            and hook_response.decision == "block"
-            and self._is_cancelled_after_agent(input_data)
-        ):
-            result["continue"] = False
+        if hook_type == "AfterAgent" and hook_response.decision == "block":
+            result["continue"] = not self._is_cancelled_after_agent(input_data)
 
         return result
 

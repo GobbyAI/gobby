@@ -23,7 +23,7 @@ from gobby.build import (
 )
 from gobby.build.dispatch_tick import kick_dispatcher_tick as _kick_dispatcher_tick
 from gobby.build.profiles import BuildProfileError
-from gobby.config.build import Isolation
+from gobby.config.build import DeliveryMode, Isolation
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
@@ -128,11 +128,14 @@ def _open_database() -> HubDatabase:
 
 def _make_build_options(
     *,
+    profile: str | None,
     quick: bool,
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
     isolation: Isolation | None,
     use_clone: bool,
+    delivery_mode: DeliveryMode | None,
+    delivery_target_repo: str | None,
     no_merge: bool,
     pr: str | None,
     target_branch: str | None,
@@ -150,11 +153,16 @@ def _make_build_options(
 ) -> BuildOptions:
     resolved_isolation: Isolation = isolation or ("clone" if use_clone else "worktree")
     return BuildOptions(
+        profile=profile or "default",
         quick=quick,
         skip_stages=_parse_skip_stages(skip_stage),
         skip_stages_explicit=bool(skip_stage),
         isolation=resolved_isolation,
         isolation_explicit=isolation is not None or use_clone,
+        delivery_mode=delivery_mode or "auto",
+        delivery_mode_explicit=delivery_mode is not None,
+        delivery_target_repo=delivery_target_repo,
+        delivery_target_repo_explicit=delivery_target_repo is not None,
         no_merge=no_merge,
         pr=pr,
         stage_caps=_parse_stage_cap(stage_cap),
@@ -179,6 +187,7 @@ def _make_build_options(
 @click.command("build")
 @click.argument("input_ref", required=False, metavar="[INPUT|ACTION]")
 @click.argument("target_ref", required=False, metavar="[REF]")
+@click.option("--profile", help="Build profile to apply.")
 @click.option("--quick", is_flag=True, default=False, help="Run one lifecycle step.")
 @click.option(
     "--skip-stage", multiple=True, help="Stage to skip. May be repeated or comma-separated."
@@ -195,6 +204,8 @@ def _make_build_options(
     help="Build workspace isolation mode.",
 )
 @click.option("--clone", "use_clone", is_flag=True, default=False, help="Use clone workspaces.")
+@click.option("--delivery-mode", type=click.Choice(["auto", "pull_request"]))
+@click.option("--delivery-target-repo", help="Delivery target repository override.")
 @click.option("--no-merge", is_flag=True, default=False, help="Leave isolated work unmerged.")
 @click.option("--pr", "pr", help="Existing PR number or URL for PR-gated builds.")
 @click.option("--target-branch", help="Target branch for the build.")
@@ -207,7 +218,7 @@ def _make_build_options(
 )
 @click.option(
     "--max-active-agents",
-    type=int,
+    type=click.IntRange(min=1),
     help="Maximum active automation agents allowed during the immediate dispatcher tick.",
 )
 @click.option(
@@ -243,6 +254,12 @@ def _make_build_options(
 )
 @click.option("--project", "project_ref", help="Project name or UUID to build.")
 @click.option("--force", is_flag=True, default=False, help="Force destructive cleanup.")
+@click.option(
+    "--delete-dirty-worktrees",
+    is_flag=True,
+    default=False,
+    help="Allow clean to delete dirty descendant worktrees.",
+)
 @click.option("--yes", is_flag=True, default=False, help="Confirm destructive clean/restart.")
 @click.option(
     "--no-resume",
@@ -253,11 +270,14 @@ def _make_build_options(
 def build_command(
     input_ref: str | None,
     target_ref: str | None,
+    profile: str | None,
     quick: bool,
     skip_stage: tuple[str, ...],
     stage_cap: tuple[str, ...],
     isolation: Isolation | None,
     use_clone: bool,
+    delivery_mode: DeliveryMode | None,
+    delivery_target_repo: str | None,
     no_merge: bool,
     pr: str | None,
     target_branch: str | None,
@@ -271,6 +291,7 @@ def build_command(
     coordinator: str | None,
     project_ref: str | None,
     force: bool,
+    delete_dirty_worktrees: bool,
     yes: bool,
     no_resume: bool,
 ) -> None:
@@ -282,7 +303,14 @@ def build_command(
         _run_build_resume(target_ref, project_ref=project_ref)
         return
     if input_ref == "clean":
-        _run_build_clean(target_ref, dry_run=dry_run, force=force, yes=yes, project_ref=project_ref)
+        _run_build_clean(
+            target_ref,
+            dry_run=dry_run,
+            force=force,
+            delete_dirty_worktrees=delete_dirty_worktrees,
+            yes=yes,
+            project_ref=project_ref,
+        )
         return
     if input_ref is None:
         invoke_build_skill()
@@ -293,11 +321,14 @@ def build_command(
         raise click.ClickException(f"--clone conflicts with --isolation {isolation}")
     project_context = _resolve_build_project_context(project_ref, Path.cwd())
     opts = _make_build_options(
+        profile=profile,
         quick=quick,
         skip_stage=skip_stage,
         stage_cap=stage_cap,
         isolation=isolation,
         use_clone=use_clone,
+        delivery_mode=delivery_mode,
+        delivery_target_repo=delivery_target_repo,
         no_merge=no_merge,
         pr=pr,
         target_branch=target_branch,
@@ -481,6 +512,7 @@ def _run_build_clean(
     *,
     dry_run: bool,
     force: bool,
+    delete_dirty_worktrees: bool = False,
     yes: bool,
     project_ref: str | None = None,
 ) -> None:
@@ -498,6 +530,7 @@ def _run_build_clean(
         cwd=cwd,
         dry_run=dry_run,
         force=force,
+        delete_dirty_worktrees=delete_dirty_worktrees,
         yes=True,
     )
     if daemon_payload is not None:
@@ -512,6 +545,7 @@ def _run_build_clean(
                 project_id=project_id,
                 dry_run=dry_run,
                 force=force,
+                delete_dirty_worktrees=delete_dirty_worktrees,
                 yes=True,
             )
         )

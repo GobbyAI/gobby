@@ -8,6 +8,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
+from gobby.mcp_proxy.tools.worktrees._events import emit_worktree_event
 from gobby.mcp_proxy.tools.worktrees._helpers import resolve_project_context
 from gobby.mcp_proxy.tools.worktrees._merge_state import is_worktree_git_merged
 from gobby.storage.worktrees import WorktreeStatus
@@ -65,7 +66,14 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not updated:
             return {"success": False, "error": "Failed to claim worktree"}
 
-        return {"success": True}
+        event = emit_worktree_event(
+            "worktree_claimed",
+            worktree_id=worktree_id,
+            project_id=worktree.project_id,
+            branch_name=worktree.branch_name,
+            session_id=resolved_session_id,
+        )
+        return {"success": True, "event": event}
 
     @registry.tool(
         name="release_worktree",
@@ -88,7 +96,14 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not updated:
             return {"success": False, "error": "Failed to release worktree"}
 
-        return {"success": True}
+        event = emit_worktree_event(
+            "worktree_released",
+            worktree_id=worktree_id,
+            project_id=worktree.project_id,
+            branch_name=worktree.branch_name,
+            session_id=worktree.agent_session_id,
+        )
+        return {"success": True, "event": event}
 
     @registry.tool(
         name="delete_worktree",
@@ -191,7 +206,15 @@ def create_lifecycle_registry(ctx: RegistryContext) -> InternalToolRegistry:
                 )
                 artifact_refs_cleared = 0
 
-        return {"success": True, "artifact_refs_cleared": artifact_refs_cleared}
+        event = emit_worktree_event(
+            "worktree_deleted",
+            worktree_id=worktree_id,
+            project_id=worktree.project_id,
+            branch_name=worktree.branch_name,
+            worktree_path=worktree.worktree_path,
+            artifact_refs_cleared=artifact_refs_cleared,
+        )
+        return {"success": True, "artifact_refs_cleared": artifact_refs_cleared, "event": event}
 
     @registry.tool(
         name="mark_worktree_merged",

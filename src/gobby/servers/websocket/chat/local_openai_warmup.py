@@ -17,8 +17,7 @@ from gobby.config.app import deep_merge
 
 logger = logging.getLogger(__name__)
 
-_LOCAL_HOSTS = {"localhost", "127.0.0.1", "::1"}
-_NOISE_TOKENS = {"local", "lmstudio", "openai"}
+_NOISE_TOKENS = {"local", "lmstudio", "ollama", "openai"}
 _QWEN_SETTINGS_PATH = Path.home() / ".qwen" / "settings.json"
 
 
@@ -30,7 +29,7 @@ class LocalOpenAIModelWarmupError(RuntimeError):
 class LocalOpenAIModelTarget:
     """A local OpenAI-compatible model target resolved from Qwen settings."""
 
-    backend: Literal["lm_studio", "ollama"]
+    backend: Literal["lmstudio", "ollama"]
     request_model: str
     base_url: str
     api_key: str | None = None
@@ -123,21 +122,6 @@ def _extract_base_url(model_config: dict[str, Any]) -> str | None:
     return None
 
 
-def _resolve_local_backend(base_url: str) -> Literal["lm_studio", "ollama"] | None:
-    try:
-        parsed = urlparse(base_url)
-    except ValueError:
-        return None
-
-    if (parsed.hostname or "").lower() not in _LOCAL_HOSTS:
-        return None
-    if parsed.port == 1234:
-        return "lm_studio"
-    if parsed.port == 11434:
-        return "ollama"
-    return None
-
-
 def resolve_qwen_local_openai_target(
     model_value: str | None,
     *,
@@ -194,10 +178,6 @@ def resolve_qwen_local_openai_target(
     if not base_url:
         return None
 
-    backend = _resolve_local_backend(base_url)
-    if backend is None:
-        return None
-
     endpoint = _match_local_generation_endpoint(
         request_model,
         base_url,
@@ -206,8 +186,11 @@ def resolve_qwen_local_openai_target(
     if endpoint is None:
         return None
 
-    backend = _resolve_local_backend(endpoint.api_base)
-    if backend is None:
+    if endpoint.provider == "lmstudio":
+        backend: Literal["lmstudio", "ollama"] = "lmstudio"
+    elif endpoint.provider == "ollama":
+        backend = "ollama"
+    else:
         return None
 
     return LocalOpenAIModelTarget(
@@ -387,8 +370,13 @@ async def _prepare_ollama_model(
         return
 
     preload_response = await client.post(
-        f"{origin}/api/generate",
-        json={"model": target.request_model, "keep_alive": -1, "stream": False},
+        f"{origin}/api/chat",
+        json={
+            "model": target.request_model,
+            "messages": [],
+            "keep_alive": -1,
+            "stream": False,
+        },
         timeout=300.0,
     )
     try:
@@ -421,7 +409,7 @@ async def ensure_qwen_local_openai_model_ready(
 
     async with httpx.AsyncClient() as client:
         try:
-            if target.backend == "lm_studio":
+            if target.backend == "lmstudio":
                 await _prepare_lm_studio_model(client, target)
             else:
                 await _prepare_ollama_model(client, target)
@@ -429,7 +417,7 @@ async def ensure_qwen_local_openai_model_ready(
             raise
         except httpx.ConnectError as exc:
             raise LocalOpenAIModelWarmupError(
-                f"Cannot reach local {target.backend.replace('_', ' ')} endpoint at {target.base_url}."
+                f"Cannot reach local {target.backend} endpoint at {target.base_url}."
             ) from exc
         except httpx.TimeoutException as exc:
             raise LocalOpenAIModelWarmupError(

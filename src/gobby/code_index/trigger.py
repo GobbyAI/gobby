@@ -29,12 +29,19 @@ class CodeIndexTrigger:
         self,
         loop: asyncio.AbstractEventLoop,
         debounce_seconds: float = 2.0,
+        retry_base_seconds: float = 1.0,
+        retry_max_seconds: float = 30.0,
+        index_timeout_seconds: float = 30.0,
     ) -> None:
         self._loop = loop
         self._debounce_seconds = debounce_seconds
+        self._retry_base_seconds = retry_base_seconds
+        self._retry_max_seconds = retry_max_seconds
+        self._index_timeout_seconds = index_timeout_seconds
         # Pending files grouped by canonical root path.
         self._pending_by_root: dict[str, set[str]] = {}
         self._flush_timers_by_root: dict[str, asyncio.TimerHandle] = {}
+        self._retry_delay_by_root: dict[str, float] = {}
 
     def notify_file_changed(
         self,
@@ -69,6 +76,28 @@ class CodeIndexTrigger:
             self._debounce_seconds,
             _schedule_flush,
         )
+
+    def _requeue_for_retry(self, root_key: str, project_id: str, files: set[str]) -> None:
+        """Return a failed batch to pending files and schedule retry with backoff."""
+        self._pending_by_root.setdefault(root_key, set()).update(files)
+
+        if root_key in self._flush_timers_by_root:
+            self._flush_timers_by_root[root_key].cancel()
+
+        retry_delay = self._retry_delay_by_root.get(root_key, self._retry_base_seconds)
+        self._retry_delay_by_root[root_key] = min(retry_delay * 2, self._retry_max_seconds)
+
+        def _schedule_flush(root: str = root_key, pid: str = project_id) -> None:
+            self._loop.create_task(self._flush(root, pid))
+
+        self._flush_timers_by_root[root_key] = self._loop.call_later(
+            retry_delay,
+            _schedule_flush,
+        )
+
+    def _clear_retry_backoff(self, root_key: str) -> None:
+        """Reset retry state after a successful index run."""
+        self._retry_delay_by_root.pop(root_key, None)
 
     @staticmethod
     def _root_key(root_path: str) -> str:
@@ -113,14 +142,19 @@ class CodeIndexTrigger:
                 stdout=asyncio.subprocess.DEVNULL,
                 stderr=asyncio.subprocess.PIPE,
             )
-            _, stderr = await asyncio.wait_for(proc.communicate(), timeout=30)
+            _, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=self._index_timeout_seconds,
+            )
             if proc.returncode == 0:
+                self._clear_retry_backoff(root_key)
                 logger.debug(
                     f"gcode indexed {len(files)} files for project {project_id} at {root_key}"
                 )
             else:
                 detail = stderr.decode().strip() if stderr else "(no stderr)"
                 logger.warning(f"gcode index exited {proc.returncode}: {detail}")
+                self._requeue_for_retry(root_key, project_id, files)
         except asyncio.CancelledError:
             try:
                 if proc is not None:
@@ -130,12 +164,14 @@ class CodeIndexTrigger:
                 pass
             raise
         except TimeoutError:
-            logger.warning("gcode index timed out after 30s")
+            logger.warning(f"gcode index timed out after {self._index_timeout_seconds:g}s")
             try:
                 if proc is not None:
                     proc.kill()
                     await proc.wait()
             except ProcessLookupError:
                 pass
+            self._requeue_for_retry(root_key, project_id, files)
         except Exception as e:
             logger.warning(f"gcode index failed: {e}")
+            self._requeue_for_retry(root_key, project_id, files)

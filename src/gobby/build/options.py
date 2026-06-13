@@ -15,16 +15,17 @@ class BuildOptions:
     """Resolved options for a build request."""
 
     profile: str = "default"
-    profile_explicit: bool = False
     quick: bool = False
     skip_stages: list[str] = field(default_factory=list)
     skip_stages_explicit: bool = False
     isolation: Isolation = "worktree"
-    isolation_explicit: bool = True
+    isolation_explicit: bool = False
     unattended: bool = False
     unattended_explicit: bool = False
     delivery_mode: DeliveryMode = "auto"
+    delivery_mode_explicit: bool = False
     delivery_target_repo: str | None = None
+    delivery_target_repo_explicit: bool = False
     no_merge: bool = False
     pr: str | None = None
     stage_caps: list[StageCapOverride] = field(default_factory=list)

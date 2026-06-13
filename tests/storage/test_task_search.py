@@ -1,5 +1,6 @@
 """Tests for task search functionality."""
 
+import logging
 from typing import Any
 
 import pytest
@@ -325,7 +326,59 @@ class TestTaskSearchBackend:
         assert sanitize_pg_search_query("hello world") == "hello world"
         assert sanitize_pg_search_query("hello (world)") == "hello world"
         assert sanitize_pg_search_query('key:value "quoted"') == "key value quoted"
+        assert sanitize_pg_search_query("func(arg) -> str") == "func arg str"
+        assert sanitize_pg_search_query("-") == ""
         assert sanitize_pg_search_query("") == ""
         assert sanitize_pg_search_query("   ") == ""
         assert sanitize_pg_search_query("my_func") == "my_func"
-        assert sanitize_pg_search_query("some-thing") == "some-thing"
+        assert sanitize_pg_search_query("some-thing") == "some thing"
+        assert sanitize_pg_search_query("alpha::beta -> list[str] &&") == ("alpha beta list str")
+        assert sanitize_pg_search_query("!!! ---") == ""
+
+    def test_keyword_backend_parse_error_returns_empty_without_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Known pg_search parse errors are non-warning empty results."""
+        from gobby.search.keyword import BM25SearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                raise RuntimeError("could not parse query string: `content:(-)`")
+
+        with caplog.at_level(logging.DEBUG):
+            results = BM25SearchBackend(FakePostgresDB(), "memories").search("alpha", 5)
+
+        assert results == []
+        assert all(record.levelno < logging.WARNING for record in caplog.records)
+        assert any(
+            "pg_search keyword query parse failed" in record.message for record in caplog.records
+        )
+
+    def test_postgres_stage_state_parse_error_returns_empty_without_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Task stage-state search uses the same parse-error fallback."""
+        from gobby.storage.tasks._search import TaskSearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                raise RuntimeError("could not parse query string: `title:(-)`")
+
+        with caplog.at_level(logging.DEBUG):
+            results = TaskSearchBackend(FakePostgresDB()).search(
+                "alpha",
+                current_stage_state="ready",
+            )
+
+        assert results == []
+        assert all(record.levelno < logging.WARNING for record in caplog.records)
+        assert any(
+            "pg_search task stage-state query parse failed" in record.message
+            for record in caplog.records
+        )

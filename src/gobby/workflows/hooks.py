@@ -429,39 +429,41 @@ class WorkflowHookHandler:
 
     def _resolve_project_path(self, event: HookEvent) -> str | None:
         """Resolve the best available filesystem path for workflow git checks."""
+        from gobby.workflows.git_utils import resolve_git_worktree_root
+
         metadata = event.metadata if isinstance(event.metadata, dict) else {}
         if metadata is not event.metadata:
             event.metadata = metadata
 
-        project_path = event.cwd if event.cwd and event.cwd.strip() else None
-        if project_path:
-            return project_path
-
+        candidates: list[str] = []
+        if event.cwd and event.cwd.strip():
+            candidates.append(event.cwd)
         metadata_path = metadata.get("project_path")
         if isinstance(metadata_path, str) and metadata_path.strip():
-            return metadata_path
+            candidates.append(metadata_path)
 
-        if not event.project_id or self.rule_engine is None:
-            return None
+        if event.project_id and self.rule_engine is not None:
+            try:
+                from gobby.storage.projects import LocalProjectManager
 
-        try:
-            from gobby.storage.projects import LocalProjectManager
+                project = LocalProjectManager(self.rule_engine.db).get(event.project_id)
+            except Exception as exc:
+                logger.debug(
+                    "Failed to resolve project_path from project_id=%s: %s",
+                    event.project_id,
+                    exc,
+                )
+                project = None
 
-            project = LocalProjectManager(self.rule_engine.db).get(event.project_id)
-        except Exception as exc:
-            logger.debug(
-                "Failed to resolve project_path from project_id=%s: %s",
-                event.project_id,
-                exc,
-            )
-            return None
+            repo_path = project.repo_path if project is not None else None
+            if isinstance(repo_path, str) and repo_path.strip():
+                metadata.setdefault("project_path", repo_path)
+                candidates.append(repo_path)
 
-        repo_path = project.repo_path if project is not None else None
-        if not isinstance(repo_path, str) or not repo_path.strip():
-            return None
-
-        metadata.setdefault("project_path", repo_path)
-        return repo_path
+        worktree_root = resolve_git_worktree_root(*candidates)
+        if worktree_root:
+            metadata["project_path"] = worktree_root
+        return worktree_root
 
     def _handle_cancelled(self, event: HookEvent) -> HookResponse:
         """Handle CancelledError by logging and returning appropriate response."""
@@ -656,7 +658,13 @@ class WorkflowHookHandler:
                         f"cwd={event.cwd!r} project_id={event.project_id!r} "
                         f"metadata_path={event.metadata.get('project_path')!r}"
                     )
-                    if _is_known_no_repo_project(event.project_id):
+                    event_data = event.data if isinstance(event.data, dict) else {}
+                    has_candidate_path = bool(
+                        event.cwd
+                        or event.metadata.get("project_path")
+                        or event_data.get("project_path")
+                    )
+                    if _is_known_no_repo_project(event.project_id) or has_candidate_path:
                         logger.debug(message)
                     else:
                         logger.warning(message)

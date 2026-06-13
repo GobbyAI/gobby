@@ -134,46 +134,6 @@ class GwikiGateway:
             args.append(query)
         return await self._run_json("collect", args)
 
-    async def research(
-        self,
-        query: str | None = None,
-        *,
-        audit: bool = False,
-        source_constraints: Sequence[str] | None = None,
-        max_steps: int | None = None,
-        max_tokens: int | None = None,
-        max_sources: int | None = None,
-        ai: str | None = None,
-        require_ai: bool = False,
-    ) -> dict[str, Any]:
-        """Run `gwiki research` with explicit CLI argv construction.
-
-        `query` remains positional for compatibility and is appended last when
-        provided. Optional values use daemon defaults of omission: `audit=False`,
-        no `source_constraints`, no `max_steps`, no `max_tokens`, no
-        `max_sources`, `ai=None`, and `require_ai=False`. Provided options map
-        directly to repeated `--source-constraint`, `--max-steps`,
-        `--max-tokens`, `--max-sources`, `--ai`, and `--require-ai` flags.
-        """
-        args = ["research"]
-        if audit:
-            args.append("--audit")
-        for source_constraint in source_constraints or ():
-            args.extend(["--source-constraint", source_constraint])
-        if max_steps is not None:
-            args.extend(["--max-steps", str(max_steps)])
-        if max_tokens is not None:
-            args.extend(["--max-tokens", str(max_tokens)])
-        if max_sources is not None:
-            args.extend(["--max-sources", str(max_sources)])
-        if ai is not None:
-            args.extend(["--ai", ai])
-        if require_ai:
-            args.append("--require-ai")
-        if query is not None:
-            args.append(query)
-        return await self._run_json("research", args)
-
     async def compile(self, output: str | Path | None = None) -> dict[str, Any]:
         args = ["compile"]
         if output is not None:

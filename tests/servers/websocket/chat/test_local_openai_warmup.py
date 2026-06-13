@@ -82,11 +82,17 @@ def _write_qwen_settings(settings_path: Path, payload: dict[str, Any]) -> None:
 
 def _endpoint(
     *,
+    provider: str = "lmstudio",
     api_base: str = "http://localhost:1234/v1",
     model: str = "qwen3.6-35b-a3b-q8-local",
     api_key: str | None = "endpoint-token",
 ) -> LocalGenerationEndpointConfig:
-    return LocalGenerationEndpointConfig(api_base=api_base, model=model, api_key=api_key)
+    return LocalGenerationEndpointConfig(
+        provider=provider,
+        api_base=api_base,
+        model=model,
+        api_key=api_key,
+    )
 
 
 def test_resolve_qwen_local_openai_target_reads_model_config(
@@ -119,11 +125,47 @@ def test_resolve_qwen_local_openai_target_reads_model_config(
     )
 
     assert target == warmup.LocalOpenAIModelTarget(
-        backend="lm_studio",
+        backend="lmstudio",
         request_model="qwen3.6-35b-a3b-q8-local",
         base_url="http://localhost:1234/v1",
         api_key="endpoint-token",
     )
+
+
+def test_resolve_qwen_local_openai_target_skips_openai_compatible_provider(
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = temp_dir / ".qwen" / "settings.json"
+    _write_qwen_settings(
+        settings_path,
+        {
+            "security": {"auth": {"selectedType": "openai"}},
+            "modelProviders": {
+                "openai": [
+                    {
+                        "id": "local-model",
+                        "baseUrl": "http://localhost:8000/v1",
+                    }
+                ]
+            },
+        },
+    )
+    monkeypatch.setattr(warmup, "_QWEN_SETTINGS_PATH", settings_path)
+
+    target = warmup.resolve_qwen_local_openai_target(
+        "local-model(openai)",
+        project_path=None,
+        local_generation_endpoints={
+            "generic": _endpoint(
+                provider="openai-compatible",
+                api_base="http://localhost:8000/v1",
+                model="local-model",
+            )
+        },
+    )
+
+    assert target is None
 
 
 @pytest.mark.asyncio
@@ -223,7 +265,7 @@ async def test_ensure_qwen_local_openai_model_ready_preloads_ollama_model(
                 "openai": [
                     {
                         "id": "qwen3-coder:32b",
-                        "baseUrl": "http://localhost:11434/v1",
+                        "baseUrl": "http://localhost:1234/v1",
                     }
                 ]
             },
@@ -233,15 +275,15 @@ async def test_ensure_qwen_local_openai_model_ready_preloads_ollama_model(
 
     fake_client = _FakeAsyncClient(
         {
-            ("GET", "http://localhost:11434/api/ps"): [
+            ("GET", "http://localhost:1234/api/ps"): [
                 _FakeResponse(
                     "GET",
-                    "http://localhost:11434/api/ps",
+                    "http://localhost:1234/api/ps",
                     json_data={"models": []},
                 )
             ],
-            ("POST", "http://localhost:11434/api/generate"): [
-                _FakeResponse("POST", "http://localhost:11434/api/generate", json_data={})
+            ("POST", "http://localhost:1234/api/chat"): [
+                _FakeResponse("POST", "http://localhost:1234/api/chat", json_data={})
             ],
         }
     )
@@ -252,7 +294,8 @@ async def test_ensure_qwen_local_openai_model_ready_preloads_ollama_model(
         project_path=None,
         local_generation_endpoints={
             "ollama": _endpoint(
-                api_base="http://localhost:11434/v1",
+                provider="ollama",
+                api_base="http://localhost:1234/v1",
                 model="qwen3-coder:32b",
                 api_key=None,
             )
@@ -262,15 +305,16 @@ async def test_ensure_qwen_local_openai_model_ready_preloads_ollama_model(
     assert fake_client.calls == [
         (
             "GET",
-            "http://localhost:11434/api/ps",
+            "http://localhost:1234/api/ps",
             {"timeout": 10.0},
         ),
         (
             "POST",
-            "http://localhost:11434/api/generate",
+            "http://localhost:1234/api/chat",
             {
                 "json": {
                     "model": "qwen3-coder:32b",
+                    "messages": [],
                     "keep_alive": -1,
                     "stream": False,
                 },

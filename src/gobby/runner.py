@@ -25,6 +25,8 @@ from gobby.shutdown_intent import ShutdownIntent
 if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
+    from gobby.adapters.codex_impl.client import CodexAppServerClient
+    from gobby.ai import TextGenerationService
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
@@ -129,6 +131,7 @@ class GobbyRunner:
     hub_manager: Any | None
 
     # Phase 2: services (init_services)
+    text_generation_service: TextGenerationService | None
     llm_service: LLMService | None
     vector_store: VectorStore | None
     memory_manager: MemoryManager | None
@@ -161,6 +164,7 @@ class GobbyRunner:
     communications_manager: Any | None
 
     # Phase 4: servers (init_servers)
+    codex_client: CodexAppServerClient | None
     http_server: HTTPServer
     websocket_server: WebSocketServer | None
 

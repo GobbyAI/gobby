@@ -27,6 +27,7 @@ from typing import Any
 
 __all__ = [
     "MemoryBackupManager",
+    "MemoryImportError",
 ]
 
 from gobby.config.persistence import MemoryBackupConfig
@@ -34,6 +35,10 @@ from gobby.memory.manager import MemoryManager
 from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+
+
+class MemoryImportError(RuntimeError):
+    """Raised when explicit memory import cannot complete."""
 
 
 def _parse_updated_at(value: Any) -> tuple[int, str]:
@@ -308,9 +313,11 @@ class MemoryBackupManager:
                 f"Importing memories from {memories_file}: file has {file_count}, DB has {db_count}"
             )
             return self._import_memories_from_lines(lines)
+        except MemoryImportError:
+            raise
         except Exception as e:
             logger.warning(f"Failed to import memories: {e}")
-            return 0
+            raise MemoryImportError(f"Failed to import memories: {e}") from e
 
     async def export_to_files(self, project_id: str | None = None) -> int:
         """
@@ -375,13 +382,17 @@ class MemoryBackupManager:
                         skipped += 1
                         continue
                     parsed_records.append(data)
-                except json.JSONDecodeError:
+                except json.JSONDecodeError as exc:
                     logger.warning(f"Invalid JSON in memories file: {line[:50]}...")
+                    raise MemoryImportError(
+                        f"Invalid JSON in memories file on line {line_num}"
+                    ) from exc
                 except Exception as e:
                     logger.debug(f"Skipping memory import: {e}")
 
         except Exception as e:
             logger.error(f"Failed to import memories: {e}")
+            raise
 
         for data in self._deduplicate_records_by_id(parsed_records):
             content = data.get("content", "")

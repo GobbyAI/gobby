@@ -82,7 +82,9 @@ class CodexHooksAdapter(BaseAdapter):
     on hook stdout.
     """
 
-    source = SessionSource.CODEX
+    @property
+    def source(self) -> SessionSource:
+        return SessionSource.CODEX
 
     # Event type mapping: Codex PascalCase hook names -> unified HookEventType
     EVENT_MAP: dict[str, HookEventType] = dict(CODEX_EVENT_MAP)

@@ -239,7 +239,7 @@ class TestDedupeMemories:
         mem1.id = "mem-a1"
         mem1.content = "same content"
         mem1.created_at = "2024-01-01"
-        mem1.project_id = None
+        mem1.project_id = "proj-1"
         mem2 = MagicMock()
         mem2.id = "mem-a2"
         mem2.content = "same content"
@@ -252,7 +252,7 @@ class TestDedupeMemories:
         assert "Duplicate content (2 copies)" in result.output
         assert "Found 1 duplicate" in result.output
 
-    def test_dedupe_execute(self, runner: CliRunner, mock_manager: MagicMock) -> None:
+    def test_dedupe_requires_confirmation(self, runner: CliRunner, mock_manager: MagicMock) -> None:
         mem1 = MagicMock()
         mem1.id = "mem-a1"
         mem1.content = "dup"
@@ -266,9 +266,84 @@ class TestDedupeMemories:
         mock_manager.list_memories.return_value = [mem1, mem2]
         mock_manager.delete_memory = AsyncMock(return_value=True)
 
-        result = runner.invoke(memory, ["dedupe"])
+        result = runner.invoke(memory, ["dedupe"], input="n\n")
+
+        assert result.exit_code == 1
+        assert "Delete 1 duplicate memories?" in result.output
+        assert "Aborted!" in result.output
+        mock_manager.delete_memory.assert_not_awaited()
+
+    def test_dedupe_execute_with_yes(self, runner: CliRunner, mock_manager: MagicMock) -> None:
+        mem1 = MagicMock()
+        mem1.id = "mem-a1"
+        mem1.content = "dup"
+        mem1.created_at = "2024-01-01"
+        mem1.project_id = None
+        mem2 = MagicMock()
+        mem2.id = "mem-a2"
+        mem2.content = "dup"
+        mem2.created_at = "2024-01-02"
+        mem2.project_id = None
+        mock_manager.list_memories.return_value = [mem1, mem2]
+        mock_manager.delete_memory = AsyncMock(return_value=True)
+
+        result = runner.invoke(memory, ["dedupe", "--yes"])
         assert result.exit_code == 0
         assert "Deleted 1 duplicate" in result.output
+
+    def test_dedupe_keeps_identical_content_per_project(
+        self, runner: CliRunner, mock_manager: MagicMock
+    ) -> None:
+        mem1 = MagicMock()
+        mem1.id = "mem-a1"
+        mem1.content = "dup"
+        mem1.created_at = "2024-01-01"
+        mem1.project_id = "proj-1"
+        mem2 = MagicMock()
+        mem2.id = "mem-a2"
+        mem2.content = "dup"
+        mem2.created_at = "2024-01-02"
+        mem2.project_id = "proj-2"
+        mem3 = MagicMock()
+        mem3.id = "mem-a3"
+        mem3.content = "dup"
+        mem3.created_at = "2024-01-03"
+        mem3.project_id = "proj-1"
+        mock_manager.list_memories.return_value = [mem1, mem2, mem3]
+        mock_manager.delete_memory = AsyncMock(return_value=True)
+
+        result = runner.invoke(memory, ["dedupe", "--yes"])
+
+        assert result.exit_code == 0
+        assert "Deleted 1 duplicate" in result.output
+        mock_manager.delete_memory.assert_awaited_once_with("mem-a3")
+
+    def test_dedupe_multi_project_duplicate_requires_confirmation(
+        self, runner: CliRunner, mock_manager: MagicMock
+    ) -> None:
+        mem1 = MagicMock()
+        mem1.id = "mem-a1"
+        mem1.content = "dup"
+        mem1.created_at = "2024-01-01"
+        mem1.project_id = "proj-1"
+        mem2 = MagicMock()
+        mem2.id = "mem-a2"
+        mem2.content = "dup"
+        mem2.created_at = "2024-01-02"
+        mem2.project_id = "proj-2"
+        mem3 = MagicMock()
+        mem3.id = "mem-a3"
+        mem3.content = "dup"
+        mem3.created_at = "2024-01-03"
+        mem3.project_id = "proj-1"
+        mock_manager.list_memories.return_value = [mem1, mem2, mem3]
+        mock_manager.delete_memory = AsyncMock(return_value=True)
+
+        result = runner.invoke(memory, ["dedupe"], input="n\n")
+
+        assert result.exit_code == 1
+        assert "Delete 1 duplicate memories?" in result.output
+        mock_manager.delete_memory.assert_not_awaited()
 
     def test_dedupe_no_duplicates(self, runner: CliRunner, mock_manager: MagicMock) -> None:
         mem1 = MagicMock()
@@ -473,6 +548,21 @@ class TestRebuildGraph:
         result = runner.invoke(memory, ["rebuild-graph"])
         assert result.exit_code != 0
 
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_rebuild_graph_start_request_error_exits_cleanly(
+        self, mock_client_fn: MagicMock, runner: CliRunner, mock_manager: MagicMock
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        client.call_http_api.side_effect = OSError("lost daemon")
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["rebuild-graph"])
+
+        assert result.exit_code == 1
+        assert "Error: Could not reach daemon" in result.output
+        assert "lost daemon" in result.output
+
     @patch("gobby.cli.memory.resolve_project_ref", return_value="proj-1")
     @patch("gobby.cli.memory._get_daemon_client")
     def test_rebuild_graph_with_project(
@@ -498,7 +588,7 @@ class TestRebuildGraph:
         assert "background=true" in call_args[0][0]
         assert "gobby memory rebuild-graph --wait -p myproj" in result.output
 
-    @patch("gobby.cli.memory.graph.time.time", side_effect=[0, 11])
+    @patch("gobby.cli.memory.graph.time.monotonic", side_effect=[0, 11])
     @patch("gobby.cli.memory._get_daemon_client")
     def test_rebuild_graph_wait_times_out(
         self,
@@ -519,6 +609,62 @@ class TestRebuildGraph:
 
         assert result.exit_code != 0
         assert "Rebuild job job-1 timed out after 10 seconds" in result.output
+
+    @patch("gobby.cli.memory.graph.time.monotonic", side_effect=[0.0, 9.5])
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_rebuild_graph_wait_caps_status_timeout_by_remaining_deadline(
+        self,
+        mock_client_fn: MagicMock,
+        _mock_time: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        start_resp = MagicMock()
+        start_resp.is_success = True
+        start_resp.json.return_value = {"job_id": "job-1", "already_running": False}
+        status_resp = MagicMock()
+        status_resp.is_success = True
+        status_resp.json.return_value = {
+            "status": "completed",
+            "memories_total": 1,
+            "memories_completed": 1,
+            "errors": 0,
+            "status_counts": {},
+            "result": {"memories_extracted": 1, "memories_processed": 1},
+        }
+        client.call_http_api.side_effect = [start_resp, status_resp]
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["rebuild-graph", "--wait", "--timeout", "10"])
+
+        assert result.exit_code == 0
+        status_call = client.call_http_api.call_args_list[1]
+        assert status_call.kwargs["timeout"] == 0.5
+
+    @patch("gobby.cli.memory.graph.time.monotonic", side_effect=[0.0, 1.0])
+    @patch("gobby.cli.memory._get_daemon_client")
+    def test_rebuild_graph_wait_status_request_error_exits_cleanly(
+        self,
+        mock_client_fn: MagicMock,
+        _mock_time: MagicMock,
+        runner: CliRunner,
+        mock_manager: MagicMock,
+    ) -> None:
+        client = MagicMock()
+        client.check_health.return_value = (True, None)
+        start_resp = MagicMock()
+        start_resp.is_success = True
+        start_resp.json.return_value = {"job_id": "job-1", "already_running": False}
+        client.call_http_api.side_effect = [start_resp, OSError("lost daemon")]
+        mock_client_fn.return_value = client
+
+        result = runner.invoke(memory, ["rebuild-graph", "--wait", "--timeout", "10"])
+
+        assert result.exit_code == 1
+        assert "Error: Could not reach daemon" in result.output
+        assert "lost daemon" in result.output
 
 
 # =============================================================================

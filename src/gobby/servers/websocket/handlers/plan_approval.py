@@ -290,9 +290,9 @@ async def handle_attached_plan_approval(
         return
 
     tmux = get_tmux_manager_for_context(ctx)
-    # Some CLIs (Claude) render more than one native menu shape, where the same
-    # logical option maps onto different keys; those sources need the live pane
-    # to disambiguate before keys are chosen.
+    # Resolve against the live pane when the source either has multiple menu
+    # shapes or a static-menu presence guard. A stale web-UI click must not send
+    # blind digits into whatever the pane currently shows.
     pane_text = ""
     if registry.requires_pane(source):
         try:

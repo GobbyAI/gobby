@@ -6,7 +6,7 @@ import pytest
 
 from gobby.config.persistence import MemoryBackupConfig
 from gobby.storage.memories import Memory
-from gobby.sync.memories import MemoryBackupManager
+from gobby.sync.memories import MemoryBackupManager, MemoryImportError
 
 pytestmark = pytest.mark.unit
 
@@ -251,9 +251,8 @@ async def test_import_handles_invalid_json(sync_manager, tmp_path, caplog):
         "not valid json\n" + json.dumps({"content": "valid", "type": "fact"}) + "\n"
     )
 
-    count = await sync_manager.import_from_files()
-
-    assert count == 1
+    with pytest.raises(MemoryImportError, match="Invalid JSON in memories file on line 1"):
+        await sync_manager.import_from_files()
     assert "Invalid JSON in memories file" in caplog.text
 
 

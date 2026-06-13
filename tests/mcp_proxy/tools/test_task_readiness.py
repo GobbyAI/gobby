@@ -214,6 +214,42 @@ class TestSuggestNextTask:
         assert result["suggestion"]["id"] == "task-1"
         assert "reason" in result
 
+    def test_suggest_next_task_records_task_selection(self, mock_readiness_registry) -> None:
+        """suggest_next_task feeds selected tasks to stuck detection."""
+        from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry
+
+        task_manager = MagicMock()
+        stuck_detector = MagicMock()
+        mock_task = MagicMock()
+        mock_task.id = "task-1"
+        mock_task.priority = 1
+        mock_task.complexity_score = 3
+        mock_task.category = "Unit tests"
+        mock_task.to_brief.return_value = {"id": "task-1", "ref": "#1", "title": "Task"}
+
+        task_manager.list_ready_tasks.return_value = [mock_task]
+        task_manager.list_tasks.return_value = []
+
+        registry = create_readiness_registry(
+            task_manager=task_manager,
+            stuck_detector=stuck_detector,
+        )
+        suggest = registry.get_tool("suggest_next_task")
+
+        result = suggest(session_id="sess-123")
+
+        assert result["suggestion"]["id"] == "task-1"
+        stuck_detector.record_task_selection.assert_called_once_with(
+            session_id="sess-123",
+            task_id="task-1",
+            context={
+                "method": "suggest_next_task",
+                "task_ref": "#1",
+                "parent_task_id": None,
+                "project_id": "test-project-id",
+            },
+        )
+
     def test_suggest_next_task_no_ready_tasks(self, mock_readiness_registry) -> None:
         """Test suggest_next_task when no tasks are ready."""
         from gobby.mcp_proxy.tools.task_readiness import create_readiness_registry

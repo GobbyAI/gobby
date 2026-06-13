@@ -37,3 +37,14 @@ def test_resolve_numeric_string_fails_if_no_project() -> None:
         result = resolve_task_id(mock_manager, "123", project_id=None)
 
     assert result is None
+
+
+def test_resolve_task_id_rejects_empty_ref_before_lookup() -> None:
+    """Test that an empty ref does not fall through to prefix lookup."""
+    mock_manager = MagicMock()
+
+    result = resolve_task_id(mock_manager, "  ", project_id="proj-1")
+
+    assert result is None
+    mock_manager.get_task.assert_not_called()
+    mock_manager.find_tasks_by_prefix.assert_not_called()

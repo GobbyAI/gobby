@@ -17,6 +17,7 @@ from gobby.search.keyword import (
     SearchMode,
     fetch_all,
     normalize_positive_scores,
+    is_pg_search_parse_error,
     pick_search_backend,
     placeholder,
     row_value,
@@ -134,14 +135,18 @@ class TaskSearchBackend:
             parent_task_id=parent_task_id,
             category=category,
         )
-        if filters.current_stage_state:
-            hits = self._search_with_stage_state(
-                query=query,
-                limit=fetch_limit,
-                filters=filters,
-            )
-        else:
-            hits = self._backend.search(query, fetch_limit, filters=filters.keyword_filters())
+        try:
+            if filters.current_stage_state:
+                hits = self._search_with_stage_state(
+                    query=query,
+                    limit=fetch_limit,
+                    filters=filters,
+                )
+            else:
+                hits = self._backend.search(query, fetch_limit, filters=filters.keyword_filters())
+        except Exception as e:
+            logger.warning(f"pg_search task search failed: {e}")
+            return []
 
         results: list[tuple[str, float]] = []
         for hit in hits:
@@ -206,6 +211,9 @@ class TaskSearchBackend:
         try:
             rows = fetch_all(self._db, sql, params)
         except Exception as e:
+            if is_pg_search_parse_error(e):
+                logger.debug("pg_search task stage-state query parse failed: %s", e)
+                return []
             logger.warning(f"pg_search task search failed: {e}")
             return []
         scores = normalize_positive_scores([float(row_value(row, "score")) for row in rows])

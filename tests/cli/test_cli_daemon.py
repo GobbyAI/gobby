@@ -436,12 +436,14 @@ class TestStartCommand:
             cmd = call_args[0][0]
             assert "--verbose" in cmd
 
+    @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
     @patch("gobby.cli.load_full_config_from_db")
     def test_start_daemon_already_running(
         self,
         mock_load_config: MagicMock,
         mock_init_storage: MagicMock,
+        mock_kill_daemons: MagicMock,
         runner: CliRunner,
         mock_daemon_config: MagicMock,
         temp_dir: Path,
@@ -451,14 +453,15 @@ class TestStartCommand:
 
         mock_proc = MagicMock()
         mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
+        gobby_dir = temp_dir / ".gobby"
 
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
+            patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir),
             patch("gobby.cli.daemon._is_process_alive", return_value=True),
             patch("gobby.cli.daemon.psutil.Process", return_value=mock_proc),
         ):
-            gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
 
@@ -470,6 +473,9 @@ class TestStartCommand:
 
             assert result.exit_code == 1
             assert "already running" in result.output
+            assert pid_file.read_text() == str(os.getpid())
+            mock_kill_daemons.assert_not_called()
+            mock_init_storage.assert_not_called()
 
     @patch("gobby.cli.daemon.kill_all_gobby_daemons")
     @patch("gobby.cli.daemon.init_local_storage")
@@ -486,12 +492,13 @@ class TestStartCommand:
         """Test start removes stale PID file when process not running."""
         mock_load_config.return_value = mock_daemon_config
         mock_kill_daemons.return_value = 0
+        gobby_dir = temp_dir / ".gobby"
 
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
+            patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir),
         ):
-            gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
 
@@ -707,14 +714,16 @@ class TestStartCommand:
         """Test start kills existing gobby daemon processes."""
         mock_load_config.return_value = mock_daemon_config
         mock_kill_daemons.return_value = 2  # Two processes killed
+        gobby_dir = temp_dir / ".gobby"
 
         with (
             runner.isolated_filesystem(temp_dir=str(temp_dir)),
             patch("gobby.cli.daemon.Path.home", return_value=temp_dir),
+            patch("gobby.cli.daemon.get_gobby_home", return_value=gobby_dir),
         ):
-            gobby_dir = temp_dir / ".gobby"
             gobby_dir.mkdir(parents=True, exist_ok=True)
             (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "gobby.pid").write_text("99999999")
 
             with (
                 patch("gobby.cli.daemon.is_port_available", return_value=True),
@@ -1409,6 +1418,37 @@ class TestStatusCommand:
             assert "Stopped" in result.output
             assert "Stale PID file found" in result.output
 
+    @patch("gobby.cli.daemon._is_process_alive", return_value=False)
+    @patch("gobby.cli.daemon.get_gobby_home")
+    @patch("gobby.cli.load_full_config_from_db")
+    def test_status_uses_process_alive_check(
+        self,
+        mock_load_config: MagicMock,
+        mock_get_gobby_home: MagicMock,
+        mock_is_process_alive: MagicMock,
+        runner: CliRunner,
+        mock_daemon_config: MagicMock,
+        temp_dir: Path,
+    ) -> None:
+        """Test status treats a PID rejected by the liveness helper as stopped."""
+        mock_load_config.return_value = mock_daemon_config
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            gobby_dir = temp_dir / ".gobby"
+            gobby_dir.mkdir(parents=True, exist_ok=True)
+            (gobby_dir / "logs").mkdir(parents=True, exist_ok=True)
+            mock_get_gobby_home.return_value = gobby_dir
+
+            pid_file = gobby_dir / "gobby.pid"
+            pid_file.write_text(str(os.getpid()))
+
+            result = runner.invoke(cli, ["status"])
+
+            assert result.exit_code == 0
+            assert "Stopped" in result.output
+            assert "Stale PID file found" in result.output
+            mock_is_process_alive.assert_called_once_with(os.getpid())
+
     @patch("gobby.utils.deps.check_config_mismatches", return_value=[])
     @patch(
         "gobby.utils.deps.collect_all_deps",
@@ -1462,10 +1502,12 @@ class TestStatusCommand:
     )
     @patch("gobby.cli.daemon.fetch_rich_status")
     @patch("gobby.cli.daemon.psutil.Process")
+    @patch("gobby.cli.daemon._is_process_alive", return_value=True)
     @patch("gobby.cli.load_full_config_from_db")
     def test_status_psutil_error(
         self,
         mock_load_config: MagicMock,
+        mock_is_process_alive: MagicMock,
         mock_psutil_process: MagicMock,
         mock_fetch_status: MagicMock,
         mock_collect_deps: MagicMock,
@@ -1494,6 +1536,7 @@ class TestStatusCommand:
             # Should still work, just without uptime info
             assert result.exit_code == 0
             assert "Running" in result.output
+            mock_is_process_alive.assert_called_once_with(os.getpid())
 
 
 class TestDaemonCommandsIntegration:

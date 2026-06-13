@@ -249,6 +249,7 @@ class HookManagerFactory:
             session_task_manager=storage.session_task,
             message_processor=message_processor,
             task_manager=storage.task,
+            progress_tracker=autonomous.progress_tracker,
             worktree_manager=storage.worktree,
             session_coordinator=session_coordinator,
             skill_manager=workflow_components.skill_manager,

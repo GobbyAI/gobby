@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import re
+import shutil
 import subprocess  # nosec B404 # git subprocesses use fixed argument vectors.
 from pathlib import Path
 
@@ -20,7 +21,10 @@ def delete_orphan_build_branches(
     tasks: list[Task],
 ) -> tuple[int, list[str]]:
     """Delete local task/integration branches owned by a cleaned build scope."""
-    repo_path = project_path(db, project_id)
+    try:
+        repo_path = project_path(db, project_id)
+    except ValueError as exc:
+        return 0, [str(exc)]
     candidates = build_branch_candidates(db, project_id, tasks, repo_path=repo_path)
     if not candidates:
         return 0, []
@@ -57,7 +61,6 @@ def build_branch_candidates(
     worktrees = LocalWorktreeManager(db)
     clones = LocalCloneManager(db)
     task_manager = LocalTaskManager(db)
-    branches = local_branches(repo_path)
     candidates: set[str] = set()
 
     for task in tasks:
@@ -68,8 +71,6 @@ def build_branch_candidates(
             candidates.add(integration_branch_name(task))
         if task.seq_num:
             candidates.add(default_task_branch_name(task))
-            prefix = f"task-{task.seq_num}-"
-            candidates.update(branch for branch in branches if branch.startswith(prefix))
 
         for worktree_id in (artifacts.worktree_id, artifacts.integration_workspace_id):
             if not worktree_id:
@@ -141,14 +142,24 @@ def project_path(db: HubDatabase, project_id: str) -> Path:
     project = LocalProjectManager(db).get(project_id)
     if project is not None and project.repo_path:
         return Path(project.repo_path)
-    return Path.cwd()
+    raise ValueError("project repo_path is required for build branch cleanup")
 
 
 def git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.CompletedProcess[str]:
+    git_binary = shutil.which("git")
+    command = [git_binary, *args] if git_binary is not None else ["git", *args]
+    if git_binary is None:
+        return subprocess.CompletedProcess(
+            command,
+            returncode=127,
+            stdout="",
+            stderr="git executable not found",
+        )
+
     env = git_subprocess_env()
     if env is None:
         return subprocess.run(  # nosec B603 # git args are fixed by callers.
-            ["git", *args],
+            command,
             cwd=repo_path,
             capture_output=True,
             text=True,
@@ -156,7 +167,7 @@ def git(repo_path: Path, args: list[str], *, timeout: int) -> subprocess.Complet
             check=False,
         )
     return subprocess.run(  # nosec B603 # git args are fixed by callers.
-        ["git", *args],
+        command,
         cwd=repo_path,
         capture_output=True,
         text=True,

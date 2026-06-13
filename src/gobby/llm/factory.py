@@ -6,13 +6,18 @@ Provides factory function for creating LLMService with multi-provider support.
 
 import logging
 
+from gobby.ai import build_daemon_text_generation_service
 from gobby.config.app import DaemonConfig
-from gobby.llm.service import LLMService
+from gobby.llm.service import LLMService, TextGenerationDependency
 
 logger = logging.getLogger(__name__)
 
 
-def create_llm_service(config: DaemonConfig) -> LLMService:
+def create_llm_service(
+    config: DaemonConfig,
+    *,
+    text_generation: TextGenerationDependency | None = None,
+) -> LLMService:
     """
     Create an LLM service for multi-provider support.
 
@@ -26,4 +31,7 @@ def create_llm_service(config: DaemonConfig) -> LLMService:
         service = create_llm_service(config)
         summary = await service.call_feature(config.session_summary, "Summarize this session.")
     """
-    return LLMService(config)
+    return LLMService(
+        config,
+        text_generation or build_daemon_text_generation_service(config),
+    )

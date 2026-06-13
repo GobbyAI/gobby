@@ -71,7 +71,7 @@ def test_gemini_block_blank_reason_uses_sentinel(
         result = adapter.translate_from_hook_response(response, hook_type="BeforeTool")
 
     assert result["decision"] == "block"
-    assert result["continue"] is True
+    assert result["continue"] is False
     assert result["reason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
     assert any(
         record.name == "gobby.adapters.gemini"

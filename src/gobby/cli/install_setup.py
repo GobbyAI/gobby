@@ -34,7 +34,6 @@ from gobby.install.distribution import (
 
 from . import install_setup_gcode as _gcode_impl
 from . import install_setup_ghook as _ghook_impl
-from . import install_setup_gloc as _gloc_impl
 from . import install_setup_gsqz as _gsqz_impl
 from . import install_setup_gwiki as _gwiki_impl
 from .utils import get_install_dir
@@ -480,24 +479,6 @@ def _run_managed_native_binary_installs() -> None:
         click.echo(f"Warning: Failed to install ghook: {e}")
 
     try:
-        gloc_result = _install_gloc()
-        if gloc_result.get("installed"):
-            verb = "Upgraded" if gloc_result.get("upgraded") else "Installed"
-            click.echo(
-                f"{verb} gloc {gloc_result.get('version', '')} "
-                f"via {gloc_result.get('method', 'unknown')} (local LLM launcher)"
-            )
-        elif gloc_result.get("skipped"):
-            reason = gloc_result.get("reason", "")
-            suffix = f" ({reason})" if reason else ""
-            click.echo(f"gloc already installed and up to date{suffix}")
-        else:
-            reason = gloc_result.get("reason", "unknown error")
-            click.echo(f"Warning: Failed to install gloc: {reason}")
-    except Exception as e:
-        click.echo(f"Warning: Failed to install gloc: {e}")
-
-    try:
         gwiki_result = _install_gwiki()
         if gwiki_result.get("installed"):
             verb = "Upgraded" if gwiki_result.get("upgraded") else "Installed"
@@ -692,45 +673,6 @@ def _probe_ghook_version(ghook_path: Path) -> str | None:
 
 def _install_ghook(force: bool = False) -> dict[str, Any]:
     return _ghook_impl.install_ghook(_module(), force)
-
-
-_GLOC_RELEASE_TAG_PREFIX = "gloc-v"
-_GLOC_CRATES_API = "https://crates.io/api/v1/crates/gobby-local"
-_GLOC_VERSION_STAMP = ".gloc-version"
-_GLOC_BIN_NAME = "gloc.exe" if sys.platform == "win32" else "gloc"
-_GLOC_TARGETS = _PLATFORM_TARGETS
-
-
-def _get_latest_gloc_version() -> str | None:
-    return _gloc_impl.get_latest_gloc_version(_module())
-
-
-def _get_installed_gloc_version(bin_dir: Path) -> str | None:
-    return _gloc_impl.get_installed_gloc_version(_module(), bin_dir)
-
-
-def _write_gloc_version_stamp(bin_dir: Path, version: str) -> None:
-    _gloc_impl.write_gloc_version_stamp(_module(), bin_dir, version)
-
-
-def _install_gloc_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
-    return _gloc_impl.install_gloc_from_github(_module(), bin_dir, target, version)
-
-
-def _install_gloc_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    return _gloc_impl.install_gloc_from_cargo_binstall(_module(), bin_dir, version)
-
-
-def _install_gloc_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    return _gloc_impl.install_gloc_from_cargo_install(_module(), bin_dir, version)
-
-
-def _probe_gloc_version(gloc_path: Path) -> str | None:
-    return _gloc_impl.probe_gloc_version(_module(), gloc_path)
-
-
-def _install_gloc(force: bool = False) -> dict[str, Any]:
-    return _gloc_impl.install_gloc(_module(), force)
 
 
 _GWIKI_RELEASE_TAG_PREFIX = "gwiki-v"

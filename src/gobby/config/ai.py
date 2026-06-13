@@ -3,21 +3,27 @@
 from __future__ import annotations
 
 import re
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from gobby.config.feature_base import FeatureProfile, validate_feature_candidates
 
 _LOCAL_ENDPOINT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
+LocalGenerationProvider = Literal["openai-compatible", "lmstudio", "ollama"]
 
 
 class LocalGenerationEndpointConfig(BaseModel):
-    """OpenAI-compatible local text generation endpoint profile."""
+    """Local text generation endpoint profile."""
 
     model_config = ConfigDict(extra="forbid")
 
+    provider: LocalGenerationProvider = Field(
+        default="openai-compatible",
+        description="Local provider adapter: openai-compatible, lmstudio, or ollama.",
+    )
     api_base: str = Field(
-        description="OpenAI-compatible API base URL, for example http://localhost:1234/v1.",
+        description="Provider API base URL, for example http://localhost:1234.",
     )
     model: str = Field(
         description="Default model name for this local generation endpoint.",
@@ -72,6 +78,19 @@ class GenerationConfig(BaseModel):
 
     model_config = ConfigDict(extra="forbid")
 
+    timeout_seconds: float = Field(
+        default=600.0,
+        gt=0.0,
+        description="Maximum seconds to wait for a daemon-owned text generation attempt.",
+    )
+    candidate_timeout_seconds: float = Field(
+        default=60.0,
+        gt=0.0,
+        description=(
+            "Maximum seconds for a single text-generation candidate attempt "
+            "before falling back to the next candidate."
+        ),
+    )
     local: LocalGenerationConfig = Field(
         default_factory=LocalGenerationConfig,
         description="Named local OpenAI-compatible generation endpoints.",

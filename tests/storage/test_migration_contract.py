@@ -180,7 +180,9 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "277_drop_llm_providers_config.sql",
         "278_session_summary_revisions.sql",
         "279_session_summary_revision_integrity.sql",
-        "280_comms_messages_platform_dedup.sql",
+        "280_code_index_projection_cleanup_pending.sql",
+        "281_code_index_failure_attempts.sql",
+        "282_comms_messages_platform_dedup.sql",
     ]
 
 
@@ -301,6 +303,39 @@ def test_session_summary_revisions_migration_and_baseline_define_schema() -> Non
         "summary revision integrity migration", integrity_migration, integrity_snippets
     )
     _assert_contains_all("summary revision integrity baseline", baseline, integrity_snippets)
+
+
+def test_code_index_projection_cleanup_pending_migration_and_baseline_define_schema() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "280_code_index_projection_cleanup_pending.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+
+    migration_snippets = (
+        "CREATE TABLE IF NOT EXISTS code_index_projection_cleanup_pending",
+        "PRIMARY KEY(project_id, store)",
+        "CHECK (store IN ('graph', 'vector'))",
+        "CREATE INDEX IF NOT EXISTS idx_cipcp_updated",
+    )
+    baseline_snippets = tuple(
+        snippet.replace(" IF NOT EXISTS", "") for snippet in migration_snippets
+    )
+    _assert_contains_all("projection cleanup migration", migration, migration_snippets)
+    _assert_contains_all("projection cleanup baseline", baseline, baseline_snippets)
+
+
+def test_code_index_failure_attempts_migration_and_baseline_define_columns() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "281_code_index_failure_attempts.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+
+    snippets = (
+        "vector_sync_attempted_at TIMESTAMPTZ",
+        "summary_attempted_at TIMESTAMPTZ",
+    )
+    _assert_contains_all("code index failure attempts migration", migration, snippets)
+    _assert_contains_all("code index failure attempts baseline", baseline, snippets)
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:

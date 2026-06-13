@@ -9,12 +9,24 @@ from pathlib import Path
 from shutil import copy2
 
 import click
+import yaml
+from pydantic import ValidationError
+from yaml import YAMLError
+
+from gobby.prompts.models import parse_frontmatter
+from gobby.workflows.definitions import AgentDefinitionBody, PipelineDefinition, WorkflowDefinition
 
 # Resource types and their directory names
 RESOURCE_TYPES = {
     "workflow": "workflows",
     "agent": "agents",
     "prompt": "prompts",
+}
+
+IMPORT_EXTENSIONS = {
+    "workflow": {".yaml", ".yml"},
+    "agent": {".yaml", ".yml"},
+    "prompt": {".md"},
 }
 
 
@@ -32,6 +44,19 @@ def _resolve_target_dir(resource_type: str, to: str | None, global_: bool) -> Pa
     return None
 
 
+def _resolve_import_destination(target_dir: Path, dest_name: str) -> Path:
+    """Resolve a single-file import destination within the target resource directory."""
+    dest_path = Path(dest_name)
+    if dest_path.is_absolute() or ".." in dest_path.parts:
+        raise click.ClickException("Import name must be relative and cannot contain '..'.")
+
+    target_root = target_dir.resolve()
+    dest = (target_dir / dest_path).resolve()
+    if not dest.is_relative_to(target_root):
+        raise click.ClickException("Import destination must stay within the target directory.")
+    return dest
+
+
 def _list_resources(source_dir: Path) -> list[Path]:
     """List all resource files in a directory (recursively)."""
     if not source_dir.exists():
@@ -41,6 +66,81 @@ def _list_resources(source_dir: Path) -> list[Path]:
         if item.is_file():
             results.append(item)
     return results
+
+
+def _list_import_resources(source_dir: Path, resource_type: str) -> list[Path]:
+    """List importable resource files in a directory (recursively)."""
+    allowed_extensions = IMPORT_EXTENSIONS[resource_type]
+    return [
+        path for path in _list_resources(source_dir) if path.suffix.lower() in allowed_extensions
+    ]
+
+
+def _validate_import_extension(resource_type: str, source: Path) -> None:
+    """Reject unsupported import file extensions."""
+    if source.suffix.lower() not in IMPORT_EXTENSIONS[resource_type]:
+        allowed = ", ".join(sorted(IMPORT_EXTENSIONS[resource_type]))
+        raise click.ClickException(
+            f"Unsupported {resource_type} import file extension '{source.suffix}'. "
+            f"Expected one of: {allowed}."
+        )
+
+
+def _read_yaml_mapping(source: Path) -> dict[str, object]:
+    """Read a YAML file that must contain a mapping."""
+    try:
+        data = yaml.safe_load(source.read_text(encoding="utf-8"))
+    except UnicodeDecodeError as exc:
+        raise click.ClickException(f"Invalid UTF-8 in {source}: {exc}") from exc
+    except YAMLError as exc:
+        raise click.ClickException(f"Invalid YAML in {source}: {exc}") from exc
+
+    if not isinstance(data, dict):
+        raise click.ClickException(f"Invalid YAML in {source}: expected a mapping.")
+    return data
+
+
+def _validate_workflow_import(source: Path) -> None:
+    """Validate workflow YAML with the workflow definition schemas."""
+    data = _read_yaml_mapping(source)
+    schema_cls = PipelineDefinition if data.get("type") == "pipeline" else WorkflowDefinition
+    try:
+        schema_cls.model_validate(data)
+    except ValidationError as exc:
+        raise click.ClickException(f"Invalid workflow definition in {source}: {exc}") from exc
+
+
+def _validate_agent_import(source: Path) -> None:
+    """Validate agent YAML with the agent definition schema."""
+    data = _read_yaml_mapping(source)
+    raw_name = data.get("name")
+    if not isinstance(raw_name, str) or not raw_name.strip():
+        data["name"] = source.stem
+    try:
+        AgentDefinitionBody.model_validate(data)
+    except ValidationError as exc:
+        raise click.ClickException(f"Invalid agent definition in {source}: {exc}") from exc
+
+
+def _validate_prompt_import(source: Path) -> None:
+    """Validate prompt markdown with the prompt frontmatter parser."""
+    try:
+        content = source.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise click.ClickException(f"Invalid UTF-8 in {source}: {exc}") from exc
+
+    parse_frontmatter(content)
+
+
+def _validate_import_resource(resource_type: str, source: Path) -> None:
+    """Validate one import source against its resource parser/schema."""
+    _validate_import_extension(resource_type, source)
+    if resource_type == "workflow":
+        _validate_workflow_import(source)
+    elif resource_type == "agent":
+        _validate_agent_import(source)
+    else:
+        _validate_prompt_import(source)
 
 
 def _copy_resource(source: Path, target_dir: Path, source_base: Path) -> str:
@@ -167,9 +267,10 @@ def import_cmd(
             source = Path(from_path)
             if source.is_file():
                 # Import a single file directly
-                target_dir.mkdir(parents=True, exist_ok=True)
                 dest_name = name or source.name
-                dest = target_dir / dest_name
+                dest = _resolve_import_destination(target_dir, dest_name)
+                _validate_import_resource(rtype, source)
+                dest.parent.mkdir(parents=True, exist_ok=True)
                 if dest.exists():
                     if not click.confirm(f"Overwrite {dest}?"):
                         continue
@@ -189,7 +290,7 @@ def import_cmd(
         if name:
             specific = source_dir / name
             if not specific.exists():
-                for ext in (".yaml", ".yml", ".md"):
+                for ext in sorted(IMPORT_EXTENSIONS[rtype]):
                     candidate = source_dir / f"{name}{ext}"
                     if candidate.exists():
                         specific = candidate
@@ -197,14 +298,17 @@ def import_cmd(
             if not specific.exists():
                 continue
             if specific.is_file():
-                files = [specific]
+                files = [specific] if specific.suffix.lower() in IMPORT_EXTENSIONS[rtype] else []
             else:
-                files = _list_resources(specific)
+                files = _list_import_resources(specific, rtype)
         else:
-            files = _list_resources(source_dir)
+            files = _list_import_resources(source_dir, rtype)
 
         if not files:
             continue
+
+        for f in files:
+            _validate_import_resource(rtype, f)
 
         click.echo(f"{RESOURCE_TYPES[rtype]}:")
         for f in files:

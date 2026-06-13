@@ -640,6 +640,28 @@ class TestSkillsDocCommand:
                 content = f.read()
             assert "test-skill" in content
 
+    @patch("gobby.cli.skills.get_skill_storage")
+    def test_doc_output_write_error_exits_cleanly(
+        self, mock_get_storage: MagicMock, runner: CliRunner
+    ) -> None:
+        """Test doc with --output handles write errors."""
+        mock_storage = MagicMock()
+        mock_skill = MagicMock()
+        mock_skill.name = "test-skill"
+        mock_skill.description = "A test skill"
+        mock_skill.enabled = True
+        mock_skill.metadata = {"skillport": {"category": "test"}}
+        mock_storage.list_skills.return_value = [mock_skill]
+        mock_get_storage.return_value = mock_storage
+
+        with runner.isolated_filesystem():
+            result = runner.invoke(cli, ["skills", "doc", "--output", "missing/SKILLS.md"])
+
+        assert result.exit_code == 1
+        assert "Error: Failed to write documentation to missing/SKILLS.md:" in result.output
+        assert "Traceback" not in result.output
+        assert isinstance(result.exception, SystemExit)
+
 
 class TestSkillsNewCommand:
     """Tests for gobby skills new command."""

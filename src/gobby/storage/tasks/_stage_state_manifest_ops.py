@@ -172,6 +172,71 @@ class StageStateManifestOps:
         )
         return self.rows.list_for_task(task_id, reader=conn)
 
+    def replace_manifest(
+        self,
+        task_id: str,
+        specs: Sequence[StageManifestSpec],
+        *,
+        expected_existing_shape: Sequence[tuple[str, int, int | None, int | None]],
+        from_state: str,
+        reason: str,
+        by_session_id: str | None,
+        by_actor: str,
+    ) -> list[StageState] | None:
+        self.rows.validate_specs(specs)
+        holder = by_session_id or by_actor
+        snapshot = self.rows.current_stage(task_id)
+        with self.mutexes.mutex(task_id, holder, "replace_manifest", expected_stage=snapshot):
+            existing = self.rows.list_for_task(task_id)
+            existing_shape = [
+                (row.stage_name, row.position, row.max_work_attempts, row.max_review_rounds)
+                for row in existing
+            ]
+            if existing_shape != list(expected_existing_shape):
+                return None
+
+            now = _now()
+            with self.db.transaction() as conn:
+                conn.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task_id,))
+                for spec in sorted(specs, key=lambda item: item.position):
+                    registry = self.rows.registry_entry(spec.stage_name)
+                    conn.execute(
+                        """
+                        INSERT INTO task_stage_states (
+                            task_id, stage_name, position, state, review_policy,
+                            reviewer_agent, work_attempt_count, review_round_count,
+                            max_work_attempts, max_review_rounds, updated_at
+                        )
+                        VALUES (%s, %s, %s, 'ready', %s, %s, 0, 0, %s, %s, %s)
+                        """,
+                        (
+                            task_id,
+                            spec.stage_name,
+                            spec.position,
+                            registry.review_policy,
+                            resolve_stage_reviewer(conn, task_id, registry),
+                            spec.max_work_attempts,
+                            spec.max_review_rounds,
+                            now,
+                        ),
+                    )
+                conn.execute(
+                    """
+                    INSERT INTO task_lifecycle_events (
+                        task_id, from_state, to_state, reason, by_actor
+                    )
+                    VALUES (%s, %s, %s, %s, %s)
+                    """,
+                    (
+                        task_id,
+                        from_state,
+                        f"manifest:{shape_signature_for_specs(specs)}",
+                        reason,
+                        by_actor,
+                    ),
+                )
+        return self.rows.list_for_task(task_id)
+
     def _update_stage_caps(
         self,
         task_id: str,

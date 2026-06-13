@@ -10,23 +10,24 @@ Tests for the gobby-clones MCP server tools:
 """
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.storage.clones import Clone
+from gobby.storage.clones import Clone, CloneStatus
 
 pytestmark = pytest.mark.integration
 
 
 @pytest.fixture
-def mock_clone_storage():
+def mock_clone_storage() -> MagicMock:
     """Create mock clone storage."""
     return MagicMock()
 
 
 @pytest.fixture
-def mock_git_manager():
+def mock_git_manager() -> MagicMock:
     """Create mock git manager."""
     manager = MagicMock()
     manager.repo_path = Path("/tmp/repo")
@@ -34,7 +35,7 @@ def mock_git_manager():
 
 
 @pytest.fixture
-def registry(mock_clone_storage, mock_git_manager):
+def registry(mock_clone_storage: Any, mock_git_manager: Any) -> Any:
     """Create registry with clone tools."""
     from gobby.mcp_proxy.tools.clones import create_clones_registry
 
@@ -48,7 +49,7 @@ def registry(mock_clone_storage, mock_git_manager):
 class TestClonesRegistryCreation:
     """Tests for registry creation."""
 
-    def test_creates_registry_with_expected_tools(self, registry) -> None:
+    def test_creates_registry_with_expected_tools(self, registry: Any) -> None:
         """Registry has all expected tools."""
         tools = registry.list_tools()
         tool_names = [t["name"] for t in tools]
@@ -64,7 +65,9 @@ class TestCreateClone:
     """Tests for create_clone tool."""
 
     @pytest.mark.asyncio
-    async def test_create_clone_success(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_create_clone_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Create clone successfully."""
         mock_git_manager.shallow_clone.return_value = MagicMock(success=True)
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
@@ -94,7 +97,9 @@ class TestCreateClone:
         mock_git_manager.shallow_clone.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_create_clone_git_failure(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_create_clone_git_failure(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Create clone fails when git operation fails."""
         mock_git_manager.shallow_clone.return_value = MagicMock(success=False, error="Clone failed")
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
@@ -109,7 +114,9 @@ class TestCreateClone:
         mock_clone_storage.create.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_create_clone_with_task_id(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_create_clone_with_task_id(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Create clone linked to a task."""
         mock_git_manager.shallow_clone.return_value = MagicMock(success=True)
         mock_git_manager.get_remote_url.return_value = "https://github.com/user/repo.git"
@@ -138,7 +145,9 @@ class TestCreateClone:
         assert result["clone"]["task_id"] == "task-456"
 
     @pytest.mark.asyncio
-    async def test_create_clone_use_local(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_create_clone_use_local(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Create clone with use_local clones base_branch then creates new branch."""
         mock_git_manager.full_clone.return_value = MagicMock(success=True)
         mock_git_manager.run_git_command.return_value = MagicMock(returncode=0)
@@ -189,7 +198,7 @@ class TestGetClone:
     """Tests for get_clone tool."""
 
     @pytest.mark.asyncio
-    async def test_get_clone_by_id(self, registry, mock_clone_storage):
+    async def test_get_clone_by_id(self, registry: Any, mock_clone_storage: Any) -> None:
         """Get clone by ID."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -214,7 +223,7 @@ class TestGetClone:
         mock_clone_storage.get.assert_called_once_with("clone-123")
 
     @pytest.mark.asyncio
-    async def test_get_clone_not_found(self, registry, mock_clone_storage):
+    async def test_get_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Get clone returns error for nonexistent clone."""
         mock_clone_storage.get.return_value = None
 
@@ -228,7 +237,7 @@ class TestListClones:
     """Tests for list_clones tool."""
 
     @pytest.mark.asyncio
-    async def test_list_all_clones(self, registry, mock_clone_storage):
+    async def test_list_all_clones(self, registry: Any, mock_clone_storage: Any) -> None:
         """List all clones."""
         mock_clone_storage.list_clones.return_value = [
             Clone(
@@ -271,7 +280,9 @@ class TestListClones:
         assert result["clones"][1]["id"] == "clone-2"
 
     @pytest.mark.asyncio
-    async def test_list_clones_with_status_filter(self, registry, mock_clone_storage):
+    async def test_list_clones_with_status_filter(
+        self, registry: Any, mock_clone_storage: Any
+    ) -> None:
         """List clones filtered by status."""
         mock_clone_storage.list_clones.return_value = []
 
@@ -282,7 +293,7 @@ class TestListClones:
         assert call_kwargs.get("status") == "active"
 
     @pytest.mark.asyncio
-    async def test_list_clones_empty(self, registry, mock_clone_storage):
+    async def test_list_clones_empty(self, registry: Any, mock_clone_storage: Any) -> None:
         """List clones returns empty list when no clones."""
         mock_clone_storage.list_clones.return_value = []
 
@@ -296,7 +307,9 @@ class TestDeleteClone:
     """Tests for delete_clone tool."""
 
     @pytest.mark.asyncio
-    async def test_delete_clone_success(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_delete_clone_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Delete clone successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -314,18 +327,19 @@ class TestDeleteClone:
             updated_at="now",
         )
         mock_git_manager.delete_clone.return_value = MagicMock(success=True)
-        mock_cursor = MagicMock()
-        mock_cursor.rowcount = 1
         mock_clone_storage.delete.return_value = True
 
         result = await registry.call("delete_clone", {"clone_id": "clone-123"})
 
         assert result["success"] is True
+        mock_clone_storage.update.assert_called_once_with(
+            "clone-123", status=CloneStatus.DELETING.value
+        )
         mock_git_manager.delete_clone.assert_called_once()
         mock_clone_storage.delete.assert_called_once_with("clone-123")
 
     @pytest.mark.asyncio
-    async def test_delete_clone_not_found(self, registry, mock_clone_storage):
+    async def test_delete_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Delete clone returns error for nonexistent clone."""
         mock_clone_storage.get.return_value = None
 
@@ -335,7 +349,9 @@ class TestDeleteClone:
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_delete_clone_force(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_delete_clone_force(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Delete clone with force flag."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -358,15 +374,91 @@ class TestDeleteClone:
         result = await registry.call("delete_clone", {"clone_id": "clone-123", "force": True})
 
         assert result["success"] is True
+        mock_clone_storage.update.assert_called_once_with(
+            "clone-123", status=CloneStatus.DELETING.value
+        )
         call_kwargs = mock_git_manager.delete_clone.call_args.kwargs
         assert call_kwargs.get("force") is True
+
+    @pytest.mark.asyncio
+    async def test_delete_clone_file_failure_preserves_original_record(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Failed file deletion leaves the existing clone record in place."""
+        original_clone = Clone(
+            id="clone-123",
+            project_id="proj-1",
+            branch_name="main",
+            clone_path="/tmp/clones/test",
+            base_branch="main",
+            task_id="task-123",
+            agent_session_id=None,
+            status="active",
+            remote_url=None,
+            last_sync_at=None,
+            cleanup_after=None,
+            created_at="now",
+            updated_at="now",
+        )
+        mock_clone_storage.get.return_value = original_clone
+        mock_git_manager.delete_clone.return_value = MagicMock(
+            success=False, error="permission denied", message=""
+        )
+
+        result = await registry.call("delete_clone", {"clone_id": "clone-123"})
+
+        assert result["success"] is False
+        assert "permission denied" in result["error"]
+        mock_clone_storage.update.assert_any_call("clone-123", status=CloneStatus.DELETING.value)
+        mock_clone_storage.update.assert_any_call("clone-123", status=CloneStatus.ACTIVE.value)
+        mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/test", force=False)
+        mock_clone_storage.delete.assert_not_called()
+        mock_clone_storage.create.assert_not_called()
+        assert mock_clone_storage.get.return_value is original_clone
+        assert original_clone.id == "clone-123"
+        assert original_clone.task_id == "task-123"
+
+    @pytest.mark.asyncio
+    async def test_delete_clone_record_failure_leaves_retryable_deleting_state(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
+        """Failed record deletion leaves a retryable deleting clone record."""
+        mock_clone_storage.get.return_value = Clone(
+            id="clone-123",
+            project_id="proj-1",
+            branch_name="main",
+            clone_path="/tmp/clones/test",
+            base_branch="main",
+            task_id=None,
+            agent_session_id=None,
+            status=CloneStatus.ACTIVE.value,
+            remote_url=None,
+            last_sync_at=None,
+            cleanup_after=None,
+            created_at="now",
+            updated_at="now",
+        )
+        mock_git_manager.delete_clone.return_value = MagicMock(success=True)
+        mock_clone_storage.delete.side_effect = RuntimeError("database unavailable")
+
+        result = await registry.call("delete_clone", {"clone_id": "clone-123"})
+
+        assert result["success"] is False
+        assert "database unavailable" in result["error"]
+        mock_clone_storage.update.assert_called_once_with(
+            "clone-123", status=CloneStatus.DELETING.value
+        )
+        mock_git_manager.delete_clone.assert_called_once_with("/tmp/clones/test", force=False)
+        mock_clone_storage.delete.assert_called_once_with("clone-123")
 
 
 class TestSyncClone:
     """Tests for sync_clone tool."""
 
     @pytest.mark.asyncio
-    async def test_sync_clone_pull_success(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_sync_clone_pull_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Sync clone pull successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -391,7 +483,9 @@ class TestSyncClone:
         mock_git_manager.sync_clone.assert_called_once()
 
     @pytest.mark.asyncio
-    async def test_sync_clone_push_success(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_sync_clone_push_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Sync clone push successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -415,7 +509,7 @@ class TestSyncClone:
         assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_sync_clone_not_found(self, registry, mock_clone_storage):
+    async def test_sync_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Sync clone returns error for nonexistent clone."""
         mock_clone_storage.get.return_value = None
 
@@ -425,7 +519,9 @@ class TestSyncClone:
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_sync_clone_failure(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_sync_clone_failure(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Sync clone handles sync failure."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -453,7 +549,9 @@ class TestMergeCloneToTarget:
     """Tests for merge_clone tool."""
 
     @pytest.mark.asyncio
-    async def test_merge_clone_success(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_merge_clone_success(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Merge clone to target branch successfully."""
         from unittest.mock import MagicMock
 
@@ -497,7 +595,7 @@ class TestMergeCloneToTarget:
         mock_clone_storage.update.assert_called()
 
     @pytest.mark.asyncio
-    async def test_merge_clone_not_found(self, registry, mock_clone_storage):
+    async def test_merge_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Merge fails for nonexistent clone."""
         mock_clone_storage.get.return_value = None
 
@@ -510,7 +608,9 @@ class TestMergeCloneToTarget:
         assert "not found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_merge_clone_fetch_failure(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_merge_clone_fetch_failure(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Merge fails when fetch from clone path fails."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -543,7 +643,9 @@ class TestMergeCloneToTarget:
         assert "fetch" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_merge_clone_with_conflicts(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_merge_clone_with_conflicts(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Merge detects conflicts and reports them."""
         from unittest.mock import MagicMock
 
@@ -584,8 +686,8 @@ class TestMergeCloneToTarget:
 
     @pytest.mark.asyncio
     async def test_merge_clone_sets_cleanup_after(
-        self, registry, mock_clone_storage, mock_git_manager
-    ):
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Successful merge sets cleanup_after to 7 days from now."""
         from unittest.mock import MagicMock
 
@@ -630,7 +732,7 @@ class TestClaimClone:
     """Tests for claim_clone tool."""
 
     @pytest.mark.asyncio
-    async def test_claim_clone_success(self, registry, mock_clone_storage):
+    async def test_claim_clone_success(self, registry: Any, mock_clone_storage: Any) -> None:
         """Claim clone successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -658,7 +760,9 @@ class TestClaimClone:
         mock_clone_storage.claim.assert_called_once_with("clone-123", "sess-1")
 
     @pytest.mark.asyncio
-    async def test_claim_clone_already_claimed(self, registry, mock_clone_storage):
+    async def test_claim_clone_already_claimed(
+        self, registry: Any, mock_clone_storage: Any
+    ) -> None:
         """Claim fails when clone is already claimed by another session."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -686,7 +790,7 @@ class TestClaimClone:
         mock_clone_storage.claim.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_claim_clone_same_session(self, registry, mock_clone_storage):
+    async def test_claim_clone_same_session(self, registry: Any, mock_clone_storage: Any) -> None:
         """Claim succeeds when clone is already claimed by same session."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -713,7 +817,7 @@ class TestClaimClone:
         assert result["success"] is True
 
     @pytest.mark.asyncio
-    async def test_claim_clone_not_found(self, registry, mock_clone_storage):
+    async def test_claim_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Claim fails when clone not found."""
         mock_clone_storage.get.return_value = None
 
@@ -730,7 +834,7 @@ class TestReleaseClone:
     """Tests for release_clone tool."""
 
     @pytest.mark.asyncio
-    async def test_release_clone_success(self, registry, mock_clone_storage):
+    async def test_release_clone_success(self, registry: Any, mock_clone_storage: Any) -> None:
         """Release clone successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -755,7 +859,7 @@ class TestReleaseClone:
         mock_clone_storage.release.assert_called_once_with("clone-123")
 
     @pytest.mark.asyncio
-    async def test_release_clone_not_found(self, registry, mock_clone_storage):
+    async def test_release_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Release fails when clone not found."""
         mock_clone_storage.get.return_value = None
 
@@ -769,7 +873,7 @@ class TestGetCloneByTask:
     """Tests for get_clone_by_task tool."""
 
     @pytest.mark.asyncio
-    async def test_get_clone_by_task_found(self, registry, mock_clone_storage):
+    async def test_get_clone_by_task_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Get clone linked to task."""
         mock_clone_storage.get_by_task.return_value = Clone(
             id="clone-123",
@@ -795,7 +899,9 @@ class TestGetCloneByTask:
         mock_clone_storage.get_by_task.assert_called_once_with("task-456")
 
     @pytest.mark.asyncio
-    async def test_get_clone_by_task_not_found(self, registry, mock_clone_storage):
+    async def test_get_clone_by_task_not_found(
+        self, registry: Any, mock_clone_storage: Any
+    ) -> None:
         """Get clone returns success with null clone when no clone linked to task."""
         mock_clone_storage.get_by_task.return_value = None
 
@@ -809,7 +915,7 @@ class TestLinkTaskToClone:
     """Tests for link_task_to_clone tool."""
 
     @pytest.mark.asyncio
-    async def test_link_task_success(self, registry, mock_clone_storage):
+    async def test_link_task_success(self, registry: Any, mock_clone_storage: Any) -> None:
         """Link task to clone successfully."""
         mock_clone_storage.get.return_value = Clone(
             id="clone-123",
@@ -836,7 +942,7 @@ class TestLinkTaskToClone:
         mock_clone_storage.update.assert_called_once_with("clone-123", task_id="task-456")
 
     @pytest.mark.asyncio
-    async def test_link_task_clone_not_found(self, registry, mock_clone_storage):
+    async def test_link_task_clone_not_found(self, registry: Any, mock_clone_storage: Any) -> None:
         """Link task fails when clone not found."""
         mock_clone_storage.get.return_value = None
 
@@ -852,7 +958,7 @@ class TestGetCloneStats:
     """Tests for get_clone_stats tool."""
 
     @pytest.mark.asyncio
-    async def test_get_clone_stats(self, registry, mock_clone_storage):
+    async def test_get_clone_stats(self, registry: Any, mock_clone_storage: Any) -> None:
         """Get clone statistics."""
         mock_clone_storage.count_by_status.return_value = {
             "active": 3,
@@ -870,7 +976,7 @@ class TestGetCloneStats:
         mock_clone_storage.count_by_status.assert_called_once_with("proj-1")
 
     @pytest.mark.asyncio
-    async def test_get_clone_stats_empty(self, registry, mock_clone_storage):
+    async def test_get_clone_stats_empty(self, registry: Any, mock_clone_storage: Any) -> None:
         """Get clone stats with no clones."""
         mock_clone_storage.count_by_status.return_value = {}
 
@@ -884,7 +990,7 @@ class TestDetectStaleClones:
     """Tests for detect_stale_clones tool."""
 
     @pytest.mark.asyncio
-    async def test_detect_stale_clones(self, registry, mock_clone_storage):
+    async def test_detect_stale_clones(self, registry: Any, mock_clone_storage: Any) -> None:
         """Detect stale clones returns results."""
         mock_clone_storage.find_stale.return_value = [
             Clone(
@@ -916,7 +1022,7 @@ class TestDetectStaleClones:
         )
 
     @pytest.mark.asyncio
-    async def test_detect_stale_clones_empty(self, registry, mock_clone_storage):
+    async def test_detect_stale_clones_empty(self, registry: Any, mock_clone_storage: Any) -> None:
         """Detect stale clones returns empty list."""
         mock_clone_storage.find_stale.return_value = []
 
@@ -931,7 +1037,7 @@ class TestCleanupStaleClones:
     """Tests for cleanup_stale_clones tool."""
 
     @pytest.mark.asyncio
-    async def test_cleanup_dry_run(self, registry, mock_clone_storage):
+    async def test_cleanup_dry_run(self, registry: Any, mock_clone_storage: Any) -> None:
         """Cleanup in dry_run mode reports but doesn't clean."""
         mock_clone_storage.cleanup_stale.return_value = [
             Clone(
@@ -963,7 +1069,7 @@ class TestCleanupStaleClones:
         )
 
     @pytest.mark.asyncio
-    async def test_cleanup_actual_run(self, registry, mock_clone_storage):
+    async def test_cleanup_actual_run(self, registry: Any, mock_clone_storage: Any) -> None:
         """Cleanup marks stale clones."""
         mock_clone_storage.cleanup_stale.return_value = [
             Clone(
@@ -991,7 +1097,9 @@ class TestCleanupStaleClones:
         assert result["cleaned"][0]["files_deleted"] is False
 
     @pytest.mark.asyncio
-    async def test_cleanup_with_delete_files(self, registry, mock_clone_storage, mock_git_manager):
+    async def test_cleanup_with_delete_files(
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Cleanup deletes clone files when delete_files=True."""
         mock_clone_storage.cleanup_stale.return_value = [
             Clone(
@@ -1024,8 +1132,8 @@ class TestCleanupStaleClones:
 
     @pytest.mark.asyncio
     async def test_cleanup_delete_files_failure(
-        self, registry, mock_clone_storage, mock_git_manager
-    ):
+        self, registry: Any, mock_clone_storage: Any, mock_git_manager: Any
+    ) -> None:
         """Cleanup reports file deletion failure."""
         mock_clone_storage.cleanup_stale.return_value = [
             Clone(

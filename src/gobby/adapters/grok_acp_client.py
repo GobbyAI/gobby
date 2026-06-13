@@ -73,12 +73,18 @@ class GrokACPClient(ACPClient):
                 },
             )
         if update_type == "tool_call":
+            tool_input = {}
+            for input_key in ("rawInput", "input"):
+                if input_key in update:
+                    value = update[input_key]
+                    tool_input = value if isinstance(value, dict) else {}
+                    break
             return StreamEvent(
                 event_type="tool_call",
                 data={
                     "call_id": update.get("toolCallId"),
                     "tool_name": update.get("title") or update.get("name"),
-                    "tool_input": update.get("rawInput") or update.get("input") or {},
+                    "tool_input": tool_input,
                 },
             )
         if update_type == "tool_call_update":

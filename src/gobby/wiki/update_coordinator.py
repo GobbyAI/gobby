@@ -30,7 +30,6 @@ EXPLICIT_WRITE_COMMANDS = frozenset(
         "ingest-file",
         "ingest-url",
         "collect",
-        "research",
         "compile",
         "remove-source",
         "refresh",

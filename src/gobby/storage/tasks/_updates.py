@@ -16,6 +16,36 @@ from gobby.storage.tasks._models import (
 from gobby.storage.tasks._read import get_task
 
 
+def _locked_parent_task_id(conn: Any, task_id: str) -> str | None:
+    row = conn.execute(
+        "SELECT parent_task_id FROM tasks WHERE id = %s FOR UPDATE",
+        (task_id,),
+    ).fetchone()
+    if not row:
+        raise ValueError(f"Task {task_id} not found")
+    return cast(str | None, row["parent_task_id"])
+
+
+def _validate_parent_task_id_update(
+    conn: Any, task_id: str, proposed_parent_task_id: str | None
+) -> None:
+    _locked_parent_task_id(conn, task_id)
+    if proposed_parent_task_id is None:
+        return
+    if proposed_parent_task_id == task_id:
+        raise ValueError("Cannot set a task as its own parent")
+
+    ancestor_id: str | None = proposed_parent_task_id
+    visited: set[str] = set()
+    while ancestor_id:
+        if ancestor_id == task_id:
+            raise ValueError("Cannot set a task parent to one of its descendants")
+        if ancestor_id in visited:
+            raise ValueError("Cannot set task parent because the parent hierarchy has a cycle")
+        visited.add(ancestor_id)
+        ancestor_id = _locked_parent_task_id(conn, ancestor_id)
+
+
 def update_task(
     db: HubDatabase,
     task_id: str,
@@ -221,6 +251,8 @@ def update_task(
     sql = f"UPDATE tasks SET {', '.join(updates)} WHERE id = %s"  # nosec B608
 
     with db.transaction() as conn:
+        if parent_task_id is not UNSET:
+            _validate_parent_task_id_update(conn, task_id, cast(str | None, parent_task_id))
         cursor = conn.execute(sql, tuple(params))
         if cursor.rowcount == 0:
             raise ValueError(f"Task {task_id} not found")
