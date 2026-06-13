@@ -2215,6 +2215,17 @@ class HangingProcess(FakeProcess):
         super().kill()
 
 
+def _assert_droid_isolated_env(env: dict[str, str]) -> Path:
+    temp_home = Path(env["HOME"])
+    assert temp_home.name.startswith("gobby-droid-feature-")
+    assert Path(env["XDG_CONFIG_HOME"]) == temp_home / ".config"
+    assert Path(env["XDG_DATA_HOME"]) == temp_home / ".local" / "share"
+    assert Path(env["XDG_STATE_HOME"]) == temp_home / ".local" / "state"
+    assert Path(env["XDG_CACHE_HOME"]) == temp_home / ".cache"
+    assert env["GOBBY_HOOKS_DISABLED"] == "1"
+    return temp_home
+
+
 @pytest.mark.asyncio
 async def test_gemini_cli_text_generate_adapter_deletes_headless_session(
     monkeypatch: pytest.MonkeyPatch,
@@ -2447,8 +2458,13 @@ async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
 @pytest.mark.asyncio
 async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
-    calls: list[dict[str, object]] = []
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    monkeypatch.setenv("HOME", str(real_home))
+    monkeypatch.delenv("FACTORY_API_KEY", raising=False)
+    calls: list[tuple[tuple[str, ...], str | None, dict[str, str]]] = []
 
     async def fake_create_subprocess_exec(
         *command: str,
@@ -2457,15 +2473,7 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
         cwd: str | None,
         env: dict[str, str],
     ) -> FakeProcess:
-        calls.append(
-            {
-                "command": command,
-                "stdout": stdout,
-                "stderr": stderr,
-                "cwd": cwd,
-                "env": env,
-            }
-        )
+        calls.append((command, cwd, env))
         return FakeProcess(b"done\n")
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
@@ -2481,7 +2489,8 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
     )
 
     assert response == "done"
-    assert calls[0]["command"] == (
+    command, cwd, env = calls[0]
+    assert command == (
         "/usr/local/bin/droid",
         "exec",
         "--output-format",
@@ -2490,14 +2499,22 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
         "claude-opus-4-7",
         "system\n\nexplain",
     )
-    assert calls[0]["cwd"] == "/tmp/project"
-    assert calls[0]["env"]["GOBBY_HOOKS_DISABLED"] == "1"  # type: ignore[index]
+    assert cwd == "/tmp/project"
+    temp_home = _assert_droid_isolated_env(env)
+    assert not temp_home.exists()
 
 
 @pytest.mark.asyncio
 async def test_droid_cli_text_generate_adapter_reports_exec_failure(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    monkeypatch.setenv("HOME", str(real_home))
+    monkeypatch.delenv("FACTORY_API_KEY", raising=False)
+    temp_homes: list[Path] = []
+
     async def fake_create_subprocess_exec(
         *_command: str,
         stdout: int,
@@ -2505,20 +2522,30 @@ async def test_droid_cli_text_generate_adapter_reports_exec_failure(
         cwd: str | None,
         env: dict[str, str],
     ) -> FakeProcess:
+        temp_homes.append(Path(env["HOME"]))
         return FakeProcess(b"", b"bad auth", returncode=2)
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     adapter = DroidCLITextGenerateAdapter(command_path="/usr/local/bin/droid")
 
-    with pytest.raises(RuntimeError, match="Droid exec failed with exit code 2: bad auth"):
+    with pytest.raises(RuntimeError, match="bad auth.*set FACTORY_API_KEY"):
         await adapter.generate(TextGenerationRequest(prompt="hello"))
+
+    assert temp_homes
+    assert all(not temp_home.exists() for temp_home in temp_homes)
 
 
 @pytest.mark.asyncio
 async def test_droid_cli_text_generate_adapter_reports_timeout_with_command(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    monkeypatch.setenv("HOME", str(real_home))
+    monkeypatch.delenv("FACTORY_API_KEY", raising=False)
     process = HangingProcess()
+    temp_homes: list[Path] = []
 
     async def fake_create_subprocess_exec(
         *_command: str,
@@ -2527,6 +2554,7 @@ async def test_droid_cli_text_generate_adapter_reports_timeout_with_command(
         cwd: str | None,
         env: dict[str, str],
     ) -> FakeProcess:
+        temp_homes.append(Path(env["HOME"]))
         return process
 
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
@@ -2541,3 +2569,116 @@ async def test_droid_cli_text_generate_adapter_reports_timeout_with_command(
     assert process.killed is True
     assert "Droid exec timed out after 0.01s" in str(exc_info.value)
     assert "/usr/local/bin/droid exec --output-format text 'hello world'" in str(exc_info.value)
+    assert temp_homes
+    assert all(not temp_home.exists() for temp_home in temp_homes)
+
+
+@pytest.mark.asyncio
+async def test_droid_cli_text_generate_adapter_cleans_temp_home_after_setup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_home = tmp_path / "real-home"
+    real_home.mkdir()
+    monkeypatch.setenv("HOME", str(real_home))
+    monkeypatch.delenv("FACTORY_API_KEY", raising=False)
+    temp_homes: list[Path] = []
+
+    async def fake_create_subprocess_exec(
+        *_command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+    ) -> FakeProcess:
+        temp_home = Path(env["HOME"])
+        temp_homes.append(temp_home)
+        (temp_home / ".factory" / "sessions").mkdir(parents=True)
+        (temp_home / ".factory" / "sessions" / "started.jsonl").write_text(
+            "{}\n",
+            encoding="utf-8",
+        )
+        raise OSError("exec setup failed")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = DroidCLITextGenerateAdapter(command_path="/usr/local/bin/droid")
+
+    with pytest.raises(OSError, match="exec setup failed"):
+        await adapter.generate(TextGenerationRequest(prompt="hello"))
+
+    assert temp_homes
+    assert all(not temp_home.exists() for temp_home in temp_homes)
+
+
+@pytest.mark.asyncio
+async def test_droid_cli_text_generate_adapter_seeds_auth_config_without_history(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    real_home = tmp_path / "real-home"
+    source_factory = real_home / ".factory"
+    allowed_files = {
+        "auth.v2.file",
+        "auth.v2.key",
+        "cache/certs/factory-cli-certs.pem",
+        "certs/system-certs-cache.json",
+        "cli-hints.json",
+        "droids/worker.md",
+        "hooks/hooks.json",
+        "host.json",
+        "mcp.json",
+        "plugins/installed_plugins.json",
+        "plugins/marketplaces/factory-plugins/index.json",
+    }
+    excluded_files = {
+        "background-processes.json",
+        "background-tasks.json",
+        "bin/rg",
+        "cache/search/manifest.json",
+        "cache/session-discovery-index.json",
+        "history.json",
+        "logs/console.log",
+        "plugins/cache/factory-plugins/package.json",
+        "sessions/project/session.jsonl",
+        "telemetry/events.json",
+        "temp/runtime.json",
+    }
+    for relative_file in allowed_files | excluded_files:
+        file_path = source_factory / relative_file
+        file_path.parent.mkdir(parents=True, exist_ok=True)
+        file_path.write_text(relative_file, encoding="utf-8")
+
+    monkeypatch.setenv("HOME", str(real_home))
+    monkeypatch.delenv("FACTORY_API_KEY", raising=False)
+    copied_files: set[str] = set()
+    temp_homes: list[Path] = []
+
+    async def fake_create_subprocess_exec(
+        *_command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+    ) -> FakeProcess:
+        temp_home = Path(env["HOME"])
+        temp_homes.append(temp_home)
+        seeded_factory = temp_home / ".factory"
+        copied_files.update(
+            sorted(
+                str(path.relative_to(seeded_factory))
+                for path in seeded_factory.rglob("*")
+                if path.is_file()
+            )
+        )
+        return FakeProcess(b"done\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = DroidCLITextGenerateAdapter(command_path="/usr/local/bin/droid")
+
+    response = await adapter.generate(TextGenerationRequest(prompt="hello"))
+
+    assert response == "done"
+    assert allowed_files <= copied_files
+    assert copied_files.isdisjoint(excluded_files)
+    assert temp_homes
+    assert all(not temp_home.exists() for temp_home in temp_homes)

@@ -39,6 +39,33 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger("gobby.ai.text_generation")
 _BORROWED_THREAD_ARCHIVE_TIMEOUT_SECONDS = 2.0
+_DROID_AUTH_ERROR_HINT = (
+    "Droid ran in an isolated temporary home; set FACTORY_API_KEY for headless auth "
+    "without reusing your real Droid session state."
+)
+_DROID_FACTORY_EXCLUDED_NAMES = frozenset(
+    {
+        "sessions",
+        "logs",
+        "temp",
+        "telemetry",
+        "background-processes.json",
+        "background-tasks.json",
+        "history.json",
+    }
+)
+_DROID_FACTORY_ALLOWED_TOP_LEVEL_DIRS = frozenset({"certs", "droids", "hooks"})
+_DROID_FACTORY_ALLOWED_CACHE_DIRS = frozenset({"certs"})
+_DROID_FACTORY_ALLOWED_PLUGIN_FILES = frozenset(
+    {
+        ("plugins", "installed_plugins.json"),
+        ("plugins", "known_marketplaces.json"),
+    }
+)
+_DROID_FACTORY_ALLOWED_PLUGIN_DIRS = frozenset({("plugins", "marketplaces")})
+_DROID_FACTORY_ALLOWED_FILE_KEYWORDS = frozenset(
+    {"auth", "cert", "config", "credential", "hint", "host", "mcp", "setting", "token"}
+)
 
 
 _GEMINI_DENY_ALL_POLICY = """[[rule]]
@@ -502,6 +529,103 @@ def _discard_codex_thread_state(client: CodexAppServerClientLike, thread_id: str
             mapping.pop(thread_id, None)
 
 
+def _droid_isolated_env(base_env: Mapping[str, str], temp_home: Path) -> dict[str, str]:
+    """Build a Droid environment rooted entirely in temp state."""
+    xdg_config_home = temp_home / ".config"
+    xdg_data_home = temp_home / ".local" / "share"
+    xdg_state_home = temp_home / ".local" / "state"
+    xdg_cache_home = temp_home / ".cache"
+    for path in (xdg_config_home, xdg_data_home, xdg_state_home, xdg_cache_home):
+        path.mkdir(parents=True, exist_ok=True)
+
+    env = dict(base_env)
+    env.update(
+        {
+            "HOME": str(temp_home),
+            "XDG_CONFIG_HOME": str(xdg_config_home),
+            "XDG_DATA_HOME": str(xdg_data_home),
+            "XDG_STATE_HOME": str(xdg_state_home),
+            "XDG_CACHE_HOME": str(xdg_cache_home),
+            "GOBBY_HOOKS_DISABLED": "1",
+        }
+    )
+    return env
+
+
+def _seed_droid_factory_state(base_env: Mapping[str, str], temp_home: Path) -> None:
+    """Copy only auth/config support from the real Factory home into temp state."""
+    if base_env.get("FACTORY_API_KEY"):
+        return
+
+    original_home = base_env.get("HOME")
+    if not original_home:
+        return
+
+    source_factory = Path(original_home) / ".factory"
+    if not source_factory.is_dir():
+        return
+
+    target_factory = temp_home / ".factory"
+    for source_path in source_factory.rglob("*"):
+        if source_path.is_symlink():
+            continue
+        relative_path = source_path.relative_to(source_factory)
+        if not _should_seed_droid_factory_path(relative_path):
+            continue
+
+        target_path = target_factory / relative_path
+        if source_path.is_dir():
+            target_path.mkdir(parents=True, exist_ok=True)
+        elif source_path.is_file():
+            target_path.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_path, target_path)
+
+
+def _should_seed_droid_factory_path(relative_path: Path) -> bool:
+    parts = relative_path.parts
+    if not parts:
+        return False
+    if any(part in _DROID_FACTORY_EXCLUDED_NAMES for part in parts):
+        return False
+    if parts[:2] == ("cache", "search"):
+        return False
+
+    top_level = parts[0]
+    if top_level in _DROID_FACTORY_ALLOWED_TOP_LEVEL_DIRS:
+        return True
+    if top_level == "cache" and len(parts) > 1:
+        return parts[1] in _DROID_FACTORY_ALLOWED_CACHE_DIRS
+    if top_level == "plugins":
+        return (
+            parts in _DROID_FACTORY_ALLOWED_PLUGIN_FILES
+            or parts[:2] in _DROID_FACTORY_ALLOWED_PLUGIN_DIRS
+        )
+    if len(parts) == 1:
+        normalized_name = top_level.lower().replace("-", "_")
+        return any(keyword in normalized_name for keyword in _DROID_FACTORY_ALLOWED_FILE_KEYWORDS)
+    return False
+
+
+def _is_droid_auth_error(message: str) -> bool:
+    normalized_message = message.lower().replace("-", " ")
+    return any(
+        marker in normalized_message
+        for marker in (
+            "api key",
+            "auth",
+            "credential",
+            "forbidden",
+            "log in",
+            "login",
+            "sign in",
+            "token",
+            "unauthorized",
+            "401",
+            "403",
+        )
+    )
+
+
 class DroidCLITextGenerateAdapter:
     """One-shot text_generate adapter for Droid's noninteractive exec transport."""
 
@@ -532,33 +656,39 @@ class DroidCLITextGenerateAdapter:
         command = self.build_command(request)
         env = os.environ.copy()
         env.update(self._env)
-        env["GOBBY_HOOKS_DISABLED"] = "1"
-        process = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=request.cwd,
-            env=env,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                process.communicate(),
-                timeout=self._timeout_seconds,
+
+        with tempfile.TemporaryDirectory(prefix="gobby-droid-feature-") as temp_dir:
+            temp_home = Path(temp_dir)
+            _seed_droid_factory_state(env, temp_home)
+            isolated_env = _droid_isolated_env(env, temp_home)
+            process = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                cwd=request.cwd,
+                env=isolated_env,
             )
-        except TimeoutError as exc:
-            if process.returncode is None:
-                with contextlib.suppress(ProcessLookupError):
-                    process.kill()
-                with contextlib.suppress(TimeoutError):
-                    await asyncio.wait_for(process.wait(), timeout=2.0)
-            raise RuntimeError(
-                f"Droid exec timed out after {self._timeout_seconds:g}s: {shlex.join(command)}"
-            ) from exc
-        returncode = process.returncode
-        if returncode:
-            message = _decode(stderr).strip() or _decode(stdout).strip()
-            raise RuntimeError(f"Droid exec failed with exit code {returncode}: {message}")
-        return _decode(stdout).strip()
+            try:
+                stdout, stderr = await asyncio.wait_for(
+                    process.communicate(),
+                    timeout=self._timeout_seconds,
+                )
+            except TimeoutError as exc:
+                if process.returncode is None:
+                    with contextlib.suppress(ProcessLookupError):
+                        process.kill()
+                    with contextlib.suppress(TimeoutError):
+                        await asyncio.wait_for(process.wait(), timeout=2.0)
+                raise RuntimeError(
+                    f"Droid exec timed out after {self._timeout_seconds:g}s: {shlex.join(command)}"
+                ) from exc
+            returncode = process.returncode
+            if returncode:
+                message = _decode(stderr).strip() or _decode(stdout).strip()
+                if not env.get("FACTORY_API_KEY") and _is_droid_auth_error(message):
+                    message = f"{message} {_DROID_AUTH_ERROR_HINT}"
+                raise RuntimeError(f"Droid exec failed with exit code {returncode}: {message}")
+            return _decode(stdout).strip()
 
 
 def _claude_text_generate_adapter(config: DaemonConfig) -> TextGenerateAdapter:
