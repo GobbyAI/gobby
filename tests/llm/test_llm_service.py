@@ -86,7 +86,6 @@ async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfi
     assert request.system_prompt == "system"
     assert request.profile == "feature_low"
     assert request.candidates == ("claude/haiku",)
-    assert request.candidate_timeout_seconds is None
     assert request.caller == "test"
     assert request.cwd == "/tmp/project"
 
@@ -106,18 +105,6 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
     assert request.profile == "feature_low"
     assert request.candidates == ("claude/haiku",)
     assert request.cwd == "/tmp/project"
-
-
-@pytest.mark.asyncio
-async def test_call_json_feature_forwards_candidate_timeout(llm_config: DaemonConfig) -> None:
-    fake_generation = FakeTextGeneration()
-    service = LLMService(llm_config, text_generation=fake_generation)
-    config = DigestConfig(candidates=["claude/haiku"], candidate_timeout_seconds=123.0)
-
-    await service.call_json_feature(config, "prompt")
-
-    request = fake_generation.requests[0]
-    assert request.candidate_timeout_seconds == 123.0
 
 
 def test_enabled_providers_reflects_text_generation_registry(llm_config: DaemonConfig) -> None:

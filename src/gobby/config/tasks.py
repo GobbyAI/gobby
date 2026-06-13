@@ -170,14 +170,6 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default=True,
         description="Enable automated task validation",
     )
-    candidate_timeout_seconds: float | None = Field(
-        default=180.0,
-        gt=0.0,
-        description=(
-            "Task validation prompts include diffs and verification evidence, so they need "
-            "a longer candidate deadline than small feature calls."
-        ),
-    )
     system_prompt: str = Field(
         default="You are a QA validator. Output ONLY valid JSON. No markdown, no explanation, no code blocks. Just the raw JSON object.",
         description="System prompt for task validation",

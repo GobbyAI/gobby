@@ -21,7 +21,6 @@ class TextGenerationRequest:
     system_prompt: str | None = None
     model: str | None = None
     max_tokens: int | None = None
-    candidate_timeout_seconds: float | None = None
     caller: str | None = None
     cwd: str | None = None
 
