@@ -261,6 +261,93 @@ class TestUpdateRule:
         data = resp.json()
         assert data["rule"]["description"] == "Updated"
 
+    def test_renames_rule(
+        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        rule_id = _seed_rule(def_manager, name="my-rule")
+
+        resp = client.put("/api/rules/my-rule", json={"name": "renamed-rule"})
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rule"]["name"] == "renamed-rule"
+        assert def_manager.get(rule_id).name == "renamed-rule"
+        assert client.get("/api/rules/my-rule").status_code == 404
+        assert client.get("/api/rules/renamed-rule").status_code == 200
+
+    def test_rename_collision_check_is_rule_scoped(
+        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _seed_rule(def_manager, name="my-rule")
+        def_manager.create(
+            name="workflow-name",
+            definition_json=json.dumps({"steps": []}),
+            workflow_type="workflow",
+            source="template",
+        )
+
+        resp = client.put("/api/rules/my-rule", json={"name": "workflow-name"})
+
+        assert resp.status_code == 200
+        assert resp.json()["rule"]["name"] == "workflow-name"
+
+    def test_rejects_rule_name_collision(
+        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _seed_rule(def_manager, name="my-rule")
+        _seed_rule(def_manager, name="existing-rule")
+
+        resp = client.put("/api/rules/my-rule", json={"name": "existing-rule"})
+
+        assert resp.status_code == 409
+
+    def test_rejects_bundled_rule_rename(
+        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        rule_id = _seed_rule(def_manager, name="bundled-rule", source="template")
+
+        resp = client.put("/api/rules/bundled-rule", json={"name": "custom-name"})
+
+        assert resp.status_code == 400
+        assert resp.json()["detail"] == "Bundled template rules cannot be renamed"
+        assert def_manager.get(rule_id).name == "bundled-rule"
+
+    def test_renames_and_updates_definition(
+        self, client: TestClient, def_manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        rule_id = _seed_rule(def_manager, name="my-rule")
+
+        resp = client.put(
+            "/api/rules/my-rule",
+            json={
+                "name": "renamed-rule",
+                "definition": {
+                    "name": "body-name-is-row-metadata-only",
+                    "event": "stop",
+                    "group": "updated-group",
+                    "effects": [{"type": "block", "reason": "updated"}],
+                    "description": "From YAML",
+                    "enabled": False,
+                    "priority": 7,
+                    "tags": ["yaml"],
+                },
+            },
+        )
+
+        assert resp.status_code == 200
+        data = resp.json()
+        assert data["rule"]["name"] == "renamed-rule"
+        assert data["rule"]["event"] == "stop"
+        assert data["rule"]["group"] == "updated-group"
+        assert data["rule"]["enabled"] is False
+        assert data["rule"]["priority"] == 7
+        assert data["rule"]["description"] == "From YAML"
+
+        stored_body = json.loads(def_manager.get(rule_id).definition_json)
+        assert "name" not in stored_body
+        assert stored_body["event"] == "stop"
+        assert stored_body["group"] == "updated-group"
+
     def test_not_found(self, client: TestClient) -> None:
         resp = client.put("/api/rules/nonexistent", json={"priority": 5})
         assert resp.status_code == 404

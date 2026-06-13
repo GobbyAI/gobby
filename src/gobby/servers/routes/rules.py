@@ -22,6 +22,7 @@ from gobby.mcp_proxy.tools.workflows._rules import (
 )
 from gobby.storage.config_store import ConfigStore
 from gobby.workflows.definitions import RuleDefinitionBody
+from gobby.workflows.loader import _is_bundled_template
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -50,6 +51,7 @@ class RuleUpdateRequest(BaseModel):
     definition: dict[str, Any] | None = Field(
         default=None, description="Full rule definition (replaces body + metadata)"
     )
+    name: str | None = Field(default=None, description="New rule name (rename)")
     description: str | None = Field(default=None, description="New description")
     enabled: bool | None = Field(default=None, description="New enabled state")
     priority: int | None = Field(default=None, description="New priority")
@@ -303,6 +305,27 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             definition.pop("name", None)
 
             fields["definition_json"] = json.dumps(definition)
+
+        new_name = fields.get("name")
+        if new_name is not None and new_name != row.name:
+            if _is_bundled_template(row):
+                raise HTTPException(
+                    status_code=400,
+                    detail="Bundled template rules cannot be renamed",
+                )
+            existing_rule = next(
+                (
+                    candidate
+                    for candidate in manager.list_all(workflow_type="rule")
+                    if candidate.name == new_name and candidate.id != row.id
+                ),
+                None,
+            )
+            if existing_rule is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail=f"Rule '{new_name}' already exists",
+                )
 
         if not fields:
             raise HTTPException(status_code=400, detail="No fields to update")
