@@ -2,7 +2,6 @@
  * Shared sub-tab utility used inside SidebarPanel.headerContent across surfaces:
  *   - workflows/PipelinesTab.tsx
  *   - agents/AgentEditForm.tsx
- *   - rules/RuleEditForm.tsx
  *
  * Each consumer surface migrates these directly to Tailwind utilities under
  * its own #13463 child task. Once all three consumers are converted, this

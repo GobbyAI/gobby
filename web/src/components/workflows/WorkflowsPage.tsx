@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { TabBar } from "../shared/TabBar";
-import { RulesTab } from "./RulesTab";
 import { AgentsTab } from "./AgentsTab";
 import { PipelinesTab } from "./PipelinesTab";
 import { ProfilesTab } from "./ProfilesTab";
@@ -47,13 +46,12 @@ import {
 } from "./workflows-styles";
 import { Heading } from '../shared/Heading'
 
-type ActiveTab = "pipelines" | "agents" | "rules" | "stages" | "profiles";
+type ActiveTab = "pipelines" | "agents" | "stages" | "profiles";
 type SourceFilter = "installed" | "project" | "templates" | "deleted";
 
 const TABS = [
   { id: "pipelines", label: "Pipelines" },
   { id: "agents", label: "Agents" },
-  { id: "rules", label: "Rules" },
   { id: "stages", label: "Stages" },
   { id: "profiles", label: "Profiles" },
 ];
@@ -86,7 +84,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
   const [searchText, setSearchText] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("installed");
   const [devMode, setDevMode] = useState(false);
-  const [showRuleCreateModal, setShowRuleCreateModal] = useState(false);
   const [showAgentCreateForm, setShowAgentCreateForm] = useState(false);
   const [showPipelineCreate, setShowPipelineCreate] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
@@ -99,19 +96,14 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     boolean | null
   >(null);
   const [agentProviderFilter, setAgentProviderFilter] = useState<string>("all");
-  const [ruleEventFilter, setRuleEventFilter] = useState<string | null>(null);
 
   // Dynamic options reported by tabs
   const [agentProviders, setAgentProviders] = useState<string[]>([]);
-  const [ruleEventTypes, setRuleEventTypes] = useState<string[]>([]);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
 
   // Cross-tab filters
   const [tagFilter, setTagFilter] = useState<string | null>(null);
   const [priorityFilter, setPriorityFilter] = useState<number | null>(null);
-
-  // Rules bulk toggle state
-  const [rulesAllEnabled, setRulesAllEnabled] = useState(false);
 
   // Popover state
   const [showFilterPopover, setShowFilterPopover] = useState(false);
@@ -171,7 +163,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
       count++;
     if (activeTab === "pipelines" && pipelineEnabledFilter !== null) count++;
     if (activeTab === "agents" && agentProviderFilter !== "all") count++;
-    if (activeTab === "rules" && ruleEventFilter !== null) count++;
     if (tagFilter !== null) count++;
     if (priorityFilter !== null) count++;
     return count;
@@ -182,26 +173,9 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     activeTab,
     pipelineEnabledFilter,
     agentProviderFilter,
-    ruleEventFilter,
     tagFilter,
     priorityFilter,
   ]);
-
-  const handleBulkToggleRules = useCallback(async () => {
-    try {
-      const res = await fetch("/api/rules/bulk-toggle", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          source: sourceFilter,
-          enabled: !rulesAllEnabled,
-        }),
-      });
-      if (res.ok) setRefreshKey((k) => k + 1);
-    } catch (e) {
-      console.error("Failed to bulk toggle rules:", e);
-    }
-  }, [sourceFilter, rulesAllEnabled]);
 
   return (
     <main className={WORKFLOWS_PAGE_CLS}>
@@ -264,9 +238,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
                 agentProviderFilter={agentProviderFilter}
                 onAgentProviderFilterChange={setAgentProviderFilter}
                 agentProviders={agentProviders}
-                ruleEventFilter={ruleEventFilter}
-                onRuleEventFilterChange={setRuleEventFilter}
-                ruleEventTypes={ruleEventTypes}
                 tagFilter={tagFilter}
                 onTagFilterChange={setTagFilter}
                 availableTags={availableTags}
@@ -283,22 +254,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           >
             &#x21bb;
           </button>
-          {activeTab === "rules" &&
-            (sourceFilter === "installed" || sourceFilter === "project") && (
-              <div
-                className="rules-enforcement-toggle"
-                onClick={handleBulkToggleRules}
-              >
-                <div
-                  className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${rulesAllEnabled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ""}`}
-                >
-                  <div
-                    className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${rulesAllEnabled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ""}`}
-                  />
-                </div>
-                <span>Enable All</span>
-              </div>
-            )}
           {activeTab === "pipelines" && (
             <button
               type="button"
@@ -315,15 +270,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
               onClick={() => setShowAgentCreateForm((prev) => !prev)}
             >
               + Agent
-            </button>
-          )}
-          {activeTab === "rules" && (
-            <button
-              type="button"
-              className={WORKFLOWS_NEW_BTN_CLS}
-              onClick={() => setShowRuleCreateModal(true)}
-            >
-              + Rule
             </button>
           )}
         </div>
@@ -366,26 +312,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
         />
       )}
 
-      {activeTab === "rules" && (
-        <RulesTab
-          searchText={searchText}
-          sourceFilter={sourceFilter}
-          devMode={devMode}
-          showCreateModal={showRuleCreateModal}
-          onCloseCreateModal={() => setShowRuleCreateModal(false)}
-          refreshKey={refreshKey}
-          projectId={projectId}
-          hideGobby={hideGobby}
-          hideInstalled={sourceFilter === "templates" && hideInstalled}
-          eventFilter={ruleEventFilter}
-          onEventTypesChange={setRuleEventTypes}
-          onAllEnabledChange={setRulesAllEnabled}
-          tagFilter={tagFilter}
-          priorityFilter={priorityFilter}
-          onTagsChange={setAvailableTags}
-        />
-      )}
-
       {activeTab === "stages" && (
         <StagesTab
           searchText={searchText}
@@ -419,9 +345,6 @@ function FilterPopover({
   agentProviderFilter,
   onAgentProviderFilterChange,
   agentProviders,
-  ruleEventFilter,
-  onRuleEventFilterChange,
-  ruleEventTypes,
   tagFilter,
   onTagFilterChange,
   availableTags,
@@ -440,9 +363,6 @@ function FilterPopover({
   agentProviderFilter: string;
   onAgentProviderFilterChange: (v: string) => void;
   agentProviders: string[];
-  ruleEventFilter: string | null;
-  onRuleEventFilterChange: (v: string | null) => void;
-  ruleEventTypes: string[];
   tagFilter: string | null;
   onTagFilterChange: (v: string | null) => void;
   availableTags: string[];
@@ -515,26 +435,6 @@ function FilterPopover({
                 }
               >
                 {p}
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-
-      {activeTab === "rules" && ruleEventTypes.length > 0 && (
-        <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
-          <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Event</div>
-          <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
-            {ruleEventTypes.map((ev) => (
-              <button
-                key={ev}
-                type="button"
-                className={`${WORKFLOWS_FILTER_CHIP_CLS} ${ruleEventFilter === ev ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
-                onClick={() =>
-                  onRuleEventFilterChange(ruleEventFilter === ev ? null : ev)
-                }
-              >
-                {ev}
               </button>
             ))}
           </div>

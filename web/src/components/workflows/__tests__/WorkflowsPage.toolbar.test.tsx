@@ -10,10 +10,6 @@ vi.mock('../AgentsTab', () => ({
   AgentsTab: () => <div data-testid="agents-tab" />,
 }))
 
-vi.mock('../RulesTab', () => ({
-  RulesTab: () => <div data-testid="rules-tab" />,
-}))
-
 describe('WorkflowsPage toolbar', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -28,5 +24,13 @@ describe('WorkflowsPage toolbar', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Templates' }))
 
     expect(screen.queryByRole('button', { name: 'Install All' })).not.toBeInTheDocument()
+  })
+
+  it('does not expose the retired Rules sub-tab', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ dev_mode: false })))
+
+    render(<WorkflowsPage />)
+
+    expect(screen.queryByRole('button', { name: 'Rules' })).not.toBeInTheDocument()
   })
 })
