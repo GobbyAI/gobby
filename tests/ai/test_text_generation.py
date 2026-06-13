@@ -2065,6 +2065,54 @@ async def test_run_cli_text_generation_command_signals_process_group_when_cancel
     assert process.killed is False
 
 
+@pytest.mark.asyncio
+async def test_text_generation_service_cleans_up_timed_out_cli_candidate_and_falls_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class CLIAdapter:
+        async def generate(self, request: TextGenerationRequest) -> str:
+            return await text_generation_adapters._run_cli_text_generation_command(
+                "Slow",
+                ("/usr/local/bin/slow", "--prompt", request.prompt),
+                cwd=None,
+                timeout_seconds=30,
+                env_overrides={},
+            )
+
+    process = HangingProcess()
+
+    async def fake_create_subprocess_exec(
+        *_command: str,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        assert start_new_session is True
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    monkeypatch.setattr(text_generation_adapters, "_signal_cli_process_group", lambda *_args: False)
+    registry = _two_candidate_registry("local:slow-cli", "local:good")
+    service = TextGenerationService(
+        registry,
+        {"local:slow-cli": CLIAdapter(), "local:good": RecordingAdapter("local:good")},
+        candidate_timeout_seconds=0.01,
+    )
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=("local:slow-cli/slow-model", "local:good/good-model"),
+        )
+    )
+
+    assert result.provider == "local:good"
+    assert process.terminated is True
+    assert process.killed is False
+
+
 def _assert_droid_isolated_env(env: dict[str, str]) -> Path:
     temp_home = Path(env["HOME"])
     assert temp_home.name.startswith("gobby-droid-feature-")
