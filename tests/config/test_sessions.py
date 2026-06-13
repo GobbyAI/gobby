@@ -32,10 +32,13 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     assert cfg.timeout == 60
     assert cfg.candidate_limit == 8
     assert cfg.selected_limit == 3
-    assert cfg.min_score == 0.5
+    assert cfg.min_score == 0.7
     assert cfg.query_synthesis_threshold == 8_000
     assert cfg.query_max_chars == 1_200
     assert DaemonConfig().memory_recall.enabled is True
+    assert MemoryRecallConfig(min_score=0.75).min_score == 0.75
+    with pytest.raises(ValueError):
+        MemoryRecallConfig(min_score=0.69)
 
     disabled_config_file = temp_dir / "disabled.yaml"
     disabled_config_file.write_text(
@@ -47,7 +50,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
                     "timeout": 12,
                     "candidate_limit": 5,
                     "selected_limit": 2,
-                    "min_score": 0.25,
+                    "min_score": 0.75,
                     "query_synthesis_threshold": 100,
                     "query_max_chars": 80,
                 }
@@ -60,7 +63,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     assert disabled_config.memory_recall.timeout == 12
     assert disabled_config.memory_recall.candidate_limit == 5
     assert disabled_config.memory_recall.selected_limit == 2
-    assert disabled_config.memory_recall.min_score == 0.25
+    assert disabled_config.memory_recall.min_score == 0.75
     assert disabled_config.memory_recall.query_synthesis_threshold == 100
     assert disabled_config.memory_recall.query_max_chars == 80
 

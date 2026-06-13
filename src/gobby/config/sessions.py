@@ -168,8 +168,8 @@ class MemoryRecallConfig(FeatureDefaultConfig):
         description="Maximum memories to surface from daemon-owned recall.",
     )
     min_score: float = Field(
-        default=0.5,
-        ge=0.0,
+        default=0.7,
+        ge=0.7,
         le=1.0,
         description="Minimum candidate relevance score for memory recall.",
     )
