@@ -83,6 +83,11 @@ class IssueSnapshot:
         repo: str,
         issue: dict[str, Any],
     ) -> IssueSnapshot:
+        try:
+            issue_number = int(issue["number"])
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError("GitHub issue payload is missing a valid integer number") from exc
+
         labels = []
         for label in issue.get("labels") or []:
             if isinstance(label, dict):
@@ -95,7 +100,7 @@ class IssueSnapshot:
         return cls(
             project_id=project_id,
             repo=repo,
-            issue_number=int(issue["number"]),
+            issue_number=issue_number,
             title=str(issue.get("title") or "Untitled issue"),
             body=str(issue.get("body") or ""),
             state=str(issue.get("state") or "open"),
@@ -131,12 +136,10 @@ def issue_point_id(project_id: str, repo: str, issue_number: int) -> str:
 
 def build_issue_content(issue: IssueSnapshot) -> str:
     """Build stable text used for semantic issue deduplication."""
-    labels = ", ".join(issue.labels)
     return "\n".join(
         [
             f"Title: {issue.title}",
             f"Repository: {issue.repo}",
-            f"Labels: {labels}",
             "",
             issue.body,
         ]
@@ -164,7 +167,7 @@ class GitHubIssueIndexer:
         *,
         vector_store: VectorStoreProtocol | None,
         embed_fn: EmbedFnProtocol | None,
-        similarity_threshold: float = 0.90,
+        similarity_threshold: float = 0.95,
     ) -> None:
         self.vector_store = vector_store
         self.embed_fn = embed_fn

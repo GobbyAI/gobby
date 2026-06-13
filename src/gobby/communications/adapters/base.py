@@ -268,6 +268,8 @@ class BaseChannelAdapter(ABC):
     def chunk_message(self, content: str, max_length: int | None = None) -> list[str]:
         """Split long messages respecting word boundaries."""
         limit = max_length or self.max_message_length
+        if limit < 1:
+            raise ValueError("max_length must be positive")
         if len(content) <= limit:
             return [content]
 
@@ -289,10 +291,12 @@ class BaseChannelAdapter(ABC):
                     split_idx = limit
 
             chunk = remaining[:split_idx].rstrip()
-            if chunk:
-                chunks.append(chunk)
-
-            remaining = remaining[split_idx:].lstrip()
+            if not chunk:
+                chunk = remaining[:limit]
+                remaining = remaining[limit:]
+            else:
+                remaining = remaining[split_idx:].lstrip()
+            chunks.append(chunk)
 
         return chunks
 

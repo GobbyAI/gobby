@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import time
 from pathlib import Path
 
@@ -61,12 +62,18 @@ class AttachmentManager:
     def get_path(self, filename: str) -> Path | None:
         """Look up a stored file by original filename (ignoring timestamp prefix)."""
         basename = Path(filename).name
-        for path in self._storage_dir.iterdir():
-            if path.is_file() and path.name.endswith(f"_{basename}"):
-                return path
-        # Exact match fallback
         exact = self._storage_dir / basename
-        return exact if exact.exists() else None
+        if exact.is_file():
+            return exact
+
+        candidates = [
+            path
+            for path in self._storage_dir.iterdir()
+            if path.is_file() and self._original_filename(path.name) == basename
+        ]
+        if not candidates:
+            return None
+        return max(candidates, key=lambda path: path.stat().st_mtime)
 
     def cleanup_old(self, days: int = 30) -> int:
         """Remove attachments older than the retention period."""
@@ -91,8 +98,6 @@ class AttachmentManager:
 
     def _safe_filename(self, filename: str) -> str:
         """Sanitize a filename, prepending a timestamp to avoid collisions."""
-        import re
-
         basename = Path(filename).name
         # Strip null bytes and path traversal sequences
         basename = basename.replace("\x00", "").replace("/", "").replace("\\", "")
@@ -102,3 +107,9 @@ class AttachmentManager:
         if not basename:
             basename = "attachment"
         return f"{int(time.time() * 1000)}_{basename}"
+
+    def _original_filename(self, stored_name: str) -> str | None:
+        prefix, separator, original = stored_name.partition("_")
+        if separator and prefix.isdigit() and original:
+            return original
+        return None

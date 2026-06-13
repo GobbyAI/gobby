@@ -40,6 +40,7 @@ TRIAGE_SKIPPED_LABEL = "gobby:skipped"
 TRIAGE_DUPLICATE_LABEL = "gobby:duplicate"
 TRIAGE_ESCALATED_LABEL = "gobby:needs-triage"
 TRIAGE_RESOLVED_LABEL = "gobby:resolved"
+AUTO_CLOSE_DUPLICATE_SCORE = 0.97
 
 BuildFunc = Callable[[str, BuildOptions], Awaitable[Any]]
 
@@ -595,6 +596,14 @@ class GitHubIssueTriageService:
     async def _judge(self, issue: IssueSnapshot, duplicates: list[IssueDuplicate]) -> TriageOutcome:
         if duplicates:
             duplicate = duplicates[0]
+            if duplicate.score < AUTO_CLOSE_DUPLICATE_SCORE:
+                return TriageOutcome(
+                    "escalate",
+                    f"Potential duplicate of {duplicate.issue_key} "
+                    f"(similarity {duplicate.score:.2f})",
+                    close_issue=False,
+                    duplicate=duplicate,
+                )
             return TriageOutcome(
                 "dedup",
                 f"Similar to {duplicate.issue_key}",

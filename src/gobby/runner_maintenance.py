@@ -368,11 +368,13 @@ async def cleanup_comms_messages_loop(
     is_shutdown_requested: Callable[[], bool],
     retention_days: int = 30,
 ) -> None:
+    from gobby.communications.attachments import AttachmentManager
     from gobby.storage.communications import LocalCommunicationsStore
 
     interval_seconds = 24 * 60 * 60
 
     store = LocalCommunicationsStore(db)
+    attachment_manager = AttachmentManager()
 
     while not is_shutdown_requested():
         try:
@@ -380,9 +382,15 @@ async def cleanup_comms_messages_loop(
             cutoff = datetime.now(UTC) - timedelta(days=retention_days)
 
             deleted_messages = store.delete_messages_before(cutoff)
+            deleted_attachments = attachment_manager.cleanup_old(days=retention_days)
 
             if deleted_messages > 0:
                 logger.info(f"Comms message cleanup: removed {deleted_messages} old messages")
+            if deleted_attachments > 0:
+                logger.info(
+                    "Comms attachment cleanup: removed %s old local files",
+                    deleted_attachments,
+                )
 
         except asyncio.CancelledError:
             break

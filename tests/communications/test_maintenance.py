@@ -5,6 +5,14 @@ import pytest
 from gobby.runner_maintenance import cleanup_comms_messages_loop
 
 
+@pytest.fixture(autouse=True)
+def mock_attachment_manager() -> MagicMock:
+    manager = MagicMock()
+    manager.cleanup_old.return_value = 0
+    with patch("gobby.communications.attachments.AttachmentManager", return_value=manager):
+        yield manager
+
+
 @pytest.mark.asyncio
 async def test_cleanup_comms_messages_loop():
     # Mock dependencies

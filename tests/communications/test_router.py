@@ -61,6 +61,22 @@ async def test_router_matching():
     assert matched == ["chan-2"]
 
 
+@pytest.mark.asyncio
+async def test_router_normalizes_rule_patterns():
+    store = MagicMock()
+    store.list_routing_rules.return_value = [
+        CommsRoutingRule(
+            id="rule-1",
+            name="Rule 1",
+            channel_id="chan-1",
+            event_pattern="SESSION:STARTED",
+        )
+    ]
+    router = MessageRouter(store)
+
+    assert await router.match_channels("session started") == ["chan-1"]
+
+
 async def test_router_loads_rules_off_event_loop():
     loop_thread = threading.get_ident()
     worker_threads: list[int] = []

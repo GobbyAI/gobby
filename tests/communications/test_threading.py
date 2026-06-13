@@ -97,7 +97,7 @@ async def test_inbound_populates_thread_map():
 
     await manager.handle_inbound_messages("test-channel", [msg])
 
-    assert manager._thread_manager._thread_map[("test-channel", "session-123")] == "thread-abc"
+    assert manager._thread_manager._thread_map[("chan-1", "session-123")] == "thread-abc"
 
 
 @pytest.mark.asyncio
@@ -199,7 +199,7 @@ async def test_thread_map_updates_on_new_thread():
 
     await manager.handle_inbound_messages("test-channel", [msg1, msg2])
 
-    assert manager._thread_manager._thread_map[("test-channel", "session-123")] == "thread-new"
+    assert manager._thread_manager._thread_map[("chan-1", "session-123")] == "thread-new"
 
 
 # --- Outbound thread propagation ---
@@ -212,7 +212,7 @@ async def test_send_message_includes_thread_from_map():
     store = _store([channel])
     manager = await _make_manager(store)
 
-    manager._thread_manager._thread_map[("test-channel", "session-123")] = "thread-456"
+    manager._thread_manager._thread_map[("chan-1", "session-123")] = "thread-456"
 
     msg = await manager.send_message("test-channel", "Reply", session_id="session-123")
 
@@ -226,7 +226,7 @@ async def test_send_message_no_thread_without_session():
     store = _store([channel])
     manager = await _make_manager(store)
 
-    manager._thread_manager._thread_map[("test-channel", "session-123")] = "thread-456"
+    manager._thread_manager._thread_map[("chan-1", "session-123")] = "thread-456"
 
     msg = await manager.send_message("test-channel", "Broadcast")
 
@@ -263,8 +263,8 @@ async def test_thread_map_isolated_per_channel():
         await manager.start()
 
     # Directly populate thread map for two different channels, same session
-    manager._thread_manager._thread_map[("slack", "session-1")] = "slack-thread-ts"
-    manager._thread_manager._thread_map[("discord", "session-1")] = "discord-thread-id"
+    manager._thread_manager._thread_map[("chan-slack", "session-1")] = "slack-thread-ts"
+    manager._thread_manager._thread_map[("chan-discord", "session-1")] = "discord-thread-id"
 
     # Send to each channel
     msg_slack = await manager.send_message("slack", "Reply", session_id="session-1")

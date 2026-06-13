@@ -8,6 +8,17 @@ from datetime import UTC, datetime
 from typing import Any, Literal
 
 
+def _required(data: Mapping[str, Any], key: str) -> Any:
+    value = data[key]
+    if value is None:
+        raise ValueError(f"Required communication row field {key!r} is null")
+    return value
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(UTC).isoformat()
+
+
 @dataclass
 class ChannelCapabilities:
     """Capabilities of a communication channel."""
@@ -76,14 +87,14 @@ class ChannelConfig:
             config_json = json.loads(config_json)
 
         return cls(
-            id=data["id"],
-            channel_type=data.get("channel_type", "unknown"),
-            name=data.get("name", "Unknown Channel"),
+            id=_required(data, "id"),
+            channel_type=_required(data, "channel_type"),
+            name=_required(data, "name"),
             enabled=bool(data.get("enabled", False)),
             config_json=config_json or {},
             webhook_secret=data.get("webhook_secret"),
-            created_at=data.get("created_at", datetime.now().isoformat()),
-            updated_at=data.get("updated_at", datetime.now().isoformat()),
+            created_at=data.get("created_at", _utc_now_iso()),
+            updated_at=data.get("updated_at", _utc_now_iso()),
         )
 
 
@@ -130,11 +141,11 @@ class CommsMessage:
             metadata_json = json.loads(metadata_json)
 
         return cls(
-            id=data["id"],
-            channel_id=data.get("channel_id", "unknown"),
+            id=_required(data, "id"),
+            channel_id=_required(data, "channel_id"),
             identity_id=data.get("identity_id"),
-            direction=data.get("direction", "outbound"),
-            content=data.get("content", ""),
+            direction=_required(data, "direction"),
+            content=_required(data, "content"),
             content_type=data.get("content_type", "text"),
             platform_message_id=data.get("platform_message_id"),
             platform_thread_id=data.get("platform_thread_id"),
@@ -142,7 +153,7 @@ class CommsMessage:
             status=data.get("status", "sent"),
             error=data.get("error"),
             metadata_json=metadata_json or {},
-            created_at=data.get("created_at", datetime.now().isoformat()),
+            created_at=data.get("created_at", _utc_now_iso()),
         )
 
 
@@ -171,15 +182,15 @@ class CommsIdentity:
             metadata_json = json.loads(metadata_json)
 
         return cls(
-            id=data["id"],
-            channel_id=data.get("channel_id", "unknown"),
-            external_user_id=data.get("external_user_id", "unknown"),
+            id=_required(data, "id"),
+            channel_id=_required(data, "channel_id"),
+            external_user_id=_required(data, "external_user_id"),
             external_username=data.get("external_username"),
             session_id=data.get("session_id"),
             project_id=data.get("project_id"),
             metadata_json=metadata_json or {},
-            created_at=data.get("created_at", datetime.now().isoformat()),
-            updated_at=data.get("updated_at", datetime.now().isoformat()),
+            created_at=data.get("created_at", _utc_now_iso()),
+            updated_at=data.get("updated_at", _utc_now_iso()),
         )
 
 
@@ -201,14 +212,14 @@ class CommsAttachment:
         """Create from database row."""
         data = dict(row)
         return cls(
-            id=data["id"],
-            message_id=data.get("message_id", ""),
-            filename=data.get("filename", ""),
+            id=_required(data, "id"),
+            message_id=_required(data, "message_id"),
+            filename=_required(data, "filename"),
             content_type=data.get("content_type", "application/octet-stream"),
             size_bytes=int(data.get("size_bytes", 0)),
             local_path=data.get("local_path"),
             platform_url=data.get("platform_url"),
-            created_at=data.get("created_at", datetime.now().isoformat()),
+            created_at=data.get("created_at", _utc_now_iso()),
         )
 
 
@@ -239,15 +250,15 @@ class CommsRoutingRule:
             config_json = json.loads(config_json)
 
         return cls(
-            id=data["id"],
-            name=data.get("name", "Unknown Rule"),
+            id=_required(data, "id"),
+            name=_required(data, "name"),
             channel_id=data.get("channel_id"),
-            event_pattern=data.get("event_pattern", "*"),
+            event_pattern=_required(data, "event_pattern"),
             project_id=data.get("project_id"),
             session_id=data.get("session_id"),
             priority=int(data.get("priority", 0)),
             enabled=bool(data.get("enabled", True)),
             config_json=config_json or {},
-            created_at=data.get("created_at", datetime.now().isoformat()),
-            updated_at=data.get("updated_at", datetime.now().isoformat()),
+            created_at=data.get("created_at", _utc_now_iso()),
+            updated_at=data.get("updated_at", _utc_now_iso()),
         )

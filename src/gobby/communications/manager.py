@@ -90,11 +90,11 @@ class CommunicationsManager:
         """Storage backend for integrations that need communications persistence."""
         return self._store
 
-    def _get_thread_id(self, channel_name: str, session_id: str) -> str | None:
-        return self._thread_manager.get_thread_id(channel_name, session_id)
+    def _get_thread_id(self, channel_id: str, session_id: str) -> str | None:
+        return self._thread_manager.get_thread_id(channel_id, session_id)
 
-    def _track_thread(self, channel_name: str, session_id: str, platform_thread_id: str) -> None:
-        self._thread_manager.track_thread(channel_name, session_id, platform_thread_id)
+    def _track_thread(self, channel_id: str, session_id: str, platform_thread_id: str) -> None:
+        self._thread_manager.track_thread(channel_id, session_id, platform_thread_id)
 
     async def start(self) -> None:
         """Load enabled channels from DB, initialize adapters, configure rate limiter."""
@@ -240,7 +240,7 @@ class CommunicationsManager:
 
     async def send_proactive(
         self, channel_name: str, conversation_id: str, content: str, content_type: str = "text"
-    ) -> str | None:
+    ) -> CommsMessage:
         """Send a proactive message via an adapter that supports it."""
         return await self._outbound.send_proactive(
             channel_name, conversation_id, content, content_type

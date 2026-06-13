@@ -11,11 +11,20 @@ import pytest
 from gobby.runner_maintenance import cleanup_comms_messages_loop
 
 
+@pytest.fixture(autouse=True)
+def mock_attachment_manager() -> MagicMock:
+    manager = MagicMock()
+    manager.cleanup_old.return_value = 0
+    with patch("gobby.communications.attachments.AttachmentManager", return_value=manager):
+        yield manager
+
+
 @pytest.mark.asyncio
-async def test_cleanup_deletes_old_messages():
+async def test_cleanup_deletes_old_messages(mock_attachment_manager: MagicMock):
     """cleanup_comms_messages_loop deletes messages older than retention_days."""
     mock_store = MagicMock()
     mock_store.delete_messages_before.return_value = 5
+    mock_attachment_manager.cleanup_old.return_value = 2
 
     shutdown_calls = iter([False, True])
 
@@ -33,6 +42,7 @@ async def test_cleanup_deletes_old_messages():
 
     sleep_mock.assert_called_once_with(24 * 60 * 60)
     mock_store.delete_messages_before.assert_called_once()
+    mock_attachment_manager.cleanup_old.assert_called_once_with(days=30)
     cutoff_arg = mock_store.delete_messages_before.call_args[0][0]
     assert isinstance(cutoff_arg, datetime)
     # Cutoff should be approximately 30 days ago

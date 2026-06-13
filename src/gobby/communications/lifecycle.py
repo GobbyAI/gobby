@@ -155,6 +155,7 @@ class AdapterLifecycleOperations:
         manager = self._manager
         now = datetime.now(UTC).isoformat()
         webhook_secret: str | None = None
+        config_json = dict(config)
 
         if secrets:
             for key, value in secrets.items():
@@ -172,13 +173,13 @@ class AdapterLifecycleOperations:
                 if key == "webhook_secret":
                     webhook_secret = secret_ref
                 else:
-                    config[key] = secret_ref
+                    config_json[key] = secret_ref
         channel_config = ChannelConfig(
             id=str(uuid.uuid4()),
             channel_type=channel_type,
             name=name,
             enabled=True,
-            config_json=config,
+            config_json=config_json,
             created_at=now,
             updated_at=now,
             webhook_secret=webhook_secret,

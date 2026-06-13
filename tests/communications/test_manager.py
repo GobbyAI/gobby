@@ -88,6 +88,7 @@ def make_adapter(
     adapter.supports_polling = supports_polling
     adapter.initialize = AsyncMock()
     adapter.send_message = AsyncMock(return_value="platform-msg-id-1")
+    adapter.send_proactive = AsyncMock(return_value="platform-proactive-id-1")
     adapter.shutdown = AsyncMock()
     adapter.parse_webhook.return_value = []
     adapter.verify_webhook.return_value = True
@@ -320,6 +321,29 @@ async def test_send_message_rate_limit_timeout_marks_failed():
 
 
 @pytest.mark.asyncio
+async def test_send_proactive_rate_limits_and_persists_message():
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter = make_adapter()
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.start()
+
+    with patch.object(manager._rate_limiter, "wait_if_needed", AsyncMock()) as wait_mock:
+        msg = await manager.send_proactive("test-channel", "conversation-1", "Hello!")
+
+    wait_mock.assert_awaited_once_with("chan-1")
+    mock_adapter.send_proactive.assert_awaited_once_with("conversation-1", "Hello!", "text")
+    assert msg.status == "sent"
+    assert msg.platform_message_id == "platform-proactive-id-1"
+    assert msg.metadata_json["platform_destination"] == "conversation-1"
+    store.create_message.assert_called_once()
+
+
+@pytest.mark.asyncio
 async def test_send_message_gobby_chat_without_broadcast_marks_failed():
     channel = make_channel(
         name="gobby_chat",
@@ -429,6 +453,30 @@ async def test_send_message_fires_event_callback():
 
     assert len(callback_events) == 1
     assert callback_events[0][0] == "comms.message_sent"
+
+
+@pytest.mark.asyncio
+async def test_send_message_logs_event_callback_failures_at_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    channel = make_channel()
+    store = make_store([channel])
+    manager = CommunicationsManager(make_config(), store, make_secret_store(), MagicMock())
+
+    mock_adapter = make_adapter()
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+
+    async def cb(event_type: str, **kwargs: Any) -> None:
+        raise RuntimeError("callback broke")
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.start()
+
+    manager.event_callback = cb
+    with caplog.at_level(logging.WARNING):
+        await manager.send_message("test-channel", "Hello!")
+
+    assert "Event callback error on send_message" in caplog.text
 
 
 @pytest.mark.asyncio
@@ -810,6 +858,25 @@ async def test_add_channel_stores_secrets_in_secret_store():
     assert "webhook_secret" not in created_channel.config_json
     assert created_channel.webhook_secret == "$secret:COMMS_SLACK_WEBHOOK_SECRET_MY-SLACK"
     assert secret_store.set.call_args_list[-1].kwargs["plaintext_value"] == "whsec_keep_separate"
+
+
+@pytest.mark.asyncio
+async def test_add_channel_does_not_mutate_caller_config():
+    store = make_store()
+    secret_store = make_secret_store()
+    manager = CommunicationsManager(make_config(), store, secret_store, MagicMock())
+
+    mock_adapter = make_adapter(channel_type="slack")
+    mock_adapter_cls = MagicMock(return_value=mock_adapter)
+    config = {"token": "$secret:SLACK_TOKEN"}
+    secrets = {"bot_token": "xoxb-test-token"}
+
+    with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
+        await manager.add_channel("slack", "my-slack", config, secrets=secrets)
+
+    assert config == {"token": "$secret:SLACK_TOKEN"}
+    created_channel = store.create_channel.call_args[0][0]
+    assert created_channel.config_json["bot_token"] == "$secret:COMMS_SLACK_BOT_TOKEN_MY-SLACK"
 
 
 def test_channel_to_dict_redacts_webhook_secret():
@@ -1207,7 +1274,7 @@ async def test_send_message_propagates_thread_id():
     with patch("gobby.communications.manager.get_adapter_class", return_value=mock_adapter_cls):
         await manager.start()
 
-    manager._thread_manager.track_thread("test-channel", "session-123", "thread-456")
+    manager._thread_manager.track_thread("chan-1", "session-123", "thread-456")
 
     msg = await manager.send_message("test-channel", "Hello reply", session_id="session-123")
 
@@ -1265,7 +1332,7 @@ async def test_handle_inbound_populates_thread_map_and_handles_reactions():
 
     await manager.handle_inbound_messages("test-channel", [inbound_msg, rxn_msg])
 
-    assert manager._thread_manager._thread_map[("test-channel", "session-123")] == "thread-456"
+    assert manager._thread_manager._thread_map[("chan-1", "session-123")] == "thread-456"
 
     # reaction should have called handler
     manager.reaction_handler.handle_reaction.assert_awaited_once_with(

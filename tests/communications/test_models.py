@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from gobby.communications.models import (
     ChannelCapabilities,
     ChannelConfig,
@@ -143,6 +145,7 @@ def test_models_with_missing_fields_from_row():
     row = {
         "id": "rule-min",
         "name": "Minimal Rule",
+        "event_pattern": "*",
         "project_id": "proj-1",
         "created_at": "2026-03-21T00:00:00Z",
         "updated_at": "2026-03-21T00:00:00Z",
@@ -172,3 +175,17 @@ def test_models_with_missing_fields_from_row():
     assert msg.status == "sent"
     assert msg.metadata_json == {}
     assert msg.identity_id is None
+
+
+def test_from_row_rejects_missing_required_fields() -> None:
+    with pytest.raises(KeyError):
+        ChannelConfig.from_row({"id": "chan-1", "name": "General"})
+
+    with pytest.raises(KeyError):
+        CommsMessage.from_row({"id": "msg-1", "content": "hello", "direction": "outbound"})
+
+    with pytest.raises(KeyError):
+        CommsIdentity.from_row({"id": "ident-1", "channel_id": "chan-1"})
+
+    with pytest.raises(KeyError):
+        CommsRoutingRule.from_row({"id": "rule-1", "name": "Rule"})

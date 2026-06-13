@@ -68,6 +68,30 @@ def test_get_path_nonexistent(attachment_manager: AttachmentManager) -> None:
     assert result is None
 
 
+def test_get_path_requires_exact_stored_original_name(
+    attachment_manager: AttachmentManager,
+    attachment_dir: Path,
+) -> None:
+    wrong_suffix = attachment_dir / "123_my_file.txt"
+    wrong_suffix.write_text("wrong")
+
+    assert attachment_manager.get_path("file.txt") is None
+
+
+def test_get_path_returns_newest_exact_original_name(
+    attachment_manager: AttachmentManager,
+    attachment_dir: Path,
+) -> None:
+    older = attachment_dir / "123_file.txt"
+    newer = attachment_dir / "456_file.txt"
+    older.write_text("older")
+    newer.write_text("newer")
+    old_mtime = time.time() - 60
+    os.utime(older, (old_mtime, old_mtime))
+
+    assert attachment_manager.get_path("file.txt") == newer
+
+
 def test_cleanup_old(attachment_manager: AttachmentManager, attachment_dir: Path) -> None:
     old_file = attachment_dir / "old_file.txt"
     old_file.write_text("old")

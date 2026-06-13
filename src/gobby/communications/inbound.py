@@ -76,7 +76,7 @@ class InboundCommunications:
 
                 if message.session_id and message.platform_thread_id:
                     manager._track_thread(
-                        channel_name, message.session_id, message.platform_thread_id
+                        channel.id, message.session_id, message.platform_thread_id
                     )
 
                 stored.append(await asyncio.to_thread(manager._store.create_message, message))
@@ -88,7 +88,10 @@ class InboundCommunications:
                 try:
                     await manager.event_callback("comms.message_received", message=msg)
                 except Exception as e:
-                    logger.debug(f"Event callback error on handle_inbound_messages: {e}")
+                    logger.warning(
+                        f"Event callback error on handle_inbound_messages: {e}",
+                        exc_info=True,
+                    )
 
         return stored
 

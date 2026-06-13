@@ -77,7 +77,7 @@ class OutboundCommunications:
 
         platform_thread_id = None
         if session_id:
-            platform_thread_id = manager._get_thread_id(channel_name, session_id)
+            platform_thread_id = manager._get_thread_id(channel.id, session_id)
 
         message = CommsMessage(
             id=str(uuid.uuid4()),
@@ -110,7 +110,7 @@ class OutboundCommunications:
             try:
                 await manager.event_callback("comms.message_sent", message=message)
             except Exception as e:
-                logger.debug(f"Event callback error on send_message: {e}", exc_info=True)
+                logger.warning(f"Event callback error on send_message: {e}", exc_info=True)
 
         return message
 
@@ -147,7 +147,7 @@ class OutboundCommunications:
 
         platform_thread_id = None
         if session_id:
-            platform_thread_id = manager._get_thread_id(channel_name, session_id)
+            platform_thread_id = manager._get_thread_id(channel.id, session_id)
 
         message = CommsMessage(
             id=str(uuid.uuid4()),
@@ -197,7 +197,7 @@ class OutboundCommunications:
                     "comms.attachment_sent", message=message, attachment=attachment
                 )
             except Exception as e:
-                logger.debug(f"Event callback error on send_attachment: {e}", exc_info=True)
+                logger.warning(f"Event callback error on send_attachment: {e}", exc_info=True)
 
         return message, attachment
 
@@ -233,15 +233,51 @@ class OutboundCommunications:
 
     async def send_proactive(
         self, channel_name: str, conversation_id: str, content: str, content_type: str = "text"
-    ) -> str | None:
+    ) -> CommsMessage:
         """Send a proactive message via an adapter that supports it."""
-        adapter = self._manager._adapters.get(channel_name)
+        manager = self._manager
+        adapter = manager._adapters.get(channel_name)
         if adapter is None:
             raise ValueError(f"Channel {channel_name!r} not found or not active")
 
+        channel = manager._channel_by_name[channel_name]
+        message = CommsMessage(
+            id=str(uuid.uuid4()),
+            channel_id=channel.id,
+            direction="outbound",
+            content=content,
+            content_type=content_type,
+            status="pending",
+            metadata_json={"platform_destination": conversation_id},
+            created_at=datetime.now(UTC).isoformat(),
+        )
+
         try:
-            return await adapter.send_proactive(conversation_id, content, content_type)
+            await manager._rate_limiter.wait_if_needed(channel.id)
+            message.platform_message_id = await adapter.send_proactive(
+                conversation_id, content, content_type
+            )
+            message.status = "sent"
         except NotImplementedError as exc:
             raise ValueError(
                 f"Channel {channel_name!r} does not support proactive messaging"
             ) from exc
+        except Exception as exc:
+            message.status = "failed"
+            message.error = str(exc)
+            logger.error(
+                f"Failed to send proactive message to {channel_name!r}: {exc}", exc_info=True
+            )
+
+        try:
+            await asyncio.to_thread(manager._store.create_message, message)
+        except Exception as exc:
+            logger.error(f"Failed to store proactive outbound message: {exc}", exc_info=True)
+
+        if manager.event_callback is not None:
+            try:
+                await manager.event_callback("comms.message_sent", message=message)
+            except Exception as exc:
+                logger.warning(f"Event callback error on send_proactive: {exc}", exc_info=True)
+
+        return message

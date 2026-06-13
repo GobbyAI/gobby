@@ -68,7 +68,8 @@ class LinearGraphQLClient:
                 except (httpx.TransportError, httpx.TimeoutException) as exc:
                     if _is_final_attempt(attempt):
                         raise LinearGraphQLError(
-                            "Linear GraphQL request failed after 3 attempts due to a network error."
+                            "Linear GraphQL request failed after "
+                            f"{_MAX_ATTEMPTS} attempts due to a network error."
                         ) from exc
                     await asyncio.sleep(_retry_delay(attempt))
                     continue
@@ -76,8 +77,8 @@ class LinearGraphQLClient:
                 if _is_retryable_status(response.status_code):
                     if _is_final_attempt(attempt):
                         raise LinearGraphQLError(
-                            "Linear GraphQL request failed after 3 attempts with "
-                            f"HTTP {response.status_code}."
+                            "Linear GraphQL request failed after "
+                            f"{_MAX_ATTEMPTS} attempts with HTTP {response.status_code}."
                         ) from _status_error(response)
                     await asyncio.sleep(_retry_delay(attempt, response))
                     continue

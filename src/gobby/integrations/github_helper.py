@@ -8,6 +8,7 @@ Local-only operations (status, diff, merge, checkout) remain as git subprocess.
 from __future__ import annotations
 
 import asyncio
+import base64
 import binascii
 import json
 import logging
@@ -42,6 +43,15 @@ def parse_github_repo(github_repo: str) -> tuple[str, str]:
     if not parts[0] or not parts[1]:
         raise ValueError(f"Invalid github_repo format: {github_repo!r}, expected 'owner/repo'")
     return parts[0], parts[1]
+
+
+def _github_page_limit(limit: int) -> int:
+    """Validate limits sent to GitHub pagination surfaces."""
+    if limit < 1:
+        raise ValueError("limit must be positive")
+    if limit > 100:
+        raise ValueError("GitHub API pagination limit cannot exceed 100")
+    return limit
 
 
 class GitHubMCPHelper:
@@ -145,7 +155,7 @@ class GitHubMCPHelper:
                         "owner": self.owner,
                         "repo": self.repo,
                         "sha": branch,
-                        "per_page": min(limit, 100),
+                        "per_page": _github_page_limit(limit),
                     },
                 )
                 commits = []
@@ -180,7 +190,7 @@ class GitHubMCPHelper:
                 [
                     "log",
                     branch,
-                    f"--max-count={min(limit, 100)}",
+                    f"--max-count={_github_page_limit(limit)}",
                     "--format=%H\t%h\t%s\t%an\t%aI",
                 ],
                 timeout=15,
@@ -234,8 +244,6 @@ class GitHubMCPHelper:
                     },
                 )
                 if isinstance(data, dict) and "content" in data:
-                    import base64
-
                     try:
                         return base64.b64decode(data["content"]).decode("utf-8")
                     except (binascii.Error, UnicodeDecodeError):
@@ -364,7 +372,7 @@ class GitHubMCPHelper:
             "owner": self.owner,
             "repo": self.repo,
             "state": state,
-            "per_page": min(limit, 100),
+            "per_page": _github_page_limit(limit),
         }
         if labels:
             args["labels"] = ",".join(labels)

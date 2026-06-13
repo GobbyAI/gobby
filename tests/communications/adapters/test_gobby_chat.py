@@ -251,3 +251,8 @@ def test_chunk_message_inherits_limit(adapter: GobbyChatAdapter) -> None:
     long_msg = "a " * 60_000  # 120_000 chars
     chunks = adapter.chunk_message(long_msg)
     assert len(chunks) > 1
+
+
+def test_chunk_message_whitespace_only_keeps_chunks(adapter: GobbyChatAdapter) -> None:
+    chunks = adapter.chunk_message("      ", max_length=3)
+    assert chunks == ["   ", "   "]

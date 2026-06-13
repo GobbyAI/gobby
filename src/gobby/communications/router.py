@@ -55,9 +55,6 @@ class MessageRouter:
         if self._rules_cache is None or now >= self._cache_expires_at:
             # rules should already be sorted by priority from store
             rules = await asyncio.to_thread(self.store.list_routing_rules, enabled_only=True)
-            # Handle both sync and async return from store if needed in future
-            if asyncio.iscoroutine(rules):
-                rules = await rules
             self._rules_cache = rules
             self._cache_expires_at = now + self._cache_ttl
         else:
@@ -95,7 +92,7 @@ class MessageRouter:
         Returns:
             True if matched.
         """
-        return fnmatch.fnmatch(event_type, pattern)
+        return fnmatch.fnmatch(event_type, self._normalize_event_type(pattern))
 
     def _normalize_event_type(self, event_type: str) -> str:
         """Normalize event type to dot-separated format.

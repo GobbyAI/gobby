@@ -224,7 +224,7 @@ async def test_triage_issue_dedup_closes_duplicate_without_task(temp_db, sample_
     vector_store.search_with_payload.return_value = [
         (
             "duplicate",
-            0.94,
+            0.98,
             {
                 "repo": "owner/other",
                 "issue_number": 7,
@@ -259,6 +259,49 @@ async def test_triage_issue_dedup_closes_duplicate_without_task(temp_db, sample_
     record = GitHubTriageStore(temp_db).get_issue_record(sample_project["id"], "owner/repo", 42)
     assert record is not None
     assert record.dedup_issue_key == "owner/other#7"
+
+
+@pytest.mark.asyncio
+async def test_triage_issue_uncertain_duplicate_escalates_without_closing(
+    temp_db,
+    sample_project,
+) -> None:
+    _enable_config(temp_db, sample_project["id"])
+    vector_store = AsyncMock()
+    vector_store.search_with_payload.return_value = [
+        (
+            "duplicate",
+            0.96,
+            {
+                "repo": "owner/other",
+                "issue_number": 7,
+                "issue_url": "https://github.com/owner/other/issues/7",
+            },
+        )
+    ]
+    memory_manager = SimpleNamespace(
+        vector_store=vector_store,
+        embed_fn=AsyncMock(return_value=[0.1, 0.2]),
+    )
+    github = FakeGitHubMCP()
+    service = GitHubIssueTriageService(
+        db=temp_db,
+        mcp_manager=github,
+        memory_manager=memory_manager,
+        build_func=AsyncMock(),
+    )
+
+    result = await service.triage_issue(
+        sample_project["id"],
+        "owner/repo",
+        42,
+        "webhook",
+        issue_data=json.loads(_payload().decode())["issue"],
+    )
+
+    assert result["verdict"] == "escalate"
+    assert github.called("add_labels_to_issue")[0]["labels"] == ["gobby:needs-triage"]
+    assert github.called("update_issue") == []
 
 
 @pytest.mark.asyncio

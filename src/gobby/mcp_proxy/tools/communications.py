@@ -158,13 +158,19 @@ def create_communications_registry(
     ) -> dict[str, Any]:
         """Send a proactive message using a stored ConversationReference."""
         try:
-            msg_id = await communications_manager.send_proactive(
+            message = await communications_manager.send_proactive(
                 channel_name=channel,
                 conversation_id=conversation_id,
                 content=content,
                 content_type=content_type,
             )
-            return {"success": True, "message_id": msg_id}
+            return {
+                "success": message.status == "sent",
+                "message_id": message.id,
+                "platform_message_id": message.platform_message_id,
+                "status": message.status,
+                "error": message.error,
+            }
         except Exception as e:
             logger.exception("Communications tool error")
             return {"success": False, "error": str(e)}
