@@ -461,7 +461,7 @@ function RuleCard({ rule, devMode, projectId, isInstalled, onCardClick, onToggle
   onMoveToGlobal: () => void
   onRestoreFromTemplate: () => void
 }) {
-  const effectType = getEffectType(rule.effect)
+  const effectType = getEffectType(rule.effect ?? null)
   const isTemplate = rule.source === 'template'
   const isDeleted = !!(rule as RuleSummary & { deleted_at?: string | null }).deleted_at
 

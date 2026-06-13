@@ -12,17 +12,60 @@ export interface RuleSummary {
   priority: number
   source: string
   tags: string[] | null
-  effect: Record<string, unknown> | null
+  effect?: Record<string, unknown> | null
+  effects?: Array<Record<string, unknown>> | null
   has_template_update?: boolean
+  audience?: string | null
+  agent_scope?: string[] | null
+  match?: Record<string, unknown> | null
+  project_id?: string | null
 }
 
 export interface RuleDetail extends RuleSummary {
   match: Record<string, unknown> | null
-  effect: Record<string, unknown> | null
+  effect?: Record<string, unknown> | null
+  effects?: Array<Record<string, unknown>> | null
+  audience?: string | null
+  agent_scope?: string[] | null
 }
 
 function getBaseUrl(): string {
   return ''
+}
+
+export class RuleApiError extends Error {
+  status: number
+
+  constructor(message: string, status: number) {
+    super(message)
+    this.name = 'RuleApiError'
+    this.status = status
+  }
+}
+
+interface RuleMutationOptions {
+  throwOnError?: boolean
+}
+
+interface RuleUpdateOptions extends RuleMutationOptions {
+  newName?: string
+}
+
+async function parseRuleError(response: Response): Promise<RuleApiError> {
+  let message = `Rule request failed with status ${response.status}`
+  try {
+    const data = await response.json()
+    if (typeof data.detail === 'string') message = data.detail
+    else if (typeof data.error === 'string') message = data.error
+  } catch {
+    try {
+      const text = await response.text()
+      if (text) message = text
+    } catch {
+      /* ignore */
+    }
+  }
+  return new RuleApiError(message, response.status)
 }
 
 export function useRules() {
@@ -106,7 +149,11 @@ export function useRules() {
     return false
   }, [fetchRules])
 
-  const createRule = useCallback(async (name: string, definition: Record<string, unknown>): Promise<RuleDetail | null> => {
+  const createRule = useCallback(async (
+    name: string,
+    definition: Record<string, unknown>,
+    options?: RuleMutationOptions,
+  ): Promise<RuleDetail | null> => {
     try {
       const baseUrl = getBaseUrl()
       const response = await fetch(`${baseUrl}/api/rules`, {
@@ -119,25 +166,39 @@ export function useRules() {
         await fetchRules()
         return data.rule || null
       }
+      if (options?.throwOnError) throw await parseRuleError(response)
     } catch (e) {
+      if (options?.throwOnError) throw e
       console.error('Failed to create rule:', e)
     }
     return null
   }, [fetchRules])
 
-  const updateRule = useCallback(async (name: string, definition: Record<string, unknown>): Promise<boolean> => {
+  const updateRule = useCallback(async (
+    name: string,
+    definition: Record<string, unknown>,
+    options?: RuleUpdateOptions,
+  ): Promise<boolean> => {
     try {
       const baseUrl = getBaseUrl()
+      const requestedName = options?.newName
+        ?? (typeof definition.name === 'string' ? definition.name : undefined)
+      const body: Record<string, unknown> = { definition }
+      if (requestedName && requestedName !== name) {
+        body.name = requestedName
+      }
       const response = await fetch(`${baseUrl}/api/rules/${encodeURIComponent(name)}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ definition }),
+        body: JSON.stringify(body),
       })
       if (response.ok) {
         await fetchRules()
         return true
       }
+      if (options?.throwOnError) throw await parseRuleError(response)
     } catch (e) {
+      if (options?.throwOnError) throw e
       console.error('Failed to update rule:', e)
     }
     return false

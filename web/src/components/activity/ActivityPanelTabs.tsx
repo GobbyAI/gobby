@@ -7,6 +7,7 @@ export type ActivityTab =
   | "traces"
   | "mcp"
   | "wiki"
+  | "rules"
   | "tasks"
   | "files"
   | "plans"
@@ -73,6 +74,19 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
         <path d="M4 4.5A2.5 2.5 0 0 1 6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5z" />
         <path d="M8 7h8" />
         <path d="M8 11h6" />
+      </svg>
+    ),
+  },
+  {
+    id: "rules",
+    label: "Rules",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M9 3h6l4 4v14H5V3h4" />
+        <path d="M14 3v5h5" />
+        <path d="M8 12h8" />
+        <path d="M8 16h5" />
+        <path d="M8 8h2" />
       </svg>
     ),
   },
