@@ -43,6 +43,7 @@ dependencies = [
     # croniter for cron expression parsing (scheduler)
     "croniter>=6.0.0",
     "falkordb>=1.1.0",
+    "faster-whisper>=1.0.0",
     "qdrant-client>=1.12.0",
     # python-multipart <0.0.27 has CVE-2026-24486, CVE-2026-40347, CVE-2026-42561
     "python-multipart>=0.0.27",
@@ -66,14 +67,13 @@ dependencies = [
     "opentelemetry-instrumentation-anthropic>=0.34.0",
     "opentelemetry-instrumentation-openai>=0.34.0",
     "yake>=0.7.3",
+    "chatterbox-tts",
 ]
 
 [project.optional-dependencies]
 email = ["aiosmtplib>=2.0", "aioimaplib>=1.0"]
-voice = [
-    "faster-whisper>=1.0.0",
-    "chatterbox-tts",
-]
+# Compatibility alias for older setup scripts. Voice dependencies are base requirements.
+voice = []
 
 [project.scripts]
 gobby = "gobby.cli:cli"
@@ -104,21 +104,21 @@ constraint-dependencies = [
 # torch, torchaudio, diffusers, and safetensors are exact-pinned by
 # chatterbox-tts==0.1.7 to vulnerable or incompatible versions, so constraints are
 # unsatisfiable on their own; overrides force fixed versions and unify the
-# voice-extra resolution. Voice extra is opt-in; revisit if chatterbox-tts
-# surfaces ABI/API drift at runtime.
-# Voice-extra watch note (gobby-#14569). PyPI checked 2026-05-13:
+# required local voice stack. Revisit if chatterbox-tts surfaces ABI/API drift
+# at runtime.
+# Voice stack watch note (gobby-#14569). PyPI checked 2026-05-13:
 # stable latest is 0.7.0 and 0.8.0rc0 remains a pre-release, so the RC floor is intentional.
 # Removal checklist:
 # - confirm safetensors>=0.8.0 stable exists and resolves with chatterbox-tts==0.1.7
-# - run the CI "Voice Extra (safetensors rc0)" job with uv sync --extra voice
+# - run the CI "Voice Stack (safetensors rc0)" job with uv sync --dev
 # - run focused voice route/STT tests and update this note with the replacement date
 override-dependencies = [
     "torch==2.11.0",
     "torchaudio==2.11.0",
-    # diffusers <0.38.0 has CVE-2026-44513 (transitive via chatterbox-tts voice extra)
+    # diffusers <0.38.0 has CVE-2026-44513 (transitive via chatterbox-tts)
     "diffusers>=0.38.0",
     # chatterbox-tts==0.1.7 pins gradio==6.8.0, which keeps Starlette below
-    # the audit-safe floor. Voice extra is opt-in; force the current compatible
+    # the audit-safe floor. Force the current compatible
     # Gradio line until chatterbox relaxes its pin.
     "gradio>=6.14.0",
     # Temporary chatterbox-tts==0.1.7 override; keep until the checklist above passes.
@@ -187,7 +187,7 @@ filterwarnings = [
     "ignore:unclosed database:ResourceWarning",
     # Ignore fork() deprecation warning from embedded spawner tests (expected on macOS)
     "ignore:This process.*is multi-threaded.*use of fork:DeprecationWarning",
-    # Ignore pkg_resources deprecation from optional voice dependencies (resemble-perth via chatterbox-tts)
+    # Ignore pkg_resources deprecation from voice dependencies (resemble-perth via chatterbox-tts)
     "ignore:pkg_resources is deprecated as an API\\.:UserWarning",
     # Ignore MCP SDK streamable_http_client deprecation (upstream)
     "ignore:Use `streamable_http_client` instead:DeprecationWarning",

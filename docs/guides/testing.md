@@ -55,8 +55,8 @@ GOBBY_TEST_PROTECT=1 uv run pytest tests/path/ --cov=gobby --cov-report=term-mis
 
 The main Python CI job excludes `tests/voice` and
 `tests/servers/routes/test_voice_routes.py`. Those run in the dedicated
-`voice-extra` job, which installs `uv sync --dev --extra voice` before running
-the focused voice suite.
+`voice-extra` job, which installs the normal dev environment with `uv sync --dev`
+before running the focused voice suite.
 
 The project pre-push verification in `.gobby/project.json` runs backend lint,
 format, and type checks plus frontend type checks and Vitest. It does not

@@ -66,11 +66,6 @@ class VoiceWarmupMixin:
         if not voice_config or not voice_config.enabled or not voice_config.stt_enabled:
             return None
 
-        # Auto-install STT deps if missing (fire-and-forget on first call)
-        if not self._stt_deps_checked:
-            self._stt_deps_checked = True
-            self._spawn_background_task(self._ensure_stt_deps(voice_config), name="ensure-stt-deps")
-
         from gobby.voice.stt import WhisperSTT
 
         self._whisper_stt = WhisperSTT(voice_config)
@@ -87,7 +82,7 @@ class VoiceWarmupMixin:
             importlib.import_module("faster_whisper")
             return True, ""
         except ImportError:
-            return False, "faster-whisper not installed (uv sync --extra voice)"
+            return False, "daemon environment is missing required package faster-whisper; run uv sync"
 
     def _get_tts(self) -> TTSProvider | None:
         """Get or create the TTS singleton (routes by provider config)."""
@@ -97,11 +92,6 @@ class VoiceWarmupMixin:
         voice_config = self._get_voice_config()
         if not voice_config or not voice_config.enabled or not voice_config.tts_enabled:
             return None
-
-        # Auto-install TTS deps if missing
-        if not self._tts_deps_checked:
-            self._tts_deps_checked = True
-            self._spawn_background_task(self._ensure_tts_deps(voice_config), name="ensure-tts-deps")
 
         from gobby.voice.providers import create_tts_provider
 
@@ -323,7 +313,9 @@ class VoiceWarmupMixin:
                 available, reason = self._get_stt_availability()
                 raise RuntimeError(reason if not available else "STT is not configured")
             if not stt.is_available:
-                raise RuntimeError("faster-whisper not installed (uv sync --extra voice)")
+                raise RuntimeError(
+                    "daemon environment is missing required package faster-whisper; run uv sync"
+                )
             logger.info("Starting Whisper STT warmup")
             await stt.warmup()
             self._stt_warmup_status = _WARMUP_READY
@@ -362,7 +354,7 @@ class VoiceWarmupMixin:
             logger.error("TTS warmup failed", exc_info=True)
 
     async def _ensure_stt_deps(self, voice_config: VoiceConfig) -> bool:
-        """Auto-install STT dependencies if missing."""
+        """Check required STT dependencies."""
         try:
             from gobby.voice.dep_check import ensure_stt_deps
 
@@ -372,7 +364,7 @@ class VoiceWarmupMixin:
             return False
 
     async def _ensure_tts_deps(self, voice_config: VoiceConfig) -> bool:
-        """Auto-install TTS dependencies if missing."""
+        """Check required TTS dependencies."""
         try:
             from gobby.voice.dep_check import ensure_tts_deps
 

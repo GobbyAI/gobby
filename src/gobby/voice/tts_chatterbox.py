@@ -77,7 +77,7 @@ def _reference_availability_error(reference_audio: Path) -> str | None:
 
 def _runtime_import_error() -> str | None:
     if not _module_is_available("chatterbox"):
-        return "chatterbox not installed (uv sync --extra voice)"
+        return "daemon environment is missing required package chatterbox-tts; run uv sync"
 
     try:
         importlib.import_module("chatterbox.tts_turbo")

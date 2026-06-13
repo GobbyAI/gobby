@@ -23,9 +23,9 @@ from typing import TYPE_CHECKING, Any
 from gobby.shutdown_intent import ShutdownIntent
 
 if TYPE_CHECKING:
+    from gobby.adapters.codex_impl.client import CodexAppServerClient
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
-    from gobby.adapters.codex_impl.client import CodexAppServerClient
     from gobby.ai import TextGenerationService
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
