@@ -1334,7 +1334,9 @@ def test_daemon_text_generation_builder_maps_feature_providers_to_one_shot_adapt
     assert isinstance(gemini_adapter, text_generation_adapters._GeminiCLITextGenerateAdapter)
     assert isinstance(grok_adapter, text_generation_adapters._GrokCLITextGenerateAdapter)
     assert isinstance(qwen_adapter, text_generation_adapters._QwenCLITextGenerateAdapter)
-    qwen_command = qwen_adapter.build_command(TextGenerationRequest(prompt="x", model="stale-model"))
+    qwen_command = qwen_adapter.build_command(
+        TextGenerationRequest(prompt="x", model="stale-model")
+    )
     assert "--openai-base-url" in qwen_command
     assert "http://localhost:11434/v1" in qwen_command
     assert qwen_command[qwen_command.index("--model") + 1] == "llama3.2"

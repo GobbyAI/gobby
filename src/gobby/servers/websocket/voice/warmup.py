@@ -82,7 +82,10 @@ class VoiceWarmupMixin:
             importlib.import_module("faster_whisper")
             return True, ""
         except ImportError:
-            return False, "daemon environment is missing required package faster-whisper; run uv sync"
+            return (
+                False,
+                "daemon environment is missing required package faster-whisper; run uv sync",
+            )
 
     def _get_tts(self) -> TTSProvider | None:
         """Get or create the TTS singleton (routes by provider config)."""
