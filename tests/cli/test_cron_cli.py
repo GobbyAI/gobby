@@ -212,6 +212,26 @@ class TestCronAdd:
         )
         assert result.exit_code != 0
 
+    def test_add_invalid_schedule(self, runner, mock_storage) -> None:
+        result = runner.invoke(
+            cli,
+            [
+                "cron",
+                "add",
+                "--name",
+                "Bad Schedule",
+                "--schedule",
+                "not a cron",
+                "--action-type",
+                "shell",
+                "--action-config",
+                '{"command": "echo"}',
+            ],
+        )
+        assert result.exit_code != 0
+        assert "Invalid cron schedule: not a cron" in result.output
+        mock_storage.create_job.assert_not_called()
+
 
 class TestCronRun:
     """Tests for 'gobby cron run'."""
@@ -335,6 +355,25 @@ class TestCronEdit:
         assert result.exit_code == 0
         call_kwargs = mock_storage.update_job.call_args
         assert call_kwargs.kwargs["cron_expr"] == "30 8 * * *"
+
+    def test_edit_interval_schedule_uses_shared_parser(self, runner, mock_storage) -> None:
+        mock_storage.get_job.return_value = _make_job()
+        mock_storage.update_job.return_value = _make_job(
+            schedule_type="interval", interval_seconds=300, cron_expr=None
+        )
+        result = runner.invoke(cli, ["cron", "edit", "cj-abc123", "--schedule", "5m"])
+        assert result.exit_code == 0
+        call_kwargs = mock_storage.update_job.call_args
+        assert call_kwargs.kwargs["schedule_type"] == "interval"
+        assert call_kwargs.kwargs["cron_expr"] is None
+        assert call_kwargs.kwargs["interval_seconds"] == 300
+
+    def test_edit_invalid_schedule(self, runner, mock_storage) -> None:
+        mock_storage.get_job.return_value = _make_job()
+        result = runner.invoke(cli, ["cron", "edit", "cj-abc123", "--schedule", "not a cron"])
+        assert result.exit_code != 0
+        assert "Invalid cron schedule: not a cron" in result.output
+        mock_storage.update_job.assert_not_called()
 
     def test_edit_enabled(self, runner, mock_storage) -> None:
         mock_storage.get_job.return_value = _make_job()

@@ -79,16 +79,21 @@ def sort_tasks_for_tree(tasks: list[Task]) -> list[Task]:
     """
     _input_order, children_by_parent = _group_children_by_parent(tasks)
 
-    # Build sorted list via depth-first traversal
     sorted_tasks: list[Task] = []
+    visited: set[str] = set()
 
     def traverse(task: Task) -> None:
+        if task.id in visited:
+            return
+        visited.add(task.id)
         sorted_tasks.append(task)
         for child in children_by_parent.get(task.id, []):
             traverse(child)
 
     for root_task in children_by_parent.get(None, []):
         traverse(root_task)
+    for task in tasks:
+        traverse(task)
 
     return sorted_tasks
 
@@ -115,9 +120,13 @@ def compute_tree_prefixes(
         primary_ids = set(task_by_id.keys())
 
     prefixes: dict[str, tuple[str, bool]] = {}
+    visited: set[str] = set()
 
     def compute_prefix(task: Task, ancestor_continues: list[bool]) -> None:
         """Recursively compute prefix for task and its children."""
+        if task.id in visited:
+            return
+        visited.add(task.id)
         is_primary = task.id in primary_ids
 
         if not task.parent_task_id or task.parent_task_id not in task_by_id:
@@ -143,6 +152,8 @@ def compute_tree_prefixes(
     # Start with root tasks
     for root_task in children_by_parent.get(None, []):
         compute_prefix(root_task, [])
+    for task in tasks:
+        compute_prefix(task, [])
 
     return prefixes
 
@@ -160,10 +171,14 @@ def get_all_descendants(manager: LocalTaskManager, task_id: str) -> list[Task]:
         List of all descendant tasks
     """
     descendants: list[Task] = []
+    visited = {task_id}
 
     def collect_children(parent_id: str) -> None:
         children = manager.list_tasks(parent_task_id=parent_id)
         for child in children:
+            if child.id in visited:
+                continue
+            visited.add(child.id)
             descendants.append(child)
             collect_children(child.id)  # Recurse into grandchildren
 

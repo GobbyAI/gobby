@@ -40,6 +40,7 @@ def init_servers(runner: GobbyRunner) -> None:
         task_sync_manager=runner.task_sync_manager,
         memory_sync_manager=runner.memory_sync_manager,
         memory_manager=runner.memory_manager,
+        text_generation_service=runner.text_generation_service,
         llm_service=runner.llm_service,
         vector_store=runner.vector_store,
         mcp_manager=runner.mcp_proxy,
@@ -95,6 +96,7 @@ def init_servers(runner: GobbyRunner) -> None:
 
         codex_client = CodexAppServerClient()
         logger.info("Codex app-server client created (will start in HTTP lifespan)")
+    runner.codex_client = codex_client
 
     services.web_chat_runtime_manager = WebChatRuntimeManager(
         codex_client=codex_client,

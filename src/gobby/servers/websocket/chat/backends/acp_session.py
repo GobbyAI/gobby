@@ -10,6 +10,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.adapters.acp_client import StreamEvent
+from gobby.adapters.acp_client_requests import is_pre_tool_decision_denied
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -106,6 +107,7 @@ class ACPManagedChatSession(
             self._is_first_turn = False
             saw_content_delta = False
             pending_tool_calls: dict[str, dict[str, Any]] = {}
+            blocked_tool_call_ids: set[str] = set()
             plan_text_parts: list[str] = []
 
             try:
@@ -128,14 +130,21 @@ class ACPManagedChatSession(
                             allow_message_fallback=not saw_content_delta,
                         )
                         if isinstance(chat_event, ToolCallEvent):
+                            pre_tool_response = None
+                            if stream_event.data.get("pre_tool_checked"):
+                                pre_tool_response = stream_event.data.get("pre_tool_response")
+                            else:
+                                pre_tool_response = await self._apply_pre_tool_lifecycle(
+                                    chat_event.tool_name,
+                                    chat_event.arguments,
+                                )
+                            if is_pre_tool_decision_denied(pre_tool_response):
+                                blocked_tool_call_ids.add(chat_event.tool_call_id)
+                                continue
                             pending_tool_calls[chat_event.tool_call_id] = {
                                 "tool_name": chat_event.tool_name,
                                 "tool_input": chat_event.arguments,
                             }
-                            await self._apply_pre_tool_lifecycle(
-                                chat_event.tool_name,
-                                chat_event.arguments,
-                            )
                         if chat_event is not None:
                             yield chat_event
                         continue
@@ -146,16 +155,20 @@ class ACPManagedChatSession(
                             allow_message_fallback=not saw_content_delta,
                         )
                         if isinstance(chat_event, ToolResultEvent):
-                            pending = pending_tool_calls.pop(chat_event.tool_call_id, {})
-                            tool_input = pending.get("tool_input")
-                            tool_input_payload: dict[str, Any] = (
-                                tool_input if isinstance(tool_input, dict) else {}
-                            )
-                            await self._apply_post_tool_lifecycle(
-                                str(pending.get("tool_name", "")),
-                                tool_input_payload,
-                                chat_event.result if chat_event.success else chat_event.error,
-                            )
+                            if chat_event.tool_call_id in blocked_tool_call_ids:
+                                blocked_tool_call_ids.remove(chat_event.tool_call_id)
+                                continue
+                            pending = pending_tool_calls.pop(chat_event.tool_call_id, None)
+                            if pending is not None:
+                                tool_input = pending.get("tool_input")
+                                tool_input_payload: dict[str, Any] = (
+                                    tool_input if isinstance(tool_input, dict) else {}
+                                )
+                                await self._apply_post_tool_lifecycle(
+                                    str(pending.get("tool_name", "")),
+                                    tool_input_payload,
+                                    chat_event.result if chat_event.success else chat_event.error,
+                                )
                         if chat_event is not None:
                             yield chat_event
                         continue

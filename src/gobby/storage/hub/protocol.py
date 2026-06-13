@@ -52,6 +52,14 @@ class LockTarget(Protocol):
 
 
 @dataclass(frozen=True)
+class AgentCapAdmission:
+    """Serializes dispatcher admission against active-agent caps."""
+
+    PRIORITY: ClassVar[int] = 100
+    project_id: str | None
+
+
+@dataclass(frozen=True)
 class TaskSeqAllocation:
     """Serializes per-project task sequence allocation."""
 

@@ -52,20 +52,3 @@ def qdrant_status() -> None:
     click.echo(f"Healthy:   {'yes' if status['healthy'] else 'no'}")
     if status["url"]:
         click.echo(f"URL:       {status['url']}")
-
-
-@qdrant.command("uninstall")
-@click.option("--remove-data", is_flag=True, help="Also remove Qdrant storage data")
-@click.confirmation_option(prompt="Are you sure you want to uninstall Qdrant?")
-def qdrant_uninstall(remove_data: bool) -> None:
-    """Uninstall Qdrant service."""
-    from .installers.qdrant import uninstall_qdrant
-
-    result = uninstall_qdrant(remove_data=remove_data)
-    if result["success"]:
-        click.echo("Qdrant uninstalled")
-        if remove_data:
-            click.echo("  Storage data removed")
-    else:
-        click.echo(f"Failed: {result.get('error', 'unknown')}", err=True)
-        sys.exit(1)

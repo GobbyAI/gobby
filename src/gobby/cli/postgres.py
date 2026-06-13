@@ -28,7 +28,6 @@ from gobby.cli.installers.postgres import (
     get_postgres_status,
     install_postgres,
     render_postgres_status,
-    uninstall_postgres,
 )
 from gobby.cli.installers.service import get_service_status
 from gobby.cli.postgres_backup import create_postgres_backup, restore_postgres_backup
@@ -112,7 +111,13 @@ def backup_cmd(output_dir: Path | None) -> None:
     default=False,
     help="Restore without an interactive confirmation prompt.",
 )
-def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool) -> None:
+@click.option(
+    "--allow-unverified",
+    is_flag=True,
+    default=False,
+    help="Allow restore when metadata.json and SHA256SUMS are missing.",
+)
+def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool, allow_unverified: bool) -> None:
     """Restore a verified PostgreSQL backup into the configured target database."""
     if _daemon_running():
         raise click.ClickException("Stop the daemon first: gobby stop")
@@ -125,27 +130,10 @@ def restore_cmd(dump_or_dir: Path, clean: bool, yes: bool) -> None:
     result = restore_postgres_backup(
         dump_or_dir,
         clean=clean,
+        allow_unverified=allow_unverified,
         gobby_home=get_gobby_home(),
     )
     _render_restore_result(result)
-
-
-@postgres_cli.command("uninstall")
-@click.option(
-    "--remove-data",
-    is_flag=True,
-    default=False,
-    help="Also delete the gobby_postgres_data and gobby_pgaudit_log Docker volumes.",
-)
-def uninstall_cmd(remove_data: bool) -> None:
-    """Clean up PostgreSQL service artifacts using the recorded install mode."""
-    gobby_home = get_gobby_home()
-    result = uninstall_postgres(
-        mode=_active_install_mode(gobby_home=gobby_home),
-        gobby_home=gobby_home,
-        remove_data=remove_data,
-    )
-    _render_uninstall_result(result)
 
 
 @postgres_cli.command("activate")
@@ -208,19 +196,6 @@ def _render_install_result(result: dict[str, Any]) -> None:
         if pgaudit_available is not None:
             click.echo(f"  pgaudit available: {'yes' if pgaudit_available else 'no'}")
         click.echo("\nRestart the daemon after cutover when hub_backend is activated.")
-        return
-
-    click.echo(f"Failed: {result.get('error', 'unknown error')}", err=True)
-    sys.exit(1)
-
-
-def _render_uninstall_result(result: dict[str, Any]) -> None:
-    if result.get("success"):
-        click.echo(result.get("message", "PostgreSQL service cleanup completed"))
-        if result.get("data_removed"):
-            click.echo("  Docker data volumes removed")
-        for step in result.get("manual_steps", []):
-            click.echo(f"  {step}")
         return
 
     click.echo(f"Failed: {result.get('error', 'unknown error')}", err=True)

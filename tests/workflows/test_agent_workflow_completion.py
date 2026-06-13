@@ -11,6 +11,7 @@ import pytest
 import yaml
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
+from gobby.agents.step_workflow import register_agent_step_workflow
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
@@ -18,11 +19,16 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.tasks import LocalTaskManager, TaskDispatchMutexManager
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.workflows.definitions import WorkflowInstance
+from gobby.workflows.definitions import AgentDefinitionBody, WorkflowInstance
 from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 pytestmark = pytest.mark.unit
+
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+EXPANSION_QA_AGENT_PATH = (
+    PROJECT_ROOT / "src/gobby/install/shared/workflows/agents/expansion-qa.yaml"
+)
 
 
 @pytest.fixture
@@ -168,6 +174,31 @@ def _register_qa_reviewer_workflow(
             current_step="review",
             step_entered_at=datetime.now(UTC),
             variables=variables,
+        )
+    )
+    return instance_manager
+
+
+def _register_expansion_qa_workflow(
+    db: HubDatabase,
+    *,
+    session_id: str = "agent-session",
+) -> WorkflowInstanceManager:
+    _create_session(db, session_id)
+    instance_manager = WorkflowInstanceManager(db)
+    agent_data = yaml.safe_load(EXPANSION_QA_AGENT_PATH.read_text(encoding="utf-8"))
+    agent_body = AgentDefinitionBody.model_validate(agent_data)
+    workflow_name = register_agent_step_workflow(agent_body, db)
+    instance_manager.save_instance(
+        WorkflowInstance(
+            id=f"inst-{session_id}-{workflow_name}",
+            session_id=session_id,
+            workflow_name=workflow_name,
+            enabled=True,
+            priority=100,
+            current_step="coverage_check",
+            step_entered_at=datetime.now(UTC),
+            variables=dict(agent_body.step_variables),
         )
     )
     return instance_manager
@@ -429,6 +460,84 @@ class TestAgentWorkflowCompletion:
         assert variables["step_workflow_complete"] is True
         assert response.context is not None
         completion_registry.notify.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize("verdict_tool", ["approve_review", "reject_review"])
+    async def test_expansion_qa_verdict_terminalizes_generated_step_workflow(
+        self, db: HubDatabase, verdict_tool: str
+    ) -> None:
+        instance_manager = _register_expansion_qa_workflow(db)
+        runner = MagicMock()
+        runner.run_storage = MagicMock()
+        runner.run_storage.get_by_session.return_value = MagicMock(id="run-123")
+        runner.agent_lifecycle_monitor = MagicMock()
+        runner.agent_lifecycle_monitor.terminalize_successful_run = AsyncMock(return_value=True)
+        runner.complete_run.return_value = True
+        completion_registry = MagicMock()
+        completion_registry.get_result.return_value = None
+        completion_registry.notify = AsyncMock()
+        engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
+        variables: dict[str, object] = {}
+
+        coverage_response = await engine.evaluate(
+            _after_tool_event(
+                mcp_tool="run_expansion_qa_coverage",
+                tool_output={"success": True, "result": {"review_action": verdict_tool}},
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "expansion-qa-steps")
+        assert instance is not None
+        assert instance.current_step == "qa_check"
+        assert instance.variables["coverage_result_saved"] is True
+        assert instance.variables["qa_result_saved"] is False
+        assert "coverage_check -> qa_check" in (coverage_response.context or "")
+
+        save_response = await engine.evaluate(
+            _after_tool_event(
+                mcp_tool="save_expansion_qa_result",
+                tool_output={"success": True},
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        instance = instance_manager.get_instance("agent-session", "expansion-qa-steps")
+        assert instance is not None
+        assert instance.current_step == "qa_check"
+        assert instance.variables["qa_result_saved"] is True
+        assert instance.variables["review_complete"] is False
+        assert "step_workflow_complete" not in variables
+        assert save_response.context is None
+
+        verdict_response = await engine.evaluate(
+            _after_tool_event(
+                mcp_tool=verdict_tool,
+                tool_arguments={"stage_name": "expansion"},
+                tool_output={"success": True},
+            ),
+            session_id="agent-session",
+            variables=variables,
+        )
+
+        assert instance_manager.get_instance("agent-session", "expansion-qa-steps") is None
+        assert variables["review_complete"] is True
+        assert variables["step_workflow_complete"] is True
+        assert "qa_check -> terminate" in (verdict_response.context or "")
+        runner.complete_run.assert_not_called()
+        runner.agent_lifecycle_monitor.terminalize_successful_run.assert_awaited_once_with(
+            "run-123",
+            notify_result={
+                "status": "success",
+                "run_id": "run-123",
+                "via": "workflow_terminate",
+                "workflow": "expansion-qa-steps",
+            },
+            message="Agent run-123 completed via workflow terminate",
+        )
+        completion_registry.notify.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_qa_reviewer_stale_get_task_result_transitions_to_terminate(

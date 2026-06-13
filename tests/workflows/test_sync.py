@@ -99,6 +99,81 @@ class TestSyncBundledRules:
         result = sync_bundled_rules(db, rules_path=rules_dir)
         assert result["skipped"] == 1
 
+    def test_sync_rule_file_imports_yml_file(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_rules import sync_rule_file
+
+        rule_file = tmp_path / "single-rule.yml"
+        rule_file.write_text(
+            """
+rules:
+  single-yml-rule:
+    event: turn_start
+    effect:
+      type: block
+      reason: "from yml"
+"""
+        )
+
+        result = sync_rule_file(db, rule_file)
+
+        assert result["synced"] == 1
+        row = manager.get_by_name("single-yml-rule")
+        assert row is not None
+        assert json.loads(row.definition_json)["event"] == "turn_start"
+
+    def test_sync_rule_file_does_not_update_sibling_rule(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager, tmp_path: Path
+    ) -> None:
+        from gobby.workflows.sync_rules import sync_rule_file
+
+        manager.create(
+            name="sibling-rule",
+            definition_json=json.dumps(
+                {
+                    "event": "turn_start",
+                    "effects": [{"type": "block", "reason": "old sibling"}],
+                }
+            ),
+            workflow_type="rule",
+            source="installed",
+            tags=["gobby"],
+        )
+
+        target_file = tmp_path / "target.yml"
+        target_file.write_text(
+            """
+rules:
+  target-rule:
+    event: turn_start
+    effect:
+      type: block
+      reason: "target"
+"""
+        )
+        sibling_file = tmp_path / "sibling.yaml"
+        sibling_file.write_text(
+            """
+rules:
+  sibling-rule:
+    event: turn_start
+    effect:
+      type: block
+      reason: "new sibling"
+"""
+        )
+
+        result = sync_rule_file(db, target_file)
+
+        assert result["synced"] == 1
+        target_row = manager.get_by_name("target-rule")
+        assert target_row is not None
+        sibling_row = manager.get_by_name("sibling-rule")
+        assert sibling_row is not None
+        sibling_definition = json.loads(sibling_row.definition_json)
+        assert sibling_definition["effects"][0]["reason"] == "old sibling"
+
     def test_skips_deprecated_directory(self, db: HubDatabase, tmp_path: Path) -> None:
         from gobby.workflows.sync_rules import sync_bundled_rules
 

@@ -13,6 +13,7 @@ from gobby.cli.tasks._utils import (
     format_task_list,
     get_claimed_task_owners,
     get_task_manager,
+    parse_task_refs,
     resolve_task_id,
     sort_tasks_for_tree,
 )
@@ -146,12 +147,9 @@ def list_tasks(
             project_id=project_id,
             claimed=claimed_filter,
             closed=closed_filter,
-            limit=10000 if stage_name or escalated else limit,
+            escalated=True if escalated else None,
+            limit=10000 if stage_name else limit,
         )
-        if escalated:
-            tasks_list = [
-                task for task in tasks_list if serialize_task_state(task)["is_escalated"]
-            ][:limit]
         tasks_list = filter_tasks_by_stage(
             manager,
             tasks_list,
@@ -357,6 +355,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
     total = len(all_tasks)
     by_stage_state: dict[str, int] = {}
     by_priority = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
+    other_priority_count = 0
     by_type: dict[str, int] = {}
     claimed_count = 0
     unclaimed_count = 0
@@ -380,8 +379,10 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
             if state["is_merge_ready"]:
                 merge_ready_count += 1
 
-        if task.priority is not None:
+        if task.priority in by_priority:
             by_priority[task.priority] = by_priority.get(task.priority, 0) + 1
+        elif task.priority is not None:
+            other_priority_count += 1
         if task.task_type:
             by_type[task.task_type] = by_type.get(task.task_type, 0) + 1
 
@@ -397,6 +398,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
             "medium": by_priority.get(2, 0),
             "low": by_priority.get(3, 0),
             "backlog": by_priority.get(4, 0),
+            "other": other_priority_count,
         },
         "by_type": by_type,
         "claimed": claimed_count,
@@ -429,6 +431,7 @@ def task_stats(project_ref: str | None, json_format: bool) -> None:
     click.echo(f"  Medium Priority: {by_priority.get(2, 0)}")
     click.echo(f"  Low Priority: {by_priority.get(3, 0)}")
     click.echo(f"  Backlog Priority: {by_priority.get(4, 0)}")
+    click.echo(f"  Other Priority: {other_priority_count}")
     if by_type:
         click.echo("\n  By Type:")
         for t, count in sorted(by_type.items(), key=lambda x: -x[1]):
@@ -466,6 +469,21 @@ def create_task(
         project_id = PERSONAL_PROJECT_ID
 
     manager = get_task_manager()
+    resolved_blockers: list[tuple[str, Any]] = []
+    dependency_failures: list[str] = []
+
+    if depends_on:
+        for blocker_ref in depends_on:
+            blocker = resolve_task_id(manager, blocker_ref)
+            if not blocker:
+                dependency_failures.append(f"{blocker_ref}: task not found")
+                continue
+            resolved_blockers.append((blocker_ref, blocker))
+
+    if dependency_failures:
+        failure_lines = "\n".join(f"  {failure}" for failure in dependency_failures)
+        raise click.ClickException(f"Could not add dependencies:\n{failure_lines}")
+
     task = manager.create_task(
         project_id=project_id,
         title=title,
@@ -478,25 +496,36 @@ def create_task(
     project_name = project_ctx.get("name") if project_ctx else None
 
     if project_name and task.seq_num:
-        click.echo(f"Created task {project_name}-#{task.seq_num}: {task.title}")
+        created_message = f"Created task {project_name}-#{task.seq_num}: {task.title}"
     else:
-        click.echo(f"Created task {task_ref}: {task.title}")
+        created_message = f"Created task {task_ref}: {task.title}"
 
     # Handle depends_on
-    if depends_on:
+    dependency_messages: list[str] = []
+    if resolved_blockers:
         from gobby.storage.task_dependencies import TaskDependencyManager
 
         dep_manager = TaskDependencyManager(manager.db)
-        for blocker_ref in depends_on:
+        for blocker_ref, blocker in resolved_blockers:
             try:
-                blocker = resolve_task_id(manager, blocker_ref)
-                if blocker:
-                    # blocker blocks task (task depends on blocker)
-                    dep_manager.add_dependency(task.id, blocker.id, "blocks")
-                    blocker_display = f"#{blocker.seq_num}" if blocker.seq_num else blocker.id[:8]
-                    click.echo(f"  → depends on {blocker_display}")
+                # blocker blocks task (task depends on blocker)
+                dep_manager.add_dependency(task.id, blocker.id, "blocks")
+                blocker_display = f"#{blocker.seq_num}" if blocker.seq_num else blocker.id[:8]
+                dependency_messages.append(f"  → depends on {blocker_display}")
             except Exception as e:
-                click.echo(f"  Warning: Could not add dependency on '{blocker_ref}': {e}", err=True)
+                dependency_failures.append(f"{blocker_ref}: {e}")
+
+    if dependency_failures:
+        try:
+            manager.delete_task(task.id, unlink=True)
+        except ValueError as e:
+            dependency_failures.append(f"created task cleanup failed: {e}")
+        failure_lines = "\n".join(f"  {failure}" for failure in dependency_failures)
+        raise click.ClickException(f"Could not add dependencies:\n{failure_lines}")
+
+    click.echo(created_message)
+    for message in dependency_messages:
+        click.echo(message)
 
 
 @click.command("show")
@@ -653,13 +682,7 @@ def close_task_cmd(
     manager = get_task_manager()
     skip = skip_validation or force
 
-    # Expand comma-separated values into individual IDs
-    expanded_ids: list[str] = []
-    for task_id in task_ids:
-        if "," in task_id:
-            expanded_ids.extend(part.strip() for part in task_id.split(",") if part.strip())
-        else:
-            expanded_ids.append(task_id)
+    expanded_ids = parse_task_refs(task_ids)
 
     closed_count = 0
     failed_count = 0
@@ -699,6 +722,9 @@ def close_task_cmd(
             click.echo(f"\nClosed {closed_count}/{len(expanded_ids)} tasks ({failed_count} failed)")
         else:
             click.echo(f"\nClosed {closed_count} tasks")
+
+    if failed_count > 0:
+        raise SystemExit(1)
 
 
 @click.command("reopen")
@@ -757,8 +783,6 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
         gobby tasks delete #42 #43 #44 --yes
         gobby tasks delete #42 --unlink
     """
-    from gobby.cli.tasks._utils import parse_task_refs
-
     manager = get_task_manager()
 
     # Parse and resolve all task refs
@@ -770,7 +794,7 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
             resolved_tasks.append((ref, resolved))
 
     if not resolved_tasks:
-        return
+        raise SystemExit(1)
 
     # Confirm deletion
     if not yes:
@@ -781,6 +805,7 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
 
     # Delete tasks
     deleted = 0
+    failed = 0
     for ref, resolved in resolved_tasks:
         try:
             manager.delete_task(resolved.id, cascade=cascade, unlink=unlink)
@@ -796,9 +821,13 @@ def delete_task(task_refs: tuple[str, ...], cascade: bool, unlink: bool, yes: bo
                     f"Use --cascade to delete them, or --unlink to preserve them."
                 )
             click.echo(f"Error: {msg}", err=True)
+            failed += 1
 
     if len(resolved_tasks) > 1:
         click.echo(f"\nDeleted {deleted}/{len(resolved_tasks)} tasks.")
+
+    if failed > 0:
+        raise SystemExit(1)
 
 
 @click.command("de-escalate")

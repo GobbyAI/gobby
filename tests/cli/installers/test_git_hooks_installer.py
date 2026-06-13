@@ -1,6 +1,9 @@
 """Tests for the git hooks installer module."""
 
+import os
+import shlex
 import stat
+import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -202,9 +205,6 @@ echo "after"
         # Should not have more than 2 consecutive newlines
         assert "\n\n\n" not in result
 
-
-class TestRemoveLegacyImportSection:
-    """Tests for legacy JSONL import hook cleanup."""
 
 class TestBackupHook:
     """Tests for _backup_hook function."""
@@ -683,8 +683,8 @@ class TestInstallGitHooks:
         assert content.startswith("#!/usr/bin/env bash")
         assert GOBBY_HOOK_START in content
 
-    def test_does_not_install_post_merge_or_post_checkout_hooks(self, tmp_path: Path) -> None:
-        """Fresh installs do not create automatic JSONL import hooks."""
+    def test_installs_post_history_hooks_for_index_freshness(self, tmp_path: Path) -> None:
+        """Fresh installs create post-history hooks for immediate code reindexing."""
         git_dir = tmp_path / ".git"
         git_dir.mkdir()
         hooks_dir = git_dir / "hooks"
@@ -693,10 +693,75 @@ class TestInstallGitHooks:
         result = install_git_hooks(tmp_path)
 
         assert result["success"] is True
-        assert "post-merge" not in result["installed"]
-        assert "post-checkout" not in result["installed"]
-        assert not (hooks_dir / "post-merge").exists()
-        assert not (hooks_dir / "post-checkout").exists()
+        for hook_name in ("post-checkout", "post-merge", "post-rewrite"):
+            assert hook_name in result["installed"]
+            content = (hooks_dir / hook_name).read_text()
+            assert 'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then' in content
+            assert "/api/code-index/codewiki/refresh" in content
+            assert "GOBBY HOOK START" in content
+
+    def test_post_checkout_reindexes_changed_files_after_branch_switch(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Installed post-checkout hook reindexes changed files during branch switches."""
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        fake_home = tmp_path / "home"
+        fake_bin = fake_home / ".gobby" / "bin"
+        fake_bin.mkdir(parents=True)
+        gcode_fifo = tmp_path / "gcode.fifo"
+        os.mkfifo(gcode_fifo)
+        gcode = fake_bin / "gcode"
+        gcode.write_text(
+            f"#!/usr/bin/env bash\nprintf '%s\\n' \"$@\" > {shlex.quote(str(gcode_fifo))}\nexit 0\n"
+        )
+        gcode.chmod(gcode.stat().st_mode | stat.S_IXUSR)
+        monkeypatch.setenv("HOME", str(fake_home))
+
+        self._git(repo, "init")
+        self._git(repo, "checkout", "-b", "main")
+        self._git(repo, "config", "user.email", "test@example.com")
+        self._git(repo, "config", "user.name", "Test User")
+        (repo / "tracked.txt").write_text("main\n")
+        self._git(repo, "add", "tracked.txt")
+        self._git(repo, "commit", "-m", "initial")
+
+        self._git(repo, "checkout", "-b", "feature")
+        (repo / "tracked.txt").write_text("feature\n")
+        (repo / "branch-only.txt").write_text("feature\n")
+        self._git(repo, "add", "tracked.txt", "branch-only.txt")
+        self._git(repo, "commit", "-m", "feature")
+        self._git(repo, "checkout", "main")
+
+        result = install_git_hooks(repo)
+        assert result["success"] is True
+
+        reader = subprocess.Popen(
+            ["cat", str(gcode_fifo)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.DEVNULL,
+            text=True,
+        )
+        try:
+            self._git(repo, "checkout", "feature")
+            stdout, _ = reader.communicate(timeout=3)
+        except subprocess.TimeoutExpired:
+            reader.kill()
+            reader.communicate()
+            pytest.fail("post-checkout hook did not reindex branch-only.txt")
+
+        assert "branch-only.txt" in stdout
+
+    @staticmethod
+    def _git(repo: Path, *args: str) -> None:
+        subprocess.run(
+            ["git", *args],
+            cwd=repo,
+            check=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
 
 class TestUninstallGitHooks:
     """Tests for uninstall_git_hooks function."""
@@ -861,6 +926,9 @@ class TestHookTemplates:
             "pre-push",
             "pre-merge-commit",
             "post-commit",
+            "post-checkout",
+            "post-merge",
+            "post-rewrite",
         }
         assert set(HOOK_TEMPLATES.keys()) == expected_hooks
 
@@ -902,6 +970,34 @@ class TestHookTemplates:
         assert "codewiki refresh request failed" in installed
         assert "/api/code-index/codewiki/refresh" in installed
         assert "--get" not in installed
+
+    def test_post_history_templates_use_post_commit_reindex_flow(self) -> None:
+        """Checkout, merge, and rewrite hooks use the same reindex flow as post-commit."""
+        post_commit = HOOK_TEMPLATES["post-commit"]
+        shared_snippets = (
+            'GCODE="$HOME/.gobby/bin/gcode"',
+            r"tr '\n' '\0'",
+            'xargs -0 "$GCODE" index --quiet --files >/dev/null 2>&1; then',
+            "/api/code-index/codewiki/refresh",
+            "codewiki refresh request failed",
+        )
+
+        for snippet in shared_snippets:
+            assert snippet in post_commit
+            for hook_name in ("post-checkout", "post-merge", "post-rewrite"):
+                assert snippet in HOOK_TEMPLATES[hook_name]
+
+        checkout = HOOK_TEMPLATES["post-checkout"]
+        assert '[ "$3" = "1" ]' in checkout
+        assert 'git diff --name-only "$1" "$2"' in checkout
+
+        merge = HOOK_TEMPLATES["post-merge"]
+        assert "git diff --name-only ORIG_HEAD HEAD" in merge
+        assert "git diff-tree --no-commit-id --name-only -r HEAD" in merge
+
+        rewrite = HOOK_TEMPLATES["post-rewrite"]
+        assert "while read -r OLD_REV NEW_REV" in rewrite
+        assert 'git diff --name-only "$OLD_REV" "$NEW_REV"' in rewrite
 
     def test_templates_do_not_import_jsonl(self) -> None:
         """No installed hook template automatically imports JSONL."""

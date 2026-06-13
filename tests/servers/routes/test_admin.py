@@ -946,4 +946,3 @@ class TestTestEndpoints:
         )
         # HTTPException(503) caught by generic except → re-raised as 500
         assert response.status_code == 500
-

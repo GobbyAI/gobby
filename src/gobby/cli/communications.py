@@ -207,6 +207,9 @@ def channels_add_cmd(ctx: click.Context, channel_type: str, name: str) -> None:
         except json.JSONDecodeError:
             print_error("Invalid JSON configuration.")
             ctx.exit(1)
+        if not isinstance(config, dict):
+            print_error("Configuration must be a JSON object.")
+            ctx.exit(1)
 
     # Remove empty optional values
     config = {k: v for k, v in config.items() if v != ""}

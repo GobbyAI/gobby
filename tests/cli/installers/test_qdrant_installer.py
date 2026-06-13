@@ -217,67 +217,6 @@ class TestInstallQdrant:
 
 
 # ---------------------------------------------------------------------------
-# Uninstaller tests
-# ---------------------------------------------------------------------------
-
-
-class TestUninstallQdrant:
-    """Tests for uninstall_qdrant function."""
-
-    def test_uninstall_without_data(self, tmp_path: Path) -> None:
-        """uninstall_qdrant succeeds without removing data."""
-        from gobby.cli.installers.qdrant import uninstall_qdrant
-
-        # Create compose file
-        services_dir = tmp_path / "services"
-        services_dir.mkdir()
-        compose = services_dir / "docker-compose.yml"
-        compose.write_text("services:\n  qdrant:\n    image: qdrant/qdrant\n")
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-
-        with (
-            patch("gobby.cli.installers.qdrant.subprocess.run", return_value=mock_result),
-            patch("gobby.cli.installers.qdrant._update_config"),
-        ):
-            result = uninstall_qdrant(gobby_home=tmp_path)
-
-        assert result["success"] is True
-        assert result["data_removed"] is False
-
-    def test_uninstall_with_data_removal(self, tmp_path: Path) -> None:
-        """uninstall_qdrant removes Docker volume when requested."""
-        from gobby.cli.installers.qdrant import QDRANT_VOLUME_NAME, uninstall_qdrant
-
-        services_dir = tmp_path / "services"
-        services_dir.mkdir(parents=True)
-        compose = services_dir / "docker-compose.yml"
-        compose.write_text("services:\n  qdrant:\n    image: qdrant/qdrant\n")
-
-        mock_result = MagicMock()
-        mock_result.returncode = 0
-
-        with (
-            patch(
-                "gobby.cli.installers.qdrant.subprocess.run", return_value=mock_result
-            ) as mock_run,
-            patch("gobby.cli.installers.qdrant._update_config"),
-        ):
-            result = uninstall_qdrant(gobby_home=tmp_path, remove_data=True)
-
-        assert result["success"] is True
-        assert result["data_removed"] is True
-        # Verify docker volume rm was called
-        volume_rm_calls = [
-            c
-            for c in mock_run.call_args_list
-            if "volume" in str(c) and QDRANT_VOLUME_NAME in str(c)
-        ]
-        assert len(volume_rm_calls) == 1
-
-
-# ---------------------------------------------------------------------------
 # Health check tests
 # ---------------------------------------------------------------------------
 
@@ -308,6 +247,19 @@ class TestQdrantHealthCheck:
         (services / "docker-compose.yml").write_text("services: {}")
 
         assert is_qdrant_installed(gobby_home=tmp_path) is True
+
+    def test_is_qdrant_installed_uses_gobby_home_default(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Uses get_gobby_home when no explicit home is supplied."""
+        import gobby.cli.services as services_module
+
+        services = tmp_path / "services"
+        services.mkdir(parents=True)
+        (services / "docker-compose.yml").write_text("services: {}")
+        monkeypatch.setattr(services_module, "get_gobby_home", lambda: tmp_path)
+
+        assert services_module.is_qdrant_installed() is True
 
 
 # ---------------------------------------------------------------------------

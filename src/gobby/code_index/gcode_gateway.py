@@ -6,7 +6,7 @@ import asyncio
 import json
 import re
 from collections.abc import Sequence
-from pathlib import Path
+from pathlib import Path, PurePath, PureWindowsPath
 from typing import Any
 
 from gobby.install.bin_freshness_models import is_at_least_version
@@ -84,6 +84,26 @@ class GcodeJsonError(GcodeGatewayError):
     """Raised when gcode returns invalid JSON."""
 
 
+class GcodeInputValidationError(GcodeGatewayError):
+    """Raised when user-controlled gcode argv values fail daemon validation."""
+
+    def __init__(self, parameter: str, value: str, reason: str) -> None:
+        self.parameter = parameter
+        self.value = value
+        self.reason = reason
+        super().__init__(f"Invalid {parameter}: {reason}")
+
+
+def _validate_user_gcode_value(parameter: str, value: str) -> str:
+    if value.startswith("-"):
+        raise GcodeInputValidationError(parameter, value, "value must not start with '-'")
+    if PurePath(value).is_absolute() or PureWindowsPath(value).is_absolute():
+        raise GcodeInputValidationError(parameter, value, "value must not be an absolute path")
+    if ".." in PurePath(value).parts or ".." in PureWindowsPath(value).parts:
+        raise GcodeInputValidationError(parameter, value, "value must not contain '..' segments")
+    return value
+
+
 def _command_project_path(command: Sequence[str]) -> str | None:
     try:
         project_arg_index = command.index("--project")
@@ -147,6 +167,7 @@ class GcodeGateway:
         return self._checked_version
 
     async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+        file_path = _validate_user_gcode_value("file_path", file_path)
         await self._ensure_version()
         args = [
             "graph",
@@ -177,6 +198,7 @@ class GcodeGateway:
         )
 
     async def graph_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+        file_path = _validate_user_gcode_value("file_path", file_path)
         return await self._run_json(
             [
                 "graph",
@@ -195,6 +217,7 @@ class GcodeGateway:
         *,
         limit: int = 100,
     ) -> dict[str, Any]:
+        symbol_id = _validate_user_gcode_value("symbol_id", symbol_id)
         return await self._run_json(
             [
                 "graph",
@@ -221,10 +244,12 @@ class GcodeGateway:
         if (symbol_id is None) == (file_path is None):
             raise ValueError("Provide exactly one of symbol_id or file_path")
         if symbol_id is not None:
+            symbol_id = _validate_user_gcode_value("symbol_id", symbol_id)
             args.extend(["--symbol-id", symbol_id])
         else:
             if file_path is None:
                 raise ValueError("file_path must be provided when symbol_id is None")
+            file_path = _validate_user_gcode_value("file_path", file_path)
             args.extend(["--file", file_path])
         args.extend(["--depth", str(depth), "--limit", str(limit)])
         return await self._run_json(args)
@@ -356,6 +381,7 @@ __all__ = [
     "GcodeGateway",
     "GcodeGatewayError",
     "GcodeIndexedFileNotFoundError",
+    "GcodeInputValidationError",
     "GcodeJsonError",
     "GcodeProjectNotFoundError",
     "GcodeTimeoutError",

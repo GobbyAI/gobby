@@ -1,8 +1,8 @@
 """
-Qdrant service installation and uninstallation.
+Qdrant service installation.
 
-Handles Docker-based Qdrant setup for vector search. Qdrant is installed
-by default during `gobby install` when Docker is available.
+Handles Docker-based Qdrant setup for vector search. Qdrant is installed by default
+during `gobby install` when Docker is available.
 """
 
 import asyncio
@@ -22,7 +22,6 @@ _COMPOSE_SRC = _DATA_DIR / "docker-compose.services.yml"
 
 DEFAULT_QDRANT_HTTP_URL = "http://localhost:6333"
 DEFAULT_QDRANT_PORT = 6333
-QDRANT_VOLUME_NAME = "gobby_qdrant_data"
 
 
 def _ensure_unified_compose(services_dir: Path) -> Path:
@@ -107,61 +106,6 @@ def install_qdrant(
         "qdrant_url": url,
         "compose_file": str(compose_file),
     }
-
-
-def uninstall_qdrant(
-    *,
-    gobby_home: Path | None = None,
-    remove_data: bool = False,
-) -> dict[str, Any]:
-    """Uninstall Qdrant service.
-
-    Args:
-        gobby_home: Gobby home directory (default: ~/.gobby)
-        remove_data: Also remove Qdrant storage data
-
-    Returns:
-        Dict with 'success' and details
-    """
-    home = gobby_home or Path("~/.gobby").expanduser()
-    services_dir = home / "services"
-    compose_file = services_dir / "docker-compose.yml"
-
-    if compose_file.exists():
-        try:
-            result = subprocess.run(  # nosec B603 B607
-                [
-                    "docker",
-                    "compose",
-                    "-f",
-                    str(compose_file),
-                    "--profile",
-                    "qdrant",
-                    "down",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=60,
-                cwd=str(services_dir),
-            )
-            if result.returncode != 0:
-                logger.warning(f"Docker compose down failed: {result.stderr or result.stdout}")
-        except subprocess.TimeoutExpired:
-            logger.warning("Docker compose down timed out")
-
-    if remove_data:
-        try:
-            subprocess.run(  # nosec B603 B607
-                ["docker", "volume", "rm", QDRANT_VOLUME_NAME],
-                capture_output=True,
-                timeout=30,
-            )
-        except (subprocess.TimeoutExpired, OSError) as exc:
-            logger.warning(f"Failed to remove Docker volume {QDRANT_VOLUME_NAME}: {exc}")
-
-    _update_config(qdrant_url=None)
-
-    return {"success": True, "data_removed": remove_data}
 
 
 def _wait_for_health(url: str, retries: int = 30, interval: float = 2.0) -> bool:

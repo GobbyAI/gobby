@@ -51,8 +51,9 @@ def _detect_search_backend_seams() -> dict[str, bool]:
         pass
     try:
         from gobby.memory.manager import MemoryManager
+        from gobby.memory.services.keyword import MemoryKeywordSearchService
 
-        seams["memory_keyword_search"] = hasattr(MemoryManager, "_keyword_search")
+        seams["memory_keyword_search"] = hasattr(MemoryKeywordSearchService, "search")
         seams["memory_rrf_k"] = "rrf_k" in inspect.signature(MemoryManager.__init__).parameters
     except ImportError:
         pass
@@ -154,9 +155,10 @@ def test_pick_search_backend_uses_postgres_bm25_and_rejects_semantic() -> None:
 @pytest.mark.skipif(not _SEAMS["memory_keyword_search"], reason=_PENDING_REASON)
 def test_memory_keyword_search_uses_keyword_backend_seam() -> None:
     from gobby.memory.manager import MemoryManager
+    from gobby.memory.services.keyword import MemoryKeywordSearchService
 
     assert hasattr(MemoryManager, "_keyword_search")
-    source = inspect.getsource(MemoryManager._keyword_search)
+    source = inspect.getsource(MemoryKeywordSearchService.search)
 
     assert "pick_search_backend" in source
     assert '"memories"' in source or "'memories'" in source

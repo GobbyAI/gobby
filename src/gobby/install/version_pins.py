@@ -7,7 +7,6 @@ MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     "ghook": "0.4.6",
     "gcode": "1.0.0",
     "gsqz": "0.4.6",
-    "gloc": "0.1.4",
     "gwiki": "0.3.0",
 }
 

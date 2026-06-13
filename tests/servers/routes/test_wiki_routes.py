@@ -121,12 +121,6 @@ class FakeGateway:
             "collect", payload={"command": "collect", "changed_paths": ["raw/a.md"]}
         )
 
-    async def research(self, query: str | None = None, *, audit: bool = False) -> dict[str, Any]:
-        self.calls.append(("research", {"query": query, "audit": audit}))
-        return self._result(
-            "research", payload={"command": "research", "changed_paths": ["raw/r.md"]}
-        )
-
     async def compile(self, output: str | Path | None = None) -> dict[str, Any]:
         self.calls.append(("compile", str(output) if output is not None else None))
         return self._result(
@@ -478,14 +472,10 @@ def test_write_routes_trigger_index(client: TestClient) -> None:
     assert FakeGateway.instances[-1].index_calls == 1
 
 
-def test_research_route_requires_query_unless_audit(client: TestClient) -> None:
-    missing_query = client.post("/api/wiki/research", json={})
-    audit = client.post("/api/wiki/research", json={"audit": True})
+def test_research_route_is_removed(client: TestClient) -> None:
+    response = client.post("/api/wiki/research", json={"query": "anything"})
 
-    assert missing_query.status_code == 400
-    assert missing_query.json()["detail"] == "query is required unless audit is true"
-    assert audit.status_code == 200
-    assert FakeGateway.instances[-1].calls[0] == ("research", {"query": None, "audit": True})
+    assert response.status_code in (404, 405)
 
 
 def test_write_routes_delegate_to_coordinator(
@@ -500,7 +490,6 @@ def test_write_routes_delegate_to_coordinator(
         ("post", "/api/wiki/attach", {"files": {"file": ("note.md", b"# Note", "text/markdown")}}),
         ("post", "/api/wiki/ingest", {"json": {"path": "notes/a.md"}}),
         ("post", "/api/wiki/collect", {"json": {"query": "hooks"}}),
-        ("post", "/api/wiki/research", {"json": {"query": "hooks"}}),
         ("post", "/api/wiki/compile", {"json": {"output": "out.md"}}),
         ("post", "/api/wiki/remove-source", {"json": {"id": "src-1", "yes": True}}),
     ]
@@ -515,7 +504,6 @@ def test_write_routes_delegate_to_coordinator(
         "ingest-file",
         "ingest-file",
         "collect",
-        "research",
         "compile",
         "remove-source",
     ]

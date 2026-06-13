@@ -7,7 +7,7 @@ They accept the handler instance as the first ``handler`` parameter.
 from __future__ import annotations
 
 import logging
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.hooks.events import HookResponse
 from gobby.tasks.state_semantics import (
@@ -22,6 +22,25 @@ if TYPE_CHECKING:
     from gobby.storage.session_models import Session
 
 _logger = logging.getLogger(__name__)
+
+
+class _SessionVariableWriter(Protocol):
+    def set_variable(self, session_id: str, name: str, value: Any) -> None: ...
+
+
+def _set_claimed_task_reconciliation(
+    sv_mgr: _SessionVariableWriter,
+    session_id: str,
+    *,
+    task_claimed: bool,
+    claimed_tasks: dict[str, str],
+) -> None:
+    """Best-effort writeback for claimed-task session variable reconciliation."""
+    try:
+        sv_mgr.set_variable(session_id, "task_claimed", task_claimed)
+        sv_mgr.set_variable(session_id, "claimed_tasks", claimed_tasks)
+    except Exception as e:
+        _logger.debug(f"Failed to persist claimed task reconciliation for {session_id}: {e}")
 
 
 def _task_state_label(task: Any) -> str:
@@ -83,9 +102,12 @@ def get_claimed_task_info(
                     ref = f"#{task.seq_num}" if task.seq_num else task.id[:8]
                     db_reconciled[task.id] = ref
                     db_result.append((ref, _task_state_label(task), task.title))
-                # Reconcile session variables with DB state
-                sv_mgr.set_variable(session_id, "task_claimed", True)
-                sv_mgr.set_variable(session_id, "claimed_tasks", db_reconciled)
+                _set_claimed_task_reconciliation(
+                    sv_mgr,
+                    session_id,
+                    task_claimed=True,
+                    claimed_tasks=db_reconciled,
+                )
                 return db_result or None
         except Exception as e:
             _logger.debug(f"Failed to reconcile claimed tasks from DB: {e}")
@@ -113,8 +135,12 @@ def get_claimed_task_info(
         except Exception as e:
             _logger.debug(f"Failed to fetch task {task_uuid[:8]}: {e}")
     if reconciled != claimed_tasks:
-        sv_mgr.set_variable(session_id, "task_claimed", bool(reconciled))
-        sv_mgr.set_variable(session_id, "claimed_tasks", reconciled)
+        _set_claimed_task_reconciliation(
+            sv_mgr,
+            session_id,
+            task_claimed=bool(reconciled),
+            claimed_tasks=reconciled,
+        )
     return result or None
 
 

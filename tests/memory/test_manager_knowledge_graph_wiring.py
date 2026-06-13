@@ -8,7 +8,12 @@ import pytest
 
 from gobby.config.persistence import MemoryConfig
 from gobby.llm.base import LLMProviderCancellation
-from gobby.memory.services.knowledge_graph import KnowledgeGraphResult, KnowledgeGraphStatus
+from gobby.memory.services.knowledge_graph import (
+    KnowledgeGraphRebuildService,
+    KnowledgeGraphResult,
+    KnowledgeGraphStatus,
+)
+from gobby.storage.memories import Memory
 from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
@@ -339,6 +344,62 @@ class TestGraphDelegation:
             }
         ]
         manager.mark_graph_processed.assert_not_called()
+
+
+class TestKnowledgeGraphRebuildService:
+    """Service-level tests for KG rebuild orchestration."""
+
+    async def test_rebuild_marks_pending_and_processed_memories(self) -> None:
+        """The rebuild service owns pending and processed graph bookkeeping."""
+
+        class Storage:
+            def __init__(self) -> None:
+                self.pending: list[str] = []
+
+            def mark_pending_graph(self, memory_id: str) -> None:
+                self.pending.append(memory_id)
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        storage = Storage()
+        memories = [
+            Memory(
+                id="mem-1",
+                memory_type="fact",
+                content="Python memory",
+                created_at="",
+                updated_at="",
+                project_id="proj-1",
+            )
+        ]
+        processed: list[str] = []
+        kg_service = MagicMock()
+        kg_service.add_to_graph = AsyncMock(
+            return_value=KnowledgeGraphResult(KnowledgeGraphStatus.SUCCESS)
+        )
+        service = KnowledgeGraphRebuildService(
+            storage_provider=lambda: storage,
+            kg_service_provider=lambda: kg_service,
+            falkor_client_provider=lambda: None,
+            run_db=run_db,
+            list_memories=lambda *args: memories,
+            fetch_all_project_memories=AsyncMock(return_value=memories),
+            mark_graph_processed=processed.append,
+        )
+
+        result = await service.rebuild_knowledge_graph(project_id=None)
+
+        assert result["success"] is True
+        assert result["memories_marked_pending"] == 1
+        assert result["memories_marked_processed"] == 1
+        assert storage.pending == ["mem-1"]
+        assert processed == ["mem-1"]
+        kg_service.add_to_graph.assert_awaited_once_with(
+            "Python memory",
+            memory_id="mem-1",
+            project_id="proj-1",
+        )
 
 
 class TestGraphBackgroundTask:

@@ -23,10 +23,12 @@ import json
 import logging
 import os
 import shutil
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
+
+from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
 
 logger = logging.getLogger(__name__)
 
@@ -39,12 +41,10 @@ ACP_PROMPT_TIMEOUT_ENV_GEMINI = "GOBBY_GEMINI_ACP_PROMPT_TIMEOUT_SECONDS"
 ACP_PROMPT_TIMEOUT_ENV_QWEN = "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
 ACP_PROMPT_TIMEOUT_ENV_GROK = "GOBBY_GROK_ACP_PROMPT_TIMEOUT_SECONDS"
 
-# asyncio's subprocess StreamReader defaults to a 64 KiB buffer. A single
-# JSON-RPC line larger than that raises LimitOverrunError ("Separator is found,
-# but chunk is longer than limit") out of readline(), which kills the ACP
-# session. ACP agents routinely emit larger frames (big tool results, long
-# assistant turns), so widen the stdout/stderr reader limit. 16 MiB covers any
-# realistic single-line frame.
+# asyncio subprocess pipes default to a 64 KiB StreamReader limit. A single
+# stdout JSON-RPC line larger than that raises LimitOverrunError from
+# readline(), which kills the ACP session. ACP agents routinely emit larger
+# frames, so widen the process pipe readers. 16 MiB covers realistic frames.
 ACP_STREAM_READER_LIMIT_BYTES = 16 * 1024 * 1024
 
 
@@ -111,7 +111,7 @@ def _compact_stderr(data: bytes | str | None, *, limit: int = 300) -> str | None
     if not compact:
         return None
     if len(compact) > limit:
-        return f"{compact[: limit - 3]}..."
+        return f"...{compact[-limit:]}"
     return compact
 
 
@@ -198,6 +198,8 @@ class ACPClient:
         self._session_info: dict[str, Any] = {}
         self._io_lock = asyncio.Lock()
         self._active_operations = 0
+        self._request_ids = itertools.count(1)
+        self._stderr_drain = SubprocessStderrDrain(f"{self.display_name} ACP", logger=logger)
 
     @property
     def is_started(self) -> bool:
@@ -265,46 +267,51 @@ class ACPClient:
             limit=ACP_STREAM_READER_LIMIT_BYTES,
         )
         self._started = True
+        self._stderr_drain.start_async(self._process.stderr)
         logger.debug("%s ACP client started (pid=%s)", self.display_name, self._process.pid)
 
-        # Perform initialize handshake
-        init_result = await self._send_request(
-            "initialize",
-            {
-                "protocolVersion": self.protocol_version,
-                "clientInfo": {
-                    "name": "gobby",
-                    "version": "1.0.0",
+        try:
+            # Perform initialize handshake
+            init_result = await self._send_request(
+                "initialize",
+                {
+                    "protocolVersion": self.protocol_version,
+                    "clientInfo": {
+                        "name": "gobby",
+                        "version": "1.0.0",
+                    },
+                    "clientCapabilities": {},
                 },
-                "clientCapabilities": {},
-            },
-        )
-        logger.debug(f"ACP initialize response: {init_result}")
-        await self._maybe_authenticate(init_result)
-        if auto_session:
-            if session_id:
-                session_result = await self.load_session(
-                    session_id,
-                    model=model,
-                    cwd=cwd,
-                    reasoning_effort=reasoning_effort,
-                )
-            else:
-                session_result = await self.create_session(
-                    model=model,
-                    cwd=cwd,
-                    reasoning_effort=reasoning_effort,
-                )
-            self._session_info = session_result if isinstance(session_result, dict) else {}
-            self._session_id = (
-                session_result.get("sessionId")
-                if session_result and session_result.get("sessionId")
-                else session_id
             )
-            logger.debug(f"ACP session ID: {self._session_id}")
-        else:
-            self._session_id = None
-            self._session_info = {}
+            logger.debug(f"ACP initialize response: {init_result}")
+            await self._maybe_authenticate(init_result)
+            if auto_session:
+                if session_id:
+                    session_result = await self.load_session(
+                        session_id,
+                        model=model,
+                        cwd=cwd,
+                        reasoning_effort=reasoning_effort,
+                    )
+                else:
+                    session_result = await self.create_session(
+                        model=model,
+                        cwd=cwd,
+                        reasoning_effort=reasoning_effort,
+                    )
+                self._session_info = session_result if isinstance(session_result, dict) else {}
+                self._session_id = (
+                    session_result.get("sessionId")
+                    if session_result and session_result.get("sessionId")
+                    else session_id
+                )
+                logger.debug(f"ACP session ID: {self._session_id}")
+            else:
+                self._session_id = None
+                self._session_info = {}
+        except BaseException:
+            await self.stop()
+            raise
 
     def _build_launch_command(
         self,
@@ -403,11 +410,12 @@ class ACPClient:
             if not self._process or not self._process.stdin or not self._process.stdout:
                 raise RuntimeError(f"{type(self).__name__} process not available")
 
+            request_id = next(self._request_ids)
             request = {
                 "jsonrpc": "2.0",
                 "method": method,
                 "params": params,
-                "id": _make_id(),
+                "id": request_id,
             }
 
             request_line = json.dumps(request) + "\n"
@@ -445,19 +453,21 @@ class ACPClient:
                     continue
 
                 if "id" in data and data.get("method"):
-                    from gobby.adapters.acp_client_requests import write_json_rpc_error
+                    from gobby.adapters.acp_client_requests import handle_client_request
 
-                    await write_json_rpc_error(
-                        self,
-                        data.get("id"),
-                        code=-32601,
-                        message=(
-                            f"Unsupported client request during {method}: {data.get('method')}"
-                        ),
-                    )
+                    async for _ in handle_client_request(self, data):
+                        pass
                     continue
 
                 if "id" in data:
+                    if data.get("id") != request_id:
+                        logger.warning(
+                            "Ignoring stale ACP %s response id=%r while waiting for id=%r",
+                            method,
+                            data.get("id"),
+                            request_id,
+                        )
+                        continue
                     if "error" in data:
                         err = data["error"]
                         raise RuntimeError(f"ACP {method} error: {err.get('message', err)}")
@@ -480,18 +490,11 @@ class ACPClient:
 
     async def _read_exit_stderr(self) -> str | None:
         """Read stderr when the subprocess has already exited."""
-        if not self._process or not self._process.stderr or self._process.returncode is None:
+        if not self._process:
             return None
-
-        try:
-            stderr_data = await asyncio.wait_for(self._process.stderr.read(), timeout=0.1)
-        except TimeoutError:
-            return None
-        except Exception:
-            logger.debug("%s ACP stderr read failed", self.display_name, exc_info=True)
-            return None
-
-        return _compact_stderr(stderr_data)
+        if self._process.returncode is not None:
+            await self._stderr_drain.wait_finished(timeout=0.1)
+        return _compact_stderr(self._stderr_drain.snapshot())
 
     async def send(
         self,
@@ -500,6 +503,8 @@ class ACPClient:
         session_id: str | None = None,
         model: str | None = None,
         reasoning_effort: str | None = None,
+        pre_tool_callback: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
+        | None = None,
     ) -> AsyncIterator[StreamEvent]:
         """Send a prompt and yield normalized stream events.
 
@@ -537,6 +542,7 @@ class ACPClient:
         try:
             await self._io_lock.acquire()
             lock_acquired = True
+            request_id = next(self._request_ids)
             request: dict[str, Any] = {
                 "jsonrpc": "2.0",
                 "method": "session/prompt",
@@ -544,7 +550,7 @@ class ACPClient:
                     "sessionId": target_session_id,
                     "prompt": [{"type": "text", "text": message}],
                 },
-                "id": _make_id(),
+                "id": request_id,
             }
             if model:
                 request["params"]["model"] = model
@@ -556,14 +562,23 @@ class ACPClient:
             await self._process.stdin.drain()
             logger.debug("Sent prompt to %s ACP: %r", self.display_name, message[:80])
 
-            async for event in self._read_stream():
+            async for event in self._read_stream(
+                expected_response_id=request_id,
+                pre_tool_callback=pre_tool_callback,
+            ):
                 yield event
         finally:
             if lock_acquired:
                 self._io_lock.release()
             self._active_operations = max(0, self._active_operations - 1)
 
-    async def _read_stream(self) -> AsyncIterator[StreamEvent]:
+    async def _read_stream(
+        self,
+        *,
+        expected_response_id: int,
+        pre_tool_callback: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
+        | None = None,
+    ) -> AsyncIterator[StreamEvent]:
         """Read and parse NDJSON lines from the subprocess stdout.
 
         Handles two types of messages:
@@ -582,7 +597,7 @@ class ACPClient:
                     timeout=self._prompt_timeout,
                 )
             except asyncio.CancelledError:
-                return
+                raise
             except TimeoutError as exc:
                 raise TimeoutError(
                     "Timed out waiting for ACP session/prompt response "
@@ -608,12 +623,21 @@ class ACPClient:
             if "id" in data and data.get("method"):
                 from gobby.adapters.acp_client_requests import handle_client_request
 
-                async for event in handle_client_request(self, data):
+                async for event in handle_client_request(
+                    self, data, pre_tool_callback=pre_tool_callback
+                ):
                     yield event
                 continue
 
             # JSON-RPC response (has "id") = end of turn
             if "id" in data:
+                if data.get("id") != expected_response_id:
+                    logger.warning(
+                        "Ignoring stale ACP session/prompt response id=%r while waiting for id=%r",
+                        data.get("id"),
+                        expected_response_id,
+                    )
+                    continue
                 if "error" in data:
                     err = data["error"]
                     yield StreamEvent(
@@ -715,6 +739,22 @@ class ACPClient:
                     },
                 )
 
+            if update_type == "tool_call":
+                tool_input = {}
+                for input_key in ("rawInput", "input"):
+                    if input_key in update:
+                        value = update[input_key]
+                        tool_input = value if isinstance(value, dict) else {}
+                        break
+                return StreamEvent(
+                    event_type="tool_call",
+                    data={
+                        "call_id": update.get("toolCallId"),
+                        "tool_name": update.get("title") or update.get("name"),
+                        "tool_input": tool_input,
+                    },
+                )
+
             return StreamEvent(event_type=update_type or method, data=update)
 
         if method == "session/result" or method == "result":
@@ -763,6 +803,7 @@ class ACPClient:
         this is a no-op.
         """
         if not self._process:
+            await self._stderr_drain.stop()
             self._started = False
             self._session_id = None
             self._session_info = {}
@@ -807,6 +848,7 @@ class ACPClient:
         except Exception as e:
             logger.debug("%s stop error (expected): %s", type(self).__name__, e)
         finally:
+            await self._stderr_drain.stop()
             self._process = None
             self._started = False
             self._session_id = None

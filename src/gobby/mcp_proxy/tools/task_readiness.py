@@ -12,6 +12,7 @@ Extracted from tasks.py using Strangler Fig pattern for code decomposition.
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.autonomous.stuck_detector import StuckDetector
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.sessions import SessionManager
 from gobby.storage.task_affected_files import TaskAffectedFileManager
@@ -394,6 +395,7 @@ def _score_tasks(
 
 def create_readiness_registry(
     task_manager: "LocalTaskManager | None" = None,
+    stuck_detector: StuckDetector | None = None,
 ) -> InternalToolRegistry:
     """
     Create a registry with task readiness tools.
@@ -415,6 +417,7 @@ def create_readiness_registry(
     # Create session variable manager for session_task scoping
     session_var_manager = SessionVariableManager(task_manager.db)
     session_manager = SessionManager(task_manager.db)
+    selection_stuck_detector = stuck_detector or StuckDetector(task_manager.db)
 
     # --- list_ready_tasks ---
 
@@ -656,6 +659,20 @@ def create_readiness_registry(
 
         # --- Single mode (count == 1): detailed suggestion ---
         best_task, best_score, is_leaf, best_proximity = scored[0]
+        if session_id:
+            try:
+                selection_stuck_detector.record_task_selection(
+                    session_id=session_id,
+                    task_id=best_task.id,
+                    context={
+                        "method": "suggest_next_task",
+                        "task_ref": best_task.to_brief().get("ref"),
+                        "parent_task_id": parent_task_id,
+                        "project_id": project_id,
+                    },
+                )
+            except Exception as e:
+                logger.warning("Failed to record autonomous task selection: %s", e)
 
         reasons = []
         if best_task.priority == 0:

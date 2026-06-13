@@ -83,8 +83,20 @@ def _audio_config_marker(config: Any) -> tuple[Any, ...]:
         getattr(voice, "whisper_compute_type", None),
         getattr(voice, "whisper_prompt", None),
         tuple(getattr(voice, "whisper_vocabulary", []) or []),
+        _whisper_runtime_marker(voice),
         tuple(_audio_binding_marker(binding) for binding in bindings),
     )
+
+
+def _whisper_runtime_marker(voice: Any) -> bool | str | None:
+    if not getattr(voice, "enabled", False) or not getattr(voice, "stt_enabled", False):
+        return None
+    try:
+        from gobby.voice.stt import WhisperSTT
+
+        return WhisperSTT(voice).is_available
+    except Exception as exc:
+        return f"error:{type(exc).__name__}"
 
 
 def _audio_binding_marker(binding: Any) -> tuple[Any, ...]:
@@ -225,11 +237,8 @@ def create_voice_router(server: HTTPServer) -> APIRouter:
         Upload an audio file to get transcription text.
         """
         config = server.config
-        if not config or not hasattr(config, "voice") or not config.voice.enabled:
+        if not config or not hasattr(config, "voice"):
             return {"error": "Voice not enabled", "text": ""}
-
-        if not config.voice.stt_enabled:
-            return {"error": "STT disabled in config", "text": ""}
 
         audio_bytes = await file.read()
         content_type = file.content_type or "audio/webm"

@@ -23,6 +23,7 @@ from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.session_types import HookSessionManager
 
 if TYPE_CHECKING:
+    from gobby.autonomous.progress_tracker import ProgressTracker
     from gobby.code_index.trigger import CodeIndexTrigger
     from gobby.config.sessions import MemoryRecallConfig
     from gobby.config.skills import SkillsConfig
@@ -58,6 +59,7 @@ class EventHandlers(
         session_task_manager: SessionTaskManager | None = None,
         message_processor: Any | None = None,
         task_manager: LocalTaskManager | None = None,
+        progress_tracker: ProgressTracker | None = None,
         worktree_manager: LocalWorktreeManager | None = None,
         session_coordinator: SessionCoordinator | None = None,
         skill_manager: HookSkillManager | None = None,
@@ -105,6 +107,7 @@ class EventHandlers(
         self._session_task_manager = session_task_manager
         self._message_processor = message_processor
         self._task_manager = task_manager
+        self._progress_tracker = progress_tracker
         self._worktree_manager = worktree_manager
         self._session_coordinator = session_coordinator
         self._skill_manager = skill_manager

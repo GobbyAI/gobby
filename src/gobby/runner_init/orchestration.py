@@ -8,6 +8,8 @@ from typing import TYPE_CHECKING
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.runner import AgentRunner
+from gobby.autonomous.progress_tracker import ProgressTracker
+from gobby.autonomous.stuck_detector import StuckDetector
 from gobby.sessions.lifecycle import SessionLifecycleManager
 
 if TYPE_CHECKING:
@@ -157,6 +159,10 @@ def init_orchestration(runner: GobbyRunner) -> None:
             tmux_config=runner.config.tmux if hasattr(runner.config, "tmux") else None,
             checkpoint_storage=LocalCheckpointManager(runner.database),
             worktree_storage=runner.worktree_storage,
+            stuck_detector=StuckDetector(
+                runner.database,
+                progress_tracker=ProgressTracker(runner.database),
+            ),
             run_db=runner.db_executor.run,
         )
     except Exception as e:

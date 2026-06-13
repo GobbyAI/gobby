@@ -7,6 +7,8 @@ surface; they do not define their own capability names.
 
 from __future__ import annotations
 
+import logging
+import time
 from collections.abc import Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -24,6 +26,11 @@ from gobby.search.embeddings import is_embedding_configured
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
+
+
+logger = logging.getLogger(__name__)
+
+PROVIDER_INSTALL_PROBE_TTL_SECONDS = 2.0
 
 
 class AICapability(StrEnum):
@@ -130,10 +137,14 @@ class CapabilityBinding:
     capability: AICapability
     provider: str
     adapter_style: AIAdapterStyle
-    available: bool
-    reason: str | None = None
     models: tuple[str, ...] = ()
     metadata: Mapping[str, Any] = field(default_factory=dict)
+    _available: bool = field(repr=False)
+    _reason: str | None = field(default=None, repr=False)
+    _availability_probe: Callable[[], bool] | None = field(default=None, repr=False)
+    _availability_probe_ttl_seconds: float = field(default=PROVIDER_INSTALL_PROBE_TTL_SECONDS)
+    _availability_checked_at: float | None = field(default=None, repr=False, compare=False)
+    _availability_probe_result: bool | None = field(default=None, repr=False, compare=False)
 
     def __init__(
         self,
@@ -145,6 +156,8 @@ class CapabilityBinding:
         reason: str | None = None,
         models: Sequence[str] = (),
         metadata: Mapping[str, Any] | None = None,
+        availability_probe: Callable[[], bool] | None = None,
+        availability_probe_ttl_seconds: float | None = None,
     ) -> None:
         normalized_capability = normalize_capability(capability)
         normalized_provider = _normalize_provider(provider)
@@ -162,10 +175,20 @@ class CapabilityBinding:
         object.__setattr__(self, "capability", normalized_capability)
         object.__setattr__(self, "provider", normalized_provider)
         object.__setattr__(self, "adapter_style", normalized_adapter_style)
-        object.__setattr__(self, "available", available)
-        object.__setattr__(self, "reason", normalized_reason)
         object.__setattr__(self, "models", normalized_models)
         object.__setattr__(self, "metadata", normalized_metadata)
+        object.__setattr__(self, "_available", available)
+        object.__setattr__(self, "_reason", normalized_reason)
+        object.__setattr__(self, "_availability_probe", availability_probe)
+        object.__setattr__(
+            self,
+            "_availability_probe_ttl_seconds",
+            PROVIDER_INSTALL_PROBE_TTL_SECONDS
+            if availability_probe_ttl_seconds is None
+            else max(0.0, availability_probe_ttl_seconds),
+        )
+        object.__setattr__(self, "_availability_checked_at", None)
+        object.__setattr__(self, "_availability_probe_result", None)
 
     @classmethod
     def unavailable(
@@ -189,6 +212,44 @@ class CapabilityBinding:
             metadata=metadata or {},
         )
 
+    @property
+    def available(self) -> bool:
+        """Return current availability, re-probing CLI-backed bindings with a short TTL."""
+        probe = self._availability_probe
+        if probe is None:
+            return self._available
+
+        now = time.monotonic()
+        checked_at = self._availability_checked_at
+        cached = self._availability_probe_result
+        if (
+            checked_at is not None
+            and cached is not None
+            and now - checked_at < self._availability_probe_ttl_seconds
+        ):
+            return cached
+
+        try:
+            current = bool(probe())
+        except Exception as exc:
+            logger.warning(
+                "AI capability availability probe failed for %s/%s: %s",
+                self.provider,
+                self.capability.value,
+                exc,
+            )
+            current = False
+        object.__setattr__(self, "_availability_checked_at", now)
+        object.__setattr__(self, "_availability_probe_result", current)
+        return current
+
+    @property
+    def reason(self) -> str | None:
+        """Return current unavailable reason, clearing stale install errors when available."""
+        if self.available:
+            return None
+        return self._reason
+
     def supports_model(self, model: str | None) -> bool:
         """Return whether this binding can satisfy the requested model."""
         return (
@@ -196,6 +257,15 @@ class CapabilityBinding:
             or not self.models
             or _normalize_binding_model(self.provider, model) in self.models
         )
+
+    def accepts_explicit_model_override(self, model: str | None) -> bool:
+        """Return whether explicit routing may pass an off-list model to the adapter."""
+        return model is not None and self.adapter_style in {
+            AIAdapterStyle.ACP,
+            AIAdapterStyle.CLI,
+            AIAdapterStyle.DAEMON,
+            AIAdapterStyle.LOCAL,
+        }
 
     def to_dict(self) -> dict[str, Any]:
         """Return API-safe binding status data."""
@@ -323,16 +393,25 @@ class AICapabilityRegistry:
     ) -> CapabilityBinding:
         """Select the first available binding that satisfies the request."""
         normalized = normalize_capability(capability)
+        provider_bindings = self.bindings_for(normalized, provider=provider)
+        allow_explicit_model_override = provider is not None
         candidates = tuple(
             binding
-            for binding in self.bindings_for(normalized, provider=provider)
+            for binding in provider_bindings
             if binding.supports_model(model)
+            or (allow_explicit_model_override and binding.accepts_explicit_model_override(model))
         )
         for binding in candidates:
             if binding.available:
                 return binding
 
-        reason = self._selection_failure_reason(normalized, candidates, provider=provider)
+        reason = self._selection_failure_reason(
+            normalized,
+            candidates,
+            provider=provider,
+            model=model,
+            provider_bindings=provider_bindings,
+        )
         raise CapabilityUnavailableError(
             normalized,
             provider=provider,
@@ -346,9 +425,24 @@ class AICapabilityRegistry:
         candidates: tuple[CapabilityBinding, ...],
         *,
         provider: str | None,
+        model: str | None,
+        provider_bindings: tuple[CapabilityBinding, ...],
     ) -> str:
-        if provider and not candidates:
+        if provider and not provider_bindings:
             return f"No {capability.value} binding registered for provider {provider!r}."
+        if provider and model and provider_bindings and not candidates:
+            configured_models = sorted(
+                {model_name for binding in provider_bindings for model_name in binding.models}
+            )
+            suffix = (
+                f" Configured models: {', '.join(repr(name) for name in configured_models)}."
+                if configured_models
+                else ""
+            )
+            return (
+                f"{capability.value} binding for provider {provider!r} does not support "
+                f"requested model {model!r}.{suffix}"
+            )
         if not candidates:
             return self.status(capability).reason or f"No available binding for {capability.value}."
         reasons = tuple(binding.reason for binding in candidates if binding.reason)
@@ -463,6 +557,12 @@ def _whisper_translate_binding(config: DaemonConfig | None) -> CapabilityBinding
     return _whisper_audio_binding(config, AICapability.AUDIO_TRANSLATE)
 
 
+def _whisper_runtime_available(config: DaemonConfig) -> bool:
+    from gobby.voice.stt import WhisperSTT
+
+    return WhisperSTT(config.voice).is_available
+
+
 def _whisper_audio_binding(
     config: DaemonConfig | None,
     capability: AICapability,
@@ -476,7 +576,7 @@ def _whisper_audio_binding(
         )
 
     voice = config.voice
-    metadata = {
+    metadata: dict[str, object] = {
         "device": voice.whisper_device,
         "compute_type": voice.whisper_compute_type,
     }
@@ -484,7 +584,11 @@ def _whisper_audio_binding(
         reason = "voice.enabled is false."
     elif not voice.stt_enabled:
         reason = "voice.stt_enabled is false."
+    elif not _whisper_runtime_available(config):
+        reason = "faster-whisper is not installed."
+        metadata["runtime_available"] = False
     else:
+        metadata["runtime_available"] = True
         return CapabilityBinding(
             capability=capability,
             provider="whisper",
@@ -512,8 +616,19 @@ def _audio_bindings(config: DaemonConfig | None) -> tuple[CapabilityBinding, ...
     if config is None:
         return tuple(bindings)
 
+    seen = {(binding.capability, binding.provider) for binding in bindings}
     for binding_config in config.voice.openai_compatible_audio:
-        bindings.extend(_openai_compatible_audio_bindings(binding_config))
+        for binding in _openai_compatible_audio_bindings(binding_config):
+            key = (binding.capability, binding.provider)
+            if key in seen:
+                logger.warning(
+                    "Skipping duplicate OpenAI-compatible audio binding for %s provider %r",
+                    binding.capability.value,
+                    binding.provider,
+                )
+                continue
+            bindings.append(binding)
+            seen.add(key)
     return tuple(bindings)
 
 
@@ -573,23 +688,16 @@ def _text_generate_binding(
     if adapter_style is None:
         return None
 
-    if provider_installed(entry):
-        return CapabilityBinding(
-            capability=AICapability.TEXT_GENERATE,
-            provider=entry.provider,
-            adapter_style=adapter_style,
-            available=True,
-            models=models,
-            metadata=metadata,
-        )
-
-    return CapabilityBinding.unavailable(
-        AICapability.TEXT_GENERATE,
-        entry.provider,
+    installed = provider_installed(entry)
+    return CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider=entry.provider,
         adapter_style=adapter_style,
+        available=installed,
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
         metadata=metadata,
+        availability_probe=lambda: provider_installed(entry),
     )
 
 
@@ -659,23 +767,16 @@ def _vision_extract_binding(
             metadata=metadata,
         )
 
-    if provider_installed(entry):
-        return CapabilityBinding(
-            capability=AICapability.VISION_EXTRACT,
-            provider=entry.provider,
-            adapter_style=adapter_style,
-            available=True,
-            models=models,
-            metadata=metadata,
-        )
-
-    return CapabilityBinding.unavailable(
-        AICapability.VISION_EXTRACT,
-        entry.provider,
+    installed = provider_installed(entry)
+    return CapabilityBinding(
+        capability=AICapability.VISION_EXTRACT,
+        provider=entry.provider,
         adapter_style=adapter_style,
+        available=installed,
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
         metadata=metadata,
+        availability_probe=lambda: provider_installed(entry),
     )
 
 
@@ -727,7 +828,7 @@ def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
     if provider == "codex":
         return AIAdapterStyle.DAEMON
     if provider in {"gemini", "grok", "qwen"}:
-        return AIAdapterStyle.ACP
+        return AIAdapterStyle.CLI
     if provider == "droid":
         return AIAdapterStyle.CLI
     return None
@@ -774,23 +875,16 @@ def _provider_binding(
             metadata=metadata,
         )
 
-    if provider_installed(entry):
-        return CapabilityBinding(
-            capability=capability,
-            provider=entry.provider,
-            adapter_style=adapter_style,
-            available=True,
-            models=models,
-            metadata=metadata,
-        )
-
-    return CapabilityBinding.unavailable(
-        capability,
-        entry.provider,
+    installed = provider_installed(entry)
+    return CapabilityBinding(
+        capability=capability,
+        provider=entry.provider,
         adapter_style=adapter_style,
+        available=installed,
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
         metadata=metadata,
+        availability_probe=lambda: provider_installed(entry),
     )
 
 

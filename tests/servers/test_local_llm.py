@@ -37,10 +37,29 @@ class TestLocalGenerationConfig:
         )
 
         assert cfg.endpoints["lm-studio"].api_base == "http://localhost:1234/v1"
+        assert cfg.endpoints["lm-studio"].provider == "openai-compatible"
         assert cfg.endpoints["lm-studio"].model == "qwen-coder"
         assert cfg.endpoints["lm-studio"].api_key == "local-key"
         assert cfg.endpoints["lm-studio"].vision_extract is False
         assert cfg.endpoints["ollama"].model == "qwen2.5-coder"
+
+    @pytest.mark.parametrize("provider", ["openai-compatible", "lmstudio", "ollama"])
+    def test_endpoint_accepts_supported_providers(self, provider: str) -> None:
+        endpoint = LocalGenerationEndpointConfig(
+            provider=provider,
+            api_base="http://localhost:1234",
+            model="qwen-coder",
+        )
+
+        assert endpoint.provider == provider
+
+    def test_endpoint_rejects_unknown_provider(self) -> None:
+        with pytest.raises(ValidationError, match="provider"):
+            LocalGenerationEndpointConfig(
+                provider="lm-studio",
+                api_base="http://localhost:1234",
+                model="qwen-coder",
+            )
 
     def test_endpoint_requires_api_base(self) -> None:
         with pytest.raises(ValidationError, match="api_base"):

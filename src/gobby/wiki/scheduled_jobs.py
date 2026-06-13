@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Callable, Iterable, Sequence
+from collections.abc import Callable, Iterable
 from typing import Any, Protocol
 
 from gobby.gwiki_gateway import GwikiGateway
@@ -17,27 +17,12 @@ from gobby.wiki.scope_resolution import (
 )
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
-DEFAULT_RESEARCH_AI = "daemon"
-WIKI_RESEARCH_INTERVAL_SECONDS = 24 * 60 * 60
 WIKI_REFRESH_INTERVAL_SECONDS = 60 * 60
 WIKI_HEALTH_INTERVAL_SECONDS = 30 * 60
 WIKI_AUDIT_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 class WikiGatewayProtocol(Protocol):
-    async def research(
-        self,
-        query: str | None = None,
-        *,
-        audit: bool = False,
-        source_constraints: Sequence[str] | None = None,
-        max_steps: int | None = None,
-        max_tokens: int | None = None,
-        max_sources: int | None = None,
-        ai: str | None = None,
-        require_ai: bool = False,
-    ) -> dict[str, Any]: ...
-
     async def refresh(
         self,
         *,
@@ -57,32 +42,7 @@ class CronRegistrationProtocol(Protocol):
 
 
 GatewayFactory = Callable[[ResolvedWikiScope], WikiGatewayProtocol]
-WIKI_CRON_COMMANDS = ("research", "refresh", "health", "audit")
-
-
-def create_wiki_research_handler(
-    *,
-    gateway: WikiGatewayProtocol,
-    coordinator: WikiUpdateCoordinator,
-    scope: str,
-) -> CronHandler:
-    async def research_handler(job: CronJob) -> str:
-        query = _string_or_none(job.action_config.get("query"))
-        if query is None:
-            raise ValueError("Wiki research cron jobs require action_config.query")
-        result = await gateway.research(
-            query,
-            ai=_string_or_none(job.action_config.get("ai")) or DEFAULT_RESEARCH_AI,
-        )
-        coordinated = await coordinator.handle_write_result(result)
-        return _history_output(
-            purpose="Run nightly wiki research",
-            scope=scope,
-            command="research",
-            gwiki_result=coordinated,
-        )
-
-    return research_handler
+WIKI_CRON_COMMANDS = ("refresh", "health", "audit")
 
 
 def create_wiki_refresh_handler(
@@ -129,12 +89,7 @@ def create_wiki_audit_handler(
     scope: str,
 ) -> CronHandler:
     async def audit_handler(job: CronJob) -> str:
-        query = _string_or_none(job.action_config.get("query"))
-        result = await gateway.research(
-            query,
-            audit=True,
-            ai=_string_or_none(job.action_config.get("ai")) or DEFAULT_RESEARCH_AI,
-        )
+        result = await gateway.audit()
         coordinated = await coordinator.handle_write_result(result)
         return _history_output(
             purpose="Audit wiki content",
@@ -165,18 +120,8 @@ async def register_wiki_cron_jobs(
         gateway = await _create_gateway(scope, db, gateway_factory)
         coordinator = WikiUpdateCoordinator(gateway)
 
-        for command, purpose, interval, handler, ensure_system_job in (
-            (
-                "research",
-                "Nightly wiki research",
-                WIKI_RESEARCH_INTERVAL_SECONDS,
-                create_wiki_research_handler(
-                    gateway=gateway,
-                    coordinator=coordinator,
-                    scope=scope,
-                ),
-                False,
-            ),
+        _retire_system_research_job(cron_storage, scope)
+        for command, purpose, interval, handler in (
             (
                 "refresh",
                 "Scheduled wiki source refresh",
@@ -186,14 +131,12 @@ async def register_wiki_cron_jobs(
                     coordinator=coordinator,
                     scope=scope,
                 ),
-                True,
             ),
             (
                 "health",
                 "Scheduled wiki health checks",
                 WIKI_HEALTH_INTERVAL_SECONDS,
                 create_wiki_health_handler(gateway=gateway, scope=scope),
-                True,
             ),
             (
                 "audit",
@@ -204,23 +147,19 @@ async def register_wiki_cron_jobs(
                     coordinator=coordinator,
                     scope=scope,
                 ),
-                True,
             ),
         ):
             handler_name = wiki_handler_name(command, scope)
             cron_executor.register_handler(handler_name, handler)
-            if ensure_system_job:
-                _ensure_wiki_cron_job(
-                    cron_storage=cron_storage,
-                    project_id=project_id,
-                    command=command,
-                    scope=scope,
-                    handler_name=handler_name,
-                    purpose=purpose,
-                    interval_seconds=interval,
-                )
-            else:
-                _retire_queryless_system_research_job(cron_storage, scope)
+            _ensure_wiki_cron_job(
+                cron_storage=cron_storage,
+                project_id=project_id,
+                command=command,
+                scope=scope,
+                handler_name=handler_name,
+                purpose=purpose,
+                interval_seconds=interval,
+            )
             registered += 1
 
     return registered
@@ -322,20 +261,22 @@ def _ensure_wiki_cron_job(
         )
 
 
-def _retire_queryless_system_research_job(
+def _retire_system_research_job(
     cron_storage: CronJobStorage,
     scope: str,
 ) -> None:
+    """Disable any research cron row; `gwiki research` no longer exists."""
     existing = cron_storage.get_job_by_name(wiki_job_name("research", scope))
-    if existing is None or not existing.is_system:
+    if existing is None:
         return
-    if _string_or_none(existing.action_config.get("query")) is not None:
-        return
-    cron_storage.reconcile_system_job_identity(
-        existing.id,
-        enabled=False,
-        next_run_at=None,
-    )
+    if existing.is_system:
+        cron_storage.reconcile_system_job_identity(
+            existing.id,
+            enabled=False,
+            next_run_at=None,
+        )
+    elif existing.enabled:
+        cron_storage.update_job(existing.id, enabled=False)
 
 
 def _configured_scopes(scopes: Iterable[str] | None, project_id: str) -> list[str]:
@@ -362,7 +303,9 @@ def reconcile_stale_wiki_cron_scopes(
 
     repaired = 0
     canonical_scope = project_scope(legacy_scope)
-    for command in WIKI_CRON_COMMANDS:
+    # "research" stays here so legacy rows for the removed command still get
+    # migrated to canonical names, where registration retires them.
+    for command in (*WIKI_CRON_COMMANDS, "research"):
         legacy = cron_storage.get_job_by_name(wiki_job_name(command, legacy_scope))
         if legacy is None:
             continue
@@ -443,10 +386,6 @@ def _status(result: dict[str, Any], payload: dict[str, Any]) -> str:
     if isinstance(status, str) and status:
         return status
     return "completed" if result.get("ok") else "failed"
-
-
-def _string_or_none(value: object) -> str | None:
-    return value if isinstance(value, str) and value else None
 
 
 def _scopes_from_config_value(value: object) -> list[str]:

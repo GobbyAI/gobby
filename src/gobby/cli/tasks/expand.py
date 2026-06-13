@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import json
 from pathlib import Path
+from typing import NoReturn
 
 import click
 
@@ -23,6 +24,13 @@ def _build_expansion_service() -> ExpansionService:
     config = load_config()
     llm_service = LLMService(config)
     return ExpansionService(task_manager=task_manager, llm_service=llm_service, config=config)
+
+
+def _fail_run_and_raise(
+    run_manager: LocalExpansionRunManager, run_id: str, exc: Exception
+) -> NoReturn:
+    run_manager.fail(run_id, str(exc))
+    raise click.ClickException(str(exc)) from exc
 
 
 def _resolve_cli_session_id(raw_session_id: str | None) -> str | None:
@@ -106,7 +114,13 @@ def compile_cmd(
         model=model,
         options={"auto_apply": False},
     )
-    run = asyncio.run(service.compile_run(run.id))
+    try:
+        run = asyncio.run(service.compile_run(run.id))
+    except Exception as exc:
+        _fail_run_and_raise(run_manager, run.id, exc)
+    if run.status != "completed" or run.error:
+        detail = run.error or f"run finished with status {run.status}"
+        raise click.ClickException(f"Expansion compile failed: {detail}")
     if json_output:
         click.echo(json.dumps(run.to_dict()))
         return
@@ -125,7 +139,11 @@ def apply_cmd(run_id: str, session_id: str | None, json_output: bool) -> None:
     """Apply a compiled expansion run."""
     service = _build_expansion_service()
     resolved_session_id = _resolve_cli_session_id(session_id)
-    run = service.apply_run(run_id, session_id=resolved_session_id)
+    run_manager = LocalExpansionRunManager(service.task_manager.db)
+    try:
+        run = service.apply_run(run_id, session_id=resolved_session_id)
+    except Exception as exc:
+        _fail_run_and_raise(run_manager, run_id, exc)
     if json_output:
         click.echo(json.dumps(run.to_dict()))
         return
@@ -200,10 +218,13 @@ def resume_cmd(run_id: str, session_id: str | None, json_output: bool) -> None:
     if run is None:
         raise click.ClickException(f"Expansion run not found: {run_id}")
     resolved_session_id = _resolve_cli_session_id(session_id)
-    if run.compiled_spec:
-        run = service.apply_run(run_id, session_id=resolved_session_id)
-    else:
-        run = asyncio.run(service.compile_and_apply_run(run_id, session_id=resolved_session_id))
+    try:
+        if run.compiled_spec:
+            run = service.apply_run(run_id, session_id=resolved_session_id)
+        else:
+            run = asyncio.run(service.compile_and_apply_run(run_id, session_id=resolved_session_id))
+    except Exception as exc:
+        _fail_run_and_raise(run_manager, run.id, exc)
     if json_output:
         click.echo(json.dumps(run.to_dict()))
         return

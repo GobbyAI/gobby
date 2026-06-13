@@ -275,8 +275,7 @@ def doctor_cmd() -> None:
 
     if issues_found:
         click.echo("\nIssues found. Run 'gobby tasks clean' to fix fixable issues.")
-        # Exit with error code if issues found
-        # (Click handles exit code but we can explicitly exit if needed, usually just return is fine unless we want non-zero)
+        raise SystemExit(1)
 
 
 @tasks.command("clean")

@@ -28,6 +28,11 @@ def resolve_task_id(
     Returns:
         The resolved Task, or None if not found (with error message printed)
     """
+    task_id = task_id.strip()
+    if not task_id:
+        click.echo("Error: Task reference cannot be empty", err=True)
+        return None
+
     # Get project_id from context if not provided
     if project_id is None:
         ctx = get_project_context(cwd=Path.cwd())

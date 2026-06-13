@@ -103,6 +103,23 @@ class TestTruncateAdditionalContext:
         assert f"aggregate_len={len(text)}" in caplog.text
         assert "contributors={'skills': 6000, 'metadata': 4050}" in caplog.text
 
+    def test_over_limit_uses_contributor_sizes_to_preserve_small_parts(self) -> None:
+        large_context = "x" * (ADDITIONAL_CONTEXT_LIMIT + 200)
+        metadata = "session metadata survives"
+        text = f"{large_context}\n\n{metadata}"
+
+        result = truncate_additional_context(
+            text,
+            contributor_sizes={
+                "response.context": len(large_context),
+                "metadata": len(metadata),
+            },
+        )
+
+        assert len(result) == ADDITIONAL_CONTEXT_LIMIT
+        assert metadata in result
+        assert result.endswith("\n... [truncated]")
+
     def test_empty_string(self) -> None:
         assert truncate_additional_context("") == ""
 

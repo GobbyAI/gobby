@@ -52,6 +52,11 @@ class RecoveringVectorStore:
         self.calls.append(("delete", collection_name, filters))
         if collection_name not in self.collections:
             raise MissingCollectionError(collection_name)
+        self.items = [
+            item
+            for item in self.items
+            if not all(item[2].get(key) == value for key, value in filters.items())
+        ]
 
     async def batch_upsert(
         self,
@@ -155,6 +160,51 @@ async def test_sync_worker_embed_adapter_preserves_embeddings_config(
     }
 
 
+@pytest.mark.asyncio
+async def test_sync_worker_retries_embed_probe_after_startup_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Embedding startup failures are retried on later worker passes."""
+    shutdown = asyncio.Event()
+    captured: dict[str, Any] = {"probe_calls": 0}
+
+    async def fake_generate_embeddings(
+        texts: list[str],
+        *,
+        model: str,
+        api_base: str | None,
+        api_key: str | None,
+        expected_dim: int | None,
+    ) -> list[list[float]]:
+        captured["probe_calls"] += 1
+        if captured["probe_calls"] == 1:
+            raise RuntimeError("embedding backend down")
+        return [[0.1] * expected_dim] if expected_dim else [[0.1]]
+
+    async def fake_sync_pass(**kwargs: Any) -> None:
+        captured["embed_model"] = kwargs["embed_model"]
+        shutdown.set()
+
+    monkeypatch.setattr("gobby.search.embeddings.generate_embeddings", fake_generate_embeddings)
+    monkeypatch.setattr("gobby.code_index.sync_worker._sync_pass", fake_sync_pass)
+
+    await sync_worker_loop(
+        storage=MagicMock(),
+        vector_store=object(),
+        context=SimpleNamespace(gcode_gateway=None, clear_graph=None),
+        config=CodeIndexConfig(
+            embedding_enabled=True,
+            graph_enabled=False,
+            sync_worker_interval_seconds=0.01,
+        ),
+        embeddings_config=EmbeddingsConfig(model="test-model", dim=4),
+        shutdown_flag=shutdown,
+    )
+
+    assert captured["probe_calls"] == 2
+    assert captured["embed_model"] is not None
+
+
 class IndexedFileNotFoundGcodeGateway:
     def __init__(self, *, remove_root: bool = False, remove_source: bool = False) -> None:
         self.remove_root = remove_root
@@ -210,14 +260,16 @@ def _indexed_file(
     *,
     vectors_synced: bool = False,
     graph_synced: bool = False,
+    symbol_count: int = 1,
+    language: str = "python",
 ) -> IndexedFile:
     return IndexedFile(
         id=IndexedFile.make_id("proj-1", "src/app.py"),
         project_id="proj-1",
         file_path="src/app.py",
-        language="python",
+        language=language,
         content_hash="abc123",
-        symbol_count=1,
+        symbol_count=symbol_count,
         vectors_synced=vectors_synced,
         graph_synced=graph_synced,
     )
@@ -296,8 +348,12 @@ async def test_sync_worker_keeps_vectors_live_when_graph_gateway_fails(
         "delete",
         "batch_upsert",
     ]
-    storage.mark_vectors_synced.assert_called_once_with(pending_file.id)
-    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_vectors_synced.assert_called_once_with(
+        pending_file.id,
+        pending_file.content_hash,
+    )
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "vector")
+    storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
     storage.mark_graph_synced.assert_not_called()
 
 
@@ -343,13 +399,90 @@ async def test_sync_worker_delegates_graph_sync_to_gcode_gateway(tmp_path: Path)
     )
 
     assert gcode_gateway.synced_files == [(tmp_path, pending_file.file_path)]
-    storage.mark_graph_sync_attempted.assert_not_called()
-    storage.mark_graph_synced.assert_called_once_with(pending_file.id)
+    storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
+    storage.mark_graph_synced.assert_called_once_with(
+        pending_file.id,
+        pending_file.content_hash,
+    )
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
 
 
 @pytest.mark.asyncio
-async def test_sync_pass_purges_missing_project_before_pending_files(tmp_path: Path) -> None:
-    """Missing project roots are purged before polling pending graph work."""
+async def test_sync_file_marks_zero_symbol_file_graph_synced_without_gcode(
+    tmp_path: Path,
+) -> None:
+    """Content-only files have no graph projection work and should not call gcode."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=True, graph_synced=False, symbol_count=0)
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
+    gcode_gateway = RecordingGcodeGateway()
+
+    did_sync = await _sync_file(
+        storage=storage,
+        vector_store=None,
+        gcode_gateway=gcode_gateway,
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        embed_model=None,
+        project_id="proj-1",
+        root=tmp_path,
+        file=pending_file,
+        embedding_dim=4,
+        run_db=RecordingRunDb(),
+    )
+
+    assert did_sync is True
+    assert gcode_gateway.synced_files == []
+    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_graph_synced.assert_called_once_with(
+        pending_file.id,
+        pending_file.content_hash,
+    )
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
+
+
+@pytest.mark.asyncio
+async def test_sync_file_marks_non_graph_language_graph_synced_without_gcode(
+    tmp_path: Path,
+) -> None:
+    """Content-search languages can have symbols but no call/import graph projection."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(
+        vectors_synced=True,
+        graph_synced=False,
+        symbol_count=1,
+        language="json",
+    )
+    storage = MagicMock()
+    storage.get_file.return_value = pending_file
+    gcode_gateway = RecordingGcodeGateway()
+
+    did_sync = await _sync_file(
+        storage=storage,
+        vector_store=None,
+        gcode_gateway=gcode_gateway,
+        config=CodeIndexConfig(embedding_enabled=False, graph_enabled=True),
+        embed_model=None,
+        project_id="proj-1",
+        root=tmp_path,
+        file=pending_file,
+        embedding_dim=4,
+        run_db=RecordingRunDb(),
+    )
+
+    assert did_sync is True
+    assert gcode_gateway.synced_files == []
+    storage.mark_graph_sync_attempted.assert_not_called()
+    storage.mark_graph_synced.assert_called_once_with(
+        pending_file.id,
+        pending_file.content_hash,
+    )
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
+
+
+@pytest.mark.asyncio
+async def test_sync_pass_skips_missing_project_before_pending_files(tmp_path: Path) -> None:
+    """Missing project roots are skipped before polling pending graph work."""
     missing_root = tmp_path / "deleted-worktree"
     project = _indexed_project(missing_root)
     storage = MagicMock()
@@ -379,11 +512,11 @@ async def test_sync_pass_purges_missing_project_before_pending_files(tmp_path: P
     )
 
     assert not missing_root.exists()
-    assert run_db.calls == ["list_indexed_projects", "delete_project_index"]
+    assert run_db.calls == ["list_indexed_projects"]
     storage.get_pending_sync_files.assert_not_called()
-    storage.delete_project_index.assert_called_once_with(project.id)
-    clear_graph.assert_awaited_once_with(project.id)
-    vector_store.delete_collection.assert_awaited_once_with(f"code_symbols_{project.id}")
+    storage.delete_project_index.assert_not_called()
+    clear_graph.assert_not_awaited()
+    vector_store.delete_collection.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -575,6 +708,7 @@ async def test_sync_file_warns_and_retries_when_indexed_row_still_exists(
         for record in caplog.records
     )
     storage.mark_graph_synced.assert_not_called()
+    storage.mark_graph_sync_attempted.assert_called_once_with(pending_file.id)
 
 
 @pytest.mark.asyncio
@@ -601,7 +735,11 @@ async def test_sync_file_skipped_response_marks_graph_synced(tmp_path: Path) -> 
     )
 
     assert did_sync is True
-    storage.mark_graph_synced.assert_called_once_with(pending_file.id)
+    storage.mark_graph_synced.assert_called_once_with(
+        pending_file.id,
+        pending_file.content_hash,
+    )
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
 
 
 @pytest.mark.asyncio
@@ -782,6 +920,76 @@ async def test_sync_file_batches_vector_embedding_and_upsert(
 
 
 @pytest.mark.asyncio
+async def test_sync_file_deletes_stale_vectors_when_file_has_no_symbols(
+    code_storage: CodeIndexStorage,
+    tmp_path: Path,
+) -> None:
+    project_id = "proj-1"
+    file_path = "src/app.py"
+    root = tmp_path
+    source_file = root / file_path
+    source_file.parent.mkdir(parents=True, exist_ok=True)
+    source_file.write_text("# gutted to comments only\n")
+
+    indexed_file = IndexedFile(
+        id=IndexedFile.make_id(project_id, file_path),
+        project_id=project_id,
+        file_path=file_path,
+        language="python",
+        content_hash="abc123",
+        symbol_count=0,
+        graph_synced=True,
+        vectors_synced=False,
+    )
+    code_storage.upsert_project_stats(
+        IndexedProject(
+            id=project_id,
+            root_path=str(root),
+            total_files=1,
+            total_symbols=0,
+        )
+    )
+    code_storage.upsert_file(indexed_file)
+
+    collection = f"code_symbols_{project_id}"
+    vector_store = RecoveringVectorStore()
+    vector_store.collections.add(collection)
+    vector_store.items = [
+        (
+            "stale-symbol-id",
+            [0.1, 0.2, 0.3, 0.4],
+            {"file_path": file_path, "project_id": project_id},
+        ),
+        (
+            "other-symbol-id",
+            [0.4, 0.3, 0.2, 0.1],
+            {"file_path": "src/other.py", "project_id": project_id},
+        ),
+    ]
+
+    did_sync = await _sync_file(
+        storage=code_storage,
+        vector_store=vector_store,
+        gcode_gateway=None,
+        config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+        embed_model=FakeEmbedModel(),
+        project_id=project_id,
+        root=root,
+        file=indexed_file,
+        embedding_dim=4,
+    )
+
+    assert did_sync is True
+    assert vector_store.calls == [
+        ("delete", collection, {"file_path": file_path, "project_id": project_id})
+    ]
+    assert [item[0] for item in vector_store.items] == ["other-symbol-id"]
+    synced_file = code_storage.get_file(project_id, file_path)
+    assert synced_file is not None
+    assert synced_file.vectors_synced is True
+
+
+@pytest.mark.asyncio
 async def test_sync_file_does_not_mark_vectors_synced_when_later_vector_batch_fails(
     code_storage: CodeIndexStorage,
     sample_symbols: list[Symbol],
@@ -834,6 +1042,7 @@ async def test_sync_file_does_not_mark_vectors_synced_when_later_vector_batch_fa
     synced_file = code_storage.get_file(project_id, file_path)
     assert synced_file is not None
     assert synced_file.vectors_synced is False
+    assert synced_file.vector_sync_attempted_at is not None
 
 
 @pytest.mark.asyncio
@@ -908,7 +1117,13 @@ async def test_sync_file_routes_vector_storage_calls_through_run_db(
     )
 
     assert did_sync is True
-    assert run_db.calls == ["get_file", "get_symbols_for_file", "mark_vectors_synced"]
+    assert run_db.calls == [
+        "get_file",
+        "mark_vector_sync_attempted",
+        "get_symbols_for_file",
+        "mark_vectors_synced",
+        "clear_projection_cleanup_pending",
+    ]
 
 
 @pytest.mark.asyncio
@@ -935,6 +1150,7 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
         file_path=file_path,
         language="python",
         content_hash="new",
+        symbol_count=1,
         vectors_synced=True,
         graph_synced=False,
     )
@@ -965,8 +1181,9 @@ async def test_sync_file_uses_current_row_for_sync_state_and_marker_id(tmp_path:
     assert did_sync is True
     assert vector_store.calls == []
     storage.mark_vectors_synced.assert_not_called()
-    storage.mark_graph_sync_attempted.assert_not_called()
-    storage.mark_graph_synced.assert_called_once_with(current_file.id)
+    storage.mark_graph_sync_attempted.assert_called_once_with(current_file.id)
+    storage.mark_graph_synced.assert_called_once_with(current_file.id, current_file.content_hash)
+    storage.clear_projection_cleanup_pending.assert_called_once_with("proj-1", "graph")
     assert gcode_gateway.synced_files == [(tmp_path, file_path)]
 
 

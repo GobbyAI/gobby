@@ -15,6 +15,8 @@ from pydantic import BaseModel
 from gobby.code_index.context import CodeIndexGraphUnavailable, CodeIndexProjectNotFound
 from gobby.code_index.gcode_gateway import (
     GcodeGatewayError,
+    GcodeInputValidationError,
+    GcodeProjectNotFoundError,
     GcodeUnavailableError,
     GcodeVersionError,
 )
@@ -71,8 +73,10 @@ def _require_project_id(project_id: str | None) -> str:
 def _graph_http_exception(error: Exception) -> HTTPException:
     if isinstance(error, (CodeIndexGraphUnavailable, GcodeUnavailableError, GcodeVersionError)):
         return HTTPException(status_code=503, detail="Code graph not available")
-    if isinstance(error, CodeIndexProjectNotFound):
+    if isinstance(error, (CodeIndexProjectNotFound, GcodeProjectNotFoundError)):
         return HTTPException(status_code=404, detail=str(error))
+    if isinstance(error, GcodeInputValidationError):
+        return HTTPException(status_code=400, detail=str(error))
     if isinstance(error, GcodeGatewayError):
         logger.exception("Code graph gateway request failed")
         return HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED)
@@ -389,8 +393,9 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
                 content={"status": "ok", "project_id": project_id, "note": "not indexed"},
             )
 
-        await code_indexer.invalidate(project_id)
-        return JSONResponse(content={"status": "ok", "project_id": project_id})
+        result = await code_indexer.invalidate(project_id)
+        status_code = 207 if result.get("status") == "partial_failure" else 200
+        return JSONResponse(status_code=status_code, content=result)
 
     @router.post("/codewiki/refresh", status_code=202)
     async def refresh_codewiki(
@@ -409,7 +414,9 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
 
         try:
             accepted = bool(
-                request_refresh(
+                await _run_db(
+                    server,
+                    request_refresh,
                     root_path=root_value,
                     project_id=body.project_id,
                     out_dir=body.out_dir,

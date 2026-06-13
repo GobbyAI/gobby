@@ -4,19 +4,50 @@ This module tests the git_utils.py functions which provide
 pure utility functions for git operations without ActionContext dependency.
 """
 
+import logging
 import subprocess
 from unittest.mock import MagicMock, patch
 
 import pytest
 
 from gobby.workflows.git_utils import (
+    get_dirty_files_categorized,
     get_file_changes,
     get_git_diff_summary,
     get_git_status,
     get_recent_git_commits,
+    resolve_git_worktree_root,
 )
 
 pytestmark = pytest.mark.unit
+
+
+class TestWorktreeRootResolution:
+    def test_returns_first_git_worktree_root(self, tmp_path) -> None:
+        non_repo = tmp_path / "plain"
+        non_repo.mkdir()
+        repo = tmp_path / "repo"
+        repo.mkdir()
+        nested = repo / "nested"
+        nested.mkdir()
+        subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+
+        assert resolve_git_worktree_root(non_repo, nested) == str(repo.resolve())
+
+    def test_non_git_cwd_dirty_files_returns_empty_without_warning(
+        self, tmp_path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        caplog.set_level(logging.WARNING, logger="gobby.workflows.git_utils")
+
+        dirty = get_dirty_files_categorized(str(tmp_path))
+
+        assert not dirty
+        assert dirty.all == set()
+        assert [
+            record
+            for record in caplog.records
+            if record.levelno >= logging.WARNING and "get_dirty_files" in record.getMessage()
+        ] == []
 
 
 class TestGetGitStatus:

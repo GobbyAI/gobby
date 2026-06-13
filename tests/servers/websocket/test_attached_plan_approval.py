@@ -38,6 +38,19 @@ _CLAUDE_FULL_MENU_PANE = (
     " 4. Tell Claude what to change\n"
 )
 _CLAUDE_CONFIRM_MENU_PANE = "Exit plan mode?\n Claude wants to exit plan mode\n 1. Yes\n 2. No\n"
+_CODEX_PLAN_MENU_PANE = (
+    "Implement this plan?\n1. Yes, implement this plan\n3. No, stay in Plan mode\n"
+)
+_DROID_PLAN_MENU_PANE = (
+    "1. Proceed with the proposal\n4. No and explain why\nup/down navigate   1-4 select\n"
+)
+_GEMINI_PLAN_MENU_PANE = (
+    "Apply this change?\n1. Allow once\n2. Allow for this session\n4. No, suggest changes (esc)\n"
+)
+_GROK_PLAN_MENU_PANE = "1 [*] Yes, and don't ask again\n4 [ ] No, reject (type to add feedback)\n"
+_QWEN_PLAN_MENU_PANE = (
+    "Apply this change?\n1. Yes, allow once\n2. Yes, allow always\n3. No, suggest changes (esc)\n"
+)
 
 
 class ConcreteSessionControl(SessionControlMixin):
@@ -339,6 +352,7 @@ class TestAttachedPlanApprovalClaude:
             "ok": True,
         }
         server._send_error.assert_not_awaited()
+        server._send_error.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_no_menu_on_pane_reports_unmapped(self) -> None:
@@ -372,16 +386,16 @@ class TestAttachedPlanApprovalClaude:
 
 
 class TestAttachedPlanApprovalCodex:
-    """Codex's static single-shape path: no pane capture, digit-only dispatch."""
+    """Codex's static single-shape path: menu-guarded digit-only dispatch."""
 
     @pytest.mark.asyncio
-    async def test_approve_dispatches_digit_only_without_capture(self) -> None:
+    async def test_approve_dispatches_digit_only_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
         server.session_manager.get.return_value = _make_terminal_session(source="codex")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_CODEX_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -393,8 +407,7 @@ class TestAttachedPlanApprovalCodex:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        # Single fixed menu shape -> no live-pane disambiguation needed.
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # Codex plan menu activates on the digit alone; approve maps to "1".
         tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -409,7 +422,7 @@ class TestAttachedPlanApprovalCodex:
         server.session_manager.get.return_value = _make_terminal_session(source="codex")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_CODEX_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -421,7 +434,7 @@ class TestAttachedPlanApprovalCodex:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # request-changes maps to "3" (No, stay in Plan mode), digit only.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "3", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -432,20 +445,15 @@ class TestAttachedPlanApprovalCodex:
             "option_id": REQUEST_CHANGES_OPTION_ID,
             "ok": True,
         }
-        server._send_error.assert_not_awaited()
-
-
-class TestAttachedPlanApprovalDroid:
-    """Droid's static single-shape spec-menu path: no pane capture, digit only."""
 
     @pytest.mark.asyncio
-    async def test_approve_dispatches_digit_only_without_capture(self) -> None:
+    async def test_stale_approval_click_without_menu_sends_no_keystrokes(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
-        server.session_manager.get.return_value = _make_terminal_session(source="droid")
+        server.session_manager.get.return_value = _make_terminal_session(source="codex")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value="agent is still generating\n")
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -457,8 +465,39 @@ class TestAttachedPlanApprovalDroid:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        # Single fixed menu shape -> no live-pane disambiguation needed.
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
+        tmux_manager.send_keys.assert_not_awaited()
+        server._send_error.assert_awaited_once()
+        assert server._send_error.await_args.kwargs.get("code") == "PLAN_KEYSTROKES_UNMAPPED"
+        error_message = server._send_error.await_args.args[1]
+        assert "codex" in error_message
+        assert "approve_act" in error_message
+        ws.send.assert_not_awaited()
+
+
+class TestAttachedPlanApprovalDroid:
+    """Droid's static single-shape spec-menu path: menu-guarded digit only."""
+
+    @pytest.mark.asyncio
+    async def test_approve_dispatches_digit_only_with_menu_guard(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server.session_manager.get.return_value = _make_terminal_session(source="droid")
+
+        tmux_manager = MagicMock()
+        tmux_manager.capture_pane = AsyncMock(return_value=_DROID_PLAN_MENU_PANE)
+        tmux_manager.send_keys = AsyncMock(return_value=True)
+
+        with patch(_TMUX_PATCH, return_value=tmux_manager):
+            await handle_attached_plan_approval(
+                server,
+                ws,
+                "term-1",
+                {"decision": "approve", "option_id": "approve_act"},
+                registry=build_default_plan_keystroke_registry(),
+            )
+
+        tmux_manager.capture_pane.assert_awaited_once()
         # Droid spec menu activates on the digit alone; approve maps to "1".
         tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -473,7 +512,7 @@ class TestAttachedPlanApprovalDroid:
         server.session_manager.get.return_value = _make_terminal_session(source="droid")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_DROID_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -485,7 +524,7 @@ class TestAttachedPlanApprovalDroid:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # request-changes maps to "4" (No and explain why), digit only.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "4", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -500,17 +539,17 @@ class TestAttachedPlanApprovalDroid:
 
 
 class TestAttachedPlanApprovalGemini:
-    """Gemini's static approval-menu path: no pane capture; distinct approve
-    digits (1 vs 2) and a shape-independent Esc key for reject."""
+    """Gemini's guarded static approval-menu path: distinct approve digits
+    (1 vs 2) and a shape-independent Esc key for reject."""
 
     @pytest.mark.asyncio
-    async def test_approve_act_dispatches_digit_one_without_capture(self) -> None:
+    async def test_approve_act_dispatches_digit_one_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
         server.session_manager.get.return_value = _make_terminal_session(source="gemini")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_GEMINI_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -522,8 +561,7 @@ class TestAttachedPlanApprovalGemini:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        # Stable approve positions + Esc reject -> no live-pane disambiguation.
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # approve_act ("Allow once", keep prompting) maps to "1", digit only.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -532,13 +570,13 @@ class TestAttachedPlanApprovalGemini:
         server._send_error.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_approve_yolo_dispatches_digit_two_without_capture(self) -> None:
+    async def test_approve_yolo_dispatches_digit_two_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
         server.session_manager.get.return_value = _make_terminal_session(source="gemini")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_GEMINI_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -550,7 +588,7 @@ class TestAttachedPlanApprovalGemini:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # approve_yolo ("Allow for this session", stop prompting) maps to "2".
         tmux_manager.send_keys.assert_awaited_once_with("%11", "2", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -565,7 +603,7 @@ class TestAttachedPlanApprovalGemini:
         server.session_manager.get.return_value = _make_terminal_session(source="gemini")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_GEMINI_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -577,7 +615,7 @@ class TestAttachedPlanApprovalGemini:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # request-changes is the named Esc key (literal=False) -- the reject digit
         # varies by tool type, but "(esc)" always rejects.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "Escape", literal=False)
@@ -593,18 +631,18 @@ class TestAttachedPlanApprovalGemini:
 
 
 class TestAttachedPlanApprovalGrok:
-    """Grok's ("Grok Build" TUI) static approval-menu path: no pane capture;
+    """Grok's ("Grok Build" TUI) guarded static approval-menu path:
     positionally-stable digits (1 yolo / 3 approve / 4 reject), every action a
     single immediate literal digit (reject is digit 4, not Esc)."""
 
     @pytest.mark.asyncio
-    async def test_approve_act_dispatches_digit_three_without_capture(self) -> None:
+    async def test_approve_act_dispatches_digit_three_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
         server.session_manager.get.return_value = _make_terminal_session(source="grok")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_GROK_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -616,8 +654,7 @@ class TestAttachedPlanApprovalGrok:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        # Stable digit positions -> no live-pane disambiguation.
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # approve_act ("Yes, proceed"/"Yes", single approval) maps to "3".
         tmux_manager.send_keys.assert_awaited_once_with("%11", "3", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -626,13 +663,13 @@ class TestAttachedPlanApprovalGrok:
         server._send_error.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_approve_yolo_dispatches_digit_one_without_capture(self) -> None:
+    async def test_approve_yolo_dispatches_digit_one_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
         server.session_manager.get.return_value = _make_terminal_session(source="grok")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_GROK_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -644,7 +681,7 @@ class TestAttachedPlanApprovalGrok:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # approve_yolo ("always-approve mode", bypass) maps to "1".
         tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -659,7 +696,7 @@ class TestAttachedPlanApprovalGrok:
         server.session_manager.get.return_value = _make_terminal_session(source="grok")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_GROK_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -671,7 +708,7 @@ class TestAttachedPlanApprovalGrok:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # request-changes is the stable reject digit "4" (literal) -- grok's "No,
         # reject" item is identical across menu shapes; Esc only unselects.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "4", literal=True)
@@ -687,18 +724,17 @@ class TestAttachedPlanApprovalGrok:
 
 
 class TestAttachedPlanApprovalQwen:
-    """Qwen Code's static approval-menu path (a Gemini-CLI fork): no pane
-    capture; distinct approve digits (1 vs 2) and a shape-independent Esc key
-    for reject."""
+    """Qwen Code's guarded static approval-menu path (a Gemini-CLI fork):
+    distinct approve digits (1 vs 2) and a shape-independent Esc key for reject."""
 
     @pytest.mark.asyncio
-    async def test_approve_act_dispatches_digit_one_without_capture(self) -> None:
+    async def test_approve_act_dispatches_digit_one_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
         server.session_manager.get.return_value = _make_terminal_session(source="qwen")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -710,8 +746,7 @@ class TestAttachedPlanApprovalQwen:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        # Stable approve positions + Esc reject -> no live-pane disambiguation.
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # approve_act ("Yes, allow once", single approval) maps to "1", digit only.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "1", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -720,13 +755,13 @@ class TestAttachedPlanApprovalQwen:
         server._send_error.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_approve_yolo_dispatches_digit_two_without_capture(self) -> None:
+    async def test_approve_yolo_dispatches_digit_two_with_menu_guard(self) -> None:
         server = ConcreteSessionControl()
         ws = _make_ws()
         server.session_manager.get.return_value = _make_terminal_session(source="qwen")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -738,7 +773,7 @@ class TestAttachedPlanApprovalQwen:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # approve_yolo ("Yes, allow always", bypass) maps to "2".
         tmux_manager.send_keys.assert_awaited_once_with("%11", "2", literal=True)
         msg = json.loads(ws.send.await_args.args[0])
@@ -753,7 +788,7 @@ class TestAttachedPlanApprovalQwen:
         server.session_manager.get.return_value = _make_terminal_session(source="qwen")
 
         tmux_manager = MagicMock()
-        tmux_manager.capture_pane = AsyncMock(return_value="should not be read")
+        tmux_manager.capture_pane = AsyncMock(return_value=_QWEN_PLAN_MENU_PANE)
         tmux_manager.send_keys = AsyncMock(return_value=True)
 
         with patch(_TMUX_PATCH, return_value=tmux_manager):
@@ -765,7 +800,7 @@ class TestAttachedPlanApprovalQwen:
                 registry=build_default_plan_keystroke_registry(),
             )
 
-        tmux_manager.capture_pane.assert_not_awaited()
+        tmux_manager.capture_pane.assert_awaited_once()
         # request-changes is the named Esc key (literal=False) -- the reject digit
         # varies by tool type, but "(esc)" always rejects (matches gemini).
         tmux_manager.send_keys.assert_awaited_once_with("%11", "Escape", literal=False)

@@ -28,7 +28,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Protocol
 
-from gobby.adapters.plan_options import get_plan_accept_option
+from gobby.adapters.plan_options import get_plan_accept_option, get_plan_accept_options
 
 # Reserved option id for the reject / request-changes action. It is NOT part of
 # the plan_options accept set (which is approve-only); native plan menus expose
@@ -82,15 +82,16 @@ class SupportsSendKeys(Protocol):
 # sequence, or ``None`` when the pane shows no menu it recognizes. It exists for
 # CLIs whose native plan prompt has more than one shape, where the same logical
 # option selects different keys per shape (Claude's full plan menu vs. its bare
-# "exit plan mode?" confirm). Sources without a resolver fall back to the static
-# ``(source, option_id)`` map.
+# "exit plan mode?" confirm). Static-menu sources can still register a matcher
+# so stale web-UI clicks do not send blind digits to the current pane.
 PlanMenuResolver = Callable[[str, str], "PlanKeystrokeSequence | None"]
+PlanMenuMatcher = Callable[[str], bool]
 
 
 class PlanKeystrokeRegistry:
     """Maps a plan action onto the keystroke sequence that selects it.
 
-    Two registration styles coexist:
+    Two registration styles coexist, with optional static-menu guards:
 
     * **Static** -- ``register(source, option_id, sequence)`` for a CLI whose
       native menu has a single fixed shape; resolved by :meth:`resolve`.
@@ -107,6 +108,7 @@ class PlanKeystrokeRegistry:
     def __init__(self) -> None:
         self._map: dict[tuple[str, str], PlanKeystrokeSequence] = {}
         self._resolvers: dict[str, PlanMenuResolver] = {}
+        self._menu_matchers: dict[str, PlanMenuMatcher] = {}
 
     def register(self, source: str, option_id: str, sequence: PlanKeystrokeSequence) -> None:
         """Register (overwriting) the static sequence for ``(source, option_id)``."""
@@ -116,6 +118,10 @@ class PlanKeystrokeRegistry:
         """Register (overwriting) a pane-aware resolver for ``source``."""
         self._resolvers[source] = resolver
 
+    def register_menu_matcher(self, source: str, matcher: PlanMenuMatcher) -> None:
+        """Register (overwriting) a static-menu presence matcher for ``source``."""
+        self._menu_matchers[source] = matcher
+
     def resolve(self, source: str | None, option_id: str | None) -> PlanKeystrokeSequence | None:
         """Return the static sequence for ``(source, option_id)`` or ``None``."""
         if not source or not option_id:
@@ -123,8 +129,8 @@ class PlanKeystrokeRegistry:
         return self._map.get((source, option_id))
 
     def requires_pane(self, source: str | None) -> bool:
-        """Whether resolving ``source`` needs live pane text (has a resolver)."""
-        return bool(source) and source in self._resolvers
+        """Whether resolving ``source`` needs live pane text."""
+        return bool(source) and (source in self._resolvers or source in self._menu_matchers)
 
     def resolve_for_pane(
         self, source: str | None, option_id: str | None, pane_text: str
@@ -140,13 +146,19 @@ class PlanKeystrokeRegistry:
         resolver = self._resolvers.get(source)
         if resolver is not None:
             return resolver(option_id, pane_text)
-        return self._map.get((source, option_id))
+        sequence = self._map.get((source, option_id))
+        if sequence is None:
+            return None
+        matcher = self._menu_matchers.get(source)
+        if matcher is not None and not matcher(pane_text):
+            return None
+        return sequence
 
     def has_source(self, source: str | None) -> bool:
         """Whether any static sequence or resolver is registered for ``source``."""
         if not source:
             return False
-        if source in self._resolvers:
+        if source in self._resolvers or source in self._menu_matchers:
             return True
         return any(key_source == source for key_source, _ in self._map)
 
@@ -161,14 +173,20 @@ def resolve_action_option_id(
     """Resolve the registry option id for a plan decision.
 
     ``request_changes`` maps to :data:`REQUEST_CHANGES_OPTION_ID`. An ``approve``
-    decision uses ``option_id`` only when it is a real plan_options accept id (the
-    accept set is uniform across sources); an unknown or missing id yields
-    ``None`` so the caller errors rather than sending the wrong keystrokes.
+    decision uses ``option_id`` when it is a real plan_options accept id. A
+    missing approve id falls back to the generic approve target, matching Path A.
+    Unknown ids still return ``None`` so callers do not send the wrong keystrokes.
     """
     if decision == "request_changes":
         return REQUEST_CHANGES_OPTION_ID
-    if decision == "approve" and option_id and get_plan_accept_option(source or "", option_id):
-        return option_id
+    if decision == "approve":
+        if option_id:
+            return option_id if get_plan_accept_option(source or "", option_id) else None
+        # Without an explicit accept id, intentionally use the first normal
+        # post-plan accept option as the generic approve fallback.
+        for option in get_plan_accept_options(source or ""):
+            if option.post_plan_chat_mode == "normal":
+                return option.id
     return None
 
 
@@ -281,7 +299,7 @@ def _claude_plan_keystrokes(option_id: str, pane_text: str) -> PlanKeystrokeSequ
 # selectable here), so both plan_options approves collapse onto "1" -- the same
 # precedent as Claude's bare confirm menu. request-changes maps to "3" (stay in
 # Plan mode so the user can send revision feedback). A single, always-present
-# menu shape means a static map suffices -- no pane-aware resolver needed.
+# menu shape means a static map suffices, guarded by a menu-presence matcher.
 
 
 def _codex_digit(digit: str) -> PlanKeystrokeSequence:
@@ -317,8 +335,8 @@ _CODEX_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 # user can send revision feedback). Options 2 ("Proceed with comment", blocks
 # for a typed comment) and 3 ("Manually edit spec", opens an external editor)
 # are deliberately unused: neither fits a single-keystroke dispatch. A single,
-# always-present menu shape means a static map suffices -- no pane-aware
-# resolver needed (requires_pane("droid") stays False).
+# always-present menu shape means a static map suffices, guarded by a
+# menu-presence matcher.
 
 
 def _droid_digit(digit: str) -> PlanKeystrokeSequence:
@@ -360,7 +378,7 @@ _DROID_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 # request-changes maps to the Esc KEY rather than a digit because the reject
 # item's number is not stable (4 for edits, 3 for shell) while Esc always rejects
 # -- so a static map keyed on the stable positions 1/2 plus Esc resolves every
-# menu shape without a pane-aware resolver (requires_pane("gemini") stays False).
+# menu shape once a menu-presence matcher confirms the approval prompt is live.
 # Option 3 "Modify with external editor" (edit menu only, opens an external
 # editor) is deliberately unused: it does not fit a single-keystroke dispatch.
 
@@ -448,6 +466,10 @@ _QWEN_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 }
 
 
+def _pane_contains_all(*needles: str) -> PlanMenuMatcher:
+    return lambda pane_text: all(needle in pane_text for needle in needles)
+
+
 def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     """Per-CLI registration point for native plan-menu keystrokes.
 
@@ -478,18 +500,37 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     # --- codex (Plan mode `/plan` -> "Implement this plan?" menu) -- task #15728 ---
     for _codex_option_id, _codex_sequence in _CODEX_PLAN_MENU.items():
         registry.register("codex", _codex_option_id, _codex_sequence)
+    registry.register_menu_matcher(
+        "codex",
+        _pane_contains_all(
+            "Implement this plan?", "Yes, implement this plan", "No, stay in Plan mode"
+        ),
+    )
     # --- droid (spec mode `--use-spec` -> "Proceed with the proposal" menu) -- task #15729 ---
     for _droid_option_id, _droid_sequence in _DROID_PLAN_MENU.items():
         registry.register("droid", _droid_option_id, _droid_sequence)
+    registry.register_menu_matcher(
+        "droid",
+        _pane_contains_all("Proceed with the proposal", "No and explain why", "1-4 select"),
+    )
     # --- gemini (interactive TUI tool-approval menu) -- task #15730 ---
     for _gemini_option_id, _gemini_sequence in _GEMINI_PLAN_MENU.items():
         registry.register("gemini", _gemini_option_id, _gemini_sequence)
+    registry.register_menu_matcher(
+        "gemini",
+        _pane_contains_all("Allow once", "Allow for this session", "No, suggest changes (esc)"),
+    )
     # --- grok (Grok Build TUI tool-approval menu) -- task #15731 ---
     for _grok_option_id, _grok_sequence in _GROK_PLAN_MENU.items():
         registry.register("grok", _grok_option_id, _grok_sequence)
+    registry.register_menu_matcher("grok", _pane_contains_all("No, reject (type to add feedback)"))
     # --- qwen (Qwen Code TUI tool-approval menu) -- task #15732 ---
     for _qwen_option_id, _qwen_sequence in _QWEN_PLAN_MENU.items():
         registry.register("qwen", _qwen_option_id, _qwen_sequence)
+    registry.register_menu_matcher(
+        "qwen",
+        _pane_contains_all("Apply this change?", "Yes, allow once", "No, suggest changes (esc)"),
+    )
 
 
 def build_default_plan_keystroke_registry() -> PlanKeystrokeRegistry:
@@ -510,6 +551,7 @@ __all__ = [
     "PlanKeystroke",
     "PlanKeystrokeRegistry",
     "PlanKeystrokeSequence",
+    "PlanMenuMatcher",
     "PlanMenuResolver",
     "SupportsSendKeys",
     "build_default_plan_keystroke_registry",

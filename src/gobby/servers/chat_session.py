@@ -39,6 +39,7 @@ from claude_agent_sdk.types import (
 )
 
 from gobby.agents.sandbox import SandboxConfig, materialize_claude_settings_async
+from gobby.config.feature_base import parse_feature_candidate
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -180,8 +181,11 @@ class ChatSession(ChatSessionPermissionsMixin):
         chat_cfg = getattr(self._config, "chat", None)
         candidates = getattr(chat_cfg, "candidates", ()) if chat_cfg else ()
         for candidate in candidates:
-            candidate_provider, separator, candidate_model = str(candidate).partition("/")
-            if separator and candidate_provider == self.provider and candidate_model:
+            try:
+                candidate_provider, candidate_model = parse_feature_candidate(str(candidate))
+            except ValueError:
+                continue
+            if candidate_provider == self.provider:
                 return candidate_model
 
         return None

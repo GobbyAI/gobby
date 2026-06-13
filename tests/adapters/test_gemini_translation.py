@@ -368,7 +368,7 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response)
 
         assert result["decision"] == "block"
-        assert result["continue"] is True
+        assert result["continue"] is False
         assert result["reason"] == "Blocked by workflow"
 
     def test_context_injection(self, adapter) -> None:

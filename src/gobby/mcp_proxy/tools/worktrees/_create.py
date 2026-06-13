@@ -9,6 +9,7 @@ from typing import Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees._context import RegistryContext
+from gobby.mcp_proxy.tools.worktrees._events import emit_worktree_event
 from gobby.mcp_proxy.tools.worktrees._helpers import (
     copy_project_json_to_worktree,
     generate_worktree_path,
@@ -173,11 +174,32 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
         except Exception as post_err:
             logger.warning(f"Post-creation setup failed for worktree {worktree.id}: {post_err}")
 
+        event = None
+        try:
+            event = emit_worktree_event(
+                "worktree_created",
+                worktree_id=worktree.id,
+                project_id=worktree.project_id,
+                branch_name=worktree.branch_name,
+                worktree_path=worktree.worktree_path,
+                base_branch=worktree.base_branch,
+                task_id=worktree.task_id,
+            )
+        except Exception as event_err:
+            logger.warning(
+                "Failed to emit worktree_created event for %s at %s: %s",
+                worktree.id,
+                worktree.worktree_path,
+                event_err,
+                exc_info=True,
+            )
+
         return {
             "success": True,
             "worktree_id": worktree.id,
             "worktree_path": worktree.worktree_path,
             "hooks_installed": hooks_installed,
+            "event": event,
         }
 
     return registry

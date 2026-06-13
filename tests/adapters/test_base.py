@@ -69,6 +69,16 @@ class IncompleteAdapter(BaseAdapter):
         return None
 
 
+class MissingSourceAdapter(BaseAdapter):
+    """Adapter that implements methods but does not declare its source."""
+
+    def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
+        return None
+
+    def translate_from_hook_response(self, response: HookResponse) -> dict:
+        return {}
+
+
 # =============================================================================
 # Abstract Class Tests
 # =============================================================================
@@ -97,6 +107,11 @@ class TestBaseAdapterAbstract:
         """Subclasses must define source attribute."""
         adapter = ConcreteAdapter()
         assert adapter.source == SessionSource.CLAUDE
+
+    def test_cannot_instantiate_adapter_without_source(self) -> None:
+        """Adapter missing source cannot be instantiated."""
+        with pytest.raises(TypeError, match="Can't instantiate abstract class"):
+            MissingSourceAdapter()
 
 
 class TestBaseAdapterSubclassing:

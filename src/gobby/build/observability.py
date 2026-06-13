@@ -19,6 +19,7 @@ from gobby.dispatch.actions import (
     StartPipelineAction,
     StartStageAction,
 )
+from gobby.dispatch.agent_counts import count_active_agents
 from gobby.dispatch.context import build_context, reload_candidate
 from gobby.storage.agents import LocalAgentRunManager
 from gobby.storage.build_history import BuildHistoryStorage
@@ -30,10 +31,7 @@ from gobby.storage.tasks._ancestor_gate import (
     find_child_development_ancestor_gate,
 )
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
-from gobby.storage.tasks._holistic_gate import (
-    HolisticDescendantGate,
-    find_holistic_descendant_gate,
-)
+from gobby.storage.tasks._holistic_gate import find_holistic_descendant_gate
 from gobby.storage.worktrees import LocalWorktreeManager
 
 MAX_ACTIVE_AGENTS = 10
@@ -91,7 +89,7 @@ def explain_dispatch(
     current_stage = dispatch_rules.current_stage(candidate)
     mutex = _mutex_diagnosis(db, task.id)
     cap = max_active_agents or MAX_ACTIVE_AGENTS
-    active_count = _count_active_agents(db, project_id=project_id)
+    active_count = count_active_agents(db, project_id=project_id)
     active_agents = {
         "count": active_count,
         "cap": cap,
@@ -114,7 +112,6 @@ def explain_dispatch(
         mutex,
         active_agents,
         ancestor_gate,
-        holistic_descendant_gate,
     )
     action = None
     if reason is None:
@@ -236,12 +233,48 @@ def _build_summary(
 
 def _root_build_state(task_manager: LocalTaskManager, root: Task) -> str:
     if root.closed_at is not None:
-        return "completed"
+        return _closed_root_build_state(root)
     if root.allow_automation:
         return "running"
     if task_manager.lifecycle_events.has_build_event(root.id):
         return "paused"
     return "never_started"
+
+
+def _closed_root_build_state(root: Task) -> str:
+    reason = (root.closed_reason or "").strip().lower()
+    if _is_cancelled_close_reason(reason):
+        return "cancelled"
+    if _is_failed_close_reason(reason):
+        return "failed"
+    if root.closed_commit_sha or _is_completed_close_reason(reason):
+        return "completed"
+    return "failed"
+
+
+def _is_completed_close_reason(reason: str) -> bool:
+    return reason in {"", "completed", "merged", "already_implemented", "manifest_exhausted"}
+
+
+def _is_cancelled_close_reason(reason: str) -> bool:
+    return reason in {
+        "cancelled",
+        "canceled",
+        "duplicate",
+        "obsolete",
+        "out_of_repo",
+        "wont_do",
+        "wont_fix",
+    }
+
+
+def _is_failed_close_reason(reason: str) -> bool:
+    return (
+        reason == "failed"
+        or reason.startswith("failed:")
+        or reason.endswith("_failed")
+        or "_failed:" in reason
+    )
 
 
 def _task_status(
@@ -317,29 +350,6 @@ def _agent_summary(run: Any) -> dict[str, Any]:
         "started_at": run.started_at,
         "created_at": run.created_at,
     }
-
-
-def _count_active_agents(db: HubDatabase, project_id: str | None) -> int:
-    if project_id:
-        row = db.fetchone(
-            """
-            SELECT COUNT(*) AS count
-              FROM agent_runs ar
-              JOIN sessions parent_s ON parent_s.id = ar.parent_session_id
-             WHERE ar.status IN ('pending', 'running')
-               AND parent_s.project_id = %s
-            """,
-            (project_id,),
-        )
-    else:
-        row = db.fetchone(
-            """
-            SELECT COUNT(*) AS count
-              FROM agent_runs
-             WHERE status IN ('pending', 'running')
-            """
-        )
-    return int(row["count"]) if row is not None else 0
 
 
 def _mutex_summaries(db: HubDatabase, task_ids: Sequence[str]) -> list[dict[str, Any]]:
@@ -504,7 +514,6 @@ def _dispatch_block_reason(
     mutex: Mapping[str, Any],
     active_agents: Mapping[str, Any],
     ancestor_gate: AncestorStageGate | None,
-    holistic_descendant_gate: HolisticDescendantGate | None,
 ) -> str | None:
     if task.closed_at is not None:
         return "closed"
@@ -520,8 +529,6 @@ def _dispatch_block_reason(
         return "dependency_block"
     if ancestor_gate is not None:
         return ancestor_gate.reason
-    if holistic_descendant_gate is not None:
-        return holistic_descendant_gate.reason
     if current_stage is None:
         return "no_current_stage"
     if _field(current_stage, "state") not in {

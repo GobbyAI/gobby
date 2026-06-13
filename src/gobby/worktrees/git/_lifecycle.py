@@ -277,14 +277,16 @@ def sync_from_main(
     worktree_path: str | Path,
     base_branch: str = "main",
     strategy: Literal["rebase", "merge"] = "rebase",
+    source_branch: str | None = None,
 ) -> GitOperationResult:
     """
     Sync worktree with base branch.
 
     Args:
         worktree_path: Path to the worktree
-        base_branch: Branch to sync from
+        base_branch: Branch to sync from when source_branch is not provided
         strategy: Sync strategy (rebase or merge)
+        source_branch: Explicit source branch/ref to sync from. Defaults to base_branch.
 
     Returns:
         GitOperationResult with success status and message
@@ -298,29 +300,31 @@ def sync_from_main(
         )
 
     try:
-        # Fetch latest from origin
-        fetch_result = runner._run_git(
-            ["fetch", "origin", base_branch],
-            cwd=worktree_path,
-            timeout=60,
-        )
-        if fetch_result.returncode != 0:
-            return GitOperationResult(
-                success=False,
-                message=f"Failed to fetch: {fetch_result.stderr}",
-                error=fetch_result.stderr,
+        sync_source = source_branch or base_branch
+        if sync_source.startswith("origin/"):
+            remote_branch = sync_source.removeprefix("origin/")
+            fetch_result = runner._run_git(
+                ["fetch", "origin", remote_branch],
+                cwd=worktree_path,
+                timeout=60,
             )
+            if fetch_result.returncode != 0:
+                return GitOperationResult(
+                    success=False,
+                    message=f"Failed to fetch: {fetch_result.stderr}",
+                    error=fetch_result.stderr,
+                )
 
         # Perform rebase or merge
         if strategy == "rebase":
             sync_result = runner._run_git(
-                ["rebase", f"origin/{base_branch}"],
+                ["rebase", sync_source],
                 cwd=worktree_path,
                 timeout=120,
             )
         else:
             sync_result = runner._run_git(
-                ["merge", f"origin/{base_branch}", "--no-edit"],
+                ["merge", sync_source, "--no-edit"],
                 cwd=worktree_path,
                 timeout=120,
             )
@@ -353,7 +357,7 @@ def sync_from_main(
 
         return GitOperationResult(
             success=True,
-            message=f"Successfully synced with origin/{base_branch} using {strategy}",
+            message=f"Successfully synced with {sync_source} using {strategy}",
             output=sync_result.stdout,
         )
 

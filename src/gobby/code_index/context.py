@@ -10,6 +10,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -18,6 +19,27 @@ from gobby.code_index.storage import CodeIndexStorage
 from gobby.config.code_index import CodeIndexConfig
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass(frozen=True)
+class InvalidateStoreOutcome:
+    """Outcome for one invalidate store cleanup."""
+
+    store: str
+    status: str
+    error: str | None = None
+    pending_retry: bool = False
+    deleted: dict[str, int] | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        result: dict[str, Any] = {"status": self.status}
+        if self.error:
+            result["error"] = self.error
+        if self.pending_retry:
+            result["pending_retry"] = True
+        if self.deleted is not None:
+            result["deleted"] = self.deleted
+        return result
 
 
 class CodeIndexGraphUnavailable(RuntimeError):
@@ -78,34 +100,99 @@ class CodeIndexContext:
             return await asyncio.to_thread(func, *args, **kwargs)
         return await self._run_db(func, *args, **kwargs)
 
-    async def invalidate(self, project_id: str) -> None:
+    async def invalidate(self, project_id: str) -> dict[str, Any]:
         """Clear all index data for a project."""
-        await self.run_db(self._storage.delete_project_index, project_id)
+        stores: dict[str, InvalidateStoreOutcome] = {}
+        counts = await self.run_db(self._storage.delete_project_index, project_id)
+        stores["hub"] = InvalidateStoreOutcome("hub", "ok", deleted=counts)
 
         if self._config.graph_enabled and self._gcode_gateway is not None:
             try:
                 result = await self._gcode_gateway.graph_clear(project_id)
                 if not result.get("success", False):
+                    error = str(result.get("error", "unknown error"))
                     logger.warning(
                         "Code graph clear during invalidate reported failure for %s: %s",
                         project_id,
-                        result.get("error", "unknown error"),
+                        error,
                     )
+                    await self.run_db(
+                        self._storage.record_projection_cleanup_failure,
+                        project_id,
+                        "graph",
+                        error,
+                    )
+                    stores["graph"] = InvalidateStoreOutcome(
+                        "graph",
+                        "failed",
+                        error=error,
+                        pending_retry=True,
+                    )
+                else:
+                    await self.run_db(
+                        self._storage.clear_projection_cleanup_pending,
+                        project_id,
+                        "graph",
+                    )
+                    stores["graph"] = InvalidateStoreOutcome("graph", "ok")
             except GcodeGatewayError as e:
+                error = str(e)
                 logger.warning(
                     "Code graph clear during invalidate failed for %s: %s",
                     project_id,
                     e,
                 )
+                await self.run_db(
+                    self._storage.record_projection_cleanup_failure,
+                    project_id,
+                    "graph",
+                    error,
+                )
+                stores["graph"] = InvalidateStoreOutcome(
+                    "graph",
+                    "failed",
+                    error=error,
+                    pending_retry=True,
+                )
+        else:
+            stores["graph"] = InvalidateStoreOutcome("graph", "skipped")
 
         if self._vector_store is not None:
             collection = f"{self._config.qdrant_collection_prefix}{project_id}"
             try:
                 await self._vector_store.delete_collection(collection)
+                await self.run_db(
+                    self._storage.clear_projection_cleanup_pending,
+                    project_id,
+                    "vector",
+                )
+                stores["vector"] = InvalidateStoreOutcome("vector", "ok")
             except Exception as e:
-                logger.warning(f"Vector collection delete failed for {collection}: {e}")
+                error = str(e)
+                logger.warning("Vector collection delete failed for %s: %s", collection, e)
+                await self.run_db(
+                    self._storage.record_projection_cleanup_failure,
+                    project_id,
+                    "vector",
+                    error,
+                )
+                stores["vector"] = InvalidateStoreOutcome(
+                    "vector",
+                    "failed",
+                    error=error,
+                    pending_retry=True,
+                )
+        else:
+            stores["vector"] = InvalidateStoreOutcome("vector", "skipped")
 
         logger.info("Invalidated code index for project %s", project_id)
+        failed = [store for store, outcome in stores.items() if outcome.status == "failed"]
+        return {
+            "status": "partial_failure" if failed else "ok",
+            "project_id": project_id,
+            "stores": {store: outcome.to_dict() for store, outcome in stores.items()},
+            "failed_stores": failed,
+        }
 
     async def graph_overview(self, project_id: str, *, limit: int = 200) -> dict[str, Any]:
         """Return a gcode-owned overview graph for an indexed project."""

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 import time
 from collections.abc import Iterator
 from datetime import UTC, datetime
@@ -624,6 +625,43 @@ def test_baseline_dirty_initializes_once_and_preserves_session_edits(
     assert variables["session_edited_files"] == ["kept.py"]
     assert variables["active_task_id"] is None
     assert variables["task_edited_files"] == {}
+
+
+def test_baseline_dirty_prefers_valid_repo_path_over_unusable_cwd(
+    db: HubDatabase,
+    session_manager: SessionManager,
+    handlers: EventHandlers,
+    project_id: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    non_repo = tmp_path / "plain"
+    non_repo.mkdir()
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    session_id = _register_session(session_manager, project_id, non_repo)
+    captured_paths: list[str | None] = []
+
+    def fake_dirty(path: str | None) -> DirtyFiles:
+        captured_paths.append(path)
+        return DirtyFiles(tracked={"dirty.py"}, untracked=set())
+
+    monkeypatch.setattr("gobby.workflows.git_utils.get_dirty_files_categorized", fake_dirty)
+    event = HookEvent(
+        event_type=HookEventType.BEFORE_AGENT,
+        session_id="external-1",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data={"cwd": str(non_repo), "project_path": str(repo)},
+        metadata={"_platform_session_id": session_id},
+    )
+
+    reconcile_session_activation(event, handlers)
+
+    assert captured_paths == [str(repo.resolve())]
+    variables = _variables(db, session_id)
+    assert variables["baseline_dirty_files"] == ["dirty.py"]
 
 
 def test_terminal_pickup_metadata_backfills_from_agent_runs(

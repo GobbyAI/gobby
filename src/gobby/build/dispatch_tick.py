@@ -14,6 +14,8 @@ from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
+_CLAIM_RECOVERY_WORKSPACE_INSPECTION_LIMIT = 5
+
 
 @dataclass
 class DispatcherTickSummary:
@@ -173,7 +175,12 @@ async def kick_dispatcher_tick(
     if db is None:
         return DispatcherTickSummary(ticks=0, reason="database_missing")
 
-    recover_safe_build_claims(db, project_id=project_id)
+    await asyncio.to_thread(
+        recover_safe_build_claims,
+        db,
+        project_id=project_id,
+        max_workspace_inspections=_CLAIM_RECOVERY_WORKSPACE_INSPECTION_LIMIT,
+    )
 
     from gobby.dispatch.dispatcher import run_heartbeat
 

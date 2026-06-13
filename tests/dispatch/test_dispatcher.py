@@ -24,7 +24,6 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.task_affected_files import TaskAffectedFileManager
 from gobby.storage.tasks import LocalTaskManager, Task
 from gobby.storage.tasks._artifacts import TaskArtifactManager
-from gobby.storage.tasks._automation import is_blocked_by_deps, list_automation_candidates
 from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._updates import update_task
@@ -340,6 +339,8 @@ def _pipeline_action(task_id: str) -> StartPipelineAction:
 
 def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:
     """Candidate filter excludes claimed leased blocked terminal."""
+    from gobby.storage.tasks import _crud
+
     ready = _task(temp_db, sample_project, "ready")
     _task(
         temp_db, sample_project, "claimed", claimed_by_session_id=_session(temp_db, sample_project)
@@ -367,10 +368,10 @@ def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, samp
         (blocked.id, blocker.id, datetime.now(UTC).isoformat()),
     )
 
-    candidates = list_automation_candidates(temp_db, project_id=sample_project["id"])
+    candidates = _crud.list_automation_candidates(temp_db, project_id=sample_project["id"])
 
     assert [candidate.id for candidate in candidates] == [ready.id]
-    assert not is_blocked_by_deps(candidates[0])
+    assert not _crud.is_blocked_by_deps(candidates[0])
 
 
 @pytest.mark.asyncio
@@ -379,6 +380,7 @@ async def test_heartbeat_blocks_child_development_while_parent_expansion_needs_r
     sample_project,
 ) -> None:
     from gobby.dispatch import dispatcher
+    from gobby.storage.tasks import _crud
 
     parent = _parent_with_stage_order(
         temp_db,
@@ -394,7 +396,7 @@ async def test_heartbeat_blocks_child_development_while_parent_expansion_needs_r
         stage_state="ready",
     )
 
-    candidates = list_automation_candidates(temp_db, project_id=sample_project["id"])
+    candidates = _crud.list_automation_candidates(temp_db, project_id=sample_project["id"])
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert child.id not in {candidate.id for candidate in candidates}
@@ -585,38 +587,6 @@ def test_count_active_agents_scopes_by_parent_session_project(temp_db, sample_pr
 
 
 @pytest.mark.asyncio
-async def test_run_heartbeat_serializes_concurrent_entry_points(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    from gobby.dispatch import dispatcher
-
-    in_flight = 0
-    max_seen = 0
-    first_entered = asyncio.Event()
-    release_first = asyncio.Event()
-
-    async def fake_unlocked(**_kwargs: Any) -> dispatcher.HeartbeatResult:
-        nonlocal in_flight, max_seen
-        in_flight += 1
-        max_seen = max(max_seen, in_flight)
-        if not first_entered.is_set():
-            first_entered.set()
-            await release_first.wait()
-        in_flight -= 1
-        return dispatcher.HeartbeatResult(scanned=1)
-
-    monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", fake_unlocked)
-
-    first = asyncio.create_task(dispatcher.run_heartbeat())
-    await first_entered.wait()
-    second = asyncio.create_task(dispatcher.run_heartbeat())
-    release_first.set()
-    await asyncio.gather(first, second)
-
-    assert max_seen == 1
-
-
-@pytest.mark.asyncio
 async def test_max_active_agents_cap(
     monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
 ) -> None:
@@ -660,6 +630,93 @@ async def test_heartbeat_reaps_stale_pending_runs_before_agent_cap(
 
     assert result.cap_reached is True
     assert calls == ["cleanup"]
+
+
+@pytest.mark.asyncio
+async def test_concurrent_heartbeats_serialize_agent_cap_admission(
+    monkeypatch: pytest.MonkeyPatch,
+    temp_db: HubDatabase,
+    sample_project: dict[str, Any],
+) -> None:
+    """Concurrent heartbeats cannot spawn past the active-agent cap."""
+    from gobby.agents.sync import sync_bundled_agents
+    from gobby.dispatch import dispatcher
+    from gobby.storage.agents import LocalAgentRunManager
+    from gobby.storage.sessions import SessionManager
+
+    sync_bundled_agents(temp_db)
+    first_task = _task(temp_db, sample_project, title="First dispatch", stage_state="in_progress")
+    second_task = _task(temp_db, sample_project, title="Second dispatch", stage_state="in_progress")
+    parent_session = SessionManager(temp_db).register(
+        external_id="dispatcher-parent",
+        machine_id="machine-1",
+        source="test",
+        project_id=sample_project["id"],
+    )
+    agents = LocalAgentRunManager(temp_db)
+    agents.create(parent_session_id=parent_session.id, provider="codex", prompt="existing")
+
+    first_spawn_started = asyncio.Event()
+    second_unlocked_entered = asyncio.Event()
+    release_first_spawn = asyncio.Event()
+    spawned_task_ids: list[str] = []
+    original_count_active_agents = dispatcher.count_active_agents
+    original_run_heartbeat_unlocked = dispatcher._run_heartbeat_unlocked
+
+    async def observed_run_heartbeat_unlocked(
+        **kwargs: Any,
+    ) -> dispatcher.HeartbeatResult:
+        if first_spawn_started.is_set():
+            second_unlocked_entered.set()
+        return await original_run_heartbeat_unlocked(**kwargs)
+
+    async def fake_spawn_agent(action: SpawnAgentAction, **_kwargs: object) -> str:
+        run = agents.create(
+            parent_session_id=parent_session.id,
+            provider="codex",
+            prompt=action.prompt,
+            task_id=action.task_id,
+        )
+        spawned_task_ids.append(action.task_id)
+        is_first_spawn = len(spawned_task_ids) == 1
+        if is_first_spawn:
+            first_spawn_started.set()
+        if is_first_spawn:
+            await release_first_spawn.wait()
+        return run.id
+
+    async def run_dispatch() -> dispatcher.HeartbeatResult:
+        return await dispatcher.run_heartbeat(
+            db=temp_db,
+            project_id=sample_project["id"],
+            max_active_agents=2,
+            max_actions=1,
+        )
+
+    monkeypatch.setattr(dispatcher, "_run_heartbeat_unlocked", observed_run_heartbeat_unlocked)
+    monkeypatch.setattr(dispatcher, "spawn_agent", fake_spawn_agent)
+
+    first = asyncio.create_task(run_dispatch())
+    second: asyncio.Task[dispatcher.HeartbeatResult] | None = None
+    try:
+        await asyncio.wait_for(first_spawn_started.wait(), 5)
+        second = asyncio.create_task(run_dispatch())
+        with pytest.raises(asyncio.TimeoutError):
+            await asyncio.wait_for(second_unlocked_entered.wait(), 0.1)
+        release_first_spawn.set()
+        first_result, second_result = await asyncio.gather(first, second)
+    finally:
+        release_first_spawn.set()
+        pending = [task for task in (first, second) if task is not None and not task.done()]
+        if pending:
+            await asyncio.gather(*pending, return_exceptions=True)
+
+    assert first_result.executed == 1
+    assert second_result.executed == 0
+    assert second_result.cap_reached is True
+    assert spawned_task_ids == [first_task.id]
+    assert original_count_active_agents(temp_db, project_id=sample_project["id"]) == 2
+    assert second_task.id not in spawned_task_ids
 
 
 @pytest.mark.asyncio

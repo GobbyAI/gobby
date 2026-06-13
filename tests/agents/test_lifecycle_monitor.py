@@ -22,6 +22,7 @@ import pytest
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor, _has_dispatch_stage_context
 from gobby.agents.tmux import configure_tmux
+from gobby.autonomous.stuck_detector import StuckDetectionResult
 from gobby.config.tmux import TmuxConfig
 from gobby.servers.routes.sessions import statusline_activity
 from gobby.storage.agents import AgentRun, LocalAgentRunManager
@@ -125,6 +126,50 @@ class TerminalWakeRecorder:
     async def __call__(self, session_name: str, keys: str, *, literal: bool = True) -> bool:
         self.calls.append((session_name, keys, literal))
         return True
+
+
+async def test_check_autonomous_stuck_agents_nudges_change_approach(
+    agent_run_manager: LocalAgentRunManager,
+    temp_db: HubDatabase,
+    sample_session: dict,
+    session_manager: SessionManager,
+    sample_project: dict,
+) -> None:
+    """Lifecycle heartbeat queries stuck detection and acts on advisory actions."""
+    stuck_detector = MagicMock()
+    stuck_detector.is_stuck.return_value = StuckDetectionResult(
+        is_stuck=True,
+        reason="same tool pattern",
+        layer="tool_loop",
+        suggested_action="change_approach",
+    )
+    monitor = AgentLifecycleMonitor(
+        agent_run_manager=agent_run_manager,
+        db=temp_db,
+        stuck_detector=stuck_detector,
+        check_interval_seconds=1.0,
+    )
+    child = session_manager.register(
+        external_id="stuck-child-session",
+        machine_id="machine-1",
+        source="claude",
+        project_id=sample_project["id"],
+        parent_session_id=sample_session["id"],
+    )
+    run = _make_terminal_run(
+        agent_run_manager,
+        sample_session,
+        child_session_id=child.id,
+        tmux_session_name="gobby-test",
+    )
+    monitor._tmux.send_keys = AsyncMock(return_value=True)
+
+    handled = await monitor.check_autonomous_stuck_agents()
+
+    assert handled == 1
+    stuck_detector.is_stuck.assert_called_once_with(child.id)
+    monitor._tmux.send_keys.assert_awaited_once_with("gobby-test", "Enter", literal=True)
+    assert run.id
 
 
 def test_idle_check_handler_receives_monitor_database(

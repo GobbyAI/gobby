@@ -387,15 +387,16 @@ def _step_completion_updates(variables: dict[str, Any]) -> dict[str, Any]:
 
 
 def _project_path(event: HookEvent) -> str | None:
-    for value in (
-        event.data.get("cwd"),
+    from gobby.workflows.git_utils import resolve_git_worktree_root
+
+    data = event.data if isinstance(event.data, dict) else {}
+    metadata = event.metadata if isinstance(event.metadata, dict) else {}
+    return resolve_git_worktree_root(
+        data.get("cwd"),
         event.cwd,
-        event.metadata.get("project_path"),
-        event.data.get("project_path"),
-    ):
-        if isinstance(value, str) and value:
-            return value
-    return None
+        metadata.get("project_path"),
+        data.get("project_path"),
+    )
 
 
 def _recover_agent_run(db: Any, session: Any, event: HookEvent) -> _AgentRunRecovery | None:

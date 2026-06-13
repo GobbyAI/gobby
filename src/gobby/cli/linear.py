@@ -496,7 +496,7 @@ def linear_sync(task_id: str, json_format: bool) -> None:
         task_manager, _, _, _ = get_linear_deps()
         resolved = resolve_task_id(task_manager, task_id)
         if not resolved:
-            return
+            raise click.ClickException(f"Task not found: {task_id}")
 
         service = get_sync_service()
         result = asyncio.run(service.sync_task_to_linear(resolved.id))
@@ -638,7 +638,7 @@ def linear_create(task_id: str, team_id: str | None, json_format: bool) -> None:
         task_manager, _, _, _ = get_linear_deps()
         resolved = resolve_task_id(task_manager, task_id)
         if not resolved:
-            return
+            raise click.ClickException(f"Task not found: {task_id}")
 
         service = get_sync_service(team_id)
         result = asyncio.run(service.create_issue_for_task(task_id=resolved.id, team_id=team_id))

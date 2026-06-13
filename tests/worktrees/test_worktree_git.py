@@ -518,17 +518,15 @@ class TestWorktreeGitManagerSyncFromMain:
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
-        mock_run.side_effect = [
-            # fetch
-            subprocess.CompletedProcess(args=["git", "fetch"], returncode=0, stdout="", stderr=""),
-            # rebase
-            subprocess.CompletedProcess(args=["git", "rebase"], returncode=0, stdout="", stderr=""),
-        ]
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "rebase"], returncode=0, stdout="", stderr=""
+        )
 
         result = manager.sync_from_main(worktree_path, strategy="rebase")
 
         assert result.success is True
         assert "rebase" in result.message
+        assert mock_run.call_args.args[0] == ["git", "rebase", "main"]
 
     @patch("subprocess.run")
     def test_sync_with_merge(self, mock_run, manager, tmp_path) -> None:
@@ -536,17 +534,43 @@ class TestWorktreeGitManagerSyncFromMain:
         worktree_path = tmp_path / "worktree"
         worktree_path.mkdir()
 
-        mock_run.side_effect = [
-            # fetch
-            subprocess.CompletedProcess(args=["git", "fetch"], returncode=0, stdout="", stderr=""),
-            # merge
-            subprocess.CompletedProcess(args=["git", "merge"], returncode=0, stdout="", stderr=""),
-        ]
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=["git", "merge"], returncode=0, stdout="", stderr=""
+        )
 
         result = manager.sync_from_main(worktree_path, strategy="merge")
 
         assert result.success is True
         assert "merge" in result.message
+        assert mock_run.call_args.args[0] == ["git", "merge", "main", "--no-edit"]
+
+    @patch("subprocess.run")
+    def test_sync_with_explicit_remote_branch_fetches_then_merges(
+        self, mock_run, manager, tmp_path
+    ) -> None:
+        """Explicit remote sync fetches and merges the requested remote-tracking ref."""
+        worktree_path = tmp_path / "worktree"
+        worktree_path.mkdir()
+
+        mock_run.side_effect = [
+            subprocess.CompletedProcess(args=["git", "fetch"], returncode=0, stdout="", stderr=""),
+            subprocess.CompletedProcess(args=["git", "merge"], returncode=0, stdout="", stderr=""),
+        ]
+
+        result = manager.sync_from_main(
+            worktree_path,
+            strategy="merge",
+            source_branch="origin/main",
+        )
+
+        assert result.success is True
+        assert mock_run.call_args_list[0].args[0] == ["git", "fetch", "origin", "main"]
+        assert mock_run.call_args_list[1].args[0] == [
+            "git",
+            "merge",
+            "origin/main",
+            "--no-edit",
+        ]
 
     @patch("subprocess.run")
     def test_sync_handles_conflict(self, mock_run, manager, tmp_path) -> None:
@@ -555,8 +579,6 @@ class TestWorktreeGitManagerSyncFromMain:
         worktree_path.mkdir()
 
         mock_run.side_effect = [
-            # fetch
-            subprocess.CompletedProcess(args=["git", "fetch"], returncode=0, stdout="", stderr=""),
             # rebase with conflict
             subprocess.CompletedProcess(
                 args=["git", "rebase"],
@@ -584,7 +606,7 @@ class TestWorktreeGitManagerSyncFromMain:
             stderr="fatal: could not fetch",
         )
 
-        result = manager.sync_from_main(worktree_path)
+        result = manager.sync_from_main(worktree_path, source_branch="origin/main")
 
         assert result.success is False
         assert "Failed to fetch" in result.message
@@ -1153,8 +1175,6 @@ class TestWorktreeGitManagerSyncEdgeCases:
         worktree_path.mkdir()
 
         mock_run.side_effect = [
-            # fetch success
-            subprocess.CompletedProcess(args=["git", "fetch"], returncode=0, stdout="", stderr=""),
             # rebase failure (not a conflict)
             subprocess.CompletedProcess(
                 args=["git", "rebase"],
@@ -1177,8 +1197,6 @@ class TestWorktreeGitManagerSyncEdgeCases:
         worktree_path.mkdir()
 
         mock_run.side_effect = [
-            # fetch success
-            subprocess.CompletedProcess(args=["git", "fetch"], returncode=0, stdout="", stderr=""),
             # merge failure (not a conflict)
             subprocess.CompletedProcess(
                 args=["git", "merge"],
@@ -1200,8 +1218,6 @@ class TestWorktreeGitManagerSyncEdgeCases:
         worktree_path.mkdir()
 
         mock_run.side_effect = [
-            # fetch success
-            subprocess.CompletedProcess(args=["git", "fetch"], returncode=0, stdout="", stderr=""),
             # merge with conflict in stderr
             subprocess.CompletedProcess(
                 args=["git", "merge"],

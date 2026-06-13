@@ -21,12 +21,15 @@ from gobby.build.task_lifecycle import (
     set_automation_for_task_tree,
 )
 from gobby.build.validation import _validate_task_ref_isolation_artifacts
-from gobby.build.workspace_common import WorkspaceBackend
+from gobby.build.workspace_common import BuildWorkspaceError, WorkspaceBackend
 from gobby.build.workspace_git import _is_git_workspace_dir
+from gobby.build.workspace_recovery import _active_workspace_message, _active_workspace_run
 from gobby.build.workspaces import _subtree_tasks
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.tasks import LocalTaskManager, StageState, Task
+from gobby.storage.tasks._dispatch_mutex import TaskDispatchMutexManager
+from gobby.storage.tasks._runtime_mutex import RuntimeDispatchMutex
 from gobby.storage.worktrees import LocalWorktreeManager
 
 _EXPANDED_EPIC_LEGACY_ROOT_STAGES = frozenset(
@@ -125,6 +128,7 @@ async def resume_existing_lifecycle(
                 raise ValueError("target_branch is required for epic integration workspaces")
             if not resume_opts.dry_run and _resume_epic_workspace_refresh_required(
                 initial_lifecycle,
+                db=db,
                 task_manager=task_manager,
                 root_task_id=task.id,
                 backend=resume_opts.workspace_backend,
@@ -181,6 +185,7 @@ async def resume_existing_lifecycle(
 def _resume_epic_workspace_refresh_required(
     stage_name: str | None,
     *,
+    db: HubDatabase | None = None,
     task_manager: LocalTaskManager | None = None,
     root_task_id: str | None = None,
     backend: WorkspaceBackend | None = None,
@@ -191,7 +196,36 @@ def _resume_epic_workspace_refresh_required(
         return False
     if task_manager is None or root_task_id is None or backend is None:
         return False
+    if db is not None:
+        _raise_if_subtree_integration_workspace_has_active_run(
+            db,
+            task_manager,
+            root_task_id,
+            backend,
+        )
     return _subtree_has_invalid_integration_artifacts(task_manager, root_task_id, backend)
+
+
+def _raise_if_subtree_integration_workspace_has_active_run(
+    db: HubDatabase,
+    task_manager: LocalTaskManager,
+    root_task_id: str,
+    backend: WorkspaceBackend,
+) -> None:
+    for task in _subtree_tasks(task_manager.db, root_task_id):
+        if task.task_type != "epic" or task.closed_at is not None:
+            continue
+        artifacts = task_manager.artifacts.get_artifacts(task.id)
+        workspace_id = (
+            artifacts.integration_workspace_id
+            if backend == "worktree"
+            else artifacts.integration_clone_id
+        )
+        if not workspace_id:
+            continue
+        active_run = _active_workspace_run(db, backend, workspace_id)
+        if active_run is not None:
+            raise BuildWorkspaceError(_active_workspace_message(backend, workspace_id, active_run))
 
 
 def _subtree_has_invalid_integration_artifacts(
@@ -295,20 +329,19 @@ def repair_expanded_epic_root_manifest_for_resume(
     if not all(is_pristine_resume_stage(row) for row in desired_rows):
         return False
 
-    task_manager.db.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
-    task_manager.stage_states.initialize_manifest(
+    expected_existing_shape = [
+        (row.stage_name, row.position, row.max_work_attempts, row.max_review_rounds) for row in rows
+    ]
+    replaced = task_manager.stage_states.replace_manifest(
         task.id,
         desired_specs,
-        by_session_id=None,
-    )
-    task_manager.lifecycle_events.record_lifecycle_event(
-        task.id,
+        expected_existing_shape=expected_existing_shape,
         from_state="manifest:" + ",".join(current_names),
-        to_state="manifest:" + ",".join(desired_names),
         reason="repair_expanded_epic_root_manifest",
+        by_session_id=None,
         by_actor="build",
     )
-    return True
+    return replaced is not None
 
 
 def is_pristine_resume_stage(row: StageState) -> bool:
@@ -338,34 +371,41 @@ def apply_stage_caps_to_existing_lifecycle(
         stage_name = _canonical_stage_name(override.stage_name)
         if stage_name not in stage_names:
             raise ValueError(f"--stage target stage is not in the existing lifecycle: {stage_name}")
-    for stage_name in stage_names:
-        stage_override = overrides.get(stage_name)
-        updates: list[str] = []
-        params: list[int | str] = []
-        max_work_attempts = (
-            stage_override.max_work_attempts
-            if stage_override and stage_override.max_work_attempts is not None
-            else retry_cap
-        )
-        max_review_rounds = (
-            stage_override.max_review_rounds
-            if stage_override and stage_override.max_review_rounds is not None
-            else retry_cap
-        )
-        if max_work_attempts is not None:
-            updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_work_attempts"])
-            params.append(max_work_attempts)
-        if max_review_rounds is not None:
-            updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_review_rounds"])
-            params.append(max_review_rounds)
-        if not updates:
-            continue
-        params.extend([task_id, stage_name])
-        task_manager.db.execute(
-            f"""
-            UPDATE task_stage_states
-               SET {", ".join(updates)}
-             WHERE task_id = %s AND stage_name = %s
-            """,
-            tuple(params),
-        )
+    with RuntimeDispatchMutex(
+        TaskDispatchMutexManager(task_manager.db),
+        task_id,
+        "resume_lifecycle",
+        "stage_caps",
+        30,
+    ):
+        for stage_name in stage_names:
+            stage_override = overrides.get(stage_name)
+            updates: list[str] = []
+            params: list[int | str] = []
+            max_work_attempts = (
+                stage_override.max_work_attempts
+                if stage_override and stage_override.max_work_attempts is not None
+                else retry_cap
+            )
+            max_review_rounds = (
+                stage_override.max_review_rounds
+                if stage_override and stage_override.max_review_rounds is not None
+                else retry_cap
+            )
+            if max_work_attempts is not None:
+                updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_work_attempts"])
+                params.append(max_work_attempts)
+            if max_review_rounds is not None:
+                updates.append(_STAGE_CAP_UPDATE_ASSIGNMENTS["max_review_rounds"])
+                params.append(max_review_rounds)
+            if not updates:
+                continue
+            params.extend([task_id, stage_name])
+            task_manager.db.execute(
+                f"""
+                UPDATE task_stage_states
+                   SET {", ".join(updates)}
+                 WHERE task_id = %s AND stage_name = %s
+                """,
+                tuple(params),
+            )

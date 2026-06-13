@@ -1155,6 +1155,75 @@ class TestCloneIsolationHandler:
         # Should NOT create a new clone
         mock_clone_manager.create_clone.assert_not_called()
 
+    @pytest.mark.asyncio
+    async def test_prepare_environment_concurrent_same_branch_uses_distinct_paths(self) -> None:
+        """Test concurrent clone creation for same branch targets distinct paths."""
+        clone_paths: list[str] = []
+
+        def create_clone(**kwargs: str) -> MagicMock:
+            clone_paths.append(kwargs["clone_path"])
+            return MagicMock(success=True)
+
+        def create_record(**kwargs: str) -> MagicMock:
+            return MagicMock(
+                id=f"clone-{len(clone_paths)}",
+                clone_path=kwargs["clone_path"],
+                branch_name=kwargs["branch_name"],
+            )
+
+        mock_clone_manager = MagicMock()
+        mock_clone_manager.create_clone.side_effect = create_clone
+        mock_clone_storage = MagicMock()
+        mock_clone_storage.get_by_branch.return_value = None
+        mock_clone_storage.create.side_effect = create_record
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name="feature/shared",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj-123",
+            project_path="/path/to/main/repo",
+            provider="claude",
+            parent_session_id="sess-456",
+        )
+
+        with patch("gobby.agents.isolation.repair_isolation_environment", new=AsyncMock()):
+            results = await asyncio.gather(
+                CloneIsolationHandler(mock_clone_manager, mock_clone_storage).prepare_environment(
+                    config
+                ),
+                CloneIsolationHandler(mock_clone_manager, mock_clone_storage).prepare_environment(
+                    config
+                ),
+            )
+
+        assert len(set(clone_paths)) == 2
+        assert results[0].cwd != results[1].cwd
+
+    def test_generate_clone_path_deconflicts_sanitized_equal_branches(self) -> None:
+        """Test branches with the same safe path prefix still get unique paths."""
+        handler = CloneIsolationHandler(MagicMock(), MagicMock())
+
+        with patch("gobby.agents.isolation.uuid4") as mock_uuid4:
+            mock_uuid4.side_effect = [
+                MagicMock(hex="a" * 32),
+                MagicMock(hex="b" * 32),
+                MagicMock(hex="c" * 32),
+                MagicMock(hex="d" * 32),
+            ]
+            same_branch_a = handler._generate_clone_path("feature/shared", "repo")
+            same_branch_b = handler._generate_clone_path("feature/shared", "repo")
+            sanitized_a = handler._generate_clone_path("feat/x", "repo")
+            sanitized_b = handler._generate_clone_path("feat-x", "repo")
+
+        assert same_branch_a != same_branch_b
+        assert sanitized_a != sanitized_b
+        assert Path(same_branch_a).name == "feature-shared-aaaaaaaa"
+        assert Path(sanitized_a).name == "feat-x-cccccccc"
+
     def test_build_context_prompt_prepends_warning(self) -> None:
         """Test build_context_prompt prepends CRITICAL: Clone Context warning."""
         mock_clone_manager = MagicMock()
@@ -1351,9 +1420,10 @@ class TestCloneIsolationHandler:
 
         with patch("gobby.utils.project_context.ensure_project_json_for_isolation") as mock_ensure:
             await handler.prepare_environment(config)
+            clone_path = mock_clone_manager.create_clone.call_args.kwargs["clone_path"]
             mock_ensure.assert_called_once_with(
                 "/path/to/source/repo",
-                handler._generate_clone_path("my-branch", "repo"),
+                clone_path,
             )
             assert mock_ensure.call_count == 1
             assert mock_ensure.call_args is not None

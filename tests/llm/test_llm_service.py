@@ -9,6 +9,7 @@ import pytest
 from gobby.ai import AIAdapterStyle, AICapability, AICapabilityRegistry, CapabilityBinding
 from gobby.config.app import DaemonConfig
 from gobby.config.sessions import DigestConfig
+from gobby.llm import create_llm_service
 from gobby.llm.service import LLMService
 
 pytestmark = pytest.mark.unit
@@ -49,6 +50,14 @@ def test_init_with_empty_providers_succeeds() -> None:
     assert repr(service) == "LLMService(enabled=[])"
 
 
+def test_create_llm_service_uses_injected_text_generation(llm_config: DaemonConfig) -> None:
+    fake_generation = FakeTextGeneration()
+
+    service = create_llm_service(llm_config, text_generation=fake_generation)
+
+    assert service.enabled_providers == ["claude"]
+
+
 def test_direct_provider_accessors_are_not_public(llm_config: DaemonConfig) -> None:
     service = LLMService(llm_config, text_generation=FakeTextGeneration())
 
@@ -63,7 +72,13 @@ async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfi
     service = LLMService(llm_config, text_generation=fake_generation)
     config = DigestConfig(candidates=["claude/haiku"])
 
-    result = await service.call_feature(config, "prompt", system_prompt="system", caller="test")
+    result = await service.call_feature(
+        config,
+        "prompt",
+        system_prompt="system",
+        caller="test",
+        cwd="/tmp/project",
+    )
 
     assert result == "generated text"
     request = fake_generation.requests[0]
@@ -72,6 +87,7 @@ async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfi
     assert request.profile == "feature_low"
     assert request.candidates == ("claude/haiku",)
     assert request.caller == "test"
+    assert request.cwd == "/tmp/project"
 
 
 @pytest.mark.asyncio
@@ -80,12 +96,15 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
     service = LLMService(llm_config, text_generation=fake_generation)
     config = DigestConfig(candidates=["claude/haiku"])
 
-    result = await service.call_json_feature(config, "prompt", system_prompt="system")
+    result = await service.call_json_feature(
+        config, "prompt", system_prompt="system", cwd="/tmp/project"
+    )
 
     assert result == {"ok": True}
     request = fake_generation.requests[0]
     assert request.profile == "feature_low"
     assert request.candidates == ("claude/haiku",)
+    assert request.cwd == "/tmp/project"
 
 
 def test_enabled_providers_reflects_text_generation_registry(llm_config: DaemonConfig) -> None:

@@ -55,9 +55,14 @@ class WorktreeGitManager(GitRunner):
         worktree_path: str | Path,
         base_branch: str = "main",
         strategy: Literal["rebase", "merge"] = "rebase",
+        source_branch: str | None = None,
     ) -> GitOperationResult:
         return _lifecycle.sync_from_main(
-            self, worktree_path, base_branch=base_branch, strategy=strategy
+            self,
+            worktree_path,
+            base_branch=base_branch,
+            strategy=strategy,
+            source_branch=source_branch,
         )
 
     def get_worktree_status(self, worktree_path: str | Path) -> WorktreeStatus | None:

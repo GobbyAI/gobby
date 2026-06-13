@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.storage.clones import CloneStatus
 
 if TYPE_CHECKING:
     from gobby.clones.git import CloneGitManager
@@ -245,7 +246,7 @@ def create_clones_registry(
         List clones with optional filters.
 
         Args:
-            status: Filter by status (active, syncing, stale, cleanup)
+            status: Filter by clone status
             limit: Maximum number of results
 
         Returns:
@@ -271,8 +272,8 @@ def create_clones_registry(
             "properties": {
                 "status": {
                     "type": "string",
-                    "description": "Filter by status (active, syncing, stale, cleanup)",
-                    "enum": ["active", "syncing", "stale", "cleanup"],
+                    "description": "Filter by status",
+                    "enum": [status.value for status in CloneStatus],
                 },
                 "limit": {
                     "type": "integer",
@@ -309,43 +310,38 @@ def create_clones_registry(
         if not clone:
             return {"success": False, "error": f"Clone not found: {clone_id}"}
 
-        # Store clone info for potential rollback
         clone_path = clone.clone_path
+        previous_status = clone.status
 
-        # Delete the database record first (can be rolled back more easily)
         try:
-            clone_storage.delete(clone_id)
+            clone_storage.update(clone_id, status=CloneStatus.DELETING.value)
         except Exception as e:
-            logger.error(f"Failed to delete clone record {clone_id}: {e}")
-            return {"success": False, "error": f"Failed to delete clone record: {e}"}
+            logger.error("Failed to mark clone %s as deleting: %s", clone_id, e, exc_info=True)
+            return {"success": False, "error": f"Failed to mark clone deleting: {e}"}
 
-        # Delete the files
         result = git_manager.delete_clone(clone_path, force=force)
         if not result.success:
-            # Rollback: recreate the clone record since file deletion failed
             logger.error(
-                f"Failed to delete clone files for {clone_id}, "
-                f"attempting to restore record: {result.error or result.message}"
+                f"Failed to delete clone files for {clone_id}: {result.error or result.message}"
             )
             try:
-                clone_storage.create(
-                    project_id=clone.project_id,
-                    branch_name=clone.branch_name,
-                    clone_path=clone_path,
-                    base_branch=clone.base_branch,
-                    task_id=clone.task_id,
-                    remote_url=clone.remote_url,
-                )
-                logger.info(f"Restored clone record for {clone_id} after file deletion failure")
-            except Exception as restore_error:
-                logger.error(
-                    f"Failed to restore clone record {clone_id}: {restore_error}. "
-                    f"Clone is now orphaned in database."
+                clone_storage.update(clone_id, status=previous_status)
+            except Exception:
+                logger.warning(
+                    "Failed to restore clone %s status after file deletion failure",
+                    clone_id,
+                    exc_info=True,
                 )
             return {
                 "success": False,
                 "error": f"Failed to delete clone files: {result.error or result.message}",
             }
+
+        try:
+            clone_storage.delete(clone_id)
+        except Exception as e:
+            logger.error("Failed to delete clone record %s after file deletion: %s", clone_id, e)
+            return {"success": False, "error": f"Failed to delete clone record: {e}"}
 
         return {"success": True, "message": f"Deleted clone {clone_id}"}
 

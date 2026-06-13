@@ -5,6 +5,7 @@ import logging
 import os
 import signal
 import sys
+from collections.abc import AsyncIterator
 from contextlib import ExitStack, suppress
 from pathlib import Path
 from types import SimpleNamespace
@@ -212,6 +213,154 @@ class TestGobbyRunnerRun:
 
 class TestInitSubsystems:
     """Tests for subsystem initialization helpers."""
+
+    @pytest.mark.asyncio
+    async def test_init_servers_wires_shared_codex_client_to_chat_backends(self) -> None:
+        from gobby.ai import (
+            AIAdapterStyle,
+            AICapability,
+            AICapabilityRegistry,
+            CapabilityBinding,
+            build_daemon_text_generation_service,
+        )
+        from gobby.config.app import DaemonConfig
+        from gobby.runner_init.servers import init_servers
+
+        class FakeCodexClient:
+            def __init__(self) -> None:
+                self.is_connected = True
+                self.start_calls = 0
+                self.stop_calls = 0
+                self.archived_thread_ids: list[str] = []
+
+            async def start(self) -> None:
+                self.start_calls += 1
+
+            async def stop(self) -> None:
+                self.stop_calls += 1
+
+            async def start_thread(self, **_kwargs: object) -> SimpleNamespace:
+                return SimpleNamespace(id="one-shot-thread")
+
+            async def run_turn(
+                self, *_args: object, **_kwargs: object
+            ) -> AsyncIterator[dict[str, object]]:
+                yield {"type": "item/agentMessage/delta", "delta": "wired"}
+
+            async def archive_thread(self, thread_id: str) -> None:
+                self.archived_thread_ids.append(thread_id)
+
+        fake_client = FakeCodexClient()
+        http_init: dict[str, object] = {}
+        web_chat_init: dict[str, object] = {}
+
+        class FakeHTTPServer:
+            def __init__(
+                self,
+                *,
+                services: object,
+                port: int,
+                test_mode: bool,
+                codex_client: object | None,
+            ) -> None:
+                http_init.update(
+                    services=services,
+                    port=port,
+                    test_mode=test_mode,
+                    codex_client=codex_client,
+                )
+                self.services = services
+                self.codex_client = codex_client
+                self._internal_manager = object()
+                self.broadcaster = SimpleNamespace(websocket_server=None)
+
+            def set_runner_getter(self, getter: object) -> None:
+                self.runner_getter = getter
+
+        class FakeWebChatRuntimeManager:
+            def __init__(self, *, codex_client: object | None, **kwargs: object) -> None:
+                web_chat_init.update(codex_client=codex_client, kwargs=kwargs)
+
+        config = DaemonConfig(websocket={"enabled": False})
+        registry = AICapabilityRegistry(
+            [
+                CapabilityBinding(
+                    capability=AICapability.TEXT_GENERATE,
+                    provider="codex",
+                    adapter_style=AIAdapterStyle.DAEMON,
+                    available=True,
+                )
+            ]
+        )
+
+        class RunnerStub:
+            pass
+
+        runner = RunnerStub()
+        runner.config = config
+        runner.codex_client = None
+        runner.text_generation_service = build_daemon_text_generation_service(
+            config,
+            registry=registry,
+        )
+        runner.database = object()
+        runner.db_executor = None
+        runner.session_manager = None
+        runner.task_manager = object()
+        runner.span_storage = None
+        runner.task_sync_manager = None
+        runner.memory_sync_manager = None
+        runner.memory_manager = None
+        runner.llm_service = object()
+        runner.vector_store = None
+        runner.mcp_proxy = None
+        runner.mcp_db_manager = None
+        runner.metrics_manager = None
+        runner.agent_runner = None
+        runner.message_processor = None
+        runner.task_validator = None
+        runner.worktree_storage = None
+        runner.clone_storage = None
+        runner.git_manager = None
+        runner.project_id = "project-1"
+        runner.pipeline_executor = None
+        runner.workflow_loader = None
+        runner.pipeline_execution_manager = None
+        runner.completion_registry = None
+        runner.wake_dispatcher = SimpleNamespace(set_web_chat_session_registry=MagicMock())
+        runner.agent_lifecycle_monitor = None
+        runner.communications_manager = None
+        runner.code_indexer = None
+        runner.cron_storage = None
+        runner.cron_scheduler = None
+        runner.system_automation_loop = None
+        runner.skill_manager = None
+        runner.hub_manager = None
+        runner.config_store = None
+        runner.prompt_manager = None
+        runner._dev_mode = False
+
+        with (
+            patch(
+                "gobby.adapters.codex_impl.app_server_adapter.CodexAdapter.is_codex_available",
+                return_value=True,
+            ),
+            patch(
+                "gobby.adapters.codex_impl.client.CodexAppServerClient", return_value=fake_client
+            ),
+            patch("gobby.runner_init.servers.HTTPServer", FakeHTTPServer),
+            patch("gobby.runner_init.servers.WebChatRuntimeManager", FakeWebChatRuntimeManager),
+            patch("gobby.runner_init.servers.set_app_context"),
+        ):
+            init_servers(runner)
+
+        assert runner.codex_client is fake_client
+        assert web_chat_init["codex_client"] is fake_client
+        assert http_init["codex_client"] is fake_client
+        assert http_init["services"].text_generation_service is runner.text_generation_service
+        assert fake_client.start_calls == 0
+        assert fake_client.stop_calls == 0
+        assert fake_client.archived_thread_ids == []
 
     @pytest.mark.asyncio
     async def test_init_subsystems_uses_embedding_readiness_helper_and_stays_alive(self) -> None:

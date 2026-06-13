@@ -88,16 +88,16 @@ def resolve_task_reference(db: HubDatabase, ref: str, project_id: str) -> str:
             raise TaskNotFoundError(f"Task with path '{ref}' not found in project")
         return str(row["id"])
 
-    # UUID format: validate it exists
+    # UUID format: validate it exists in the caller's project
     # UUIDs have 5 parts separated by hyphens
     parts = ref.split("-")
     if len(parts) == 5:
         row = db.fetchone(
-            "SELECT id FROM tasks WHERE id = %s",
-            (ref,),
+            "SELECT id FROM tasks WHERE id = %s AND project_id = %s",
+            (ref, project_id),
         )
         if not row:
-            raise TaskNotFoundError(f"Task with UUID '{ref}' not found")
+            raise TaskNotFoundError(f"Task with UUID '{ref}' not found in project")
         return str(row["id"])
 
     # Unknown format

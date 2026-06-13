@@ -4,9 +4,10 @@ CLI commands for managing cron jobs.
 
 import json
 from datetime import datetime
-from typing import Any, Literal, cast
+from typing import Any, Literal, NamedTuple, cast
 
 import click
+from croniter import croniter
 
 from gobby.cli.utils import resolve_project_ref
 from gobby.storage.cron import CronJobStorage
@@ -18,6 +19,26 @@ def get_cron_storage() -> tuple[HubDatabase, CronJobStorage]:
     """Get initialized cron storage."""
     db = open_runtime_hub_database(apply_migrations=False)
     return db, CronJobStorage(db)
+
+
+class ParsedSchedule(NamedTuple):
+    schedule_type: Literal["cron", "interval"]
+    cron_expr: str | None
+    interval_seconds: int | None
+
+
+def _parse_schedule(schedule: str) -> ParsedSchedule:
+    schedule_normalized = schedule.strip().lower()
+    multipliers = {"s": 1, "m": 60, "h": 3600}
+    suffix = schedule_normalized[-1:] if schedule_normalized else ""
+    if suffix in multipliers and schedule_normalized[:-1].isdigit():
+        return ParsedSchedule("interval", None, int(schedule_normalized[:-1]) * multipliers[suffix])
+
+    try:
+        croniter(schedule, datetime.now())
+    except (ValueError, KeyError) as e:
+        raise click.ClickException(f"Invalid cron schedule: {schedule}") from e
+    return ParsedSchedule("cron", schedule, None)
 
 
 @click.group()
@@ -51,7 +72,12 @@ def list_jobs(
     click.echo(f"Found {len(jobs)} cron job(s):\n")
     for job in jobs:
         status_icon = "●" if job.enabled else "○"
-        schedule = job.cron_expr or f"every {job.interval_seconds}s" or job.run_at or "?"
+        if job.schedule_type == "cron":
+            schedule = job.cron_expr or "?"
+        elif job.schedule_type == "interval":
+            schedule = f"every {job.interval_seconds}s" if job.interval_seconds else "?"
+        else:
+            schedule = job.run_at or "?"
         last = job.last_status or "never"
         click.echo(f"  {status_icon} {job.id}  {job.name:<30} {schedule:<20} last: {last}")
 
@@ -95,30 +121,17 @@ def add_job(
         click.echo(f"Invalid JSON for --action-config: {e}", err=True)
         raise SystemExit(1) from None
 
-    # Parse schedule: detect interval vs cron expression
-    schedule_type: Literal["cron", "interval", "once"] = "cron"
-    cron_expr = None
-    interval_seconds = None
-
-    schedule_normalized = schedule.strip().lower()
-    multipliers = {"s": 1, "m": 60, "h": 3600}
-    suffix = schedule_normalized[-1:] if schedule_normalized else ""
-    if suffix in multipliers and schedule_normalized[:-1].isdigit():
-        schedule_type = "interval"
-        interval_seconds = int(schedule_normalized[:-1]) * multipliers[suffix]
-    else:
-        schedule_type = "cron"
-        cron_expr = schedule
+    parsed_schedule = _parse_schedule(schedule)
 
     _, storage = get_cron_storage()
     job = storage.create_job(
         project_id=project_id,
         name=name,
-        schedule_type=cast(Literal["cron", "interval", "once"], schedule_type),
+        schedule_type=cast(Literal["cron", "interval", "once"], parsed_schedule.schedule_type),
         action_type=cast(Literal["agent_spawn", "pipeline", "shell", "handler"], action_type),
         action_config=config,
-        cron_expr=cron_expr,
-        interval_seconds=interval_seconds,
+        cron_expr=parsed_schedule.cron_expr,
+        interval_seconds=parsed_schedule.interval_seconds,
         timezone=tz,
         description=description,
     )
@@ -129,7 +142,9 @@ def add_job(
 
     click.echo(f"Created cron job: {job.id}")
     click.echo(f"  Name: {job.name}")
-    click.echo(f"  Schedule: {cron_expr or f'every {interval_seconds}s'}")
+    click.echo(
+        f"  Schedule: {parsed_schedule.cron_expr or f'every {parsed_schedule.interval_seconds}s'}"
+    )
     click.echo(f"  Action: {action_type}")
 
 
@@ -261,14 +276,10 @@ def edit_job(
             raise SystemExit(1) from None
 
     if schedule is not None:
-        if schedule.endswith("s") and schedule[:-1].isdigit():
-            kwargs["schedule_type"] = "interval"
-            kwargs["interval_seconds"] = int(schedule[:-1])
-            kwargs["cron_expr"] = None
-        else:
-            kwargs["schedule_type"] = "cron"
-            kwargs["cron_expr"] = schedule
-            kwargs["interval_seconds"] = None
+        parsed_schedule = _parse_schedule(schedule)
+        kwargs["schedule_type"] = parsed_schedule.schedule_type
+        kwargs["cron_expr"] = parsed_schedule.cron_expr
+        kwargs["interval_seconds"] = parsed_schedule.interval_seconds
 
     if not kwargs:
         click.echo("No changes specified.", err=True)

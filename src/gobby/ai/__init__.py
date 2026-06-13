@@ -24,9 +24,8 @@ from gobby.ai.registry import (
     normalize_capability,
 )
 from gobby.ai.text_generation import (
-    ACPTextGenerateAdapter,
     ClaudeTextGenerateAdapter,
-    CodexAppServerTextGenerateAdapter,
+    CodexCLITextGenerateAdapter,
     DroidCLITextGenerateAdapter,
     LocalTextGenerateAdapter,
     TextGenerateAdapter,
@@ -45,7 +44,6 @@ from gobby.ai.vision import (
 )
 
 __all__ = [
-    "ACPTextGenerateAdapter",
     "AudioCapabilityAdapter",
     "AudioCapabilityOutput",
     "AudioCapabilityRequest",
@@ -62,7 +60,7 @@ __all__ = [
     "CapabilityUnavailableError",
     "ClaudeTextGenerateAdapter",
     "ClaudeVisionExtractAdapter",
-    "CodexAppServerTextGenerateAdapter",
+    "CodexCLITextGenerateAdapter",
     "DroidCLITextGenerateAdapter",
     "LocalTextGenerateAdapter",
     "LocalVisionExtractAdapter",

@@ -1,4 +1,4 @@
-"""PostgreSQL service installation, uninstallation, and status checks."""
+"""PostgreSQL service installation and status checks."""
 
 from __future__ import annotations
 
@@ -30,8 +30,6 @@ DEFAULT_POSTGRES_PORT = 60891
 DEFAULT_POSTGRES_DB = "gobby"
 DEFAULT_POSTGRES_USER = "gobby"
 DEFAULT_POSTGRES_PASSWORD = "gobby_dev"
-POSTGRES_DATA_VOLUME = "gobby_postgres_data"
-PGAUDIT_LOG_VOLUME = "gobby_pgaudit_log"
 
 
 def install_postgres(
@@ -47,20 +45,6 @@ def install_postgres(
             f"Unsupported PostgreSQL install mode: {mode}. Docker is the only supported mode."
         )
     return _install_docker(gobby_home=gobby_home, port=port)
-
-
-def uninstall_postgres(
-    *,
-    mode: InstallMode | str = "docker",
-    gobby_home: Path | None = None,
-    remove_data: bool = False,
-) -> dict[str, Any]:
-    """Uninstall or disconnect PostgreSQL according to the recorded install mode."""
-    if mode == "docker":
-        return _uninstall_docker(gobby_home=gobby_home, remove_data=remove_data)
-    raise click.ClickException(
-        f"Unsupported PostgreSQL install mode: {mode}. Docker is the only supported mode."
-    )
 
 
 def _install_docker(*, gobby_home: Path | None, port: int) -> dict[str, Any]:
@@ -210,52 +194,6 @@ def render_postgres_status(payload: dict[str, Any]) -> str:
     if error:
         lines.append(f"Error:       {error}")
     return "\n".join(lines)
-
-
-def _uninstall_docker(*, gobby_home: Path | None, remove_data: bool) -> dict[str, Any]:
-    home = gobby_home or _bootstrap.default_gobby_home()
-    _preserve_required_postgres_runtime(home)
-    services_dir = home / "services"
-    compose_file = services_dir / "docker-compose.yml"
-
-    if compose_file.exists():
-        try:
-            result = subprocess.run(  # nosec B603 B607 # fixed docker compose command
-                [
-                    "docker",
-                    "compose",
-                    "-f",
-                    str(compose_file),
-                    "--profile",
-                    "postgres",
-                    "down",
-                ],
-                capture_output=True,
-                text=True,
-                timeout=90,
-                cwd=str(services_dir),
-            )
-            if result.returncode != 0:
-                logger.warning(
-                    "Docker compose postgres down failed: %s", result.stderr or result.stdout
-                )
-        except subprocess.TimeoutExpired:
-            logger.warning("Docker compose postgres down timed out")
-        except OSError as exc:
-            logger.warning("Docker compose postgres down failed: %s", exc)
-
-    if remove_data:
-        _remove_docker_volumes((POSTGRES_DATA_VOLUME, PGAUDIT_LOG_VOLUME))
-
-    return {
-        "success": True,
-        "mode": "docker",
-        "data_removed": remove_data,
-        "message": (
-            "PostgreSQL Docker service cleanup completed; runtime bootstrap preserved "
-            "because PostgreSQL is the only supported hub backend."
-        ),
-    }
 
 
 def _ensure_unified_compose(services_dir: Path) -> Path:
@@ -468,15 +406,3 @@ def _dsn_host(dsn: str) -> str | None:
 def _dsn_db(dsn: str) -> str | None:
     parsed = urlparse(dsn)
     return parsed.path.lstrip("/") or None
-
-
-def _remove_docker_volumes(volume_names: tuple[str, ...]) -> None:
-    for volume_name in volume_names:
-        try:
-            subprocess.run(  # nosec B603 B607 # fixed docker volume command
-                ["docker", "volume", "rm", volume_name],
-                capture_output=True,
-                timeout=30,
-            )
-        except (OSError, subprocess.SubprocessError, subprocess.TimeoutExpired) as exc:
-            logger.warning("Failed to remove Docker volume %s: %s", volume_name, exc)

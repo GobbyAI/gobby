@@ -12,10 +12,12 @@ from .models import (
     KnowledgeGraphStatus,
     Relationship,
 )
+from .rebuild import KnowledgeGraphRebuildService
 from .service import KnowledgeGraphService
 
 __all__ = [
     "Entity",
+    "KnowledgeGraphRebuildService",
     "KnowledgeGraphResult",
     "KnowledgeGraphService",
     "KnowledgeGraphStatus",

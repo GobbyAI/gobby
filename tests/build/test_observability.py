@@ -235,6 +235,70 @@ def test_build_stop_target_disables_status_and_dispatch_for_tree(temp_db) -> Non
     assert explanation["reason"] == "automation_disabled"
 
 
+@pytest.mark.parametrize("action", ["stop", "resume", "clean", "restart"])
+def test_build_control_targets_reject_foreign_project_uuid(temp_db, action: str) -> None:
+    from gobby.build.controls import (
+        build_clean_target,
+        build_restart_target,
+        build_resume_target,
+        build_stop_target,
+    )
+    from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
+
+    local_project_id = _project(temp_db, "observability-stop-local")
+    foreign_project_id = _project(temp_db, "observability-stop-foreign")
+    manager = LocalTaskManager(temp_db)
+    artifact_manager = TaskArtifactManager(temp_db)
+    foreign_task = manager.create_task(project_id=foreign_project_id, title="Foreign")
+    manager.initialize_task_manifest(foreign_task.id, stage_names=["development"])
+    manager.stage_states.start_stage(foreign_task.id, "development", by_session_id="dispatcher")
+    foreign_task = manager.update_task(foreign_task.id, allow_automation=True)
+    artifact_manager.set_artifacts_atomic(
+        foreign_task.id,
+        worktree_path="/tmp/foreign-worktree",
+        worktree_id="wt-foreign",
+        base_commit_sha="abc123",
+        target_branch="foreign-branch",
+    )
+
+    with pytest.raises(ValueError, match="task ref not found"):
+        if action == "stop":
+            asyncio.run(build_stop_target(foreign_task.id, db=temp_db, project_id=local_project_id))
+        elif action == "resume":
+            asyncio.run(
+                build_resume_target(foreign_task.id, db=temp_db, project_id=local_project_id)
+            )
+        elif action == "clean":
+            asyncio.run(
+                build_clean_target(
+                    foreign_task.id,
+                    db=temp_db,
+                    project_id=local_project_id,
+                    yes=True,
+                )
+            )
+        else:
+            asyncio.run(
+                build_restart_target(
+                    foreign_task.id,
+                    db=temp_db,
+                    project_id=local_project_id,
+                    yes=True,
+                )
+            )
+
+    assert manager.get_task(foreign_task.id).allow_automation is True
+    stage = manager.stage_states.current_stage(foreign_task.id)
+    assert stage is not None
+    assert stage.stage_name == "development"
+    assert stage.state == "in_progress"
+    artifacts = artifact_manager.get_artifacts(foreign_task.id)
+    assert artifacts.worktree_path == "/tmp/foreign-worktree"
+    assert artifacts.worktree_id == "wt-foreign"
+    assert artifacts.base_commit_sha == "abc123"
+    assert artifacts.target_branch == "foreign-branch"
+
+
 def test_build_stop_target_preserves_review_approved_stage(temp_db) -> None:
     from gobby.build.controls import build_stop_target
     from gobby.build.observability import explain_dispatch
@@ -336,6 +400,42 @@ def test_get_build_status_reports_closed_root_as_completed(temp_db) -> None:
     assert status["summary"]["closed_tasks"] == 1
 
 
+@pytest.mark.parametrize(
+    ("closed_reason", "expected_state"),
+    [
+        ("wont_do", "cancelled"),
+        ("cancelled", "cancelled"),
+        ("failed", "failed"),
+    ],
+)
+def test_get_build_status_reports_non_success_closed_root_state(
+    temp_db,
+    closed_reason: str,
+    expected_state: str,
+) -> None:
+    from gobby.build.observability import get_build_status
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.tasks._lifecycle_events import BUILD_EVENT_REASON
+
+    project_id = _project(temp_db, f"observability-{closed_reason}-root")
+    manager = LocalTaskManager(temp_db)
+    root = _automated_task(temp_db, project_id, f"{closed_reason} Root")
+    manager.lifecycle_events.record_lifecycle_event(
+        root.id,
+        from_state=None,
+        to_state="development",
+        reason=BUILD_EVENT_REASON,
+        by_actor="build",
+    )
+    manager.close_task(root.id, reason=closed_reason, force=True)
+
+    status = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project_id)
+
+    assert status["summary"]["state"] == expected_state
+    assert status["summary"]["open_tasks"] == 0
+    assert status["summary"]["closed_tasks"] == 1
+
+
 def test_get_build_status_hides_stale_current_stage_for_closed_root(temp_db) -> None:
     from gobby.build.observability import get_build_status
     from gobby.storage.tasks import LocalTaskManager
@@ -357,10 +457,11 @@ def test_get_build_status_hides_stale_current_stage_for_closed_root(temp_db) -> 
         """
         UPDATE tasks
            SET closed_at = %s,
-               closed_reason = %s
+               closed_reason = %s,
+               closed_commit_sha = %s
          WHERE id = %s
         """,
-        ("2026-06-02T00:00:00+00:00", "closed-with-stale-stage", root.id),
+        ("2026-06-02T00:00:00+00:00", "closed-with-stale-stage", "abc1234", root.id),
     )
 
     status = get_build_status(f"#{root.seq_num}", db=temp_db, project_id=project_id)
@@ -508,12 +609,18 @@ def test_explain_dispatch_reports_holistic_descendant_gate(temp_db) -> None:
 
     explanation = explain_dispatch(root.id, db=temp_db, project_id=project_id)
 
-    assert explanation["eligible"] is False
-    assert explanation["reason"] == "holistic_descendants_nonterminal"
+    assert explanation["eligible"] is True
+    assert explanation["reason"] is None
     gate = explanation["holistic_descendant_gate"]
     assert gate["reason"] == "holistic_descendants_nonterminal"
     assert gate["blockers"][0]["task_id"] == child.id
     assert gate["blockers"][0]["task_ref"] == f"#{child.seq_num}"
     assert gate["blockers"][0]["stage_name"] == "development"
     assert gate["blockers"][0]["stage_state"] == "ready"
-    assert explanation["proposed_action"] is None
+    action = explanation["proposed_action"]
+    assert action["action"] == "append_audit_marker"
+    assert action["task_id"] == root.id
+    assert action["heading"] == "Holistic QA deferred"
+    assert action["body"].startswith("Holistic QA is waiting for nonterminal descendants:")
+    assert f"#{child.seq_num}" in action["body"]
+    assert "[stage=development:ready, escalated=false]" in action["body"]

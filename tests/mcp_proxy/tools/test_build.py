@@ -25,18 +25,27 @@ def _registry(temp_db: Any) -> Any:
 def test_build_task_tool_is_registered_with_json_schema(temp_db: Any) -> None:
     registry = _registry(temp_db)
 
+    tool_names = {item["name"] for item in registry.list_tools()}
+    assert {"build_task", "build_stop", "build_resume", "build_clean", "build_restart"}.issubset(
+        tool_names
+    )
     tool = next(item for item in registry.list_tools() if item["name"] == "build_task")
     schema = tool["inputSchema"]
 
     assert schema["type"] == "object"
     assert schema["required"] == ["input_ref"]
     assert schema["properties"]["input_ref"]["type"] == "string"
+    assert schema["properties"]["profile"]["type"] == "string"
     assert schema["properties"]["quick"]["type"] == "boolean"
+    assert schema["properties"]["dry_run"]["type"] == "boolean"
     assert set(schema["properties"]["isolation"]["enum"]) == {"none", "worktree", "clone"}
     assert set(schema["properties"]["workspace_backend"]["enum"]) == {"worktree", "clone"}
     assert "default" not in schema["properties"]["workspace_backend"]
     assert schema["properties"]["clone"]["type"] == "boolean"
+    assert schema["properties"]["unattended"]["type"] == "boolean"
     assert schema["properties"]["skip_stages"]["items"]["type"] == "string"
+    assert set(schema["properties"]["delivery_mode"]["enum"]) == {"auto", "pull_request"}
+    assert schema["properties"]["delivery_target_repo"]["type"] == "string"
     assert schema["properties"]["no_merge"]["type"] == "boolean"
     assert schema["properties"]["pr"]["type"] == "string"
     assert "max_review_rounds" not in schema["properties"]
@@ -45,9 +54,16 @@ def test_build_task_tool_is_registered_with_json_schema(temp_db: Any) -> None:
     assert schema["properties"]["stage"]["items"]["type"] == "string"
     assert schema["properties"]["target_branch"]["type"] == "string"
     assert schema["properties"]["agent"]["type"] == "string"
+    assert schema["properties"]["clones_dir"]["type"] == "string"
+    assert schema["properties"]["cwd"]["type"] == "string"
     assert schema["properties"]["reset_expansion_output"]["type"] == "boolean"
     assert schema["properties"]["max_active_agents"]["minimum"] == 1
     assert schema["properties"]["max_retries"]["minimum"] == 0
+    assert set(schema["properties"]["planning_seed_state"]["enum"]) == {
+        "drafted",
+        "needs_review",
+        "approved",
+    }
     assert schema["properties"]["coordinator"]["type"] == "string"
 
 
@@ -58,10 +74,8 @@ def test_removed_fields_are_not_exposed(temp_db: Any) -> None:
     schema = tool["inputSchema"]
 
     assert {
-        "profile",
         "stages",
         "add_stages",
-        "unattended",
         "yolo",
         "composer_yolo",
     }.isdisjoint(schema["properties"])
@@ -89,17 +103,26 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
     ) as build:
         result = await build_task(
             input_ref="#42",
+            profile="submit",
             quick=True,
             skip_stages=["qa"],
             workspace_backend="clone",
+            unattended=True,
+            delivery_mode="auto",
+            delivery_target_repo="owner/repo",
             no_merge=False,
             pr="123",
             stage=["pr:max_review_rounds=2"],
             target_branch="release/0.4",
             agent="backend-developer",
+            clones_dir="/tmp",
+            cwd="/tmp",
             reset_expansion_output=True,
             max_active_agents=4,
             max_retries=0,
+            planning_seed_state="approved",
+            completed_plan_review_rounds=2,
+            dry_run=True,
             coordinator="#6075",
             project_id="project-1",
         )
@@ -124,10 +147,19 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
     call = build.call_args
     assert call.args[0] == "#42"
     opts = call.args[1]
+    assert opts.profile == "submit"
     assert opts.quick is True
     assert opts.skip_stages == ["qa"]
     assert opts.isolation == "clone"
     assert opts.isolation_explicit is True
+    assert opts.unattended is True
+    assert opts.unattended_explicit is True
+    assert opts.delivery_mode == "auto"
+    assert opts.delivery_mode_explicit is True
+    assert opts.delivery_target_repo == "owner/repo"
+    assert opts.delivery_target_repo_explicit is True
+    assert str(opts.clones_dir) == "/tmp"
+    assert str(opts.cwd) == "/tmp"
     assert opts.no_merge is False
     assert opts.pr == "123"
     assert [
@@ -139,6 +171,9 @@ async def test_build_task_tool_calls_shared_service_and_returns_result_dict(
     assert opts.reset_expansion_output is True
     assert opts.max_active_agents == 4
     assert opts.max_retries == 0
+    assert opts.planning_seed_state == "approved"
+    assert opts.completed_plan_review_rounds == 2
+    assert opts.dry_run is True
     assert opts.coordinator_session_ref == "#6075"
     assert call.kwargs["db"] is temp_db
     assert call.kwargs["project_id"] == "project-1"

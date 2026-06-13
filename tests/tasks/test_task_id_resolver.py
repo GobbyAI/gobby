@@ -79,6 +79,21 @@ class TestTaskIdResolver:
         resolved = task_manager.resolve_task_reference(task.id, project_id)
         assert resolved == task.id
 
+    def test_resolve_uuid_rejects_foreign_project(self, task_manager, temp_db) -> None:
+        """Test that UUID resolution is project-scoped."""
+        temp_db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
+            ("proj-a", "Project A"),
+        )
+        temp_db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, NOW(), NOW())",
+            ("proj-b", "Project B"),
+        )
+        foreign_task = task_manager.create_task(project_id="proj-b", title="Task B")
+
+        with pytest.raises(TaskNotFoundError, match="not found in project"):
+            task_manager.resolve_task_reference(foreign_task.id, "proj-a")
+
     def test_resolve_uuid_validates_exists(self, task_manager, project_id) -> None:
         """Test that UUID is validated to exist."""
         task_manager.create_task(project_id=project_id, title="Test Task")
