@@ -44,6 +44,7 @@ class AgentHealthMonitor:
         cleanup_handler: AgentCleanupHandler,
         tmux_config: TmuxConfig,
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        checkpoint_agent_work: Callable[[AgentRun], Awaitable[None]] | None = None,
     ) -> None:
         self._agent_run_manager = agent_run_manager
         self._db = db
@@ -53,6 +54,7 @@ class AgentHealthMonitor:
         self._cleanup_handler = cleanup_handler
         self._tmux_config = tmux_config
         self._run_db_callback = run_db
+        self._checkpoint_agent_work = checkpoint_agent_work
 
     async def _run_db(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db_callback is None:
@@ -352,6 +354,16 @@ class AgentHealthMonitor:
                         classification.reason,
                         classification.consecutive_hits,
                     )
+
+                    if self._checkpoint_agent_work is not None:
+                        try:
+                            await self._checkpoint_agent_work(run)
+                        except Exception as e:
+                            logger.warning(
+                                "Failed to checkpoint provider-stalled agent %s: %s",
+                                run.id,
+                                e,
+                            )
 
                     await self._tmux.kill_session(tmux_name)
                     await self._clear_tmux_session_name(run)

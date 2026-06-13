@@ -3034,6 +3034,60 @@ class TestCheckProviderStallsKillsAgent:
         assert "rate limit" in (updated.error or "").lower()
 
     @pytest.mark.asyncio
+    async def test_checkpoints_before_killing_confirmed_stall(
+        self,
+        monitor: AgentLifecycleMonitor,
+        agent_run_manager: LocalAgentRunManager,
+        sample_session: dict,
+    ) -> None:
+        """Confirmed PROVIDER_STALL checkpoints agent work before killing tmux."""
+        run = _make_terminal_run(
+            agent_run_manager,
+            sample_session,
+            run_id="run-stall-checkpoint-order",
+            tmux_session_name="gobby-stall-checkpoint-order",
+        )
+        events: list[tuple[str, str]] = []
+
+        async def checkpoint_agent_work(checkpoint_run: AgentRun) -> None:
+            events.append(("checkpoint", checkpoint_run.id))
+
+        async def kill_session(session_name: str) -> None:
+            events.append(("kill", session_name))
+
+        with (
+            patch.object(
+                monitor._tmux,
+                "capture_pane",
+                new_callable=AsyncMock,
+                return_value="Error: 429 Too Many Requests - rate limit exceeded\n",
+            ),
+            patch.object(
+                monitor,
+                "_checkpoint_agent_work",
+                new=checkpoint_agent_work,
+            ),
+            patch.object(
+                monitor._tmux,
+                "kill_session",
+                new_callable=AsyncMock,
+                side_effect=kill_session,
+            ),
+        ):
+            await monitor.check_provider_stalls()
+            state = monitor._stall_classifier._states.get(run.id)
+            assert state is not None
+            state.last_check_at = time.monotonic() - 35
+
+            stalled = await monitor.check_provider_stalls()
+
+        assert stalled == 1
+        assert events == [
+            ("checkpoint", "run-stall-checkpoint-order"),
+            ("kill", "gobby-stall-checkpoint-order"),
+        ]
+
+    @pytest.mark.asyncio
     async def test_provider_stall_resets_stage_and_releases_dispatch_mutex(
         self,
         agent_run_manager: LocalAgentRunManager,

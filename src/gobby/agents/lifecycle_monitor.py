@@ -174,6 +174,7 @@ class AgentLifecycleMonitor:
             cleanup_handler=self._cleanup_handler,
             tmux_config=self._tmux_config,
             run_db=run_db,
+            checkpoint_agent_work=lambda run: self._checkpoint_agent_work(run),
         )
         self._idle_check_handler = IdleCheckHandler(
             agent_run_manager=agent_run_manager,
@@ -479,6 +480,24 @@ class AgentLifecycleMonitor:
 
     async def _checkpoint_and_kill_looping_agent(self, run: AgentRun) -> None:
         """Checkpoint work, kill tmux, then full cleanup for a doom-looping agent."""
+        await self._checkpoint_agent_work(run)
+
+        if run.tmux_session_name:
+            await self._tmux.kill_session(run.tmux_session_name)
+            await self._run_db(
+                self._agent_run_manager.clear_tmux_session_name,
+                run.id,
+                run.tmux_session_name,
+            )
+
+        threshold = self._loop_tracker.threshold
+        await self._cleanup_handler.cleanup_agent(
+            run,
+            terminal_payload=f"doom loop: dismissed loop prompt {threshold}+ times",
+        )
+
+    async def _checkpoint_agent_work(self, run: AgentRun) -> None:
+        """Checkpoint agent work when checkpoint storage is available."""
         if self._checkpoint_manager and run.task_id:
             cwd = await self._resolve_agent_cwd(run)
             if cwd:
@@ -497,20 +516,6 @@ class AgentLifecycleMonitor:
                         )
                 except Exception as e:
                     logger.warning(f"Failed to checkpoint agent {run.id}: {e}")
-
-        if run.tmux_session_name:
-            await self._tmux.kill_session(run.tmux_session_name)
-            await self._run_db(
-                self._agent_run_manager.clear_tmux_session_name,
-                run.id,
-                run.tmux_session_name,
-            )
-
-        threshold = self._loop_tracker.threshold
-        await self._cleanup_handler.cleanup_agent(
-            run,
-            terminal_payload=f"doom loop: dismissed loop prompt {threshold}+ times",
-        )
 
     async def _resolve_agent_cwd(self, run: AgentRun) -> str | None:
         """Resolve the working directory for an agent run."""

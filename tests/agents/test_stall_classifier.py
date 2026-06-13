@@ -114,12 +114,64 @@ class TestClassify:
         result = classifier.classify("run-1", pane_output="Working on task...\nEditing file.py")
         assert result.status == StallStatus.HEALTHY
 
+    def test_source_text_in_pane_does_not_trigger_provider_stall(self) -> None:
+        classifier = StallClassifier()
+        pane_output = """
+        _PROVIDER_ERROR_PATTERNS = (
+            re.compile(r"(?:error|failed|exception|raise|fatal).*rate.?limit"),
+            re.compile(r"ETIMEDOUT|ECONNREFUSED|ECONNRESET"),
+            re.compile(r"network\\s+error"),
+            "overloaded_error",
+            assert "network error" in output
+            return_value="Error: 429 Too Many Requests - rate limit exceeded\\n",
+        )
+        """
+
+        with patch("gobby.agents.stall_classifier.time") as mock_time:
+            mock_time.monotonic.return_value = 0.0
+            result = classifier.classify("run-1", pane_output=pane_output)
+            assert result.status == StallStatus.HEALTHY
+
+            mock_time.monotonic.return_value = _MIN_CHECK_INTERVAL_SECONDS + 1
+            result = classifier.classify("run-1", pane_output=pane_output)
+
+        assert result.status == StallStatus.HEALTHY
+        assert result.consecutive_hits == 0
+
     def test_single_provider_error_returns_unknown(self) -> None:
         """First detection should be UNKNOWN (not yet confirmed)."""
         classifier = StallClassifier()
         result = classifier.classify("run-1", pane_output="Error: 429 rate limit exceeded")
         assert result.status == StallStatus.UNKNOWN
         assert result.consecutive_hits == 1
+
+    @pytest.mark.parametrize(
+        "pane_output",
+        [
+            "Error: 429 Too Many Requests - rate limit exceeded",
+            "429 rate limit exceeded",
+            "Provider connection timed out while starting",
+            "network error while contacting provider",
+            "ECONNREFUSED",
+            "overloaded_error",
+            "ResourceExhausted: quota exceeded",
+            "APIConnectionError: connection failed",
+        ],
+    )
+    def test_bottom_line_provider_errors_confirm_stall(self, pane_output: str) -> None:
+        classifier = StallClassifier()
+
+        with patch("gobby.agents.stall_classifier.time") as mock_time:
+            mock_time.monotonic.return_value = 0.0
+            result = classifier.classify("run-1", pane_output=f"Working...\n{pane_output}")
+            assert result.status == StallStatus.UNKNOWN
+            assert result.consecutive_hits == 1
+
+            mock_time.monotonic.return_value = _MIN_CHECK_INTERVAL_SECONDS + 1
+            result = classifier.classify("run-1", pane_output=f"Working...\n{pane_output}")
+
+        assert result.status == StallStatus.PROVIDER_STALL
+        assert result.consecutive_hits == _CONSECUTIVE_THRESHOLD
 
     def test_consecutive_errors_confirm_stall(self) -> None:
         """Two consecutive checks with provider errors = confirmed stall."""
