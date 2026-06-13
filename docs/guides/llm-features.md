@@ -11,8 +11,8 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 | `feature_mid` | `gemini/gemini-3.5-flash`, `claude/sonnet` |
 | `feature_high` | `codex/gpt-5.5`, `claude/opus` |
 
-Built-in defaults are cloud-only. Local OpenAI-compatible runtimes are opt-in
-named endpoints and should be explicit final fallbacks:
+Built-in defaults are cloud-only. Local runtimes are opt-in named endpoints and
+should be explicit final fallbacks:
 
 ```yaml
 ai:
@@ -20,9 +20,18 @@ ai:
     local:
       endpoints:
         lm-studio:
-          api_base: http://localhost:1234/v1
+          provider: lmstudio
+          api_base: http://localhost:1234
           model: google/gemma-4-26b-a4b-qat
           api_key: $secret:LM_STUDIO_KEY
+        ollama:
+          provider: ollama
+          api_base: http://localhost:11434
+          model: qwen3
+        generic:
+          provider: openai-compatible
+          api_base: http://localhost:8000/v1
+          model: local-model
     profile_defaults:
       feature_low:
         - codex/gpt-5.4-mini

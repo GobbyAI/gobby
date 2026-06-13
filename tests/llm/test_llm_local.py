@@ -225,6 +225,7 @@ class TestGenerateText:
     @pytest.mark.asyncio
     async def test_no_client_raises(self, provider: LocalLLMProvider) -> None:
         provider._client = None
+        provider._adapter._client = None
         with pytest.raises(RuntimeError, match="not initialised"):
             await provider.generate_text("hello")
 
