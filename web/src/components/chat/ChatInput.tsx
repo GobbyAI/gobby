@@ -875,7 +875,7 @@ export function ChatInput({
                 />
               </div>
             ) : null}
-            <input ref={fileInputRef} type="file" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
+            <input ref={fileInputRef} type="file" name="chat-attachments" multiple className="hidden" onChange={(e) => { handleFilesSelected(e.target.files); e.target.value = '' }} />
           </div>
         </div>
 
@@ -884,6 +884,7 @@ export function ChatInput({
           <div className="flex items-start gap-2">
             <textarea
               ref={textareaRef}
+              name="message"
               style={{ minHeight: 'var(--control-row-height)' }}
               className="chat-input-textarea flex-1 bg-muted rounded-lg px-3 py-2 text-sm leading-5 text-foreground placeholder:text-muted-foreground resize-none focus:outline-none focus:ring-2 focus:ring-accent min-h-[36px]"
               value={input}

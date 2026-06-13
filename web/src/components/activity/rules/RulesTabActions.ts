@@ -97,6 +97,10 @@ export function saveRuleDraft(
       audience: draft.audience,
       agent_scope: draft.agent_scope,
       enabled: draft.enabled,
+      when: draft.when,
+      match: draft.match,
+      effects: draft.effects,
+      extra: draft.extra,
     };
 
     if (!merged.name) throw new Error("Rule name is required");

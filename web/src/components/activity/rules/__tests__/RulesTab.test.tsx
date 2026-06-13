@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +12,25 @@ vi.mock("../../../../hooks/useWebSocketEvent", () => ({
 
 vi.mock("../../../chat/artifacts/ResizeHandle", () => ({
   ResizeHandle: () => <div data-testid="resize-handle" />,
+}));
+
+vi.mock("../../../shared/CodeMirrorEditor", () => ({
+  CodeMirrorEditor: ({
+    content,
+    onChange,
+    readOnly,
+  }: {
+    content: string;
+    onChange?: (content: string) => void;
+    readOnly?: boolean;
+  }) => (
+    <textarea
+      aria-label="Rule YAML"
+      readOnly={readOnly}
+      value={content}
+      onChange={(event) => onChange?.(event.target.value)}
+    />
+  ),
 }));
 
 type RuleRecord = {
@@ -316,6 +335,73 @@ describe("Rules activity tab", () => {
         effects: [{ type: "block", reason: "Generated file" }],
         match: { tools: ["Edit"] },
         when: "tool.name == 'Edit'",
+      }),
+    });
+    expect((putCall?.body as { definition?: Record<string, unknown> }).definition).not.toHaveProperty(
+      "name",
+    );
+  });
+
+  it("edits full rule definitions from the YAML detail view", async () => {
+    const { calls } = installRulesFetch();
+    const user = userEvent.setup();
+
+    render(<RulesTab />);
+    await user.click(await screen.findByRole("button", { name: /Select alpha-rule/i }));
+    await screen.findByLabelText("Rule name");
+
+    await user.click(screen.getByRole("button", { name: "YAML" }));
+    const yamlEditor = await screen.findByLabelText("Rule YAML");
+    expect((yamlEditor as HTMLTextAreaElement).value).toContain("effects:");
+    expect((yamlEditor as HTMLTextAreaElement).value).toContain("match:");
+
+    fireEvent.change(yamlEditor, {
+      target: {
+        value: [
+          "name: alpha-yaml",
+          "description: YAML description",
+          "event: before_tool",
+          "group: guardrails",
+          "priority: 77",
+          "enabled: true",
+          "tags:",
+          "  - safety",
+          "audience: interactive",
+          "agent_scope:",
+          "  - developer",
+          'when: session.phase == "edit"',
+          "match:",
+          "  tools:",
+          "    - Edit",
+          "    - MultiEdit",
+          "effects:",
+          "  - type: block",
+          "    reason: YAML generated file",
+          "",
+        ].join("\n"),
+      },
+    });
+
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() => expect(screen.getAllByText("alpha-yaml").length).toBeGreaterThan(0));
+    const putCall = calls.find(
+      (call) => call.url.endsWith("/api/rules/alpha-rule") && call.method === "PUT",
+    );
+    expect(putCall?.body).toEqual({
+      name: "alpha-yaml",
+      definition: expect.objectContaining({
+        description: "YAML description",
+        event: "before_tool",
+        group: "guardrails",
+        priority: 77,
+        enabled: true,
+        tags: ["safety"],
+        audience: "interactive",
+        agent_scope: ["developer"],
+        when: 'session.phase == "edit"',
+        match: { tools: ["Edit", "MultiEdit"] },
+        effects: [{ type: "block", reason: "YAML generated file" }],
       }),
     });
     expect((putCall?.body as { definition?: Record<string, unknown> }).definition).not.toHaveProperty(

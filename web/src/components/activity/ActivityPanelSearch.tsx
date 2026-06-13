@@ -13,16 +13,19 @@ function ActivityPanelSearchImpl({
   placeholder,
   ariaLabel,
 }: ActivityPanelSearchProps) {
+  const inputLabel = ariaLabel ?? placeholder;
+
   return (
     <input
       type="search"
       className="activity-panel-search"
       value={value}
+      name={inputLabel.toLowerCase().replace(/\s+/g, "-")}
       onChange={(event: ChangeEvent<HTMLInputElement>) =>
         onChange(event.target.value)
       }
       placeholder={placeholder}
-      aria-label={ariaLabel ?? placeholder}
+      aria-label={inputLabel}
     />
   );
 }

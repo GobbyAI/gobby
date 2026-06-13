@@ -1,4 +1,5 @@
 import { useMemo, useState } from "react";
+import * as yaml from "js-yaml";
 
 import { useRules, type RuleDetail, type RuleSummary } from "../../../hooks/useRules";
 
@@ -25,6 +26,7 @@ export interface RuleDraft {
   when: string | null;
   match: Record<string, unknown> | null;
   effects: Array<Record<string, unknown>> | null;
+  extra: Record<string, unknown>;
 }
 
 export const DEFAULT_RULE_FILTERS: RulesFilters = {
@@ -120,11 +122,13 @@ export function detailToDraft(detail: RuleDetail): RuleDraft {
     when: detail.when,
     match: detail.match,
     effects: ruleEffects(detail),
+    extra: {},
   };
 }
 
 export function draftToDefinition(draft: RuleDraft): Record<string, unknown> {
   const definition: Record<string, unknown> = {
+    ...draft.extra,
     event: draft.event,
     enabled: draft.enabled,
     priority: draft.priority,
@@ -140,6 +144,145 @@ export function draftToDefinition(draft: RuleDraft): Record<string, unknown> {
   if (draft.agent_scope.length > 0) definition.agent_scope = draft.agent_scope;
 
   return definition;
+}
+
+const RULE_YAML_DUMP_OPTIONS: yaml.DumpOptions = {
+  lineWidth: 120,
+  noRefs: true,
+  sortKeys: false,
+};
+
+const RULE_DRAFT_KEYS = new Set([
+  "name",
+  "description",
+  "event",
+  "group",
+  "priority",
+  "enabled",
+  "tags",
+  "audience",
+  "agent_scope",
+  "when",
+  "match",
+  "effect",
+  "effects",
+]);
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function optionalString(
+  source: Record<string, unknown>,
+  key: string,
+  fallback: string,
+): string {
+  const value = source[key];
+  if (value === undefined || value === null) return fallback;
+  if (typeof value !== "string") throw new Error(`"${key}" must be a string`);
+  return value;
+}
+
+function optionalStringArray(
+  source: Record<string, unknown>,
+  key: string,
+  fallback: string[],
+): string[] {
+  const value = source[key];
+  if (value === undefined || value === null) return fallback;
+  if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+    throw new Error(`"${key}" must be a string array`);
+  }
+  return value;
+}
+
+function optionalNumber(
+  source: Record<string, unknown>,
+  key: string,
+  fallback: number,
+): number {
+  const value = source[key];
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number.parseInt(value, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  throw new Error(`"${key}" must be a number`);
+}
+
+function optionalBoolean(
+  source: Record<string, unknown>,
+  key: string,
+  fallback: boolean,
+): boolean {
+  const value = source[key];
+  if (value === undefined || value === null) return fallback;
+  if (typeof value === "boolean") return value;
+  throw new Error(`"${key}" must be true or false`);
+}
+
+function optionalRecord(
+  source: Record<string, unknown>,
+  key: string,
+  fallback: Record<string, unknown> | null,
+): Record<string, unknown> | null {
+  const value = source[key];
+  if (value === undefined || value === null) return fallback;
+  if (!isRecord(value)) throw new Error(`"${key}" must be an object`);
+  return value;
+}
+
+function optionalEffects(
+  source: Record<string, unknown>,
+  fallback: Array<Record<string, unknown>> | null,
+): Array<Record<string, unknown>> | null {
+  if (source.effects === undefined && source.effect === undefined) return fallback;
+  if (Array.isArray(source.effects)) {
+    if (!source.effects.every(isRecord)) throw new Error('"effects" must contain objects');
+    return source.effects;
+  }
+  if (isRecord(source.effect)) return [source.effect];
+  throw new Error('"effects" must be an array of objects');
+}
+
+function extraDefinitionFields(source: Record<string, unknown>): Record<string, unknown> {
+  const extra: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(source)) {
+    if (!RULE_DRAFT_KEYS.has(key)) extra[key] = value;
+  }
+  return extra;
+}
+
+export function draftToYaml(draft: RuleDraft): string {
+  return yaml.dump(
+    {
+      name: draft.name,
+      ...draftToDefinition(draft),
+    },
+    RULE_YAML_DUMP_OPTIONS,
+  );
+}
+
+export function yamlToDraft(content: string, fallback: RuleDraft): RuleDraft {
+  const parsed = yaml.load(content, { schema: yaml.JSON_SCHEMA });
+  if (!isRecord(parsed)) throw new Error("Invalid YAML: expected an object");
+
+  return {
+    name: optionalString(parsed, "name", fallback.name),
+    description: optionalString(parsed, "description", fallback.description),
+    event: optionalString(parsed, "event", fallback.event),
+    group: optionalString(parsed, "group", fallback.group),
+    priority: optionalNumber(parsed, "priority", fallback.priority),
+    tags: optionalStringArray(parsed, "tags", fallback.tags),
+    audience: optionalString(parsed, "audience", fallback.audience),
+    agent_scope: optionalStringArray(parsed, "agent_scope", fallback.agent_scope),
+    enabled: optionalBoolean(parsed, "enabled", fallback.enabled),
+    when: optionalString(parsed, "when", fallback.when ?? "") || null,
+    match: optionalRecord(parsed, "match", fallback.match),
+    effects: optionalEffects(parsed, fallback.effects),
+    extra: extraDefinitionFields(parsed),
+  };
 }
 
 export function formatRuleSummaryValue(value: unknown): string {

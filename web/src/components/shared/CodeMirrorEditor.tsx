@@ -25,6 +25,8 @@ interface CodeMirrorEditorProps {
   onChange?: (content: string) => void
   onSave?: () => void
   editorViewRef?: React.MutableRefObject<EditorView | null>
+  ariaLabel?: string
+  editorId?: string
 }
 
 function getLanguageExtension(lang: string) {
@@ -62,7 +64,16 @@ function getLanguageExtension(lang: string) {
   }
 }
 
-export function CodeMirrorEditor({ content, language, readOnly = false, onChange, onSave, editorViewRef }: CodeMirrorEditorProps) {
+export function CodeMirrorEditor({
+  content,
+  language,
+  readOnly = false,
+  onChange,
+  onSave,
+  editorViewRef,
+  ariaLabel,
+  editorId,
+}: CodeMirrorEditorProps) {
   const containerRef = useRef<HTMLDivElement>(null)
   const viewRef = useRef<EditorView | null>(null)
   const resolvedTheme = useResolvedTheme()
@@ -126,6 +137,14 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
           onChangeRef.current?.(update.state.doc.toString())
         }
       }),
+      ...(ariaLabel || editorId
+        ? [
+            EditorView.contentAttributes.of({
+              ...(ariaLabel ? { 'aria-label': ariaLabel } : {}),
+              ...(editorId ? { id: editorId } : {}),
+            }),
+          ]
+        : []),
       EditorView.theme({
         '&': {
           height: '100%',
@@ -184,7 +203,7 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
       viewRef.current = null
       if (editorViewRefRef.current) editorViewRefRef.current.current = null
     }
-  }, [language, readOnly, handleSave, resolvedTheme]) // Recreate on language/readOnly/theme change
+  }, [language, readOnly, handleSave, resolvedTheme, ariaLabel, editorId]) // Recreate on language/readOnly/theme change
 
   // Update content when it changes externally (e.g., file reload)
   useEffect(() => {
@@ -198,5 +217,10 @@ export function CodeMirrorEditor({ content, language, readOnly = false, onChange
     }
   }, [content])
 
-  return <div ref={containerRef} className="codemirror-container h-full overflow-hidden [&_.cm-editor]:h-full" />
+  return (
+    <div
+      ref={containerRef}
+      className="codemirror-container h-full w-full min-w-0 overflow-hidden [&_.cm-editor]:h-full [&_.cm-editor]:min-w-0"
+    />
+  )
 }

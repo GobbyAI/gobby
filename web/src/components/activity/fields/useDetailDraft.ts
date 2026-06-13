@@ -13,7 +13,7 @@ export interface UseDetailDraftResult<T extends object> {
   dirty: boolean;
   saving: boolean;
   serverChanged: boolean;
-  save: () => Promise<void>;
+  save: (overrideDraft?: T) => Promise<boolean>;
   discard: () => void;
   confirmIfDirty: (next: () => void) => void;
 }
@@ -71,24 +71,33 @@ export function useDetailDraft<T extends object>({
     setDraft(cloneSource(latestSourceRef.current));
   }, []);
 
-  const save = useCallback(async () => {
-    if (draft === null) return;
-    const latest = latestSourceRef.current ?? draft;
+  const save = useCallback(async (overrideDraft?: T) => {
+    const target = overrideDraft ?? draft;
+    if (target === null || target === undefined) return false;
+    const latest = latestSourceRef.current ?? target;
     const merged = { ...latest };
-    for (const key of editedKeysRef.current) {
-      merged[key] = draft[key];
+
+    if (overrideDraft) {
+      for (const key of Object.keys(overrideDraft) as Array<keyof T>) {
+        merged[key] = overrideDraft[key];
+      }
+    } else {
+      for (const key of editedKeysRef.current) {
+        merged[key] = target[key];
+      }
     }
 
     setSaving(true);
     try {
       const saved = await onSave(merged);
-      if (!saved) return;
+      if (!saved) return false;
       latestSourceRef.current = merged;
       editedKeysRef.current.clear();
       dirtyRef.current = false;
       setDraft(cloneSource(merged));
       setDirty(false);
       setServerChanged(false);
+      return true;
     } finally {
       setSaving(false);
     }
