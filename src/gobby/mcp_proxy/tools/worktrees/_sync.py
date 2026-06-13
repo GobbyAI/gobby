@@ -84,6 +84,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
     async def sync_worktree(
         worktree_id: str,
         strategy: str = "merge",
+        source_branch: str | None = None,
         project_path: str | None = None,
     ) -> dict[str, Any]:
         """Sync a worktree with the main branch.
@@ -91,6 +92,8 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
         Args:
             worktree_id: The worktree ID to sync.
             strategy: Sync strategy ('merge' or 'rebase').
+            source_branch: Explicit source branch/ref to sync from. Defaults to the
+                worktree's stored base_branch.
             project_path: Path to project directory (pass cwd from CLI).
 
         Returns:
@@ -125,6 +128,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             worktree.worktree_path,
             base_branch=worktree.base_branch,
             strategy=strategy_literal,
+            source_branch=source_branch,
         )
 
         if not result.success:
@@ -137,6 +141,7 @@ def create_sync_registry(ctx: RegistryContext) -> InternalToolRegistry:
             "message": result.message,
             "output": result.output,
             "strategy": strategy,
+            "source_branch": source_branch or worktree.base_branch,
         }
 
     @registry.tool(

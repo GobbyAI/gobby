@@ -822,7 +822,10 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
         }
 
     @router.post("/worktrees/{worktree_id}/sync")
-    async def sync_worktree(worktree_id: str) -> dict[str, Any]:
+    async def sync_worktree(
+        worktree_id: str,
+        source_branch: str | None = None,
+    ) -> dict[str, Any]:
         """Sync a worktree with its base branch."""
         if not server.services.worktree_storage:
             raise HTTPException(503, "Worktree storage not available")
@@ -833,12 +836,15 @@ def create_source_control_router(server: HTTPServer) -> APIRouter:
 
         if server.services.git_manager:
             result = server.services.git_manager.sync_from_main(
-                wt.worktree_path, base_branch=wt.base_branch
+                wt.worktree_path,
+                base_branch=wt.base_branch,
+                source_branch=source_branch,
             )
             return {
                 "success": result.success,
                 "message": result.message,
                 "id": worktree_id,
+                "source_branch": source_branch or wt.base_branch,
             }
 
         return server.services.worktree_storage.sync(worktree_id)

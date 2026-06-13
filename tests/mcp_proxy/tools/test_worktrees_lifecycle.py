@@ -811,8 +811,42 @@ async def test_sync_worktree(registry, mock_worktree_storage, mock_git_manager) 
     mock_git_manager.sync_from_main.return_value.message = "Synced"
     result = await registry.call("sync_worktree", {"worktree_id": "wt-1", "strategy": "merge"})
     assert result["success"] is True
+    assert result["source_branch"] == "main"
     mock_git_manager.sync_from_main.assert_called_with(
-        "/tmp/p1", base_branch="main", strategy="merge"
+        "/tmp/p1", base_branch="main", strategy="merge", source_branch=None
+    )
+
+
+async def test_sync_worktree_explicit_source_branch(
+    registry, mock_worktree_storage, mock_git_manager
+) -> None:
+    wt = Worktree(
+        id="wt-1",
+        project_id="p1",
+        branch_name="b1",
+        worktree_path="/tmp/p1",
+        base_branch="main",
+        status="active",
+        created_at="",
+        updated_at="",
+        task_id=None,
+        agent_session_id=None,
+        merged_at=None,
+    )
+    mock_worktree_storage.get.return_value = wt
+    mock_git_manager.sync_from_main.return_value.success = True
+    mock_git_manager.sync_from_main.return_value.message = "Synced"
+    result = await registry.call(
+        "sync_worktree",
+        {"worktree_id": "wt-1", "strategy": "merge", "source_branch": "origin/main"},
+    )
+    assert result["success"] is True
+    assert result["source_branch"] == "origin/main"
+    mock_git_manager.sync_from_main.assert_called_with(
+        "/tmp/p1",
+        base_branch="main",
+        strategy="merge",
+        source_branch="origin/main",
     )
 
 
