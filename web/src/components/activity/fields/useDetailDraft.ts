@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 
+import { useDirtyGuard } from "../dirtyGuard";
+
 interface UseDetailDraftOptions<T extends object> {
   source: T | null;
   onSave: (draft: T) => Promise<boolean>;
@@ -20,10 +22,13 @@ function cloneSource<T extends object>(source: T | null): T | null {
   return source === null ? null : { ...source };
 }
 
+const DISCARD_UNSAVED_CHANGES_MESSAGE = "Discard unsaved changes?";
+
 export function useDetailDraft<T extends object>({
   source,
   onSave,
 }: UseDetailDraftOptions<T>): UseDetailDraftResult<T> {
+  const { registerDirtyGuard } = useDirtyGuard();
   const latestSourceRef = useRef<T | null>(source);
   const dirtyRef = useRef(false);
   const editedKeysRef = useRef<Set<keyof T>>(new Set());
@@ -43,12 +48,14 @@ export function useDetailDraft<T extends object>({
       return;
     }
     editedKeysRef.current.clear();
+    dirtyRef.current = false;
     setServerChanged(false);
     setDraft(cloneSource(source));
   }, [source]);
 
   const setField = useCallback(<K extends keyof T>(key: K, value: T[K]) => {
     editedKeysRef.current.add(key);
+    dirtyRef.current = true;
     setDirty(true);
     setDraft((current) => {
       if (current === null) return null;
@@ -58,6 +65,7 @@ export function useDetailDraft<T extends object>({
 
   const discard = useCallback(() => {
     editedKeysRef.current.clear();
+    dirtyRef.current = false;
     setDirty(false);
     setServerChanged(false);
     setDraft(cloneSource(latestSourceRef.current));
@@ -77,6 +85,7 @@ export function useDetailDraft<T extends object>({
       if (!saved) return;
       latestSourceRef.current = merged;
       editedKeysRef.current.clear();
+      dirtyRef.current = false;
       setDraft(cloneSource(merged));
       setDirty(false);
       setServerChanged(false);
@@ -85,17 +94,38 @@ export function useDetailDraft<T extends object>({
     }
   }, [draft, onSave]);
 
+  const confirmLeave = useCallback(async () => {
+    if (!dirtyRef.current) return true;
+    if (!window.confirm(DISCARD_UNSAVED_CHANGES_MESSAGE)) return false;
+    discard();
+    return true;
+  }, [discard]);
+
+  const confirmLeaveRef = useRef(confirmLeave);
+  useEffect(() => {
+    confirmLeaveRef.current = confirmLeave;
+  }, [confirmLeave]);
+
+  useEffect(
+    () =>
+      registerDirtyGuard({
+        isDirty: () => dirtyRef.current,
+        confirmLeave: () => confirmLeaveRef.current(),
+      }),
+    [registerDirtyGuard],
+  );
+
   const confirmIfDirty = useCallback(
     (next: () => void) => {
-      if (!dirty) {
+      if (!dirtyRef.current) {
         next();
         return;
       }
-      if (!window.confirm("Discard unsaved changes?")) return;
+      if (!window.confirm(DISCARD_UNSAVED_CHANGES_MESSAGE)) return;
       discard();
       next();
     },
-    [dirty, discard],
+    [discard],
   );
 
   return {

@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
+import { useDirtyGuardController } from './dirtyGuard'
 import type { ActivityTab } from './ActivityPanelTabs'
 
 const STORAGE_KEY_LAYOUT = 'gobby-activity-panel-layout'
@@ -81,6 +82,7 @@ export function loadLayoutMode(): LayoutMode {
 }
 
 export function useActivityPanel(isMobile: boolean) {
+  const dirtyGuard = useDirtyGuardController()
   const [mode, setMode] = useState<LayoutMode>(loadLayoutMode)
   // Initial render always starts at chat (desktop and mobile). The desktop
   // `panel` preference only carries onto mobile via the crossing effect
@@ -141,69 +143,81 @@ export function useActivityPanel(isMobile: boolean) {
   const autoOpenedRef = useRef(false)
 
   const toggleFromChat = useCallback(() => {
-    autoOpenedRef.current = false
-    if (isMobile) {
-      setMobileView(reduceMobileToggle)
-      return
-    }
-    setMode(reduceToggleFromChat)
-  }, [isMobile])
+    dirtyGuard.guardedRun(() => {
+      autoOpenedRef.current = false
+      if (isMobile) {
+        setMobileView(reduceMobileToggle)
+        return
+      }
+      setMode(reduceToggleFromChat)
+    })
+  }, [dirtyGuard, isMobile])
 
   const toggleFromPanel = useCallback(() => {
-    autoOpenedRef.current = false
-    if (isMobile) {
-      setMobileView(reduceMobileToggle)
-      return
-    }
-    setMode(reduceToggleFromPanel)
-  }, [isMobile])
+    dirtyGuard.guardedRun(() => {
+      autoOpenedRef.current = false
+      if (isMobile) {
+        setMobileView(reduceMobileToggle)
+        return
+      }
+      setMode(reduceToggleFromPanel)
+    })
+  }, [dirtyGuard, isMobile])
 
   const showTab = useCallback(
     (tab: ActivityTab) => {
-      setActiveTab(tab)
-      if (isMobile) {
-        setMobileView((view) => {
-          if (view !== 'panel') {
-            autoOpenedRef.current = true
-            return 'panel'
-          }
-          return view
-        })
-        return
-      }
-      setMode((current) => {
-        if (current === 'chat') {
-          autoOpenedRef.current = true
-          return 'split'
+      dirtyGuard.guardedRun(() => {
+        setActiveTab(tab)
+        if (isMobile) {
+          setMobileView((view) => {
+            if (view !== 'panel') {
+              autoOpenedRef.current = true
+              return 'panel'
+            }
+            return view
+          })
+          return
         }
-        return current
+        setMode((current) => {
+          if (current === 'chat') {
+            autoOpenedRef.current = true
+            return 'split'
+          }
+          return current
+        })
       })
     },
-    [isMobile],
+    [dirtyGuard, isMobile],
   )
 
   const closeIfAutoOpened = useCallback(() => {
-    if (!autoOpenedRef.current) return
-    autoOpenedRef.current = false
-    if (isMobile) {
-      setMobileView('chat')
-      return
-    }
-    setMode((current) => (current === 'split' ? 'chat' : current))
-  }, [isMobile])
+    dirtyGuard.guardedRun(() => {
+      if (!autoOpenedRef.current) return
+      autoOpenedRef.current = false
+      if (isMobile) {
+        setMobileView('chat')
+        return
+      }
+      setMode((current) => (current === 'split' ? 'chat' : current))
+    })
+  }, [dirtyGuard, isMobile])
 
   // Used by mobile-only action handlers (plan approve, session swap) to return
   // to the chat after acting. No-op on desktop, where the chosen layout stays.
   const dismissOnMobile = useCallback(() => {
-    if (isMobile) {
-      setMobileView('chat')
-    }
-  }, [isMobile])
+    dirtyGuard.guardedRun(() => {
+      if (isMobile) {
+        setMobileView('chat')
+      }
+    })
+  }, [dirtyGuard, isMobile])
 
   const handleTabChange = useCallback((tab: ActivityTab) => {
-    autoOpenedRef.current = false
-    setActiveTab(tab)
-  }, [])
+    dirtyGuard.guardedRun(() => {
+      autoOpenedRef.current = false
+      setActiveTab(tab)
+    })
+  }, [dirtyGuard])
 
   const effectiveMode: LayoutMode = isMobile
     ? mobileView === 'panel'
@@ -223,5 +237,6 @@ export function useActivityPanel(isMobile: boolean) {
     toggleFromChat,
     toggleFromPanel,
     dismissOnMobile,
+    dirtyGuard,
   }
 }

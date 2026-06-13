@@ -7,6 +7,7 @@ import type {
   VoiceProps,
 } from "../../../types/chat";
 import type { GobbySession } from "../../../types/sessions";
+import type { DirtyGuardContextValue } from "../../activity/dirtyGuard";
 import type { LayoutMode } from "../../activity/useActivityPanel";
 
 export const DATA_URI = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUg==";
@@ -22,6 +23,11 @@ export const toggleFromChatSpy = vi.fn();
 export const toggleFromPanelSpy = vi.fn();
 export const dismissOnMobileSpy = vi.fn();
 export const commandPalettePropsSpy = vi.fn();
+
+const noopDirtyGuard: DirtyGuardContextValue = {
+  registerDirtyGuard: () => () => {},
+  guardedRun: (action) => action(),
+};
 
 export const messageListMockFactory = () => ({
   MessageList: React.forwardRef((_props: unknown, ref) => {
@@ -411,6 +417,7 @@ export const useActivityPanelMockFactory = () => ({
     showTab: showTabSpy,
     toggleFromChat: toggleFromChatSpy,
     toggleFromPanel: toggleFromPanelSpy,
+    dirtyGuard: noopDirtyGuard,
   }),
 });
 

@@ -57,6 +57,7 @@ export function ChatPage({
   const {
     activeTab: activityTab,
     closeIfAutoOpened,
+    dirtyGuard,
     dismissOnMobile,
     effectiveMode,
     panelWidth,
@@ -218,6 +219,7 @@ export function ChatPage({
         onExpireSession={conversations.onExpireSession}
         chatSessionId={routing.activityPanelChatSessionId}
         focusSessionId={routing.focusSessionId}
+        dirtyGuard={dirtyGuard}
         onFocusSessionHandled={routing.handleFocusSessionHandled}
         onSwapSession={routing.handleSwapSession}
         onResumeSession={routing.handleResumeSessionFromActivity}

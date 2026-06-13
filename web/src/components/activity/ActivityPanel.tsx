@@ -15,6 +15,11 @@ import { CronTab } from "./CronTab";
 import { TracesTab } from "./TracesTab";
 import { ActivityMcpTab, type ActivityMcpTabProps } from "./ActivityMcpTab";
 import { WikiTab } from "./WikiTab";
+import { DirtyGuardProvider } from "./DirtyGuardContext";
+import {
+  useDirtyGuardController,
+  type DirtyGuardContextValue,
+} from "./dirtyGuard";
 import type { Artifact } from "../../types/artifacts";
 import type { ApprovalOption } from "../../types/chat";
 import type { GobbySession } from "../../types/sessions";
@@ -92,6 +97,7 @@ interface ActivityPanelProps {
   onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   chatSessionId?: string | null;
   focusSessionId?: string | null;
+  dirtyGuard?: DirtyGuardContextValue;
   onFocusSessionHandled?: () => void;
   onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
@@ -207,7 +213,10 @@ export function ActivityPanel({
   onSwapSession,
   onResumeSession,
   isMobile = false,
+  dirtyGuard,
 }: ActivityPanelProps) {
+  const localDirtyGuard = useDirtyGuardController();
+  const dirtyGuardValue = dirtyGuard ?? localDirtyGuard;
   // viewportWidth feeds the resize-handle max-width calc only. The overlay
   // decision is mobile-only now (decoupled from desktop): the desktop
   // tri-state owns chat/split/panel, mobile owns chat/panel as an overlay.
@@ -266,15 +275,19 @@ export function ActivityPanel({
 
   // Mobile close / desktop "Show Chat" — both delegate to the same toggle.
   const handleToggleChat = () => {
-    setShowMobileTabMenu(false);
-    onToggleChat();
+    dirtyGuardValue.guardedRun(() => {
+      setShowMobileTabMenu(false);
+      onToggleChat();
+    });
   };
   // Desktop only: in 'split' the button hides the chat (-> panel); in 'panel'
   // it brings the chat back (-> split).
   const chatHidden = mode === "panel";
   const handleTabSelect = (tab: ActivityTab) => {
-    onTabChange(tab);
-    setShowMobileTabMenu(false);
+    dirtyGuardValue.guardedRun(() => {
+      onTabChange(tab);
+      setShowMobileTabMenu(false);
+    });
   };
 
   const tabContent = () => {
@@ -343,53 +356,55 @@ export function ActivityPanel({
 
   if (useOverlay) {
     return (
-      <div className="activity-panel-mobile-overlay">
-        <aside className="activity-panel" aria-labelledby="activity-panel-title">
-          <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
-          <ActivityActionsProvider>
-            <div className="activity-panel-tabs">
-              <ActivityDropdown
-                tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
-                activeTab={activeTab}
-                activeTabConfig={activeTabConfig}
-                isOpen={showMobileTabMenu}
-                onToggle={() => setShowMobileTabMenu((open) => !open)}
-                onSelect={handleTabSelect}
-                wrapperRef={mobileTabMenuRef}
-              />
-              <ActivityActionButtons />
-              <span className="activity-panel-close-slot">
-                <button
-                  type="button"
-                  className="btn btn-accent btn-sm activity-panel-action-btn"
-                  onClick={handleToggleChat}
-                  aria-label="Close panel"
-                  title="Close panel"
-                >
-                  <svg
-                    width="14"
-                    height="14"
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="2"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                    aria-hidden="true"
+      <DirtyGuardProvider value={dirtyGuardValue}>
+        <div className="activity-panel-mobile-overlay">
+          <aside className="activity-panel" aria-labelledby="activity-panel-title">
+            <Heading level={1} id="activity-panel-title" className="sr-only">{`Activity: ${activeTabConfig.label}`}</Heading>
+            <ActivityActionsProvider>
+              <div className="activity-panel-tabs">
+                <ActivityDropdown
+                  tabs={ACTIVITY_PANEL_DROPDOWN_TABS}
+                  activeTab={activeTab}
+                  activeTabConfig={activeTabConfig}
+                  isOpen={showMobileTabMenu}
+                  onToggle={() => setShowMobileTabMenu((open) => !open)}
+                  onSelect={handleTabSelect}
+                  wrapperRef={mobileTabMenuRef}
+                />
+                <ActivityActionButtons />
+                <span className="activity-panel-close-slot">
+                  <button
+                    type="button"
+                    className="btn btn-accent btn-sm activity-panel-action-btn"
+                    onClick={handleToggleChat}
+                    aria-label="Close panel"
+                    title="Close panel"
                   >
-                    <line x1="18" y1="6" x2="6" y2="18" />
-                    <line x1="6" y1="6" x2="18" y2="18" />
-                  </svg>
-                  <span className="activity-panel-action-btn__label">Close</span>
-                </button>
-              </span>
-            </div>
+                    <svg
+                      width="14"
+                      height="14"
+                      viewBox="0 0 24 24"
+                      fill="none"
+                      stroke="currentColor"
+                      strokeWidth="2"
+                      strokeLinecap="round"
+                      strokeLinejoin="round"
+                      aria-hidden="true"
+                    >
+                      <line x1="18" y1="6" x2="6" y2="18" />
+                      <line x1="6" y1="6" x2="18" y2="18" />
+                    </svg>
+                    <span className="activity-panel-action-btn__label">Close</span>
+                  </button>
+                </span>
+              </div>
 
-            {/* Tab content */}
-            <div className="activity-panel-content">{tabContent()}</div>
-          </ActivityActionsProvider>
-        </aside>
-      </div>
+              {/* Tab content */}
+              <div className="activity-panel-content">{tabContent()}</div>
+            </ActivityActionsProvider>
+          </aside>
+        </div>
+      </DirtyGuardProvider>
     );
   }
 
@@ -406,7 +421,7 @@ export function ActivityPanel({
       };
 
   return (
-    <>
+    <DirtyGuardProvider value={dirtyGuardValue}>
       {!isFullWidth && (
         <ResizeHandle
           onResize={onWidthChange}
@@ -453,6 +468,6 @@ export function ActivityPanel({
           <div className="activity-panel-content">{tabContent()}</div>
         </ActivityActionsProvider>
       </aside>
-    </>
+    </DirtyGuardProvider>
   );
 }
