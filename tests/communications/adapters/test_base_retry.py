@@ -8,6 +8,13 @@ import httpx
 import pytest
 
 from gobby.communications.adapters.base import _MAX_RETRY_AFTER_DELAY_SECONDS, BaseChannelAdapter
+from gobby.communications.adapters.discord import DiscordAdapter
+from gobby.communications.adapters.email import EmailAdapter
+from gobby.communications.adapters.gobby_chat import GobbyChatAdapter
+from gobby.communications.adapters.slack import SlackAdapter
+from gobby.communications.adapters.sms import SMSAdapter
+from gobby.communications.adapters.teams import TeamsAdapter
+from gobby.communications.adapters.telegram import TelegramAdapter
 from gobby.communications.models import ChannelCapabilities, CommsMessage
 
 pytestmark = pytest.mark.unit
@@ -72,6 +79,26 @@ def _make_response(status_code: int, headers: dict | None = None) -> MagicMock:
 @pytest.fixture
 def adapter() -> ConcreteAdapter:
     return ConcreteAdapter()
+
+
+@pytest.mark.parametrize(
+    "adapter_type",
+    [
+        DiscordAdapter,
+        EmailAdapter,
+        GobbyChatAdapter,
+        SlackAdapter,
+        SMSAdapter,
+        TeamsAdapter,
+        TelegramAdapter,
+    ],
+)
+def test_channel_adapters_initialize_base_rate_limit_state(
+    adapter_type: type[BaseChannelAdapter],
+) -> None:
+    adapter = adapter_type()
+
+    assert adapter._rate_limit_callback is None
 
 
 @pytest.mark.asyncio

@@ -32,6 +32,7 @@ class SlackAdapter(BaseChannelAdapter):
     """Adapter for Slack Web API and Events API."""
 
     def __init__(self) -> None:
+        super().__init__()
         self._client: httpx.AsyncClient | None = None
         self._bot_token: str | None = None
         self._signing_secret: str | None = None

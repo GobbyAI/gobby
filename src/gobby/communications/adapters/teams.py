@@ -25,6 +25,7 @@ class TeamsAdapter(BaseChannelAdapter):
     _JWKS_TIMEOUT_SECONDS = 5.0
 
     def __init__(self) -> None:
+        super().__init__()
         self._client: httpx.AsyncClient | None = None
         self._app_id: str = ""
         self._app_password: str = ""

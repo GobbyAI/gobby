@@ -35,6 +35,7 @@ class SMSAdapter(BaseChannelAdapter):
     _OPT_IN_KEYWORDS = frozenset({"START", "UNSTOP", "YES"})
 
     def __init__(self) -> None:
+        super().__init__()
         self._client: httpx.AsyncClient | None = None
         self._account_sid: str | None = None
         self._auth_token: str | None = None
