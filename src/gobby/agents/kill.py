@@ -1,7 +1,6 @@
 """Standalone agent kill logic.
 
-Extracted from RunningAgentRegistry — works entirely from DB records.
-No in-memory registry dependency.
+Works entirely from DB records. No in-memory registry dependency.
 """
 
 from __future__ import annotations

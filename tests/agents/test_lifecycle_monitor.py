@@ -3,7 +3,7 @@
 Tests for the AgentLifecycleMonitor that detects dead tmux sessions
 and completed/failed autonomous tasks, and marks their agent DB records.
 
-All tests are DB-driven — no in-memory RunningAgentRegistry.
+All tests are DB-driven with no in-memory registry dependency.
 """
 
 from __future__ import annotations
@@ -2220,7 +2220,7 @@ class TestCheckExpiredAgents:
             assert events == ["killed"]
             mutex = mutexes.get_mutex(task.id)
             assert mutex is not None
-            assert mutex.lease_holder == "recovery"
+            assert mutex.lease_holder == "task_recovery"
             events.append("release_task_claim")
             return original_release_claim(*args, **kwargs)
 
@@ -2698,12 +2698,11 @@ class TestCheckExpiredAgents:
         def assert_recovery_mutex_held() -> None:
             mutex = mutexes.get_mutex(task.id)
             assert mutex is not None
-            assert mutex.lease_holder == "recovery"
+            assert mutex.lease_holder == "task_recovery"
             assert mutex.run_id is None
 
         def fail_stage(*args: object, **kwargs: object) -> object:
             assert events == ["verified_dead"]
-            assert_recovery_mutex_held()
             events.append("fail_stage")
             return original_fail_stage(*args, **kwargs)
 

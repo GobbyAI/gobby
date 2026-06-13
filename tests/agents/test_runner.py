@@ -4,7 +4,6 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.agents.registry import RunningAgent
 from gobby.agents.runner import AgentRunner
 from gobby.agents.runner_models import AgentConfig, AgentRunContext
 
@@ -135,67 +134,6 @@ def runner(mock_db, mock_session_storage):
         session_storage=mock_session_storage,
         max_agent_depth=2,
     )
-
-
-class TestRunningAgent:
-    """Tests for RunningAgent dataclass (from gobby.agents.registry)."""
-
-    def test_create_running_agent(self) -> None:
-        """RunningAgent stores all fields correctly."""
-        agent = RunningAgent(
-            run_id="run-123",
-            session_id="sess-child",
-            parent_session_id="sess-parent",
-            provider="claude",
-            workflow_name="plan-execute",
-            worktree_id="wt-abc",
-            pid=12345,
-            terminal_type="ghostty",
-            master_fd=5,
-        )
-
-        assert agent.run_id == "run-123"
-        assert agent.session_id == "sess-child"
-        assert agent.parent_session_id == "sess-parent"
-        assert agent.provider == "claude"
-        assert agent.workflow_name == "plan-execute"
-        assert agent.worktree_id == "wt-abc"
-        assert agent.pid == 12345
-        assert agent.terminal_type == "ghostty"
-        assert agent.master_fd == 5
-
-    def test_running_agent_defaults(self) -> None:
-        """RunningAgent has correct default values."""
-        agent = RunningAgent(
-            run_id="run-1",
-            session_id="sess-c",
-            parent_session_id="sess-p",
-        )
-
-        assert agent.workflow_name is None
-        assert agent.worktree_id is None
-        assert agent.pid is None
-        assert agent.terminal_type is None
-        assert agent.master_fd is None
-        assert agent.provider == "claude"
-        assert agent.task is None
-
-    def test_to_dict(self) -> None:
-        """RunningAgent.to_dict() returns correct dict."""
-        agent = RunningAgent(
-            run_id="run-abc",
-            session_id="sess-c",
-            parent_session_id="sess-p",
-            provider="claude",
-        )
-
-        result = agent.to_dict()
-
-        assert result["run_id"] == "run-abc"
-        assert result["parent_session_id"] == "sess-p"
-        assert result["session_id"] == "sess-c"
-        assert result["provider"] == "claude"
-        assert "started_at" in result
 
 
 class TestAgentRunnerGetAndListRuns:
