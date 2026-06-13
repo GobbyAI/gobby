@@ -249,6 +249,10 @@ pub(crate) fn describe_frame_images(
                         width: None,
                         height: None,
                     }) {
+                        // A blank description means the vision adapter returned
+                        // empty content; drop it so it is not counted as a real
+                        // frame description.
+                        Ok(extraction) if extraction.description.trim().is_empty() => None,
                         Ok(extraction) => Some(extraction.description),
                         Err(error) => {
                             log::warn!(

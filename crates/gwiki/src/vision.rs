@@ -51,6 +51,19 @@ pub(crate) fn disabled_degradation() -> VisionDegradation {
     }
 }
 
+/// Vision content is "empty" when the model returned neither a description nor
+/// OCR text. The daemon can answer HTTP 200 with all-blank fields (e.g. a vision
+/// adapter that misfires), which must degrade rather than be recorded as a
+/// successful `extracted` page with an empty body.
+fn vision_extraction_is_empty(extraction: &VisionExtraction) -> bool {
+    extraction.description.trim().is_empty()
+        && extraction
+            .ocr_text
+            .as_ref()
+            .map(|text| text.trim().is_empty())
+            .unwrap_or(true)
+}
+
 pub trait VisionClient {
     fn extract(&self, request: &VisionRequest<'_>) -> Result<VisionExtraction, WikiError>;
 }
@@ -86,6 +99,13 @@ pub fn write_image_derived_markdown(
 ) -> Result<VisionMarkdownResult, WikiError> {
     let (extraction, degradation) = match endpoint {
         VisionEndpoint::Available(client) => match client.extract(&request) {
+            Ok(extraction) if vision_extraction_is_empty(&extraction) => (
+                None,
+                Some(VisionDegradation {
+                    reason: ModalityDegradationReason::VisionError,
+                    fallback: "Vision extraction returned empty content; keep raw image assets and surface filename/metadata only.".to_string(),
+                }),
+            ),
             Ok(extraction) => (Some(extraction), None),
             Err(error) => (
                 None,
@@ -391,6 +411,20 @@ mod tests {
         }
     }
 
+    struct EmptyVisionClient;
+
+    impl VisionClient for EmptyVisionClient {
+        fn extract(&self, _request: &VisionRequest<'_>) -> Result<VisionExtraction, WikiError> {
+            // HTTP 200 with all-blank content (the daemon claude vision bug):
+            // blank description, no OCR, only non-content metadata.
+            Ok(VisionExtraction {
+                description: "   ".to_string(),
+                ocr_text: None,
+                metadata: vec![("model".to_string(), "haiku".to_string())],
+            })
+        }
+    }
+
     fn record_for(temp: &Path) -> SourceRecord {
         SourceManifest::register(
             temp,
@@ -589,6 +623,39 @@ mod tests {
         assert!(markdown.contains("vision_degradation: vision_error"));
         assert!(markdown.contains("## Source References"));
         assert!(markdown.contains("raw/assets/image.png"));
+    }
+
+    #[test]
+    fn empty_vision_extraction_degrades() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = record_for(temp.path());
+        let asset_path = PathBuf::from("raw/assets/image.png");
+
+        let result = write_image_derived_markdown(
+            temp.path(),
+            &ScopeIdentity::project("project-123"),
+            &record,
+            VisionRequest {
+                file_name: "circuit.png",
+                mime_type: Some("image/png"),
+                asset_path: &asset_path,
+                bytes: b"image-bytes",
+                width: None,
+                height: None,
+            },
+            VisionEndpoint::Available(&EmptyVisionClient),
+        )
+        .expect("empty vision degrades");
+
+        let degradation = result.degradation.expect("degradation");
+        assert_eq!(degradation.reason, ModalityDegradationReason::VisionError);
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.path)).expect("derived markdown");
+        assert!(markdown.contains("vision_status: unavailable"));
+        assert!(markdown.contains("vision_degradation: vision_error"));
+        assert!(!markdown.contains("vision_status: extracted"));
+        assert!(!markdown.contains("## Vision Description"));
     }
 
     #[test]

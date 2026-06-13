@@ -59,6 +59,17 @@ impl TranscriptionDegradation {
     }
 }
 
+/// Transcription is "empty" when no speech segments were produced, or every
+/// segment is blank. A daemon STT call can answer HTTP 200 with zero segments
+/// (e.g. the engine is unavailable), which must degrade rather than be recorded
+/// as a successful `transcribed` page with an empty transcript.
+pub(crate) fn transcription_output_is_empty(output: &TranscriptionOutput) -> bool {
+    output
+        .segments
+        .iter()
+        .all(|segment| segment.text.trim().is_empty())
+}
+
 pub trait TranscriptionClient {
     fn transcribe(
         &self,
@@ -129,6 +140,19 @@ pub fn write_audio_transcript_markdown(
     input: TranscriptionMarkdownInput,
 ) -> Result<TranscriptionMarkdownResult, WikiError> {
     let (transcription, degradation) = match input {
+        TranscriptionMarkdownInput::Transcribed(output)
+            if transcription_output_is_empty(&output) =>
+        {
+            (
+                None,
+                Some(TranscriptionDegradation {
+                    reason: ModalityDegradationReason::TranscriptionError,
+                    fallback:
+                        "Transcription returned no speech segments; keep the raw audio asset only."
+                            .to_string(),
+                }),
+            )
+        }
         TranscriptionMarkdownInput::Transcribed(output) => (Some(output), None),
         TranscriptionMarkdownInput::Degraded(degradation) => (None, Some(degradation)),
     };
@@ -606,5 +630,53 @@ mod tests {
         assert!(markdown.contains("transcription_degradation: missing_endpoint"));
         assert!(markdown.contains("Keep raw audio assets"));
         assert!(markdown.contains("Original audio: `raw/assets/interview.wav`"));
+    }
+
+    #[test]
+    fn empty_transcript_degrades() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = record_for(temp.path());
+        let asset_path = PathBuf::from("raw/assets/interview.wav");
+        std::fs::create_dir_all(temp.path().join("raw/assets")).expect("asset dir");
+        std::fs::write(temp.path().join(&asset_path), b"audio-bytes").expect("asset");
+
+        // HTTP 200 with zero speech segments (the STT-unavailable daemon case).
+        let result = write_audio_transcript_markdown(
+            temp.path(),
+            &ScopeIdentity::project("project-123"),
+            &record,
+            TranscriptionRequest {
+                file_name: "interview.wav",
+                mime_type: Some("audio/wav"),
+                asset_path: &asset_path,
+                bytes: b"audio-bytes",
+            },
+            TranscriptionMarkdownInput::Transcribed(TranscriptionOutput {
+                segments: Vec::new(),
+                language: Some("en".to_string()),
+                model: Some("base".to_string()),
+                source_language: None,
+                task: None,
+                target_language: None,
+                translated: false,
+                translation_degraded: false,
+                partial: false,
+                completed_ranges: Vec::new(),
+                missing_ranges: Vec::new(),
+            }),
+        )
+        .expect("write empty transcript markdown");
+
+        let degradation = result.degradation.expect("degradation");
+        assert_eq!(
+            degradation.reason,
+            ModalityDegradationReason::TranscriptionError
+        );
+
+        let markdown =
+            std::fs::read_to_string(temp.path().join(&result.path)).expect("transcript markdown");
+        assert!(markdown.contains("transcription_status: unavailable"));
+        assert!(markdown.contains("transcription_degradation: transcription_error"));
+        assert!(!markdown.contains("transcription_status: transcribed"));
     }
 }

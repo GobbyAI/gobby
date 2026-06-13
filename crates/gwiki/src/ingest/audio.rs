@@ -304,6 +304,17 @@ fn transcription_result_to_markdown(
     prefix: &str,
 ) -> TranscriptionMarkdownInput {
     match result {
+        Ok(output) if crate::transcribe::transcription_output_is_empty(&output) => {
+            // The daemon can answer HTTP 200 with no speech segments (e.g. the
+            // STT engine is unavailable). Degrade rather than record a
+            // successful transcript with an empty body.
+            TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
+                reason,
+                fallback: format!(
+                    "{prefix}: transcription returned no speech segments; keep raw audio assets and require supplied transcripts."
+                ),
+            })
+        }
         Ok(output) => TranscriptionMarkdownInput::Transcribed(output),
         Err(error) => TranscriptionMarkdownInput::Degraded(TranscriptionDegradation {
             reason,
