@@ -68,7 +68,8 @@
    control row (var(--control-row-height) resolves to
    --status-bar-control-height here, which also carries coarse-pointer
    touch sizing). */
-.app-header-actions .app-theme-toggle {
+.app-header-actions .app-theme-toggle,
+.app-header-actions .app-settings-cog {
   flex-shrink: 0;
   min-height: var(--control-row-height);
 }

@@ -1,4 +1,4 @@
-import { MoonIcon, SunIcon } from "./icons";
+import { LightbulbIcon, MoonIcon } from "./icons";
 import { useResolvedTheme } from "../hooks/useResolvedTheme";
 import type { Theme } from "../hooks/useSettings";
 
@@ -14,7 +14,7 @@ interface ThemeToggleProps {
  * Dual-state theme toggle for the header. Glyph-only, sized to match the
  * collapsed New Chat / Toggle Panel buttons via the shared
  * `btn btn-accent btn-sm` system. The icon shows the *destination*:
- * dark mode shows a sun (click → light), light mode a moon (click → dark).
+ * dark mode shows a light bulb (click → light), light mode a moon (click → dark).
  * It reads the resolved theme so a `system` setting still flips to an
  * explicit choice, and persists through the settings store rather than
  * touching `data-theme` directly.
@@ -40,7 +40,7 @@ export function ThemeToggle({ theme, onThemeChange, disabled = false }: ThemeTog
         onThemeChange(next);
       }}
     >
-      {isDark ? <SunIcon /> : <MoonIcon />}
+      {isDark ? <LightbulbIcon /> : <MoonIcon />}
     </button>
   );
 }

@@ -12,7 +12,7 @@ afterEach(() => {
 })
 
 describe('ThemeToggle', () => {
-  it('shows the sun affordance in dark mode and switches to light on click', () => {
+  it('shows the light-bulb affordance in dark mode and switches to light on click', () => {
     setResolvedTheme('dark')
     const onThemeChange = vi.fn()
     render(<ThemeToggle theme="dark" onThemeChange={onThemeChange} />)

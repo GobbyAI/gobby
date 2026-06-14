@@ -4,6 +4,7 @@ import {
   useMemo,
   useEffect,
   useRef,
+  lazy,
   Suspense,
 } from "react";
 import { useAuth } from "./hooks/useAuth";
@@ -51,8 +52,13 @@ import { useAppCommandPalette } from "./components/app/useAppCommandPalette";
 import { useAppKeyboardShortcuts } from "./components/app/useAppKeyboardShortcuts";
 import { useReasoningPreferences } from "./components/app/useReasoningPreferences";
 import { useSessionReconciliation } from "./components/app/useSessionReconciliation";
-import { HamburgerIcon } from "./components/icons";
+import { HamburgerIcon, SettingsCogIcon } from "./components/icons";
 import { FilesProvider } from "./contexts/FilesContext";
+import { useSettingsOverlay } from "./components/settings/useSettingsOverlay";
+
+const SettingsOverlay = lazy(
+  () => import("./components/settings/SettingsOverlay"),
+);
 
 const HIDDEN_PROJECTS = new Set(["_orphaned", "_migrated"]);
 
@@ -193,6 +199,7 @@ export default function App() {
     null,
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
+  const settingsOverlay = useSettingsOverlay();
   const initialHash = window.location.hash.slice(1);
   const [activityTabRequest, setActivityTabRequest] =
     useState<ActivityTab | null>(null);
@@ -722,6 +729,17 @@ export default function App() {
             />
           )}
           <ThemeToggle theme={settings.theme} onThemeChange={updateTheme} />
+          <button
+            type="button"
+            className="btn btn-accent btn-sm app-settings-cog"
+            onClick={() => settingsOverlay.open()}
+            aria-label="Open settings"
+            aria-haspopup="dialog"
+            aria-expanded={settingsOverlay.isOpen}
+            title="Settings"
+          >
+            <SettingsCogIcon />
+          </button>
         </div>
       </header>
 
@@ -894,6 +912,17 @@ export default function App() {
         onDefaultChatModeChange={updateDefaultChatMode}
         onReset={resetSettings}
       />
+
+      {settingsOverlay.isOpen && (
+        <Suspense fallback={null}>
+          <SettingsOverlay
+            isOpen={settingsOverlay.isOpen}
+            activeSection={settingsOverlay.activeSection}
+            onClose={settingsOverlay.close}
+            onSelectSection={settingsOverlay.selectSection}
+          />
+        </Suspense>
+      )}
 
       <QuickCaptureTask
         isOpen={quickCaptureOpen}
