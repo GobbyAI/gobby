@@ -1,30 +1,31 @@
 import type { GobbySkill } from '../../hooks/useSkills'
 import { cn } from '../../lib/utils'
-import { SOURCE_BADGE_CLS, SOURCE_BADGE_BG } from './styles'
 import {
-  WORKFLOWS_EMPTY_CLS,
-  WORKFLOWS_GRID_CLS,
-  WORKFLOWS_CARD_CLS,
-  WORKFLOWS_CARD_DELETED_CLS,
-  WORKFLOWS_CARD_HEADER_CLS,
-  WORKFLOWS_CARD_NAME_CLS,
-  WORKFLOWS_CARD_TYPE_CLS,
-  WORKFLOWS_CARD_TYPE_VARIANT_CLS,
-  WORKFLOWS_CARD_DESC_CLS,
-  WORKFLOWS_CARD_BADGES_CLS,
-  WORKFLOWS_CARD_BADGE_CLS,
-  WORKFLOWS_CARD_FOOTER_CLS,
-  WORKFLOWS_CARD_ACTIONS_CLS,
-  WORKFLOWS_TOGGLE_CLS,
-  WORKFLOWS_TOGGLE_TRACK_CLS,
-  WORKFLOWS_TOGGLE_TRACK_ON_CLS,
-  WORKFLOWS_TOGGLE_KNOB_CLS,
-  WORKFLOWS_TOGGLE_KNOB_ON_CLS,
-  WORKFLOWS_ACTION_BTN_CLS,
-  WORKFLOWS_ACTION_BTN_RESTORE_CLS,
-  WORKFLOWS_ACTION_ICON_CLS,
-  WORKFLOWS_ACTION_ICON_DANGER_CLS,
-} from '../workflows/workflows-styles'
+  SOURCE_BADGE_BG,
+  SOURCE_BADGE_CLS,
+  SKILLS_EMPTY_CLS,
+  SKILLS_GRID_CLS,
+  SKILLS_CARD_CLS,
+  SKILLS_CARD_DELETED_CLS,
+  SKILLS_CARD_HEADER_CLS,
+  SKILLS_CARD_NAME_CLS,
+  SKILLS_CARD_TYPE_CLS,
+  SKILLS_CARD_TYPE_VARIANT_CLS,
+  SKILLS_CARD_DESC_CLS,
+  SKILLS_CARD_BADGES_CLS,
+  SKILLS_CARD_BADGE_CLS,
+  SKILLS_CARD_FOOTER_CLS,
+  SKILLS_CARD_ACTIONS_CLS,
+  SKILLS_TOGGLE_CLS,
+  SKILLS_TOGGLE_TRACK_CLS,
+  SKILLS_TOGGLE_TRACK_ON_CLS,
+  SKILLS_TOGGLE_KNOB_CLS,
+  SKILLS_TOGGLE_KNOB_ON_CLS,
+  SKILLS_ACTION_BTN_CLS,
+  SKILLS_ACTION_BTN_RESTORE_CLS,
+  SKILLS_ACTION_ICON_CLS,
+  SKILLS_ACTION_ICON_DANGER_CLS,
+} from './styles'
 
 interface SkillsGridProps {
   skills: GobbySkill[]
@@ -65,12 +66,12 @@ export function SkillsGrid({
 }: SkillsGridProps) {
   if (skills.length === 0) {
     return (
-      <div className={WORKFLOWS_EMPTY_CLS}>No skills match the current filters.</div>
+      <div className={SKILLS_EMPTY_CLS}>No skills match the current filters.</div>
     )
   }
 
   return (
-    <div className={WORKFLOWS_GRID_CLS}>
+    <div className={SKILLS_GRID_CLS}>
       {skills.map(skill => (
         <SkillCard
           key={skill.id}
@@ -107,35 +108,35 @@ function SkillCard({ skill, projectId, onSelect, onToggle, onEdit, onDelete, onE
 
   return (
     <div
-      className={cn(WORKFLOWS_CARD_CLS, isDeleted && WORKFLOWS_CARD_DELETED_CLS)}
+      className={cn(SKILLS_CARD_CLS, isDeleted && SKILLS_CARD_DELETED_CLS)}
       onClick={onSelect}
     >
-      <div className={WORKFLOWS_CARD_HEADER_CLS}>
-        <span className={WORKFLOWS_CARD_NAME_CLS}>{skill.name}</span>
-        <span className={`${WORKFLOWS_CARD_TYPE_CLS} ${WORKFLOWS_CARD_TYPE_VARIANT_CLS.skill}`}>skill</span>
+      <div className={SKILLS_CARD_HEADER_CLS}>
+        <span className={SKILLS_CARD_NAME_CLS}>{skill.name}</span>
+        <span className={`${SKILLS_CARD_TYPE_CLS} ${SKILLS_CARD_TYPE_VARIANT_CLS.skill}`}>skill</span>
       </div>
 
       {skill.description && (
-        <div className={WORKFLOWS_CARD_DESC_CLS}>{skill.description}</div>
+        <div className={SKILLS_CARD_DESC_CLS}>{skill.description}</div>
       )}
 
-      <div className={WORKFLOWS_CARD_BADGES_CLS}>
-        {skill.always_apply && <span className={WORKFLOWS_CARD_BADGE_CLS}>always</span>}
+      <div className={SKILLS_CARD_BADGES_CLS}>
+        {skill.always_apply && <span className={SKILLS_CARD_BADGE_CLS}>always</span>}
         <SourceBadge source={skill.source} />
-        {category && <span className={WORKFLOWS_CARD_BADGE_CLS}>{category}</span>}
-        {skill.version && <span className={WORKFLOWS_CARD_BADGE_CLS}>v{skill.version}</span>}
+        {category && <span className={SKILLS_CARD_BADGE_CLS}>{category}</span>}
+        {skill.version && <span className={SKILLS_CARD_BADGE_CLS}>v{skill.version}</span>}
         {skill.injection_format && skill.injection_format !== 'summary' && (
-          <span className={WORKFLOWS_CARD_BADGE_CLS}>{skill.injection_format}</span>
+          <span className={SKILLS_CARD_BADGE_CLS}>{skill.injection_format}</span>
         )}
       </div>
 
-      <div className={WORKFLOWS_CARD_FOOTER_CLS}>
+      <div className={SKILLS_CARD_FOOTER_CLS}>
         {isDeleted ? (
           <>
             <div />
-            <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
-              <button type="button" className={`${WORKFLOWS_ACTION_BTN_CLS} ${WORKFLOWS_ACTION_BTN_RESTORE_CLS}`} onClick={e => { e.stopPropagation(); onRestore() }} title="Restore deleted skill">Restore</button>
-              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onExport() }} title="Export" aria-label="Export skill">
+            <div className={SKILLS_CARD_ACTIONS_CLS}>
+              <button type="button" className={`${SKILLS_ACTION_BTN_CLS} ${SKILLS_ACTION_BTN_RESTORE_CLS}`} onClick={e => { e.stopPropagation(); onRestore() }} title="Restore deleted skill">Restore</button>
+              <button type="button" className={SKILLS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onExport() }} title="Export" aria-label="Export skill">
                 <DownloadIcon />
               </button>
             </div>
@@ -143,29 +144,29 @@ function SkillCard({ skill, projectId, onSelect, onToggle, onEdit, onDelete, onE
         ) : (
           <>
             <div
-              className={WORKFLOWS_TOGGLE_CLS}
+              className={SKILLS_TOGGLE_CLS}
               onClick={e => { e.stopPropagation(); onToggle() }}
             >
-              <div className={`${WORKFLOWS_TOGGLE_TRACK_CLS} ${skill.enabled ? WORKFLOWS_TOGGLE_TRACK_ON_CLS : ''}`}>
-                <div className={`${WORKFLOWS_TOGGLE_KNOB_CLS} ${skill.enabled ? WORKFLOWS_TOGGLE_KNOB_ON_CLS : ''}`} />
+              <div className={`${SKILLS_TOGGLE_TRACK_CLS} ${skill.enabled ? SKILLS_TOGGLE_TRACK_ON_CLS : ''}`}>
+                <div className={`${SKILLS_TOGGLE_KNOB_CLS} ${skill.enabled ? SKILLS_TOGGLE_KNOB_ON_CLS : ''}`} />
               </div>
               <span>{skill.enabled ? 'On' : 'Off'}</span>
             </div>
 
-            <div className={WORKFLOWS_CARD_ACTIONS_CLS}>
+            <div className={SKILLS_CARD_ACTIONS_CLS}>
               {skill.source === 'installed' && projectId && (
-                <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onMoveToProject() }} title="Move to current project">To Project</button>
+                <button type="button" className={SKILLS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onMoveToProject() }} title="Move to current project">To Project</button>
               )}
               {skill.source === 'project' && (
-                <button type="button" className={WORKFLOWS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onMoveToGlobal() }} title="Move to global scope">To Global</button>
+                <button type="button" className={SKILLS_ACTION_BTN_CLS} onClick={e => { e.stopPropagation(); onMoveToGlobal() }} title="Move to global scope">To Global</button>
               )}
-              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onEdit() }} title="Edit skill" aria-label="Edit skill">
+              <button type="button" className={SKILLS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onEdit() }} title="Edit skill" aria-label="Edit skill">
                 <EditIcon />
               </button>
-              <button type="button" className={WORKFLOWS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onExport() }} title="Export" aria-label="Export skill">
+              <button type="button" className={SKILLS_ACTION_ICON_CLS} onClick={e => { e.stopPropagation(); onExport() }} title="Export" aria-label="Export skill">
                 <DownloadIcon />
               </button>
-              <button type="button" className={`${WORKFLOWS_ACTION_ICON_CLS} ${WORKFLOWS_ACTION_ICON_DANGER_CLS}`} onClick={e => { e.stopPropagation(); onDelete() }} title="Delete skill" aria-label="Delete skill">
+              <button type="button" className={`${SKILLS_ACTION_ICON_CLS} ${SKILLS_ACTION_ICON_DANGER_CLS}`} onClick={e => { e.stopPropagation(); onDelete() }} title="Delete skill" aria-label="Delete skill">
                 <DeleteIcon />
               </button>
             </div>

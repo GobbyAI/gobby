@@ -11,27 +11,27 @@ import { SkillHubBrowser } from './SkillHubBrowser'
 import { SkillImportModal } from './SkillImportModal'
 import { cn } from '../../lib/utils'
 import {
-  WORKFLOWS_PAGE_CLS,
-  WORKFLOWS_TOOLBAR_CLS,
-  WORKFLOWS_TOOLBAR_LEFT_CLS,
-  WORKFLOWS_TOOLBAR_TITLE_CLS,
-  WORKFLOWS_TOOLBAR_RIGHT_CLS,
-  WORKFLOWS_TOOLBAR_BTN_CLS,
-  WORKFLOWS_NEW_BTN_CLS,
-  WORKFLOWS_FILTER_BAR_CLS,
-  WORKFLOWS_FILTER_WRAPPER_CLS,
-  WORKFLOWS_FILTER_BTN_CLS,
-  WORKFLOWS_FILTER_BADGE_CLS,
-  WORKFLOWS_FILTER_POPOVER_CLS,
-  WORKFLOWS_FILTER_POPOVER_SECTION_CLS,
-  WORKFLOWS_FILTER_POPOVER_LABEL_CLS,
-  WORKFLOWS_FILTER_POPOVER_CHIPS_CLS,
-  WORKFLOWS_FILTER_CHIP_CLS,
-  WORKFLOWS_FILTER_CHIP_ACTIVE_CLS,
-  WORKFLOWS_SEARCH_CLS,
-  WORKFLOWS_CONTENT_CLS,
-  WORKFLOWS_LOADING_CLS,
-} from '../workflows/workflows-styles'
+  SKILLS_PAGE_CLS,
+  SKILLS_TOOLBAR_CLS,
+  SKILLS_TOOLBAR_LEFT_CLS,
+  SKILLS_TOOLBAR_TITLE_CLS,
+  SKILLS_TOOLBAR_RIGHT_CLS,
+  SKILLS_TOOLBAR_BTN_CLS,
+  SKILLS_NEW_BTN_CLS,
+  SKILLS_FILTER_BAR_CLS,
+  SKILLS_FILTER_WRAPPER_CLS,
+  SKILLS_FILTER_BTN_CLS,
+  SKILLS_FILTER_BADGE_CLS,
+  SKILLS_FILTER_POPOVER_CLS,
+  SKILLS_FILTER_POPOVER_SECTION_CLS,
+  SKILLS_FILTER_POPOVER_LABEL_CLS,
+  SKILLS_FILTER_POPOVER_CHIPS_CLS,
+  SKILLS_FILTER_CHIP_CLS,
+  SKILLS_FILTER_CHIP_ACTIVE_CLS,
+  SKILLS_SEARCH_CLS,
+  SKILLS_CONTENT_CLS,
+  SKILLS_LOADING_CLS,
+} from './styles'
 import { Heading } from '../shared/Heading'
 
 const ERROR_TOAST_CLS =
@@ -260,7 +260,7 @@ export function SkillsPage() {
   const activeFilterCount = sourceFilter !== 'installed' ? 1 : 0
 
   return (
-    <main className={WORKFLOWS_PAGE_CLS}>
+    <main className={SKILLS_PAGE_CLS}>
       {ConfirmDialogElement}
       {errorMessage && (
         <button
@@ -273,11 +273,11 @@ export function SkillsPage() {
         </button>
       )}
 
-      <div className={WORKFLOWS_TOOLBAR_CLS}>
-        <div className={WORKFLOWS_TOOLBAR_LEFT_CLS}>
-          <Heading level={1} className={WORKFLOWS_TOOLBAR_TITLE_CLS}>Skills</Heading>
+      <div className={SKILLS_TOOLBAR_CLS}>
+        <div className={SKILLS_TOOLBAR_LEFT_CLS}>
+          <Heading level={1} className={SKILLS_TOOLBAR_TITLE_CLS}>Skills</Heading>
         </div>
-        <div className={WORKFLOWS_TOOLBAR_RIGHT_CLS}>
+        <div className={SKILLS_TOOLBAR_RIGHT_CLS}>
           <div className={cn(VIEW_TOGGLE_CLS, activeTab === 'installed' && 'mr-2')}>
             <button
               className={cn(VIEW_BTN_CLS, activeTab === 'installed' && VIEW_BTN_ACTIVE_CLS)}
@@ -298,22 +298,22 @@ export function SkillsPage() {
           </div>
           {activeTab === 'installed' && (
             <>
-              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={() => setShowImport(true)} title="Import" aria-label="Import skill">
+              <button className={SKILLS_TOOLBAR_BTN_CLS} onClick={() => setShowImport(true)} title="Import" aria-label="Import skill">
                 <ImportIcon />
               </button>
-              <button className={WORKFLOWS_TOOLBAR_BTN_CLS} onClick={handleRestore} title="Restore Defaults" aria-label="Restore default skills">
+              <button className={SKILLS_TOOLBAR_BTN_CLS} onClick={handleRestore} title="Restore Defaults" aria-label="Restore default skills">
                 <RestoreIcon />
               </button>
-              <button className={WORKFLOWS_NEW_BTN_CLS} onClick={handleCreate}>+ New</button>
+              <button className={SKILLS_NEW_BTN_CLS} onClick={handleCreate}>+ New</button>
             </>
           )}
         </div>
       </div>
 
-      <div className={WORKFLOWS_FILTER_BAR_CLS}>
+      <div className={SKILLS_FILTER_BAR_CLS}>
         {activeTab === 'installed' && (
           <input
-            className={WORKFLOWS_SEARCH_CLS}
+            className={SKILLS_SEARCH_CLS}
             type="text"
             value={searchText}
             onChange={handleSearch}
@@ -321,29 +321,29 @@ export function SkillsPage() {
           />
         )}
         {activeTab === 'installed' && (
-          <div className={WORKFLOWS_FILTER_WRAPPER_CLS} ref={filterRef}>
+          <div className={SKILLS_FILTER_WRAPPER_CLS} ref={filterRef}>
             <button
               type="button"
-              className={WORKFLOWS_FILTER_BTN_CLS}
+              className={SKILLS_FILTER_BTN_CLS}
               onClick={() => setShowFilterPopover(v => !v)}
             >
               Filter
               {activeFilterCount > 0 && (
-                <span className={WORKFLOWS_FILTER_BADGE_CLS}>{activeFilterCount}</span>
+                <span className={SKILLS_FILTER_BADGE_CLS}>{activeFilterCount}</span>
               )}
             </button>
             {showFilterPopover && (
-              <div className={WORKFLOWS_FILTER_POPOVER_CLS}>
-                <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
-                  <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Source</div>
-                  <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
+              <div className={SKILLS_FILTER_POPOVER_CLS}>
+                <div className={SKILLS_FILTER_POPOVER_SECTION_CLS}>
+                  <div className={SKILLS_FILTER_POPOVER_LABEL_CLS}>Source</div>
+                  <div className={SKILLS_FILTER_POPOVER_CHIPS_CLS}>
                     {SOURCE_OPTIONS.map(opt => (
                       <button
                         key={opt.value}
                         type="button"
                         className={cn(
-                          WORKFLOWS_FILTER_CHIP_CLS,
-                          sourceFilter === opt.value && WORKFLOWS_FILTER_CHIP_ACTIVE_CLS,
+                          SKILLS_FILTER_CHIP_CLS,
+                          sourceFilter === opt.value && SKILLS_FILTER_CHIP_ACTIVE_CLS,
                         )}
                         onClick={() => handleSourceFilter(opt.value)}
                       >
@@ -369,9 +369,9 @@ export function SkillsPage() {
             onClear={handleClearFilters}
           />
 
-          <div className={WORKFLOWS_CONTENT_CLS}>
+          <div className={SKILLS_CONTENT_CLS}>
             {isLoading ? (
-              <div className={WORKFLOWS_LOADING_CLS}>Loading skills...</div>
+              <div className={SKILLS_LOADING_CLS}>Loading skills...</div>
             ) : (
               <SkillsGrid
                 skills={filteredSkills}
@@ -391,7 +391,7 @@ export function SkillsPage() {
       )}
 
       {activeTab === 'hub' && (
-        <div className={WORKFLOWS_CONTENT_CLS}>
+        <div className={SKILLS_CONTENT_CLS}>
           <SkillHubBrowser
             hubs={hubs}
             hubResults={hubResults}

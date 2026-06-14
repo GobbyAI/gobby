@@ -48,7 +48,6 @@ import {
   IntegrationsPage,
   MemoryPage,
   SkillsPage,
-  WorkflowsPage,
 } from "./components/app/AppPages";
 import { APP_VALID_TABS, createAppNavItems } from "./components/app/appNavigation";
 import { useAppCommandPalette } from "./components/app/useAppCommandPalette";
@@ -878,8 +877,6 @@ export default function App() {
               <MemoryPage projectId={effectiveProjectId} />
             ) : activeTab === "skills" ? (
               <SkillsPage />
-            ) : activeTab === "workflows" ? (
-              <WorkflowsPage projectId={effectiveProjectId} />
             ) : activeTab === "integrations" ? (
               <IntegrationsPage />
             ) : activeTab === "configuration" ? (

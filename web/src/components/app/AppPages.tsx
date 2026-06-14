@@ -21,11 +21,6 @@ export const ConfigurationPage = lazy(() =>
     default: m.ConfigurationPage,
   })),
 );
-export const WorkflowsPage = lazy(() =>
-  import("../workflows/WorkflowsPage").then((m) => ({
-    default: m.WorkflowsPage,
-  })),
-);
 export const DashboardPage = lazy(() =>
   import("../dashboard/DashboardPage").then((m) => ({
     default: m.DashboardPage,
