@@ -33,6 +33,44 @@ export interface SkillFilters {
   category: string;
 }
 
+export interface SkillHub {
+  name: string;
+  type: string;
+  base_url: string | null;
+  repo: string | null;
+  auth_required?: boolean | null;
+  auth_configured?: boolean | null;
+  auth_key_name?: string | null;
+}
+
+export interface SkillHubResult {
+  slug: string;
+  display_name: string;
+  description: string;
+  hub_name: string;
+  version: string | null;
+  score: number | null;
+  license?: string | null;
+  content?: string | null;
+}
+
+export interface SkillScanFinding {
+  severity: string;
+  title: string;
+  description: string;
+  category?: string;
+  remediation: string;
+  location: string;
+}
+
+export interface SkillScanResult {
+  is_safe: boolean;
+  max_severity: string;
+  scan_duration_seconds: number;
+  findings: SkillScanFinding[];
+  findings_count: number;
+}
+
 export const SKILL_SEGMENT_OPTIONS: Array<{ value: SkillSegment; label: string }> = [
   { value: "installed", label: "Installed" },
   { value: "hub", label: "Hub" },

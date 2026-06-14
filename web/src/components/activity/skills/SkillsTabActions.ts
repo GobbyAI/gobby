@@ -1,4 +1,11 @@
-import { getBaseUrl, type ActivitySkill } from "./SkillsTabData";
+import {
+  getBaseUrl,
+  type ActivitySkill,
+  type SkillHub,
+  type SkillHubResult,
+  type SkillScanFinding,
+  type SkillScanResult,
+} from "./SkillsTabData";
 
 export type SkillUpdatePayload = Partial<
   Pick<
@@ -22,6 +29,79 @@ async function parseSkillResponse(response: Response): Promise<ActivitySkill | n
   if (data?.skill) return data.skill as ActivitySkill;
   if (data?.id) return data as ActivitySkill;
   return null;
+}
+
+async function responseError(response: Response, fallback: string): Promise<Error> {
+  const body = await response.json().catch(() => null);
+  return new Error(body?.detail || body?.error || fallback);
+}
+
+export async function loadSkillHubs(): Promise<SkillHub[]> {
+  const response = await fetch(`${getBaseUrl()}/api/skills/hubs`);
+  if (!response.ok) throw await responseError(response, "Failed to load skill hubs");
+  const data = await response.json();
+  return Array.isArray(data?.hubs) ? (data.hubs as SkillHub[]) : [];
+}
+
+export async function searchSkillHubs(
+  query: string,
+  hubName?: string,
+): Promise<{ results: SkillHubResult[]; hubErrors: Record<string, string> }> {
+  const params = new URLSearchParams({ q: query });
+  if (hubName) params.set("hub_name", hubName);
+
+  const response = await fetch(`${getBaseUrl()}/api/skills/hubs/search?${params}`);
+  if (!response.ok) throw await responseError(response, "Failed to search skill hubs");
+
+  const data = await response.json();
+  return {
+    results: Array.isArray(data?.results) ? (data.results as SkillHubResult[]) : [],
+    hubErrors:
+      data?.hub_errors && typeof data.hub_errors === "object"
+        ? (data.hub_errors as Record<string, string>)
+        : {},
+  };
+}
+
+export async function scanHubSkill(content: string, name: string): Promise<SkillScanResult> {
+  const response = await fetch(`${getBaseUrl()}/api/skills/scan`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ content, name }),
+  });
+  if (!response.ok) throw await responseError(response, "Failed to scan hub skill");
+
+  const data = await response.json();
+  const findings = Array.isArray(data?.findings) ? (data.findings as SkillScanFinding[]) : [];
+  const isSafe = Boolean(data?.is_safe ?? data?.safe ?? findings.length === 0);
+
+  return {
+    is_safe: isSafe,
+    max_severity: String(data?.max_severity ?? (isSafe ? "info" : "unknown")),
+    scan_duration_seconds: Number(data?.scan_duration_seconds ?? 0),
+    findings,
+    findings_count: Number(data?.findings_count ?? findings.length),
+  };
+}
+
+export async function installHubSkill(params: {
+  hubName: string;
+  slug: string;
+  version?: string | null;
+  projectId?: string | null;
+}): Promise<ActivitySkill | null> {
+  const response = await fetch(`${getBaseUrl()}/api/skills/hubs/install`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({
+      hub_name: params.hubName,
+      slug: params.slug,
+      version: params.version,
+      project_id: params.projectId ?? null,
+    }),
+  });
+  if (!response.ok) throw await responseError(response, "Failed to install hub skill");
+  return parseSkillResponse(response);
 }
 
 export async function updateSkill(

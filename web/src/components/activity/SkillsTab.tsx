@@ -29,6 +29,7 @@ import {
 } from "./skills/SkillsTabData";
 import { SkillsInstalledDetail } from "./skills/SkillsInstalledDetail";
 import { SkillsInstalledList } from "./skills/SkillsInstalledList";
+import { SkillsHubView } from "./skills/SkillsHubView";
 
 interface SkillsTabProps {
   projectId?: string | null;
@@ -123,15 +124,17 @@ export const SkillsTab = memo(function SkillsTab({ projectId }: SkillsTabProps) 
       if (selectedId !== null) setSelectedId(null);
       return;
     }
-if (!selectedId || !filteredSkills.some((skill) => skill.id === selectedId)) {
-const nextSelection = filteredSkills.find((skill) => !skill.deleted_at) ?? filteredSkills[0];
-setSelectedId(nextSelection.id);
+    if (!selectedId || !filteredSkills.some((skill) => skill.id === selectedId)) {
+      const nextSelection = filteredSkills.find((skill) => !skill.deleted_at) ?? filteredSkills[0];
+      setSelectedId(nextSelection.id);
     }
   }, [filteredSkills, segment, selectedId]);
 
   const replaceSkill = useCallback((updated: ActivitySkill) => {
     setSkills((current) =>
-      current.map((skill) => (skill.id === updated.id ? updated : skill)),
+      current.some((skill) => skill.id === updated.id)
+        ? current.map((skill) => (skill.id === updated.id ? updated : skill))
+        : [updated, ...current],
     );
     setSelectedId(updated.id);
   }, []);
@@ -228,9 +231,22 @@ setSelectedId(nextSelection.id);
     [refreshSkills, withSkillBusy],
   );
 
-return (
-<div className="skills-tab flex h-full flex-col">
-<div className="activity-panel-toolbar skills-tab__toolbar">
+  const handleHubInstalled = useCallback(
+    (skill: ActivitySkill) => {
+      replaceSkill({
+        ...skill,
+        source: skill.source ?? "installed",
+        deleted_at: null,
+      });
+      setFilters((current) => ({ ...current, source: "all", category: "all", search: "" }));
+      setSegment("installed");
+    },
+    [replaceSkill],
+  );
+
+  return (
+    <div className="skills-tab flex h-full flex-col">
+      <div className="activity-panel-toolbar skills-tab__toolbar">
         {segment === "installed" && (
           <ActivityPanelSearch
             value={filters.search}
@@ -249,13 +265,13 @@ return (
         />
         {segment === "installed" && (
           <>
-<select
-className="min-h-8 rounded-md border border-border bg-[var(--bg-secondary)] px-2 text-xs text-foreground pointer-coarse:min-h-11"
-aria-label="Skill source"
-name="skill-source"
-value={filters.source}
-onChange={(event) =>
-setFilters((current) => ({
+            <select
+              className="min-h-8 rounded-md border border-border bg-[var(--bg-secondary)] px-2 text-xs text-foreground pointer-coarse:min-h-11"
+              aria-label="Skill source"
+              name="skill-source"
+              value={filters.source}
+              onChange={(event) =>
+                setFilters((current) => ({
                   ...current,
                   source: event.target.value as SkillFilters["source"],
                 }))
@@ -267,13 +283,13 @@ setFilters((current) => ({
                 </option>
               ))}
             </select>
-<select
-className="min-h-8 rounded-md border border-border bg-[var(--bg-secondary)] px-2 text-xs text-foreground pointer-coarse:min-h-11"
-aria-label="Skill category"
-name="skill-category"
-value={filters.category}
-onChange={(event) =>
-setFilters((current) => ({ ...current, category: event.target.value }))
+            <select
+              className="min-h-8 rounded-md border border-border bg-[var(--bg-secondary)] px-2 text-xs text-foreground pointer-coarse:min-h-11"
+              aria-label="Skill category"
+              name="skill-category"
+              value={filters.category}
+              onChange={(event) =>
+                setFilters((current) => ({ ...current, category: event.target.value }))
               }
             >
               <option value="all">All categories</option>
@@ -299,10 +315,10 @@ setFilters((current) => ({ ...current, category: event.target.value }))
       )}
 
       {segment === "hub" ? (
-        <ActivityPanelEmpty
-          icon={<TasksEmptyIcon />}
-          heading="Skill Hub"
-          body="Hub search and install controls move into this segment next."
+        <SkillsHubView
+          projectId={projectId}
+          onInstalled={handleHubInstalled}
+          onError={setError}
         />
       ) : (
         <div className="flex min-h-0 flex-1 flex-col">
