@@ -129,6 +129,31 @@ describe("WikiTab", () => {
     expect(screen.queryByText("Relative hooks")).not.toBeInTheDocument();
   });
 
+  it("uses the canonical source list, detail pane, and QuickMenu actions", async () => {
+    const user = userEvent.setup();
+    render(<WikiTab projectId="demo" />);
+
+    expect(await screen.findByRole("searchbox", { name: "Search wiki sources" })).toBeInTheDocument();
+    expect(screen.getByRole("list", { name: "Wiki sources" })).toBeInTheDocument();
+    expect(screen.getByRole("separator", { name: "Resize panel" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Hooks source" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open actions for Hooks source" }));
+
+    expect(screen.getByRole("menu", { name: "Actions for Hooks source" })).toBeInTheDocument();
+    await user.click(screen.getByRole("menuitem", { name: "Remove source" }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        expect.stringContaining("/api/wiki/remove-source?project=demo"),
+        expect.objectContaining({
+          method: "POST",
+          body: JSON.stringify({ id: "src-1", dry_run: true }),
+        }),
+      );
+    });
+  });
+
   it("reports malformed JSON responses", async () => {
     fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
       const url = String(input);
@@ -151,7 +176,8 @@ describe("WikiTab", () => {
     render(<WikiTab projectId="demo" />);
 
     await screen.findAllByText("Hooks source");
-    await user.click(screen.getByRole("button", { name: /Remove\s+Hooks source/ }));
+    await user.click(screen.getByRole("button", { name: "Open actions for Hooks source" }));
+    await user.click(screen.getByRole("menuitem", { name: "Remove source" }));
 
     await waitFor(() => {
       expect(fetchMock).toHaveBeenCalledWith(
