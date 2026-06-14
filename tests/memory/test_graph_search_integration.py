@@ -282,12 +282,12 @@ class TestFindRelatedMemoryIds:
         assert "(start:_Entity {entity_key: $entity_key})-[r]-(neighbor:_Entity)" in cypher
         assert "NOT (type(r) IN $excluded_relationship_types)" in cypher
         assert params["excluded_relationship_types"] == ["MENTIONED_IN", "RELATES_TO_CODE"]
-        # The query pulls a generous candidate set and returns edge weight + recency;
-        # weight/decay scoring and the top-N neighbor cap are applied in Python.
+        # The query pulls the highest raw-weight candidates first; weight/decay scoring
+        # and the top-N neighbor cap are then applied in Python.
         assert params["neighbor_limit"] == 64
         assert "coalesce(r.weight, 1.0) AS edge_weight" in cypher
         assert "r.updated_at AS updated_at" in cypher
-        assert "ORDER BY" not in cypher
+        assert "ORDER BY coalesce(r.weight, 1.0) DESC" in cypher
 
     async def test_caps_seed_entities(
         self,

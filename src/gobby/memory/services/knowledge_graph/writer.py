@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.memory.falkor_client import FalkorConnectionError
 from gobby.memory.identity import entity_key
-from gobby.search.backends.embedding import _cosine_similarity
+from gobby.search.similarity import cosine_similarity as _cosine_similarity
 
 from .models import Relationship, _GraphEntity
 
@@ -45,10 +45,7 @@ def cooccurrence_weight(cosine: float, support: int, *, alpha: float, cap: int) 
 
 def _project_scope(var: str) -> str:
     """Cypher predicate scoping ``var`` to ``$project_id`` (null-safe for globals)."""
-    return (
-        f"({var}.project_id = $project_id "
-        f"OR ($project_id IS NULL AND {var}.project_id IS NULL))"
-    )
+    return f"({var}.project_id = $project_id OR ($project_id IS NULL AND {var}.project_id IS NULL))"
 
 
 class KnowledgeGraphWriter:

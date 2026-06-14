@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -25,6 +26,16 @@ _GRAPH_EXPANSION_ENTITY_SEED_LIMIT = 8
 _GRAPH_RELATED_EXPANSION_TIMEOUT_SECONDS = 2.0
 
 
+@dataclass(frozen=True)
+class SearchDebugSnapshot:
+    """Diagnostic ranking snapshot emitted after a search path materializes results."""
+
+    merged_ids: list[str]
+    returned_ids: list[str]
+    ranking_score_map: dict[str, float]
+    rrf_applied: bool
+
+
 class SearchService:
     """Encapsulates memory search across Qdrant, FalkorDB graph, and keyword search."""
 
@@ -43,6 +54,7 @@ class SearchService:
         falkordb_rrf_k: int,
         vector_store_failure_logger: Callable[[str, BaseException], None],
         run_db: Callable[..., Awaitable[Any]] | None = None,
+        search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
     ) -> None:
         self._storage = storage
         self._vector_store = vector_store
@@ -56,6 +68,7 @@ class SearchService:
         self._falkordb_rrf_k = falkordb_rrf_k
         self._log_vector_store_failure = vector_store_failure_logger
         self._run_db = run_db
+        self._search_debug_sink = search_debug_sink
 
     async def _run_storage(self, func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
         if self._run_db is None:
@@ -254,7 +267,7 @@ class SearchService:
             rrf_applied = False
             ranking_score_map = {}
 
-        return self._build_results(
+        results = self._build_results(
             merged_ids=merged_ids,
             ranking_score_map=ranking_score_map,
             qdrant_score_map=qdrant_score_map,
@@ -271,6 +284,13 @@ class SearchService:
             effective_min_score=effective_min_score,
             limit=limit,
         )
+        self._emit_search_debug(
+            merged_ids=merged_ids,
+            returned=results,
+            ranking_score_map=ranking_score_map,
+            rrf_applied=rrf_applied,
+        )
+        return results
 
     async def _search_qdrant_keyword(
         self,
@@ -345,7 +365,7 @@ class SearchService:
             ranking_score_map = {}
             rrf_applied = False
 
-        return self._build_results(
+        results = self._build_results(
             merged_ids=merged_ids,
             ranking_score_map=ranking_score_map,
             qdrant_score_map=qdrant_score_map,
@@ -362,6 +382,35 @@ class SearchService:
             effective_min_score=effective_min_score,
             limit=limit,
         )
+        self._emit_search_debug(
+            merged_ids=merged_ids,
+            returned=results,
+            ranking_score_map=ranking_score_map,
+            rrf_applied=rrf_applied,
+        )
+        return results
+
+    def _emit_search_debug(
+        self,
+        *,
+        merged_ids: list[str],
+        returned: list[Memory],
+        ranking_score_map: dict[str, float],
+        rrf_applied: bool,
+    ) -> None:
+        if self._search_debug_sink is None:
+            return
+
+        snapshot = SearchDebugSnapshot(
+            merged_ids=list(merged_ids),
+            returned_ids=[mem.id for mem in returned],
+            ranking_score_map=dict(ranking_score_map),
+            rrf_applied=rrf_applied,
+        )
+        try:
+            self._search_debug_sink(snapshot)
+        except Exception:
+            logger.debug("Search debug sink failed", exc_info=True)
 
     def _build_results(
         self,
@@ -443,14 +492,24 @@ class SearchService:
 
             scored.append((mem, mem.ranking_score, similarity))
 
-        scored.sort(
-            key=lambda item: (
-                item[2] is not None,
-                item[2] if item[2] is not None else float("-inf"),
-                item[1],
-            ),
-            reverse=True,
-        )
+        if rrf_applied:
+            scored.sort(
+                key=lambda item: (
+                    item[1],
+                    item[2] is not None,
+                    item[2] if item[2] is not None else float("-inf"),
+                ),
+                reverse=True,
+            )
+        else:
+            scored.sort(
+                key=lambda item: (
+                    item[2] is not None,
+                    item[2] if item[2] is not None else float("-inf"),
+                    item[1],
+                ),
+                reverse=True,
+            )
         return [mem for mem, _, _ in scored[:limit]]
 
     async def _search_graph_for_memories(

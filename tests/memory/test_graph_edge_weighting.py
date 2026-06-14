@@ -15,6 +15,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from gobby.mcp_proxy import semantic_search as semantic_search_mod
 from gobby.memory.services.knowledge_graph import service as service_mod
 from gobby.memory.services.knowledge_graph import writer as writer_mod
 from gobby.memory.services.knowledge_graph.reader import (
@@ -28,6 +29,7 @@ from gobby.memory.services.knowledge_graph.writer import (
     KnowledgeGraphWriter,
     cooccurrence_weight,
 )
+from gobby.search import similarity as similarity_mod
 from gobby.search.backends import embedding as embedding_mod
 
 Responder = Any
@@ -105,8 +107,10 @@ def test_cooccurrence_weight_is_bounded_unit_interval() -> None:
 
 
 def test_cosine_similarity_is_shared_implementation_not_reimplemented() -> None:
-    assert writer_mod._cosine_similarity is embedding_mod._cosine_similarity
-    assert service_mod._cosine_similarity is embedding_mod._cosine_similarity
+    assert embedding_mod._cosine_similarity is similarity_mod.cosine_similarity
+    assert writer_mod._cosine_similarity is similarity_mod.cosine_similarity
+    assert service_mod._cosine_similarity is similarity_mod.cosine_similarity
+    assert semantic_search_mod._cosine_similarity is similarity_mod.cosine_similarity
 
 
 # --------------------------------------------------------------------------- #
@@ -138,9 +142,7 @@ async def test_merge_relationship_weighted_upserts_weight_count_and_timestamp(
     client = _falkor_client(monkeypatch)
     client.query = AsyncMock(return_value=[])
 
-    await client.merge_relationship(
-        "a", "b", "RELATED", properties={"weight": 0.7, "foo": "bar"}
-    )
+    await client.merge_relationship("a", "b", "RELATED", properties={"weight": 0.7, "foo": "bar"})
 
     cypher, params = client.query.call_args.args
     assert "ON CREATE SET r += $props, r.count = 1, r.updated_at = timestamp()" in cypher
@@ -307,12 +309,12 @@ async def test_traversal_orders_neighbors_by_weight_in_python() -> None:
 
     result = await reader._find_related_entity_keys(["seed"], max_hops=1, limit=20, project_id=None)
 
-    # Ordering is by edge weight DESC, applied in Python (not via Cypher).
+    # Ordering is by edge weight DESC in both the Cypher candidate pull and Python cap.
     assert result == ["high", "mid", "low"]
     neighbor_cypher = falkor.find("related_entity_key")[0][0]
     assert "coalesce(r.weight, 1.0) AS edge_weight" in neighbor_cypher
     assert "r.updated_at AS updated_at" in neighbor_cypher
-    assert "ORDER BY" not in neighbor_cypher
+    assert "ORDER BY coalesce(r.weight, 1.0) DESC" in neighbor_cypher
 
 
 async def test_traversal_unweighted_edges_use_neutral_weight() -> None:

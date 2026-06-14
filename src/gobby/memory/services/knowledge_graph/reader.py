@@ -255,6 +255,7 @@ class KnowledgeGraphReader:
                     "AND NOT (type(r) IN $excluded_relationship_types) "
                     "RETURN neighbor.entity_key AS related_entity_key, "
                     "coalesce(r.weight, 1.0) AS edge_weight, r.updated_at AS updated_at "
+                    "ORDER BY coalesce(r.weight, 1.0) DESC "
                     "LIMIT $neighbor_limit",
                     {
                         "entity_key": source_key,

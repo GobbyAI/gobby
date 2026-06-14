@@ -10,11 +10,11 @@ from __future__ import annotations
 
 import hashlib
 import logging
-import math
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from gobby.search.similarity import cosine_similarity
 from gobby.storage.hub.protocol import HubDatabase
 
 if TYPE_CHECKING:
@@ -27,29 +27,7 @@ _T = TypeVar("_T")
 DEFAULT_EMBEDDING_MODEL = "nomic-embed-text"
 DEFAULT_EMBEDDING_DIM = 768
 
-
-def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
-    """
-    Compute cosine similarity between two vectors.
-
-    Args:
-        vec1: First vector
-        vec2: Second vector
-
-    Returns:
-        Cosine similarity score between -1 and 1
-    """
-    if len(vec1) != len(vec2):
-        raise ValueError(f"Vector dimension mismatch: {len(vec1)} vs {len(vec2)}")
-
-    dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=True))
-    norm1 = math.sqrt(sum(a * a for a in vec1))
-    norm2 = math.sqrt(sum(b * b for b in vec2))
-
-    if norm1 == 0 or norm2 == 0:
-        return 0.0
-
-    return dot_product / (norm1 * norm2)
+_cosine_similarity = cosine_similarity
 
 
 @dataclass

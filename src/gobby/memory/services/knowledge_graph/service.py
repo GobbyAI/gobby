@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
-from gobby.search.backends.embedding import _cosine_similarity
+from gobby.search.similarity import cosine_similarity as _cosine_similarity
 
 from .code_linker import KnowledgeGraphCodeLinker
 from .extraction import KnowledgeGraphExtractor

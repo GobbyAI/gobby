@@ -33,145 +33,27 @@ in a uniquely-named graph and clears it per arm, so it never touches gobby_kg.
 from __future__ import annotations
 
 import os
-from dataclasses import dataclass, field
-from hashlib import sha256
+from dataclasses import dataclass
 from typing import Any
 
 import pytest
 
 from gobby.config.persistence import MemoryKnowledgeGraphConfig
-from gobby.memory.identity import entity_key
 from gobby.memory.services.knowledge_graph import writer as writer_mod
-from gobby.memory.services.knowledge_graph.models import Entity, Relationship
-from gobby.memory.services.knowledge_graph.normalization import display_entity_name
 from gobby.memory.services.knowledge_graph.service import KnowledgeGraphService
+from tests.memory._recall_corpus import (
+    DIM,
+    NUM_CLUSTERS,
+    K,
+    MemoryDef,
+    _seed_keys,
+    _Stub,
+    _StubExtractor,
+    build_corpus,
+    make_embed_fn,
+)
 
 pytestmark = [pytest.mark.integration]
-
-DIM = 16
-NUM_CLUSTERS = 5
-MEMORIES_PER_CLUSTER = 6
-DISTRACTORS_PER_CLUSTER = 6
-K = 5  # recall@k / cutoff for the labeled query set
-NOISE_DIM = DIM - 1  # orthogonal axis distractors load onto
-
-
-# --------------------------------------------------------------------------- #
-# Corpus                                                                      #
-# --------------------------------------------------------------------------- #
-
-
-@dataclass
-class MemoryDef:
-    memory_id: str
-    cluster: int
-    entities: list[str]
-    typed_pairs: list[tuple[str, str]] = field(default_factory=list)
-
-
-def _hub(c: int) -> str:
-    return f"c{c}_hub"
-
-
-def _spoke(c: int, i: int, j: int) -> str:
-    return f"c{c}_m{i}_s{j}"
-
-
-def _distractor(c: int, n: int) -> str:
-    return f"c{c}_noise_{n}"
-
-
-def build_corpus() -> list[MemoryDef]:
-    """Clustered memories: a shared hub bridges a cluster; spokes are memory-local.
-
-    Typed (LLM-style) relations connect only the two spokes within a memory, so the
-    baseline graph has no cross-memory path -- the hub is the bridge that only the
-    derived CO_OCCURS edges expose. One distractor memory per cluster co-mentions the
-    hub with low-cosine noise entities, creating cap pressure that weighting can
-    correctly down-rank.
-    """
-    memories: list[MemoryDef] = []
-    for c in range(NUM_CLUSTERS):
-        for i in range(MEMORIES_PER_CLUSTER):
-            s0, s1 = _spoke(c, i, 0), _spoke(c, i, 1)
-            memories.append(
-                MemoryDef(
-                    memory_id=f"mem_c{c}_m{i}",
-                    cluster=c,
-                    entities=[_hub(c), s0, s1],
-                    typed_pairs=[(s0, s1)],
-                )
-            )
-        # One distractor memory per cluster: hub + orthogonal-noise entities.
-        noise = [_distractor(c, n) for n in range(DISTRACTORS_PER_CLUSTER)]
-        memories.append(
-            MemoryDef(
-                memory_id=f"mem_c{c}_noise",
-                cluster=c,
-                entities=[_hub(c), *noise],
-                typed_pairs=[],
-            )
-        )
-    return memories
-
-
-def _cluster_of(name: str) -> int:
-    # names start with "c<digit(s)>_"
-    return int(name[1 : name.index("_")])
-
-
-def make_embed_fn(dim: int) -> Any:
-    """Deterministic embeddings: cluster onehot for hubs/spokes, noise axis for distractors."""
-
-    def _jitter(name: str) -> float:
-        digest = int(sha256(name.encode()).hexdigest(), 16)
-        return ((digest % 1000) / 1000.0) * 0.05  # small, deterministic
-
-    async def embed(name: str) -> list[float]:
-        vec = [0.0] * dim
-        cluster = _cluster_of(name)
-        if "_noise_" in name:
-            # Distractors load an orthogonal axis -> ~0 cosine to the cluster hub.
-            vec[NOISE_DIM] = 1.0
-            vec[cluster % NOISE_DIM] = _jitter(name)
-        else:
-            vec[cluster % NOISE_DIM] = 1.0
-            # small per-entity jitter so spokes are near (not identical to) the hub
-            vec[(cluster + 1) % NOISE_DIM] += _jitter(name)
-        return vec
-
-    return embed
-
-
-# --------------------------------------------------------------------------- #
-# Stub extractor (deterministic, no LLM)                                      #
-# --------------------------------------------------------------------------- #
-
-
-class _StubExtractor:
-    def __init__(self, by_content: dict[str, MemoryDef]) -> None:
-        self._by_content = by_content
-
-    async def extract_entities(self, content: str) -> list[Entity]:
-        mem = self._by_content[content]
-        return [Entity(name=name, entity_type="concept") for name in mem.entities]
-
-    async def extract_relationships(
-        self, content: str, entities: list[Entity]
-    ) -> list[Relationship]:
-        mem = self._by_content[content]
-        return [
-            Relationship(source=s, target=t, relationship="RELATED_TO")
-            for s, t in mem.typed_pairs
-        ]
-
-    async def select_outdated_relations(self, **kwargs: Any) -> list[dict[str, Any]]:
-        return []
-
-
-class _Stub:
-    """Placeholder for the unused prompt_loader / llm_service constructor args."""
-
 
 # --------------------------------------------------------------------------- #
 # Metrics                                                                     #
@@ -183,10 +65,6 @@ class ArmMetrics:
     recall_at_k: float
     mrr: float
     cooccurs_edges: int
-
-
-def _seed_keys(mem: MemoryDef) -> list[str]:
-    return [entity_key(None, display_entity_name(name)) for name in mem.entities]
 
 
 async def _evaluate(service: KnowledgeGraphService, corpus: list[MemoryDef]) -> tuple[float, float]:
@@ -273,7 +151,10 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.memory.falkor_client import FalkorClient
 
     graph_name = f"test_recall_benchmark_{os.getpid()}"
-    client = FalkorClient(host=host, port=port, password=password, graph_name=graph_name)
+    try:
+        client = FalkorClient(host=host, port=port, password=password, graph_name=graph_name)
+    except Exception as exc:
+        pytest.skip(f"FalkorDB not reachable for integration benchmark: {exc}")
     try:
         if not await client.ping():
             pytest.skip("FalkorDB not reachable for integration benchmark")
@@ -297,12 +178,18 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
         corpus = build_corpus()
 
         baseline = await _run_arm(
-            client, corpus,
-            graph_edge_weighting=False, materialize_cooccurrence=False, graph_edge_decay=False,
+            client,
+            corpus,
+            graph_edge_weighting=False,
+            materialize_cooccurrence=False,
+            graph_edge_decay=False,
         )
         cooc_unweighted = await _run_arm(
-            client, corpus,
-            graph_edge_weighting=False, materialize_cooccurrence=True, graph_edge_decay=False,
+            client,
+            corpus,
+            graph_edge_weighting=False,
+            materialize_cooccurrence=True,
+            graph_edge_decay=False,
         )
 
         # Sweep (alpha, cap) for the weighted arm; freeze winners as module constants.
@@ -312,7 +199,8 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
                 monkeypatch.setattr(writer_mod, "COOCCUR_ALPHA", alpha)
                 monkeypatch.setattr(writer_mod, "COOCCUR_SUPPORT_CAP", cap)
                 sweep[(alpha, cap)] = await _run_arm(
-                    client, corpus,
+                    client,
+                    corpus,
                     graph_edge_weighting=True,
                     materialize_cooccurrence=True,
                     graph_edge_decay=False,
@@ -324,7 +212,8 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setattr(writer_mod, "COOCCUR_ALPHA", best_combo[0])
         monkeypatch.setattr(writer_mod, "COOCCUR_SUPPORT_CAP", best_combo[1])
         weighted_decay = await _run_arm(
-            client, corpus,
+            client,
+            corpus,
             graph_edge_weighting=True,
             materialize_cooccurrence=True,
             graph_edge_decay=True,
@@ -367,6 +256,7 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
         assert baseline.cooccurs_edges == 0
         assert cooc_unweighted.cooccurs_edges > 0
         assert cooc_unweighted.recall_at_k > baseline.recall_at_k
+        assert cooc_weighted.recall_at_k >= cooc_unweighted.recall_at_k
     finally:
         try:
             await client.query("MATCH (n) DETACH DELETE n")

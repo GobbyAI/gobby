@@ -7,8 +7,9 @@ It stores embeddings in memory and uses an OpenAI-compatible embeddings API.
 from __future__ import annotations
 
 import logging
-import math
 from typing import TYPE_CHECKING, Any
+
+from gobby.search.similarity import cosine_similarity
 
 if TYPE_CHECKING:
     from gobby.config.persistence import EmbeddingsConfig
@@ -16,27 +17,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-def _cosine_similarity(vec1: list[float], vec2: list[float]) -> float:
-    """Compute cosine similarity between two vectors.
-
-    Args:
-        vec1: First vector
-        vec2: Second vector
-
-    Returns:
-        Cosine similarity score between -1 and 1
-    """
-    if len(vec1) != len(vec2):
-        return 0.0
-
-    dot_product = sum(a * b for a, b in zip(vec1, vec2, strict=True))
-    norm1 = math.sqrt(sum(a * a for a in vec1))
-    norm2 = math.sqrt(sum(b * b for b in vec2))
-
-    if norm1 == 0 or norm2 == 0:
-        return 0.0
-
-    return dot_product / (norm1 * norm2)
+_cosine_similarity = cosine_similarity
 
 
 class EmbeddingBackend:

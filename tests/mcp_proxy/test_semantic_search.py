@@ -510,12 +510,11 @@ class TestCosineSimilarity:
         vec2 = [0.0, 1.0]
         assert abs(_cosine_similarity(vec1, vec2)) < 1e-6
 
-    def test_dimension_mismatch_raises(self) -> None:
-        """Test that dimension mismatch raises ValueError."""
+    def test_dimension_mismatch_returns_zero(self) -> None:
+        """Test that dimension mismatch degrades to 0.0."""
         vec1 = [1.0, 2.0]
         vec2 = [1.0, 2.0, 3.0]
-        with pytest.raises(ValueError, match="dimension mismatch"):
-            _cosine_similarity(vec1, vec2)
+        assert _cosine_similarity(vec1, vec2) == 0.0
 
     def test_zero_vector(self) -> None:
         """Test that zero vector returns 0.0."""
