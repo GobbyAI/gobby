@@ -102,6 +102,11 @@ def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() ->
         summary_session_id="sess-source",
     )
 
+    assert prompt.startswith("Continue where you last left off.")
+    assert "`<!-- gobby:injected-context:begin -->`" in prompt
+    assert prompt.index("use that injected context directly") < prompt.index(
+        "gobby-sessions.wait_for_summary"
+    )
     assert 'gobby-sessions.wait_for_summary(session_id="sess-source")' in prompt
     assert "`completed=false`" in prompt
     assert "progressive discovery" in prompt

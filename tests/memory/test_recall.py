@@ -217,6 +217,14 @@ def test_recall_eligibility_accepts_real_parent_prompts_from_supported_sources(
             "`completed=false`, repeat the same wait call. Once complete, use the "
             "returned `context` and continue."
         ),
+        (
+            "Continue where you last left off. If startup context contains "
+            "`<!-- gobby:injected-context:begin -->`, use that injected context directly "
+            "and continue. Only if the injected context is missing or incomplete, call "
+            '`gobby-sessions.wait_for_summary(session_id="s1")`. If it returns '
+            "`completed=false`, repeat the same wait call. Once complete, use the "
+            "returned `context` and continue."
+        ),
         "Task #123 has incomplete subtasks. Use suggest_next_task() and continue working.",
     ],
 )

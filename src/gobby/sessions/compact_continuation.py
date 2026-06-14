@@ -11,6 +11,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.skills.formatting import skill_fetch_batch_directive
+from gobby.utils.injected_context import INJECTED_CONTEXT_BEGIN
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -20,9 +21,11 @@ logger = logging.getLogger(__name__)
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
 COMPACT_SELF_CONTINUE_PROMPT = (
-    "Continue where you last left off. Before continuing, call "
+    "Continue where you last left off. If startup context contains "
+    f"`{INJECTED_CONTEXT_BEGIN}`, use that injected context directly and continue. "
+    "Only if the injected context is missing or incomplete, call "
     "`gobby-sessions.wait_for_summary` for the compacted session. If it returns "
-    "`completed=false`, repeat the wait call. Once complete, use the returned "
+    "`completed=false`, repeat the same wait call. Once complete, use the returned "
     "`context` and continue."
 )
 COMPACT_SELF_CONTINUE_FRESH_SECONDS = 600
@@ -385,7 +388,9 @@ def _prepare_compact_resume_skills(values: list[str]) -> list[str]:
 def _build_wait_for_summary_directive(summary_session_id: str | None) -> str:
     if summary_session_id:
         return (
-            "Continue where you last left off. Before continuing, call "
+            "Continue where you last left off. If startup context contains "
+            f"`{INJECTED_CONTEXT_BEGIN}`, use that injected context directly and continue. "
+            "Only if the injected context is missing or incomplete, call "
             "`gobby-sessions.wait_for_summary("
             f'session_id="{summary_session_id}"'
             ")`. If it returns `completed=false`, repeat the same wait call. "

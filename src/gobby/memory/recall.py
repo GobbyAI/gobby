@@ -667,8 +667,9 @@ def _looks_like_codex_bootstrap_prompt(prompt: str) -> bool:
 
 def _looks_like_wait_directive(prompt: str) -> bool:
     return (
-        prompt.startswith("Continue where you last left off. Before continuing, call ")
-        and "gobby-sessions.wait_for_summary(" in prompt
+        prompt.startswith("Continue where you last left off.")
+        and "gobby-sessions.wait_for_summary" in prompt
+        and "`completed=false`" in prompt
     ) or (
         prompt.startswith("Task ")
         and " has incomplete subtasks. Use suggest_next_task() and continue working." in prompt

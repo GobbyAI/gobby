@@ -284,6 +284,10 @@ class TestCompactSelfTerminalPath:
         ) -> bool:
             events.append(("mark", session_id))
             assert "Continue where you last left off." in prompt
+            assert "`<!-- gobby:injected-context:begin -->`" in prompt
+            assert prompt.index("use that injected context directly") < prompt.index(
+                "wait_for_summary"
+            )
             assert 'wait_for_summary(session_id="s1")' in prompt
             assert summary_session_id == "s1"
             return True
@@ -335,6 +339,10 @@ class TestCompactSelfTerminalPath:
         assert result["compact_resume_required_skills"] == ["python", "development-discipline"]
         mock_persist.assert_called_once()
         assert len(captured_prompts) == 1
+        assert "`<!-- gobby:injected-context:begin -->`" in captured_prompts[0]
+        assert captured_prompts[0].index("use that injected context directly") < (
+            captured_prompts[0].index("wait_for_summary")
+        )
         assert 'wait_for_summary(session_id="s1")' in captured_prompts[0]
         assert "progressive discovery" in captured_prompts[0]
         assert '"name": "python"' in captured_prompts[0]
