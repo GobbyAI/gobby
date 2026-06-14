@@ -62,17 +62,33 @@ impl DocPruneScope {
         }
     }
 
-    fn should_prune(&self, doc_path: &str) -> bool {
-        if self.scopes.is_empty() {
+    pub(crate) fn is_unscoped(&self) -> bool {
+        self.scopes.is_empty()
+    }
+
+    pub(crate) fn includes_file(&self, file: &str) -> bool {
+        self.is_unscoped() || in_scope(file, &self.scopes)
+    }
+
+    pub(crate) fn includes_module(&self, module: &str) -> bool {
+        self.is_unscoped() || in_scope(module, &self.scopes)
+    }
+
+    pub(crate) fn includes_doc(&self, doc_path: &str) -> bool {
+        if self.is_unscoped() {
             return true;
         }
         if let Some(file) = scoped_file_doc(doc_path) {
-            return in_scope(file, &self.scopes);
+            return self.includes_file(file);
         }
         if let Some(module) = scoped_module_doc(doc_path) {
-            return in_scope(module, &self.scopes);
+            return self.includes_module(module);
         }
-        true
+        false
+    }
+
+    fn should_prune(&self, doc_path: &str) -> bool {
+        self.includes_doc(doc_path)
     }
 }
 
@@ -216,7 +232,7 @@ impl<'a> DocSink<'a> {
         let meta = CodewikiMeta {
             docs: self.next_docs,
             generated_docs: self.generated_docs.clone(),
-            index_snapshot,
+            index_snapshot: index_snapshot.or(self.previous_snapshot),
             ai_mode: self.ai_mode,
         };
         write_codewiki_meta(self.out_dir, &meta)?;

@@ -2,6 +2,7 @@ use super::super::*;
 use std::collections::{BTreeMap, BTreeSet};
 
 #[allow(clippy::too_many_arguments)]
+#[cfg(test)]
 pub(crate) fn build_module_docs(
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
@@ -10,6 +11,31 @@ pub(crate) fn build_module_docs(
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
+    emit: &mut dyn FnMut(&ModuleDoc) -> anyhow::Result<()>,
+) -> anyhow::Result<Vec<ModuleDoc>> {
+    build_module_docs_with_filter(
+        files,
+        graph_edges,
+        graph_availability,
+        leading_chunks,
+        generate,
+        reuse,
+        progress,
+        &|_: &str| true,
+        emit,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn build_module_docs_with_filter(
+    files: &[FileDoc],
+    graph_edges: &[CodewikiGraphEdge],
+    graph_availability: CodewikiGraphAvailability,
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
+    generate: &mut Option<&mut TextGenerator<'_>>,
+    reuse: &mut Option<&mut ReusePlan>,
+    progress: &mut CodewikiProgress,
+    module_filter: &dyn Fn(&str) -> bool,
     emit: &mut dyn FnMut(&ModuleDoc) -> anyhow::Result<()>,
 ) -> anyhow::Result<Vec<ModuleDoc>> {
     let mut module_names = BTreeSet::new();
@@ -24,7 +50,10 @@ pub(crate) fn build_module_docs(
 
     let mut module_summaries: BTreeMap<String, String> = BTreeMap::new();
     let mut module_sources: BTreeMap<String, Vec<SourceSpan>> = BTreeMap::new();
-    let mut modules = module_names.into_iter().collect::<Vec<_>>();
+    let mut modules = module_names
+        .into_iter()
+        .filter(|module| module_filter(module))
+        .collect::<Vec<_>>();
     modules.sort_by_key(|module| std::cmp::Reverse(module_depth(module)));
 
     let mut docs = Vec::new();

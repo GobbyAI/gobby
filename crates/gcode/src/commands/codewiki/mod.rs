@@ -38,10 +38,12 @@ mod reuse;
 mod text;
 
 // Document builders.
+#[cfg(test)]
+pub(crate) use build::build_module_docs;
 pub(crate) use build::{
     FileDocPosition, build_architecture_doc, build_codewiki_changes_doc,
-    build_codewiki_index_snapshot, build_file_doc, build_hotspots_doc, build_module_docs,
-    build_onboarding_doc,
+    build_codewiki_index_snapshot, build_file_doc, build_hotspots_doc,
+    build_module_docs_with_filter, build_onboarding_doc,
 };
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
@@ -578,18 +580,31 @@ pub fn run(
     };
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
     let out_path = Path::new(&out_dir);
-    progress.emit("reading metadata and hashing snapshot");
-    let previous_meta = io::read_codewiki_meta(out_path)?;
-    let index_snapshot = build_codewiki_index_snapshot(&ctx.project_root, &input)?;
-    let mut ownership_meta = read_ownership_meta(out_path)?;
+    let doc_scope = DocPruneScope::from_scopes(&scopes);
+    if doc_scope.is_unscoped() {
+        progress.emit("reading metadata and hashing snapshot");
+    } else {
+        progress.emit("reading metadata for scoped write");
+    }
+    let previous_meta = if doc_scope.is_unscoped() {
+        Some(io::read_codewiki_meta(out_path)?)
+    } else {
+        None
+    };
+    let index_snapshot = if doc_scope.is_unscoped() {
+        Some(build_codewiki_index_snapshot(&ctx.project_root, &input)?)
+    } else {
+        None
+    };
+    let mut ownership_meta = if doc_scope.is_unscoped() {
+        Some(read_ownership_meta(out_path)?)
+    } else {
+        None
+    };
     let mut reuse_plan = ReusePlan::load(&ctx.project_root, out_path, ai_mode)?;
     let mut reuse = Some(&mut reuse_plan);
-    let mut sink = DocSink::open_with_prune_scope(
-        &ctx.project_root,
-        out_path,
-        ai_mode,
-        DocPruneScope::from_scopes(&scopes),
-    )?;
+    let mut sink =
+        DocSink::open_with_prune_scope(&ctx.project_root, out_path, ai_mode, doc_scope.clone())?;
     let mut generated_pages = 0_usize;
     let mut module_count = 0_usize;
     let mut file_count = 0_usize;
@@ -608,26 +623,37 @@ pub fn run(
     };
     generate_hierarchical_docs_with_ownership(
         &input,
-        &ctx.project_root,
-        &mut ownership_meta,
+        ownership_meta
+            .as_mut()
+            .map(|meta| (ctx.project_root.as_path(), meta)),
         generator.as_deref_mut(),
         ai_depth,
         &mut reuse,
         &mut progress,
+        &doc_scope,
         &mut emit,
     )?;
-    progress.emit("generating changes docs");
-    emit(BuiltDoc::healthy(
-        "code/_changes.md",
-        build_codewiki_changes_doc(previous_meta.index_snapshot.as_ref(), &index_snapshot)?,
-    ))?;
-    write_ownership_meta(out_path, &ownership_meta)?;
+    if let Some(index_snapshot) = index_snapshot.as_ref() {
+        progress.emit("generating changes docs");
+        emit(BuiltDoc::healthy(
+            "code/_changes.md",
+            build_codewiki_changes_doc(
+                previous_meta
+                    .as_ref()
+                    .and_then(|meta| meta.index_snapshot.as_ref()),
+                index_snapshot,
+            )?,
+        ))?;
+    }
+    if let Some(ownership_meta) = ownership_meta.as_ref() {
+        write_ownership_meta(out_path, ownership_meta)?;
+    }
     let symbol_count = input
         .symbols
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
-    let changed_paths = sink.finish(Some(index_snapshot))?;
+    let changed_paths = sink.finish(index_snapshot)?;
     let skipped = generated_pages.saturating_sub(changed_paths.len());
 
     let summary = CodewikiRunSummary {
@@ -645,10 +671,19 @@ pub fn run(
     };
     match format {
         Format::Json => output::print_json(&summary),
-        Format::Text => output::print_text(&format!(
-            "wrote {} file docs, {} module docs, and repo.md to {}",
-            summary.files, summary.modules, summary.out_dir
-        )),
+        Format::Text => {
+            if doc_scope.is_unscoped() {
+                output::print_text(&format!(
+                    "wrote {} file docs, {} module docs, and repo.md to {}",
+                    summary.files, summary.modules, summary.out_dir
+                ))
+            } else {
+                output::print_text(&format!(
+                    "wrote {} scoped file docs and {} scoped module docs to {}",
+                    summary.files, summary.modules, summary.out_dir
+                ))
+            }
+        }
     }?;
 
     Ok(())
@@ -749,6 +784,7 @@ fn generate_hierarchical_docs_with_graph_availability(
     mut generate: Option<&mut TextGenerator<'_>>,
 ) -> Vec<BuiltDoc> {
     let mut progress = CodewikiProgress::silent();
+    let doc_scope = DocPruneScope::unscoped();
     let mut docs = Vec::new();
     if let Err(error) = generate_hierarchical_docs_core(
         input,
@@ -757,6 +793,7 @@ fn generate_hierarchical_docs_with_graph_availability(
         AiDepth::Symbols,
         &mut None,
         &mut progress,
+        &doc_scope,
         &mut |doc| {
             docs.push(doc);
             Ok(())
@@ -771,21 +808,22 @@ fn generate_hierarchical_docs_with_graph_availability(
 #[expect(clippy::too_many_arguments)]
 fn generate_hierarchical_docs_with_ownership(
     input: &CodewikiInput,
-    project_root: &Path,
-    ownership_meta: &mut OwnershipMeta,
+    ownership: Option<(&Path, &mut OwnershipMeta)>,
     mut generate: Option<&mut TextGenerator<'_>>,
     ai_depth: AiDepth,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
+    doc_scope: &DocPruneScope,
     emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     generate_hierarchical_docs_core(
         input,
-        Some((project_root, ownership_meta)),
+        ownership,
         &mut generate,
         ai_depth,
         reuse,
         progress,
+        doc_scope,
         emit,
     )
 }
@@ -809,6 +847,7 @@ fn generate_hierarchical_docs_with_reuse(
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
 ) -> Vec<BuiltDoc> {
+    let doc_scope = DocPruneScope::unscoped();
     let mut docs = Vec::new();
     if let Err(error) = generate_hierarchical_docs_core(
         input,
@@ -817,6 +856,7 @@ fn generate_hierarchical_docs_with_reuse(
         ai_depth,
         reuse,
         progress,
+        &doc_scope,
         &mut |doc| {
             docs.push(doc);
             Ok(())
@@ -828,6 +868,10 @@ fn generate_hierarchical_docs_with_reuse(
     docs
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "core generation threads mutable generator, reuse, progress, scope, and emit state until #731 splits the codewiki command"
+)]
 fn generate_hierarchical_docs_core(
     input: &CodewikiInput,
     ownership: Option<(&Path, &mut OwnershipMeta)>,
@@ -835,16 +879,17 @@ fn generate_hierarchical_docs_core(
     ai_depth: AiDepth,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
+    doc_scope: &DocPruneScope,
     emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
     let mut files = input
         .files
         .iter()
-        .filter(|file| is_core_file(file))
+        .filter(|file| is_core_file(file) && doc_scope.includes_file(file))
         .cloned()
         .collect::<BTreeSet<_>>();
     for symbol in &input.symbols {
-        if is_core_file(&symbol.file_path) {
+        if is_core_file(&symbol.file_path) && doc_scope.includes_file(&symbol.file_path) {
             files.insert(symbol.file_path.clone());
         }
     }
@@ -852,7 +897,7 @@ fn generate_hierarchical_docs_core(
 
     let mut symbols_by_file: BTreeMap<String, Vec<Symbol>> = BTreeMap::new();
     for symbol in &input.symbols {
-        if !is_core_file(&symbol.file_path) {
+        if !is_core_file(&symbol.file_path) || !doc_scope.includes_file(&symbol.file_path) {
             continue;
         }
         symbols_by_file
@@ -903,7 +948,7 @@ fn generate_hierarchical_docs_core(
         file_docs.push(file_doc);
     }
     progress.emit("generating module docs");
-    let module_docs = build_module_docs(
+    let module_docs = build_module_docs_with_filter(
         &file_docs,
         &input.graph_edges,
         input.graph_availability,
@@ -911,6 +956,7 @@ fn generate_hierarchical_docs_core(
         generate,
         reuse,
         progress,
+        &|module| doc_scope.includes_module(module),
         &mut |module| {
             emit(BuiltDoc {
                 path: module_doc_path(&module.module),
@@ -923,6 +969,9 @@ fn generate_hierarchical_docs_core(
             })
         },
     )?;
+    if !doc_scope.is_unscoped() {
+        return Ok(());
+    }
     let (repo_doc, repo_degraded) = build_repo_doc(
         &file_docs,
         &module_docs,

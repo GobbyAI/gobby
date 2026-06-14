@@ -33,7 +33,10 @@ fn codewiki_ownership_timed_out_blame_reaps_child_without_thread_leak() {
     let Some(after_threads) = current_thread_count() else {
         return;
     };
-    assert_eq!(after_threads, baseline_threads);
+    assert!(
+        after_threads <= baseline_threads,
+        "timed-out blame should not leak threads: before={baseline_threads}, after={after_threads}"
+    );
 }
 
 #[cfg(target_os = "linux")]

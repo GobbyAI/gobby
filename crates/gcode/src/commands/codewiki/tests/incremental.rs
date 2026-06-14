@@ -1,6 +1,27 @@
 use super::support::*;
 use super::*;
 
+fn generate_docs_for_scope(input: &CodewikiInput, doc_scope: &DocPruneScope) -> Vec<BuiltDoc> {
+    let mut docs = Vec::new();
+    let mut generate = None::<&mut TextGenerator<'_>>;
+    let mut progress = CodewikiProgress::silent();
+    generate_hierarchical_docs_core(
+        input,
+        None,
+        &mut generate,
+        AiDepth::Symbols,
+        &mut None,
+        &mut progress,
+        doc_scope,
+        &mut |doc| {
+            docs.push(doc);
+            Ok(())
+        },
+    )
+    .expect("generate docs for scope");
+    docs
+}
+
 #[test]
 fn incremental_write_always_rewrites_docs_without_provenance() {
     let project = tempfile::tempdir().expect("project dir");
@@ -275,8 +296,27 @@ fn scoped_incremental_write_preserves_out_of_scope_docs_and_meta() {
             ),
         ],
     };
-    let first_docs = generate_hierarchical_docs(&input, None);
-    write_incremental_doc_set(project.path(), &out_dir, &first_docs).expect("first write");
+    let mut first_docs = generate_hierarchical_docs(&input, None)
+        .into_iter()
+        .map(|(path, content)| BuiltDoc::healthy(path, content))
+        .collect::<Vec<_>>();
+    first_docs.push(BuiltDoc::healthy(
+        "code/_changes.md",
+        "changes before scoped run\n".to_string(),
+    ));
+    first_docs.push(BuiltDoc::healthy(
+        "code/_ownership.md",
+        "ownership before scoped run\n".to_string(),
+    ));
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first_docs,
+        None,
+        "off",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
 
     let out_of_scope_file_doc = out_dir.join("code/files/tools/helper.rs.md");
     let out_of_scope_module_doc = out_dir.join("code/modules/tools.md");
@@ -284,6 +324,23 @@ fn scoped_incremental_write_preserves_out_of_scope_docs_and_meta() {
     assert!(out_of_scope_file_doc.exists());
     assert!(out_of_scope_module_doc.exists());
     assert!(stale_in_scope_file_doc.exists());
+    let global_paths = [
+        "code/repo.md",
+        "code/_architecture.md",
+        "code/_onboarding.md",
+        "code/_hotspots.md",
+        "code/_changes.md",
+        "code/_ownership.md",
+    ];
+    let global_before = global_paths
+        .iter()
+        .map(|path| {
+            (
+                *path,
+                std::fs::read_to_string(out_dir.join(path)).expect("global doc before"),
+            )
+        })
+        .collect::<Vec<_>>();
 
     let scoped_input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
@@ -298,26 +355,156 @@ fn scoped_incremental_write_preserves_out_of_scope_docs_and_meta() {
             "pub struct Client;",
         )],
     };
-    let scoped_docs = generate_hierarchical_docs(&scoped_input, None)
-        .into_iter()
-        .map(|(path, content)| BuiltDoc::healthy(path, content))
-        .collect::<Vec<_>>();
+    let doc_scope = DocPruneScope::from_scopes(&["src".to_string()]);
+    let scoped_docs = generate_docs_for_scope(&scoped_input, &doc_scope);
     write_incremental_doc_set_with_snapshot(
         project.path(),
         &out_dir,
         &scoped_docs,
         None,
         "off",
-        DocPruneScope::from_scopes(&["src".to_string()]),
+        doc_scope,
     )
     .expect("scoped write");
 
     assert!(out_of_scope_file_doc.exists());
     assert!(out_of_scope_module_doc.exists());
     assert!(!stale_in_scope_file_doc.exists());
+    for (path, before) in global_before {
+        let after = std::fs::read_to_string(out_dir.join(path)).expect("global doc after");
+        assert_eq!(after, before, "{path} changed during scoped write");
+    }
     let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
     let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
     assert!(meta["docs"].get("code/files/tools/helper.rs.md").is_some());
     assert!(meta["docs"].get("code/modules/tools.md").is_some());
     assert!(meta["docs"].get("code/files/src/old.rs.md").is_none());
+    for path in global_paths {
+        assert!(meta["docs"].get(path).is_some(), "{path} meta was pruned");
+    }
+    let generated_docs = meta["generated_docs"].as_array().expect("generated docs");
+    for path in global_paths {
+        assert!(
+            !generated_docs.contains(&serde_json::Value::String(path.to_string())),
+            "{path} was regenerated during scoped write"
+        );
+    }
+}
+
+#[test]
+fn scoped_incremental_write_preserves_partial_ancestor_module() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src/nested")).expect("source dirs");
+    std::fs::write(
+        project.path().join("src/sibling.rs"),
+        "pub struct Sibling;\n",
+    )
+    .expect("write sibling");
+    std::fs::write(
+        project.path().join("src/nested/leaf.rs"),
+        "pub fn leaf() {}\n",
+    )
+    .expect("write leaf");
+    let out_dir = project.path().join("codewiki");
+
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![
+            "src/sibling.rs".to_string(),
+            "src/nested/leaf.rs".to_string(),
+        ],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![
+            test_symbol(
+                "src/sibling.rs",
+                "Sibling",
+                "class",
+                1,
+                "pub struct Sibling;",
+            ),
+            test_symbol("src/nested/leaf.rs", "leaf", "function", 1, "pub fn leaf()"),
+        ],
+    };
+    let first_docs = generate_hierarchical_docs(&input, None)
+        .into_iter()
+        .map(|(path, content)| BuiltDoc::healthy(path, content))
+        .collect::<Vec<_>>();
+    let snapshot = build_codewiki_index_snapshot(project.path(), &input).expect("snapshot");
+    write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &first_docs,
+        Some(snapshot),
+        "off",
+        DocPruneScope::unscoped(),
+    )
+    .expect("first write");
+
+    let ancestor_module_path = out_dir.join("code/modules/src.md");
+    let ancestor_before = std::fs::read_to_string(&ancestor_module_path).expect("ancestor before");
+    assert!(ancestor_before.contains("src/sibling.rs"));
+
+    std::fs::write(
+        project.path().join("src/nested/leaf.rs"),
+        "pub fn leaf() {}\npub fn changed() {}\n",
+    )
+    .expect("modify leaf");
+    let scoped_input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/nested/leaf.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/nested/leaf.rs",
+            "leaf",
+            "function",
+            1,
+            "pub fn leaf()",
+        )],
+    };
+    let doc_scope = DocPruneScope::from_scopes(&["src/nested".to_string()]);
+    let scoped_docs = generate_docs_for_scope(&scoped_input, &doc_scope);
+    assert!(
+        scoped_docs
+            .iter()
+            .any(|doc| doc.path == "code/modules/src/nested.md")
+    );
+    assert!(
+        !scoped_docs
+            .iter()
+            .any(|doc| doc.path == "code/modules/src.md")
+    );
+
+    let changed_paths = write_incremental_doc_set_with_snapshot(
+        project.path(),
+        &out_dir,
+        &scoped_docs,
+        None,
+        "off",
+        doc_scope,
+    )
+    .expect("scoped write");
+    assert!(!changed_paths.contains(&"code/modules/src.md".to_string()));
+
+    let ancestor_after = std::fs::read_to_string(&ancestor_module_path).expect("ancestor after");
+    assert_eq!(ancestor_after, ancestor_before);
+    assert!(ancestor_after.contains("src/sibling.rs"));
+
+    let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
+    let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
+    assert!(meta["docs"].get("code/modules/src.md").is_some());
+    assert!(
+        meta["index_snapshot"]["files"]
+            .get("src/sibling.rs")
+            .is_some(),
+        "scoped write must preserve the previous full index snapshot"
+    );
+    let generated_docs = meta["generated_docs"].as_array().expect("generated docs");
+    assert!(
+        !generated_docs.contains(&serde_json::Value::String(
+            "code/modules/src.md".to_string()
+        )),
+        "ancestor module was regenerated from partial scoped input"
+    );
 }

@@ -245,6 +245,7 @@ fn interrupted_run_resumes_from_persisted_docs() {
     let mut generate = Some::<&mut TextGenerator<'_>>(&mut first_generator);
     let mut progress = CodewikiProgress::silent();
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
+    let doc_scope = DocPruneScope::unscoped();
     let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
         if doc.path.starts_with("code/modules/") {
             anyhow::bail!("simulated kill before module docs");
@@ -259,6 +260,7 @@ fn interrupted_run_resumes_from_persisted_docs() {
         AiDepth::Symbols,
         &mut None,
         &mut progress,
+        &doc_scope,
         &mut emit,
     );
     assert!(interrupted.is_err(), "simulated kill propagates");
@@ -283,6 +285,7 @@ fn interrupted_run_resumes_from_persisted_docs() {
     let mut reuse = Some(&mut plan);
     let mut progress = CodewikiProgress::silent();
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink reopens");
+    let doc_scope = DocPruneScope::unscoped();
     let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
         sink.persist(&doc)?;
         Ok(())
@@ -294,6 +297,7 @@ fn interrupted_run_resumes_from_persisted_docs() {
         AiDepth::Symbols,
         &mut reuse,
         &mut progress,
+        &doc_scope,
         &mut emit,
     )
     .expect("resumed run");
