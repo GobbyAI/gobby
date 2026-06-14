@@ -1659,17 +1659,20 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
     assert neutral_cwd != Path("/tmp/project")
     # Codex output file lives inside the neutral cwd so its lifetime matches the call.
     assert Path(command[command.index("--output-last-message") + 1]).parent == neutral_cwd
-    assert command[:9] == [
+    assert command[:10] == [
         "/bin/codex",
         "--ask-for-approval",
         "never",
         "exec",
         "--ephemeral",
+        "--skip-git-repo-check",
         "--ignore-user-config",
         "--ignore-rules",
         "--sandbox",
         "read-only",
     ]
+    # Codex aborts outside a Git repo; the neutral temp cwd is not one.
+    assert "--skip-git-repo-check" in command
     assert "--output-last-message" in command
     assert command[command.index("--model") + 1] == "gpt-5.4-mini"
     # request.cwd must NOT leak into the command as --cd.
@@ -2211,6 +2214,9 @@ async def test_gemini_cli_text_generate_adapter_runs_non_session_prompt(
     assert cwds[0] != "/tmp/project"
     assert cwds[0] is not None and "gobby-textgen-" in cwds[0]
     assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
+    # The neutral temp cwd is untrusted; trust it so headless Gemini does not
+    # exit with FatalUntrustedWorkspaceError when Folder Trust is enabled.
+    assert envs[0]["GEMINI_CLI_TRUST_WORKSPACE"] == "true"
 
 
 @pytest.mark.asyncio

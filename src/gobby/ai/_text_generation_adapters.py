@@ -251,7 +251,11 @@ class _GeminiCLITextGenerateAdapter:
     ) -> None:
         self._command_path = command_path
         self._timeout_seconds = timeout_seconds
-        self._env = dict(env or {})
+        # One-shot generation runs in a neutral temp dir, which is untrusted. When
+        # Folder Trust is enabled, headless Gemini exits with
+        # FatalUntrustedWorkspaceError instead of generating; trusting the empty
+        # workspace for the session avoids that (it carries no project config).
+        self._env = {**dict(env or {}), "GEMINI_CLI_TRUST_WORKSPACE": "true"}
 
     def _resolve_command_path(self) -> str:
         path = self._command_path or shutil.which("gemini")
@@ -478,6 +482,9 @@ class CodexCLITextGenerateAdapter:
             "never",
             "exec",
             "--ephemeral",
+            # One-shot generation runs in a neutral temp dir, which is not a Git
+            # repository. Codex aborts outside a Git repo unless this flag is set.
+            "--skip-git-repo-check",
             "--ignore-user-config",
             "--ignore-rules",
             "--sandbox",
