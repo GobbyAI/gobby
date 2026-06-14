@@ -12,6 +12,7 @@ const VALID_TABS: ActivityTab[] = [
   'agents',
   'stages',
   'skills',
+  'memory',
   'integrations',
   'wiki',
   'rules',

@@ -174,7 +174,7 @@ export function TagsField({
             <button
               type="button"
               className={cn(
-              "inline-flex h-11 w-11 items-center justify-center rounded text-muted-foreground",
+                "inline-flex h-11 w-11 items-center justify-center rounded text-muted-foreground",
                 "hover:bg-[var(--bg-tertiary)] hover:text-foreground",
                 "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
               )}
@@ -190,7 +190,7 @@ export function TagsField({
           id={inputId}
           type="text"
           className={cn(
-            "min-h-8 min-w-24 flex-1 bg-transparent px-1 text-sm text-foreground",
+            "min-h-11 min-w-24 flex-1 bg-transparent px-1 text-sm text-foreground",
             "placeholder:text-muted-foreground focus-visible:outline-none",
           )}
           aria-label={`Add ${label}`}

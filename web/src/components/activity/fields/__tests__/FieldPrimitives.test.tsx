@@ -79,10 +79,13 @@ describe("draft field primitives (#17014)", () => {
       />,
     );
 
-    fireEvent.change(screen.getByLabelText("Add Labels"), {
+    const addInput = screen.getByLabelText("Add Labels");
+    expect(addInput).toHaveClass("min-h-11");
+
+    fireEvent.change(addInput, {
       target: { value: "ui" },
     });
-    fireEvent.keyDown(screen.getByLabelText("Add Labels"), { key: "Enter" });
+    fireEvent.keyDown(addInput, { key: "Enter" });
     expect(onChange).toHaveBeenCalledWith(["web", "ui"]);
 
     fireEvent.click(screen.getByLabelText("Remove web"));

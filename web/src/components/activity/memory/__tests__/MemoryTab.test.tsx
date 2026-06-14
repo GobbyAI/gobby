@@ -1,0 +1,186 @@
+import { render, screen, waitFor, within } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
+import { MemoryTab } from "../../MemoryTab";
+
+vi.mock("../../../chat/artifacts/ResizeHandle", () => ({
+  ResizeHandle: () => <div data-testid="resize-handle" />,
+}));
+
+const originalFetch = globalThis.fetch;
+
+type MemoryRecord = {
+  id: string;
+  memory_type: string;
+  content: string;
+  created_at: string;
+  updated_at: string;
+  project_id: string | null;
+  source_type: string | null;
+  source_session_id: string | null;
+  importance: number;
+  access_count: number;
+  last_accessed_at: string | null;
+  tags: string[] | null;
+};
+
+const recentIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
+const oldIso = new Date(Date.now() - 72 * 60 * 60 * 1000).toISOString();
+
+function makeMemory(overrides: Partial<MemoryRecord>): MemoryRecord {
+  return {
+    id: "mem-default",
+    memory_type: "fact",
+    content: "Default memory",
+    created_at: recentIso,
+    updated_at: recentIso,
+    project_id: "project-1",
+    source_type: "agent",
+    source_session_id: null,
+    importance: 0.5,
+    access_count: 0,
+    last_accessed_at: null,
+    tags: [],
+    ...overrides,
+  };
+}
+
+function jsonResponse(data: unknown, status = 200) {
+  return new Response(JSON.stringify(data), {
+    status,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+function setupFetch(memories: MemoryRecord[]) {
+  const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const method = init?.method ?? "GET";
+
+    if (url.includes("/api/memories/stats")) {
+      return jsonResponse({
+        total_count: memories.length,
+        by_type: { fact: 1, preference: 1, pattern: 0, context: 0 },
+        recent_count: 1,
+        avg_importance: 0.5,
+        project_id: "project-1",
+      });
+    }
+    if (url.includes("/api/memories?") && method === "GET") {
+      return jsonResponse({ memories });
+    }
+    if (url.endsWith("/api/memories/mem-recent") && method === "PUT") {
+      return jsonResponse({
+        ...memories[0],
+        ...JSON.parse(String(init?.body)),
+        updated_at: new Date().toISOString(),
+      });
+    }
+    if (url.endsWith("/api/memories/mem-recent") && method === "DELETE") {
+      return jsonResponse({ ok: true });
+    }
+    return jsonResponse({ error: "no mock route matched" }, 404);
+  });
+
+  globalThis.fetch = fetchMock as unknown as typeof fetch;
+  window.fetch = fetchMock as unknown as typeof fetch;
+  return fetchMock;
+}
+
+function lastJsonBody(fetchMock: ReturnType<typeof setupFetch>) {
+  const call = fetchMock.mock.calls
+    .slice()
+    .reverse()
+    .find(([url, init]) => String(url).includes("/api/memories/mem-recent") && Boolean(init?.body));
+  return call?.[1]?.body ? JSON.parse(String(call[1].body)) : null;
+}
+
+describe("Memory activity tab", () => {
+  afterEach(() => {
+    globalThis.fetch = originalFetch;
+    window.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("registers the tab, filters rows, refreshes manually, and saves drafts", async () => {
+    const fetchMock = setupFetch([
+      makeMemory({
+        id: "mem-recent",
+        memory_type: "fact",
+        content: "Persist panel width override",
+        created_at: recentIso,
+        updated_at: recentIso,
+        tags: ["activity"],
+      }),
+      makeMemory({
+        id: "mem-old",
+        memory_type: "preference",
+        content: "Use a quiet palette for dashboards",
+        created_at: oldIso,
+        updated_at: oldIso,
+        tags: ["design"],
+      }),
+    ]);
+    const user = userEvent.setup();
+
+    expect(ACTIVITY_PANEL_TABS.some((tab) => tab.id === "memory")).toBe(true);
+    render(<MemoryTab projectId="project-1" />);
+
+    expect(
+      await screen.findByRole("button", { name: "Select Persist panel width override" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select Use a quiet palette for dashboards" }))
+      .toBeInTheDocument();
+    expect(screen.getByRole("searchbox", { name: "Search memories" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Refresh memories" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Filter memories" }));
+    await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
+    expect(screen.queryByText("Use a quiet palette for dashboards")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select Persist panel width override" }))
+      .toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Filter memories" }));
+    await user.click(screen.getByRole("checkbox", { name: "Last 24 hours" }));
+    await user.type(screen.getByRole("searchbox", { name: "Search memories" }), "palette");
+    expect(screen.queryByText("Persist panel width override")).not.toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Select Use a quiet palette for dashboards" }))
+      .toBeInTheDocument();
+
+    await user.clear(screen.getByRole("searchbox", { name: "Search memories" }));
+    await user.click(screen.getByRole("button", { name: "Refresh memories" }));
+    await waitFor(() => {
+      const listCalls = fetchMock.mock.calls.filter(([url]) => String(url).includes("/api/memories?"));
+      expect(listCalls.length).toBeGreaterThan(1);
+    });
+
+    await user.click(screen.getByRole("button", { name: "Select Persist panel width override" }));
+    await user.clear(screen.getByRole("textbox", { name: "Memory content" }));
+    await user.type(screen.getByRole("textbox", { name: "Memory content" }), "Draft should be discarded");
+    await user.click(screen.getByRole("button", { name: "Discard" }));
+    expect(screen.getByRole("textbox", { name: "Memory content" }))
+      .toHaveValue("Persist panel width override");
+
+    await user.clear(screen.getByRole("textbox", { name: "Memory content" }));
+    await user.type(screen.getByRole("textbox", { name: "Memory content" }), "Panel override is transient");
+    await user.selectOptions(screen.getByRole("combobox", { name: "Memory type" }), "pattern");
+    await user.type(screen.getByLabelText("Add Tags"), "panel{Enter}");
+    expect(screen.getByRole("button", { name: "Discard" })).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Save" }));
+
+    await waitFor(() =>
+      expect(lastJsonBody(fetchMock)).toMatchObject({
+        content: "Panel override is transient",
+        memory_type: "pattern",
+        tags: ["activity", "panel"],
+      }),
+    );
+
+    await user.click(screen.getByRole("button", { name: "Open actions for Persist panel width override" }));
+    const menu = screen.getByRole("menu", { name: "Actions for Persist panel width override" });
+    expect(within(menu).getByRole("menuitem", { name: "Copy content" })).toBeInTheDocument();
+    expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  });
+});

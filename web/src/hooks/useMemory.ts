@@ -83,6 +83,7 @@ interface CreateMemoryParams {
 
 interface UpdateMemoryParams {
   content?: string
+  memory_type?: string
   importance?: number
   tags?: string[]
 }

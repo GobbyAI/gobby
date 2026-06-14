@@ -17,6 +17,7 @@ import { ActivityMcpTab, type ActivityMcpTabProps } from "./ActivityMcpTab";
 import { AgentsTab } from "./AgentsTab";
 import { StagesTab } from "./StagesTab";
 import { SkillsTab } from "./SkillsTab";
+import { MemoryTab } from "./MemoryTab";
 import { IntegrationsTab } from "./IntegrationsTab";
 import { WikiTab } from "./WikiTab";
 import { RulesTab } from "./RulesTab";
@@ -327,6 +328,8 @@ export function ActivityPanel({
         return <StagesTab projectId={projectId} />;
       case "skills":
         return <SkillsTab projectId={projectId} />;
+      case "memory":
+        return <MemoryTab projectId={projectId} />;
       case "integrations":
         return <IntegrationsTab />;
       case "wiki":
