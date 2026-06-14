@@ -119,7 +119,7 @@ export function SegmentedControl<T extends string>({
             onKeyDown={(event) => handleKeyDown(event, index)}
             className={cn(
               'segmented-control__option',
-              'inline-flex items-center justify-center pointer-coarse:min-h-11',
+              'inline-flex items-center justify-center pointer-coarse:min-h-11 pointer-coarse:min-w-11',
               sizePad,
               'transition-colors motion-reduce:transition-none',
               'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background',

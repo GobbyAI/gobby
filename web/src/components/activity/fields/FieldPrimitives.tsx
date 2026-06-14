@@ -134,6 +134,7 @@ export function TagsField({
   placeholder,
 }: TagsFieldProps) {
   const [entry, setEntry] = useState("");
+  const inputId = useId();
 
   function addEntry() {
     const tag = entry.trim();
@@ -186,6 +187,7 @@ export function TagsField({
           </span>
         ))}
         <input
+          id={inputId}
           type="text"
           className={cn(
             "min-h-8 min-w-24 flex-1 bg-transparent px-1 text-sm text-foreground",

@@ -65,6 +65,7 @@ export function DetailActionButton({
       type="button"
       className={cn(
         "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md px-2.5",
+        "pointer-coarse:min-h-11 pointer-coarse:min-w-11",
         "text-xs font-medium transition-colors",
         "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
         "focus-visible:ring-offset-2 focus-visible:ring-offset-background",
