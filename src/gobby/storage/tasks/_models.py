@@ -179,7 +179,7 @@ class Task:
     closed_at: str | None = None
     labels: list[str] | None = None
     closed_reason: str | None = None
-    validation_status: Literal["pending", "valid", "invalid"] | None = None
+    validation_status: Literal["pending", "valid", "invalid", "error"] | None = None
     validation_feedback: str | None = None
     category: str | None = None
     validation_criteria: str | None = None

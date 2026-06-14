@@ -26,7 +26,12 @@ from gobby.ai import (
     build_daemon_text_generation_service,
 )
 from gobby.ai._text_generation_builder import _daemon_text_generation_adapter_factories
-from gobby.ai.text_generation import ONE_SHOT_DIRECTIVE
+from gobby.ai._text_generation_helpers import _CandidateTimeoutError
+from gobby.ai.text_generation import (
+    ONE_SHOT_DIRECTIVE,
+    FeatureGenerationUnavailableError,
+    is_feature_generation_infrastructure_error,
+)
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureProfile
 from gobby.llm.base import LLMProviderCancellation, LLMTextResult
@@ -1607,7 +1612,7 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
         provider_name: str,
         command: list[str],
         *,
-        cwd: str | None,
+        neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
     ) -> str:
@@ -1617,7 +1622,7 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
             {
                 "provider_name": provider_name,
                 "command": command,
-                "cwd": cwd,
+                "neutral_cwd": neutral_cwd,
                 "timeout_seconds": timeout_seconds,
                 "env_overrides": env_overrides,
             }
@@ -1645,13 +1650,15 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
     assert len(calls) == 1
     call = calls[0]
     command = call["command"]
-    assert call == {
-        "provider_name": "Codex",
-        "command": command,
-        "cwd": "/tmp/project",
-        "timeout_seconds": 12.0,
-        "env_overrides": {"EXTRA": "1"},
-    }
+    assert call["provider_name"] == "Codex"
+    assert call["timeout_seconds"] == 12.0
+    assert call["env_overrides"] == {"EXTRA": "1"}
+    # One-shot generation runs in a neutral temp dir, never the request's project cwd.
+    neutral_cwd = call["neutral_cwd"]
+    assert isinstance(neutral_cwd, Path)
+    assert neutral_cwd != Path("/tmp/project")
+    # Codex output file lives inside the neutral cwd so its lifetime matches the call.
+    assert Path(command[command.index("--output-last-message") + 1]).parent == neutral_cwd
     assert command[:9] == [
         "/bin/codex",
         "--ask-for-approval",
@@ -1665,7 +1672,8 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
     ]
     assert "--output-last-message" in command
     assert command[command.index("--model") + 1] == "gpt-5.4-mini"
-    assert command[command.index("--cd") + 1] == "/tmp/project"
+    # request.cwd must NOT leak into the command as --cd.
+    assert "--cd" not in command
     assert command[-1] == f"system prompt\n\n{ONE_SHOT_DIRECTIVE}\n\nuser prompt"
 
 
@@ -1679,7 +1687,7 @@ async def test_daemon_codex_text_generate_adapter_uses_configured_deadline(
         provider_name: str,
         command: list[str],
         *,
-        cwd: str | None,
+        neutral_cwd: Path,
         timeout_seconds: float,
         env_overrides: dict[str, str],
     ) -> str:
@@ -1936,8 +1944,10 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
             )
         ]
     )
+    # The gemini binding is a spawn-cold CLI lane, so it is bounded by
+    # cli_candidate_timeout_seconds (not the fast-lane candidate_timeout_seconds).
     service = build_daemon_text_generation_service(
-        DaemonConfig(ai={"generation": {"candidate_timeout_seconds": 0.01}}),
+        DaemonConfig(ai={"generation": {"cli_candidate_timeout_seconds": 0.01}}),
         registry=registry,
     )
 
@@ -1999,6 +2009,7 @@ async def test_run_cli_text_generation_command_cleans_up_process_when_cancelled(
 
     async def fake_create_subprocess_exec(
         *command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2013,7 +2024,7 @@ async def test_run_cli_text_generation_command_cleans_up_process_when_cancelled(
         text_generation_adapters._run_cli_text_generation_command(
             "Gemini",
             ("/usr/local/bin/gemini", "--prompt", "slow"),
-            cwd=None,
+            neutral_cwd=Path("/tmp"),
             timeout_seconds=30,
             env_overrides={},
         )
@@ -2045,6 +2056,7 @@ async def test_run_cli_text_generation_command_signals_process_group_when_cancel
 
     async def fake_create_subprocess_exec(
         *command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2069,7 +2081,7 @@ async def test_run_cli_text_generation_command_signals_process_group_when_cancel
         text_generation_adapters._run_cli_text_generation_command(
             "Qwen",
             ("/usr/local/bin/qwen", "--model", "slow"),
-            cwd=None,
+            neutral_cwd=Path("/tmp"),
             timeout_seconds=30,
             env_overrides={},
         )
@@ -2094,7 +2106,7 @@ async def test_text_generation_service_cleans_up_timed_out_cli_candidate_and_fal
             return await text_generation_adapters._run_cli_text_generation_command(
                 "Slow",
                 ("/usr/local/bin/slow", "--prompt", request.prompt),
-                cwd=None,
+                neutral_cwd=Path("/tmp"),
                 timeout_seconds=30,
                 env_overrides={},
             )
@@ -2103,6 +2115,7 @@ async def test_text_generation_service_cleans_up_timed_out_cli_candidate_and_fal
 
     async def fake_create_subprocess_exec(
         *_command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2135,7 +2148,9 @@ async def test_text_generation_service_cleans_up_timed_out_cli_candidate_and_fal
 
 def _assert_droid_isolated_env(env: dict[str, str]) -> Path:
     temp_home = Path(env["HOME"])
-    assert temp_home.name.startswith("gobby-droid-feature-")
+    # Droid home/state lives under the shared neutral textgen root (cwd / "home").
+    assert temp_home.name == "home"
+    assert temp_home.parent.name.startswith("gobby-textgen-")
     assert Path(env["XDG_CONFIG_HOME"]) == temp_home / ".config"
     assert Path(env["XDG_DATA_HOME"]) == temp_home / ".local" / "share"
     assert Path(env["XDG_STATE_HOME"]) == temp_home / ".local" / "state"
@@ -2154,6 +2169,7 @@ async def test_gemini_cli_text_generate_adapter_runs_non_session_prompt(
 
     async def fake_create_subprocess_exec(
         *command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2191,7 +2207,9 @@ async def test_gemini_cli_text_generate_adapter_runs_non_session_prompt(
             f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain",
         ),
     ]
-    assert cwds == ["/tmp/project"]
+    # One-shot generation runs in a neutral temp dir, never the request's project cwd.
+    assert cwds[0] != "/tmp/project"
+    assert cwds[0] is not None and "gobby-textgen-" in cwds[0]
     assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
 
 
@@ -2203,6 +2221,7 @@ async def test_gemini_cli_text_generate_adapter_parses_json_output_wrapper(
 
     async def fake_create_subprocess_exec(
         *command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2244,6 +2263,7 @@ async def test_gemini_cli_text_generate_adapter_reports_json_wrapper_error(
 ) -> None:
     async def fake_create_subprocess_exec(
         *_command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2271,6 +2291,7 @@ async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
 
     async def fake_create_subprocess_exec(
         *command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2316,7 +2337,9 @@ async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
     assert "--resume" not in commands[0]
     assert "--continue" not in commands[0]
     assert "--session-id" not in commands[0]
-    assert cwds == ["/tmp/project"]
+    # One-shot generation runs in a neutral temp dir, never the request's project cwd.
+    assert cwds[0] != "/tmp/project"
+    assert cwds[0] is not None and "gobby-textgen-" in cwds[0]
     assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
 
 
@@ -2329,6 +2352,7 @@ async def test_qwen_cli_text_generate_adapter_uses_configured_openai_endpoint(
 
     async def fake_create_subprocess_exec(
         *command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2391,6 +2415,7 @@ async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
 
     async def fake_create_subprocess_exec(
         *command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2440,7 +2465,9 @@ async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
     assert command[-2:] == ("--single", f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain")
     assert {"--acp", "--session-id", "--resume", "--continue", "-r", "-c"}.isdisjoint(command)
     assert leader_socket_parent_exists == [True]
-    assert cwds == ["/tmp/project"]
+    # One-shot generation runs in a neutral temp dir, never the request's project cwd.
+    assert cwds[0] != "/tmp/project"
+    assert cwds[0] is not None and "gobby-textgen-" in cwds[0]
 
 
 @pytest.mark.asyncio
@@ -2456,6 +2483,7 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
 
     async def fake_create_subprocess_exec(
         *command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2489,7 +2517,9 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
         "claude-opus-4-7",
         "system\n\nexplain",
     )
-    assert cwd == "/tmp/project"
+    # One-shot generation runs in a neutral temp dir, never the request's project cwd.
+    assert cwd != "/tmp/project"
+    assert cwd is not None and "gobby-textgen-" in cwd
     temp_home = _assert_droid_isolated_env(env)
     assert not temp_home.exists()
 
@@ -2507,6 +2537,7 @@ async def test_droid_cli_text_generate_adapter_reports_exec_failure(
 
     async def fake_create_subprocess_exec(
         *_command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2541,6 +2572,7 @@ async def test_droid_cli_text_generate_adapter_reports_timeout_with_command(
 
     async def fake_create_subprocess_exec(
         *_command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2581,6 +2613,7 @@ async def test_droid_cli_text_generate_adapter_cleans_temp_home_after_setup_fail
 
     async def fake_create_subprocess_exec(
         *_command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2652,6 +2685,7 @@ async def test_droid_cli_text_generate_adapter_seeds_auth_config_without_history
 
     async def fake_create_subprocess_exec(
         *_command: str,
+        stdin: int,
         stdout: int,
         stderr: int,
         cwd: str | None,
@@ -2681,3 +2715,112 @@ async def test_droid_cli_text_generate_adapter_seeds_auth_config_without_history
     assert copied_files.isdisjoint(excluded_files)
     assert temp_homes
     assert all(not temp_home.exists() for temp_home in temp_homes)
+
+
+def test_is_feature_generation_infrastructure_error_classification() -> None:
+    assert is_feature_generation_infrastructure_error(FeatureGenerationUnavailableError("x"))
+    assert is_feature_generation_infrastructure_error(_CandidateTimeoutError("t"))
+    assert is_feature_generation_infrastructure_error(
+        CapabilityUnavailableError(AICapability.TEXT_GENERATE)
+    )
+    # A single malformed-JSON parse failure is an ordinary candidate failure, not infra.
+    assert not is_feature_generation_infrastructure_error(ValueError("bad json"))
+    assert not is_feature_generation_infrastructure_error(None)
+    # The cause/context chain is walked.
+    try:
+        try:
+            raise _CandidateTimeoutError("inner timeout")
+        except _CandidateTimeoutError as inner:
+            raise RuntimeError("wrapped") from inner
+    except RuntimeError as exc:
+        assert is_feature_generation_infrastructure_error(exc)
+
+
+@pytest.mark.asyncio
+async def test_generate_json_raises_typed_infra_error_when_all_candidates_fail() -> None:
+    registry = _two_candidate_registry("local:a", "local:b")
+    service = TextGenerationService(
+        registry,
+        {
+            "local:a": ProviderFailureAdapter(_CandidateTimeoutError("a timed out")),
+            "local:b": ProviderFailureAdapter(_CandidateTimeoutError("b timed out")),
+        },
+    )
+
+    with pytest.raises(FeatureGenerationUnavailableError) as exc_info:
+        await service.generate_json(
+            TextGenerationRequest(
+                prompt="extract",
+                candidates=("local:a/slow-model", "local:b/good-model"),
+            )
+        )
+    # The terminal failure is classified as infrastructure (callers back off, not reject).
+    assert is_feature_generation_infrastructure_error(exc_info.value)
+
+
+def test_candidate_timeout_selection_by_adapter_style() -> None:
+    service = TextGenerationService(
+        AICapabilityRegistry([]),
+        candidate_timeout_seconds=60.0,
+        cli_candidate_timeout_seconds=150.0,
+    )
+
+    def _binding(style: AIAdapterStyle) -> CapabilityBinding:
+        return CapabilityBinding(
+            capability=AICapability.TEXT_GENERATE,
+            provider="p",
+            adapter_style=style,
+            available=True,
+        )
+
+    # Spawn-cold lanes get the larger CLI timeout.
+    for style in (
+        AIAdapterStyle.CLI,
+        AIAdapterStyle.DAEMON,
+        AIAdapterStyle.LLM_PROVIDER,
+        AIAdapterStyle.ACP,
+    ):
+        assert service._candidate_timeout_for_binding(_binding(style)) == 150.0
+
+    # Fast API lanes keep the tight candidate timeout.
+    for style in (AIAdapterStyle.LOCAL, AIAdapterStyle.OPENAI_COMPATIBLE):
+        assert service._candidate_timeout_for_binding(_binding(style)) == 60.0
+
+    # No binding falls back to the fast timeout.
+    assert service._candidate_timeout_for_binding(None) == 60.0
+
+
+@pytest.mark.asyncio
+async def test_run_cli_text_generation_command_closes_stdin(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        captured["stdin"] = stdin
+        captured["cwd"] = cwd
+        return FakeProcess(b"ok\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await text_generation_adapters._run_cli_text_generation_command(
+        "Gemini",
+        ("/usr/local/bin/gemini", "--prompt", "hi"),
+        neutral_cwd=tmp_path,
+        timeout_seconds=5,
+        env_overrides={},
+    )
+
+    assert result == "ok"
+    # stdin is closed so codex-style "Reading additional input from stdin" cannot hang.
+    assert captured["stdin"] == asyncio.subprocess.DEVNULL
+    assert captured["cwd"] == str(tmp_path)

@@ -18,6 +18,7 @@ from claude_agent_sdk import (
 
 from gobby.config.app import DaemonConfig
 from gobby.llm.base import AuthMode, LLMProviderCancellation, LLMTextResult
+from gobby.llm.textgen_cwd import neutral_textgen_cwd
 from gobby.utils.json_helpers import extract_json_from_text
 
 # Headless settings file — zeroes out all hooks so internal LLM calls
@@ -442,53 +443,61 @@ class ClaudeLLMProvider:
             raise RuntimeError("Generation unavailable (Claude CLI not found)")
 
         # Configure Claude Agent SDK
-        # Use tools=[] to disable all tools for pure text generation
-        options = ClaudeAgentOptions(
-            system_prompt=system_prompt or "You are a helpful assistant.",
-            max_turns=1,
-            model=model or self._default_model,
-            tools=[],  # Explicitly disable all tools
-            allowed_tools=[],
-            mcp_servers={},
-            permission_mode="default",
-            cli_path=cli_path,
-        )
+        # Use tools=[] to disable all tools for pure text generation.
+        # cwd is a neutral temp dir (never the project dir) so the spawned claude
+        # CLI does not load project context/hooks and pay a variable startup tax.
+        with neutral_textgen_cwd() as neutral_cwd:
+            options = ClaudeAgentOptions(
+                system_prompt=system_prompt or "You are a helpful assistant.",
+                max_turns=1,
+                model=model or self._default_model,
+                tools=[],  # Explicitly disable all tools
+                allowed_tools=[],
+                mcp_servers={},
+                permission_mode="default",
+                cli_path=cli_path,
+                cwd=str(neutral_cwd),
+            )
 
-        captured_usage: dict[str, int] | None = None
+            captured_usage: dict[str, int] | None = None
 
-        async def _run_query() -> str:
-            nonlocal captured_usage
-            result_text = ""
-            message_count = 0
-            async for message in query(prompt=prompt, options=options):
-                message_count += 1
-                self.logger.debug(
-                    f"generate_text message {message_count}: {type(message).__name__}"
-                )
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            self.logger.debug(f"  TextBlock: {block.text[:100]}...")
-                            result_text += block.text
-                        elif isinstance(block, ToolUseBlock):
-                            self.logger.debug(f"  ToolUseBlock: {block.name}")
-                elif isinstance(message, ResultMessage):
+            async def _run_query() -> str:
+                nonlocal captured_usage
+                result_text = ""
+                message_count = 0
+                async for message in query(prompt=prompt, options=options):
+                    message_count += 1
                     self.logger.debug(
-                        f"  ResultMessage: result={message.result}, type={type(message.result)}"
+                        f"generate_text message {message_count}: {type(message).__name__}"
                     )
-                    if message.result:
-                        result_text = message.result
-                    usage = _normalize_claude_usage(getattr(message, "usage", None))
-                    if usage is not None:
-                        captured_usage = usage
-            if message_count == 0:
-                self.logger.warning("generate_text: No messages received from Claude SDK")
-            elif not result_text:
-                self.logger.warning(f"generate_text: {message_count} messages but no text content")
-            return result_text
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                self.logger.debug(f"  TextBlock: {block.text[:100]}...")
+                                result_text += block.text
+                            elif isinstance(block, ToolUseBlock):
+                                self.logger.debug(f"  ToolUseBlock: {block.name}")
+                    elif isinstance(message, ResultMessage):
+                        self.logger.debug(
+                            f"  ResultMessage: result={message.result}, type={type(message.result)}"
+                        )
+                        if message.result:
+                            result_text = message.result
+                        usage = _normalize_claude_usage(getattr(message, "usage", None))
+                        if usage is not None:
+                            captured_usage = usage
+                if message_count == 0:
+                    self.logger.warning("generate_text: No messages received from Claude SDK")
+                elif not result_text:
+                    self.logger.warning(
+                        f"generate_text: {message_count} messages but no text content"
+                    )
+                return result_text
 
-        operation = f"generate_text[{caller}]" if caller else "generate_text"
-        result: str = await self._execute_sdk_query(operation, _run_query, options, max_retries=3)
+            operation = f"generate_text[{caller}]" if caller else "generate_text"
+            result: str = await self._execute_sdk_query(
+                operation, _run_query, options, max_retries=3
+            )
         # SDK doesn't support max_tokens directly; post-truncate if needed
         if max_tokens and len(result) > max_tokens * 4:
             result = result[: max_tokens * 4]
@@ -570,41 +579,47 @@ class ClaudeLLMProvider:
         if not cli_path:
             raise RuntimeError("Generation unavailable (Claude CLI not found)")
 
-        options = ClaudeAgentOptions(
-            system_prompt=system_prompt or "You are a helpful assistant.",
-            max_turns=1,
-            model=model or self._default_model,
-            tools=[],
-            allowed_tools=[],
-            mcp_servers={},
-            permission_mode="default",
-            cli_path=cli_path,
-            output_format={"type": "json_object"},
-        )
+        # cwd is a neutral temp dir (never the project dir) so the spawned claude
+        # CLI does not load project context/hooks and pay a variable startup tax.
+        with neutral_textgen_cwd() as neutral_cwd:
+            options = ClaudeAgentOptions(
+                system_prompt=system_prompt or "You are a helpful assistant.",
+                max_turns=1,
+                model=model or self._default_model,
+                tools=[],
+                allowed_tools=[],
+                mcp_servers={},
+                permission_mode="default",
+                cli_path=cli_path,
+                output_format={"type": "json_object"},
+                cwd=str(neutral_cwd),
+            )
 
-        async def _run_query() -> str:
-            result_text = ""
-            message_count = 0
-            async for message in query(prompt=prompt, options=options):
-                message_count += 1
-                self.logger.debug(
-                    "generate_json message %d: %s", message_count, type(message).__name__
-                )
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            result_text += block.text
-                elif isinstance(message, ResultMessage):
-                    if message.result:
-                        result_text = message.result
-            if message_count == 0:
-                self.logger.warning("generate_json: No messages received from Claude SDK")
-            elif not result_text:
-                self.logger.warning("generate_json: %d messages but no text content", message_count)
-            return result_text
+            async def _run_query() -> str:
+                result_text = ""
+                message_count = 0
+                async for message in query(prompt=prompt, options=options):
+                    message_count += 1
+                    self.logger.debug(
+                        "generate_json message %d: %s", message_count, type(message).__name__
+                    )
+                    if isinstance(message, AssistantMessage):
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                result_text += block.text
+                    elif isinstance(message, ResultMessage):
+                        if message.result:
+                            result_text = message.result
+                if message_count == 0:
+                    self.logger.warning("generate_json: No messages received from Claude SDK")
+                elif not result_text:
+                    self.logger.warning(
+                        "generate_json: %d messages but no text content", message_count
+                    )
+                return result_text
 
-        operation = f"generate_json[{caller}]" if caller else "generate_json"
-        text = await self._execute_sdk_query(operation, _run_query, options, max_retries=3)
+            operation = f"generate_json[{caller}]" if caller else "generate_json"
+            text = await self._execute_sdk_query(operation, _run_query, options, max_retries=3)
         text = str(text).strip()
         self.logger.debug("generate_json raw response (%d chars): %s", len(text), text[:500])
         if not text:

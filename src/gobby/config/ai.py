@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from gobby.config.feature_base import FeatureProfile, validate_feature_candidates
+
+logger = logging.getLogger(__name__)
 
 _LOCAL_ENDPOINT_NAME_RE = re.compile(r"^[a-z0-9][a-z0-9_-]*$")
 LocalGenerationProvider = Literal["openai-compatible", "lmstudio", "ollama"]
@@ -87,8 +90,19 @@ class GenerationConfig(BaseModel):
         default=60.0,
         gt=0.0,
         description=(
-            "Maximum seconds for a single text-generation candidate attempt "
-            "before falling back to the next candidate."
+            "Maximum seconds for a single text-generation candidate attempt on a "
+            "fast (local/OpenAI-compatible API) lane before falling back to the "
+            "next candidate."
+        ),
+    )
+    cli_candidate_timeout_seconds: float = Field(
+        default=150.0,
+        gt=0.0,
+        description=(
+            "Maximum seconds for a single candidate attempt on a spawn-cold lane "
+            "(CLI subprocess, daemon, ACP, or the Claude SDK that spawns a CLI). "
+            "These lanes pay cold-start cost, so they get more headroom than the "
+            "fast-lane candidate_timeout_seconds. Must stay below timeout_seconds."
         ),
     )
     local: LocalGenerationConfig = Field(
@@ -99,6 +113,24 @@ class GenerationConfig(BaseModel):
         default_factory=dict,
         description="Profile default candidate overrides keyed by feature profile.",
     )
+
+    @model_validator(mode="after")
+    def clamp_candidate_timeouts(self) -> GenerationConfig:
+        """Keep cli_candidate_timeout_seconds at or below the overall attempt budget.
+
+        A per-candidate cap longer than the overall ``timeout_seconds`` attempt
+        budget is meaningless, so clamp (with a warning) instead of failing — this
+        keeps small-timeout test/dev configs valid.
+        """
+        if self.cli_candidate_timeout_seconds > self.timeout_seconds:
+            logger.warning(
+                "cli_candidate_timeout_seconds (%.3g) exceeds timeout_seconds (%.3g); "
+                "clamping to timeout_seconds",
+                self.cli_candidate_timeout_seconds,
+                self.timeout_seconds,
+            )
+            self.cli_candidate_timeout_seconds = self.timeout_seconds
+        return self
 
     @field_validator("profile_defaults")
     @classmethod

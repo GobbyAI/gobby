@@ -36,9 +36,9 @@ Task: {{ title }}
 {{ category_section }}{{ criteria_text }}
 
 {{ changes_section }}
-IMPORTANT: Return ONLY a JSON object, nothing else. No explanation, no preamble.
-Format: {"status": "valid", "feedback": "..."} or {"status": "invalid", "feedback": "..."}
 {% if file_context %}
 File Context:
 {{ file_context }}
 {% endif %}
+IMPORTANT: Return ONLY a JSON object, nothing else. No explanation, no preamble.
+Format: {"status": "valid", "feedback": "..."} or {"status": "invalid", "feedback": "..."}

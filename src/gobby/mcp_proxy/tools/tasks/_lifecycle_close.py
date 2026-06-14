@@ -525,6 +525,10 @@ def _append_verification_evidence_context(
     if not evidence_text:
         return validation_context
 
+    logger.debug(
+        "Appended verification evidence to validation context: evidence_chars=%d",
+        len(evidence_text),
+    )
     if validation_context:
         return f"{validation_context}\n\n{evidence_text}"
     return evidence_text

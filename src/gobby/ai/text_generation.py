@@ -15,13 +15,18 @@ from gobby.ai._text_generation_contracts import (
     TextGenerateJSONAdapter,
     TextGenerationRequest,
 )
-from gobby.ai._text_generation_helpers import ONE_SHOT_DIRECTIVE
+from gobby.ai._text_generation_helpers import (
+    ONE_SHOT_DIRECTIVE,
+    FeatureGenerationUnavailableError,
+    is_feature_generation_infrastructure_error,
+)
 from gobby.ai._text_generation_service import TextGenerationService
 
 __all__ = [
     "ClaudeTextGenerateAdapter",
     "CodexCLITextGenerateAdapter",
     "DroidCLITextGenerateAdapter",
+    "FeatureGenerationUnavailableError",
     "LocalTextGenerateAdapter",
     "ONE_SHOT_DIRECTIVE",
     "TextGenerateAdapter",
@@ -30,4 +35,5 @@ __all__ = [
     "TextGenerationRequest",
     "TextGenerationService",
     "build_daemon_text_generation_service",
+    "is_feature_generation_infrastructure_error",
 ]

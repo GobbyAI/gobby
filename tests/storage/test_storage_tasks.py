@@ -717,6 +717,21 @@ class TestLocalTaskManager:
         assert updated.validation_status == "valid"
         assert updated.validation_feedback == "good"
 
+    def test_validation_status_error_round_trips(self, task_manager, project_id) -> None:
+        """validation_status='error' (LLM infra failure) persists and reads back."""
+        task = task_manager.create_task(project_id=project_id, title="Infra task")
+
+        updated = task_manager.update_task(
+            task.id,
+            validation_status="error",
+            validation_feedback="generation unavailable",
+        )
+
+        assert updated.validation_status == "error"
+        reloaded = task_manager.get_task(task.id)
+        assert reloaded is not None
+        assert reloaded.validation_status == "error"
+
     def test_clear_parent_task(self, task_manager, project_id) -> None:
         parent = task_manager.create_task(project_id, "P")
         child = task_manager.create_task(project_id, "C", parent_task_id=parent.id)

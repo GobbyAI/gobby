@@ -25,6 +25,46 @@ class _CandidateTimeoutError(RuntimeError):
     """A single candidate attempt exceeded the per-candidate timeout."""
 
 
+class FeatureGenerationUnavailableError(RuntimeError):
+    """No text-generation candidate produced a usable result.
+
+    Raised when every candidate failed for infrastructure reasons — timeouts,
+    capability unavailability, or provider transport/format failures (including
+    all candidates returning malformed JSON for a feature JSON call). This is an
+    infrastructure problem, not a domain decision: callers such as task
+    validation use it to distinguish "the model never answered" from a genuine
+    verdict, so they can back off and retry rather than recording a false result.
+    """
+
+
+def is_feature_generation_infrastructure_error(exc: BaseException | None) -> bool:
+    """Return True if ``exc`` (or its cause/context chain) is an infra generation failure.
+
+    Treats :class:`FeatureGenerationUnavailableError`, per-candidate timeouts, and
+    capability-unavailable errors as infrastructure failures. A single malformed-JSON
+    parse failure is *not* infra on its own (the candidate loop falls through to the
+    next candidate); when every candidate fails, the service raises
+    :class:`FeatureGenerationUnavailableError`, which this recognizes.
+    """
+    from gobby.ai.registry import CapabilityUnavailableError
+
+    seen: set[int] = set()
+    current: BaseException | None = exc
+    while current is not None and id(current) not in seen:
+        seen.add(id(current))
+        if isinstance(
+            current,
+            (
+                FeatureGenerationUnavailableError,
+                _CandidateTimeoutError,
+                CapabilityUnavailableError,
+            ),
+        ):
+            return True
+        current = current.__cause__ or current.__context__
+    return False
+
+
 def _llm_text_result_type() -> type[LLMTextResult]:
     from gobby.llm.base import LLMTextResult
 

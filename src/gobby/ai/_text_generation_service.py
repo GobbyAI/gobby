@@ -16,6 +16,7 @@ from gobby.ai._text_generation_contracts import (
     TextGenerationRequest,
 )
 from gobby.ai._text_generation_helpers import (
+    FeatureGenerationUnavailableError,
     _candidate_debug_label,
     _CandidateTimeoutError,
     _coerce_text_result,
@@ -26,6 +27,7 @@ from gobby.ai._text_generation_helpers import (
     _validate_text_generation_output,
 )
 from gobby.ai.registry import (
+    AIAdapterStyle,
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
@@ -42,6 +44,19 @@ if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
 
 logger = logging.getLogger("gobby.ai.text_generation")
+
+# Lanes that spawn a cold subprocess (a CLI, the daemon transport, an ACP client,
+# or the Claude SDK that itself spawns the claude CLI) pay cold-start latency and
+# get the larger cli_candidate_timeout. Fast HTTP API lanes (local / OpenAI-
+# compatible) keep the tight candidate_timeout.
+_SPAWN_COLD_ADAPTER_STYLES: frozenset[AIAdapterStyle] = frozenset(
+    {
+        AIAdapterStyle.CLI,
+        AIAdapterStyle.DAEMON,
+        AIAdapterStyle.LLM_PROVIDER,
+        AIAdapterStyle.ACP,
+    }
+)
 
 
 def _json_parse_failure(raw: str, exc: Exception) -> ValueError:
@@ -65,11 +80,13 @@ class TextGenerationService:
         profile_defaults: Mapping[FeatureProfile, Sequence[str]] | None = None,
         *,
         candidate_timeout_seconds: float | None = None,
+        cli_candidate_timeout_seconds: float | None = None,
     ) -> None:
         self._registry = registry
         self._adapters = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
         self._candidate_timeout_seconds = candidate_timeout_seconds
+        self._cli_candidate_timeout_seconds = cli_candidate_timeout_seconds
         self._profile_defaults = {
             FeatureProfile(profile): tuple(
                 normalize_feature_candidate(candidate) for candidate in candidates
@@ -77,9 +94,25 @@ class TextGenerationService:
             for profile, candidates in (profile_defaults or {}).items()
         }
 
-    async def _await_candidate[T](self, awaitable: Awaitable[T]) -> T:
-        """Bound one candidate attempt by the per-candidate timeout."""
-        timeout = self._candidate_timeout_seconds
+    def _candidate_timeout_for_binding(self, binding: CapabilityBinding | None) -> float | None:
+        """Select the per-candidate timeout for the lane behind ``binding``.
+
+        Spawn-cold lanes get ``cli_candidate_timeout_seconds`` (more headroom for
+        cold-start); fast API lanes keep the tight ``candidate_timeout_seconds``.
+        """
+        if (
+            binding is not None
+            and binding.adapter_style in _SPAWN_COLD_ADAPTER_STYLES
+            and self._cli_candidate_timeout_seconds is not None
+        ):
+            return self._cli_candidate_timeout_seconds
+        return self._candidate_timeout_seconds
+
+    async def _await_candidate[T](
+        self, awaitable: Awaitable[T], *, binding: CapabilityBinding | None
+    ) -> T:
+        """Bound one candidate attempt by the lane-appropriate per-candidate timeout."""
+        timeout = self._candidate_timeout_for_binding(binding)
         if timeout is None:
             return await awaitable
         try:
@@ -120,7 +153,7 @@ class TextGenerationService:
             operation="text generation",
         ):
             raise unavailable_error from last_error
-        raise RuntimeError(
+        raise FeatureGenerationUnavailableError(
             "No text generation candidate succeeded "
             f"(tried: {attempted_candidates}; errors: {candidate_errors})"
         ) from last_error
@@ -149,7 +182,7 @@ class TextGenerationService:
             operation="JSON generation",
         ):
             raise unavailable_error from last_error
-        raise RuntimeError(
+        raise FeatureGenerationUnavailableError(
             "No JSON generation candidate succeeded; "
             f"attempted candidates: {attempted_candidates}; errors: {candidate_errors}"
         ) from last_error
@@ -172,7 +205,7 @@ class TextGenerationService:
             try:
                 binding = self._select_binding(candidate)
                 adapter = self._adapter_for_provider(binding.provider)
-                result = await self._await_candidate(adapter.generate(candidate))
+                result = await self._await_candidate(adapter.generate(candidate), binding=binding)
                 text_result = _coerce_text_result(result)
                 _validate_text_generation_output(candidate, text_result.text)
                 self._log_generation_event(
@@ -233,10 +266,14 @@ class TextGenerationService:
                         Callable[[TextGenerationRequest], Awaitable[dict[str, Any]]],
                         json_adapter,
                     )
-                    result = await self._await_candidate(typed_json_adapter(candidate))
+                    result = await self._await_candidate(
+                        typed_json_adapter(candidate), binding=binding
+                    )
                     parse_outcome = "provider_structured"
                 else:
-                    text = await self._await_candidate(adapter.generate(_json_request(candidate)))
+                    text = await self._await_candidate(
+                        adapter.generate(_json_request(candidate)), binding=binding
+                    )
                     raw = _coerce_text_result(text).text
                     try:
                         result = _parse_json_text(raw)

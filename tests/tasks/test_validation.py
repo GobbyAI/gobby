@@ -18,11 +18,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.ai.text_generation import FeatureGenerationUnavailableError
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.tasks.validation import (
+    VALIDATION_PROMPT_BUDGET_CHARS,
     TaskValidator,
     ValidationResult,
+    _budget_validation_sections,
     extract_file_patterns_from_text,
     find_matching_files,
     get_commits_since,
@@ -36,6 +39,116 @@ from gobby.tasks.validation import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+class TestValidationPromptBudget:
+    """Fix #2: bound the assembled validation prompt and emit size observability."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock(spec=LLMService)
+        llm.call_json_feature = AsyncMock()
+        return llm
+
+    @pytest.fixture
+    def config(self):
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
+
+    def test_budget_helper_prioritizes_changes_over_file_context(self) -> None:
+        budgeted = _budget_validation_sections("D" * 30000, "F" * 20000)
+        assert len(budgeted.changes_section) == VALIDATION_PROMPT_BUDGET_CHARS
+        assert budgeted.file_context == ""  # changes consume the whole budget
+        assert budgeted.changes_truncated_chars == 30000 - VALIDATION_PROMPT_BUDGET_CHARS
+        assert budgeted.file_context_truncated_chars == 20000
+
+    def test_budget_helper_gives_file_context_remaining_budget(self) -> None:
+        budgeted = _budget_validation_sections("D" * 5000, "F" * 20000)
+        assert len(budgeted.changes_section) == 5000
+        assert len(budgeted.file_context) == VALIDATION_PROMPT_BUDGET_CHARS - 5000
+        assert budgeted.changes_truncated_chars == 0
+
+    @pytest.mark.asyncio
+    async def test_large_changes_summary_is_bounded(self, config, mock_llm) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
+
+        await validator.validate_task(
+            task_id="task-1",
+            title="Big change",
+            description="d",
+            changes_summary="@@ diff @@\n" + ("x" * 60000),
+            validation_criteria="criteria",
+        )
+
+        prompt = mock_llm.call_json_feature.call_args.args[1]
+        # The whole prompt stays near the budget plus small boilerplate/criteria.
+        assert len(prompt) < VALIDATION_PROMPT_BUDGET_CHARS + 2000
+
+    @pytest.mark.asyncio
+    async def test_prompt_size_observability_logged(self, config, mock_llm, caplog) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
+
+        with caplog.at_level("INFO", logger="gobby.tasks.validation"):
+            await validator.validate_task(
+                task_id="task-obs",
+                title="t",
+                description="d",
+                changes_summary="some changes",
+                validation_criteria="criteria",
+            )
+
+        assert any(
+            "Validation prompt assembled" in rec.message and "final_prompt_chars" in rec.message
+            for rec in caplog.records
+        )
+
+
+class TestValidationInfrastructureFailure:
+    """Fix #4: infra generation failures return status='error', not a verdict."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock(spec=LLMService)
+        llm.call_json_feature = AsyncMock()
+        return llm
+
+    @pytest.fixture
+    def config(self):
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
+
+    @pytest.mark.asyncio
+    async def test_infrastructure_failure_returns_error_status(self, config, mock_llm) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = FeatureGenerationUnavailableError(
+            "No JSON generation candidate succeeded"
+        )
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "error"
+        assert result.feedback is not None
+
+    @pytest.mark.asyncio
+    async def test_non_infrastructure_exception_returns_pending(self, config, mock_llm) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = ValueError("unexpected bug")
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "pending"
 
 
 class TestRunGitCommand:

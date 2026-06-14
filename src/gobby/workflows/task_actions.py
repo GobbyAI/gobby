@@ -27,7 +27,7 @@ def update_task_from_workflow(
     Args:
         db: HubDatabase instance
         task_id: ID of the task to update
-        validation_status: Validation status ('pending', 'valid', 'invalid')
+        validation_status: Validation status ('pending', 'valid', 'invalid', 'error')
         validation_feedback: Feedback from validation
 
     Returns:

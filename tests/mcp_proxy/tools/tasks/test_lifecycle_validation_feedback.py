@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock
 
@@ -16,6 +18,30 @@ from gobby.mcp_proxy.tools.tasks._lifecycle_validation import (
 from gobby.tasks.validation import ValidationResult as TaskValidationResult
 
 pytestmark = pytest.mark.unit
+
+
+class _NoBackoffConn:
+    """Connection stub where validation backoff lookups always find no row."""
+
+    rowcount = 0
+
+    def execute(self, *_args: object, **_kwargs: object) -> _NoBackoffConn:
+        return self
+
+    def fetchone(self) -> None:
+        return None
+
+
+class _NoBackoffDB:
+    """HubDatabase stub so TaskValidationBackoffStore reads as 'no active backoff'."""
+
+    @contextlib.contextmanager
+    def transaction(self) -> Iterator[_NoBackoffConn]:
+        yield _NoBackoffConn()
+
+
+def _task_manager_mock(update_task: MagicMock) -> SimpleNamespace:
+    return SimpleNamespace(update_task=update_task, db=_NoBackoffDB())
 
 
 @pytest.mark.parametrize(
@@ -228,7 +254,7 @@ async def test_valid_llm_result_with_failure_feedback_is_overridden_to_invalid()
             )
         )
     )
-    ctx = SimpleNamespace(task_manager=SimpleNamespace(update_task=update_task))
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
 
     result = await validate_leaf_task_with_llm(
         task,
@@ -271,7 +297,7 @@ async def test_conflicting_success_and_failure_feedback_prefers_failure() -> Non
             )
         )
     )
-    ctx = SimpleNamespace(task_manager=SimpleNamespace(update_task=update_task))
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
 
     result = await validate_leaf_task_with_llm(
         task,
@@ -311,7 +337,7 @@ async def test_valid_llm_result_with_zero_failure_feedback_remains_valid() -> No
             )
         )
     )
-    ctx = SimpleNamespace(task_manager=SimpleNamespace(update_task=update_task))
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
 
     result = await validate_leaf_task_with_llm(
         task,
@@ -350,7 +376,7 @@ async def test_invalid_llm_result_with_verified_success_feedback_is_promoted() -
             )
         )
     )
-    ctx = SimpleNamespace(task_manager=SimpleNamespace(update_task=update_task))
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
 
     result = await validate_leaf_task_with_llm(
         task,
@@ -392,7 +418,7 @@ async def test_pending_llm_result_with_success_feedback_is_not_promoted() -> Non
             )
         )
     )
-    ctx = SimpleNamespace(task_manager=SimpleNamespace(update_task=update_task))
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
 
     result = await validate_leaf_task_with_llm(
         task,

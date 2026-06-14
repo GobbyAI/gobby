@@ -104,6 +104,13 @@ def _make_stage_state(
 def mock_task_manager() -> MagicMock:
     mgr = MagicMock(spec=LocalTaskManager)
     mgr.db = MagicMock()
+    # Validation backoff lookups must read as "no active backoff" (fetchone -> None),
+    # otherwise TaskValidationBackoffStore builds a state from MagicMock rows.
+    _backoff_conn = MagicMock()
+    _backoff_conn.execute.return_value.fetchone.return_value = None
+    _backoff_conn.execute.return_value.rowcount = 0
+    mgr.db.transaction.return_value.__enter__.return_value = _backoff_conn
+    mgr.db.transaction.return_value.__exit__.return_value = False
     mgr.stage_states = MagicMock()
     mgr.stage_states.get.return_value = _make_stage_state()
     return mgr

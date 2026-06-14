@@ -10,7 +10,6 @@ import os
 import shlex
 import shutil
 import signal
-import tempfile
 from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -25,6 +24,7 @@ from gobby.ai._text_generation_helpers import (
     _with_one_shot_directive,
 )
 from gobby.config.app import DaemonConfig
+from gobby.llm.textgen_cwd import neutral_textgen_cwd
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -125,18 +125,23 @@ async def _run_cli_text_generation_command(
     provider_name: str,
     command: Sequence[str],
     *,
-    cwd: str | None,
+    neutral_cwd: Path,
     timeout_seconds: float,
     env_overrides: Mapping[str, str],
 ) -> str:
+    # One-shot text generation never runs in the project directory: ``neutral_cwd``
+    # is a per-call temp dir owned by the calling adapter (see neutral_textgen_cwd).
+    # ``request.cwd`` is intentionally never threaded here — that prevents project
+    # context/hooks from loading and adding a large variable startup tax.
     env = os.environ.copy()
     env.update(env_overrides)
     env["GOBBY_HOOKS_DISABLED"] = "1"
     process = await asyncio.create_subprocess_exec(
         *command,
+        stdin=asyncio.subprocess.DEVNULL,
         stdout=asyncio.subprocess.PIPE,
         stderr=asyncio.subprocess.PIPE,
-        cwd=cwd,
+        cwd=str(neutral_cwd),
         env=env,
         start_new_session=True,
     )
@@ -270,23 +275,25 @@ class _GeminiCLITextGenerateAdapter:
 
     async def generate(self, request: TextGenerationRequest) -> str:
         request = _with_one_shot_directive(request)
-        return await _run_cli_text_generation_command(
-            "Gemini",
-            self.build_command(request),
-            cwd=request.cwd,
-            timeout_seconds=self._timeout_seconds,
-            env_overrides=self._env,
-        )
+        with neutral_textgen_cwd() as cwd:
+            return await _run_cli_text_generation_command(
+                "Gemini",
+                self.build_command(request),
+                neutral_cwd=cwd,
+                timeout_seconds=self._timeout_seconds,
+                env_overrides=self._env,
+            )
 
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
         request = _with_one_shot_directive(_json_request(request))
-        raw = await _run_cli_text_generation_command(
-            "Gemini",
-            self.build_command(request, output_format="json"),
-            cwd=request.cwd,
-            timeout_seconds=self._timeout_seconds,
-            env_overrides=self._env,
-        )
+        with neutral_textgen_cwd() as cwd:
+            raw = await _run_cli_text_generation_command(
+                "Gemini",
+                self.build_command(request, output_format="json"),
+                neutral_cwd=cwd,
+                timeout_seconds=self._timeout_seconds,
+                env_overrides=self._env,
+            )
         try:
             wrapper = json.loads(raw)
         except json.JSONDecodeError as exc:
@@ -350,13 +357,14 @@ class _QwenCLITextGenerateAdapter:
             env["OPENAI_API_KEY"] = endpoint.api_key or "not-needed"
             env["OPENAI_BASE_URL"] = endpoint.api_base
             env["OPENAI_MODEL"] = endpoint.model
-        return await _run_cli_text_generation_command(
-            "Qwen",
-            self.build_command(request),
-            cwd=request.cwd,
-            timeout_seconds=self._timeout_seconds,
-            env_overrides=env,
-        )
+        with neutral_textgen_cwd() as cwd:
+            return await _run_cli_text_generation_command(
+                "Qwen",
+                self.build_command(request),
+                neutral_cwd=cwd,
+                timeout_seconds=self._timeout_seconds,
+                env_overrides=env,
+            )
 
     def _select_openai_endpoint(self, request: TextGenerationRequest) -> _QwenOpenAIEndpoint | None:
         if not self._openai_endpoints:
@@ -432,12 +440,12 @@ class _GrokCLITextGenerateAdapter:
 
     async def generate(self, request: TextGenerationRequest) -> str:
         request = _with_one_shot_directive(request)
-        with tempfile.TemporaryDirectory(prefix="gobby-grok-textgen-") as temp_dir:
-            leader_socket = Path(temp_dir) / "leader.sock"
+        with neutral_textgen_cwd() as cwd:
+            leader_socket = cwd / "leader.sock"
             return await _run_cli_text_generation_command(
                 "Grok",
                 self.build_command(request, leader_socket=leader_socket),
-                cwd=request.cwd,
+                neutral_cwd=cwd,
                 timeout_seconds=self._timeout_seconds,
                 env_overrides=self._env,
             )
@@ -479,19 +487,19 @@ class CodexCLITextGenerateAdapter:
         ]
         if request.model:
             command.extend(["--model", request.model])
-        if request.cwd:
-            command.extend(["--cd", request.cwd])
+        # Intentionally no ``--cd``: one-shot generation runs in a neutral temp dir,
+        # never the project directory (avoids the project-context startup tax).
         command.append(_compose_prompt(request))
         return command
 
     async def generate(self, request: TextGenerationRequest) -> str:
         request = _with_one_shot_directive(request)
-        with tempfile.TemporaryDirectory(prefix="gobby-codex-textgen-") as temp_dir:
-            output_path = Path(temp_dir) / "last-message.txt"
+        with neutral_textgen_cwd() as cwd:
+            output_path = cwd / "last-message.txt"
             await _run_cli_text_generation_command(
                 "Codex",
                 self.build_command(request, output_path=output_path),
-                cwd=request.cwd,
+                neutral_cwd=cwd,
                 timeout_seconds=self._timeout_seconds,
                 env_overrides=self._env,
             )
@@ -626,15 +634,19 @@ class DroidCLITextGenerateAdapter:
         env = os.environ.copy()
         env.update(self._env)
 
-        with tempfile.TemporaryDirectory(prefix="gobby-droid-feature-") as temp_dir:
-            temp_home = Path(temp_dir)
+        with neutral_textgen_cwd() as cwd:
+            # Droid home/state lives under the same neutral root as the process cwd,
+            # so both share one lifetime instead of two unrelated temp dirs.
+            temp_home = cwd / "home"
+            temp_home.mkdir(parents=True, exist_ok=True)
             _seed_droid_factory_state(env, temp_home)
             isolated_env = _droid_isolated_env(env, temp_home)
             process = await asyncio.create_subprocess_exec(
                 *command,
+                stdin=asyncio.subprocess.DEVNULL,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
-                cwd=request.cwd,
+                cwd=str(cwd),
                 env=isolated_env,
                 start_new_session=True,
             )

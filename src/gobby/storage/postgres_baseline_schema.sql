@@ -354,7 +354,7 @@ CREATE TABLE tasks (
     labels JSONB,
     closed_reason TEXT,
     compacted_at TIMESTAMPTZ,
-    validation_status TEXT CHECK(validation_status IN ('pending', 'valid', 'invalid')),
+    validation_status TEXT CHECK(validation_status IN ('pending', 'valid', 'invalid', 'error')),
     validation_feedback TEXT,
     validation_override_reason TEXT,
     category TEXT,
@@ -510,6 +510,14 @@ CREATE TABLE task_dispatch_mutex (
 
 CREATE INDEX idx_dispatch_mutex_scan ON task_dispatch_mutex(lease_until, run_id);
 CREATE INDEX idx_dispatch_mutex_run_id ON task_dispatch_mutex(run_id);
+
+CREATE TABLE task_validation_backoff (
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    next_retry_at TIMESTAMPTZ,
+    last_error TEXT,
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+);
 
 CREATE TABLE task_lifecycle_events (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

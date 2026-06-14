@@ -18,6 +18,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from gobby.ai.text_generation import is_feature_generation_infrastructure_error
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
@@ -30,6 +31,13 @@ logger = logging.getLogger(__name__)
 DEFAULT_COMMIT_WINDOW = 10
 DEFAULT_MAX_CHARS = 50000
 RELATED_TEST_MAX_FILES = 5
+# Single shared budget (chars) for the large variable sections of the validation
+# prompt (the change diff/summary plus any read file context). Cold CLI model
+# lanes (e.g. gemini-3.5-flash) take ~29s on a 27KB prompt, so an oversized prompt
+# pushes every candidate past the per-candidate timeout. Keep the assembled prompt
+# small enough to finish well under that cap; the change section is prioritized
+# over raw file context because the diff already shows what changed.
+VALIDATION_PROMPT_BUDGET_CHARS = 14000
 VALIDATION_GATES = {
     ("plan_review", "needs_review"): "plan_review",
     ("in_development", "needs_review"): "qa",
@@ -38,6 +46,41 @@ VALIDATION_GATES = {
     ("pr", "needs_review"): "pr",
     ("merging", "open"): "merge_readiness",
 }
+
+
+@dataclass(frozen=True)
+class _BudgetedSections:
+    """Result of applying the validation prompt budget to the large sections."""
+
+    changes_section: str
+    file_context: str
+    changes_truncated_chars: int
+    file_context_truncated_chars: int
+
+
+def _budget_validation_sections(
+    changes_section: str,
+    file_context: str,
+    *,
+    budget_chars: int = VALIDATION_PROMPT_BUDGET_CHARS,
+) -> _BudgetedSections:
+    """Trim the change section and file context to a single shared char budget.
+
+    The change section (diff/summary plus appended verification evidence) is the
+    authoritative implementation artifact and takes priority; raw file context
+    only receives whatever budget remains. Deterministic by construction so the
+    same inputs always yield the same prompt.
+    """
+    changes_kept = changes_section[:budget_chars]
+    remaining = max(0, budget_chars - len(changes_kept))
+    file_context_kept = file_context[:remaining]
+    return _BudgetedSections(
+        changes_section=changes_kept,
+        file_context=file_context_kept,
+        changes_truncated_chars=len(changes_section) - len(changes_kept),
+        file_context_truncated_chars=len(file_context) - len(file_context_kept),
+    )
+
 
 _RELATED_TEST_STOPWORDS = frozenset(
     {
@@ -587,9 +630,15 @@ def get_git_diff(
 
 @dataclass
 class ValidationResult:
-    """Result of task validation."""
+    """Result of task validation.
 
-    status: Literal["valid", "invalid", "pending"]
+    ``error`` is distinct from ``invalid``: it marks an LLM *infrastructure*
+    failure (no generation candidate produced a usable result) rather than a
+    genuine "requirements not met" verdict, so callers can back off and retry
+    instead of recording a false rejection.
+    """
+
+    status: Literal["valid", "invalid", "pending", "error"]
     feedback: str | None = None
 
 
@@ -693,16 +742,32 @@ class TaskValidator:
         if category:
             category_section = f"Test Strategy: {category}\n\n"
 
+        # Enforce a single shared prompt budget across the large variable sections
+        # so cold CLI model lanes finish well under the per-candidate timeout.
+        changes_section_chars = len(changes_section)
+        file_context_chars = len(file_context)
+        budgeted = _budget_validation_sections(changes_section, file_context or "")
+
         # Build prompt using PromptLoader
         prompt_path = self.config.prompt_path or "validation/validate"
         template_context = {
             "title": title,
             "category_section": category_section,
             "criteria_text": criteria_text,
-            "changes_section": changes_section,
-            "file_context": file_context[:50000] if file_context else "",
+            "changes_section": budgeted.changes_section,
+            "file_context": budgeted.file_context,
         }
         prompt = self._loader.render(prompt_path, template_context)
+        logger.info(
+            "Validation prompt assembled for task %s: changes_chars=%d file_context_chars=%d "
+            "changes_truncated=%d file_context_truncated=%d final_prompt_chars=%d",
+            task_id,
+            changes_section_chars,
+            file_context_chars,
+            budgeted.changes_truncated_chars,
+            budgeted.file_context_truncated_chars,
+            len(prompt),
+        )
 
         try:
             result_data = await self.llm_service.call_json_feature(
@@ -723,5 +788,15 @@ class TaskValidator:
             )
 
         except Exception as e:
+            if is_feature_generation_infrastructure_error(e):
+                logger.error(
+                    "Validation generation unavailable for task %s (infrastructure failure): %s",
+                    task_id,
+                    e,
+                )
+                return ValidationResult(
+                    status="error",
+                    feedback=f"Validation generation unavailable (infrastructure): {e}",
+                )
             logger.error(f"Failed to validate task {task_id}: {e}")
             return ValidationResult(status="pending", feedback=f"Validation failed: {str(e)}")

@@ -183,6 +183,9 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "280_code_index_projection_cleanup_pending.sql",
         "281_code_index_failure_attempts.sql",
         "282_comms_messages_platform_dedup.sql",
+        "283_mcp_server_auth_timeout_fields.sql",
+        "284_task_validation_status_error.sql",
+        "285_task_validation_backoff.sql",
     ]
 
 

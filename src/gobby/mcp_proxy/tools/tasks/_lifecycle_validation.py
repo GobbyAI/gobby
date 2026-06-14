@@ -7,10 +7,12 @@ can be closed (commit checks, child completion, LLM validation).
 import logging
 import re
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
 from gobby.storage.tasks import Task
+from gobby.storage.tasks._validation_backoff import TaskValidationBackoffStore
 from gobby.tasks.state_semantics import is_task_closed
 
 if TYPE_CHECKING:
@@ -320,6 +322,12 @@ def gather_validation_context(
             if diff_result.diff:
                 raw_diff = diff_result.diff
                 summarized_diff = summarize_diff_for_validation(raw_diff)
+                logger.info(
+                    "Validation diff for task %s: raw_diff_chars=%d diff_chars=%d",
+                    task.id,
+                    len(raw_diff),
+                    len(summarized_diff),
+                )
                 validation_context = (
                     f"Commit-based diff ({len(diff_result.commits)} commits, "
                     f"{diff_result.file_count} files):\n\n{summarized_diff}"
@@ -387,6 +395,34 @@ async def validate_leaf_task_with_llm(
         )
         return ValidationResult(can_close=True)
 
+    # Skip the LLM call entirely while an infrastructure-failure backoff is active,
+    # so a generation outage does not re-run validation every heartbeat.
+    backoff_store = TaskValidationBackoffStore(ctx.task_manager.db)
+    now = datetime.now(UTC)
+    backoff_state = backoff_store.get(task.id)
+    if backoff_state is not None and backoff_state.is_in_backoff_window(now):
+        retry_at = (
+            backoff_state.next_retry_at.isoformat() if backoff_state.next_retry_at else "later"
+        )
+        logger.warning(
+            "Skipping validation for task %s: infrastructure backoff active "
+            "(consecutive_failures=%d, retry after %s)",
+            resolved_id,
+            backoff_state.consecutive_failures,
+            retry_at,
+        )
+        return ValidationResult(
+            can_close=False,
+            error_type="validation_infrastructure_unavailable",
+            message=f"Validation generation unavailable (infrastructure); retry after {retry_at}.",
+            extra={
+                "validation_status": "error",
+                "retryable": True,
+                "next_retry_at": retry_at,
+                "consecutive_failures": backoff_state.consecutive_failures,
+            },
+        )
+
     # Run LLM validation
     result = await task_validator.validate_task(
         task_id=task.id,
@@ -396,6 +432,70 @@ async def validate_leaf_task_with_llm(
         validation_criteria=task.validation_criteria,
         category=task.category,
     )
+
+    # An LLM infrastructure failure (no candidate produced a usable result) is not a
+    # verdict: record/extend the backoff and escalate after too many in a row, but do
+    # not persist 'invalid' or burn the validation-failure / work-attempt counters.
+    if result.status == "error":
+        state = backoff_store.record_failure(task.id, error=result.feedback, now=now)
+        ctx.task_manager.update_task(
+            resolved_id,
+            validation_status="error",
+            validation_feedback=result.feedback,
+        )
+        retry_at = state.next_retry_at.isoformat() if state.next_retry_at else "later"
+        if state.should_escalate():
+            ctx.task_manager.update_task(
+                resolved_id,
+                escalated_at=now.isoformat(),
+                escalation_reason=(
+                    "validation generation unavailable after "
+                    f"{state.consecutive_failures} consecutive infrastructure failures"
+                ),
+            )
+            logger.error(
+                "Escalating task %s: validation generation unavailable after %d consecutive "
+                "infrastructure failures",
+                resolved_id,
+                state.consecutive_failures,
+            )
+            return ValidationResult(
+                can_close=False,
+                error_type="validation_infrastructure_unavailable",
+                message=(
+                    f"Validation generation unavailable after {state.consecutive_failures} "
+                    "consecutive infrastructure failures; escalated for manual review."
+                ),
+                extra={
+                    "validation_status": "error",
+                    "retryable": False,
+                    "escalated": True,
+                    "consecutive_failures": state.consecutive_failures,
+                },
+            )
+        logger.warning(
+            "Validation infrastructure failure for task %s (consecutive_failures=%d); "
+            "backing off until %s",
+            resolved_id,
+            state.consecutive_failures,
+            retry_at,
+        )
+        return ValidationResult(
+            can_close=False,
+            error_type="validation_infrastructure_unavailable",
+            message=f"Validation generation unavailable (infrastructure); retry after {retry_at}.",
+            extra={
+                "validation_status": "error",
+                "retryable": True,
+                "next_retry_at": retry_at,
+                "consecutive_failures": state.consecutive_failures,
+            },
+        )
+
+    # Real verdict (or pending/disabled) this round — clear any prior infra backoff so
+    # an old outage cannot poison later attempts.
+    if backoff_state is not None:
+        backoff_store.clear(task.id)
 
     validation_status = result.status
     original_feedback = result.feedback
