@@ -37,4 +37,13 @@ describe('WorkflowsPage toolbar', () => {
 
     expect(screen.queryByRole('button', { name: 'Agents' })).not.toBeInTheDocument()
   })
+
+  it('does not expose the migrated Stages or Profiles sub-tabs', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ dev_mode: false })))
+
+    render(<WorkflowsPage />)
+
+    expect(screen.queryByRole('button', { name: 'Stages' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'Profiles' })).not.toBeInTheDocument()
+  })
 })

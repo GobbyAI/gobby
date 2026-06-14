@@ -37,7 +37,7 @@ export const WORKFLOWS_FILTER_ICON_BTN_ACTIVE_CLS =
 // ── Search input ──
 
 export const WORKFLOWS_SEARCH_CLS =
-  "px-2.5 py-1.5 text-[length:calc(var(--font-size-base)*0.75)] border border-border rounded-md bg-[var(--bg-secondary)] text-[var(--text-primary)] outline-none w-[200px] focus-visible:border-[var(--accent)] focus-visible:shadow-[0_0_0_2px_var(--accent-soft)] max-md:flex-1 max-md:min-w-[120px] max-md:w-auto";
+  "px-2.5 py-1.5 text-[length:calc(var(--font-size-base)*0.75)] border border-border rounded-md bg-[var(--bg-secondary)] text-[var(--text-primary)] outline-none w-[200px] focus-visible:border-[var(--accent)] focus-visible:shadow-[0_0_0_2px_var(--accent-soft)] max-md:flex-1 max-md:min-w-[120px] max-md:w-auto pointer-coarse:min-h-11";
 
 // ── Toolbar / new buttons ──
 
