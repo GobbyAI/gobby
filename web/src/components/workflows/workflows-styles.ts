@@ -1,9 +1,8 @@
 // Shared Tailwind class constants for the workflows surface.
 //
-// Migrated from WorkflowsPage.css under #13899. Consumers (WorkflowsPage,
-// RulesTab, PipelinesTab, SkillsPage, SkillsGrid, ReportingTab,
-// PipelineExecutionsView) import these names instead of relying on a side-
-// effect CSS import. Mobile reflow uses Tailwind's `max-md:` breakpoint
+// Migrated from WorkflowsPage.css under #13899. Workflows-adjacent surfaces
+// import these names instead of relying on a side-effect CSS import.
+// Mobile reflow uses Tailwind's `max-md:` breakpoint
 // variant (matches the prior `@media (max-width: 768px)` rule).
 
 // ── Page chrome ──
@@ -208,6 +207,6 @@ export const WORKFLOWS_YAML_HEADER_ACTIONS_CLS =
 export const WORKFLOWS_YAML_ERROR_CLS = "text-sm text-[var(--color-error)]";
 export const WORKFLOWS_YAML_EDITOR_CLS = "flex-1 overflow-hidden";
 
-// pipeline-edit-yaml-view used by workflows/PipelinesTab.tsx for inline YAML
-// editing (not the modal). The host CodeMirror instance fills the panel.
+// Retained for legacy YAML editor surfaces while the workflows surface is
+// reduced to its migration empty state.
 export const PIPELINE_EDIT_YAML_VIEW_CLS = "h-full [&_.codemirror-container]:h-full";

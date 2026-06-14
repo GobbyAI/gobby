@@ -5,8 +5,8 @@ import { getExecStatusKind } from "../../../lib/pipelineColors";
 
 // ── Shared pipeline class constants ──
 //
-// Used across PipelineExecutionsView and ReportingTab; defined here so
-// both consumers can import the same string. Light-theme-specific overrides
+// Used across Activity pipeline details and ReportingTab; defined here so
+// consumers can import the same string. Light-theme-specific overrides
 // for these classes that involve color-mix() math (rather than swapping a
 // theme-aware token) stay as Tailwind arbitrary variants here; everything
 // theme-aware via tokens (badges, soft tints) needs no per-theme variant.
@@ -99,7 +99,7 @@ export interface StepData {
 // stacked vertically against a left rail, with a status-colored dot on each
 // row (replaces the former `.pipeline-steps-timeline .pipeline-step::before`
 // pseudo-element). PipelinesTab activity-panel detail uses "timeline";
-// PipelineExecutionsView and ReportingTab drilldowns use "card".
+// ReportingTab drilldowns use "card".
 
 const STEP_CARD_WRAPPER_CLS =
   "bg-[var(--bg-tertiary)] rounded-md overflow-hidden";

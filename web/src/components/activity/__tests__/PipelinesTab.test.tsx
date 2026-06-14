@@ -112,4 +112,53 @@ describe('PipelinesTab', () => {
       expect(screen.getByRole('option', { name: 'All' })).toHaveAttribute('aria-selected', 'false')
     })
   })
+
+  it('loads the next page of executions with a page-size offset', async () => {
+    mockFetch.resetRoutes()
+    const firstPage = Array.from({ length: 50 }, (_, index) => ({
+      id: `exec-${index + 1}`,
+      pipeline_name: `Pipeline ${index + 1}`,
+      status: 'completed',
+      created_at: '2026-04-09T00:00:00Z',
+    }))
+    mockFetch.mockJsonResponse(/\/api\/pipelines\/executions\?.*offset=50/, {
+      executions: [
+        {
+          id: 'exec-51',
+          pipeline_name: 'Pipeline 51',
+          status: 'completed',
+          created_at: '2026-04-09T01:00:00Z',
+        },
+      ],
+    })
+    mockFetch.mockJsonResponse(/\/api\/pipelines\/executions\?/, {
+      executions: firstPage,
+    })
+    mockFetch.mockJsonResponse('/api/pipelines/exec-1', {
+      execution: {
+        id: 'exec-1',
+        pipeline_name: 'Pipeline 1',
+        status: 'completed',
+        created_at: '2026-04-09T00:00:00Z',
+        steps: [],
+      },
+    })
+
+    render(<PipelinesTab projectId="proj-1" />)
+
+    await waitFor(() => {
+      expect(screen.getByText('Pipeline 50')).toBeInTheDocument()
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Load more' }))
+
+    await waitFor(() => {
+      expect(screen.getByText('Pipeline 51')).toBeInTheDocument()
+    })
+
+    const executionCalls = mockFetch.fn.mock.calls
+      .map(([url]) => String(url))
+      .filter((url) => url.includes('/api/pipelines/executions?'))
+
+    expect(executionCalls.some((url) => url.includes('offset=50'))).toBe(true)
+  })
 })

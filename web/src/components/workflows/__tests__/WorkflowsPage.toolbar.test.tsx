@@ -1,49 +1,22 @@
-import { fireEvent, render, screen } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
-import { WorkflowsPage } from '../WorkflowsPage'
+import { render, screen } from "@testing-library/react";
+import { describe, expect, it } from "vitest";
 
-vi.mock('../PipelinesTab', () => ({
-  PipelinesTab: () => <div data-testid="pipelines-tab" />,
-}))
+import { WorkflowsPage } from "../WorkflowsPage";
 
-describe('WorkflowsPage toolbar', () => {
-  afterEach(() => {
-    vi.unstubAllGlobals()
-  })
+describe("WorkflowsPage toolbar", () => {
+  it("renders the Workflows shell without retired sub-tabs or pipeline actions", () => {
+    render(<WorkflowsPage />);
 
-  it('does not show Install All under the Templates source filter', () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ dev_mode: false })))
-
-    render(<WorkflowsPage />)
-
-    fireEvent.click(screen.getByRole('button', { name: 'Filter workflows' }))
-    fireEvent.click(screen.getByRole('button', { name: 'Templates' }))
-
-    expect(screen.queryByRole('button', { name: 'Install All' })).not.toBeInTheDocument()
-  })
-
-  it('does not expose the retired Rules sub-tab', () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ dev_mode: false })))
-
-    render(<WorkflowsPage />)
-
-    expect(screen.queryByRole('button', { name: 'Rules' })).not.toBeInTheDocument()
-  })
-
-  it('does not expose the retired Agents sub-tab', () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ dev_mode: false })))
-
-    render(<WorkflowsPage />)
-
-    expect(screen.queryByRole('button', { name: 'Agents' })).not.toBeInTheDocument()
-  })
-
-  it('does not expose the migrated Stages or Profiles sub-tabs', () => {
-    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ dev_mode: false })))
-
-    render(<WorkflowsPage />)
-
-    expect(screen.queryByRole('button', { name: 'Stages' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: 'Profiles' })).not.toBeInTheDocument()
-  })
-})
+    expect(screen.getByRole("heading", { name: "Workflows" })).toBeInTheDocument();
+    expect(
+      screen.getByText("Workflow definitions are managed from Activity."),
+    ).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Pipelines" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Rules" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Agents" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Stages" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Profiles" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Filter workflows" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "+ Pipeline" })).not.toBeInTheDocument();
+  });
+});
