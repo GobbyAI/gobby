@@ -1,9 +1,11 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { useMemory, type GobbyMemory } from "../../hooks/useMemory";
+import { useIsMobile } from "../../hooks/useIsMobile";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
+import { DetailActionButton } from "./fields";
 import {
   copyMemoryContent,
   deleteMemoryWithRefresh,
@@ -17,13 +19,24 @@ import {
   MEMORY_TYPE_OPTIONS,
 } from "./memory/MemoryTabData";
 import { MemoryDetailPanel } from "./memory/MemoryDetailPanel";
+import { MemoryGraphView } from "./memory/MemoryGraphView";
 import { MemoryTabList } from "./memory/MemoryTabList";
 
 interface MemoryTabProps {
   projectId?: string | null;
+  requestPanelOverride?: () => void;
+  releasePanelOverride?: () => void;
 }
 
-export const MemoryTab = memo(function MemoryTab({ projectId }: MemoryTabProps) {
+type MemoryViewMode = "detail" | "graph";
+
+const noop = () => {};
+
+export const MemoryTab = memo(function MemoryTab({
+  projectId,
+  requestPanelOverride = noop,
+  releasePanelOverride = noop,
+}: MemoryTabProps) {
   const {
     memories,
     stats,
@@ -33,13 +46,17 @@ export const MemoryTab = memo(function MemoryTab({ projectId }: MemoryTabProps) 
     updateMemory,
     deleteMemory,
     refreshMemories,
+    fetchKnowledgeGraph,
+    fetchEntityNeighbors,
   } = useMemory(projectId);
+  const isMobile = useIsMobile();
   const [search, setSearch] = useState("");
   const [filtersOpen, setFiltersOpen] = useState(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
+  const [viewMode, setViewMode] = useState<MemoryViewMode>("detail");
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
 
   const tabFilters = useMemo(
@@ -84,6 +101,17 @@ export const MemoryTab = memo(function MemoryTab({ projectId }: MemoryTabProps) 
     confirmLeaveRef.current(() => setSelectedId(memory.id));
   }, []);
 
+  const handleOpenGraph = useCallback(() => {
+    confirmLeaveRef.current(() => {
+      setViewMode("graph");
+      requestPanelOverride();
+    });
+  }, [requestPanelOverride]);
+
+  const handleCloseGraph = useCallback(() => {
+    setViewMode("detail");
+  }, []);
+
   const handleSave = useCallback(
     async (draft: MemoryDraft) => {
       try {
@@ -126,6 +154,23 @@ export const MemoryTab = memo(function MemoryTab({ projectId }: MemoryTabProps) 
   );
 
   const hasDetail = Boolean(selectedMemory);
+
+  const detailActions = isMobile ? (
+    <span className="text-xs text-muted-foreground">Graph opens on desktop only.</span>
+  ) : (
+    <DetailActionButton label="Graph" onClick={handleOpenGraph} />
+  );
+
+  if (viewMode === "graph") {
+    return (
+      <MemoryGraphView
+        fetchKnowledgeGraph={fetchKnowledgeGraph}
+        fetchEntityNeighbors={fetchEntityNeighbors}
+        releasePanelOverride={releasePanelOverride}
+        onClose={handleCloseGraph}
+      />
+    );
+  }
 
   return (
     <div className="flex h-full flex-col">
@@ -269,6 +314,7 @@ export const MemoryTab = memo(function MemoryTab({ projectId }: MemoryTabProps) 
               key={selectedMemory.id}
               memory={selectedMemory}
               onSave={handleSave}
+              actions={detailActions}
               onConfirmLeaveChange={(handler) => {
                 confirmLeaveRef.current = handler;
               }}

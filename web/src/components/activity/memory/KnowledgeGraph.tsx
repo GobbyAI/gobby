@@ -2,9 +2,9 @@ import { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import ForceGraph3D from 'react-force-graph-3d'
 import SpriteText from 'three-spritetext'
 import { SphereGeometry, MeshLambertMaterial, Mesh } from 'three'
-import { IS_MOBILE, IS_IOS } from '../../utils/platform'
-import { resolveCssVar, cn } from '../../lib/utils'
-import type { KnowledgeGraphData, KnowledgeEntity, KnowledgeRelationship } from '../../hooks/useMemory'
+import { IS_MOBILE, IS_IOS } from '../../../utils/platform'
+import { resolveCssVar, cn } from '../../../lib/utils'
+import type { KnowledgeGraphData, KnowledgeEntity, KnowledgeRelationship } from '../../../hooks/useMemory'
 
 const CONTAINER_CLS = 'relative flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
 const EMPTY_CLS = 'flex h-full min-h-[300px] flex-col items-center justify-center gap-2 text-[var(--text-muted)]'
@@ -259,7 +259,6 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   // Initial data fetch (refetches when limit changes)
   useEffect(() => {
     let cancelled = false
-    setLoading(true)
     fetchKnowledgeGraph(limit).then(data => {
       if (!cancelled && data) setGraphData(data)
       if (!cancelled) setLoading(false)

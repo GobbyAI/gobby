@@ -1,4 +1,4 @@
-import { useEffect, useMemo } from "react";
+import { useEffect, useMemo, type ReactNode } from "react";
 
 import type { GobbyMemory } from "../../../hooks/useMemory";
 import {
@@ -15,6 +15,7 @@ interface MemoryDetailPanelProps {
   memory: GobbyMemory | null;
   onSave: (draft: MemoryDraft) => Promise<boolean>;
   onConfirmLeaveChange: (handler: (next: () => void) => void) => void;
+  actions?: ReactNode;
 }
 
 function draftFromMemory(memory: GobbyMemory | null): MemoryDraft | null {
@@ -31,6 +32,7 @@ export function MemoryDetailPanel({
   memory,
   onSave,
   onConfirmLeaveChange,
+  actions,
 }: MemoryDetailPanelProps) {
   const sourceDraft = useMemo(() => draftFromMemory(memory), [memory]);
   const detailDraft = useDetailDraft<MemoryDraft>({
@@ -58,6 +60,7 @@ export function MemoryDetailPanel({
         dirty={dirty}
         saving={saving}
         serverChanged={serverChanged}
+        actions={actions}
         onSave={() => void save()}
         onDiscard={discard}
       />

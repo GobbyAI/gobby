@@ -61,6 +61,8 @@ export function ChatPage({
     dismissOnMobile,
     effectiveMode,
     panelWidth,
+    releasePanelOverride,
+    requestPanelOverride,
     setActiveTab: setActivityTab,
     setPanelWidth,
     showTab,
@@ -225,6 +227,8 @@ export function ChatPage({
         onResumeSession={routing.handleResumeSessionFromActivity}
         onAddFileToChat={routing.handleAddFileToChat}
         isMobile={isMobile}
+        requestPanelOverride={requestPanelOverride}
+        releasePanelOverride={releasePanelOverride}
       />
 
       <CommandPalette

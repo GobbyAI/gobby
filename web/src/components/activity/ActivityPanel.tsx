@@ -108,6 +108,8 @@ interface ActivityPanelProps {
   onSwapSession?: (target: import("../../types/chat").SwappedSessionTarget) => void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
   isMobile?: boolean;
+  requestPanelOverride?: () => void;
+  releasePanelOverride?: () => void;
 }
 
 interface ActivityDropdownProps {
@@ -219,6 +221,8 @@ export function ActivityPanel({
   onSwapSession,
   onResumeSession,
   isMobile = false,
+  requestPanelOverride,
+  releasePanelOverride,
   dirtyGuard,
 }: ActivityPanelProps) {
   const localDirtyGuard = useDirtyGuardController();
@@ -329,7 +333,13 @@ export function ActivityPanel({
       case "skills":
         return <SkillsTab projectId={projectId} />;
       case "memory":
-        return <MemoryTab projectId={projectId} />;
+        return (
+          <MemoryTab
+            projectId={projectId}
+            requestPanelOverride={requestPanelOverride}
+            releasePanelOverride={releasePanelOverride}
+          />
+        );
       case "integrations":
         return <IntegrationsTab />;
       case "wiki":

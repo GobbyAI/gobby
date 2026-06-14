@@ -17,7 +17,9 @@ const GRAPH_LIMIT_MIN = 50
 const KNOWLEDGE_LIMIT_MAX = IS_IOS ? 300 : IS_MOBILE ? 500 : 5000
 const GRAPH_LIMIT_STEP = 50
 
-const KnowledgeGraph = lazy(() => import('./KnowledgeGraph').then(m => ({ default: m.KnowledgeGraph })))
+const KnowledgeGraph = lazy(() =>
+  import('../activity/memory/KnowledgeGraph').then(m => ({ default: m.KnowledgeGraph }))
+)
 
 const FALLBACK_BUTTON_CLS =
   'cursor-pointer rounded border border-[var(--border)] bg-[var(--bg-secondary)] px-3 py-1.5 text-[length:var(--text-sm)] text-[var(--text-primary)] hover:bg-[var(--bg-tertiary)]'
