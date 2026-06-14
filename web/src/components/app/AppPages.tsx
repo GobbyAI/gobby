@@ -6,11 +6,6 @@ export const MemoryPage = lazy(() =>
     default: m.MemoryPage,
   })),
 );
-export const SkillsPage = lazy(() =>
-  import("../skills/SkillsPage").then((m) => ({
-    default: m.SkillsPage,
-  })),
-);
 export const IntegrationsPage = lazy(() =>
   import("../integrations/IntegrationsPage").then((m) => ({
     default: m.IntegrationsPage,
