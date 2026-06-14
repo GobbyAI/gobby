@@ -51,11 +51,11 @@ export function RulesTabList({
           <div
             key={rule.id || rule.name}
             role="listitem"
-            className={cn("rules-row", isSelected && "rules-row--selected")}
+            className={cn("activity-list-row", isSelected && "activity-list-row--selected")}
           >
             <button
               type="button"
-              className="rules-row__main"
+              className="activity-list-row__body"
               aria-label={`Select ${rule.name}`}
               onClick={() => onSelect(rule)}
             >
@@ -63,12 +63,7 @@ export function RulesTabList({
                 kind={rule.enabled ? "active" : "disabled"}
                 label={rule.enabled ? "Rule enabled" : "Rule disabled"}
               />
-              <span className="rules-row__text">
-                <span className="activity-row-title">{rule.name}</span>
-                {rule.description && (
-                  <span className="activity-row-meta">{rule.description}</span>
-                )}
-              </span>
+              <span className="activity-row-title">{rule.name}</span>
               {rule.event && <span className="rules-row__badge">{rule.event}</span>}
               {rule.group && <span className="rules-row__group">{rule.group}</span>}
             </button>

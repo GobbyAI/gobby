@@ -84,11 +84,13 @@ describe('Pipelines defs segment', () => {
         within(screen.getByRole('list', { name: 'Pipeline definitions' })).getByText('deploy-prod'),
       ).toBeInTheDocument()
     })
+    // Single-line rows surface the definition name + chips; the description now
+    // lives in the detail pane, not inline on the list row.
     expect(
-      within(screen.getByRole('list', { name: 'Pipeline definitions' })).getByText(
+      within(screen.getByRole('list', { name: 'Pipeline definitions' })).queryByText(
         'Deploy production services with staged approvals.',
       ),
-    ).toBeInTheDocument()
+    ).not.toBeInTheDocument()
     expect(screen.getByRole('radio', { name: 'Defs' })).toHaveAttribute('aria-checked', 'true')
     expect(window.localStorage.getItem('gobby-pipelines-segment-v1')).toBe('defs')
 

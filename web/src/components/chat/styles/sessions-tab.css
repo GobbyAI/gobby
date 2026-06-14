@@ -201,6 +201,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
+  min-height: var(--activity-panel-row-height);
   padding: 0.5rem 0.75rem;
   cursor: pointer;
   transition: background 0.1s;
@@ -401,10 +402,10 @@
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  width: 2.75rem;
-  height: 2.75rem;
-  min-width: 2.75rem;
-  min-height: 2.75rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
   border: none;
   border-radius: 0.375rem;
   background: transparent;
@@ -413,6 +414,17 @@
   transition:
     color 0.15s,
     background-color 0.15s;
+}
+
+/* Desktop keeps the kebab compact so list rows match the Sessions row height;
+   touch promotes it to the 44px target. */
+@media (pointer: coarse) {
+  .quick-menu-trigger {
+    width: 2.75rem;
+    height: 2.75rem;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
 }
 
 .quick-menu-trigger:hover {
@@ -471,10 +483,21 @@
 }
 
 .task-more-btn {
-  width: 2.75rem;
-  height: 2.75rem;
-  min-width: 2.75rem;
-  min-height: 2.75rem;
+  width: 1.75rem;
+  height: 1.75rem;
+  min-width: 1.75rem;
+  min-height: 1.75rem;
+}
+
+/* Desktop keeps the kebab compact so task/MCP rows match the Sessions row
+   height; touch promotes it to the 44px target. */
+@media (pointer: coarse) {
+  .task-more-btn {
+    width: 2.75rem;
+    height: 2.75rem;
+    min-width: 2.75rem;
+    min-height: 2.75rem;
+  }
 }
 
 .session-more-btn:hover,

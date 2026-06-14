@@ -56,13 +56,13 @@ export function AgentsTabList({
             role="listitem"
             aria-label={`${agent.definition.name} agent`}
             className={cn(
-              "flex min-h-11 items-center border-b border-border bg-[var(--bg-primary)]",
-              selected && "bg-[var(--accent-tint)]",
+              "activity-list-row",
+              selected && "activity-list-row--selected",
             )}
           >
             <button
               type="button"
-              className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left hover:bg-[var(--surface-tint-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="activity-list-row__body"
               aria-label={`Select ${agent.definition.name}`}
               onClick={() => onSelect(agent)}
             >
@@ -71,14 +71,7 @@ export function AgentsTabList({
                 label={agent.enabled ? "Agent enabled" : "Agent disabled"}
                 pulse={agent.enabled}
               />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="activity-row-title">{agent.definition.name}</span>
-                {agent.definition.description && (
-                  <span className="activity-row-meta truncate">
-                    {agent.definition.description}
-                  </span>
-                )}
-              </span>
+              <span className="activity-row-title">{agent.definition.name}</span>
               <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
                 {agent.definition.provider}
               </span>

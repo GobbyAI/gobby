@@ -142,6 +142,58 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* ============================================
+   Activity Panel — shared list row
+   The single source of truth for every activity top-list row. Mirrors the
+   canonical Sessions row (.session-entry) so Rules, MCP, Agents, Memory,
+   Stages, Profiles, Skills, Pipelines, Wiki, and Integrations all read at one
+   height. Rows are single-line: status dot + .activity-row-title + trailing
+   .activity-row-meta / chips + kebab. No stacked second line, no min-h-11.
+   ============================================ */
+.activity-list-row {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  min-height: var(--activity-panel-row-height);
+  border-bottom: 1px solid var(--border);
+  background: transparent;
+  color: var(--text-primary);
+  transition: background 0.1s;
+}
+
+.activity-list-row:hover {
+  background: var(--bg-tertiary);
+}
+
+.activity-list-row--selected,
+.activity-list-row--selected:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+/* The clickable body inside a row. Carries the Sessions row padding so the
+   whole row reads at --activity-panel-row-height; the kebab sits to its right
+   inside the row's right gutter. */
+.activity-list-row__body {
+  display: flex;
+  flex: 1 1 auto;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  appearance: none;
+  background: transparent;
+  border: 0;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.activity-list-row__body:focus-visible {
+  outline: none;
+  box-shadow: inset 0 0 0 2px var(--accent);
+}
+
 
 /* ============================================
    Tasks Tab — compact panel tree
@@ -552,7 +604,7 @@
 .activity-mcp-row {
   display: flex;
   align-items: center;
-  min-height: 2.25rem;
+  min-height: var(--activity-panel-row-height);
   color: var(--text-primary);
   transition:
     background 0.15s,
@@ -609,7 +661,7 @@
   gap: 0.45rem;
   min-width: 0;
   flex: 1 1 auto;
-  min-height: 2.25rem;
+  min-height: var(--activity-panel-row-height);
   padding: 0.35rem 0.25rem 0.35rem 0.75rem;
   border: 0;
   background: transparent;
@@ -829,44 +881,8 @@
   display: grid;
 }
 
-.rules-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
-  min-width: 0;
-  border-bottom: 1px solid var(--border);
-  background: var(--bg-primary);
-}
-
-.rules-row--selected {
-  background: var(--surface-selected);
-}
-
-.rules-row__main {
-  display: grid;
-  grid-template-columns: auto minmax(0, 1fr) auto auto;
-  align-items: center;
-  gap: 0.5rem;
-  min-height: 3rem;
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  padding: 0.4rem 0.25rem 0.4rem 0.75rem;
-  text-align: left;
-  cursor: pointer;
-}
-
-.rules-row__main:focus-visible {
-  outline: 2px solid var(--accent);
-  outline-offset: -2px;
-}
-
-.rules-row__text {
-  display: grid;
-  min-width: 0;
-  gap: 0.12rem;
-}
-
+/* Rules rows compose the shared .activity-list-row / .activity-list-row__body
+   primitive; only the event/group chips remain rules-specific. */
 .rules-row__badge,
 .rules-row__group,
 .rules-detail__source {

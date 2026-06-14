@@ -5,7 +5,6 @@ import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import { IntegrationPlatformIcon } from "./IntegrationPlatformIcon";
 import { CHANNEL_DISPLAY_NAMES } from "./channelMetadata";
 import {
-  formatRelativeTime,
   statusKindForChannel,
   statusLabelForChannel,
 } from "./IntegrationsTabModel";
@@ -52,13 +51,13 @@ export function ChannelsList({
             role="listitem"
             aria-label={`${channel.name} integration`}
             className={cn(
-              "flex min-h-11 items-center border-b border-border bg-[var(--bg-primary)]",
-              selected && "bg-[var(--accent-tint)]",
+              "activity-list-row",
+              selected && "activity-list-row--selected",
             )}
           >
             <button
               type="button"
-              className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left hover:bg-[var(--surface-tint-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="activity-list-row__body"
               aria-label={`Select ${channel.name}`}
               onClick={() => onSelect(channel)}
             >
@@ -66,12 +65,7 @@ export function ChannelsList({
                 kind={statusKindForChannel(channel)}
                 label={statusLabelForChannel(channel)}
               />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="activity-row-title">{channel.name}</span>
-                <span className="activity-row-meta truncate">
-                  Updated {formatRelativeTime(channel.updated_at)}
-                </span>
-              </span>
+              <span className="activity-row-title">{channel.name}</span>
               <span className="hidden shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground sm:inline-flex">
                 <IntegrationPlatformIcon type={channel.channel_type} size={12} />
                 {CHANNEL_DISPLAY_NAMES[channel.channel_type]}

@@ -45,29 +45,25 @@ export function WikiTabList({
             role="listitem"
             aria-label={`${label} source`}
             className={cn(
-              "flex min-h-11 items-stretch border-b border-border bg-[var(--bg-primary)]",
-              selected && "bg-[var(--accent-tint)]",
+              "activity-list-row",
+              selected && "activity-list-row--selected",
             )}
           >
             <button
               type="button"
-              className="flex min-w-0 flex-1 flex-col gap-1 px-3 py-2 text-left hover:bg-[var(--surface-tint-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="activity-list-row__body"
               aria-label={`Select ${label}`}
               onClick={() => onSelect(source)}
             >
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate text-sm font-medium text-foreground">
-                  {label}
+              <span className="activity-row-title">{label}</span>
+              {links.length > 0 && (
+                <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+                  Linked
                 </span>
-                {links.length > 0 && (
-                  <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-                    Linked
-                  </span>
-                )}
-              </span>
-              <span className="break-all text-xs text-muted-foreground">{path}</span>
+              )}
+              <span className="activity-row-meta shrink truncate">{path}</span>
             </button>
-            <div className="flex items-start px-1 py-2">
+            <div className="flex items-center px-1">
               <QuickMenu
                 items={menuItems}
                 menuLabel={`Actions for ${label}`}

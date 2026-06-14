@@ -2,7 +2,7 @@ import type { GobbyMemory } from "../../../hooks/useMemory";
 import { cn } from "../../../lib/utils";
 import { formatRelativeTime } from "../../../utils/formatTime";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
-import { memoryTypeLabel, normalizeMemoryTags } from "./MemoryTabData";
+import { memoryTypeLabel } from "./MemoryTabData";
 
 interface MemoryTabListProps {
   memories: GobbyMemory[];
@@ -30,7 +30,6 @@ export function MemoryTabList({
       {memories.map((memory) => {
         const selected = memory.id === selectedId;
         const busy = memory.id === busyId;
-        const tags = normalizeMemoryTags(memory.tags);
         const menuItems: QuickMenuItem[] = [
           {
             label: "Copy content",
@@ -52,41 +51,25 @@ export function MemoryTabList({
             role="listitem"
             aria-label={`${memory.content} memory`}
             className={cn(
-              "flex min-h-11 items-stretch border-b border-border bg-[var(--bg-primary)]",
-              selected && "bg-[var(--accent-tint)]",
+              "activity-list-row",
+              selected && "activity-list-row--selected",
             )}
           >
             <button
               type="button"
-              className="flex min-w-0 flex-1 flex-col gap-1 px-3 py-2 text-left hover:bg-[var(--surface-tint-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="activity-list-row__body"
               aria-label={`Select ${memory.content}`}
               onClick={() => onSelect(memory)}
             >
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
-                  {memoryTypeLabel(memory.memory_type)}
-                </span>
-                <span className="truncate text-xs text-muted-foreground">
-                  Created {formatRelativeTime(memory.created_at)}
-                </span>
+              <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
+                {memoryTypeLabel(memory.memory_type)}
               </span>
-              <span className="line-clamp-2 text-sm leading-snug text-foreground">
-                {previewContent(memory.content)}
+              <span className="activity-row-title">{previewContent(memory.content)}</span>
+              <span className="activity-row-meta">
+                {formatRelativeTime(memory.created_at)}
               </span>
-              {tags.length > 0 && (
-                <span className="flex flex-wrap gap-1">
-                  {tags.slice(0, 3).map((tag) => (
-                    <span
-                      key={tag}
-                      className="rounded-md border border-border bg-[var(--bg-secondary)] px-1.5 py-0.5 text-[10px] text-muted-foreground"
-                    >
-                      {tag}
-                    </span>
-                  ))}
-                </span>
-              )}
             </button>
-            <div className="flex items-start px-1 py-2">
+            <div className="flex items-center px-1">
               <QuickMenu
                 items={menuItems}
                 menuLabel={`Actions for ${memory.content}`}

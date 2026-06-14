@@ -63,13 +63,13 @@ export function ProfilesList({
             role="listitem"
             aria-label={`${profile.display_label} profile`}
             className={cn(
-              "flex min-h-11 items-center border-b border-border bg-[var(--bg-primary)]",
-              selected && "bg-[var(--accent-tint)]",
+              "activity-list-row",
+              selected && "activity-list-row--selected",
             )}
           >
             <button
               type="button"
-              className="flex min-w-0 flex-1 items-center gap-2 px-3 py-2 text-left hover:bg-[var(--surface-tint-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
+              className="activity-list-row__body"
               aria-label={`Select ${profile.display_label}`}
               onClick={() => onSelect(profile)}
             >
@@ -78,10 +78,7 @@ export function ProfilesList({
                 label={profile.enabled ? "Profile enabled" : "Profile disabled"}
                 pulse={profile.enabled}
               />
-              <span className="flex min-w-0 flex-1 flex-col">
-                <span className="activity-row-title">{profile.display_label}</span>
-                <span className="activity-row-meta truncate">{profile.description}</span>
-              </span>
+              <span className="activity-row-title">{profile.display_label}</span>
               <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
                 {profile.source}
               </span>

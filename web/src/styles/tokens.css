@@ -227,6 +227,13 @@
   /* Status-bar action controls keep desktop visual height on touch devices;
      the bar supplies the 44px row, the button should not fill it. */
   --status-bar-control-height: 1.75rem;
+
+  /* Activity-panel list-row height — single source of truth for every activity
+     top-list row (Sessions, Tasks, Rules, MCP, Agents, Memory, Stages,
+     Profiles, Skills, Pipelines, Wiki, Integrations). Mirrors the content-driven
+     Sessions row so every tab's list reads at one height. Rows are single-line;
+     secondary detail belongs in the detail pane, not a stacked second line. */
+  --activity-panel-row-height: 2.25rem;
 }
 
 @media (pointer: coarse) {
