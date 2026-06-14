@@ -160,11 +160,16 @@ pub fn contract() -> CliContract {
                     format_flag(),
                 ],
                 json_output_keys: vec![
+                    "success",
                     "status",
                     "project_id",
-                    "file",
+                    "file_path",
+                    "reason",
+                    "synced_files",
+                    "synced_symbols",
                     "relationships_written",
-                    "skipped",
+                    "degraded",
+                    "error",
                     "summary",
                 ],
                 ..CommandContract::new(

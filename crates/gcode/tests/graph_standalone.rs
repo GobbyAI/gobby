@@ -8,6 +8,7 @@ use std::process::{Command, Output};
 
 const TEST_PROJECT_ID: &str = "graph-standalone-project";
 const TEST_FILE: &str = "src/lib.rs";
+const CONTENT_ONLY_FILE: &str = "docs/content.txt";
 const CALLER_ID: &str = "graph-standalone-caller";
 const CALLEE_ID: &str = "graph-standalone-callee";
 
@@ -23,11 +24,17 @@ fn graph_commands_run_without_daemon_when_services_are_available() {
     let project = tempfile::tempdir().expect("temp project");
     fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
     fs::create_dir_all(project.path().join("src")).expect("create src");
+    fs::create_dir_all(project.path().join("docs")).expect("create docs");
     fs::write(
         project.path().join("src/lib.rs"),
         "pub fn caller() { callee(); }\npub fn callee() {}\n",
     )
     .expect("write source");
+    fs::write(
+        project.path().join(CONTENT_ONLY_FILE),
+        "plain prose without code graph facts\n",
+    )
+    .expect("write content-only source");
     fs::write(
         project.path().join(".gobby/gcode.json"),
         serde_json::json!({
@@ -72,6 +79,46 @@ fn graph_commands_run_without_daemon_when_services_are_available() {
     );
     assert_eq!(skipped["status"], "skipped");
     assert_eq!(skipped["reason"], "indexed_file_not_found");
+
+    let content_skip = json_command(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", CONTENT_ONLY_FILE],
+    );
+    assert_no_graph_facts_skip(&content_skip);
+    assert!(graph_synced(&mut conn, CONTENT_ONLY_FILE));
+    let overview_after_content_skip = json_command(&env, project.path(), &["graph", "overview"]);
+    assert!(
+        !overview_has_file(&overview_after_content_skip, CONTENT_ONLY_FILE),
+        "content-only skip should not create a file node: {overview_after_content_skip}"
+    );
+
+    seed_temporary_content_import(&mut conn);
+    let stale_seed = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", CONTENT_ONLY_FILE],
+    );
+    assert_success(stale_seed, "seed stale content graph projection");
+    let overview_with_stale = json_command(&env, project.path(), &["graph", "overview"]);
+    assert!(
+        overview_has_file(&overview_with_stale, CONTENT_ONLY_FILE),
+        "temporary import sync should create a stale file node: {overview_with_stale}"
+    );
+
+    clear_temporary_content_import(&mut conn);
+    let stale_cleanup = json_command(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", CONTENT_ONLY_FILE],
+    );
+    assert_no_graph_facts_skip(&stale_cleanup);
+    assert!(graph_synced(&mut conn, CONTENT_ONLY_FILE));
+    let overview_after_cleanup = json_command(&env, project.path(), &["graph", "overview"]);
+    assert!(
+        !overview_has_file(&overview_after_cleanup, CONTENT_ONLY_FILE),
+        "no-fact sync should remove stale file node: {overview_after_cleanup}"
+    );
 
     let sync = run_gcode(
         &env,
@@ -254,20 +301,90 @@ fn assert_success(output: Output, label: &str) -> Value {
     })
 }
 
+fn assert_no_graph_facts_skip(payload: &Value) {
+    assert_eq!(payload["success"], true);
+    assert_eq!(payload["status"], "skipped");
+    assert_eq!(payload["reason"], "no_graph_facts");
+    assert_eq!(payload["file_path"], CONTENT_ONLY_FILE);
+    assert_eq!(payload["relationships_written"], 0);
+    assert_eq!(payload["synced_files"], 1);
+    assert_eq!(payload["synced_symbols"], 0);
+}
+
+fn overview_has_file(overview: &Value, file_path: &str) -> bool {
+    overview["nodes"].as_array().is_some_and(|nodes| {
+        nodes
+            .iter()
+            .any(|node| node["type"] == "file" && node["id"] == file_path)
+    })
+}
+
+fn graph_synced(conn: &mut Client, file_path: &str) -> bool {
+    conn.query_one(
+        "SELECT graph_synced
+         FROM code_indexed_files
+         WHERE project_id = $1 AND file_path = $2",
+        &[&TEST_PROJECT_ID, &file_path],
+    )
+    .expect("read graph_synced")
+    .get(0)
+}
+
+fn seed_temporary_content_import(conn: &mut Client) {
+    conn.execute(
+        "INSERT INTO code_imports (project_id, source_file, target_module)
+         VALUES ($1, $2, 'temporary.stale.module')",
+        &[&TEST_PROJECT_ID, &CONTENT_ONLY_FILE],
+    )
+    .expect("insert temporary content import");
+    conn.execute(
+        "UPDATE code_indexed_files
+         SET graph_synced = false, graph_sync_attempted_at = NULL
+         WHERE project_id = $1 AND file_path = $2",
+        &[&TEST_PROJECT_ID, &CONTENT_ONLY_FILE],
+    )
+    .expect("mark content file graph stale");
+}
+
+fn clear_temporary_content_import(conn: &mut Client) {
+    conn.execute(
+        "DELETE FROM code_imports
+         WHERE project_id = $1 AND source_file = $2",
+        &[&TEST_PROJECT_ID, &CONTENT_ONLY_FILE],
+    )
+    .expect("delete temporary content import");
+    conn.execute(
+        "UPDATE code_indexed_files
+         SET graph_synced = false, graph_sync_attempted_at = NULL
+         WHERE project_id = $1 AND file_path = $2",
+        &[&TEST_PROJECT_ID, &CONTENT_ONLY_FILE],
+    )
+    .expect("mark content file graph stale after import removal");
+}
+
 fn seed_project(conn: &mut Client) {
     cleanup_project(conn, TEST_PROJECT_ID).expect("cleanup graph rows");
     conn.batch_execute(
         "INSERT INTO code_indexed_projects
             (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
          VALUES
-            ('graph-standalone-project', '/tmp/graph-standalone', 1, 2, NOW(), 0);
+            ('graph-standalone-project', '/tmp/graph-standalone', 2, 2, NOW(), 0);
 
          INSERT INTO code_indexed_files
             (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
              graph_synced, vectors_synced, graph_sync_attempted_at, indexed_at)
          VALUES
             ('graph-standalone-file', 'graph-standalone-project', 'src/lib.rs', 'rust',
-             'hash-1', 2, 54, false, true, NULL, NOW());
+             'hash-1', 2, 54, false, true, NULL, NOW()),
+            ('graph-standalone-content-file', 'graph-standalone-project', 'docs/content.txt', 'text',
+             'hash-content', 0, 35, false, true, NULL, NOW());
+
+         INSERT INTO code_content_chunks
+            (id, project_id, file_path, chunk_index, line_start, line_end, content, language,
+             created_at)
+         VALUES
+            ('graph-standalone-content-chunk-0', 'graph-standalone-project', 'docs/content.txt',
+             0, 1, 1, 'plain prose without code graph facts', 'text', NOW());
 
          INSERT INTO code_symbols
             (id, project_id, file_path, name, qualified_name, kind, language, byte_start, byte_end,

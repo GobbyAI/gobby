@@ -132,6 +132,7 @@ enum GraphFileSyncOutcome {
         relationships_written: usize,
         symbols_synced: usize,
     },
+    SkippedNoGraphFacts,
     SkippedMissingIndexedFile,
 }
 
@@ -142,6 +143,24 @@ pub(super) fn skipped_missing_indexed_file_payload(ctx: &Context, file_path: &st
         "status": "skipped",
         "reason": "indexed_file_not_found",
     })
+}
+
+pub(super) fn skipped_no_graph_facts_payload(ctx: &Context, file_path: &str) -> Value {
+    json!({
+        "success": true,
+        "project_id": ctx.project_id,
+        "file_path": file_path,
+        "status": "skipped",
+        "reason": "no_graph_facts",
+        "synced_files": 1,
+        "synced_symbols": 0,
+        "relationships_written": 0,
+        "summary": format!("skipped graph sync for {file_path}: no graph facts"),
+    })
+}
+
+pub(super) fn has_no_graph_facts<I, D, C>(imports: &[I], definitions: &[D], calls: &[C]) -> bool {
+    imports.is_empty() && definitions.is_empty() && calls.is_empty()
 }
 
 fn sync_file_graph(
@@ -161,6 +180,14 @@ fn sync_file_graph(
         return Err(GraphSyncContractError::indexed_file_not_found(ctx, file_path).into());
     }
     let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+    if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
+        code_graph::with_code_graph(ctx, |graph| {
+            graph.delete_file_graph(&facts.file_path, &[])?;
+            graph.delete_file_node(&facts.file_path)
+        })?;
+        db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+        return Ok(GraphFileSyncOutcome::SkippedNoGraphFacts);
+    }
     let relationships_written = code_graph::sync_file_graph(
         ctx,
         &facts.file_path,
@@ -304,22 +331,37 @@ pub fn sync_file(
     format: Format,
 ) -> anyhow::Result<()> {
     let sync = sync_file_graph(ctx, file_path, allow_missing_indexed_file)?;
-    let GraphFileSyncOutcome::Synced {
-        relationships_written,
-        symbols_synced,
-    } = sync
-    else {
-        let payload = skipped_missing_indexed_file_payload(ctx, file_path);
-        return match format {
-            Format::Json => output::print_json(&payload),
-            Format::Text => {
-                output::print_text(&format!(
-                    "Skipped code-index graph sync for project {}: indexed file `{file_path}` was not found",
-                    ctx.project_id
-                ))?;
-                output::print_json_compact(&payload)
-            }
-        };
+    let (relationships_written, symbols_synced) = match sync {
+        GraphFileSyncOutcome::Synced {
+            relationships_written,
+            symbols_synced,
+        } => (relationships_written, symbols_synced),
+        GraphFileSyncOutcome::SkippedNoGraphFacts => {
+            let payload = skipped_no_graph_facts_payload(ctx, file_path);
+            return match format {
+                Format::Json => output::print_json(&payload),
+                Format::Text => {
+                    output::print_text(&format!(
+                        "Skipped code-index graph sync for project {}: `{file_path}` has no graph facts",
+                        ctx.project_id
+                    ))?;
+                    output::print_json_compact(&payload)
+                }
+            };
+        }
+        GraphFileSyncOutcome::SkippedMissingIndexedFile => {
+            let payload = skipped_missing_indexed_file_payload(ctx, file_path);
+            return match format {
+                Format::Json => output::print_json(&payload),
+                Format::Text => {
+                    output::print_text(&format!(
+                        "Skipped code-index graph sync for project {}: indexed file `{file_path}` was not found",
+                        ctx.project_id
+                    ))?;
+                    output::print_json_compact(&payload)
+                }
+            };
+        }
     };
     let report = ProjectionSyncReport::ok(1, symbols_synced);
     let summary = format!("synced {relationships_written} graph relationships for {file_path}");

@@ -1,6 +1,6 @@
 use super::lifecycle::{
-    GRAPH_SYNC_CONTRACT_EXIT_CODE, GraphSyncContractError, format_success_text,
-    skipped_missing_indexed_file_payload,
+    GRAPH_SYNC_CONTRACT_EXIT_CODE, GraphSyncContractError, format_success_text, has_no_graph_facts,
+    skipped_missing_indexed_file_payload, skipped_no_graph_facts_payload,
 };
 use super::payload::format_report_text;
 use super::reads::format_grouped_graph_results;
@@ -186,6 +186,38 @@ fn missing_file_sync_error_and_skip_payloads_are_typed() {
             "reason": "indexed_file_not_found",
         })
     );
+}
+
+#[test]
+fn no_graph_facts_skip_payload_is_terminal_success_shape() {
+    let ctx = make_ctx_no_falkordb();
+    let skipped = skipped_no_graph_facts_payload(&ctx, "docs/generated.json");
+
+    assert_eq!(
+        skipped,
+        json!({
+            "success": true,
+            "project_id": "test-project",
+            "file_path": "docs/generated.json",
+            "status": "skipped",
+            "reason": "no_graph_facts",
+            "synced_files": 1,
+            "synced_symbols": 0,
+            "relationships_written": 0,
+            "summary": "skipped graph sync for docs/generated.json: no graph facts",
+        })
+    );
+}
+
+#[test]
+fn no_graph_facts_requires_empty_imports_definitions_and_calls() {
+    let empty: &[()] = &[];
+    let present: &[()] = &[()];
+
+    assert!(has_no_graph_facts(empty, empty, empty));
+    assert!(!has_no_graph_facts(present, empty, empty));
+    assert!(!has_no_graph_facts(empty, present, empty));
+    assert!(!has_no_graph_facts(empty, empty, present));
 }
 
 #[test]
