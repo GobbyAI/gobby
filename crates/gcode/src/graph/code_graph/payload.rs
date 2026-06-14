@@ -1,6 +1,6 @@
 use std::collections::HashSet;
 
-use gobby_core::graph_analytics::{AnalyticsEdge, AnalyticsGraph, AnalyticsNode};
+use gobby_core::graph_analytics::{AnalyticsEdge, AnalyticsGraph, AnalyticsNode, weight_for_kind};
 use serde::{Deserialize, Serialize};
 
 use crate::models::{ProjectionMetadata, ProjectionProvenance};
@@ -61,10 +61,14 @@ impl GraphPayload {
                 .collect(),
             edges: edges
                 .into_iter()
-                .map(|(source, target, kind)| AnalyticsEdge {
-                    source,
-                    target,
-                    kind,
+                .map(|(source, target, kind)| {
+                    let weight = weight_for_kind(&kind);
+                    AnalyticsEdge {
+                        source,
+                        target,
+                        kind,
+                        weight,
+                    }
                 })
                 .collect(),
         }

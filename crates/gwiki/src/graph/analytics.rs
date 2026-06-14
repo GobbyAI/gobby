@@ -2,7 +2,7 @@ use std::collections::BTreeMap;
 
 use gobby_core::graph_analytics::{
     AnalyticsEdge, AnalyticsGraph, AnalyticsNode, CentralityScore, Community, EdgeRef,
-    GraphAnalytics, Hotspot, NodeRef, analyze,
+    GraphAnalytics, Hotspot, NodeRef, analyze, weight_for_kind,
 };
 
 use super::{
@@ -123,11 +123,13 @@ pub fn analytics_graph_from_facts(
             source: source_id,
             target: document_id(&source.scope, &source.document_path),
             kind: "supports".to_string(),
+            weight: weight_for_kind("supports"),
         });
         edges.push(AnalyticsEdge {
             source: citation_id,
             target: source_node_id(&source.scope, &source.source_path),
             kind: "cites".to_string(),
+            weight: weight_for_kind("cites"),
         });
     }
 
@@ -148,6 +150,7 @@ pub fn analytics_graph_from_facts(
             source: document_id(&link.scope, &link.source_path),
             target,
             kind: "links".to_string(),
+            weight: weight_for_kind("links"),
         });
     }
 

@@ -49,14 +49,17 @@ pub(crate) fn build_hotspots_doc(
                 nodes.contains_key(&edge.source_component_id)
                     && nodes.contains_key(&edge.target_component_id)
             })
-            .map(|edge| AnalyticsEdge {
-                source: edge.source_component_id.clone(),
-                target: edge.target_component_id.clone(),
-                kind: match edge.kind {
+            .map(|edge| {
+                let kind = match edge.kind {
                     CodewikiGraphEdgeKind::Call => "call",
                     CodewikiGraphEdgeKind::Import => "import",
+                };
+                AnalyticsEdge {
+                    source: edge.source_component_id.clone(),
+                    target: edge.target_component_id.clone(),
+                    kind: kind.to_string(),
+                    weight: graph_analytics::weight_for_kind(kind),
                 }
-                .to_string(),
             })
             .collect(),
     };

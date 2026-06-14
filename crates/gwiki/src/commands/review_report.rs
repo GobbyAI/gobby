@@ -388,6 +388,7 @@ fn analytics_graph_from_edges(changes: &ChangeSetInput, edges: &[CodeGraphEdge])
                 source: edge.source.clone(),
                 target: edge.target.clone(),
                 kind: edge.edge.clone(),
+                weight: graph_analytics::weight_for_kind(&edge.edge),
             }
         })
         .collect();
@@ -628,7 +629,9 @@ fn optional_falkor_config(conn: &mut postgres::Client) -> Result<Option<FalkorCo
 mod tests {
     use std::path::PathBuf;
 
-    use gobby_core::graph_analytics::{AnalyticsEdge, AnalyticsGraph, AnalyticsNode};
+    use gobby_core::graph_analytics::{
+        AnalyticsEdge, AnalyticsGraph, AnalyticsNode, weight_for_kind,
+    };
 
     use crate::ScopeIdentity;
     use crate::code_graph::{AffectedPage, CodeGraphEdge};
@@ -682,11 +685,13 @@ mod tests {
                         source: "symbol-a".to_string(),
                         target: "symbol-b".to_string(),
                         kind: "CALLS".to_string(),
+                        weight: weight_for_kind("CALLS"),
                     },
                     AnalyticsEdge {
                         source: "symbol-a".to_string(),
                         target: "symbol-c".to_string(),
                         kind: "CALLS".to_string(),
+                        weight: weight_for_kind("CALLS"),
                     },
                 ],
             }),

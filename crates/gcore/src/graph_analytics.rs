@@ -3,6 +3,8 @@
 use std::cmp::Ordering;
 use std::collections::{HashMap, HashSet};
 
+mod leiden;
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct AnalyticsNode {
     pub id: String,
@@ -10,11 +12,17 @@ pub struct AnalyticsNode {
     pub weight: f64,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+/// An edge in an analytics graph.
+///
+/// `weight` is a finite positive coupling strength consumed by community
+/// detection; default it via [`weight_for_kind`] at construction sites.
+/// `f64` is why this type is `PartialEq` but not `Eq`.
+#[derive(Debug, Clone, PartialEq)]
 pub struct AnalyticsEdge {
     pub source: String,
     pub target: String,
     pub kind: String,
+    pub weight: f64,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -69,8 +77,8 @@ pub struct GraphAnalytics {
 
 pub fn analyze(graph: &AnalyticsGraph) -> GraphAnalytics {
     let prepared = PreparedGraph::new(graph);
-    let (bridges, bridge_edges) = prepared.bridge_nodes_and_edges();
-    let (communities, memberships) = prepared.communities_without_bridges(&bridge_edges);
+    let (bridges, _) = prepared.bridge_nodes_and_edges();
+    let (communities, memberships) = prepared.communities();
     let centrality = prepared.centrality();
     let god_nodes = prepared.god_nodes(&centrality);
     let unexpected_links = prepared.unexpected_links(&memberships);
@@ -86,10 +94,32 @@ pub fn analyze(graph: &AnalyticsGraph) -> GraphAnalytics {
     }
 }
 
+/// Default coupling weight for an edge of the given relationship `kind`.
+///
+/// These are starting values, tuned against modularity quality: structural
+/// containment and inheritance couple more tightly than loose references. The
+/// match is case-insensitive and accepts the singular/plural/UPPERCASE spellings
+/// produced across gcode payloads, codewiki, and gwiki provenance. Unknown kinds
+/// fall back to `1.0`. The result is always finite and positive; sanitizing the
+/// public `AnalyticsEdge.weight` (NaN/∞/≤0) happens at the adapter boundary.
+pub fn weight_for_kind(kind: &str) -> f64 {
+    match kind.to_ascii_lowercase().as_str() {
+        "contains" | "member" => 3.0,    // structural containment
+        "extends" | "implements" => 2.5, // inheritance
+        "import" | "imports" => 2.0,     // module dependency
+        "call" | "calls" => 1.5,         // call coupling
+        "cites" | "supports" => 1.5,     // gwiki provenance
+        "references" | "refers" | "uses" | "callers" => 1.0,
+        "links" | "link" | "neighbor" | "relates" => 1.0,
+        _ => 1.0, // unknown DB rel-types, "changed", etc.
+    }
+}
+
 #[derive(Debug, Clone)]
 struct PreparedEdge {
     source: usize,
     target: usize,
+    weight: f64,
     edge_ref: EdgeRef,
 }
 
@@ -148,6 +178,7 @@ impl PreparedGraph {
                 (source != target).then(|| PreparedEdge {
                     source,
                     target,
+                    weight: edge.weight,
                     edge_ref: EdgeRef {
                         source: edge.source.clone(),
                         target: edge.target.clone(),
@@ -238,56 +269,72 @@ impl PreparedGraph {
         (bridges, state.bridge_edges)
     }
 
-    fn communities_without_bridges(
-        &self,
-        bridge_edges: &HashSet<usize>,
-    ) -> (Vec<Community>, HashMap<String, usize>) {
-        let mut visited = vec![false; self.nodes.len()];
-        let mut components = Vec::new();
-
-        for start in 0..self.nodes.len() {
-            if visited[start] {
-                continue;
-            }
-            let mut stack = vec![start];
-            let mut component = Vec::new();
-            visited[start] = true;
-
-            while let Some(node) = stack.pop() {
-                component.push(node);
-                for (neighbor, edge_index) in &self.adjacency[node] {
-                    if bridge_edges.contains(edge_index) || visited[*neighbor] {
-                        continue;
-                    }
-                    visited[*neighbor] = true;
-                    stack.push(*neighbor);
-                }
-            }
-
-            component.sort_unstable();
-            components.push(component);
+    /// Partition the graph into communities with weighted Leiden.
+    ///
+    /// Replaces the old Tarjan bridge-cut heuristic. Isolated nodes (and every
+    /// node when there are no usable edges) fall out as their own singleton
+    /// community; each connected component is partitioned under one global `m`.
+    /// Returns the communities (sorted by their smallest member id, then size)
+    /// and a node-id → community-index membership map.
+    fn communities(&self) -> (Vec<Community>, HashMap<String, usize>) {
+        if self.nodes.is_empty() {
+            return (Vec::new(), HashMap::new());
         }
 
-        components.sort_by(|left, right| {
+        // Build a weighted edge list for Leiden, sanitizing public weights:
+        // non-finite or non-positive weights fall back to 1.0.
+        let mut total_weight = 0.0_f64;
+        let edges: Vec<(usize, usize, f64)> = self
+            .edges
+            .iter()
+            .map(|edge| {
+                let weight = if edge.weight.is_finite() && edge.weight > 0.0 {
+                    edge.weight
+                } else {
+                    1.0
+                };
+                total_weight += weight;
+                (edge.source, edge.target, weight)
+            })
+            .collect();
+
+        let memberships = if total_weight < f64::EPSILON {
+            // Nodes but no usable edges: every node is its own community.
+            (0..self.nodes.len()).collect::<Vec<_>>()
+        } else {
+            let graph = leiden::LeidenGraph::new(self.nodes.len(), &edges);
+            leiden::detect_communities(&graph, leiden::DEFAULT_GAMMA)
+        };
+
+        // Group node indices by community id (Leiden returns a dense labeling).
+        let community_count = memberships.iter().copied().max().map_or(0, |m| m + 1);
+        let mut groups: Vec<Vec<usize>> = vec![Vec::new(); community_count];
+        for (node, &comm) in memberships.iter().enumerate() {
+            groups[comm].push(node);
+        }
+        for group in &mut groups {
+            group.sort_unstable();
+        }
+        groups.sort_by(|left, right| {
             self.nodes[left[0]]
                 .id
                 .cmp(&self.nodes[right[0]].id)
                 .then_with(|| left.len().cmp(&right.len()))
         });
 
-        let mut memberships = HashMap::new();
-        let communities = components
+        let mut memberships_by_id = HashMap::new();
+        let communities = groups
             .into_iter()
             .enumerate()
-            .map(|(index, component)| {
-                let nodes = component
+            .map(|(index, group)| {
+                let nodes = group
                     .iter()
-                    .map(|node| {
-                        memberships.insert(self.nodes[*node].id.clone(), index);
-                        self.nodes[*node].clone()
+                    .map(|&node| {
+                        memberships_by_id.insert(self.nodes[node].id.clone(), index);
+                        self.nodes[node].clone()
                     })
                     .collect::<Vec<_>>();
-                let weight = component.iter().map(|node| self.weights[*node]).sum();
+                let weight = group.iter().map(|&node| self.weights[node]).sum();
                 Community {
                     id: format!("community-{}", index + 1),
                     nodes,
@@ -296,7 +343,7 @@ impl PreparedGraph {
             })
             .collect::<Vec<_>>();
 
-        (communities, memberships)
+        (communities, memberships_by_id)
     }
 
     fn god_nodes(&self, centrality: &[CentralityScore]) -> Vec<NodeRef> {
@@ -511,6 +558,7 @@ mod tests {
             source: source.to_string(),
             target: target.to_string(),
             kind: kind.to_string(),
+            weight: weight_for_kind(kind),
         })
         .collect();
 
@@ -579,5 +627,65 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("c", 3, 5.0), ("d", 3, 1.0)]
         );
+    }
+
+    #[test]
+    fn weight_for_kind_covers_observed_aliases_case_insensitively() {
+        let cases = [
+            ("contains", 3.0),
+            ("member", 3.0),
+            ("extends", 2.5),
+            ("implements", 2.5),
+            ("import", 2.0),
+            ("imports", 2.0),
+            ("IMPORTS", 2.0),
+            ("call", 1.5),
+            ("calls", 1.5),
+            ("CALLS", 1.5),
+            ("cites", 1.5),
+            ("supports", 1.5),
+            ("references", 1.0),
+            ("uses", 1.0),
+            ("callers", 1.0),
+            ("links", 1.0),
+            ("neighbor", 1.0),
+            ("relates", 1.0),
+            ("changed", 1.0),
+            ("totally-unknown-kind", 1.0),
+        ];
+        for (kind, expected) in cases {
+            assert_eq!(weight_for_kind(kind), expected, "kind={kind}");
+        }
+    }
+
+    #[test]
+    fn analyze_empty_graph_does_not_panic() {
+        let analytics = analyze(&AnalyticsGraph {
+            nodes: Vec::new(),
+            edges: Vec::new(),
+        });
+        assert!(analytics.communities.is_empty());
+        assert!(analytics.centrality.is_empty());
+        assert!(analytics.bridges.is_empty());
+    }
+
+    #[test]
+    fn analyze_nodes_without_edges_yields_singleton_communities() {
+        let nodes = ["a", "b", "c"]
+            .into_iter()
+            .map(|id| AnalyticsNode {
+                id: id.to_string(),
+                kind: "symbol".to_string(),
+                weight: 1.0,
+            })
+            .collect();
+        let analytics = analyze(&AnalyticsGraph {
+            nodes,
+            edges: Vec::new(),
+        });
+        assert_eq!(analytics.communities.len(), 3);
+        for community in &analytics.communities {
+            assert_eq!(community.nodes.len(), 1);
+        }
     }
 }

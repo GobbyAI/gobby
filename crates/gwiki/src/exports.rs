@@ -427,12 +427,16 @@ mod tests {
             graph_json["analytics"]["centrality"][0]["degree"],
             serde_json::json!(2)
         );
+        // Weighted Leiden clusters the citation→source→overview→lib.rs chain
+        // into two 2-node communities (split at the middle "supports" edge),
+        // plus the isolated design.md singleton — three communities total. The
+        // first (sorted by smallest member id) is the {citation, source} pair.
         assert_eq!(
             graph_json["analytics"]["communities"][0]["nodes"]
                 .as_array()
                 .expect("community nodes")
                 .len(),
-            1
+            2
         );
 
         let report =
@@ -440,7 +444,7 @@ mod tests {
         assert!(report.contains("# GWiki Graph Report"));
         assert!(report.contains("## Analytics"));
         assert!(report.contains(&format!("- Top central node: {central_node_id} (degree 2)")));
-        assert!(report.contains("- Communities: 5"));
+        assert!(report.contains("- Communities: 3"));
         assert!(report.contains("## Degraded sources"));
         assert!(report.contains("- falkordb_unavailable"));
         assert!(report.contains("```mermaid"));

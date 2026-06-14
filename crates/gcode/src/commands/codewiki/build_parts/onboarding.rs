@@ -151,6 +151,7 @@ fn ranked_onboarding_steps(
                 source: source.clone(),
                 target: target.clone(),
                 kind: "imports".to_string(),
+                weight: graph_analytics::weight_for_kind("imports"),
             })
             .collect(),
     };

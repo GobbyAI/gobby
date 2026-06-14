@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, HashMap};
 
 use gobby_core::graph_analytics::{GraphAnalytics, analyze};
 
@@ -237,41 +237,14 @@ pub(super) fn summarize_bridge_edges(
 }
 
 fn gcore_bridge_summary_for_edges(edges: &[BridgeEdgeHypothesis]) -> Option<BridgeReportSummary> {
-    let graph = GraphPayload::analytics_graph_from_parts(
-        bridge_analytics_nodes(edges),
-        edges.iter().map(|edge| {
-            (
-                edge.source_id.clone(),
-                edge.target_symbol_id.clone(),
-                edge.relation.clone(),
-            )
-        }),
-    );
-    let analytics = analyze(&graph);
-    let unexpected_links = analytics
-        .unexpected_links
-        .iter()
-        .map(|edge| {
-            (
-                edge.source.as_str(),
-                edge.target.as_str(),
-                edge.kind.as_str(),
-            )
-        })
-        .collect::<BTreeSet<_>>();
-    let unexpected_bridge_edges = edges
-        .iter()
-        .filter(|edge| {
-            unexpected_links.contains(&(
-                edge.source_id.as_str(),
-                edge.target_symbol_id.as_str(),
-                edge.relation.as_str(),
-            ))
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-
-    bridge_summary_from_analytics_edges(&unexpected_bridge_edges)
+    // Bridge hypotheses are inferred memory→code edges surfaced for
+    // investigation. We previously filtered them through `analyze`'s
+    // `unexpected_links` over a graph built from only the bridge edges, but that
+    // graph has no code structure to be "unexpected" against: under the old
+    // bridge-cut every tree edge was a bridge (so every hypothesis passed),
+    // while weighted Leiden correctly clusters a lone memory→symbol edge into
+    // one community (so none would pass). Summarize the hypotheses directly.
+    bridge_summary_from_analytics_edges(edges)
 }
 
 fn bridge_summary_from_analytics_edges(
@@ -314,18 +287,6 @@ fn bridge_summary_from_analytics_edges(
             max: confidence_max,
         }),
     })
-}
-
-fn bridge_analytics_nodes(edges: &[BridgeEdgeHypothesis]) -> Vec<(String, String, f64)> {
-    let mut nodes = BTreeMap::<String, String>::new();
-    for edge in edges {
-        nodes.insert(edge.source_id.clone(), "knowledge".to_string());
-        nodes.insert(edge.target_symbol_id.clone(), "symbol".to_string());
-    }
-    nodes
-        .into_iter()
-        .map(|(id, kind)| (id, kind, 1.0))
-        .collect()
 }
 
 /// Rebuild through `BridgeEdgeHypothesis::new` so inferred relation label,
