@@ -503,6 +503,97 @@ mod tests {
         edges
     }
 
+    /// Newman modularity of a flat partition from the symmetric adjacency.
+    /// The test graphs here are level-0 (no self-loops), so
+    /// `Q = internal_double/2m − γ·Σ_c (D_c/2m)²`, where `internal_double`
+    /// counts each internal edge twice (once per direction) and `D_c` is the
+    /// summed strength of community `c`.
+    fn modularity(g: &LeidenGraph, membership: &[usize], gamma: f64) -> f64 {
+        let two_m = 2.0 * g.total_weight;
+        if two_m <= 0.0 {
+            return 0.0;
+        }
+        let mut internal_double = 0.0;
+        for u in 0..g.n {
+            for &(v, w) in &g.adjacency[u] {
+                if v != u && membership[v] == membership[u] {
+                    internal_double += w;
+                }
+            }
+        }
+        let k = membership.iter().copied().max().map_or(0, |m| m + 1);
+        let mut degree = vec![0.0_f64; k];
+        for u in 0..g.n {
+            degree[membership[u]] += g.strength[u];
+        }
+        let null: f64 = degree.iter().map(|d| (d / two_m) * (d / two_m)).sum();
+        internal_double / two_m - gamma * null
+    }
+
+    /// Zachary's karate club — the 78 canonical NetworkX edges over 34 nodes,
+    /// 0-indexed, each weight 1.0. The 4-community modularity optimum is
+    /// `Q ≈ 0.4198`; the 2-faction split scores `≈ 0.371`.
+    fn karate_club() -> Vec<(usize, usize, f64)> {
+        // Grouped by source node (kept hand-laid for auditability against the
+        // canonical adjacency: node 0 has degree 16, node 33 degree 17).
+        #[rustfmt::skip]
+        let pairs: &[(usize, usize)] = &[
+            (0, 1), (0, 2), (0, 3), (0, 4), (0, 5), (0, 6), (0, 7), (0, 8),
+            (0, 10), (0, 11), (0, 12), (0, 13), (0, 17), (0, 19), (0, 21), (0, 31),
+            (1, 2), (1, 3), (1, 7), (1, 13), (1, 17), (1, 19), (1, 21), (1, 30),
+            (2, 3), (2, 7), (2, 8), (2, 9), (2, 13), (2, 27), (2, 28), (2, 32),
+            (3, 7), (3, 12), (3, 13),
+            (4, 6), (4, 10),
+            (5, 6), (5, 10), (5, 16),
+            (6, 16),
+            (8, 30), (8, 32), (8, 33),
+            (9, 33),
+            (13, 33),
+            (14, 32), (14, 33),
+            (15, 32), (15, 33),
+            (18, 32), (18, 33),
+            (19, 33),
+            (20, 32), (20, 33),
+            (22, 32), (22, 33),
+            (23, 25), (23, 27), (23, 29), (23, 32), (23, 33),
+            (24, 25), (24, 27), (24, 31),
+            (25, 31),
+            (26, 29), (26, 33),
+            (27, 33),
+            (28, 31), (28, 33),
+            (29, 32), (29, 33),
+            (30, 32), (30, 33),
+            (31, 32), (31, 33),
+            (32, 33),
+        ];
+        pairs.iter().map(|&(u, v)| (u, v, 1.0)).collect()
+    }
+
+    /// Brute-force local-optimality check: for every node, evaluate every move
+    /// to an existing community and to a fresh singleton id (isolation), and
+    /// assert none raises `Q` beyond a `1e-9` tolerance. This is the strongest
+    /// single-node correctness invariant — it directly catches a missed
+    /// isolation move.
+    fn assert_no_improving_single_move(g: &LeidenGraph, membership: &[usize], gamma: f64) {
+        let base = modularity(g, membership, gamma);
+        let fresh = membership.iter().copied().max().map_or(0, |m| m + 1);
+        for u in 0..g.n {
+            let original = membership[u];
+            for target in 0..=fresh {
+                if target == original {
+                    continue;
+                }
+                let mut trial = membership.to_vec();
+                trial[u] = target;
+                let q = modularity(g, &trial, gamma);
+                assert!(
+                    q <= base + 1e-9,
+                    "node {u}: moving to community {target} raises Q from {base} to {q}"
+                );
+            }
+        }
+    }
+
     #[test]
     fn two_triangles_with_bridge_split() {
         let mut edges = triangle(0);
@@ -690,5 +781,66 @@ mod tests {
             partition.community_of[0], partition.community_of[1],
             "an isolation move must split the over-merged self-loop cluster"
         );
+    }
+
+    #[test]
+    fn zachary_karate_club_finds_modular_structure() {
+        let edges = karate_club();
+        let g = LeidenGraph::new(34, &edges);
+        let membership = detect_communities(&g, DEFAULT_GAMMA);
+        let q = modularity(&g, &membership, DEFAULT_GAMMA);
+        let count = community_count(&membership);
+        // Optimum ≈ 0.4198; the 2-faction split ≈ 0.371; a trivial partition = 0.
+        // `q >= 0.40` is the real "it found modular structure" signal.
+        assert!(
+            (2..=5).contains(&count),
+            "unexpected community count {count}"
+        );
+        assert!(q >= 0.40, "modularity Q={q} far below the ~0.42 optimum");
+        assert!(
+            q <= 0.42 + 1e-6,
+            "modularity Q={q} exceeds theoretical optimum"
+        );
+        assert_communities_connected(34, &edges, &membership);
+        assert_eq!(detect_communities(&g, DEFAULT_GAMMA), membership); // deterministic
+    }
+
+    #[test]
+    fn local_moving_partition_has_no_improving_single_node_move() {
+        // The full multi-level pipeline output is NOT guaranteed single-node
+        // optimal: higher aggregation levels move whole groups, which can leave
+        // an individual node with an improving move (on karate, node 9 →
+        // +0.001 Q toward the 0.41979 optimum). The level-0 `local_moving`
+        // pass, by contrast, converges to a strict single-node optimum by
+        // construction — including the isolation (fresh-singleton) candidate —
+        // so it is the right scope for this invariant: a missed isolation move
+        // surfaces here as an improving move the pass failed to take.
+        let two_cliques = {
+            let mut e = clique(0, 5, 1.0);
+            e.extend(clique(5, 5, 1.0));
+            e.push((0, 5, 1.0));
+            e.push((4, 9, 1.0));
+            (10usize, e)
+        };
+        for (n, edges) in [two_cliques, (34usize, karate_club())] {
+            let g = LeidenGraph::new(n, &edges);
+            let mut partition = Partition::singletons(&g);
+            local_moving(&g, &mut partition, DEFAULT_GAMMA);
+            // Guard against a vacuous pass: local moving must form real
+            // structure, neither leaving every node a singleton nor collapsing
+            // all into one. Count distinct ids (the raw output is not densely
+            // numbered) rather than `community_count`'s max-id heuristic.
+            let distinct = partition
+                .community_of
+                .iter()
+                .copied()
+                .collect::<std::collections::BTreeSet<usize>>()
+                .len();
+            assert!(
+                1 < distinct && distinct < n,
+                "local moving produced a degenerate partition: {distinct} communities over {n} nodes"
+            );
+            assert_no_improving_single_move(&g, &partition.community_of, DEFAULT_GAMMA);
+        }
     }
 }
