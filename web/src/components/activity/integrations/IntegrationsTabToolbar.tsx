@@ -61,11 +61,7 @@ export function IntegrationsTabToolbar({
         <option value="enabled">Enabled</option>
         <option value="disabled">Disabled</option>
       </select>
-      <button
-        type="button"
-        className="min-h-8 rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground transition-opacity hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
-        onClick={onAdd}
-      >
+      <button type="button" className="btn btn-accent btn-sm" onClick={onAdd}>
         + Channel
       </button>
     </div>

@@ -209,7 +209,7 @@ export function WikiChatActions({
     <div className="relative">
       <button
         type="button"
-        className="inline-flex h-[36px] items-center gap-1 rounded-md border border-border px-2 text-xs text-foreground hover:bg-muted disabled:pointer-events-none disabled:opacity-50"
+        className="btn btn-secondary btn-sm"
         aria-label="Wiki actions"
         title="Wiki actions"
         disabled={disabled}
@@ -218,7 +218,7 @@ export function WikiChatActions({
         <span aria-hidden="true">Wiki</span>
       </button>
       {isOpen ? (
-        <div className="absolute left-0 top-10 z-30 w-[min(360px,calc(100vw-2rem))] rounded-md border border-border bg-background p-3 shadow-lg">
+        <div className="absolute right-0 top-10 z-30 w-[min(360px,calc(100vw-2rem))] rounded-md border border-border bg-background p-3 shadow-lg">
           <div className="grid grid-cols-2 gap-2">
             {ACTIONS.map((action) => (
               <button

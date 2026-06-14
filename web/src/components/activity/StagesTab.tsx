@@ -174,7 +174,7 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
 
   return (
     <div className="flex h-full min-h-0 flex-col bg-[var(--bg-primary)]">
-      <div className="flex min-h-11 flex-wrap items-center gap-2 border-b border-border bg-[var(--bg-secondary)] px-3 py-2">
+      <div className="activity-panel-toolbar">
         <ActivityPanelSearch
           value={search}
           onChange={setSearch}
@@ -190,11 +190,7 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
           className="activity-panel-toolbar-segmented"
         />
         {segment === "profiles" && (
-          <button
-            type="button"
-            className="ml-auto min-h-8 rounded-md bg-accent px-3 text-xs font-medium text-accent-foreground transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent"
-            onClick={handleCreateProfile}
-          >
+          <button type="button" className="btn btn-accent btn-sm ml-auto" onClick={handleCreateProfile}>
             + Profile
           </button>
         )}

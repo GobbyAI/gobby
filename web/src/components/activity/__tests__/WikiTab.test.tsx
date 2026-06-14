@@ -134,7 +134,7 @@ describe("WikiTab", () => {
     render(<WikiTab projectId="demo" />);
 
     expect(await screen.findByRole("searchbox", { name: "Search wiki sources" })).toBeInTheDocument();
-    expect(screen.getByRole("list", { name: "Wiki sources" })).toBeInTheDocument();
+    expect(await screen.findByRole("list", { name: "Wiki sources" })).toBeInTheDocument();
     expect(screen.getByRole("separator", { name: "Resize panel" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Hooks source" })).toBeInTheDocument();
 

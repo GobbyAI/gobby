@@ -220,11 +220,7 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
               }
               footer={
                 channels.length === 0 ? (
-                  <button
-                    type="button"
-                    className="inline-flex min-h-8 items-center justify-center rounded-md bg-accent px-3 text-xs font-semibold text-accent-foreground hover:opacity-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11"
-                    onClick={handleAdd}
-                  >
+                  <button type="button" className="btn btn-accent btn-sm" onClick={handleAdd}>
                     Create channel
                   </button>
                 ) : undefined

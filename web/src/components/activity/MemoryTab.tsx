@@ -4,6 +4,7 @@ import { useMemory, type GobbyMemory } from "../../hooks/useMemory";
 import { useIsMobile } from "../../hooks/useIsMobile";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
+import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { DetailActionButton } from "./fields";
 import {
@@ -174,20 +175,17 @@ export const MemoryTab = memo(function MemoryTab({
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex min-h-11 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
-        <input
-          type="search"
-          name="search-memories"
-          aria-label="Search memories"
-          className="min-h-9 min-w-0 flex-1 rounded-md border border-border bg-[var(--bg-secondary)] px-3 text-sm text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
-          placeholder="Search"
+      <div className="activity-panel-toolbar">
+        <ActivityPanelSearch
           value={search}
-          onChange={(event) => setSearch(event.target.value)}
+          onChange={setSearch}
+          placeholder="Search"
+          ariaLabel="Search memories"
         />
         <div className="relative">
           <button
             type="button"
-            className="inline-flex min-h-9 items-center justify-center rounded-md border border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+            className="btn btn-secondary btn-sm"
             aria-label="Filter memories"
             aria-expanded={filtersOpen}
             onClick={() => setFiltersOpen((open) => !open)}
@@ -245,7 +243,7 @@ export const MemoryTab = memo(function MemoryTab({
         </div>
         <button
           type="button"
-          className="inline-flex min-h-9 items-center justify-center rounded-md border border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+          className="btn btn-secondary btn-sm"
           aria-label="Refresh memories"
           disabled={isLoading}
           onClick={refreshMemories}

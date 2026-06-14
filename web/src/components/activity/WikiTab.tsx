@@ -118,7 +118,7 @@ export const WikiTab = memo(function WikiTab({ projectId }: WikiTabProps) {
 
   return (
     <div className="flex h-full flex-col">
-      <div className="flex min-h-11 flex-wrap items-center gap-2 border-b border-border px-3 py-2">
+      <div className="activity-panel-toolbar">
         <ActivityPanelSearch
           value={search}
           onChange={setSearch}
@@ -128,7 +128,7 @@ export const WikiTab = memo(function WikiTab({ projectId }: WikiTabProps) {
         <div className="relative">
           <button
             type="button"
-            className="inline-flex min-h-9 items-center justify-center rounded-md border border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+            className="btn btn-secondary btn-sm"
             aria-label="Filter wiki sources"
             aria-expanded={filtersOpen}
             onClick={() => setFiltersOpen((open) => !open)}
@@ -160,7 +160,7 @@ export const WikiTab = memo(function WikiTab({ projectId }: WikiTabProps) {
         </div>
         <button
           type="button"
-          className="inline-flex min-h-9 items-center justify-center rounded-md border border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11"
+          className="btn btn-secondary btn-sm"
           aria-label="Refresh wiki"
           disabled={isLoading}
           onClick={() => void refresh()}
