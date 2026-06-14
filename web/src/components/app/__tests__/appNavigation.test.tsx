@@ -8,4 +8,10 @@ describe("app navigation", () => {
     expect(APP_NAV_PAGES.map((page) => page.id)).not.toContain("skills");
     expect(createAppNavItems().map((item) => item.id)).not.toContain("skills");
   });
+
+  it("does not expose the retired Integrations page route", () => {
+    expect(APP_VALID_TABS.has("integrations")).toBe(false);
+    expect(APP_NAV_PAGES.map((page) => page.id)).not.toContain("integrations");
+    expect(createAppNavItems().map((item) => item.id)).not.toContain("integrations");
+  });
 });

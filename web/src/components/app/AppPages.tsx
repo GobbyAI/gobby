@@ -6,11 +6,6 @@ export const MemoryPage = lazy(() =>
     default: m.MemoryPage,
   })),
 );
-export const IntegrationsPage = lazy(() =>
-  import("../integrations/IntegrationsPage").then((m) => ({
-    default: m.IntegrationsPage,
-  })),
-);
 export const ConfigurationPage = lazy(() =>
   import("../ConfigurationPage").then((m) => ({
     default: m.ConfigurationPage,
