@@ -4,6 +4,9 @@ use std::time::Duration;
 use gobby_core::ai_types::AiError;
 
 use super::*;
+use sanitize::sanitize_model_markdown_links;
+
+mod sanitize;
 
 const FALLBACK_CITATION_LINE_WIDTH: usize = 240;
 
@@ -457,7 +460,7 @@ pub(crate) fn ground_text(
     valid_spans: &[SourceSpan],
     fallback_citation: Option<&str>,
 ) -> String {
-    let cleaned = strip_invalid_citations(text, valid_spans);
+    let cleaned = sanitize_model_markdown_links(&strip_invalid_citations(text, valid_spans));
     match fallback_citation {
         Some(fallback_citation) if !contains_valid_citation(&cleaned, valid_spans) => {
             if fallback_citation.contains('\n') {
