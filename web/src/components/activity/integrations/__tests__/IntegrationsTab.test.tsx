@@ -25,6 +25,22 @@ type ChannelRecord = {
   updated_at: string;
 };
 
+type MessageRecord = {
+  id: string;
+  channel_id: string;
+  identity_id: string | null;
+  direction: "inbound" | "outbound";
+  content: string;
+  content_type: string;
+  platform_message_id: string | null;
+  platform_thread_id: string | null;
+  session_id: string | null;
+  status: string;
+  error: string | null;
+  metadata_json: Record<string, unknown>;
+  created_at: string;
+};
+
 let mockFetch: MockFetchInstance;
 
 function makeChannel(overrides: Partial<ChannelRecord>): ChannelRecord {
@@ -41,7 +57,26 @@ function makeChannel(overrides: Partial<ChannelRecord>): ChannelRecord {
   };
 }
 
-function setupFetch(channels: ChannelRecord[]) {
+function makeMessage(overrides: Partial<MessageRecord>): MessageRecord {
+  return {
+    id: "msg-default",
+    channel_id: "ch-slack",
+    identity_id: null,
+    direction: "outbound",
+    content: "Default message",
+    content_type: "text",
+    platform_message_id: null,
+    platform_thread_id: null,
+    session_id: null,
+    status: "delivered",
+    error: null,
+    metadata_json: {},
+    created_at: "2026-01-01T00:00:00Z",
+    ...overrides,
+  };
+}
+
+function setupFetch(channels: ChannelRecord[], messages: MessageRecord[] = []) {
   mockFetch = createMockFetch();
   mockFetch.fn.mockImplementation(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -59,6 +94,9 @@ function setupFetch(channels: ChannelRecord[]) {
           config_json: { chat_id: "-100123" },
         }),
       );
+    }
+    if (url.includes("/api/comms/messages")) {
+      return jsonResponse(messages);
     }
     if (url.endsWith("/api/comms/channels/ch-slack/status")) {
       return jsonResponse({
@@ -238,6 +276,45 @@ describe("Integrations activity tab", () => {
         enabled: true,
       }),
     );
+  });
+
+  it("swaps the selected channel detail pane to recent messages", async () => {
+    setupFetch(
+      [
+        makeChannel({
+          id: "ch-slack",
+          name: "Release alerts",
+          channel_type: "slack",
+          config_json: { channel_id: "C123" },
+        }),
+      ],
+      [
+        makeMessage({
+          id: "msg-release",
+          content: "Release shipped",
+          direction: "outbound",
+          status: "delivered",
+          created_at: "2026-01-02T00:00:00Z",
+        }),
+      ],
+    );
+
+    const user = userEvent.setup();
+    render(<IntegrationsTab />);
+
+    await user.click(await screen.findByRole("button", { name: "Select Release alerts" }));
+    await user.click(screen.getByRole("button", { name: "Messages" }));
+
+    expect(await screen.findByRole("heading", { name: "Messages" })).toBeInTheDocument();
+    expect(screen.getByText("Release shipped")).toBeInTheDocument();
+    expect(
+      mockFetch.fn.mock.calls.some(([url]) =>
+        String(url).includes("/api/comms/messages?channel_id=ch-slack"),
+      ),
+    ).toBe(true);
+
+    await user.click(screen.getByRole("button", { name: "Close messages" }));
+    expect(await screen.findByRole("heading", { name: "Release alerts" })).toBeInTheDocument();
   });
 
   it("creates channels with config fields separated from secrets", async () => {

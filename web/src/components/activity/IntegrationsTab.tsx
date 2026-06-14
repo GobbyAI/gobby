@@ -16,6 +16,7 @@ import {
 } from "./integrations/IntegrationsTabData";
 import { ChannelDetailPanel } from "./integrations/ChannelDetailPanel";
 import { ChannelsList } from "./integrations/ChannelsList";
+import { MessagesView } from "./integrations/MessagesView";
 import {
   filterChannels,
   type IntegrationDraft,
@@ -29,6 +30,8 @@ const initialFilters: IntegrationFilters = {
   status: "all",
 };
 
+type DetailViewMode = "config" | "messages";
+
 export const IntegrationsTab = memo(function IntegrationsTab() {
   const [channels, setChannels] = useState<Channel[]>([]);
   const [isLoading, setIsLoading] = useState(true);
@@ -37,6 +40,7 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
+  const [viewMode, setViewMode] = useState<DetailViewMode>("config");
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [filters, setFilters] = useState<IntegrationFilters>(initialFilters);
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
@@ -99,6 +103,7 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
     );
     setSelectedId(updated.id);
     setIsCreating(false);
+    setViewMode("config");
   }, []);
 
   const withChannelBusy = useCallback(async (channel: Channel, action: () => Promise<void>) => {
@@ -116,6 +121,7 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
   const handleSelect = useCallback((channel: Channel) => {
     confirmLeaveRef.current(() => {
       setIsCreating(false);
+      setViewMode("config");
       setSelectedId(channel.id);
     });
   }, []);
@@ -123,6 +129,7 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
   const handleAdd = useCallback(() => {
     confirmLeaveRef.current(() => {
       setIsCreating(true);
+      setViewMode("config");
       setSelectedId(null);
     });
   }, []);
@@ -247,18 +254,27 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
 
         {hasDetail && (
           <div className="min-h-0 flex-1">
-            <ChannelDetailPanel
-              key={isCreating ? "new" : selectedChannel?.id}
-              mode={isCreating ? "create" : "edit"}
-              channel={selectedChannel}
-              onSave={handleSave}
-              onDelete={handleDelete}
-              onCancelCreate={() => setIsCreating(false)}
-              onError={setError}
-              onConfirmLeaveChange={(handler) => {
-                confirmLeaveRef.current = handler;
-              }}
-            />
+            {viewMode === "messages" && selectedChannel && !isCreating ? (
+              <MessagesView
+                key={selectedChannel.id}
+                channel={selectedChannel}
+                onClose={() => setViewMode("config")}
+              />
+            ) : (
+              <ChannelDetailPanel
+                key={isCreating ? "new" : selectedChannel?.id}
+                mode={isCreating ? "create" : "edit"}
+                channel={selectedChannel}
+                onSave={handleSave}
+                onDelete={handleDelete}
+                onCancelCreate={() => setIsCreating(false)}
+                onShowMessages={() => setViewMode("messages")}
+                onError={setError}
+                onConfirmLeaveChange={(handler) => {
+                  confirmLeaveRef.current = handler;
+                }}
+              />
+            )}
           </div>
         )}
       </div>

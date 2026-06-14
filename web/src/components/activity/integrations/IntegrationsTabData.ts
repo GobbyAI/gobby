@@ -1,4 +1,4 @@
-import type { Channel, ChannelStatus } from "../../../hooks/useIntegrations";
+import type { Channel, ChannelStatus, CommsMessage } from "../../../hooks/useIntegrations";
 import type { IntegrationSavePayload } from "./IntegrationsTabModel";
 
 export class IntegrationApiError extends Error {
@@ -27,9 +27,27 @@ function normalizeChannels(data: Channel[] | { channels?: Channel[] }): Channel[
   return Array.isArray(data) ? data : (data.channels ?? []);
 }
 
+function normalizeMessages(data: CommsMessage[] | { messages?: CommsMessage[] }): CommsMessage[] {
+  return Array.isArray(data) ? data : (data.messages ?? []);
+}
+
 export async function loadIntegrationChannels(): Promise<Channel[]> {
   const data = await fetchJson<Channel[] | { channels?: Channel[] }>("/api/comms/channels");
   return normalizeChannels(data);
+}
+
+export async function loadChannelMessages(
+  channelId: string,
+  limit: number,
+): Promise<CommsMessage[]> {
+  const params = new URLSearchParams({
+    channel_id: channelId,
+    limit: String(limit),
+  });
+  const data = await fetchJson<CommsMessage[] | { messages?: CommsMessage[] }>(
+    `/api/comms/messages?${params}`,
+  );
+  return normalizeMessages(data);
 }
 
 export async function fetchIntegrationStatus(channelId: string): Promise<ChannelStatus | null> {

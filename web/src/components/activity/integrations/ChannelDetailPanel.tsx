@@ -5,6 +5,7 @@ import { ActivityRowStatusDot } from "../ActivityRowStatusDot";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "../ActivityPanelEmpty";
 import {
   DetailPaneHeader,
+  DetailActionButton,
   KeyValueField,
   SelectField,
   SwitchField,
@@ -30,6 +31,7 @@ interface ChannelDetailPanelProps {
   onSave: (draft: IntegrationDraft) => Promise<boolean>;
   onDelete: (channel: Channel) => void;
   onCancelCreate: () => void;
+  onShowMessages: () => void;
   onError: (message: string | null) => void;
   onConfirmLeaveChange: (handler: (next: () => void) => void) => void;
 }
@@ -75,12 +77,33 @@ function SecretField({
   );
 }
 
+function MessagesIcon() {
+  return (
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 15a4 4 0 0 1-4 4H8l-5 3V7a4 4 0 0 1 4-4h10a4 4 0 0 1 4 4z" />
+      <path d="M8 9h8" />
+      <path d="M8 13h5" />
+    </svg>
+  );
+}
+
 export function ChannelDetailPanel({
   mode,
   channel,
   onSave,
   onDelete,
   onCancelCreate,
+  onShowMessages,
   onError,
   onConfirmLeaveChange,
 }: ChannelDetailPanelProps) {
@@ -204,13 +227,20 @@ export function ChannelDetailPanel({
               </button>
             ) : (
               channel && (
-                <button
-                  type="button"
-                  className="inline-flex min-h-8 items-center justify-center rounded-md px-2.5 text-xs font-medium text-error transition-colors hover:bg-error-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11"
-                  onClick={() => onDelete(channel)}
-                >
-                  Delete
-                </button>
+                <>
+                  <DetailActionButton
+                    label="Messages"
+                    icon={<MessagesIcon />}
+                    onClick={() => draftState.confirmIfDirty(onShowMessages)}
+                  />
+                  <button
+                    type="button"
+                    className="inline-flex min-h-8 items-center justify-center rounded-md px-2.5 text-xs font-medium text-error transition-colors hover:bg-error-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+                    onClick={() => onDelete(channel)}
+                  >
+                    Delete
+                  </button>
+                </>
               )
             )}
           </>
