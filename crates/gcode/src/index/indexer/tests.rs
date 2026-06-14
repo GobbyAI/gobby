@@ -313,92 +313,95 @@ fn library_writes_all_code_facts() {
     assert_eq!(counts.chunks_indexed, 1);
 }
 
-#[test]
-#[serial_test::serial(serial_db)]
-fn parsed_reindex_preserves_unchanged_symbol_summaries_and_clears_changed_symbols() {
-    let Some((mut conn, database_url)) = connect_summary_preservation_test_db() else {
-        return;
-    };
-    let project_id = unique_test_project_id("gcode-summary-preservation");
-    let rel = "src/lib.rs";
-    cleanup_summary_preservation_project(&mut conn, &project_id)
-        .expect("pre-clean summary preservation rows");
-    let _cleanup = SummaryPreservationCleanup {
-        database_url,
-        project_id: project_id.clone(),
-    };
+mod serial_db {
+    use super::*;
 
-    api::upsert_project_stats(
-        &mut conn,
-        &IndexedProject {
-            id: project_id.clone(),
-            root_path: "/tmp/gcode-summary-preservation".to_string(),
-            total_files: 1,
-            total_symbols: 3,
-            last_indexed_at: String::new(),
-            index_duration_ms: 0,
-            total_eligible_files: None,
-        },
-    )
-    .expect("seed project row");
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn parsed_reindex_preserves_unchanged_symbol_summaries_and_clears_changed_symbols() {
+        let (mut conn, database_url) = connect_summary_preservation_test_db();
+        let project_id = unique_test_project_id("gcode-summary-preservation");
+        let rel = "src/lib.rs";
+        cleanup_summary_preservation_project(&mut conn, &project_id)
+            .expect("pre-clean summary preservation rows");
+        let _cleanup = SummaryPreservationCleanup {
+            database_url,
+            project_id: project_id.clone(),
+        };
 
-    let unchanged = test_symbol(&project_id, rel, "unchanged", 0, "unchanged-hash");
-    let changed = test_symbol(&project_id, rel, "changed", 32, "changed-hash-v1");
-    let stale = test_symbol(&project_id, rel, "stale", 64, "stale-hash");
-    write_postgres_parsed_file_facts(
-        &mut conn,
-        &project_id,
-        rel,
-        "file-hash-v1",
-        b"fn unchanged() {}\nfn changed() {}\nfn stale() {}\n",
-        vec![unchanged.clone(), changed.clone(), stale.clone()],
-    );
+        api::upsert_project_stats(
+            &mut conn,
+            &IndexedProject {
+                id: project_id.clone(),
+                root_path: "/tmp/gcode-summary-preservation".to_string(),
+                total_files: 1,
+                total_symbols: 3,
+                last_indexed_at: String::new(),
+                index_duration_ms: 0,
+                total_eligible_files: None,
+            },
+        )
+        .expect("seed project row");
 
-    let unchanged_summary = "keep daemon summary";
-    let changed_summary = "clear stale daemon summary";
-    conn.execute(
-        "UPDATE code_symbols SET summary = $1 WHERE id = $2",
-        &[&unchanged_summary, &unchanged.id],
-    )
-    .expect("set unchanged summary");
-    conn.execute(
-        "UPDATE code_symbols SET summary = $1 WHERE id = $2",
-        &[&changed_summary, &changed.id],
-    )
-    .expect("set changed summary");
+        let unchanged = test_symbol(&project_id, rel, "unchanged", 0, "unchanged-hash");
+        let changed = test_symbol(&project_id, rel, "changed", 32, "changed-hash-v1");
+        let stale = test_symbol(&project_id, rel, "stale", 64, "stale-hash");
+        write_postgres_parsed_file_facts(
+            &mut conn,
+            &project_id,
+            rel,
+            "file-hash-v1",
+            b"fn unchanged() {}\nfn changed() {}\nfn stale() {}\n",
+            vec![unchanged.clone(), changed.clone(), stale.clone()],
+        );
 
-    let mut changed_v2 = changed.clone();
-    changed_v2.content_hash = "changed-hash-v2".to_string();
-    write_postgres_parsed_file_facts(
-        &mut conn,
-        &project_id,
-        rel,
-        "file-hash-v2",
-        b"// unrelated file edit\nfn unchanged() {}\nfn changed() {}\n",
-        vec![unchanged.clone(), changed_v2.clone()],
-    );
+        let unchanged_summary = "keep daemon summary";
+        let changed_summary = "clear stale daemon summary";
+        conn.execute(
+            "UPDATE code_symbols SET summary = $1 WHERE id = $2",
+            &[&unchanged_summary, &unchanged.id],
+        )
+        .expect("set unchanged summary");
+        conn.execute(
+            "UPDATE code_symbols SET summary = $1 WHERE id = $2",
+            &[&changed_summary, &changed.id],
+        )
+        .expect("set changed summary");
 
-    assert_eq!(
-        symbol_summary(&mut conn, &unchanged.id),
-        Some(unchanged_summary.to_string())
-    );
-    assert_eq!(symbol_summary(&mut conn, &changed.id), None);
-    assert_eq!(
-        symbol_count(&mut conn, &project_id, rel, &stale.id),
-        0,
-        "symbols omitted from the latest parse should be deleted"
-    );
+        let mut changed_v2 = changed.clone();
+        changed_v2.content_hash = "changed-hash-v2".to_string();
+        write_postgres_parsed_file_facts(
+            &mut conn,
+            &project_id,
+            rel,
+            "file-hash-v2",
+            b"// unrelated file edit\nfn unchanged() {}\nfn changed() {}\n",
+            vec![unchanged.clone(), changed_v2.clone()],
+        );
+
+        assert_eq!(
+            symbol_summary(&mut conn, &unchanged.id),
+            Some(unchanged_summary.to_string())
+        );
+        assert_eq!(symbol_summary(&mut conn, &changed.id), None);
+        assert_eq!(
+            symbol_count(&mut conn, &project_id, rel, &stale.id),
+            0,
+            "symbols omitted from the latest parse should be deleted"
+        );
+    }
 }
 
-fn connect_summary_preservation_test_db() -> Option<(postgres::Client, String)> {
-    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
-    match db::connect_readwrite(&database_url) {
-        Ok(conn) => Some((conn, database_url)),
-        Err(error) => {
-            eprintln!("skipping summary preservation test: PostgreSQL hub is unavailable: {error}");
-            None
-        }
-    }
+fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
+    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+        .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for summary preservation tests");
+    let conn = db::connect_readwrite(&database_url)
+        .expect("connect summary preservation PostgreSQL test database");
+    (conn, database_url)
 }
 
 fn unique_test_project_id(prefix: &str) -> String {

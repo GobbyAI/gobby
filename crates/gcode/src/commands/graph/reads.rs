@@ -416,27 +416,18 @@ mod tests {
         "code_indexed_files",
     ];
 
-    fn graph_resolution_database_url() -> Option<String> {
-        std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()
+    fn graph_resolution_database_url() -> String {
+        std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for graph resolution tests")
     }
 
-    fn connect_graph_resolution_test_db() -> Option<Client> {
-        let database_url = graph_resolution_database_url()?;
-        match gobby_core::postgres::connect_readwrite(&database_url) {
-            Ok(mut conn) => {
-                if let Err(err) = crate::schema::validate_runtime_schema(&mut conn) {
-                    eprintln!(
-                        "skipping graph resolution test: PostgreSQL schema is invalid: {err}"
-                    );
-                    return None;
-                }
-                Some(conn)
-            }
-            Err(err) => {
-                eprintln!("skipping graph resolution test: failed to connect PostgreSQL: {err}");
-                None
-            }
-        }
+    fn connect_graph_resolution_test_db() -> Client {
+        let database_url = graph_resolution_database_url();
+        let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
+            .expect("connect graph resolution PostgreSQL test database");
+        crate::schema::validate_runtime_schema(&mut conn)
+            .expect("graph resolution PostgreSQL test schema is valid");
+        conn
     }
 
     fn unique_uuid(label: &str) -> String {
@@ -456,8 +447,7 @@ mod tests {
     impl GraphResolutionProjectCleanup {
         fn new(project_id: &str) -> Self {
             Self {
-                database_url: graph_resolution_database_url()
-                    .expect("graph resolution database URL"),
+                database_url: graph_resolution_database_url(),
                 project_id: project_id.to_string(),
             }
         }
@@ -548,11 +538,13 @@ mod tests {
         use super::*;
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn uuid_input_resolves_exact_symbol_for_active_project() {
-            let Some(mut conn) = connect_graph_resolution_test_db() else {
-                return;
-            };
+            let mut conn = connect_graph_resolution_test_db();
             let project_id = unique_uuid("project");
             cleanup_graph_resolution_project(&mut conn, &project_id);
             let _cleanup = GraphResolutionProjectCleanup::new(&project_id);
@@ -580,11 +572,13 @@ mod tests {
         }
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn unknown_uuid_input_does_not_fall_back_to_name_resolution() {
-            let Some(mut conn) = connect_graph_resolution_test_db() else {
-                return;
-            };
+            let mut conn = connect_graph_resolution_test_db();
             let project_id = unique_uuid("project");
             cleanup_graph_resolution_project(&mut conn, &project_id);
             let _cleanup = GraphResolutionProjectCleanup::new(&project_id);
@@ -610,11 +604,13 @@ mod tests {
         }
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn ambiguous_name_behavior_remains_unchanged() {
-            let Some(mut conn) = connect_graph_resolution_test_db() else {
-                return;
-            };
+            let mut conn = connect_graph_resolution_test_db();
             let project_id = unique_uuid("project");
             cleanup_graph_resolution_project(&mut conn, &project_id);
             let _cleanup = GraphResolutionProjectCleanup::new(&project_id);

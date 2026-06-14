@@ -544,11 +544,14 @@ mod tests {
         use super::*;
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn standalone_command_installs_public_code_index_subset() {
-            let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
-                return;
-            };
+            let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+                .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for setup command tests");
             let home = tempfile::tempdir().expect("temp home");
             unsafe { std::env::set_var("GOBBY_HOME", home.path()) };
             let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);

@@ -225,51 +225,41 @@ mod tests {
         hasher::symbol_content_hash(source, start, end).expect("symbol hash")
     }
 
-    fn postgres_test_context(project_id: &str) -> Option<Context> {
-        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
-        match db::connect_readwrite(&database_url) {
-            Ok(_) => Some(Context {
-                database_url,
-                project_root: std::path::PathBuf::from("/tmp/gcode-freshness-lock-test"),
-                project_id: project_id.to_string(),
-                quiet: true,
-                falkordb: None,
-                qdrant: None,
-                embedding: None,
-                code_vectors: crate::config::CodeVectorSettings::default(),
-                indexing: gobby_core::config::IndexingConfig::default(),
-                daemon_url: None,
-                index_scope: crate::config::ProjectIndexScope::Single,
-            }),
-            Err(error) => {
-                eprintln!("skipping freshness lock test: PostgreSQL hub is unavailable: {error}");
-                None
-            }
+    fn postgres_test_context(project_id: &str) -> Context {
+        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for freshness tests");
+        db::connect_readwrite(&database_url).expect("connect freshness PostgreSQL test database");
+        Context {
+            database_url,
+            project_root: std::path::PathBuf::from("/tmp/gcode-freshness-lock-test"),
+            project_id: project_id.to_string(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: crate::config::CodeVectorSettings::default(),
+            indexing: gobby_core::config::IndexingConfig::default(),
+            daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 
-    fn postgres_context_with_root(project_id: &str, root: &Path) -> Option<Context> {
-        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
-        match db::connect_readwrite(&database_url) {
-            Ok(_) => Some(Context {
-                database_url,
-                project_root: root.to_path_buf(),
-                project_id: project_id.to_string(),
-                quiet: true,
-                falkordb: None,
-                qdrant: None,
-                embedding: None,
-                code_vectors: crate::config::CodeVectorSettings::default(),
-                indexing: gobby_core::config::IndexingConfig::default(),
-                daemon_url: None,
-                index_scope: crate::config::ProjectIndexScope::Single,
-            }),
-            Err(error) => {
-                eprintln!(
-                    "skipping freshness pre-gate test: PostgreSQL hub is unavailable: {error}"
-                );
-                None
-            }
+    fn postgres_context_with_root(project_id: &str, root: &Path) -> Context {
+        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for freshness tests");
+        db::connect_readwrite(&database_url).expect("connect freshness PostgreSQL test database");
+        Context {
+            database_url,
+            project_root: root.to_path_buf(),
+            project_id: project_id.to_string(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: crate::config::CodeVectorSettings::default(),
+            indexing: gobby_core::config::IndexingConfig::default(),
+            daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
         }
     }
 
@@ -330,11 +320,13 @@ mod tests {
         }
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn busy_project_lock_skips_freshness_refresh() {
-            let Some(ctx) = postgres_test_context("gcode-freshness-busy") else {
-                return;
-            };
+            let ctx = postgres_test_context("gcode-freshness-busy");
             let _holder = hold_project_lock(&ctx);
 
             let status = ensure_fresh(&ctx, FreshnessScope::Project).expect("freshness status");
@@ -343,6 +335,10 @@ mod tests {
         }
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn pre_gate_skips_lock_when_unchanged_and_trips_after_a_change() {
             let tmp = tempfile::tempdir().expect("tempdir");
@@ -358,9 +354,7 @@ mod tests {
             set_mtime(&lib, aged);
             set_mtime(&root.join("README.md"), aged);
 
-            let Some(ctx) = postgres_context_with_root("gcode-freshness-pregate", root) else {
-                return;
-            };
+            let ctx = postgres_context_with_root("gcode-freshness-pregate", root);
 
             // Start clean, then index so code_indexed_projects.last_indexed_at = NOW().
             invalidate_test_project(&ctx);

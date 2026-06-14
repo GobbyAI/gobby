@@ -169,11 +169,13 @@ mod serial_db {
     use super::*;
 
     #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    )]
     #[serial_test::serial(serial_db)]
     fn overlay_visibility_counts_and_kinds_use_database_predicates() {
-        let Some((mut conn, database_url)) = connect_overlay_visibility_test_db() else {
-            return;
-        };
+        let (mut conn, database_url) = connect_overlay_visibility_test_db();
 
         let ids = OverlayFixtureIds::new(database_url);
         cleanup_overlay_visibility_fixture(&mut conn, &ids);
@@ -205,100 +207,101 @@ mod serial_db {
             .cleanup()
             .expect("cleanup overlay visibility fixture");
     }
-}
 
-#[test]
-fn resolve_graph_symbol_by_id_resolves_exact_symbol() {
-    let Some((mut conn, database_url)) = connect_overlay_visibility_test_db() else {
-        return;
-    };
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn resolve_graph_symbol_by_id_resolves_exact_symbol() {
+        let (mut conn, database_url) = connect_overlay_visibility_test_db();
 
-    let project_id = unique_test_id("gcode-graph-symbol-by-id");
-    cleanup_single_project(&mut conn, &project_id);
-    insert_project(&mut conn, &project_id, "/tmp/gcode-graph-symbol-by-id");
-    let _cleanup = SingleProjectCleanup {
-        database_url,
-        project_id: project_id.clone(),
-    };
-    insert_file(&mut conn, &project_id, "src/target.rs", "rust", 1);
-    insert_symbol(
-        &mut conn,
-        &project_id,
-        "src/target.rs",
-        "target_symbol",
-        "function",
-    );
-    let symbol_id = format!("{project_id}:src/target.rs:target_symbol");
+        let project_id = unique_test_id("gcode-graph-symbol-by-id");
+        cleanup_single_project(&mut conn, &project_id);
+        insert_project(&mut conn, &project_id, "/tmp/gcode-graph-symbol-by-id");
+        let _cleanup = SingleProjectCleanup {
+            database_url,
+            project_id: project_id.clone(),
+        };
+        insert_file(&mut conn, &project_id, "src/target.rs", "rust", 1);
+        insert_symbol(
+            &mut conn,
+            &project_id,
+            "src/target.rs",
+            "target_symbol",
+            "function",
+        );
+        let symbol_id = format!("{project_id}:src/target.rs:target_symbol");
 
-    let resolved = resolve_graph_symbol_by_id(&mut conn, &symbol_id, &project_id)
-        .expect("resolve symbol by id")
-        .expect("symbol resolves");
+        let resolved = resolve_graph_symbol_by_id(&mut conn, &symbol_id, &project_id)
+            .expect("resolve symbol by id")
+            .expect("symbol resolves");
 
-    assert_eq!(resolved.id, symbol_id);
-    assert_eq!(resolved.display_name, "target_symbol");
-}
-
-#[test]
-fn resolve_graph_symbol_by_id_returns_none_for_missing_uuid() {
-    let Some((mut conn, _database_url)) = connect_overlay_visibility_test_db() else {
-        return;
-    };
-    let project_id = unique_test_id("gcode-graph-symbol-missing");
-    let missing_id = uuid::Uuid::new_v5(
-        &crate::models::CODE_INDEX_UUID_NAMESPACE,
-        project_id.as_bytes(),
-    )
-    .to_string();
-
-    let resolved = resolve_graph_symbol_by_id(&mut conn, &missing_id, &project_id)
-        .expect("resolve missing symbol id");
-
-    assert!(resolved.is_none());
-}
-
-#[test]
-fn resolve_graph_symbol_by_id_returns_none_for_empty_id() {
-    let Some((mut conn, _database_url)) = connect_overlay_visibility_test_db() else {
-        return;
-    };
-
-    let resolved = resolve_graph_symbol_by_id(&mut conn, "", "gcode-empty-symbol-id")
-        .expect("resolve empty symbol id");
-
-    assert!(resolved.is_none());
-}
-
-#[test]
-fn resolve_graph_symbol_by_id_returns_none_for_malformed_id() {
-    let Some((mut conn, _database_url)) = connect_overlay_visibility_test_db() else {
-        return;
-    };
-
-    let resolved = resolve_graph_symbol_by_id(&mut conn, "not-a-symbol-id", "gcode-malformed-id")
-        .expect("resolve malformed symbol id");
-
-    assert!(resolved.is_none());
-}
-
-fn connect_overlay_visibility_test_db() -> Option<(Client, String)> {
-    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
-    match gobby_core::postgres::connect_readwrite(&database_url) {
-        Ok(mut conn) => {
-            if let Err(err) = crate::schema::validate_runtime_schema(&mut conn) {
-                eprintln!(
-                    "skipping overlay visibility test: PostgreSQL hub schema is invalid: {err}"
-                );
-                return None;
-            }
-            Some((conn, database_url))
-        }
-        Err(err) => {
-            eprintln!(
-                "skipping overlay visibility test: failed to connect test PostgreSQL hub: {err}"
-            );
-            None
-        }
+        assert_eq!(resolved.id, symbol_id);
+        assert_eq!(resolved.display_name, "target_symbol");
     }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn resolve_graph_symbol_by_id_returns_none_for_missing_uuid() {
+        let (mut conn, _database_url) = connect_overlay_visibility_test_db();
+        let project_id = unique_test_id("gcode-graph-symbol-missing");
+        let missing_id = uuid::Uuid::new_v5(
+            &crate::models::CODE_INDEX_UUID_NAMESPACE,
+            project_id.as_bytes(),
+        )
+        .to_string();
+
+        let resolved = resolve_graph_symbol_by_id(&mut conn, &missing_id, &project_id)
+            .expect("resolve missing symbol id");
+
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn resolve_graph_symbol_by_id_returns_none_for_empty_id() {
+        let (mut conn, _database_url) = connect_overlay_visibility_test_db();
+
+        let resolved = resolve_graph_symbol_by_id(&mut conn, "", "gcode-empty-symbol-id")
+            .expect("resolve empty symbol id");
+
+        assert!(resolved.is_none());
+    }
+
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn resolve_graph_symbol_by_id_returns_none_for_malformed_id() {
+        let (mut conn, _database_url) = connect_overlay_visibility_test_db();
+
+        let resolved =
+            resolve_graph_symbol_by_id(&mut conn, "not-a-symbol-id", "gcode-malformed-id")
+                .expect("resolve malformed symbol id");
+
+        assert!(resolved.is_none());
+    }
+}
+
+fn connect_overlay_visibility_test_db() -> (Client, String) {
+    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+        .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for FTS PostgreSQL tests");
+    let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
+        .expect("connect FTS PostgreSQL test database");
+    crate::schema::validate_runtime_schema(&mut conn).expect("FTS PostgreSQL test schema is valid");
+    (conn, database_url)
 }
 
 struct OverlayFixtureIds {

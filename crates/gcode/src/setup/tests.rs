@@ -332,16 +332,14 @@ mod serial_db {
     use super::*;
 
     #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    )]
     #[serial_test::serial(serial_db)]
     fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
-        let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
-            // This is an opt-in destructive integration test. Local/unit test runs
-            // skip it when no throwaway PostgreSQL database is configured.
-            eprintln!(
-                "skipping PostgreSQL overwrite test: GCODE_POSTGRES_TEST_DATABASE_URL is not set"
-            );
-            return;
-        };
+        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for overwrite setup tests");
         if let Err(reason) = destructive_postgres_test_allowed(&database_url) {
             // Refuse to panic against a non-test database; skipping is safer than
             // requiring every developer machine to provide PostgreSQL.

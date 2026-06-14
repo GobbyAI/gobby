@@ -213,15 +213,11 @@ mod tests {
         }
     }
 
-    fn connect_postgres_test_db() -> Option<String> {
-        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
-        match db::connect_readwrite(&database_url) {
-            Ok(_) => Some(database_url),
-            Err(error) => {
-                eprintln!("skipping advisory-lock test: PostgreSQL hub is unavailable: {error}");
-                None
-            }
-        }
+    fn connect_postgres_test_db() -> String {
+        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for index-lock tests");
+        db::connect_readwrite(&database_url).expect("connect index-lock PostgreSQL test database");
+        database_url
     }
 
     fn hold_project_lock(database_url: &str, project_id: &str) -> Client {
@@ -246,11 +242,13 @@ mod tests {
         use super::*;
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn brief_try_returns_busy_while_same_project_lock_is_held() {
-            let Some(database_url) = connect_postgres_test_db() else {
-                return;
-            };
+            let database_url = connect_postgres_test_db();
             let ctx = context_for(database_url.clone(), "gcode-lock-brief-try");
             let _holder = hold_project_lock(&database_url, &ctx.project_id);
 
@@ -268,11 +266,13 @@ mod tests {
         }
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn wait_blocks_until_same_project_lock_is_released() {
-            let Some(database_url) = connect_postgres_test_db() else {
-                return;
-            };
+            let database_url = connect_postgres_test_db();
             let project_id = "gcode-lock-wait";
             let ctx = context_for(database_url.clone(), project_id);
             let holder = hold_project_lock(&database_url, project_id);
@@ -298,11 +298,13 @@ mod tests {
         }
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn different_project_ids_do_not_block_each_other() {
-            let Some(database_url) = connect_postgres_test_db() else {
-                return;
-            };
+            let database_url = connect_postgres_test_db();
             let _holder = hold_project_lock(&database_url, "gcode-lock-held-project");
             let ctx = context_for(database_url, "gcode-lock-free-project");
 

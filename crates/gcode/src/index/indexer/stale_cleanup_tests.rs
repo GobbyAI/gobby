@@ -4,64 +4,68 @@ use crate::db;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-#[test]
-fn discovered_scan_deletes_stale_facts_when_ast_indexing_returns_none() {
-    let Some((mut conn, database_url)) = connect_test_db() else {
-        return;
-    };
-    let project_root = tempfile::tempdir().expect("project tempdir");
-    let project_id = unique_test_project_id("gcode-discovered-skip-cleanup");
-    cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
-    let _cleanup = ProjectCleanup {
-        database_url: database_url.clone(),
-        project_id: project_id.clone(),
-    };
+mod serial_db {
+    use super::*;
 
-    write_file(
-        project_root.path(),
-        "src/lib.rs",
-        b"pub fn indexed() -> u8 { 1 }\n",
-    );
-    let ctx = test_context(
-        database_url,
-        project_root.path().to_path_buf(),
-        project_id.clone(),
-    );
-    let initial = index_files(discovered_request(project_root.path(), true), &ctx)
-        .expect("initial discovered index");
-    assert_eq!(initial.indexed_files, 1);
-    assert!(
-        symbol_count(&mut conn, &project_id, "src/lib.rs") > 0,
-        "initial discovered scan should index at least one symbol"
-    );
+    #[test]
+    #[cfg_attr(
+        not(gcode_postgres_tests),
+        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    )]
+    #[serial_test::serial(serial_db)]
+    fn discovered_scan_deletes_stale_facts_when_ast_indexing_returns_none() {
+        let (mut conn, database_url) = connect_test_db();
+        let project_root = tempfile::tempdir().expect("project tempdir");
+        let project_id = unique_test_project_id("gcode-discovered-skip-cleanup");
+        cleanup_project(&mut conn, &project_id).expect("pre-clean project rows");
+        let _cleanup = ProjectCleanup {
+            database_url: database_url.clone(),
+            project_id: project_id.clone(),
+        };
 
-    write_file(project_root.path(), "src/lib.rs", b"");
-    let reindex = index_files(discovered_request(project_root.path(), false), &ctx)
-        .expect("reindex discovered scan");
+        write_file(
+            project_root.path(),
+            "src/lib.rs",
+            b"pub fn indexed() -> u8 { 1 }\n",
+        );
+        let ctx = test_context(
+            database_url,
+            project_root.path().to_path_buf(),
+            project_id.clone(),
+        );
+        let initial = index_files(discovered_request(project_root.path(), true), &ctx)
+            .expect("initial discovered index");
+        assert_eq!(initial.indexed_files, 1);
+        assert!(
+            symbol_count(&mut conn, &project_id, "src/lib.rs") > 0,
+            "initial discovered scan should index at least one symbol"
+        );
 
-    assert_eq!(reindex.indexed_files, 0);
-    assert_eq!(reindex.skipped_files, 1);
-    assert_eq!(
-        symbol_count(&mut conn, &project_id, "src/lib.rs"),
-        0,
-        "stale code_symbols rows should be deleted when AST indexing skips an indexed file"
-    );
-    assert_eq!(
-        indexed_file_count(&mut conn, &project_id, "src/lib.rs"),
-        0,
-        "deleted file facts should not leave the file stale for every later scan"
-    );
+        write_file(project_root.path(), "src/lib.rs", b"");
+        let reindex = index_files(discovered_request(project_root.path(), false), &ctx)
+            .expect("reindex discovered scan");
+
+        assert_eq!(reindex.indexed_files, 0);
+        assert_eq!(reindex.skipped_files, 1);
+        assert_eq!(
+            symbol_count(&mut conn, &project_id, "src/lib.rs"),
+            0,
+            "stale code_symbols rows should be deleted when AST indexing skips an indexed file"
+        );
+        assert_eq!(
+            indexed_file_count(&mut conn, &project_id, "src/lib.rs"),
+            0,
+            "deleted file facts should not leave the file stale for every later scan"
+        );
+    }
 }
 
-fn connect_test_db() -> Option<(postgres::Client, String)> {
-    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL").ok()?;
-    match db::connect_readwrite(&database_url) {
-        Ok(conn) => Some((conn, database_url)),
-        Err(error) => {
-            eprintln!("skipping stale cleanup test: PostgreSQL hub is unavailable: {error}");
-            None
-        }
-    }
+fn connect_test_db() -> (postgres::Client, String) {
+    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+        .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for stale cleanup tests");
+    let conn = db::connect_readwrite(&database_url)
+        .expect("connect stale cleanup PostgreSQL test database");
+    (conn, database_url)
 }
 
 fn test_context(database_url: String, project_root: PathBuf, project_id: String) -> Context {

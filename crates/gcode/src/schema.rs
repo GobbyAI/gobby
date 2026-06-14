@@ -108,11 +108,14 @@ mod tests {
         use super::*;
 
         #[test]
+        #[cfg_attr(
+            not(gcode_postgres_tests),
+            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        )]
         #[serial_test::serial(serial_db)]
         fn validates_runtime_schema_when_postgres_test_dsn_is_set() {
-            let Ok(database_url) = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL") else {
-                return;
-            };
+            let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
+                .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for schema tests");
 
             let mut client = gobby_core::postgres::connect_readwrite(&database_url)
                 .expect("connect test PostgreSQL hub");
