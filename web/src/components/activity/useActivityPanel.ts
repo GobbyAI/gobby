@@ -36,6 +36,7 @@ const VALID_TABS: ActivityTab[] = [
  */
 export type LayoutMode = 'chat' | 'split' | 'panel'
 export type MobileView = 'chat' | 'panel'
+export type ViewOverride = 'panel' | null
 
 const LAYOUT_MODES: LayoutMode[] = ['chat', 'split', 'panel']
 
@@ -93,6 +94,7 @@ export function useActivityPanel(isMobile: boolean) {
   // `panel` preference only carries onto mobile via the crossing effect
   // below, never on a fresh mobile mount.
   const [mobileView, setMobileView] = useState<MobileView>('chat')
+  const [viewOverride, setViewOverride] = useState<ViewOverride>(null)
 
   const [panelWidth, setPanelWidth] = useState(() => {
     try {
@@ -150,6 +152,7 @@ export function useActivityPanel(isMobile: boolean) {
   const toggleFromChat = useCallback(() => {
     dirtyGuard.guardedRun(() => {
       autoOpenedRef.current = false
+      setViewOverride(null)
       if (isMobile) {
         setMobileView(reduceMobileToggle)
         return
@@ -161,6 +164,7 @@ export function useActivityPanel(isMobile: boolean) {
   const toggleFromPanel = useCallback(() => {
     dirtyGuard.guardedRun(() => {
       autoOpenedRef.current = false
+      setViewOverride(null)
       if (isMobile) {
         setMobileView(reduceMobileToggle)
         return
@@ -172,6 +176,7 @@ export function useActivityPanel(isMobile: boolean) {
   const showTab = useCallback(
     (tab: ActivityTab) => {
       dirtyGuard.guardedRun(() => {
+        setViewOverride(null)
         setActiveTab(tab)
         if (isMobile) {
           setMobileView((view) => {
@@ -197,6 +202,7 @@ export function useActivityPanel(isMobile: boolean) {
 
   const closeIfAutoOpened = useCallback(() => {
     dirtyGuard.guardedRun(() => {
+      setViewOverride(null)
       if (!autoOpenedRef.current) return
       autoOpenedRef.current = false
       if (isMobile) {
@@ -220,19 +226,38 @@ export function useActivityPanel(isMobile: boolean) {
   const handleTabChange = useCallback((tab: ActivityTab) => {
     dirtyGuard.guardedRun(() => {
       autoOpenedRef.current = false
+      setViewOverride(null)
       setActiveTab(tab)
     })
   }, [dirtyGuard])
 
-  const effectiveMode: LayoutMode = isMobile
+  const baseEffectiveMode: LayoutMode = isMobile
     ? mobileView === 'panel'
       ? 'panel'
       : 'chat'
     : mode
+  const effectiveViewOverride: ViewOverride = isMobile ? null : viewOverride
+  const effectiveMode: LayoutMode =
+    effectiveViewOverride === 'panel' ? 'panel' : baseEffectiveMode
+
+  const requestPanelOverride = useCallback(() => {
+    if (isMobile) {
+      setViewOverride(null)
+      return
+    }
+    setViewOverride('panel')
+  }, [isMobile])
+
+  const releasePanelOverride = useCallback(() => {
+    setViewOverride(null)
+  }, [])
 
   return {
     mode,
     effectiveMode,
+    viewOverride: effectiveViewOverride,
+    requestPanelOverride,
+    releasePanelOverride,
     panelWidth,
     setPanelWidth,
     activeTab,

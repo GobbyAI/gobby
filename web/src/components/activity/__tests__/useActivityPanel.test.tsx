@@ -125,6 +125,74 @@ describe('useActivityPanel — desktop', () => {
     act(() => result.current.dismissOnMobile())
     expect(result.current.effectiveMode).toBe('split')
   })
+
+  it('supports a transient full-width override without persisting layout', () => {
+    localStorage.setItem(LAYOUT_KEY, 'split')
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    expect(result.current.viewOverride).toBeNull()
+
+    act(() => result.current.requestPanelOverride())
+    expect(result.current.viewOverride).toBe('panel')
+    expect(result.current.mode).toBe('split')
+    expect(result.current.effectiveMode).toBe('panel')
+    expect(localStorage.getItem(LAYOUT_KEY)).toBe('split')
+
+    act(() => result.current.releasePanelOverride())
+    expect(result.current.viewOverride).toBeNull()
+    expect(result.current.effectiveMode).toBe('split')
+    expect(localStorage.getItem(LAYOUT_KEY)).toBe('split')
+  })
+
+  it('clears the transient override when the activity tab changes', () => {
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    act(() => result.current.requestPanelOverride())
+    expect(result.current.effectiveMode).toBe('panel')
+
+    act(() => result.current.setActiveTab('tasks'))
+    expect(result.current.viewOverride).toBeNull()
+    expect(result.current.activeTab).toBe('tasks')
+    expect(result.current.effectiveMode).toBe('split')
+  })
+
+  it('clears the transient override when showTab selects another activity', () => {
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    act(() => result.current.requestPanelOverride())
+    expect(result.current.effectiveMode).toBe('panel')
+
+    act(() => result.current.showTab('rules'))
+    expect(result.current.viewOverride).toBeNull()
+    expect(result.current.activeTab).toBe('rules')
+    expect(result.current.effectiveMode).toBe('split')
+  })
+
+  it('clears the transient override when the user explicitly toggles layout', () => {
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    act(() => result.current.requestPanelOverride())
+    expect(result.current.effectiveMode).toBe('panel')
+
+    act(() => result.current.toggleFromChat())
+    expect(result.current.viewOverride).toBeNull()
+    expect(result.current.effectiveMode).toBe('chat')
+    expect(localStorage.getItem(LAYOUT_KEY)).toBe('chat')
+  })
+
+  it('clears the transient override when the panel toggle changes layout', () => {
+    localStorage.setItem(LAYOUT_KEY, 'chat')
+    const { result } = renderHook(() => useActivityPanel(false))
+
+    act(() => result.current.requestPanelOverride())
+    expect(result.current.mode).toBe('chat')
+    expect(result.current.effectiveMode).toBe('panel')
+
+    act(() => result.current.toggleFromPanel())
+    expect(result.current.viewOverride).toBeNull()
+    expect(result.current.effectiveMode).toBe('split')
+    expect(localStorage.getItem(LAYOUT_KEY)).toBe('split')
+  })
 })
 
 describe('useActivityPanel — mobile', () => {
@@ -220,6 +288,17 @@ describe('useActivityPanel — mobile', () => {
     rerender({ isMobile: false })
     expect(result.current.effectiveMode).toBe('split')
     expect(result.current.mode).toBe('split')
+  })
+
+  it('ignores the transient full-width override on mobile', () => {
+    localStorage.setItem(LAYOUT_KEY, 'split')
+    const { result } = renderHook(() => useActivityPanel(true))
+
+    act(() => result.current.requestPanelOverride())
+
+    expect(result.current.viewOverride).toBeNull()
+    expect(result.current.effectiveMode).toBe('chat')
+    expect(localStorage.getItem(LAYOUT_KEY)).toBe('split')
   })
 })
 
