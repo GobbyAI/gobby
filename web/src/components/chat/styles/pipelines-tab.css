@@ -10,6 +10,7 @@
   font: inherit;
   text-align: left;
   width: 100%;
+  min-height: var(--activity-panel-row-height);
   display: flex;
   align-items: center;
   justify-content: space-between;

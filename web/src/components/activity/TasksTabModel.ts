@@ -205,7 +205,7 @@ export function getTaskFilterLabel(filter: TaskFilterKey): string {
 export function getTaskFilterColor(filter: TaskFilterKey): string {
   if (filter === 'escalated') return 'var(--color-error)'
   if (filter === 'review_rejected') return 'var(--color-warning-foreground)'
-  return TASK_STATE_COLORS[filter] ?? '#737373'
+  return TASK_STATE_COLORS[filter] ?? 'var(--text-muted)'
 }
 
 export function getStageStateColor(state: StageState5): string {

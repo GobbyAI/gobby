@@ -455,10 +455,10 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
           const props = Object.entries(e.properties || {}).slice(0, 4)
             .map(([k, v]) => `${k}: ${String(v).slice(0, 30)}`)
             .join('\n')
-          return `<div style="text-align:center;font-family:monospace;font-size:11px;line-height:1.4">
+          return `<div style="text-align:center;font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.4">
             <b>${e.name}</b><br/>
-            <span style="color:${getEntityColorCss(e.entity_type)};text-transform:uppercase;font-size:9px">${e.entity_type}</span>
-            ${props ? '<br/><span style="color:var(--text-muted);font-size:9px">' + props.replace(/\n/g, '<br/>') + '</span>' : ''}
+            <span style="color:${getEntityColorCss(e.entity_type)};text-transform:uppercase;font-size:var(--text-2xs)">${e.entity_type}</span>
+            ${props ? '<br/><span style="color:var(--text-muted);font-size:var(--text-2xs)">' + props.replace(/\n/g, '<br/>') + '</span>' : ''}
           </div>`
         }}
         nodeThreeObject={nodeThreeObject}

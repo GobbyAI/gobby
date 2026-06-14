@@ -160,14 +160,14 @@ export const FileChangesTab = memo(function FileChangesTab({
               key={file.path}
               onClick={() => handleSelect(file.path)}
               aria-pressed={isSelected}
-              className={`w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-muted transition-colors border-b border-border/50 ${isSelected ? 'bg-muted/50' : ''}`}
+              className={`activity-list-row activity-list-row__body${isSelected ? ' activity-list-row--selected' : ''}`}
             >
               {statusBadge(file.status)}
               <div className="flex-1 min-w-0 flex items-baseline gap-1">
-                <span className="text-sm font-medium truncate">
+                <span className="activity-row-title truncate">
                   {fileName(file.path)}
                 </span>
-                <span className="text-2xs text-muted-foreground truncate">
+                <span className="activity-row-meta truncate">
                   {fileDir(file.path)}
                 </span>
               </div>
