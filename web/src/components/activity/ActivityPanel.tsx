@@ -17,6 +17,7 @@ import { ActivityMcpTab, type ActivityMcpTabProps } from "./ActivityMcpTab";
 import { AgentsTab } from "./AgentsTab";
 import { StagesTab } from "./StagesTab";
 import { SkillsTab } from "./SkillsTab";
+import { IntegrationsTab } from "./IntegrationsTab";
 import { WikiTab } from "./WikiTab";
 import { RulesTab } from "./RulesTab";
 import { DirtyGuardProvider } from "./DirtyGuardContext";
@@ -326,6 +327,8 @@ export function ActivityPanel({
         return <StagesTab projectId={projectId} />;
       case "skills":
         return <SkillsTab projectId={projectId} />;
+      case "integrations":
+        return <IntegrationsTab />;
       case "wiki":
         return <WikiTab projectId={projectId} />;
       case "rules":
@@ -387,7 +390,7 @@ export function ActivityPanel({
                 <span className="activity-panel-close-slot">
                   <button
                     type="button"
-                    className="btn btn-accent btn-sm activity-panel-action-btn"
+                    className="btn btn-accent btn-sm activity-panel-action-btn pointer-coarse:min-h-11 pointer-coarse:min-w-11"
                     onClick={handleToggleChat}
                     aria-label="Close panel"
                     title="Close panel"

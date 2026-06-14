@@ -18,7 +18,7 @@ function ActivityPanelSearchImpl({
   return (
     <input
       type="search"
-      className="activity-panel-search"
+      className="activity-panel-search pointer-coarse:min-h-11"
       value={value}
       name={inputLabel.toLowerCase().replace(/\s+/g, "-")}
       onChange={(event: ChangeEvent<HTMLInputElement>) =>

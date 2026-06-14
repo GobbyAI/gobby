@@ -9,6 +9,7 @@ export type ActivityTab =
   | "agents"
   | "stages"
   | "skills"
+  | "integrations"
   | "wiki"
   | "rules"
   | "tasks"
@@ -99,6 +100,19 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
         <path d="M12 3l7 4v10l-7 4-7-4V7l7-4z" />
         <path d="M12 8v8" />
         <path d="M8.5 10l3.5 2 3.5-2" />
+      </svg>
+    ),
+  },
+  {
+    id: "integrations",
+    label: "Integrations",
+    icon: (
+      <svg {...iconProps}>
+        <path d="M7 7h10" />
+        <path d="M7 17h10" />
+        <circle cx="5" cy="7" r="3" />
+        <circle cx="19" cy="17" r="3" />
+        <path d="M12 7v10" />
       </svg>
     ),
   },
