@@ -87,6 +87,13 @@ def _exact_session_target(name: str) -> str:
     return f"={name}:"
 
 
+def _send_keys_target(target: str) -> str:
+    """Return the tmux target form used for keystroke delivery."""
+    if target.startswith("%"):
+        return target
+    return _exact_session_target(target)
+
+
 @dataclass
 class TmuxSessionInfo:
     """Metadata about a running tmux session."""
@@ -748,7 +755,7 @@ class TmuxSessionManager:
             rc, _stdout, stderr = await self._run(
                 "send-keys",
                 "-t",
-                _exact_session_target(session_name),
+                _send_keys_target(session_name),
                 keys,
             )
             if rc != 0:
@@ -760,7 +767,7 @@ class TmuxSessionManager:
 
         try:
             await send_literal_text_to_tmux_target(
-                _exact_session_target(session_name),
+                _send_keys_target(session_name),
                 keys,
                 tmux_cmd=self._base_args(),
             )

@@ -670,6 +670,20 @@ class TestTmuxSessionManager:
             )
 
     @pytest.mark.asyncio
+    async def test_send_keys_preserves_pane_target_for_literal_text(self) -> None:
+        mgr = TmuxSessionManager()
+        with patch(
+            "gobby.agents.tmux.session_manager.send_literal_text_to_tmux_target",
+            new_callable=AsyncMock,
+        ) as mock_send:
+            assert await mgr.send_keys("%12", "hello") is True
+            mock_send.assert_awaited_once_with(
+                "%12",
+                "hello",
+                tmux_cmd=["tmux", "-L", "gobby", "-f", "/dev/null"],
+            )
+
+    @pytest.mark.asyncio
     async def test_get_pane_pid(self) -> None:
         mgr = TmuxSessionManager()
         with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
@@ -1726,6 +1740,16 @@ class TestTmuxSessionManagerExtended:
             result = await mgr.send_keys("test", "C-c", literal=False)
         assert result is True
         mock_run.assert_awaited_once_with("send-keys", "-t", "=test:", "C-c")
+
+    @pytest.mark.asyncio
+    async def test_send_keys_raw_key_mode_preserves_pane_target(self) -> None:
+        """Raw key mode targets tmux panes directly when given a pane id."""
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, "", "")
+            result = await mgr.send_keys("%12", "C-c", literal=False)
+        assert result is True
+        mock_run.assert_awaited_once_with("send-keys", "-t", "%12", "C-c")
 
     @pytest.mark.asyncio
     async def test_get_pane_pid_invalid_output(self) -> None:
