@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 import asyncio
+import itertools
 import logging
 from typing import TYPE_CHECKING, Any
 
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
+from gobby.search.backends.embedding import _cosine_similarity
 
 from .code_linker import KnowledgeGraphCodeLinker
 from .extraction import KnowledgeGraphExtractor
@@ -21,7 +23,7 @@ from .models import (
 )
 from .normalization import display_entity_name, normalize_entities, normalize_relationships
 from .reader import KnowledgeGraphReader
-from .writer import KnowledgeGraphWriter
+from .writer import COOCCUR_MAX_ENTITIES, KnowledgeGraphWriter
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -56,6 +58,10 @@ class KnowledgeGraphService:
         code_link_min_score: float = 0.82,
         code_symbol_collection_prefix: str = "code_symbols_",
         embedding_dim: int = 768,
+        graph_edge_weighting: bool = False,
+        materialize_cooccurrence: bool = False,
+        graph_edge_decay: bool = False,
+        edge_half_life_days: float = 30.0,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn
@@ -64,6 +70,8 @@ class KnowledgeGraphService:
         self._code_link_min_score = code_link_min_score
         self._code_symbol_collection_prefix = code_symbol_collection_prefix
         self._embedding_dim = embedding_dim
+        self._graph_edge_weighting = graph_edge_weighting
+        self._materialize_cooccurrence = materialize_cooccurrence
 
         self._writer = KnowledgeGraphWriter(falkor_client)
         self._extractor = KnowledgeGraphExtractor(
@@ -72,7 +80,13 @@ class KnowledgeGraphService:
             feature_config=feature_config,
         )
         self._maintenance = KnowledgeGraphMaintenance(falkor_client)
-        self._reader = KnowledgeGraphReader(falkor_client, embed_fn, embedding_dim=embedding_dim)
+        self._reader = KnowledgeGraphReader(
+            falkor_client,
+            embed_fn,
+            embedding_dim=embedding_dim,
+            graph_edge_decay=graph_edge_decay,
+            edge_half_life_days=edge_half_life_days,
+        )
         self._code_linker = KnowledgeGraphCodeLinker(
             falkor_client,
             vector_store,
@@ -208,32 +222,8 @@ class KnowledgeGraphService:
                 )
                 partial_errors.append(f"merge_node:{entity.name}:{e}")
 
-        for rel in relationships:
-            try:
-                await self._writer.merge_relationship(rel)
-                made_progress = True
-            except FalkorConnectionError as e:
-                logger.warning(
-                    "FalkorDB unreachable during merge_relationship for memory %s: %s",
-                    memory_ref,
-                    e,
-                )
-                return self._connection_failure_result(
-                    e,
-                    made_progress=made_progress,
-                    partial_errors=partial_errors,
-                    entities=len(entities),
-                    relationships=len(relationships),
-                )
-            except Exception as e:
-                logger.warning(
-                    "Failed to merge relationship %s for memory %s: %s",
-                    rel,
-                    memory_ref,
-                    e,
-                )
-                partial_errors.append(f"merge_relationship:{rel.relationship}:{e}")
-
+        # Embeddings are built before the weighted writes so cosine-derived edge
+        # weights (typed relations and CO_OCCURS) have vectors available.
         entity_embeddings: dict[str, list[float]] = {}
         if self._embed_fn is not None:
             for entity in entities:
@@ -267,6 +257,35 @@ class KnowledgeGraphService:
                     )
                     partial_errors.append(f"set_embedding:{entity.name}:{e}")
 
+        for rel in relationships:
+            try:
+                await self._writer.merge_relationship(
+                    rel,
+                    properties=self._typed_relationship_properties(rel, entity_embeddings),
+                )
+                made_progress = True
+            except FalkorConnectionError as e:
+                logger.warning(
+                    "FalkorDB unreachable during merge_relationship for memory %s: %s",
+                    memory_ref,
+                    e,
+                )
+                return self._connection_failure_result(
+                    e,
+                    made_progress=made_progress,
+                    partial_errors=partial_errors,
+                    entities=len(entities),
+                    relationships=len(relationships),
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to merge relationship %s for memory %s: %s",
+                    rel,
+                    memory_ref,
+                    e,
+                )
+                partial_errors.append(f"merge_relationship:{rel.relationship}:{e}")
+
         if memory_id:
             try:
                 await self._link_entities_to_memory(entities, memory_id, project_id=project_id)
@@ -287,6 +306,31 @@ class KnowledgeGraphService:
             except Exception as e:
                 logger.warning("Failed to link entities to memory %s: %s", memory_ref, e)
                 partial_errors.append(f"mentioned_in:{memory_id}:{e}")
+
+        # CO_OCCURS support edges run after MENTIONED_IN: their support query reads
+        # the just-written bipartite structure for the current memory.
+        if memory_id and self._materialize_cooccurrence:
+            try:
+                await self._merge_cooccurrence_edges(entities, entity_embeddings, project_id)
+                made_progress = True
+            except FalkorConnectionError as e:
+                logger.warning(
+                    "FalkorDB unreachable during CO_OCCURS materialization for memory %s: %s",
+                    memory_ref,
+                    e,
+                )
+                return self._connection_failure_result(
+                    e,
+                    made_progress=made_progress,
+                    partial_errors=partial_errors,
+                    entities=len(entities),
+                    relationships=len(relationships),
+                )
+            except Exception as e:
+                logger.warning(
+                    "Failed to materialize CO_OCCURS edges for memory %s: %s", memory_ref, e
+                )
+                partial_errors.append(f"co_occurs:{memory_id}:{e}")
 
         if project_id and self._vector_store and self._embed_fn is not None and entity_embeddings:
             try:
@@ -309,6 +353,54 @@ class KnowledgeGraphService:
             entities_extracted=len(entities),
             relationships_extracted=len(relationships),
             errors=partial_errors,
+        )
+
+    def _typed_relationship_properties(
+        self,
+        rel: Relationship,
+        entity_embeddings: dict[str, list[float]],
+    ) -> dict[str, Any] | None:
+        """Weighted-edge properties for a typed relation, or ``None`` when off.
+
+        ``typed_weight = cos01`` (cosine clamped to >= 0). The reinforcement count is
+        managed by the client as edge metadata, not folded into the weight, so the
+        Python side only supplies the weight. Returns ``None`` when weighting is
+        disabled or either endpoint lacks an embedding, preserving unweighted writes.
+        """
+        if not self._graph_edge_weighting:
+            return None
+        source_emb = entity_embeddings.get(rel.source)
+        target_emb = entity_embeddings.get(rel.target)
+        if not source_emb or not target_emb:
+            return None
+        cos01 = max(_cosine_similarity(source_emb, target_emb), 0.0)
+        return {"weight": cos01}
+
+    async def _merge_cooccurrence_edges(
+        self,
+        entities: list[_GraphEntity],
+        entity_embeddings: dict[str, list[float]],
+        project_id: str | None,
+    ) -> None:
+        """Write canonical co-occurrence edges over the memory's salient entities.
+
+        Salience: the extractor exposes no per-entity score, so the first
+        ``COOCCUR_MAX_ENTITIES`` entities in extractor order are taken. Pairs are
+        canonicalized (a < b) by sorting the selected keys before combining.
+        """
+        salient = entities[:COOCCUR_MAX_ENTITIES]
+        keys = sorted({entity.entity_key for entity in salient})
+        pairs = list(itertools.combinations(keys, 2))
+        if not pairs:
+            return
+        # graph_edge_weighting gates whether CO_OCCURS carries a weight: when off the
+        # edges are densification-only (neutral traversal weight), isolating the
+        # densification effect from the weighting effect in the recall benchmark.
+        await self._writer.merge_cooccurrence_edges(
+            pairs,
+            project_id,
+            entity_embeddings,
+            weighted=self._graph_edge_weighting,
         )
 
     async def _ensure_graph_schema(self) -> None:

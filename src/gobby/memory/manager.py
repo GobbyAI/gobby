@@ -240,6 +240,10 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 embedding_dim=embedding_dim,
                 llm_service=llm_service,
                 feature_config=self.config.kg,
+                graph_edge_weighting=self.config.graph_edge_weighting,
+                materialize_cooccurrence=self.config.materialize_cooccurrence,
+                graph_edge_decay=self.config.graph_edge_decay,
+                edge_half_life_days=self.config.edge_half_life_days,
             )
             logger.debug("KnowledgeGraphService initialized")
             return kg_service

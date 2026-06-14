@@ -619,16 +619,34 @@ class FalkorClient:
         rel_type: str,
         properties: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
-        """Merge a relationship between two nodes matched by entity_key."""
+        """Merge a relationship between two nodes matched by entity_key.
+
+        When ``properties`` carries a ``weight`` key (the weighted-edge path), the
+        relationship additionally manages a reinforcement ``count`` and a
+        ``updated_at`` timestamp. Callers that omit ``weight`` keep the exact
+        prior behavior (``r += $props`` only), so existing callers are unchanged.
+        """
         rel_type = _normalize_relationship_type(rel_type)
         props = dict(properties or {})
-        cypher = (
+        match_clause = (
             "MATCH (a:_Entity {entity_key: $source_key}), (b:_Entity {entity_key: $target_key}) "
             f"MERGE (a)-[r:{rel_type}]->(b) "
-            "ON CREATE SET r += $props "
-            "ON MATCH SET r += $props "
-            "RETURN type(r) AS rel_type"
         )
+        if "weight" in props:
+            cypher = (
+                match_clause
+                + "ON CREATE SET r += $props, r.count = 1, r.updated_at = timestamp() "
+                "ON MATCH SET r += $props, r.count = coalesce(r.count, 0) + 1, "
+                "r.updated_at = timestamp() "
+                "RETURN type(r) AS rel_type"
+            )
+        else:
+            cypher = (
+                match_clause
+                + "ON CREATE SET r += $props "
+                "ON MATCH SET r += $props "
+                "RETURN type(r) AS rel_type"
+            )
         return await self.query(
             cypher,
             {"source_key": source_key, "target_key": target_key, "props": props},

@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import logging
 import time
+from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.memory.falkor_client import FalkorConnectionError
+from gobby.memory.scoring import temporal_decay
 
 if TYPE_CHECKING:
     from collections.abc import Callable
@@ -19,10 +21,32 @@ _DIRECT_MEMORY_LINK_FACTOR = 4
 _RELATED_ENTITY_SEED_LIMIT = 8
 _RELATED_ENTITY_NEIGHBOR_LIMIT = 8
 _RELATED_ENTITY_LIMIT_FACTOR = 4
+# Generous per-source candidate cap pulled from FalkorDB before Python-side
+# weight/decay scoring; the top _RELATED_ENTITY_NEIGHBOR_LIMIT survive per source.
+_RELATED_ENTITY_QUERY_LIMIT = 64
 _STRUCTURAL_RELATIONSHIP_TYPES = ("MENTIONED_IN", "RELATES_TO_CODE")
 _TRAVERSAL_TIMEOUT_THRESHOLD = 3
 _TRAVERSAL_TIMEOUT_COOLDOWN_SECONDS = 60.0
 _TRAVERSAL_WARNING_INTERVAL_SECONDS = 60.0
+
+
+def _edge_timestamp_to_iso(value: Any) -> str | None:
+    """Convert a FalkorDB ``timestamp()`` (epoch ms) edge value to an ISO string.
+
+    Edge ``updated_at`` is written via Cypher ``timestamp()`` (milliseconds since
+    epoch). ``temporal_decay`` expects an ISO-8601 string, so numeric values are
+    converted; strings pass through; anything else yields ``None`` (no decay).
+    """
+    if value is None:
+        return None
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float)):
+        try:
+            return datetime.fromtimestamp(value / 1000.0, tz=UTC).isoformat()
+        except (ValueError, OverflowError, OSError):
+            return None
+    return None
 
 
 class KnowledgeGraphReader:
@@ -34,10 +58,14 @@ class KnowledgeGraphReader:
         embed_fn: Callable[..., Any] | None,
         *,
         embedding_dim: int,
+        graph_edge_decay: bool = False,
+        edge_half_life_days: float = 30.0,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn
         self._embedding_dim = embedding_dim
+        self._graph_edge_decay = graph_edge_decay
+        self._edge_half_life_days = edge_half_life_days
         self._vector_index_ensured = False
         self._traversal_timeout_count = 0
         self._traversal_disabled_until = 0.0
@@ -180,6 +208,24 @@ class KnowledgeGraphReader:
             error,
         )
 
+    def _edge_score(self, edge_weight: Any, updated_at: Any) -> float:
+        """Combine an edge weight with optional recency decay for candidate ranking.
+
+        Decay acts at candidate selection (which neighbors survive the cap), not
+        final ranking. ``edge_weight`` falls back to a neutral ``1.0`` so unweighted
+        and ``coalesce(r.weight, 1.0)`` edges degrade to the prior behavior.
+        """
+        try:
+            weight = float(edge_weight) if edge_weight is not None else 1.0
+        except (TypeError, ValueError):
+            weight = 1.0
+        if not self._graph_edge_decay:
+            return weight
+        iso = _edge_timestamp_to_iso(updated_at)
+        if iso is None:
+            return weight
+        return weight * temporal_decay(iso, self._edge_half_life_days)
+
     async def _find_related_entity_keys(
         self,
         seed_keys: list[str],
@@ -189,17 +235,17 @@ class KnowledgeGraphReader:
     ) -> list[str]:
         related_keys: list[str] = []
         seen = set(seed_keys)
-        frontier = list(seed_keys)
+        # Frontier carries the accumulated path score so multi-hop ranking is global
+        # rather than only per-source.
+        frontier: list[tuple[str, float]] = [(key, 1.0) for key in seed_keys]
         max_related_entities = max(
             _RELATED_ENTITY_NEIGHBOR_LIMIT,
             limit * _RELATED_ENTITY_LIMIT_FACTOR,
         )
 
         for _ in range(max_hops):
-            next_frontier: list[str] = []
-            for source_key in frontier:
-                if len(related_keys) >= max_related_entities:
-                    break
+            hop_best: dict[str, float] = {}
+            for source_key, source_score in frontier:
                 rows = await self._falkor.query(
                     "MATCH (start:_Entity {entity_key: $entity_key})-[r]-(neighbor:_Entity) "
                     "WHERE (start.project_id = $project_id "
@@ -207,24 +253,44 @@ class KnowledgeGraphReader:
                     "AND (neighbor.project_id = $project_id "
                     "OR ($project_id IS NULL AND neighbor.project_id IS NULL)) "
                     "AND NOT (type(r) IN $excluded_relationship_types) "
-                    "RETURN neighbor.entity_key AS related_entity_key "
-                    "ORDER BY related_entity_key LIMIT $neighbor_limit",
+                    "RETURN neighbor.entity_key AS related_entity_key, "
+                    "coalesce(r.weight, 1.0) AS edge_weight, r.updated_at AS updated_at "
+                    "LIMIT $neighbor_limit",
                     {
                         "entity_key": source_key,
                         "project_id": project_id,
-                        "neighbor_limit": _RELATED_ENTITY_NEIGHBOR_LIMIT,
+                        "neighbor_limit": _RELATED_ENTITY_QUERY_LIMIT,
                         "excluded_relationship_types": list(_STRUCTURAL_RELATIONSHIP_TYPES),
                     },
                 )
-                for row in rows[:_RELATED_ENTITY_NEIGHBOR_LIMIT]:
+                # Score each candidate, keep the strongest edge per neighbor, then cap
+                # to the top _RELATED_ENTITY_NEIGHBOR_LIMIT for this source.
+                best_by_key: dict[str, float] = {}
+                for row in rows:
                     related_key = row.get("related_entity_key")
                     if not related_key or related_key in seen:
                         continue
-                    seen.add(related_key)
-                    related_keys.append(related_key)
-                    next_frontier.append(related_key)
-                    if len(related_keys) >= max_related_entities:
-                        break
+                    edge_score = self._edge_score(row.get("edge_weight"), row.get("updated_at"))
+                    if related_key not in best_by_key or edge_score > best_by_key[related_key]:
+                        best_by_key[related_key] = edge_score
+                scored = sorted(best_by_key.items(), key=lambda item: (-item[1], item[0]))
+                for related_key, edge_score in scored[:_RELATED_ENTITY_NEIGHBOR_LIMIT]:
+                    path_score = source_score * edge_score
+                    if related_key not in hop_best or path_score > hop_best[related_key]:
+                        hop_best[related_key] = path_score
+            if not hop_best:
+                break
+            # Globally order this hop's fresh neighbors by accumulated path score.
+            ordered = sorted(hop_best.items(), key=lambda item: (-item[1], item[0]))
+            next_frontier: list[tuple[str, float]] = []
+            for related_key, path_score in ordered:
+                if related_key in seen:
+                    continue
+                seen.add(related_key)
+                related_keys.append(related_key)
+                next_frontier.append((related_key, path_score))
+                if len(related_keys) >= max_related_entities:
+                    break
             if not next_frontier or len(related_keys) >= max_related_entities:
                 break
             frontier = next_frontier

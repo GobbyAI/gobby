@@ -388,6 +388,35 @@ class MemoryConfig(BaseModel):
             "Applies to cosine similarity after source boost and temporal decay."
         ),
     )
+    graph_edge_weighting: bool = Field(
+        default=False,
+        description=(
+            "Enable weighted entity->entity edges in the memory knowledge graph. "
+            "When on, typed relations carry a cosine-similarity weight (and a "
+            "reinforcement count as metadata). Default off; adopt per recall benchmark."
+        ),
+    )
+    materialize_cooccurrence: bool = Field(
+        default=False,
+        description=(
+            "Materialize derived CO_OCCURS support edges between entities that share "
+            "a memory, densifying the traversable entity layer. Default off."
+        ),
+    )
+    graph_edge_decay: bool = Field(
+        default=False,
+        description=(
+            "Apply edge-recency decay during knowledge-graph traversal candidate "
+            "selection (reshapes which neighbors survive the traversal cap). Default off."
+        ),
+    )
+    edge_half_life_days: float = Field(
+        default=30.0,
+        description=(
+            "Half-life in days for knowledge-graph edge-recency decay "
+            "(graph_edge_decay). Set to 0 to disable edge decay."
+        ),
+    )
 
     @field_validator("crossref_threshold", "code_link_min_score", "min_recall_score")
     @classmethod
@@ -411,6 +440,14 @@ class MemoryConfig(BaseModel):
         """Validate temporal_decay_half_life_days is non-negative."""
         if v < 0:
             raise ValueError("temporal_decay_half_life_days must be >= 0")
+        return v
+
+    @field_validator("edge_half_life_days")
+    @classmethod
+    def validate_edge_half_life(cls, v: float) -> float:
+        """Validate edge_half_life_days is non-negative."""
+        if v < 0:
+            raise ValueError("edge_half_life_days must be >= 0")
         return v
 
     @field_validator("backend")

@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.memory.falkor_client import FalkorConnectionError
 from gobby.memory.identity import entity_key
+from gobby.search.backends.embedding import _cosine_similarity
 
 from .models import Relationship, _GraphEntity
 
@@ -15,6 +16,39 @@ if TYPE_CHECKING:
     from gobby.memory.falkor_client import FalkorClient
 
 logger = logging.getLogger(__name__)
+
+# Co-occurrence edge-weighting constants. The FORM of the weight blend is fixed;
+# these coefficients are the frozen winners of the offline recall sweep in
+# tests/memory/test_recall_benchmark.py. They are deliberately NOT runtime config
+# knobs -- the benchmark sweeps them by monkeypatching these module globals, and
+# production ships the frozen values only.
+COOCCUR_ALPHA: float = 0.5
+COOCCUR_SUPPORT_CAP: int = 5
+# Bounded fanout: only the top-N salient entities of a memory form co-occurrence
+# pairs (N=8 -> <=28 pairs), keeping pairwise cost bounded as the graph densifies.
+COOCCUR_MAX_ENTITIES: int = 8
+
+
+def cooccurrence_weight(cosine: float, support: int, *, alpha: float, cap: int) -> float:
+    """Blend entity cosine similarity with saturating co-occurrence support.
+
+    ``cos01 = max(cosine, 0.0)`` -- negative similarity must never act as a positive
+    edge weight. Support enters through a saturating normalizer (diminishing returns
+    on repeated co-mention, the same rationale as BM25 term-frequency saturation),
+    and the blend is convex-linear, so the result is bounded to ``[0.0, 1.0]``.
+    """
+    cos01 = max(cosine, 0.0)
+    safe_cap = cap if cap > 0 else 1
+    norm_support = min(support, safe_cap) / safe_cap
+    return alpha * cos01 + (1.0 - alpha) * norm_support
+
+
+def _project_scope(var: str) -> str:
+    """Cypher predicate scoping ``var`` to ``$project_id`` (null-safe for globals)."""
+    return (
+        f"({var}.project_id = $project_id "
+        f"OR ($project_id IS NULL AND {var}.project_id IS NULL))"
+    )
 
 
 class KnowledgeGraphWriter:
@@ -67,12 +101,22 @@ class KnowledgeGraphWriter:
             },
         )
 
-    async def merge_relationship(self, relationship: Relationship) -> None:
-        """Merge an entity relationship."""
+    async def merge_relationship(
+        self,
+        relationship: Relationship,
+        properties: dict[str, Any] | None = None,
+    ) -> None:
+        """Merge an entity relationship, optionally carrying edge properties.
+
+        When ``properties`` includes a ``weight`` key the underlying client also
+        manages a reinforcement ``count`` and ``updated_at`` timestamp; otherwise
+        the call is byte-for-byte the prior unweighted behavior.
+        """
         await self._falkor.merge_relationship(
             source_key=relationship.source,
             target_key=relationship.target,
             rel_type=relationship.relationship,
+            properties=properties,
         )
 
     async def set_entity_vector(self, entity_key: str, embedding: list[float]) -> None:
@@ -86,7 +130,8 @@ class KnowledgeGraphWriter:
         """Fetch existing relationships involving the given entities."""
         rows = await self._falkor.query(
             "MATCH (a:_Entity)-[r]->(b:_Entity) "
-            "WHERE a.entity_key IN $keys OR b.entity_key IN $keys "
+            "WHERE (a.entity_key IN $keys OR b.entity_key IN $keys) "
+            "AND type(r) <> 'CO_OCCURS' "
             "RETURN a.name AS source, type(r) AS rel_type, b.name AS target",
             {"keys": entity_keys},
         )
@@ -156,3 +201,81 @@ class KnowledgeGraphWriter:
             "MERGE (e)-[:MENTIONED_IN]->(m)",
             {"entity_keys": entity_keys, "memory_id": memory_id},
         )
+
+    async def merge_cooccurrence_edges(
+        self,
+        pairs: list[tuple[str, str]],
+        project_id: str | None,
+        embeddings: dict[str, list[float]],
+        *,
+        weighted: bool = True,
+    ) -> None:
+        """Materialize derived ``CO_OCCURS`` support edges over canonical ``a<b`` pairs.
+
+        Support is the distinct shared-memory count read (idempotently) from the live
+        ``MENTIONED_IN`` bipartite structure, so it self-corrects when memories are
+        removed instead of inflating a counter. When ``weighted`` is true the edge also
+        carries a weight blending entity cosine similarity with the saturating support
+        normalizer; when false the edge is densification-only (no ``weight`` property,
+        so traversal coalesces to a neutral ``1.0``). Zero-support pairs delete any
+        stale edge (using the same project-scoped entity match as the write path) so the
+        traversable layer never accumulates noise.
+        """
+        if not pairs:
+            return
+
+        proj_a = _project_scope("a")
+        proj_b = _project_scope("b")
+        proj_m = _project_scope("m")
+
+        pair_params = [{"a": a, "b": b} for a, b in pairs]
+        support_rows = await self._falkor.query(
+            "UNWIND $pairs AS p "
+            "MATCH (a:_Entity {entity_key: p.a}), (b:_Entity {entity_key: p.b}) "
+            f"WHERE {proj_a} AND {proj_b} "
+            "OPTIONAL MATCH (a)-[:MENTIONED_IN]->(m:Memory)<-[:MENTIONED_IN]-(b) "
+            "RETURN p.a AS a, p.b AS b, "
+            f"count(DISTINCT CASE WHEN m IS NOT NULL AND {proj_m} THEN m END) AS support",
+            {"pairs": pair_params, "project_id": project_id},
+        )
+
+        alpha = COOCCUR_ALPHA
+        cap = COOCCUR_SUPPORT_CAP
+        write_rows: list[dict[str, Any]] = []
+        delete_rows: list[dict[str, str]] = []
+        for row in support_rows:
+            a = row.get("a")
+            b = row.get("b")
+            if not a or not b:
+                continue
+            support = int(row.get("support") or 0)
+            if support <= 0:
+                delete_rows.append({"a": a, "b": b})
+                continue
+            new_row: dict[str, Any] = {"a": a, "b": b, "support": support}
+            if weighted:
+                emb_a = embeddings.get(a)
+                emb_b = embeddings.get(b)
+                cosine = _cosine_similarity(emb_a, emb_b) if emb_a and emb_b else 0.0
+                new_row["weight"] = cooccurrence_weight(cosine, support, alpha=alpha, cap=cap)
+            write_rows.append(new_row)
+
+        if write_rows:
+            weight_clause = ", r.weight = p.weight" if weighted else ""
+            await self._falkor.query(
+                "UNWIND $rows AS p "
+                "MATCH (a:_Entity {entity_key: p.a}), (b:_Entity {entity_key: p.b}) "
+                f"WHERE {proj_a} AND {proj_b} "
+                "MERGE (a)-[r:CO_OCCURS]->(b) "
+                f"SET r.support = p.support{weight_clause}, r.updated_at = timestamp()",
+                {"rows": write_rows, "project_id": project_id},
+            )
+        if delete_rows:
+            await self._falkor.query(
+                "UNWIND $rows AS p "
+                "MATCH (a:_Entity {entity_key: p.a})-[r:CO_OCCURS]->"
+                "(b:_Entity {entity_key: p.b}) "
+                f"WHERE {proj_a} AND {proj_b} "
+                "DELETE r",
+                {"rows": delete_rows, "project_id": project_id},
+            )
