@@ -101,17 +101,14 @@ constraint-dependencies = [
     # torch <2.8.0 has GHSA-887c-mr87-cxwp (medium); <2.7.1-rc1 has GHSA-3749-ghw9-m3mg (low) - see override-dependencies below
     "torch>=2.8.0",
 ]
-# torch, torchaudio, diffusers, and safetensors are exact-pinned by
+# torch, torchaudio, diffusers, gradio, and safetensors are exact-pinned by
 # chatterbox-tts==0.1.7 to vulnerable or incompatible versions, so constraints are
 # unsatisfiable on their own; overrides force fixed versions and unify the
 # required local voice stack. Revisit if chatterbox-tts surfaces ABI/API drift
 # at runtime.
-# Voice stack watch note (gobby-#14569). PyPI checked 2026-05-13:
-# stable latest is 0.7.0 and 0.8.0rc0 remains a pre-release, so the RC floor is intentional.
-# Removal checklist:
-# - confirm safetensors>=0.8.0 stable exists and resolves with chatterbox-tts==0.1.7
-# - run the CI "Voice Stack (safetensors rc0)" job with uv sync --dev
-# - run focused voice route/STT tests and update this note with the replacement date
+# Voice stack note (gobby-#14569): stable safetensors 0.8.0 was released on
+# 2026-06-09 and resolves with chatterbox-tts==0.1.7, so keep the override on
+# the stable audit floor while chatterbox keeps its exact pin.
 override-dependencies = [
     "torch==2.11.0",
     "torchaudio==2.11.0",
@@ -121,8 +118,8 @@ override-dependencies = [
     # the audit-safe floor. Force the current compatible
     # Gradio line until chatterbox relaxes its pin.
     "gradio>=6.14.0",
-    # Temporary chatterbox-tts==0.1.7 override; keep until the checklist above passes.
-    "safetensors>=0.8.0rc0",
+    # chatterbox-tts==0.1.7 pins safetensors==0.5.3.
+    "safetensors>=0.8.0",
 ]
 
 [build-system]
