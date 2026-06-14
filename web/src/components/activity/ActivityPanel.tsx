@@ -14,6 +14,7 @@ import { FilesTab } from "./FilesTab";
 import { CronTab } from "./CronTab";
 import { TracesTab } from "./TracesTab";
 import { ActivityMcpTab, type ActivityMcpTabProps } from "./ActivityMcpTab";
+import { AgentsTab } from "./AgentsTab";
 import { WikiTab } from "./WikiTab";
 import { RulesTab } from "./RulesTab";
 import { DirtyGuardProvider } from "./DirtyGuardContext";
@@ -317,6 +318,8 @@ export function ActivityPanel({
         return <TracesTab projectId={projectId} />;
       case "mcp":
         return mcp ? <ActivityMcpTab {...mcp} /> : null;
+      case "agents":
+        return <AgentsTab projectId={projectId} />;
       case "wiki":
         return <WikiTab projectId={projectId} />;
       case "rules":

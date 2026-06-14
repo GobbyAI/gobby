@@ -61,6 +61,10 @@ vi.mock('../ActivityMcpTab', () => ({
   ActivityMcpTab: () => <div>MCP Tab</div>,
 }))
 
+vi.mock('../AgentsTab', () => ({
+  AgentsTab: () => <div>Agents Tab</div>,
+}))
+
 describe('ActivityPanel', () => {
   it('returns null in chat-only mode', () => {
     const { container } = render(

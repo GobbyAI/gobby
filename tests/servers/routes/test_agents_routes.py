@@ -287,6 +287,17 @@ class TestCreateDefinition:
         response = client.post("/api/agents/definitions", json={"name": "dup"})
         assert response.status_code == 500
 
+    def test_create_with_tags_and_enabled(self, client: TestClient) -> None:
+        response = client.post(
+            "/api/agents/definitions",
+            json={"name": "tagged-agent", "tags": ["review", "qa"], "enabled": False},
+        )
+
+        assert response.status_code == 200
+        definition = response.json()["definition"]
+        assert definition["tags"] == ["review", "qa"]
+        assert definition["enabled"] is False
+
 
 # ---------------------------------------------------------------------------
 # PUT /api/agents/definitions/{id}
@@ -326,6 +337,18 @@ class TestUpdateDefinition:
         response = client.put(f"/api/agents/definitions/{created['id']}", json={"enabled": False})
         assert response.status_code == 200
         assert response.json()["definition"]["enabled"] is False
+
+    def test_update_tags_field(self, client: TestClient) -> None:
+        created = client.post("/api/agents/definitions", json={"name": "tag-update"}).json()[
+            "definition"
+        ]
+        response = client.put(
+            f"/api/agents/definitions/{created['id']}",
+            json={"tags": ["ops", "nightly"]},
+        )
+
+        assert response.status_code == 200
+        assert response.json()["definition"]["tags"] == ["ops", "nightly"]
 
     def test_update_body_fields(self, client: TestClient) -> None:
         created = client.post("/api/agents/definitions", json={"name": "body-update"}).json()[

@@ -6,6 +6,7 @@ export type ActivityTab =
   | "cron"
   | "traces"
   | "mcp"
+  | "agents"
   | "wiki"
   | "rules"
   | "tasks"
@@ -62,6 +63,18 @@ export const ACTIVITY_PANEL_TABS: ActivityPanelTab[] = [
         <rect x="9" y="14" width="6" height="6" rx="1" />
         <path d="M10 7h4" />
         <path d="M12 10v4" />
+      </svg>
+    ),
+  },
+  {
+    id: "agents",
+    label: "Agents",
+    icon: (
+      <svg {...iconProps}>
+        <circle cx="12" cy="8" r="4" />
+        <path d="M4 21a8 8 0 0 1 16 0" />
+        <path d="M18 8h3" />
+        <path d="M3 8h3" />
       </svg>
     ),
   },

@@ -65,6 +65,8 @@ class CreateAgentDefinitionRequest(BaseModel):
     default_variables: dict[str, Any] | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
+    enabled: bool = True
+    tags: list[str] | None = None
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -106,6 +108,7 @@ class UpdateAgentDefinitionRequest(BaseModel):
     enabled: bool | None = None
     blocked_tools: list[str] | None = None
     blocked_mcp_tools: list[str] | None = None
+    tags: list[str] | None = None
 
     @field_validator("reasoning_effort", mode="before")
     @classmethod
@@ -329,6 +332,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 base_branch=request.base_branch,
                 timeout=request.timeout,
                 max_turns=request.max_turns,
+                enabled=request.enabled,
                 workflows=workflows,
                 blocked_tools=request.blocked_tools or [],
                 blocked_mcp_tools=request.blocked_mcp_tools or [],
@@ -343,6 +347,7 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 description=body.description,
                 source="installed",
                 enabled=body.enabled,
+                tags=request.tags,
             )
             return {"status": "success", "definition": row.to_dict()}
         except Exception as e:
@@ -419,6 +424,8 @@ def create_agents_router(server: "HTTPServer") -> APIRouter:
                 update_fields["enabled"] = fields["enabled"]
             if "name" in fields:
                 update_fields["name"] = fields["name"]
+            if "tags" in fields:
+                update_fields["tags"] = fields["tags"]
 
             row = manager.update(definition_id, **update_fields)
             return {"status": "success", "definition": row.to_dict()}
