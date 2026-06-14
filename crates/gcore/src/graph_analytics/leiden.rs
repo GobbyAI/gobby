@@ -96,6 +96,17 @@ fn local_moving(g: &LeidenGraph, partition: &mut Partition, gamma: f64) -> bool 
     if two_m <= 0.0 {
         return false;
     }
+    // Isolation — splitting a node into its own fresh community — needs ids up
+    // to `n - 1`, but aggregation-level partitions pack communities densely into
+    // `0..k` with `k < n`. Widen `sigma_tot` to `n` and track which ids are
+    // unused so a split has a free id to claim.
+    partition.sigma_tot.resize(g.n, 0.0);
+    let mut comm_size = vec![0usize; g.n];
+    for &c in &partition.community_of {
+        comm_size[c] += 1;
+    }
+    let mut free_ids: Vec<usize> = (0..g.n).filter(|&c| comm_size[c] == 0).collect();
+
     let mut queue: VecDeque<usize> = (0..g.n).collect();
     let mut in_queue = vec![true; g.n];
     let mut moved_any = false;
@@ -116,6 +127,7 @@ fn local_moving(g: &LeidenGraph, partition: &mut Partition, gamma: f64) -> bool 
 
         // Remove u from its community so Σ_tot reflects u's absence.
         partition.sigma_tot[current] -= k_u;
+        comm_size[current] -= 1;
 
         // Baseline: rejoin the current community.
         let k_u_current = to_comm.get(&current).copied().unwrap_or(0.0);
@@ -135,11 +147,30 @@ fn local_moving(g: &LeidenGraph, partition: &mut Partition, gamma: f64) -> bool 
             }
         }
 
-        // Re-insert u into the chosen community.
-        partition.sigma_tot[best_comm] += k_u;
-        partition.community_of[u] = best_comm;
+        // Isolation: move u alone into a fresh empty community (gain 0). It is a
+        // distinct option only when `current` keeps other members — if removing u
+        // already emptied `current`, rejoining it is itself isolation. Tested
+        // last and behind strict improvement, so an equally good stay-or-join
+        // (gain >= 0) wins over needlessly fragmenting; a size->=2 `current`
+        // leaves at most n-1 communities in use, so a free id is guaranteed.
+        let target = if comm_size[current] > 0 && 0.0 > best_gain + EPS {
+            free_ids
+                .pop()
+                .expect("a size->=2 community leaves a free id")
+        } else {
+            best_comm
+        };
 
-        if best_comm != current {
+        // Re-insert u into the chosen community.
+        partition.sigma_tot[target] += k_u;
+        comm_size[target] += 1;
+        partition.community_of[u] = target;
+
+        if target != current {
+            // Moving u out may have emptied `current`; recycle its id.
+            if comm_size[current] == 0 {
+                free_ids.push(current);
+            }
             moved_any = true;
             for &(v, _) in &g.adjacency[u] {
                 if v != u && !in_queue[v] {
@@ -639,5 +670,25 @@ mod tests {
         let membership = detect(7, &edges);
         assert_eq!(membership[0], membership[4]);
         assert_communities_connected(7, &edges, &membership);
+    }
+
+    #[test]
+    fn local_moving_isolates_over_merged_self_loop_cluster() {
+        // Two heavy super-nodes only faintly tied together are wedged into one
+        // community, as aggregation can leave them. Each self-loop makes pulling
+        // a node out into its own singleton a strict modularity win — a move the
+        // local-moving pass can realize only if it offers a fresh empty
+        // community alongside the current and neighboring ones. Without that
+        // candidate the pair stays fused; with it, the cluster splits.
+        let g = LeidenGraph::new(2, &[(0, 0, 10.0), (1, 1, 10.0), (0, 1, 0.1)]);
+        let mut partition = Partition {
+            community_of: vec![0, 0],
+            sigma_tot: vec![40.2, 0.0],
+        };
+        local_moving(&g, &mut partition, DEFAULT_GAMMA);
+        assert_ne!(
+            partition.community_of[0], partition.community_of[1],
+            "an isolation move must split the over-merged self-loop cluster"
+        );
     }
 }

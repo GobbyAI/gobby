@@ -340,3 +340,51 @@ fn bridge_edges_are_hypotheses() {
         "INFERRED"
     );
 }
+
+#[test]
+fn bridge_summary_aggregates_shared_symbol_hypotheses_across_source_systems() {
+    // Two inferred memory->code hypotheses land on the same symbol from two
+    // different source systems. The direct summary aggregates edge metadata
+    // (never graph structure): it counts both edges, tallies each source
+    // system, and spans the confidence range — surfacing both hypotheses the
+    // old bridge-cut filter would have collapsed once memory nodes shared a
+    // symbol.
+    let edges = vec![
+        BridgeEdgeHypothesis::inferred(
+            "memory-1",
+            "sym:handler",
+            RELATES_TO_CODE,
+            "gobby-memory",
+            Some(0.6),
+        ),
+        BridgeEdgeHypothesis::inferred(
+            "memory-2",
+            "sym:handler",
+            RELATES_TO_CODE,
+            "gobby-graph",
+            Some(0.9),
+        ),
+    ];
+
+    assert_eq!(
+        summarize_bridge_edges(&edges),
+        Some(BridgeReportSummary {
+            relation: RELATES_TO_CODE.to_string(),
+            edge_count: 2,
+            inferred: true,
+            read_only: true,
+            // BTreeMap-sorted by source-system name: "gobby-graph" < "gobby-memory".
+            source_system_counts: vec![
+                NamedCount {
+                    name: "gobby-graph".to_string(),
+                    count: 1,
+                },
+                NamedCount {
+                    name: "gobby-memory".to_string(),
+                    count: 1,
+                },
+            ],
+            confidence_range: Some(ConfidenceRange { min: 0.6, max: 0.9 }),
+        })
+    );
+}
