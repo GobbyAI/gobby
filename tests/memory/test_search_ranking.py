@@ -77,11 +77,16 @@ def _service(
     )
 
 
-def test_build_results_uses_rrf_score_as_primary_when_rrf_applied() -> None:
+def test_build_results_keeps_semantic_primary_even_when_rrf_applied() -> None:
+    # Regression guard for #17105: a high-similarity semantic hit must outrank a
+    # higher-RRF graph-only hit even when RRF is applied. RRF/graph/keyword lists
+    # expand recall and break ties; they must never displace a strong semantic result
+    # from the top-K (making ranking_score primary regressed the default search path).
     service = _service(["semantic", "graph"])
 
     results = service._build_results(
-        merged_ids=["semantic", "graph"],
+        # Input order is graph-first to prove ordering is decided by the sort, not input.
+        merged_ids=["graph", "semantic"],
         ranking_score_map={"semantic": 0.01, "graph": 0.05},
         qdrant_score_map={"semantic": 0.99},
         qdrant_set={"semantic"},
@@ -98,9 +103,10 @@ def test_build_results_uses_rrf_score_as_primary_when_rrf_applied() -> None:
         limit=2,
     )
 
-    assert [mem.id for mem in results] == ["graph", "semantic"]
+    # Semantic-first: the 0.99-similarity hit beats the higher-RRF (0.05) graph-only hit.
+    assert [mem.id for mem in results] == ["semantic", "graph"]
     assert [mem.ranking_mode for mem in results] == ["rrf", "rrf"]
-    assert results[0].search_via == "graph"
+    assert results[0].search_via == "semantic"
 
 
 def test_build_results_preserves_semantic_primary_order_without_rrf() -> None:

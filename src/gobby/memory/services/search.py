@@ -492,24 +492,20 @@ class SearchService:
 
             scored.append((mem, mem.ranking_score, similarity))
 
-        if rrf_applied:
-            scored.sort(
-                key=lambda item: (
-                    item[1],
-                    item[2] is not None,
-                    item[2] if item[2] is not None else float("-inf"),
-                ),
-                reverse=True,
-            )
-        else:
-            scored.sort(
-                key=lambda item: (
-                    item[2] is not None,
-                    item[2] if item[2] is not None else float("-inf"),
-                    item[1],
-                ),
-                reverse=True,
-            )
+        # Semantic-first ordering: similarity is the quality signal; RRF/keyword/graph
+        # lists expand recall and break ties but must never displace a high-similarity
+        # hit from the top-K. Making ranking_score primary (attempted in #17102) made the
+        # default graph_search=True path regress -- a low-RRF graph hit buried a
+        # high-similarity result. See #17105. The principled similarity-aware merge blend
+        # is tracked in #17104; until then, semantic-first holds for every path.
+        scored.sort(
+            key=lambda item: (
+                item[2] is not None,
+                item[2] if item[2] is not None else float("-inf"),
+                item[1],
+            ),
+            reverse=True,
+        )
         return [mem for mem, _, _ in scored[:limit]]
 
     async def _search_graph_for_memories(
