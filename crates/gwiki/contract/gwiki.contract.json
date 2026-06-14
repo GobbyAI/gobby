@@ -447,6 +447,14 @@
           "repeatable": true
         },
         {
+          "name": "--source",
+          "takes_value": true,
+          "value_name": "SOURCE_ID_OR_PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
           "name": "--kind",
           "takes_value": true,
           "value_name": "source|concept|topic",

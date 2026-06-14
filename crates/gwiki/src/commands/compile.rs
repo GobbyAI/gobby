@@ -1,19 +1,24 @@
-use std::path::PathBuf;
+use std::collections::HashSet;
+use std::io::ErrorKind;
+use std::path::{Path, PathBuf};
 
 use gobby_core::ai::{daemon as core_ai_daemon, effective_route, text as core_ai_text};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::explainer::{ExplainerGenerator, ExplainerPrompt, ExplainerReport, ExplainerResponse};
+use crate::sources::{SourceManifest, SourceRecord};
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{
-    CommandOutcome, ScopeSelection, WikiError, compile as wiki_compile, daemon, session, synthesis,
+    CommandOutcome, ScopeSelection, WikiError, compile as wiki_compile, daemon, paths, session,
+    synthesis,
 };
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
     topic: Option<String>,
     outline: Vec<String>,
+    source: Vec<String>,
     target_kind: synthesis::ArticleKind,
     target_page: Option<PathBuf>,
     write_intent: bool,
@@ -22,21 +27,12 @@ pub(crate) fn execute(
 ) -> Result<CommandOutcome, WikiError> {
     let resolved_scope = resolve_command_scope(&scope)?;
     let research_scope = session::ResearchScope::from(&resolved_scope);
-    let mut session = session::ResearchSession::load_checkpoint(research_scope.root())?;
-    // Article topic precedence: explicit positional, then the topic scope's
-    // own name (a topic vault compiles its topic by default), then the
-    // session's compile state or research question.
-    let scope_topic = match &research_scope {
-        session::ResearchScope::Topic { name, .. } => Some(name.clone()),
-        _ => None,
-    };
-    let topic = topic.or(scope_topic).unwrap_or_else(|| {
-        session
-            .compile_state
-            .as_ref()
-            .map(|state| state.topic.clone())
-            .unwrap_or_else(|| session.question.clone())
-    });
+    let topic_seed = compile_topic_seed(topic.as_deref(), &research_scope);
+    let mut session = load_compile_session(research_scope, topic_seed.as_deref())?;
+    if !source.is_empty() {
+        apply_source_selection(&mut session, &source)?;
+    }
+    let topic = resolve_compile_topic(topic_seed, &session);
     let daemon_report = daemon::probe_daemon_capabilities();
     let transport = resolve_explainer_transport(ai);
     let route_label = transport.route_label();
@@ -101,6 +97,143 @@ Article: {}",
         payload,
         text,
     ))
+}
+
+fn compile_topic_seed(
+    topic: Option<&str>,
+    research_scope: &session::ResearchScope,
+) -> Option<String> {
+    topic.map(str::to_owned).or_else(|| match research_scope {
+        session::ResearchScope::Topic { name, .. } => Some(name.clone()),
+        _ => None,
+    })
+}
+
+fn load_compile_session(
+    research_scope: session::ResearchScope,
+    topic_seed: Option<&str>,
+) -> Result<session::ResearchSession, WikiError> {
+    match session::ResearchSession::load_checkpoint(research_scope.root()) {
+        Ok(session) => Ok(session),
+        Err(WikiError::Io { action, source, .. })
+            if action == "read research checkpoint" && source.kind() == ErrorKind::NotFound =>
+        {
+            let Some(topic) = topic_seed else {
+                return Err(WikiError::InvalidInput {
+                    field: "topic",
+                    message: "compile requires TOPIC or --topic when no research checkpoint exists"
+                        .to_string(),
+                });
+            };
+            session::ResearchSession::new(topic.to_string(), research_scope, Vec::new(), 1, None)
+        }
+        Err(error) => Err(error),
+    }
+}
+
+fn resolve_compile_topic(topic_seed: Option<String>, session: &session::ResearchSession) -> String {
+    topic_seed.unwrap_or_else(|| {
+        session
+            .compile_state
+            .as_ref()
+            .map(|state| state.topic.clone())
+            .unwrap_or_else(|| session.question.clone())
+    })
+}
+
+fn apply_source_selection(
+    session: &mut session::ResearchSession,
+    selectors: &[String],
+) -> Result<(), WikiError> {
+    let manifest = SourceManifest::read(session.scope.root())?;
+    session.accepted_notes = resolve_source_notes(session.scope.root(), &manifest, selectors)?;
+    session.save_checkpoint()
+}
+
+fn resolve_source_notes(
+    vault_root: &Path,
+    manifest: &SourceManifest,
+    selectors: &[String],
+) -> Result<Vec<session::AcceptedResearchNote>, WikiError> {
+    let mut selected = Vec::new();
+    let mut seen = HashSet::new();
+    for selector in selectors {
+        let record = resolve_source_selector(manifest, selector)?;
+        if seen.insert(record.id.clone()) {
+            selected.push(accepted_note_from_source(vault_root, record)?);
+        }
+    }
+    Ok(selected)
+}
+
+fn resolve_source_selector<'a>(
+    manifest: &'a SourceManifest,
+    selector: &str,
+) -> Result<&'a SourceRecord, WikiError> {
+    let selector = selector.trim();
+    if let Some(record) = manifest.entries.iter().find(|entry| entry.id == selector) {
+        return Ok(record);
+    }
+
+    let selector_path = Path::new(selector);
+    for record in &manifest.entries {
+        if paths::raw_source_path(&record.id)? == selector_path {
+            return Ok(record);
+        }
+    }
+
+    let matches = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.location == selector || entry.canonical_location == selector)
+        .collect::<Vec<_>>();
+    match matches.as_slice() {
+        [record] => Ok(record),
+        [] => Err(WikiError::NotFound {
+            resource: "source",
+            id: selector.to_string(),
+        }),
+        _ => Err(WikiError::InvalidInput {
+            field: "source",
+            message: format!(
+                "source selector `{selector}` matched multiple records; pass a source id"
+            ),
+        }),
+    }
+}
+
+fn accepted_note_from_source(
+    vault_root: &Path,
+    record: &SourceRecord,
+) -> Result<session::AcceptedResearchNote, WikiError> {
+    let raw_path = paths::raw_source_path(&record.id)?;
+    let absolute_path = vault_root.join(&raw_path);
+    match absolute_path.try_exists() {
+        Ok(true) => {}
+        Ok(false) => {
+            return Err(WikiError::NotFound {
+                resource: "raw_source",
+                id: raw_path.display().to_string(),
+            });
+        }
+        Err(error) => {
+            return Err(WikiError::Io {
+                action: "check raw source",
+                path: Some(absolute_path),
+                source: error,
+            });
+        }
+    }
+
+    Ok(session::AcceptedResearchNote {
+        title: record
+            .title
+            .clone()
+            .unwrap_or_else(|| record.location.clone()),
+        path: raw_path,
+        code_citations: Vec::new(),
+        degradation: None,
+    })
 }
 
 /// Resolved explainer transport, mirroring `gwiki ask` honesty semantics:
@@ -195,5 +328,231 @@ fn routing_label(route: AiRouting) -> &'static str {
         AiRouting::Daemon => "daemon",
         AiRouting::Direct => "direct",
         AiRouting::Off => "off",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sources::{CompileStatus, IngestionMethod, SourceKind};
+    use std::fs;
+
+    fn source_record(
+        id: &str,
+        location: &str,
+        canonical_location: &str,
+        title: Option<&str>,
+    ) -> SourceRecord {
+        SourceRecord {
+            id: id.to_string(),
+            location: location.to_string(),
+            canonical_location: canonical_location.to_string(),
+            kind: SourceKind::Markdown,
+            fetched_at: "2026-06-14T00:00:00Z".to_string(),
+            content_hash: format!("{id}-hash"),
+            title: title.map(str::to_string),
+            citation: None,
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Pending,
+            replay: None,
+        }
+    }
+
+    fn write_raw_source(root: &Path, record: &SourceRecord) {
+        let path = root.join(paths::raw_source_path(&record.id).expect("raw path"));
+        fs::create_dir_all(path.parent().expect("raw parent")).expect("create raw parent");
+        fs::write(&path, format!("# {}\n", record.id)).expect("write raw source");
+    }
+
+    #[test]
+    fn source_selectors_resolve_id_raw_path_location_and_canonical_location() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let records = vec![
+            source_record(
+                "src-alpha",
+                "alpha.md",
+                "file:///vault/alpha.md",
+                Some("Alpha"),
+            ),
+            source_record("src-beta", "beta.md", "file:///vault/beta.md", Some("Beta")),
+            source_record(
+                "src-gamma",
+                "gamma.md",
+                "file:///vault/gamma.md",
+                Some("Gamma"),
+            ),
+            source_record("src-delta", "delta.md", "canonical:delta", None),
+        ];
+        for record in &records {
+            write_raw_source(temp.path(), record);
+        }
+        let manifest = SourceManifest { entries: records };
+
+        let notes = resolve_source_notes(
+            temp.path(),
+            &manifest,
+            &[
+                "src-alpha".to_string(),
+                "raw/src-beta.md".to_string(),
+                "gamma.md".to_string(),
+                "canonical:delta".to_string(),
+            ],
+        )
+        .expect("source notes");
+
+        assert_eq!(
+            notes
+                .iter()
+                .map(|note| note.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("raw/src-alpha.md"),
+                PathBuf::from("raw/src-beta.md"),
+                PathBuf::from("raw/src-gamma.md"),
+                PathBuf::from("raw/src-delta.md"),
+            ]
+        );
+        assert_eq!(
+            notes
+                .iter()
+                .map(|note| note.title.as_str())
+                .collect::<Vec<_>>(),
+            vec!["Alpha", "Beta", "Gamma", "delta.md"]
+        );
+    }
+
+    #[test]
+    fn source_selection_dedupes_by_source_id_in_selector_order() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let alpha = source_record("src-alpha", "alpha.md", "canonical:alpha", Some("Alpha"));
+        let beta = source_record("src-beta", "beta.md", "canonical:beta", Some("Beta"));
+        write_raw_source(temp.path(), &alpha);
+        write_raw_source(temp.path(), &beta);
+        let manifest = SourceManifest {
+            entries: vec![alpha, beta],
+        };
+
+        let notes = resolve_source_notes(
+            temp.path(),
+            &manifest,
+            &[
+                "src-beta".to_string(),
+                "src-alpha".to_string(),
+                "raw/src-beta.md".to_string(),
+                "alpha.md".to_string(),
+            ],
+        )
+        .expect("source notes");
+
+        assert_eq!(
+            notes
+                .iter()
+                .map(|note| note.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                PathBuf::from("raw/src-beta.md"),
+                PathBuf::from("raw/src-alpha.md"),
+            ]
+        );
+    }
+
+    #[test]
+    fn missing_source_selector_reports_source_not_found() {
+        let manifest = SourceManifest {
+            entries: vec![source_record(
+                "src-alpha",
+                "alpha.md",
+                "canonical:alpha",
+                Some("Alpha"),
+            )],
+        };
+        let error = resolve_source_selector(&manifest, "missing").expect_err("missing source");
+
+        match error {
+            WikiError::NotFound { resource, id } => {
+                assert_eq!(resource, "source");
+                assert_eq!(id, "missing");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn ambiguous_non_id_selector_reports_invalid_input() {
+        let manifest = SourceManifest {
+            entries: vec![
+                source_record("src-alpha", "shared.md", "canonical:alpha", Some("Alpha")),
+                source_record("src-beta", "shared.md", "canonical:beta", Some("Beta")),
+            ],
+        };
+        let error = resolve_source_selector(&manifest, "shared.md").expect_err("ambiguous source");
+
+        match error {
+            WikiError::InvalidInput { field, message } => {
+                assert_eq!(field, "source");
+                assert_eq!(
+                    message,
+                    "source selector `shared.md` matched multiple records; pass a source id"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_raw_file_for_selected_source_reports_raw_source_not_found() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let manifest = SourceManifest {
+            entries: vec![source_record(
+                "src-alpha",
+                "alpha.md",
+                "canonical:alpha",
+                Some("Alpha"),
+            )],
+        };
+
+        let error = resolve_source_notes(temp.path(), &manifest, &["src-alpha".to_string()])
+            .expect_err("missing raw source");
+
+        match error {
+            WikiError::NotFound { resource, id } => {
+                assert_eq!(resource, "raw_source");
+                assert_eq!(id, "raw/src-alpha.md");
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
+    }
+
+    #[test]
+    fn missing_checkpoint_with_topic_seed_creates_fresh_compile_session() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = session::ResearchScope::project_for_id("project-1", temp.path());
+
+        let session =
+            load_compile_session(scope, Some("Fresh Topic")).expect("fresh compile session");
+
+        assert_eq!(session.question, "Fresh Topic");
+        assert!(session.accepted_notes.is_empty());
+        assert_eq!(session.scope.root(), temp.path());
+    }
+
+    #[test]
+    fn missing_checkpoint_without_topic_seed_requires_topic() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let scope = session::ResearchScope::project_for_id("project-1", temp.path());
+
+        let error = load_compile_session(scope, None).expect_err("missing topic");
+
+        match error {
+            WikiError::InvalidInput { field, message } => {
+                assert_eq!(field, "topic");
+                assert_eq!(
+                    message,
+                    "compile requires TOPIC or --topic when no research checkpoint exists"
+                );
+            }
+            other => panic!("unexpected error: {other:?}"),
+        }
     }
 }

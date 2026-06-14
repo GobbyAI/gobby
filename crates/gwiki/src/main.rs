@@ -331,6 +331,9 @@ struct CompileArgs {
     #[arg(long = "outline", value_name = "HEADING")]
     outline: Vec<String>,
 
+    #[arg(long = "source", value_name = "SOURCE_ID_OR_PATH")]
+    source: Vec<String>,
+
     #[arg(long, value_enum, default_value = "topic")]
     kind: CompileKind,
 
@@ -632,6 +635,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
         CliCommand::Compile(args) => Ok(Command::Compile {
             topic: args.topic,
             outline: args.outline,
+            source: args.source,
             target_kind: args.kind.into(),
             target_page: args.target,
             write_intent: args.write_intent,

@@ -267,3 +267,91 @@ fn public_cli_smoke_compiles_accepted_notes_and_audits_in_topic_scope() {
     assert_eq!(audit_payload["scope"]["kind"], "topic");
     assert_eq!(audit_payload["scope"]["id"], "rust");
 }
+
+#[test]
+fn public_cli_smoke_compile_source_bootstraps_fresh_project_checkpoint() {
+    let fixture = common::GwikiFixture::new();
+    common::write_gcode_json(fixture.project());
+
+    let source = fixture.project().join("fresh-source.md");
+    fs::write(
+        &source,
+        "# Fresh source\n\nFresh project compile should select this ingested note.\n",
+    )
+    .expect("write source");
+
+    let init = gwiki(
+        &fixture,
+        fixture.project(),
+        &["--format", "json", "init", "--project"],
+    );
+    common::assert_success(&init, "project init");
+
+    let source_arg = source.to_str().expect("source path utf8");
+    let ingest = gwiki(
+        &fixture,
+        fixture.project(),
+        &[
+            "--format",
+            "json",
+            "--project",
+            "ingest-file",
+            "--no-ai",
+            source_arg,
+        ],
+    );
+    common::assert_success(&ingest, "ingest-file");
+    let ingest_payload = common::json_stdout(&ingest);
+    let source_id = ingest_payload["source"]["id"]
+        .as_str()
+        .expect("source id")
+        .to_string();
+
+    let compile = gwiki(
+        &fixture,
+        fixture.project(),
+        &[
+            "--format",
+            "json",
+            "--project",
+            "compile",
+            "Fresh Vault Compile",
+            "--source",
+            &source_id,
+            "--ai",
+            "off",
+        ],
+    );
+    common::assert_success(&compile, "compile");
+    let compile_payload = common::json_stdout(&compile);
+    assert_eq!(compile_payload["command"], "compile");
+    assert_eq!(compile_payload["ai"]["route"], "off");
+
+    let vault = fixture.project().join(".gobby/wiki");
+    let article = vault.join("knowledge/topics/fresh-vault-compile.md");
+    assert!(article.is_file(), "missing article {}", article.display());
+
+    let provenance_path = vault.join("meta/provenance.json");
+    assert!(
+        provenance_path.is_file(),
+        "missing provenance {}",
+        provenance_path.display()
+    );
+    let provenance = fs::read_to_string(&provenance_path).expect("read provenance");
+    assert!(provenance.contains(&format!("raw/{source_id}.md")));
+
+    let checkpoint_path = vault.join(".gwiki/research-session.json");
+    assert!(
+        checkpoint_path.is_file(),
+        "missing checkpoint {}",
+        checkpoint_path.display()
+    );
+    let checkpoint: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(checkpoint_path).expect("read checkpoint"))
+            .expect("checkpoint JSON");
+    assert_eq!(checkpoint["question"], "Fresh Vault Compile");
+    assert_eq!(
+        checkpoint["accepted_notes"][0]["path"],
+        format!("raw/{source_id}.md")
+    );
+}

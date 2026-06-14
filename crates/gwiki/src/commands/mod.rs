@@ -71,6 +71,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::Compile {
             topic,
             outline,
+            source,
             target_kind,
             target_page,
             write_intent,
@@ -79,6 +80,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         } => compile::execute(
             topic,
             outline,
+            source,
             target_kind,
             target_page,
             write_intent,

@@ -77,6 +77,7 @@ pub enum Command {
     Compile {
         topic: Option<String>,
         outline: Vec<String>,
+        source: Vec<String>,
         target_kind: synthesis::ArticleKind,
         target_page: Option<PathBuf>,
         write_intent: bool,

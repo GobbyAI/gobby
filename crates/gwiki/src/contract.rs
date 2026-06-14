@@ -190,6 +190,7 @@ pub fn contract() -> CliContract {
                 positionals: vec![optional_positional("TOPIC", false)],
                 flags: vec![
                     FlagContract::repeatable_value("--outline", "HEADING"),
+                    FlagContract::repeatable_value("--source", "SOURCE_ID_OR_PATH"),
                     FlagContract::value("--kind", "source|concept|topic")
                         .allowed(vec!["source", "concept", "topic"]),
                     FlagContract::value("--target", "PAGE"),

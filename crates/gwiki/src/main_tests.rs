@@ -216,6 +216,50 @@ fn compile_positional_topic_never_populates_scope_selection() {
 }
 
 #[test]
+fn compile_source_flags_are_repeatable_and_map_to_command() {
+    let cli = Cli::try_parse_from([
+        "gwiki",
+        "--project",
+        "/tmp/example-project",
+        "compile",
+        "Borrow Checker",
+        "--source",
+        "src-alpha",
+        "--source",
+        "raw/src-beta.md",
+    ])
+    .expect("parse compile sources");
+    let CliCommand::Compile(args) = cli.command else {
+        panic!("expected parsed compile command");
+    };
+    assert_eq!(
+        args.source,
+        vec!["src-alpha".to_string(), "raw/src-beta.md".to_string()]
+    );
+
+    let command = command_from_cli(CliCommand::Compile(args), cli.scope.into())
+        .expect("compile command maps");
+    let Command::Compile {
+        source,
+        topic,
+        scope,
+        ..
+    } = command
+    else {
+        panic!("expected compile command");
+    };
+    assert_eq!(topic.as_deref(), Some("Borrow Checker"));
+    assert_eq!(
+        source,
+        vec!["src-alpha".to_string(), "raw/src-beta.md".to_string()]
+    );
+    assert_eq!(
+        scope.project_root(),
+        Some(std::path::Path::new("/tmp/example-project"))
+    );
+}
+
+#[test]
 fn graph_context_cli_maps_to_command() {
     let cli = Cli::try_parse_from([
         "gwiki",
