@@ -543,8 +543,8 @@ These rows should not be rebuilt as settings overlay controls:
 
 ## Sign-off
 
-Status: pending Josh review.
+Status: approved.
 
 | Approver | Date | Amendments |
 | --- | --- | --- |
-| Pending | Pending | Pending review of the audit matrix and IA. |
+| Josh | 2026-06-14 | Approved as-is. |
