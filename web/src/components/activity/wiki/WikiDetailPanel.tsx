@@ -98,7 +98,7 @@ function DetailSection({
 }) {
   return (
     <section className="space-y-2">
-      <h4 className="text-sm font-semibold text-foreground">{title}</h4>
+      <h4 className="text-sm font-medium text-foreground">{title}</h4>
       {children}
     </section>
   );

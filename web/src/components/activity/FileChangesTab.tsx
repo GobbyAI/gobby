@@ -167,7 +167,7 @@ export const FileChangesTab = memo(function FileChangesTab({
                 <span className="text-sm font-medium truncate">
                   {fileName(file.path)}
                 </span>
-                <span className="text-[10px] text-muted-foreground truncate">
+                <span className="text-2xs text-muted-foreground truncate">
                   {fileDir(file.path)}
                 </span>
               </div>

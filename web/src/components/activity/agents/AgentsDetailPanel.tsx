@@ -238,7 +238,7 @@ export function AgentsDetailPanel({
           />
 
           <section className="rounded-md border border-border bg-[var(--bg-secondary)] p-3">
-            <h3 className="mb-2 text-sm font-semibold text-foreground">Skills</h3>
+            <h3 className="mb-2 text-sm font-medium text-foreground">Skills</h3>
             <AgentSkillsEditor
               skills={draft.skills}
               onSkillsChange={(value) => setDraftField("skills", value)}
@@ -246,7 +246,7 @@ export function AgentsDetailPanel({
             />
           </section>
           <section className="rounded-md border border-border bg-[var(--bg-secondary)] p-3">
-            <h3 className="mb-2 text-sm font-semibold text-foreground">Rules</h3>
+            <h3 className="mb-2 text-sm font-medium text-foreground">Rules</h3>
             <AgentRulesEditor
               rules={draft.rules}
               onRulesChange={(value) => setDraftField("rules", value)}
@@ -256,21 +256,21 @@ export function AgentsDetailPanel({
             />
           </section>
           <section className="rounded-md border border-border bg-[var(--bg-secondary)] p-3">
-            <h3 className="mb-2 text-sm font-semibold text-foreground">Variables</h3>
+            <h3 className="mb-2 text-sm font-medium text-foreground">Variables</h3>
             <AgentVariablesEditor
               variables={draft.variables}
               onVariablesChange={(value) => setDraftField("variables", value)}
             />
           </section>
           <section className="rounded-md border border-border bg-[var(--bg-secondary)] p-3">
-            <h3 className="mb-2 text-sm font-semibold text-foreground">Steps</h3>
+            <h3 className="mb-2 text-sm font-medium text-foreground">Steps</h3>
             <AgentStepsEditor
               steps={draft.steps}
               onChange={(value) => setDraftField("steps", value)}
             />
           </section>
           <section className="rounded-md border border-border bg-[var(--bg-secondary)] p-3">
-            <h3 className="mb-2 text-sm font-semibold text-foreground">Tool blocks</h3>
+            <h3 className="mb-2 text-sm font-medium text-foreground">Tool blocks</h3>
             <AgentToolBlocksEditor
               blockedTools={draft.blockedTools}
               onBlockedToolsChange={(value) => setDraftField("blockedTools", value)}

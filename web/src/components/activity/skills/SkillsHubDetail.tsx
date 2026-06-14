@@ -252,7 +252,7 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
                       >
                         <div className="mb-2 flex items-start justify-between gap-3">
                           <div className="min-w-0">
-                            <div className="text-sm font-semibold text-foreground">{finding.title}</div>
+                            <div className="text-sm font-medium text-foreground">{finding.title}</div>
                             <div className="text-xs text-muted-foreground">{finding.location}</div>
                           </div>
                           <span

@@ -108,10 +108,10 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
                   </span>
                 </div>
                 <div className="flex items-center gap-2 shrink-0">
-                  <span className="text-[10px] text-muted-foreground tabular-nums">
+                  <span className="text-2xs text-muted-foreground tabular-nums">
                     {formatDurationMs(trace.duration_ms)}
                   </span>
-                  <span className="text-[10px] text-muted-foreground">
+                  <span className="text-2xs text-muted-foreground">
                     {formatTime(trace.timestamp)}
                   </span>
                 </div>
@@ -153,7 +153,7 @@ export const TracesTab = memo(function TracesTab({ projectId }: TracesTabProps) 
               <span className="text-xs font-medium text-foreground truncate">
                 {selectedTrace.root_span_name || selectedTrace.trace_id.slice(0, 8)}
               </span>
-              <span className="text-[10px] text-muted-foreground shrink-0 tabular-nums">
+              <span className="text-2xs text-muted-foreground shrink-0 tabular-nums">
                 {formatDurationMs(selectedTrace.duration_ms)}
               </span>
             </div>
