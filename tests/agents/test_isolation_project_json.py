@@ -76,8 +76,8 @@ async def test_clone_isolation_writes_parent_project_id(tmp_path: Path) -> None:
     )
 
     with (
-        patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
-        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
     ):
         await handler.prepare_environment(config)
 
@@ -130,8 +130,8 @@ async def test_clone_creation_does_not_block_event_loop(tmp_path: Path) -> None:
     )
 
     with (
-        patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
-        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
     ):
         loop = asyncio.get_running_loop()
         loop_was_responsive = loop.create_future()

@@ -645,7 +645,7 @@ class TestSpawnAgentTaskResolution:
     """Tests for task_id resolution formats."""
 
     @pytest.mark.asyncio
-    async def test_task_id_supports_hash_n_format(self, mock_runner, agent_body) -> None:
+    async def test_task_id_supports_hash_n_format(self, mock_runner, agent_body, db) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         mock_task_manager = MagicMock()
@@ -658,7 +658,7 @@ class TestSpawnAgentTaskResolution:
         registry = create_spawn_agent_registry(
             mock_runner,
             task_manager=mock_task_manager,
-            db=MagicMock(),
+            db=db,
         )
 
         with (
@@ -678,7 +678,12 @@ class TestSpawnAgentTaskResolution:
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.resolve_task_id_for_mcp"
             ) as mock_resolve,
+            patch("gobby.mcp_proxy.tools.spawn_agent._implementation.TaskSpawnLease") as lease_cls,
         ):
+            lease = lease_cls.return_value
+            lease.acquire.return_value = None
+            lease.attach.return_value = None
+            lease.release_unattached.return_value = None
             mock_ctx.return_value = {
                 "id": "proj-123",
                 "project_path": "/path/to/project",

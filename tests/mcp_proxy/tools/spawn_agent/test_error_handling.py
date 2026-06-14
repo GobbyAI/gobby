@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.isolation import IsolationContext, SpawnConfig
+from gobby.agents.worktree_reuse import ReusedWorktreeSyncResult
 from gobby.storage.tasks import LocalTaskManager, TaskArtifactManager
 
 pytestmark = pytest.mark.unit
@@ -683,7 +684,13 @@ class TestSpawnAgentImplErrorBranches:
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.sync_reused_worktree_to_base",
-                new=AsyncMock(),
+                new=AsyncMock(
+                    return_value=ReusedWorktreeSyncResult(
+                        status="clean",
+                        base_ref="main",
+                        base_commit_sha="",
+                    )
+                ),
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._worktree_reuse.repair_isolation_environment",

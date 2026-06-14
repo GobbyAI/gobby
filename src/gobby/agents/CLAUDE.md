@@ -9,7 +9,7 @@ This directory implements agent spawning, process management, isolation, and lif
 | `AgentSpawner` | `spawn.py` | Prepares agent spawns: session creation, isolation, prompt building |
 | `SpawnExecutor` | `spawn_executor.py` | Executes the prepared spawn (process creation) |
 | `AgentRunner` | `runner.py` | Manages running agent processes, completion tracking |
-| `IsolationHandler` | `isolation.py` | Worktree/clone/none isolation handlers |
+| `IsolationHandler` | `isolation.py` | Compatibility facade for isolation models, handlers, repair, and factory helpers |
 
 ## File Index
 
@@ -25,7 +25,14 @@ This directory implements agent spawning, process management, isolation, and lif
 - `runner_tracking.py` — Token/turn tracking for running agents
 
 ### Isolation
-- `isolation.py` — Three handlers: `NoneIsolationHandler`, `WorktreeIsolationHandler`, `CloneIsolationHandler`. Each prepares the working directory and git state.
+- `isolation.py` — Compatibility facade preserving the historical `gobby.agents.isolation` import surface.
+- `isolation_models.py` — Shared `IsolationContext`, `SpawnConfig`, `IsolationHandler`, and branch naming.
+- `isolation_none.py` — `NoneIsolationHandler` for current-directory execution.
+- `isolation_worktree.py` — `WorktreeIsolationHandler` for git worktree creation, reuse, base capture, and cleanup.
+- `isolation_clone.py` — `CloneIsolationHandler` and clone base commit capture.
+- `isolation_repair.py` — Hook copying, Droid hook merging, project metadata repair, MCP config patching, and provider preflight helpers.
+- `isolation_code_index.py` — Isolated workspace code-index preflight wrapper.
+- `isolation_factory.py` — `get_isolation_handler` factory.
 
 ### Sessions & Context
 - `session.py` — Child session management (creation, variable initialization, ancestry)
@@ -54,7 +61,7 @@ spawn_agent() called
   → AgentSpawner.prepare()
     → Create child session (session.py)
     → Resolve agent definition (definitions.py)
-    → Setup isolation (isolation.py)
+    → Setup isolation (isolation.py facade, implementation in isolation_*.py)
     → Build prompt (context.py)
     → Activate step workflow (if steps defined)
   → SpawnExecutor.execute()

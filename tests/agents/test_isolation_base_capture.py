@@ -86,10 +86,10 @@ async def test_base_captured_before_first_agent_run(
 
     with (
         patch(
-            "gobby.agents.isolation._copy_cli_hooks",
+            "gobby.agents.isolation_repair._copy_cli_hooks",
             new=AsyncMock(side_effect=assert_base_before_hook_copy),
         ),
-        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
     ):
         await handler.prepare_environment(_config(task.id, sample_project["id"], tmp_path))
 
@@ -103,15 +103,15 @@ async def test_repair_isolation_environment_logs_git_hygiene_failures(
 ) -> None:
     """Git hygiene failures are logged and do not block isolation repair."""
     with (
-        patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
-        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
         patch("gobby.utils.project_context.ensure_project_json_for_isolation"),
         patch(
-            "gobby.agents.isolation.preseed_isolated_python_environment",
+            "gobby.agents.isolation_repair.preseed_isolated_python_environment",
             new=AsyncMock(return_value=SimpleNamespace(attempted=False, success=True)),
         ),
         patch(
-            "gobby.agents.isolation.apply_isolation_git_hygiene",
+            "gobby.agents.isolation_repair.apply_isolation_git_hygiene",
             side_effect=RuntimeError("git hygiene failed"),
         ),
         caplog.at_level(logging.WARNING, logger="gobby.agents.isolation"),
@@ -133,9 +133,11 @@ async def _prepare_with_git_head(
     expected_git_cwd: str,
 ) -> IsolationContext:
     with (
-        patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
-        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
-        patch("gobby.agents.isolation.subprocess.run", return_value=_git_head("abc123")) as run,
+        patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
+        patch(
+            "gobby.agents.isolation_clone.subprocess.run", return_value=_git_head("abc123")
+        ) as run,
     ):
         ctx = await handler.prepare_environment(config)
 
@@ -152,8 +154,8 @@ async def _prepare_worktree_with_merge_base(
 ) -> IsolationContext:
     handler._git_manager.run_git_command.return_value = _git_head("base123")
     with (
-        patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
-        patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
+        patch("gobby.agents.isolation_repair._patch_mcp_config_for_isolation", new=AsyncMock()),
     ):
         ctx = await handler.prepare_environment(config)
 

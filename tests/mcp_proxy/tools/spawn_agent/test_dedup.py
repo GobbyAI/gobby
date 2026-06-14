@@ -160,7 +160,7 @@ class TestSpawnAgentDedup:
         mock_execute.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_merge_worker_spawn_ignores_parent_merge_orchestrator_run(self) -> None:
+    async def test_merge_worker_spawn_ignores_parent_merge_orchestrator_run(self, db) -> None:
         """A merge orchestrator may spawn a same-task merge worker without hitting itself."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
@@ -199,7 +199,7 @@ class TestSpawnAgentDedup:
         registry = create_spawn_agent_registry(
             runner,
             task_manager=mock_task_manager,
-            db=MagicMock(),
+            db=db,
         )
 
         with (
@@ -220,7 +220,12 @@ class TestSpawnAgentDedup:
                 "gobby.mcp_proxy.tools.spawn_agent._implementation.execute_spawn",
                 new_callable=AsyncMock,
             ) as mock_execute,
+            patch("gobby.mcp_proxy.tools.spawn_agent._implementation.TaskSpawnLease") as lease_cls,
         ):
+            lease = lease_cls.return_value
+            lease.acquire.return_value = None
+            lease.attach.return_value = None
+            lease.release_unattached.return_value = None
             mock_ctx.return_value = {
                 "id": "proj-123",
                 "project_path": "/path/to/project",

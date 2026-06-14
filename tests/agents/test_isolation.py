@@ -212,12 +212,16 @@ class TestRepairIsolationEnvironment:
     @pytest.mark.asyncio
     async def test_preseeds_python_environment(self, tmp_path: Path) -> None:
         with (
-            patch("gobby.agents.isolation._copy_cli_hooks", new=AsyncMock()),
+            patch("gobby.agents.isolation_repair._copy_cli_hooks", new=AsyncMock()),
             patch("gobby.utils.project_context.ensure_project_json_for_isolation"),
             patch(
-                "gobby.agents.isolation.preseed_isolated_python_environment", new=AsyncMock()
+                "gobby.agents.isolation_repair.preseed_isolated_python_environment",
+                new=AsyncMock(),
             ) as preseed,
-            patch("gobby.agents.isolation._patch_mcp_config_for_isolation", new=AsyncMock()),
+            patch(
+                "gobby.agents.isolation_repair._patch_mcp_config_for_isolation",
+                new=AsyncMock(),
+            ),
         ):
             result = await repair_isolation_environment(
                 main_repo_path="/main/repo",
@@ -564,11 +568,11 @@ class TestWorktreeIsolationHandler:
         with (
             patch("pathlib.Path.is_dir", return_value=True),
             patch(
-                "gobby.agents.isolation.repair_isolation_environment",
+                "gobby.agents.isolation_worktree.repair_isolation_environment",
                 new=AsyncMock(),
             ) as repair,
             patch(
-                "gobby.agents.isolation.worktree_reuse.sync_reused_worktree_to_base",
+                "gobby.agents.isolation_worktree.worktree_reuse.sync_reused_worktree_to_base",
                 new=AsyncMock(),
             ) as sync,
         ):
@@ -639,11 +643,11 @@ class TestWorktreeIsolationHandler:
         with (
             patch("pathlib.Path.is_dir", return_value=True),
             patch(
-                "gobby.agents.isolation.repair_isolation_environment",
+                "gobby.agents.isolation_worktree.repair_isolation_environment",
                 new=AsyncMock(),
             ) as repair,
             patch(
-                "gobby.agents.isolation.worktree_reuse.sync_reused_worktree_to_base",
+                "gobby.agents.isolation_worktree.worktree_reuse.sync_reused_worktree_to_base",
                 new=AsyncMock(),
             ) as sync,
             pytest.raises(RuntimeError, match="Cannot reuse claimed live worktree"),
@@ -698,7 +702,10 @@ class TestWorktreeIsolationHandler:
 
         with (
             patch("pathlib.Path.is_dir", return_value=False),
-            patch("gobby.agents.isolation.repair_isolation_environment", new=AsyncMock()) as repair,
+            patch(
+                "gobby.agents.isolation_worktree.repair_isolation_environment",
+                new=AsyncMock(),
+            ) as repair,
         ):
             ctx = await handler.prepare_environment(config)
 
@@ -830,7 +837,8 @@ class TestWorktreeIsolationHandler:
 
         # Make _copy_cli_hooks raise
         with patch(
-            "gobby.agents.isolation._copy_cli_hooks", side_effect=OSError("Permission denied")
+            "gobby.agents.isolation_repair._copy_cli_hooks",
+            side_effect=OSError("Permission denied"),
         ):
             config = SpawnConfig(
                 prompt="Test",
@@ -1139,7 +1147,7 @@ class TestCloneIsolationHandler:
         with (
             patch("pathlib.Path.is_dir", return_value=True),
             patch(
-                "gobby.agents.isolation.repair_isolation_environment",
+                "gobby.agents.isolation_clone.repair_isolation_environment",
                 new=AsyncMock(),
             ) as repair,
         ):
@@ -1190,7 +1198,7 @@ class TestCloneIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        with patch("gobby.agents.isolation.repair_isolation_environment", new=AsyncMock()):
+        with patch("gobby.agents.isolation_clone.repair_isolation_environment", new=AsyncMock()):
             results = await asyncio.gather(
                 CloneIsolationHandler(mock_clone_manager, mock_clone_storage).prepare_environment(
                     config
@@ -1207,7 +1215,7 @@ class TestCloneIsolationHandler:
         """Test branches with the same safe path prefix still get unique paths."""
         handler = CloneIsolationHandler(MagicMock(), MagicMock())
 
-        with patch("gobby.agents.isolation.uuid4") as mock_uuid4:
+        with patch("gobby.agents.isolation_clone.uuid4") as mock_uuid4:
             mock_uuid4.side_effect = [
                 MagicMock(hex="a" * 32),
                 MagicMock(hex="b" * 32),
@@ -1315,7 +1323,8 @@ class TestCloneIsolationHandler:
         )
 
         with patch(
-            "gobby.agents.isolation._copy_cli_hooks", side_effect=OSError("Permission denied")
+            "gobby.agents.isolation_repair._copy_cli_hooks",
+            side_effect=OSError("Permission denied"),
         ):
             config = SpawnConfig(
                 prompt="Test",
