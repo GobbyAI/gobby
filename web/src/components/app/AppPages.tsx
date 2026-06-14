@@ -1,11 +1,6 @@
 import { lazy, type ReactElement } from "react";
 import { Heading } from '../shared/Heading'
 
-export const MemoryPage = lazy(() =>
-  import("../memory/MemoryPage").then((m) => ({
-    default: m.MemoryPage,
-  })),
-);
 export const ConfigurationPage = lazy(() =>
   import("../ConfigurationPage").then((m) => ({
     default: m.ConfigurationPage,

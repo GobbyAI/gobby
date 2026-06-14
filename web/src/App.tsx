@@ -45,7 +45,6 @@ import {
   ComingSoonPage,
   ConfigurationPage,
   DashboardPage,
-  MemoryPage,
 } from "./components/app/AppPages";
 import { APP_VALID_TABS, createAppNavItems } from "./components/app/appNavigation";
 import { useAppCommandPalette } from "./components/app/useAppCommandPalette";
@@ -871,8 +870,6 @@ export default function App() {
                   stopTTS: voice.stopTTS,
                 }}
               />
-            ) : activeTab === "memory" ? (
-              <MemoryPage projectId={effectiveProjectId} />
             ) : activeTab === "configuration" ? (
               <ConfigurationPage />
             ) : activeTab === "dashboard" ? (
