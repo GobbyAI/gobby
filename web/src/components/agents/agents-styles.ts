@@ -3,7 +3,7 @@
 // Migrated from agents.css and AgentStepsEditor.css under #13674. Consumers
 // (AgentEditForm, AgentPortfolioPage, AgentRulesEditor, AgentSkillsEditor,
 // AgentStepsEditor, AgentToolBlocksEditor, AgentVariablesEditor,
-// IsolationTargetSelector, plus workflows/AgentsTab) import these names
+// IsolationTargetSelector, plus the activity Agents tab) import these names
 // instead of relying on a side-effect CSS import.
 
 // ── Shared agent buttons ──

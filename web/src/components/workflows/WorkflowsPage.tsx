@@ -1,6 +1,5 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { TabBar } from "../shared/TabBar";
-import { AgentsTab } from "./AgentsTab";
 import { PipelinesTab } from "./PipelinesTab";
 import { ProfilesTab } from "./ProfilesTab";
 import { StagesTab } from "./StagesTab";
@@ -46,12 +45,11 @@ import {
 } from "./workflows-styles";
 import { Heading } from '../shared/Heading'
 
-type ActiveTab = "pipelines" | "agents" | "stages" | "profiles";
+type ActiveTab = "pipelines" | "stages" | "profiles";
 type SourceFilter = "installed" | "project" | "templates" | "deleted";
 
 const TABS = [
   { id: "pipelines", label: "Pipelines" },
-  { id: "agents", label: "Agents" },
   { id: "stages", label: "Stages" },
   { id: "profiles", label: "Profiles" },
 ];
@@ -84,7 +82,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
   const [searchText, setSearchText] = useState("");
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("installed");
   const [devMode, setDevMode] = useState(false);
-  const [showAgentCreateForm, setShowAgentCreateForm] = useState(false);
   const [showPipelineCreate, setShowPipelineCreate] = useState(false);
   const [refreshKey, setRefreshKey] = useState(0);
   const [refreshing, setRefreshing] = useState(false);
@@ -95,10 +92,8 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
   const [pipelineEnabledFilter, setPipelineEnabledFilter] = useState<
     boolean | null
   >(null);
-  const [agentProviderFilter, setAgentProviderFilter] = useState<string>("all");
 
   // Dynamic options reported by tabs
-  const [agentProviders, setAgentProviders] = useState<string[]>([]);
   const [availableTags, setAvailableTags] = useState<string[]>([]);
 
   // Cross-tab filters
@@ -162,7 +157,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     )
       count++;
     if (activeTab === "pipelines" && pipelineEnabledFilter !== null) count++;
-    if (activeTab === "agents" && agentProviderFilter !== "all") count++;
     if (tagFilter !== null) count++;
     if (priorityFilter !== null) count++;
     return count;
@@ -172,7 +166,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
     hideInstalled,
     activeTab,
     pipelineEnabledFilter,
-    agentProviderFilter,
     tagFilter,
     priorityFilter,
   ]);
@@ -235,9 +228,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
                 activeTab={activeTab}
                 pipelineEnabledFilter={pipelineEnabledFilter}
                 onPipelineEnabledFilterChange={setPipelineEnabledFilter}
-                agentProviderFilter={agentProviderFilter}
-                onAgentProviderFilterChange={setAgentProviderFilter}
-                agentProviders={agentProviders}
                 tagFilter={tagFilter}
                 onTagFilterChange={setTagFilter}
                 availableTags={availableTags}
@@ -263,15 +253,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
               + Pipeline
             </button>
           )}
-          {activeTab === "agents" && (
-            <button
-              type="button"
-              className={WORKFLOWS_NEW_BTN_CLS}
-              onClick={() => setShowAgentCreateForm((prev) => !prev)}
-            >
-              + Agent
-            </button>
-          )}
         </div>
       </div>
 
@@ -290,24 +271,6 @@ export function WorkflowsPage({ projectId }: { projectId?: string }) {
           enabledFilter={pipelineEnabledFilter}
           tagFilter={tagFilter}
           priorityFilter={priorityFilter}
-          onTagsChange={setAvailableTags}
-        />
-      )}
-
-      {activeTab === "agents" && (
-        <AgentsTab
-          searchText={searchText}
-          sourceFilter={sourceFilter}
-          devMode={devMode}
-          showCreateForm={showAgentCreateForm}
-          onToggleCreateForm={setShowAgentCreateForm}
-          refreshKey={refreshKey}
-          projectId={projectId}
-          hideGobby={hideGobby}
-          hideInstalled={sourceFilter === "templates" && hideInstalled}
-          filterProvider={agentProviderFilter}
-          onProvidersChange={setAgentProviders}
-          tagFilter={tagFilter}
           onTagsChange={setAvailableTags}
         />
       )}
@@ -342,9 +305,6 @@ function FilterPopover({
   activeTab,
   pipelineEnabledFilter,
   onPipelineEnabledFilterChange,
-  agentProviderFilter,
-  onAgentProviderFilterChange,
-  agentProviders,
   tagFilter,
   onTagFilterChange,
   availableTags,
@@ -360,9 +320,6 @@ function FilterPopover({
   activeTab: ActiveTab;
   pipelineEnabledFilter: boolean | null;
   onPipelineEnabledFilterChange: (v: boolean | null) => void;
-  agentProviderFilter: string;
-  onAgentProviderFilterChange: (v: string) => void;
-  agentProviders: string[];
   tagFilter: string | null;
   onTagFilterChange: (v: string | null) => void;
   availableTags: string[];
@@ -415,28 +372,6 @@ function FilterPopover({
             >
               Disabled
             </button>
-          </div>
-        </div>
-      )}
-
-      {activeTab === "agents" && agentProviders.length > 0 && (
-        <div className={WORKFLOWS_FILTER_POPOVER_SECTION_CLS}>
-          <div className={WORKFLOWS_FILTER_POPOVER_LABEL_CLS}>Provider</div>
-          <div className={WORKFLOWS_FILTER_POPOVER_CHIPS_CLS}>
-            {agentProviders.map((p) => (
-              <button
-                key={p}
-                type="button"
-                className={`${WORKFLOWS_FILTER_CHIP_CLS} ${agentProviderFilter === p ? WORKFLOWS_FILTER_CHIP_ACTIVE_CLS : ""}`}
-                onClick={() =>
-                  onAgentProviderFilterChange(
-                    agentProviderFilter === p ? "all" : p,
-                  )
-                }
-              >
-                {p}
-              </button>
-            ))}
           </div>
         </div>
       )}

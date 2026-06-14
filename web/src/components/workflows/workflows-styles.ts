@@ -1,7 +1,7 @@
 // Shared Tailwind class constants for the workflows surface.
 //
 // Migrated from WorkflowsPage.css under #13899. Consumers (WorkflowsPage,
-// RulesTab, AgentsTab, PipelinesTab, SkillsPage, SkillsGrid, ReportingTab,
+// RulesTab, PipelinesTab, SkillsPage, SkillsGrid, ReportingTab,
 // PipelineExecutionsView) import these names instead of relying on a side-
 // effect CSS import. Mobile reflow uses Tailwind's `max-md:` breakpoint
 // variant (matches the prior `@media (max-width: 768px)` rule).

@@ -6,10 +6,6 @@ vi.mock('../PipelinesTab', () => ({
   PipelinesTab: () => <div data-testid="pipelines-tab" />,
 }))
 
-vi.mock('../AgentsTab', () => ({
-  AgentsTab: () => <div data-testid="agents-tab" />,
-}))
-
 describe('WorkflowsPage toolbar', () => {
   afterEach(() => {
     vi.unstubAllGlobals()
@@ -32,5 +28,13 @@ describe('WorkflowsPage toolbar', () => {
     render(<WorkflowsPage />)
 
     expect(screen.queryByRole('button', { name: 'Rules' })).not.toBeInTheDocument()
+  })
+
+  it('does not expose the retired Agents sub-tab', () => {
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({ dev_mode: false })))
+
+    render(<WorkflowsPage />)
+
+    expect(screen.queryByRole('button', { name: 'Agents' })).not.toBeInTheDocument()
   })
 })
