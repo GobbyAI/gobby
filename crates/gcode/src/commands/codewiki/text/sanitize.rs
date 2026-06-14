@@ -2,11 +2,89 @@ use std::ops::Range;
 
 use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 
+use crate::commands::codewiki::inline_code;
+
 pub(super) fn sanitize_model_markdown_links(text: &str) -> String {
     let replacements = unsafe_link_replacements(text);
+    apply_replacements(text, replacements)
+}
+
+pub(crate) fn neutralize_symbol_purpose_links(text: &str) -> String {
+    let code_ranges = markdown_code_ranges(text);
+    let mut replacements = markdown_link_replacements(text);
+    replacements.extend(wikilink_replacements(text, &code_ranges));
+    apply_replacements(text, replacements)
+}
+
+fn markdown_link_replacements(text: &str) -> Vec<Replacement> {
+    Parser::new_ext(text, Options::empty())
+        .into_offset_iter()
+        .filter_map(|(event, range)| match event {
+            Event::Start(Tag::Link { .. }) => Some(replacement_for_range(text, range)),
+            _ => None,
+        })
+        .collect()
+}
+
+fn markdown_code_ranges(text: &str) -> Vec<Range<usize>> {
+    Parser::new_ext(text, Options::empty())
+        .into_offset_iter()
+        .filter_map(|(event, range)| match event {
+            Event::Code(_) | Event::Start(Tag::CodeBlock(_)) => Some(range),
+            _ => None,
+        })
+        .collect()
+}
+
+fn wikilink_replacements(text: &str, code_ranges: &[Range<usize>]) -> Vec<Replacement> {
+    let mut replacements = Vec::new();
+    let mut cursor = 0;
+
+    while let Some(relative_start) = text[cursor..].find("[[") {
+        let start = cursor + relative_start;
+        let token_body_start = start + 2;
+        if range_contains(code_ranges, start) {
+            cursor = token_body_start;
+            continue;
+        }
+
+        let Some(relative_end) = text[token_body_start..].find("]]") else {
+            break;
+        };
+        let end = token_body_start + relative_end + 2;
+        if !range_overlaps(code_ranges, start..end) {
+            replacements.push(replacement_for_range(text, start..end));
+        }
+        cursor = end;
+    }
+
+    replacements
+}
+
+fn replacement_for_range(text: &str, range: Range<usize>) -> Replacement {
+    Replacement {
+        label: inline_code(&text[range.clone()]),
+        range,
+    }
+}
+
+fn range_contains(ranges: &[Range<usize>], index: usize) -> bool {
+    ranges
+        .iter()
+        .any(|range| range.start <= index && index < range.end)
+}
+
+fn range_overlaps(ranges: &[Range<usize>], candidate: Range<usize>) -> bool {
+    ranges
+        .iter()
+        .any(|range| range.start < candidate.end && candidate.start < range.end)
+}
+
+fn apply_replacements(text: &str, mut replacements: Vec<Replacement>) -> String {
     if replacements.is_empty() {
         return text.to_owned();
     }
+    replacements.sort_by_key(|replacement| (replacement.range.start, replacement.range.end));
 
     let mut out = String::with_capacity(text.len());
     let mut cursor = 0;
@@ -216,5 +294,45 @@ mod tests {
         );
 
         assert_eq!(text, sanitize_model_markdown_links(text));
+    }
+
+    #[test]
+    fn neutralizes_literal_wikilinks_in_symbol_purpose() {
+        let text = "The renderer emits [[relative_path|title]] as prose.";
+
+        assert_eq!(
+            "The renderer emits `[[relative_path|title]]` as prose.",
+            neutralize_symbol_purpose_links(text)
+        );
+    }
+
+    #[test]
+    fn neutralizes_literal_markdown_links_in_symbol_purpose() {
+        let text = "The renderer mentions [text](path/to/page.md) as prose.";
+
+        assert_eq!(
+            "The renderer mentions `[text](path/to/page.md)` as prose.",
+            neutralize_symbol_purpose_links(text)
+        );
+    }
+
+    #[test]
+    fn neutralizing_symbol_purpose_links_leaves_code_spans_and_fences_unchanged() {
+        let text = concat!(
+            "Keep `[[inline|code]]` and `[code](path.md)`.\n\n",
+            "```md\n",
+            "[[fenced|code]]\n",
+            "[fenced](path.md)\n",
+            "```"
+        );
+
+        assert_eq!(text, neutralize_symbol_purpose_links(text));
+    }
+
+    #[test]
+    fn neutralizing_symbol_purpose_links_leaves_source_citations_plain() {
+        let text = "Purpose stays grounded [file.rs:10].";
+
+        assert_eq!(text, neutralize_symbol_purpose_links(text));
     }
 }

@@ -197,6 +197,27 @@ fn component_id_uses_stored_symbol_id() {
     assert_eq!(symbol.id, "stored-symbol-id");
 }
 
+#[test]
+fn file_doc_purpose_neutralizes_summary_link_tokens() {
+    let mut symbol = test_symbol("src/lib.rs", "wiki_link", "function", 1, "fn wiki_link()");
+    symbol.summary =
+        Some("Quotes [[relative_path|title]] and [exact](knowledge/topics/exact).".to_string());
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![symbol],
+    };
+
+    let docs = generate_hierarchical_docs(&input, None);
+    let file = rendered_doc(&docs, "code/files/src/lib.rs.md");
+
+    assert!(file.contains(
+        "  - Purpose: Quotes `[[relative_path|title]]` and `[exact](knowledge/topics/exact)`. [src/lib.rs:1]"
+    ));
+}
+
 fn repo_marker_input() -> CodewikiInput {
     let files = [
         "alpha.rs",

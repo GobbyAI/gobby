@@ -91,9 +91,9 @@ pub(crate) use run::{load_symbols_for_codewiki, should_document_file, validate_e
 pub(crate) use text::{
     Generation, citation_list, citation_markers, collect_link_spans, display_child_summary,
     frontmatter_with_degradation, frontmatter_with_degradation_without_ranges, ground_text,
-    maybe_generate, replace_citations_with_markers, resolve_text_generator,
-    structural_file_summary, structural_module_summary, structural_repo_summary,
-    structural_symbol_purpose, write_references, write_section,
+    maybe_generate, neutralize_symbol_purpose_links, replace_citations_with_markers,
+    resolve_text_generator, structural_file_summary, structural_module_summary,
+    structural_repo_summary, structural_symbol_purpose, write_references, write_section,
 };
 #[cfg(test)]
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};

@@ -865,7 +865,11 @@ pub(crate) fn render_file_doc(file: &FileDoc) -> String {
         {
             let _ = writeln!(doc, "  - Signature: {}", inline_code(signature));
         }
-        let _ = writeln!(doc, "  - Purpose: {}", symbol.purpose);
+        let _ = writeln!(
+            doc,
+            "  - Purpose: {}",
+            neutralize_symbol_purpose_links(&symbol.purpose)
+        );
     }
     doc.push('\n');
     doc

@@ -4,6 +4,7 @@ use std::time::Duration;
 use gobby_core::ai_types::AiError;
 
 use super::*;
+pub(crate) use sanitize::neutralize_symbol_purpose_links;
 use sanitize::sanitize_model_markdown_links;
 
 mod sanitize;
