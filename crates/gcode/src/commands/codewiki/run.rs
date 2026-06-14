@@ -1,0 +1,266 @@
+use std::collections::BTreeMap;
+use std::path::Path;
+
+use crate::commands::scope;
+use crate::config::{self, Context};
+use crate::db;
+use crate::models::Symbol;
+use crate::output::{self, Format};
+use crate::visibility;
+
+use super::{
+    BuiltDoc, CodewikiAiOptions, CodewikiInput, CodewikiProgress, CodewikiRunSummary,
+    DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT, ReusePlan,
+    build_codewiki_changes_doc, build_codewiki_index_snapshot, fetch_codewiki_graph_edges,
+    generation, in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator,
+    write_ownership_meta,
+};
+
+// CLI entry point: each parameter maps to a distinct codewiki flag, so the
+// argument count tracks the command surface rather than hidden coupling.
+#[allow(clippy::too_many_arguments)]
+pub fn run(
+    ctx: &Context,
+    out: Option<String>,
+    scope_args: Vec<String>,
+    ai: CodewikiAiOptions,
+    edge_limit: usize,
+    include_docs: bool,
+    format: Format,
+    verbose: bool,
+) -> anyhow::Result<()> {
+    validate_edge_limit(edge_limit)?;
+    let ai_depth = ai.depth;
+
+    let mut progress = CodewikiProgress::stderr(verbose && !ctx.quiet);
+
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let scopes = scope_args
+        .iter()
+        .map(|value| scope::normalize_file_arg(ctx, value))
+        .collect::<Vec<_>>();
+    progress.emit("loading indexed files");
+    let files = visibility::visible_tree(&mut conn, ctx)?
+        .into_iter()
+        .filter(|file| should_document_file(&file.file_path, include_docs))
+        .map(|file| file.file_path)
+        .filter(|file| in_scope(file, &scopes))
+        .collect::<Vec<_>>();
+    let symbols = load_symbols_for_codewiki(&files, &mut progress, |paths| {
+        visibility::visible_symbols_for_files(&mut conn, ctx, paths)
+    })?;
+
+    progress.emit(format!(
+        "fetching graph edges for {} files and {} symbols (limit {})",
+        files.len(),
+        symbols.len(),
+        edge_limit
+    ));
+    progress.emit("loading leading content chunks");
+    let leading_chunks = load_leading_chunks(&mut conn, ctx, &files)?;
+
+    let graph = fetch_codewiki_graph_edges(ctx, &files, &symbols, edge_limit)?;
+    let input = CodewikiInput {
+        files,
+        graph_edges: graph.edges,
+        graph_availability: graph.availability,
+        symbols,
+        leading_chunks,
+    };
+    let mut generator = resolve_text_generator(ctx, &ai);
+    let ai_enabled = generator.is_some();
+    let ai_mode = if ai_enabled {
+        ai_depth.mode_label()
+    } else {
+        "off"
+    };
+    let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
+    let out_path = Path::new(&out_dir);
+    let doc_scope = DocPruneScope::from_scopes(&scopes);
+    if doc_scope.is_unscoped() {
+        progress.emit("reading metadata and hashing snapshot");
+    } else {
+        progress.emit("reading metadata for scoped write");
+    }
+    let previous_meta = if doc_scope.is_unscoped() {
+        Some(io::read_codewiki_meta(out_path)?)
+    } else {
+        None
+    };
+    let index_snapshot = if doc_scope.is_unscoped() {
+        Some(build_codewiki_index_snapshot(&ctx.project_root, &input)?)
+    } else {
+        None
+    };
+    let mut ownership_meta = if doc_scope.is_unscoped() {
+        Some(read_ownership_meta(out_path)?)
+    } else {
+        None
+    };
+    let mut reuse_plan = ReusePlan::load(&ctx.project_root, out_path, ai_mode)?;
+    let mut reuse = Some(&mut reuse_plan);
+    let mut sink =
+        DocSink::open_with_prune_scope(&ctx.project_root, out_path, ai_mode, doc_scope.clone())?;
+    let mut generated_pages = 0_usize;
+    let mut module_count = 0_usize;
+    let mut file_count = 0_usize;
+    // Persist each doc and its meta entry as soon as it is built, so a killed
+    // run keeps everything generated so far and a re-run resumes from disk.
+    let mut emit = |doc: BuiltDoc| -> anyhow::Result<()> {
+        generated_pages += 1;
+        if doc.path.starts_with("code/modules/") {
+            module_count += 1;
+        }
+        if doc.path.starts_with("code/files/") {
+            file_count += 1;
+        }
+        sink.persist(&doc)?;
+        Ok(())
+    };
+    generation::generate_hierarchical_docs_with_ownership(
+        &input,
+        ownership_meta
+            .as_mut()
+            .map(|meta| (ctx.project_root.as_path(), meta)),
+        generator.as_deref_mut(),
+        ai_depth,
+        &mut reuse,
+        &mut progress,
+        &doc_scope,
+        &mut emit,
+    )?;
+    if let Some(index_snapshot) = index_snapshot.as_ref() {
+        progress.emit("generating changes docs");
+        emit(BuiltDoc::healthy(
+            "code/_changes.md",
+            build_codewiki_changes_doc(
+                previous_meta
+                    .as_ref()
+                    .and_then(|meta| meta.index_snapshot.as_ref()),
+                index_snapshot,
+            )?,
+        ))?;
+    }
+    if let Some(ownership_meta) = ownership_meta.as_ref() {
+        write_ownership_meta(out_path, ownership_meta)?;
+    }
+    let symbol_count = input
+        .symbols
+        .iter()
+        .filter(|symbol| is_core_file(&symbol.file_path))
+        .count();
+    let changed_paths = sink.finish(index_snapshot)?;
+    let skipped = generated_pages.saturating_sub(changed_paths.len());
+
+    let summary = CodewikiRunSummary {
+        command: "codewiki",
+        project_id: ctx.project_id.clone(),
+        project_root: ctx.project_root.display().to_string(),
+        out_dir,
+        generated_pages,
+        changed_paths,
+        skipped,
+        files: file_count,
+        modules: module_count,
+        symbols: symbol_count,
+        ai_enabled,
+    };
+    match format {
+        Format::Json => output::print_json(&summary),
+        Format::Text => {
+            if doc_scope.is_unscoped() {
+                output::print_text(&format!(
+                    "wrote {} file docs, {} module docs, and repo.md to {}",
+                    summary.files, summary.modules, summary.out_dir
+                ))
+            } else {
+                output::print_text(&format!(
+                    "wrote {} scoped file docs and {} scoped module docs to {}",
+                    summary.files, summary.modules, summary.out_dir
+                ))
+            }
+        }
+    }?;
+
+    Ok(())
+}
+
+pub(crate) fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
+    if (1..=MAX_EDGE_LIMIT).contains(&edge_limit) {
+        return Ok(());
+    }
+    anyhow::bail!("codewiki --edge-limit must be between 1 and {MAX_EDGE_LIMIT}, got {edge_limit}")
+}
+
+/// codewiki documents code and structured config — any file the indexer
+/// recognizes as an AST or json/yaml language. Content-only files (markdown,
+/// plain text, license/lock files) are gwiki's domain, so codewiki skips them.
+fn documents_file(file_path: &str) -> bool {
+    crate::index::languages::detect_language(file_path).is_some()
+}
+
+/// Whether codewiki should emit a file doc for `file_path`. Content-only files
+/// are skipped unless the caller opts back in with `--include-docs`.
+pub(crate) fn should_document_file(file_path: &str, include_docs: bool) -> bool {
+    include_docs || documents_file(file_path)
+}
+
+pub(crate) fn load_symbols_for_codewiki(
+    files: &[String],
+    progress: &mut CodewikiProgress,
+    mut load_symbols: impl FnMut(&[String]) -> anyhow::Result<Vec<Symbol>>,
+) -> anyhow::Result<Vec<Symbol>> {
+    progress.emit(format!("loading symbols for {} files", files.len()));
+    load_symbols(files)
+}
+
+/// Loads each file's first indexed content chunk (`chunk_index = 0`) from the
+/// hub. Overlay scopes prefer overlay rows and fall back to the parent
+/// project for files the overlay has not re-indexed.
+fn load_leading_chunks(
+    conn: &mut postgres::Client,
+    ctx: &Context,
+    files: &[String],
+) -> anyhow::Result<BTreeMap<String, LeadingChunk>> {
+    let mut chunks = BTreeMap::new();
+    if files.is_empty() {
+        return Ok(chunks);
+    }
+    let project_ids = match &ctx.index_scope {
+        config::ProjectIndexScope::Single => vec![ctx.project_id.clone()],
+        config::ProjectIndexScope::Overlay {
+            overlay_project_id,
+            parent_project_id,
+            ..
+        } => vec![overlay_project_id.clone(), parent_project_id.clone()],
+    };
+    for project_id in project_ids {
+        let rows = conn.query(
+            "SELECT file_path,
+                    line_start::BIGINT AS line_start,
+                    line_end::BIGINT AS line_end,
+                    content
+             FROM code_content_chunks
+             WHERE project_id = $1 AND file_path = ANY($2) AND chunk_index = 0",
+            &[&project_id, &files],
+        )?;
+        for row in rows {
+            let file_path: String = row.get("file_path");
+            if chunks.contains_key(&file_path) {
+                continue;
+            }
+            let line_start: i64 = row.get("line_start");
+            let line_end: i64 = row.get("line_end");
+            let content: String = row.get("content");
+            chunks.insert(
+                file_path,
+                LeadingChunk {
+                    content,
+                    line_start: usize::try_from(line_start).unwrap_or(0),
+                    line_end: usize::try_from(line_end).unwrap_or(0),
+                },
+            );
+        }
+    }
+    Ok(chunks)
+}
