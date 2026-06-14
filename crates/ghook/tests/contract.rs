@@ -50,6 +50,42 @@ fn malformed_stdin_uses_cli_specific_json_error_contract() -> TestResult {
 }
 
 #[test]
+fn malformed_stdin_ignores_closed_stdout_pipe() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+    let mut command = Command::new(env!("CARGO_BIN_EXE_ghook"));
+    command
+        .arg("--gobby-owned")
+        .args(["--cli", "codex", "--type", "SessionStart"])
+        .env("HOME", home.path())
+        .env("GOBBY_HOME", gobby_home.path())
+        .env("GOBBY_DAEMON_URL", daemon_url)
+        .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
+        .env_remove("GOBBY_SOURCE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped());
+
+    let mut child = command.spawn()?;
+    drop(child.stdout.take());
+    if let Some(mut child_stdin) = child.stdin.take() {
+        child_stdin.write_all(b"not json")?;
+    }
+    let output = child.wait_with_output()?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_stderr_empty(&output, "malformed stdin closed stdout")?;
+
+    Ok(())
+}
+
+#[test]
 fn missing_cli_or_type_prints_empty_json_and_exits_two() -> TestResult {
     for (cli, hook_type) in [(None, Some("SessionStart")), (Some("codex"), None)] {
         let home = tempfile::tempdir()?;

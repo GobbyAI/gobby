@@ -113,7 +113,7 @@ fn run_diagnose(args: &Args) -> ExitCode {
     let out = diagnose::diagnose(cli, hook_type);
     match serde_json::to_string_pretty(&out) {
         Ok(s) => {
-            println!("{s}");
+            output::stdout(format_args!("{s}\n"));
             ExitCode::SUCCESS
         }
         Err(e) => {
@@ -125,7 +125,7 @@ fn run_diagnose(args: &Args) -> ExitCode {
 
 fn run_gobby_owned(args: &Args) -> ExitCode {
     let (Some(cli), Some(hook_type)) = (args.cli.as_deref(), args.hook_type.as_deref()) else {
-        println!("{}", serde_json::json!({}));
+        emit_empty_json();
         return ExitCode::from(2);
     };
 
@@ -137,7 +137,7 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
         if statusline::is_statusline_hook(cli, hook_type) {
             return ExitCode::SUCCESS;
         }
-        println!("{}", serde_json::json!({}));
+        emit_empty_json();
         return ExitCode::SUCCESS;
     }
 
@@ -185,7 +185,7 @@ fn run_gobby_owned(args: &Args) -> ExitCode {
         Ok(v) => v,
         Err(e) => {
             let _ = transport::quarantine_malformed(&stdin_raw, &e.to_string(), is_critical);
-            println!("{}", serde_json::json!({}));
+            emit_empty_json();
             return ExitCode::from(cfg.json_error_exit_code);
         }
     };
@@ -294,6 +294,10 @@ fn continue_action() -> HookAction {
         stdout_json: Some(serde_json::json!({"continue": true}).to_string()),
         stderr_message: None,
     }
+}
+
+fn emit_empty_json() {
+    output::stdout(format_args!("{{}}\n"));
 }
 
 fn hooks_disabled_by_env() -> bool {
