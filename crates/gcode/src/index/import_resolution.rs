@@ -1,5 +1,6 @@
 mod context;
 mod helpers;
+mod js_local;
 mod parser;
 mod predicates;
 mod rust_local;
@@ -16,5 +17,5 @@ pub use context::{
 };
 pub(crate) use parser::{
     parse_import_statement, resolve_external_callee, resolve_local_callee,
-    resolve_rust_local_qualified_callee, seed_import_bindings,
+    resolve_local_member_callee, resolve_rust_local_qualified_callee, seed_import_bindings,
 };

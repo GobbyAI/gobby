@@ -217,6 +217,26 @@ pub(crate) fn resolve_local_callee<'a>(
     import_bindings.local_bare.get(callee_name)
 }
 
+pub(crate) fn resolve_local_member_callee<'a>(
+    import_bindings: &'a ImportBindings,
+    symbols: &[Symbol],
+    callee_name: &str,
+    root_alias: Option<&str>,
+    is_member_call: bool,
+) -> Option<&'a LocalImportBinding> {
+    if !is_member_call {
+        return None;
+    }
+    let root_alias = root_alias?;
+    if symbols.iter().any(|symbol| symbol.name == root_alias) {
+        return None;
+    }
+    import_bindings
+        .local_member
+        .get(root_alias)?
+        .get(callee_name)
+}
+
 pub(crate) fn resolve_rust_local_qualified_callee<'a>(
     import_context: &'a ImportResolutionContext,
     rel_path: &str,

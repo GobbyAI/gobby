@@ -171,15 +171,16 @@ pub(crate) fn parse_js_import_statement(
         module_name: specifier.clone(),
     });
 
-    if !is_external_js_module(&specifier, import_context) {
-        return Ok(());
-    }
-
     let Some(clause) = extract_js_import_clause(&normalized) else {
         return Ok(());
     };
     let clause = clause.trim();
     if clause.is_empty() || clause.starts_with("type ") {
+        return Ok(());
+    }
+
+    if !is_external_js_module(&specifier, import_context) {
+        parse_js_local_import_clause(&specifier, clause, rel_path, import_context, extracted)?;
         return Ok(());
     }
 
@@ -246,6 +247,79 @@ pub(crate) fn parse_js_import_statement(
             .bindings
             .member
             .insert(alias.to_string(), specifier.clone());
+    }
+    Ok(())
+}
+
+fn parse_js_local_import_clause(
+    specifier: &str,
+    clause: &str,
+    rel_path: &str,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) -> anyhow::Result<()> {
+    let Some(module) = import_context.js_local_module(rel_path, specifier) else {
+        return Ok(());
+    };
+
+    let Ok(parts) = split_top_level(clause, ',') else {
+        return Ok(());
+    };
+    for part in parts {
+        let part = part.trim();
+        if part.is_empty() {
+            continue;
+        }
+        if let Some(alias) = part.strip_prefix("* as ") {
+            let alias = alias.trim();
+            if !alias.is_empty() {
+                extracted.bindings.member.remove(alias);
+                extracted
+                    .bindings
+                    .local_member
+                    .insert(alias.to_string(), module.exports.clone());
+            }
+            continue;
+        }
+        if part.starts_with('{') && part.ends_with('}') {
+            let inner = &part[1..part.len() - 1];
+            let Ok(items) = split_top_level(inner, ',') else {
+                return Ok(());
+            };
+            for item in items {
+                let item = item.trim();
+                if item.is_empty() || item.starts_with("type ") {
+                    continue;
+                }
+                let (imported_name, alias) = split_alias(item);
+                if let Some(binding) = module.exports.get(imported_name) {
+                    let local_alias = alias.unwrap_or(imported_name).to_string();
+                    extracted.bindings.bare.remove(&local_alias);
+                    extracted.bindings.member.remove(&local_alias);
+                    extracted
+                        .bindings
+                        .local_bare
+                        .insert(local_alias, binding.clone());
+                }
+            }
+            continue;
+        }
+
+        if part.starts_with("type ") {
+            continue;
+        }
+        let alias = part.trim();
+        if alias.is_empty() {
+            continue;
+        }
+        if let Some(binding) = module.exports.get("default") {
+            extracted.bindings.bare.remove(alias);
+            extracted.bindings.member.remove(alias);
+            extracted
+                .bindings
+                .local_bare
+                .insert(alias.to_string(), binding.clone());
+        }
     }
     Ok(())
 }

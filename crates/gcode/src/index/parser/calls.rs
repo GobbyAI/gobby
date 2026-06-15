@@ -109,9 +109,25 @@ fn materialize_call(
         } else {
             None
         };
+    let local_member_target = if local_target.is_none()
+        && external_target.is_none()
+        && local_qualified_target.is_none()
+        && !external_shadowed
+    {
+        import_resolution::resolve_local_member_callee(
+            ctx.import_bindings,
+            ctx.symbols,
+            &site.callee_name,
+            root_alias.as_deref(),
+            site.syntax == CallSyntaxKind::Member,
+        )
+    } else {
+        None
+    };
     let local_import_target = if local_target.is_none()
         && external_target.is_none()
         && local_qualified_target.is_none()
+        && local_member_target.is_none()
         && !external_shadowed
     {
         import_resolution::resolve_local_callee(
@@ -126,6 +142,7 @@ fn materialize_call(
     let semantic_target = if local_target.is_none()
         && external_target.is_none()
         && local_qualified_target.is_none()
+        && local_member_target.is_none()
         && local_import_target.is_none()
         && !external_shadowed
     {
@@ -156,6 +173,8 @@ fn materialize_call(
         call = call.with_symbol_target(callee_symbol_id);
     } else if let Some(local_qualified_target) = local_qualified_target {
         call = call.with_symbol_target(local_qualified_target.symbol_id(ctx.project_id));
+    } else if let Some(local_member_target) = local_member_target {
+        call = call.with_symbol_target(local_member_target.symbol_id(ctx.project_id));
     } else if let Some(local_import_target) = local_import_target {
         call = call.with_symbol_target(local_import_target.symbol_id(ctx.project_id));
     } else if let Some(external_target) = external_target {

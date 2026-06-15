@@ -1,10 +1,42 @@
 use super::common::{parse_javascript, parse_python, parse_source, parse_tsx, parse_typescript};
-use crate::models::Symbol;
+use crate::models::{CallRelation, ParseResult, Symbol};
 
 const TEST_PROJECT_ID: &str = "proj";
 
 fn canonical_symbol_id(file_path: &str, name: &str, kind: &str, byte_start: usize) -> String {
     Symbol::make_id(TEST_PROJECT_ID, file_path, name, kind, byte_start)
+}
+
+fn assert_call_targets_parsed_symbol(
+    call: &CallRelation,
+    target: &ParseResult,
+    name: &str,
+    kind: &str,
+) {
+    let matching_ids = target
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.name == name && symbol.kind == kind)
+        .map(|symbol| symbol.id.as_str())
+        .collect::<Vec<_>>();
+    assert!(
+        !matching_ids.is_empty(),
+        "missing target symbol {name}/{kind}; symbols: {:?}",
+        target
+            .symbols
+            .iter()
+            .map(|symbol| (&symbol.name, &symbol.kind, &symbol.id))
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert!(
+        matching_ids
+            .iter()
+            .any(|id| Some(*id) == call.callee_symbol_id.as_deref()),
+        "call target {:?} was not one of {matching_ids:?}",
+        call.callee_symbol_id
+    );
+    assert!(call.callee_external_module.is_none());
 }
 
 #[test]
@@ -181,26 +213,106 @@ function run() {
 }
 
 #[test]
-fn leaves_relative_javascript_imports_unresolved() {
+fn resolves_local_javascript_named_import_aliases_to_canonical_symbol() {
+    let target_source = "export function helper() {}\n";
     let parsed = parse_javascript(
         r#"
-import { helper } from "./utils";
+import { helper as runHelper } from "./utils";
 
 function run() {
-  helper();
+runHelper();
+}
+"#,
+        &[("src/utils.js", target_source)],
+    );
+    let target = parse_source("src/utils.js", target_source, &[]);
+
+    let call = parsed.calls.first().expect("call");
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_call_targets_parsed_symbol(call, &target, "helper", "function");
+}
+
+#[test]
+fn resolves_local_javascript_default_imports_to_canonical_symbol() {
+    let target_source = "export default function helper() {}\n";
+    let parsed = parse_javascript(
+        r#"
+import helper from "./utils";
+
+function run() {
+helper();
+}
+"#,
+        &[("src/utils.js", target_source)],
+    );
+    let target = parse_source("src/utils.js", target_source, &[]);
+
+    let call = parsed.calls.first().expect("call");
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_call_targets_parsed_symbol(call, &target, "helper", "function");
+}
+
+#[test]
+fn resolves_local_javascript_namespace_member_calls_to_canonical_symbol() {
+    let target_source = "export function helper() {}\nexport function other() {}\n";
+    let parsed = parse_javascript(
+        r#"
+import * as Utils from "./utils";
+
+function run() {
+Utils.helper();
+}
+"#,
+        &[("src/utils.js", target_source)],
+    );
+    let target = parse_source("src/utils.js", target_source, &[]);
+
+    let call = parsed.calls.first().expect("call");
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_call_targets_parsed_symbol(call, &target, "helper", "function");
+}
+
+#[test]
+fn resolves_self_package_javascript_imports_to_canonical_symbol() {
+    let target_source = "export function helper() {}\n";
+    let parsed = parse_javascript(
+        r#"
+import { helper } from "app/utils";
+
+function run() {
+helper();
 }
 "#,
         &[
-            (
-                "package.json",
-                r#"{"name":"app","dependencies":{"react":"^18.0.0"}}"#,
-            ),
-            ("src/utils.js", "export function helper() {}\n"),
+            ("package.json", r#"{"name":"app","dependencies":{}}"#),
+            ("src/utils.js", target_source),
         ],
     );
+    let target = parse_source("src/utils.js", target_source, &[]);
 
     let call = parsed.calls.first().expect("call");
-    assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_call_targets_parsed_symbol(call, &target, "helper", "function");
+}
+
+#[test]
+fn resolves_local_typescript_named_import_aliases_to_canonical_symbol() {
+    let target_source = "export function loadUser(): void {}\n";
+    let parsed = parse_typescript(
+        r#"
+import { loadUser as load } from "./api";
+
+export function run(): void {
+load();
+}
+"#,
+        &[("src/api.ts", target_source)],
+    );
+    let target = parse_source("src/api.ts", target_source, &[]);
+
+    let call = parsed.calls.first().expect("call");
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_call_targets_parsed_symbol(call, &target, "loadUser", "function");
 }
 
 #[test]

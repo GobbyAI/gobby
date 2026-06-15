@@ -10,6 +10,7 @@ use regex::Regex;
 use crate::models::{ImportRelation, Symbol};
 
 use super::helpers::{is_elixir_alias, is_ruby_constant_name};
+use super::js_local::{JsLocalModule, build_js_local_module_index, js_import_target_keys};
 use super::predicates::{
     csharp_declared_types, elixir_dependency_roots, java_declared_types, php_declared_symbols,
     ruby_require_root,
@@ -25,6 +26,7 @@ pub struct ImportResolutionContext {
     pub(super) python_local_symbols: HashMap<String, Vec<LocalImportBinding>>,
     pub(super) js_external_packages: HashSet<String>,
     pub(super) js_self_package_name: Option<String>,
+    pub(super) js_local_modules: HashMap<String, Vec<JsLocalModule>>,
     pub(super) go_module_path: Option<String>,
     pub(super) rust_external_crates: HashSet<String>,
     pub(super) rust_self_crate_name: Option<String>,
@@ -58,6 +60,25 @@ impl ImportResolutionContext {
         } else {
             Some(first)
         }
+    }
+
+    pub(super) fn js_local_module(
+        &self,
+        rel_path: &str,
+        specifier: &str,
+    ) -> Option<&JsLocalModule> {
+        for key in js_import_target_keys(rel_path, self.js_self_package_name.as_deref(), specifier)
+        {
+            let Some(modules) = self.js_local_modules.get(&key) else {
+                continue;
+            };
+            let mut modules = modules.iter();
+            let first = modules.next()?;
+            if modules.next().is_none() {
+                return Some(first);
+            }
+        }
+        None
     }
 
     pub(super) fn rust_local_symbol(
@@ -147,6 +168,7 @@ impl LocalImportBinding {
 pub(crate) struct ImportBindings {
     pub(crate) bare: HashMap<String, ExternalImportBinding>,
     pub(crate) local_bare: HashMap<String, LocalImportBinding>,
+    pub(crate) local_member: HashMap<String, HashMap<String, LocalImportBinding>>,
     pub(crate) bare_wildcard_modules: Vec<String>,
     pub(crate) member: HashMap<String, String>,
     pub(crate) external_roots: HashMap<String, ExternalRootBinding>,
@@ -258,6 +280,7 @@ pub fn build_import_resolution_context_with_overrides(
         python_local_symbols: build_python_local_symbol_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
         js_self_package_name: load_js_self_package_name(root_path),
+        js_local_modules: build_js_local_module_index(root_path, candidate_files),
         go_module_path: load_go_module_path(root_path),
         rust_external_crates: load_rust_external_crates(root_path),
         rust_self_crate_name: load_rust_self_crate_name(root_path),
