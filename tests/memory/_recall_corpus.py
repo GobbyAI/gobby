@@ -7,6 +7,7 @@ from hashlib import sha256
 from typing import Any
 
 from gobby.memory.identity import entity_key
+from gobby.memory.services.knowledge_graph.clustering import EntityVector
 from gobby.memory.services.knowledge_graph.models import Entity, Relationship
 from gobby.memory.services.knowledge_graph.normalization import display_entity_name
 
@@ -64,9 +65,21 @@ def build_corpus() -> list[MemoryDef]:
     return memories
 
 
+def sorted_entity_names() -> list[str]:
+    """Return every unique corpus entity name in deterministic order."""
+    return sorted({name for memory in build_corpus() for name in memory.entities})
+
+
 def _cluster_of(name: str) -> int:
     # names start with "c<digit(s)>_"
     return int(name[1 : name.index("_")])
+
+
+def ground_truth_entity_clusters() -> dict[str, int | None]:
+    """Ground-truth entity labels for clustering quality metrics."""
+    return {
+        name: None if "_noise_" in name else _cluster_of(name) for name in sorted_entity_names()
+    }
 
 
 def make_embed_fn(dim: int, *, unique_signal: float = 0.0) -> Any:
@@ -103,6 +116,19 @@ def make_embed_fn(dim: int, *, unique_signal: float = 0.0) -> Any:
         return vec
 
     return embed
+
+
+async def direct_clustering_vectors(dim: int = DIM) -> list[EntityVector]:
+    """Build EntityVector rows from the same deterministic embeddings used in benchmarks."""
+    embed = make_embed_fn(dim)
+    return [
+        EntityVector(
+            entity_key=entity_key(None, display_entity_name(name)),
+            name=display_entity_name(name),
+            embedding=await embed(name),
+        )
+        for name in sorted_entity_names()
+    ]
 
 
 def _seed_keys(mem: MemoryDef) -> list[str]:

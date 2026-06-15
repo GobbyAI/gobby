@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
     from gobby.ai import TextGenerationService
+    from gobby.code_index.prune import CodeIndexPruner
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
     from gobby.events.wake import WakeDispatcher
@@ -104,6 +105,7 @@ class GobbyRunner:
     _bin_freshness_task: asyncio.Task[None] | None
     _code_index_task: asyncio.Task[None] | None
     _code_index_shutdown: asyncio.Event | None
+    _code_index_startup_prune_task: asyncio.Task[dict[str, int]] | None
     _sync_worker_task: asyncio.Task[None] | None
     _sync_worker_shutdown: asyncio.Event | None
     _websocket_task: asyncio.Task[None] | None
@@ -136,6 +138,7 @@ class GobbyRunner:
     vector_store: VectorStore | None
     memory_manager: MemoryManager | None
     code_indexer: Any | None
+    code_index_pruner: CodeIndexPruner | None
     mcp_db_manager: LocalMCPManager
     metrics_event_store: MetricsEventStore
     metrics_manager: ToolMetricsManager

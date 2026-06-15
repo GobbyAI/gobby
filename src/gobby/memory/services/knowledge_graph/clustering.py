@@ -12,8 +12,8 @@ if TYPE_CHECKING:
     from .reader import KnowledgeGraphReader
     from .writer import KnowledgeGraphWriter
 
-HDBSCAN_MIN_CLUSTER_SIZE = 3
-HDBSCAN_MIN_SAMPLES = 2
+DEFAULT_CLUSTER_MIN_CLUSTER_SIZE = 5
+DEFAULT_CLUSTER_MIN_SAMPLES: int | None = 2
 HDBSCAN_METRIC = "euclidean"
 HDBSCAN_CLUSTER_SELECTION_METHOD = "eom"
 
@@ -194,14 +194,21 @@ def cluster_entity_vectors(
     entities: Sequence[EntityVector],
     *,
     project_id: str | None,
+    min_cluster_size: int = DEFAULT_CLUSTER_MIN_CLUSTER_SIZE,
+    min_samples: int | None = DEFAULT_CLUSTER_MIN_SAMPLES,
 ) -> ClusterRunResult:
     """Cluster entity vectors with deterministic labels and fail-clear dependency loading."""
+    if min_cluster_size < 2:
+        raise ValueError("min_cluster_size must be >= 2")
+    if min_samples is not None and min_samples < 1:
+        raise ValueError("min_samples must be None or >= 1")
+
     entity_count = len(entities)
     valid_vectors, invalid_entity_keys = _partition_valid_vectors(entities)
     valid_entity_keys = [entity_key for entity_key, _ in valid_vectors]
     invalid_count = len(invalid_entity_keys)
 
-    if len(valid_vectors) < HDBSCAN_MIN_CLUSTER_SIZE:
+    if len(valid_vectors) < min_cluster_size:
         labels_by_key = _noise_labels(valid_entity_keys)
         labels_by_key.update(_noise_labels(invalid_entity_keys))
         metrics = _quality_metrics(
@@ -229,8 +236,8 @@ def cluster_entity_vectors(
     np, HDBSCAN, silhouette_score = _load_sklearn_tools()
     matrix = np.asarray([vector for _, vector in valid_vectors], dtype=float)
     raw_labels = HDBSCAN(
-        min_cluster_size=HDBSCAN_MIN_CLUSTER_SIZE,
-        min_samples=HDBSCAN_MIN_SAMPLES,
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
         metric=HDBSCAN_METRIC,
         cluster_selection_method=HDBSCAN_CLUSTER_SELECTION_METHOD,
         copy=False,
@@ -271,10 +278,18 @@ async def recluster_project_entities(
     reader: KnowledgeGraphReader,
     writer: KnowledgeGraphWriter,
     project_id: str | None,
+    *,
+    min_cluster_size: int = DEFAULT_CLUSTER_MIN_CLUSTER_SIZE,
+    min_samples: int | None = DEFAULT_CLUSTER_MIN_SAMPLES,
 ) -> ClusterRunResult:
     """Read entity embeddings, run HDBSCAN, and persist canonical cluster IDs."""
     entities = await reader.fetch_project_entity_vectors(project_id=project_id)
-    result = cluster_entity_vectors(entities, project_id=project_id)
+    result = cluster_entity_vectors(
+        entities,
+        project_id=project_id,
+        min_cluster_size=min_cluster_size,
+        min_samples=min_samples,
+    )
     await writer.write_entity_clusters(
         result.cluster_ids_by_entity_key,
         project_id=project_id,

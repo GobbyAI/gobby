@@ -46,7 +46,8 @@ class CodeIndexPruneStorageMixin:
                 "DELETE FROM code_index_prune_dirty_projects WHERE project_id = %s",
                 (project_id,),
             )
-            return cursor.rowcount > 0
+            rowcount = cursor.rowcount
+            return isinstance(rowcount, int) and rowcount > 0
 
     def list_prune_dirty_projects(self, limit: int = 100) -> list[CodeIndexPruneDirtyProject]:
         """List dirty prune roots, oldest first."""

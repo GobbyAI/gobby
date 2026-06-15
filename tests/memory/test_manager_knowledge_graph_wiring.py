@@ -30,6 +30,7 @@ def _make_manager(
     llm_service: MagicMock | None = None,
     vector_store: AsyncMock | None = None,
     embed_fn: AsyncMock | None = None,
+    config: MemoryConfig | None = None,
 ) -> MagicMock:
     """Create a MemoryManager with controlled dependencies.
 
@@ -42,7 +43,7 @@ def _make_manager(
     db.fetchone = MagicMock(return_value=None)
     db.execute = MagicMock()
 
-    config = MemoryConfig()
+    config = config or MemoryConfig()
 
     kwargs = {
         "db": db,
@@ -101,6 +102,23 @@ class TestKnowledgeGraphServiceInitialization:
         call_kwargs = mock_kg_service.call_args.kwargs
         assert call_kwargs["llm_service"] is llm_service
         assert call_kwargs["feature_config"] is manager.config.kg
+
+    def test_kg_service_uses_cluster_density_config(self) -> None:
+        """KnowledgeGraphService wiring should honor clustering density config."""
+        config = MemoryConfig(cluster_min_cluster_size=7, cluster_min_samples=None)
+
+        with patch("gobby.memory.manager.KnowledgeGraphService") as mock_kg_service:
+            _make_manager(
+                falkordb_host="127.0.0.1",
+                llm_service=_mock_llm_service(),
+                vector_store=AsyncMock(),
+                embed_fn=AsyncMock(return_value=[0.1]),
+                config=config,
+            )
+
+        call_kwargs = mock_kg_service.call_args.kwargs
+        assert call_kwargs["cluster_min_cluster_size"] == 7
+        assert call_kwargs["cluster_min_samples"] is None
 
     def test_kg_service_none_when_no_FalkorDB(self) -> None:
         """KnowledgeGraphService is None when FalkorDB is not configured."""

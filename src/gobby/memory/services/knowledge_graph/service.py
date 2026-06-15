@@ -65,6 +65,8 @@ class KnowledgeGraphService:
         edge_half_life_days: float = 30.0,
         cluster_recall_expansion: bool = False,
         cluster_expansion_per_entity: int = 3,
+        cluster_min_cluster_size: int = 5,
+        cluster_min_samples: int | None = 2,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn
@@ -75,6 +77,8 @@ class KnowledgeGraphService:
         self._embedding_dim = embedding_dim
         self._graph_edge_weighting = graph_edge_weighting
         self._materialize_cooccurrence = materialize_cooccurrence
+        self._cluster_min_cluster_size = cluster_min_cluster_size
+        self._cluster_min_samples = cluster_min_samples
 
         self._writer = KnowledgeGraphWriter(falkor_client)
         self._extractor = KnowledgeGraphExtractor(
@@ -572,7 +576,13 @@ class KnowledgeGraphService:
 
     async def recluster_entities(self, project_id: str | None = None) -> ClusterRunResult:
         """Recompute and persist deterministic HDBSCAN entity cluster IDs."""
-        return await recluster_project_entities(self._reader, self._writer, project_id)
+        return await recluster_project_entities(
+            self._reader,
+            self._writer,
+            project_id,
+            min_cluster_size=self._cluster_min_cluster_size,
+            min_samples=self._cluster_min_samples,
+        )
 
     async def clear_project_graph(self, project_id: str) -> dict[str, int]:
         """Delete all Memory nodes for a project, then clean orphaned entities."""

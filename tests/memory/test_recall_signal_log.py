@@ -79,6 +79,8 @@ def test_build_recall_signal_event_records_search_features_and_sanitizes_floats(
             "materialize_cooccurrence": False,
             "cluster_recall_expansion": False,
             "cluster_expansion_per_entity": 3,
+            "cluster_min_cluster_size": 5,
+            "cluster_min_samples": 2,
             "temporal_decay_half_life_days": 30.0,
         },
     )
@@ -180,6 +182,8 @@ def test_make_recall_signal_sink_is_default_off_and_writes_when_enabled(tmp_path
             graph_edge_weighting=True,
             cluster_recall_expansion=True,
             cluster_expansion_per_entity=7,
+            cluster_min_cluster_size=8,
+            cluster_min_samples=None,
         )
     )
     assert sink is not None
@@ -192,3 +196,5 @@ def test_make_recall_signal_sink_is_default_off_and_writes_when_enabled(tmp_path
     assert event["weighting"]["graph_edge_weighting"] is True
     assert event["weighting"]["cluster_recall_expansion"] is True
     assert event["weighting"]["cluster_expansion_per_entity"] == 7
+    assert event["weighting"]["cluster_min_cluster_size"] == 8
+    assert event["weighting"]["cluster_min_samples"] is None

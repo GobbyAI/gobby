@@ -248,6 +248,8 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 edge_half_life_days=self.config.edge_half_life_days,
                 cluster_recall_expansion=self.config.cluster_recall_expansion,
                 cluster_expansion_per_entity=self.config.cluster_expansion_per_entity,
+                cluster_min_cluster_size=self.config.cluster_min_cluster_size,
+                cluster_min_samples=self.config.cluster_min_samples,
             )
             logger.debug("KnowledgeGraphService initialized")
             return kg_service

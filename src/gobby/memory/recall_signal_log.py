@@ -111,6 +111,8 @@ def _weighting_snapshot(config: MemoryConfig) -> dict[str, object]:
         "materialize_cooccurrence": getattr(config, "materialize_cooccurrence", False),
         "cluster_recall_expansion": getattr(config, "cluster_recall_expansion", False),
         "cluster_expansion_per_entity": getattr(config, "cluster_expansion_per_entity", 3),
+        "cluster_min_cluster_size": getattr(config, "cluster_min_cluster_size", 5),
+        "cluster_min_samples": getattr(config, "cluster_min_samples", 2),
         "temporal_decay_half_life_days": _finite_or_none(
             getattr(config, "temporal_decay_half_life_days", None)
         ),

@@ -431,6 +431,20 @@ class MemoryConfig(BaseModel):
             "when cluster_recall_expansion is enabled."
         ),
     )
+    cluster_min_cluster_size: int = Field(
+        default=5,
+        description=(
+            "HDBSCAN min_cluster_size for offline entity embedding reclustering. "
+            "Daemon-global static default; per-project tuning is intentionally separate."
+        ),
+    )
+    cluster_min_samples: int | None = Field(
+        default=2,
+        description=(
+            "HDBSCAN min_samples for offline entity embedding reclustering. "
+            "None delegates to HDBSCAN's min_cluster_size behavior."
+        ),
+    )
     recall_signal_logging: bool = Field(
         default=False,
         description=(
@@ -485,6 +499,22 @@ class MemoryConfig(BaseModel):
         """Validate cluster expansion fanout is non-negative."""
         if v < 0:
             raise ValueError("cluster_expansion_per_entity must be >= 0")
+        return v
+
+    @field_validator("cluster_min_cluster_size")
+    @classmethod
+    def validate_cluster_min_cluster_size(cls, v: int) -> int:
+        """Validate HDBSCAN min_cluster_size."""
+        if v < 2:
+            raise ValueError("cluster_min_cluster_size must be >= 2")
+        return v
+
+    @field_validator("cluster_min_samples")
+    @classmethod
+    def validate_cluster_min_samples(cls, v: int | None) -> int | None:
+        """Validate HDBSCAN min_samples while preserving explicit None."""
+        if v is not None and v < 1:
+            raise ValueError("cluster_min_samples must be None or >= 1")
         return v
 
     @field_validator("backend")

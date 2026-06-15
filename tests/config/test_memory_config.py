@@ -87,6 +87,8 @@ def test_kept_fields_still_exist() -> None:
     assert hasattr(config, "recall_signal_log_path")
     assert hasattr(config, "cluster_recall_expansion")
     assert hasattr(config, "cluster_expansion_per_entity")
+    assert hasattr(config, "cluster_min_cluster_size")
+    assert hasattr(config, "cluster_min_samples")
 
 
 def test_recall_signal_logging_defaults_off() -> None:
@@ -101,12 +103,33 @@ def test_cluster_recall_expansion_defaults_off() -> None:
     config = MemoryConfig()
     assert config.cluster_recall_expansion is False
     assert config.cluster_expansion_per_entity == 3
+    assert config.cluster_min_cluster_size == 5
+    assert config.cluster_min_samples == 2
 
 
 def test_cluster_expansion_per_entity_rejects_negative_values() -> None:
     """Cluster expansion fanout should be non-negative."""
     with pytest.raises(ValueError, match="cluster_expansion_per_entity must be >= 0"):
         MemoryConfig(cluster_expansion_per_entity=-1)
+
+
+def test_cluster_density_params_round_trip_and_preserve_none_min_samples() -> None:
+    """HDBSCAN density params should preserve explicit None through config dumps."""
+    config = MemoryConfig(cluster_min_cluster_size=7, cluster_min_samples=None)
+
+    round_tripped = MemoryConfig.model_validate(config.model_dump())
+
+    assert round_tripped.cluster_min_cluster_size == 7
+    assert round_tripped.cluster_min_samples is None
+
+
+def test_cluster_density_params_reject_invalid_values() -> None:
+    """HDBSCAN density params should reject invalid small values."""
+    with pytest.raises(ValueError, match="cluster_min_cluster_size must be >= 2"):
+        MemoryConfig(cluster_min_cluster_size=1)
+
+    with pytest.raises(ValueError, match="cluster_min_samples must be None or >= 1"):
+        MemoryConfig(cluster_min_samples=0)
 
 
 def test_old_config_with_removed_fields_does_not_crash() -> None:

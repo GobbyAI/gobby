@@ -285,6 +285,58 @@ def test_service_wires_cluster_recall_flags_to_reader() -> None:
     assert service._reader._cluster_expansion_per_entity == 9
 
 
+async def test_service_recluster_uses_configured_density_params(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    captured: dict[str, Any] = {}
+
+    async def fake_recluster_project_entities(
+        reader: Any,
+        writer: Any,
+        project_id: str | None,
+        *,
+        min_cluster_size: int,
+        min_samples: int | None,
+    ) -> service_mod.ClusterRunResult:
+        captured["reader"] = reader
+        captured["writer"] = writer
+        captured["project_id"] = project_id
+        captured["min_cluster_size"] = min_cluster_size
+        captured["min_samples"] = min_samples
+        return service_mod.ClusterRunResult(
+            project_id=project_id,
+            entity_count=0,
+            valid_entity_count=0,
+            clustered_entity_count=0,
+            noise_count=0,
+            invalid_count=0,
+            cluster_count=0,
+            cluster_ids_by_entity_key={},
+            cluster_sizes={},
+            invalid_entity_keys=[],
+            quality_metrics={},
+        )
+
+    monkeypatch.setattr(service_mod, "recluster_project_entities", fake_recluster_project_entities)
+    service = service_mod.KnowledgeGraphService(
+        falkor_client=RecordingFalkor(),  # type: ignore[arg-type]
+        embed_fn=None,
+        prompt_loader=MagicMock(),
+        llm_service=MagicMock(),
+        feature_config=MemoryKnowledgeGraphConfig(),
+        cluster_min_cluster_size=7,
+        cluster_min_samples=None,
+    )
+
+    result = await service.recluster_entities(project_id="project-1")
+
+    assert result.project_id == "project-1"
+    assert captured["reader"] is service._reader
+    assert captured["writer"] is service._writer
+    assert captured["min_cluster_size"] == 7
+    assert captured["min_samples"] is None
+
+
 # --------------------------------------------------------------------------- #
 # Reader weight/decay-aware traversal                                         #
 # --------------------------------------------------------------------------- #
