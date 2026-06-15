@@ -25,8 +25,10 @@ from gobby.config.embedding_keys import (
 )
 from gobby.prompts.sync import sync_bundled_prompts
 from gobby.servers.routes.configuration_import_export import _prompt_export_key
+from gobby.servers.routes.configuration_models import SaveUISettingsRequest
 from gobby.servers.routes.configuration_prompts import _normalize_variable_spec
 from gobby.servers.routes.configuration_secrets import MASKED_SECRET
+from gobby.servers.routes.configuration_ui_settings import UI_SETTINGS_KEYS
 from gobby.servers.routes.configuration_values import register_value_routes
 from gobby.servers.tool_approvals import DEFAULT_GLOBAL_APPROVAL_RULES
 from gobby.storage.config_store import ConfigStore
@@ -1812,6 +1814,33 @@ class TestUISettings:
         assert data["planPendingVariant"] == "info"
         assert data["selectedProvider"] == "codex"
 
+    def test_put_and_get_voice_toggles(self, client: TestClient) -> None:
+        """STT/TTS/voice-input toggles round-trip (previously dropped server-side)."""
+        put_resp = client.put(
+            "/api/config/ui-settings",
+            json={
+                "sttEnabled": False,
+                "ttsEnabled": True,
+                "voiceInputMode": "vad",
+            },
+        )
+        assert put_resp.status_code == 200
+        assert put_resp.json()["ok"] is True
+
+        data = client.get("/api/config/ui-settings").json()
+        assert data["sttEnabled"] is False
+        assert data["ttsEnabled"] is True
+        assert data["voiceInputMode"] == "vad"
+
+    def test_delete_voice_toggle(self, client: TestClient) -> None:
+        """A voice toggle is a known key and is deletable like other UI settings."""
+        client.put("/api/config/ui-settings", json={"voiceInputMode": "ptt"})
+
+        resp = client.delete("/api/config/ui-settings/voiceInputMode")
+        assert resp.status_code == 200
+        assert resp.json()["ok"] is True
+        assert "voiceInputMode" not in client.get("/api/config/ui-settings").json()
+
     def test_put_partial_update(self, client: TestClient) -> None:
         """PUT with only some keys updates only those."""
         client.put("/api/config/ui-settings", json={"fontSize": 14, "theme": "dark"})
@@ -1880,3 +1909,35 @@ class TestUISettings:
         resp = client.delete("/api/config/ui-settings/bogusKey")
         assert resp.status_code == 400
         assert "Unknown UI setting" in resp.json()["detail"]
+
+
+class TestUISettingsVoiceFields:
+    """DB-free contract for the STT/TTS/voice-input UI settings.
+
+    These previously round-tripped through useSettings but were dropped because
+    SaveUISettingsRequest omitted them and the route allowlist excluded them.
+    Verified without a database so the contract runs even where the route's
+    Postgres fixture is unavailable.
+    """
+
+    @pytest.mark.parametrize("field", ["sttEnabled", "ttsEnabled", "voiceInputMode"])
+    def test_model_declares_voice_field(self, field: str) -> None:
+        """The request model declares each voice field so it is not stripped."""
+        assert field in SaveUISettingsRequest.model_fields
+        assert field in SaveUISettingsRequest.UI_SETTING_FIELDS
+
+    def test_model_accepts_only_a_voice_toggle(self) -> None:
+        """A payload with only a voice toggle is a valid (non-empty) update."""
+        parsed = SaveUISettingsRequest(sttEnabled=False)
+        assert parsed.sttEnabled is False
+        assert parsed.ttsEnabled is None
+        assert parsed.voiceInputMode is None
+
+    def test_voice_input_mode_round_trips_value(self) -> None:
+        parsed = SaveUISettingsRequest(voiceInputMode="vad")
+        assert parsed.voiceInputMode == "vad"
+
+    @pytest.mark.parametrize("key", ["sttEnabled", "ttsEnabled", "voiceInputMode"])
+    def test_route_allowlist_includes_voice_field(self, key: str) -> None:
+        """The route get/save/delete allowlist persists each voice field."""
+        assert key in UI_SETTINGS_KEYS

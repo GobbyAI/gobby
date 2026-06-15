@@ -1,5 +1,4 @@
 import { useEffect, useState } from 'react'
-import type { ReactNode } from 'react'
 import { NumberField, SwitchField, TextField } from '../../activity/fields'
 import { BoundedSelectField, KeyValueMapField, StringListField } from '../fields'
 import {
@@ -10,12 +9,19 @@ import {
   type ProviderModelEntry,
 } from '../../../lib/providerModels'
 import type { UseSettingsReturn } from '../../../hooks/useSettings'
-import { enumOptionsAt, numberBoundsAt } from '../configSchema'
 import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
 import {
   useSettingsSectionContext,
   type ProviderSelectionContextValue,
 } from './SettingsSectionContext'
+import { asMap } from './configAccessors'
+import {
+  NumberConfigField,
+  SchemaSelectField,
+  StringListConfigField,
+  Subsection,
+  TextConfigField,
+} from './configFields'
 
 // One LLM feature's owned config rows. Each feature exposes a capability
 // profile (`FeatureProfile` enum) and an ordered candidate list; some also
@@ -125,36 +131,6 @@ const OWNED_PATHS: readonly string[] = [
   CONTEXT_WINDOW_PATH,
 ]
 
-function asString(value: unknown): string {
-  return typeof value === 'string' ? value : ''
-}
-
-function asNumber(value: unknown): number | null {
-  return typeof value === 'number' ? value : null
-}
-
-function asStringList(value: unknown): string[] {
-  return Array.isArray(value) ? value.filter((item): item is string => typeof item === 'string') : []
-}
-
-function asMap<V>(value: unknown): Record<string, V> {
-  return value && typeof value === 'object' && !Array.isArray(value)
-    ? (value as Record<string, V>)
-    : {}
-}
-
-function Subsection({ title, hint, children }: { title: string; hint?: string; children: ReactNode }) {
-  return (
-    <section className="settings-subsection">
-      <div className="settings-subsection__head">
-        <h4 className="settings-subsection__title">{title}</h4>
-        {hint ? <p className="settings-field__hint">{hint}</p> : null}
-      </div>
-      {children}
-    </section>
-  )
-}
-
 function ModelProviderControls({
   clientSettings,
   providerSelection,
@@ -217,102 +193,13 @@ function ModelProviderControls({
   )
 }
 
-function ProfileSelect({
-  fields,
-  path,
-  ariaLabel,
-}: {
-  fields: SettingsSectionFields
-  path: string
-  ariaLabel: string
-}) {
-  return (
-    <BoundedSelectField
-      label="Capability profile"
-      ariaLabel={ariaLabel}
-      value={asString(fields.getValue(path))}
-      options={enumOptionsAt(fields.schema, path)}
-      onChange={(value) => fields.setValue(path, value)}
-    />
-  )
-}
-
-function CandidatesField({
-  fields,
-  path,
-  ariaLabel,
-}: {
-  fields: SettingsSectionFields
-  path: string
-  ariaLabel: string
-}) {
-  return (
-    <StringListField
-      label="Provider/model candidates"
-      ariaLabel={ariaLabel}
-      value={asStringList(fields.getValue(path))}
-      addLabel="Add candidate"
-      placeholder="provider/model (e.g. claude/sonnet)"
-      onChange={(value) => fields.setValue(path, value)}
-    />
-  )
-}
-
-function NumberConfigField({
-  fields,
-  path,
-  label,
-  ariaLabel,
-  step,
-}: {
-  fields: SettingsSectionFields
-  path: string
-  label: string
-  ariaLabel: string
-  step?: number
-}) {
-  const bounds = numberBoundsAt(fields.schema, path)
-  return (
-    <NumberField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asNumber(fields.getValue(path))}
-      min={bounds.min}
-      max={bounds.max}
-      step={step}
-      onChange={(value) => fields.setValue(path, value)}
-    />
-  )
-}
-
-function PromptPathField({
-  fields,
-  path,
-  label,
-  ariaLabel,
-}: {
-  fields: SettingsSectionFields
-  path: string
-  label: string
-  ariaLabel: string
-}) {
-  return (
-    <TextField
-      label={label}
-      ariaLabel={ariaLabel}
-      value={asString(fields.getValue(path))}
-      placeholder="features/… (leave blank for the default)"
-      onChange={(value) => fields.setValue(path, value === '' ? null : value)}
-    />
-  )
-}
-
 function FeatureGroup({ fields, spec }: { fields: SettingsSectionFields; spec: FeatureSpec }) {
   return (
     <Subsection title={spec.label}>
-      <ProfileSelect
+      <SchemaSelectField
         fields={fields}
         path={`${spec.key}.profile`}
+        label="Capability profile"
         ariaLabel={`${spec.label} profile`}
       />
       {spec.hasEnabled ? (
@@ -323,10 +210,13 @@ function FeatureGroup({ fields, spec }: { fields: SettingsSectionFields; spec: F
           onChange={(value) => fields.setValue(`${spec.key}.enabled`, value)}
         />
       ) : null}
-      <CandidatesField
+      <StringListConfigField
         fields={fields}
         path={`${spec.key}.candidates`}
+        label="Provider/model candidates"
         ariaLabel={`${spec.label} candidates`}
+        addLabel="Add candidate"
+        placeholder="provider/model (e.g. claude/sonnet)"
       />
       {spec.hasConfidence ? (
         <NumberConfigField
@@ -338,12 +228,14 @@ function FeatureGroup({ fields, spec }: { fields: SettingsSectionFields; spec: F
         />
       ) : null}
       {spec.promptPaths.map((prompt) => (
-        <PromptPathField
+        <TextConfigField
           key={prompt.suffix}
           fields={fields}
           path={`${spec.key}.${prompt.suffix}`}
           label={prompt.label}
           ariaLabel={`${spec.label} ${prompt.label}`}
+          placeholder="features/… (leave blank for the default)"
+          nullable
         />
       ))}
     </Subsection>
