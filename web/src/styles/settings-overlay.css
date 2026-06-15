@@ -565,3 +565,41 @@
   color: var(--text-muted);
   font-size: var(--text-sm);
 }
+
+/* skills.hubs: one card per named hub, with a stacked HubConfig sub-form. */
+.settings-hubs-field__items {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.settings-hubs-field__item {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+  padding: 0.875rem;
+  border: 1px solid var(--border);
+  border-radius: 0.5rem;
+  background: var(--bg-secondary);
+}
+
+.settings-hubs-field__head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.settings-hubs-field__head .settings-field__input {
+  flex: 1 1 10rem;
+  min-width: 0;
+}
+
+.settings-hub-fields {
+  display: flex;
+  flex-direction: column;
+  gap: 0.625rem;
+}

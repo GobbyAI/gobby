@@ -282,6 +282,41 @@ export function NumberListConfigField({
   )
 }
 
+/**
+ * A `dict[str, number]` config row: a key/value map whose every value is a
+ * number (the audit's `map<number>` "fix" rows, e.g. the MCP proxy
+ * `tool_timeouts`). Reads coerce the outer object through `asMap` and each
+ * value through `asNumber`; a freshly added entry seeds to 0.
+ */
+export function NumberMapConfigField({
+  fields,
+  path,
+  label,
+  ariaLabel,
+  addLabel,
+  keyPlaceholder,
+}: ConfigFieldBase & { addLabel?: string; keyPlaceholder?: string }) {
+  return (
+    <KeyValueMapField<number>
+      label={label}
+      ariaLabel={ariaLabel}
+      value={asMap<number>(fields.getValue(path))}
+      addLabel={addLabel}
+      keyPlaceholder={keyPlaceholder}
+      createValue={() => 0}
+      renderValue={(value, onValueChange, key) => (
+        <NumberField
+          label=""
+          ariaLabel={`${ariaLabel} ${key || 'new entry'} value`}
+          value={asNumber(value)}
+          onChange={(next) => onValueChange(next ?? 0)}
+        />
+      )}
+      onChange={(value) => fields.setValue(path, value)}
+    />
+  )
+}
+
 /** A list-of-strings config row. */
 export function StringListConfigField({
   fields,
