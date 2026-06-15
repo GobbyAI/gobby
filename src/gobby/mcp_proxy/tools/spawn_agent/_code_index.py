@@ -10,7 +10,7 @@ from gobby.agents.isolation import ensure_isolation_code_index
 
 logger = logging.getLogger(__name__)
 
-_PLANNING_CODE_INDEX_AGENTS = frozenset({"planner", "plan-adversary"})
+_PLANNING_CODE_INDEX_AGENTS = frozenset({"planner", "plan-adversary", "plan-enhancer"})
 
 
 @dataclass(frozen=True)

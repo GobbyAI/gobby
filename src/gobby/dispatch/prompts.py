@@ -236,6 +236,35 @@ def _merge_runner(task: object, context: Mapping[str, object]) -> str:
     )
 
 
+def _plan_enhancer(task: object, context: Mapping[str, object]) -> str:
+    base = _prompt(
+        task,
+        context,
+        role="Enhance the plan",
+        contract="plan-enhancer.yaml agent",
+    )
+    round_number = _context_value(context, "round_number")
+    if round_number:
+        max_rounds = _context_value(context, "max_enhancement_rounds")
+        of_clause = f" of at most {max_rounds}" if max_rounds else ""
+        round_line = (
+            f"\nThis is enhancement round {round_number}{of_clause}; "
+            f"record it with round_number={round_number}."
+        )
+    else:
+        round_line = ""
+    plan_file_path = _artifact_value(context, "plan_file_path")
+    plan_file_line = (
+        f"\nUse plan_file_path as the exact plan artifact path to read: {plan_file_path}."
+        if plan_file_path
+        else ""
+    )
+    return (
+        f"{base}{round_line}{plan_file_line}\nProduce ranked Better/Bigger suggestions only; "
+        "never approve, reject, edit the plan, or write the manifest."
+    )
+
+
 def _default(task: object, context: Mapping[str, object]) -> str:
     return _prompt(
         task,
@@ -260,6 +289,8 @@ PROMPT_BUILDERS: dict[str, PromptBuilder] = {
     "merge-worker": _merge_runner,
     "plan-adversary": _plan_adversary,
     "plan-adversary-taskless": _plan_adversary,
+    "plan-enhancer": _plan_enhancer,
+    "plan-enhancer-taskless": _plan_enhancer,
     "plan-reviewer": _plan_adversary,
     "planner": _planner,
     "product-manager": _product_manager,

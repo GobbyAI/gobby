@@ -36,11 +36,54 @@ def test_dispatch_prompt_builder_keys_present() -> None:
         "merge-orchestrator",
         "plan-adversary",
         "plan-adversary-taskless",
+        "plan-enhancer",
+        "plan-enhancer-taskless",
         "planner",
         "product-manager",
         "qa-reviewer",
         "researcher",
     } <= set(PROMPT_BUILDERS)
+
+
+def test_plan_enhancer_prompt_builder_renders_round_and_plan_path() -> None:
+    from types import SimpleNamespace
+
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    builder = PROMPT_BUILDERS["plan-enhancer"]
+    task = SimpleNamespace(ref="#42", title="Ship the widget")
+    artifacts = SimpleNamespace(plan_file_path=".gobby/plans/widget.md")
+    prompt = builder(
+        task,
+        {
+            "artifacts": artifacts,
+            "round_number": 2,
+            "max_enhancement_rounds": 3,
+        },
+    )
+
+    assert "Enhance the plan" in prompt
+    assert "round 2" in prompt
+    assert "of at most 3" in prompt
+    assert "round_number=2" in prompt
+    assert ".gobby/plans/widget.md" in prompt
+    # The enhancer is advisory: it must never be told to gate or edit the plan.
+    assert "never approve, reject, edit the plan, or write the manifest" in prompt
+
+
+def test_plan_enhancer_taskless_shares_builder_and_omits_round_when_absent() -> None:
+    from types import SimpleNamespace
+
+    from gobby.dispatch.prompts import PROMPT_BUILDERS
+
+    assert PROMPT_BUILDERS["plan-enhancer-taskless"] is PROMPT_BUILDERS["plan-enhancer"]
+
+    builder = PROMPT_BUILDERS["plan-enhancer-taskless"]
+    task = SimpleNamespace(ref="#7", title="Thin draft")
+    prompt = builder(task, {"reason": "stage"})
+
+    assert "Enhance the plan" in prompt
+    assert "enhancement round" not in prompt
 
 
 def test_qa_reviewer_prompt_builder_registered() -> None:

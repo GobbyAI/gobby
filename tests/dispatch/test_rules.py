@@ -849,6 +849,7 @@ def test_base_rules_order_excludes_merge_rule() -> None:
         "architecture_rule",
         "prd_rule",
         "planning_work_rule",
+        "planning_enhancement_rule",
         "planning_review_rule",
         "planning_advance_rule",
         "expansion_work_rule",
@@ -871,7 +872,7 @@ def test_final_rules_is_base_rules_plus_merge_rule_at_final_position() -> None:
     from gobby.dispatch.rules import BASE_RULES, RULES, merge_rule
 
     assert RULES == [*BASE_RULES, merge_rule]
-    assert len(RULES) == 28
+    assert len(RULES) == 29
     assert RULES[-1] is merge_rule
 
 

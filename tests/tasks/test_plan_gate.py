@@ -1,9 +1,9 @@
 """Tests for the spawn-time plan validation gate.
 
-Specifically: ``planner`` and ``plan-adversary`` spawns refuse to start when
-the task's ``plan_file_path`` artifact fails the Plan-Coverage Contract
-validator. Other agents pass through, and the gate is a no-op when no plan
-artifact is recorded.
+Specifically: ``planner``, ``plan-adversary``, and ``plan-enhancer`` spawns
+refuse to start when the task's ``plan_file_path`` artifact fails the
+Plan-Coverage Contract validator. Other agents pass through, and the gate is a
+no-op when no plan artifact is recorded.
 """
 
 from __future__ import annotations
@@ -144,7 +144,22 @@ def _make_task_manager_with_artifact(plan_file_path: str | None) -> MagicMock:
 
 
 def test_planning_agents_constant() -> None:
-    assert PLANNING_AGENTS == frozenset({"planner", "plan-adversary"})
+    assert PLANNING_AGENTS == frozenset({"planner", "plan-adversary", "plan-enhancer"})
+
+
+def test_plan_enhancer_spawn_against_malformed_plan_returns_structured_failure(
+    tmp_path: Path,
+) -> None:
+    plan = _write_broken_plan(tmp_path / "broken.md")
+    manager = _make_task_manager_with_artifact(str(plan))
+
+    result = validate_plan_for_agent_spawn(
+        agent_name="plan-enhancer", task_id="t1", task_manager=manager
+    )
+
+    assert result is not None
+    assert result["success"] is False
+    assert "PlanValidationError" in result["error"]
 
 
 def test_non_planning_agent_passes_through() -> None:

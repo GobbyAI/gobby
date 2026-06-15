@@ -22,7 +22,7 @@ logger = logging.getLogger(__name__)
 
 # Agent names whose spawn must be gated by plan validation. Centralized so the
 # spawn pipeline and tests share one source of truth.
-PLANNING_AGENTS = frozenset({"planner", "plan-adversary"})
+PLANNING_AGENTS = frozenset({"planner", "plan-adversary", "plan-enhancer"})
 
 
 def validate_plan_for_agent_spawn(
@@ -34,8 +34,9 @@ def validate_plan_for_agent_spawn(
     """Validate a planning agent's plan artifact before spawn.
 
     Args:
-        agent_name: The agent definition name being spawned. Only ``planner``
-            and ``plan-adversary`` trigger the gate; other agents pass through.
+        agent_name: The agent definition name being spawned. Only ``planner``,
+            ``plan-adversary``, and ``plan-enhancer`` trigger the gate; other
+            agents pass through.
         task_id: The task the agent will work against. Without a task there is
             nothing to look up a plan artifact from, so the gate no-ops.
         task_manager: ``LocalTaskManager`` used to fetch task artifacts.

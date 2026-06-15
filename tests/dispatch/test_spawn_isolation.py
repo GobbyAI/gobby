@@ -63,6 +63,20 @@ def test_taskless_plan_adversary_forces_none_isolation() -> None:
     assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
 
 
+def test_taskless_plan_enhancer_forces_none_isolation() -> None:
+    action = SpawnAgentAction(
+        task_id="task-1",
+        task_ref="#1",
+        agent_slug="plan-enhancer-taskless",
+        prompt="go",
+        initial_variables={"stage_name": "planning"},
+    )
+    task = SimpleNamespace(isolation="worktree")
+    agent_body = SimpleNamespace(isolation="clone")
+
+    assert _effective_spawn_isolation(task=task, action=action, agent_body=agent_body) == "none"
+
+
 class RaisingInitialVariables(dict[str, object]):
     def get(self, _key: object, _default: object = None) -> object:
         raise AssertionError("main-context isolation should bypass stage lookup")

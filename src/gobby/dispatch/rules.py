@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable, Sequence
 from typing import Any, cast
 
+from gobby.dispatch._planning_enhancement import planning_enhancement_rule
 from gobby.dispatch.actions import (
     Action,
     AdvanceStageAction,
@@ -480,6 +481,7 @@ BASE_RULES: list[Rule] = [
     architecture_rule,
     prd_rule,
     planning_work_rule,
+    planning_enhancement_rule,
     planning_review_rule,
     planning_advance_rule,
     expansion_work_rule,
@@ -936,6 +938,7 @@ __all__ = [
     "is_child_parked",
     "merge_rule",
     "planning_advance_rule",
+    "planning_enhancement_rule",
     "planning_review_rule",
     "planning_work_rule",
     "pr_advance_rule",

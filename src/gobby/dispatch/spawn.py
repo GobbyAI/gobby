@@ -42,9 +42,11 @@ _PRE_DEVELOPMENT_ISOLATION_STAGES = {
     "expansion",
 }
 _DEVELOPMENT_FORWARD_ISOLATION_STAGES = {"development", "holistic_qa", "pr", "merge"}
-# Taskless plan review coordinates the caller's current plan workflow and has no
-# build task isolation to inherit.
-_TASKLESS_MAIN_CONTEXT_AGENT_SLUGS = frozenset({"plan-adversary-taskless"})
+# Taskless plan review and enhancement coordinate the caller's current plan
+# workflow and have no build task isolation to inherit.
+_TASKLESS_MAIN_CONTEXT_AGENT_SLUGS = frozenset(
+    {"plan-adversary-taskless", "plan-enhancer-taskless"}
+)
 
 SpawnIsolation = Literal["none", "worktree", "clone"]
 
