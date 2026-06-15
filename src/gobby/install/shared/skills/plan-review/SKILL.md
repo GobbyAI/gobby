@@ -227,6 +227,60 @@ These are contract-level and fail-fast. Flag any of them as `blocking`:
 
 ---
 
+## Proportionality (Over-Engineering) Check
+
+The checks above surface what the plan *omits* (missing requirements, edge
+cases, weak tests) and what it puts *out of scope* (traceability). You must also
+check the **opposite** failure: a deliverable that builds **more mechanism than
+its goal justifies** — a Rube Goldberg machine. This is the `over-engineering`
+finding category, and it closes the gap where plan-review historically caught
+under-built plans but never over-built ones.
+
+The adversary agent loads the shared **`proportionality`** skill alongside this
+one (`get_skill(name="proportionality")`). That skill is the single source of
+truth for the criterion; apply it here at **plan altitude**, where the unit
+under review is a **deliverable section**.
+
+**Criterion — justification, not minimization.** You are not asking "is this the
+smallest possible plan?" Ambition, size, and large or complex epics are **never
+findings on their own** — do not punish reach. Flag only machinery with **no
+concrete consumer or stated requirement anywhere in the plan**:
+
+- a deliverable that builds a subsystem, registry, service, factory, framework,
+  or abstraction layer for a caller that does not exist in this plan;
+- config fields, flags, profile knobs, or env settings introduced with exactly
+  one value and no second consumer named;
+- indirection (wrappers, adapters, event hops) that adds call depth without
+  adding a capability, boundary, or testability anyone in the plan needs;
+- a new dependency where an existing Gobby utility already covers every case.
+
+Apply the justification test per deliverable: is there a concrete consumer in
+*this* plan? is the simplest direct approach provably insufficient? does intent
+reach effect in ≤2–3 indirection hops? is it explainable without "we might
+later…"? Any "no" → emit an `over-engineering` finding and **name the simpler
+form explicitly** ("replace the `FooRegistry` with a module-level dict", "drop
+the `enable_x` flag and inline the behavior"). A finding that does not name the
+simpler alternative is incomplete.
+
+**Severity:**
+
+- `blocking` for a **structural** Rube Goldberg — a speculative subsystem,
+  framework, or abstraction the rest of the plan would build on. Simplify these
+  **before expansion**, because every downstream leaf inherits the over-built
+  shape.
+- `nit` for **ceremony** — a one-off knob, a single redundant wrapper, mild
+  gold-plating that is cheap to simplify in place and does not distort the rest
+  of the plan.
+
+**Do not over-flag.** A false over-engineering finding discourages legitimate
+ambition, which is the harm to avoid. A large-but-justified epic where every
+deliverable names its consumer produces **zero** proportionality findings.
+Justified complexity — error handling for real failure modes, structure a stated
+requirement demands, extensibility with a named future consumer — is retained,
+never flagged. When justification is plausible, do not flag.
+
+---
+
 ## Manifest Emission on Approval
 
 `## M1 Task Manifest` is the typed bridge between deliverable sections and the
@@ -323,6 +377,7 @@ Each finding is a fenced block (or bullet entry) with these fields:
   - `unhandled-edge`
   - `weak-testability`
   - `traceability`
+  - `over-engineering`
   - `gobby-format`
 - **location** — phase/task reference (e.g., `Phase 2 / § 2.3` or `Phase header`)
 - **description** — one short paragraph; what is wrong or missing.
@@ -345,6 +400,17 @@ retry / bail-out policy and the surfacing of the failure to the caller.
 
 `## Phase 3 — Wire-up` is not a canonical expansion phase heading. The
 canonical form is `## P3: Wire-up`. Update before approval.
+
+### F3 — blocking — over-engineering — Phase 1 / § 1.2
+
+§ 1.2 introduces a `PlanEnhancerStrategyRegistry` with one registered strategy
+and no second strategy named anywhere in the plan. The registry adds two
+indirection hops (lookup + dispatch) with no consumer that needs them — mechanism
+disproportionate to a single-strategy goal.
+
+**Suggested fix:** delete the registry and call the one strategy directly as a
+module-level function; reintroduce a registry only when a second strategy is
+actually planned.
 ```
 
 ---

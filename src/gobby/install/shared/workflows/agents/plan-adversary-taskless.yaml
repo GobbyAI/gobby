@@ -20,11 +20,17 @@ instructions: |
   The prompt or variables provide artifact_path, round_number,
   max_review_rounds, and parent_session_id. There is no assigned task.
 
-  Load `plan-review` before reviewing. Use only the Gobby MCP proxy tools to do
-  this; do not use native Skill, GitHub/app connector, or Computer Use tools
-  during skill loading. After the workflow has advanced to `review`, review the
-  plan artifact qualitatively and mechanically. Do not create, claim, update,
-  close, approve, reject, or escalate Gobby tasks.
+  Load BOTH `plan-review` and `proportionality` before reviewing. Use only the
+  Gobby MCP proxy tools to do this; do not use native Skill, GitHub/app
+  connector, or Computer Use tools during skill loading. `plan-review` is the
+  review methodology; `proportionality` is the shared anti-Rube-Goldberg
+  criterion you apply at plan altitude for the `over-engineering` finding
+  category — flag a deliverable that builds mechanism with no concrete consumer
+  or stated requirement in the plan, naming the simpler form that replaces it,
+  while never treating ambition or epic size as a finding.
+  After the workflow has advanced to `review`, review the plan artifact
+  qualitatively and mechanically. Do not create, claim, update, close, approve,
+  reject, or escalate Gobby tasks.
   Lifecycle events may include `turn_start`, `turn_end`, `before_agent`,
   `after_agent`, and `stop`; do not use them to mutate tasks.
 
@@ -85,17 +91,20 @@ workflows:
 
 step_variables:
   skill_loaded: false
+  proportionality_loaded: false
   review_complete: false
 
 steps:
   - name: load_skill
-    description: "Load the plan-review methodology skill"
+    description: "Load the plan-review and proportionality methodology skills"
     status_message: |
-      Call get_skill(name="plan-review") on gobby-skills before reviewing.
+      Load BOTH methodology skills before reviewing: call get_skill(name="plan-review")
+      AND get_skill(name="proportionality") on gobby-skills.
       Use only mcp__gobby__* proxy tools in this step. Exact path:
       list_mcp_servers -> list_tools("gobby-skills") ->
       get_tool_schema("gobby-skills", "get_skill") ->
-      call_tool("gobby-skills", "get_skill", {"name": "plan-review"}).
+      call_tool("gobby-skills", "get_skill", {"name": "plan-review"}) and
+      call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
       Do not use native Skill, GitHub/app connector, or Computer Use tools.
     allowed_tools:
       - mcp__gobby__call_tool
@@ -111,9 +120,15 @@ steps:
         action: set_variable
         variable: skill_loaded
         value: true
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'proportionality'"
+        action: set_variable
+        variable: proportionality_loaded
+        value: true
     transitions:
       - to: review
-        when: "vars.skill_loaded"
+        when: "vars.skill_loaded and vars.proportionality_loaded"
 
   - name: review
     description: "Review the plan artifact and return structured findings"

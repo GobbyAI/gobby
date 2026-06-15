@@ -85,6 +85,48 @@ class TestAdversarySkillLoading:
         transitions = load_step.transitions or []
         assert any(t.to == "review" and t.when and "skill_loaded" in t.when for t in transitions)
 
+    def test_load_skill_step_also_targets_proportionality(self, agent: AgentDefinitionBody) -> None:
+        # Plan-altitude proportionality (anti-Rube-Goldberg) is loaded alongside
+        # plan-review so the over-engineering finding category has its shared
+        # criterion available.
+        load_step = find_step(agent.steps or [], "load_skill")
+        assert load_step is not None
+        assert load_step.status_message is not None
+        assert "proportionality" in load_step.status_message
+        assert (
+            'call_tool("gobby-skills", "get_skill", {"name": "proportionality"})'
+            in load_step.status_message
+        )
+
+    def test_load_skill_sets_proportionality_loaded_variable(
+        self, agent: AgentDefinitionBody
+    ) -> None:
+        # The load_skill step must set proportionality_loaded (alongside the
+        # existing skill_loaded) from a gobby-skills:get_skill success, so the
+        # transition can gate on both skills being loaded.
+        load_step = find_step(agent.steps or [], "load_skill")
+        assert load_step is not None
+        mcp_success = getattr(load_step, "on_mcp_success", []) or []
+        get_skill_variables = {
+            _field(entry, "variable")
+            for entry in mcp_success
+            if _field(entry, "server") == "gobby-skills" and _field(entry, "tool") == "get_skill"
+        }
+        assert "proportionality_loaded" in get_skill_variables
+        assert "skill_loaded" in get_skill_variables
+
+    def test_transition_gates_on_both_skills_loaded(self, agent: AgentDefinitionBody) -> None:
+        load_step = find_step(agent.steps or [], "load_skill")
+        assert load_step is not None
+        transitions = load_step.transitions or []
+        assert any(
+            t.to == "review"
+            and t.when
+            and "skill_loaded" in t.when
+            and "proportionality_loaded" in t.when
+            for t in transitions
+        )
+
     def test_claim_step_uses_normal_delegated_claim(self, agent: AgentDefinitionBody) -> None:
         claim_step = find_step(agent.steps or [], "claim")
         assert claim_step is not None
@@ -121,6 +163,15 @@ class TestAdversaryInstructionsPreserveContracts:
         assert "GitHub/app connector" in instructions
         assert "Computer Use tools" in instructions
         assert "After `plan-review` is loaded" in instructions
+
+    def test_instructions_reference_proportionality(self, agent: AgentDefinitionBody) -> None:
+        instructions = agent.instructions or ""
+        assert "proportionality" in instructions
+        assert 'get_skill(name="proportionality")' in instructions
+        # The over-engineering criterion must name the simpler form and never
+        # treat ambition/size as a finding.
+        assert "over-engineering" in instructions
+        assert "simpler form" in instructions
 
     def test_review_rejection_and_requirements_contracts_preserved(
         self, agent: AgentDefinitionBody

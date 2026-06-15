@@ -61,6 +61,33 @@ def test_taskless_adversary_loads_plan_review_and_reports_structured_result() ->
     assert "gobby-agents:end_agent_run" in steps["review"]["allowed_mcp_tools"]
 
 
+def test_taskless_adversary_loads_proportionality() -> None:
+    # Plan-altitude proportionality (anti-Rube-Goldberg) is loaded alongside
+    # plan-review so the taskless interactive adversary applies the same
+    # over-engineering criterion as the stage-native agent.
+    agent = _agent()
+    steps = {step["name"]: step for step in agent["steps"]}
+
+    status = steps["load_skill"]["status_message"]
+    assert "proportionality" in status
+    assert 'call_tool("gobby-skills", "get_skill", {"name": "proportionality"})' in status
+
+    load_success = steps["load_skill"]["on_mcp_success"]
+    variables = {entry.get("variable") for entry in load_success}
+    assert "skill_loaded" in variables
+    assert "proportionality_loaded" in variables
+
+    transition_whens = " ".join(
+        t.get("when", "") for t in steps["load_skill"].get("transitions", [])
+    )
+    assert "proportionality_loaded" in transition_whens
+
+    instructions = agent["instructions"]
+    assert "proportionality" in instructions
+    assert "over-engineering" in instructions
+    assert "simpler form" in instructions
+
+
 def test_taskless_adversary_review_step_allows_send_message_to_parent() -> None:
     """Regression for #15100.
 

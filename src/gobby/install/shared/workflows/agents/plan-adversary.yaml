@@ -31,13 +31,19 @@ instructions: |
   record and transfers the claim only for that assigned task.
 
   METHODOLOGY:
-  After claiming your task, your first action MUST be to load the `plan-review`
-  skill. Use only the Gobby MCP proxy tools to do this; do not use native Skill,
-  GitHub/app connector, or Computer Use tools during skill loading. Call
-  get_skill(name="plan-review") on gobby-skills, then continue. Follow that skill's
-  heuristics EXACTLY — attitude, method, traceability, gobby-specific
-  checks, severity-based escalation policy, round-scoped findings heading, and
-  halt conditions. Do not manufacture findings. Do not approve without a
+  After claiming your task, your first action MUST be to load BOTH methodology
+  skills: `plan-review` and `proportionality`. Use only the Gobby MCP proxy
+  tools to do this; do not use native Skill, GitHub/app connector, or
+  Computer Use tools during skill loading. Call get_skill(name="plan-review")
+  and get_skill(name="proportionality") on gobby-skills, then continue. Follow
+  `plan-review`'s heuristics EXACTLY — attitude, method, traceability,
+  gobby-specific checks, the over-engineering (proportionality) check,
+  severity-based escalation policy, round-scoped findings heading, and halt
+  conditions. `proportionality` is the shared anti-Rube-Goldberg criterion you
+  apply at plan altitude: flag a deliverable that builds mechanism with no
+  concrete consumer or stated requirement in the plan, and always name the
+  simpler form that should replace it. Ambition and epic size are never
+  findings on their own. Do not manufacture findings. Do not approve without a
   re-check pass.
 
   PLAN-COVERAGE CONTRACT GATE:
@@ -174,6 +180,7 @@ workflows:
 step_variables:
   task_claimed: false
   skill_loaded: false
+  proportionality_loaded: false
   review_complete: false
 
 steps:
@@ -210,16 +217,19 @@ steps:
         when: "vars.task_claimed"
 
   - name: load_skill
-    description: "Load the plan-review methodology skill"
+    description: "Load the plan-review and proportionality methodology skills"
     status_message: |
-      Call get_skill(name="plan-review") on gobby-skills, then continue before reviewing.
+      Load BOTH methodology skills before reviewing: call get_skill(name="plan-review")
+      AND get_skill(name="proportionality") on gobby-skills, then continue.
       Use only mcp__gobby__* proxy tools in this step. Exact path:
       list_mcp_servers -> list_tools("gobby-skills") ->
       get_tool_schema("gobby-skills", "get_skill") ->
-      call_tool("gobby-skills", "get_skill", {"name": "plan-review"}).
+      call_tool("gobby-skills", "get_skill", {"name": "plan-review"}) and
+      call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
       Do not use native Skill, GitHub/app connector, or Computer Use tools.
-      The returned skill content is the authoritative methodology for this
-      agent and must be followed exactly.
+      Both returned skills are authoritative: `plan-review` is the review
+      methodology, `proportionality` is the shared anti-Rube-Goldberg criterion
+      backing the over-engineering finding category. Follow both exactly.
     allowed_tools:
       - mcp__gobby__call_tool
       - mcp__gobby__list_mcp_servers
@@ -234,9 +244,15 @@ steps:
         action: set_variable
         variable: skill_loaded
         value: true
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'proportionality'"
+        action: set_variable
+        variable: proportionality_loaded
+        value: true
     transitions:
       - to: review
-        when: "vars.skill_loaded"
+        when: "vars.skill_loaded and vars.proportionality_loaded"
 
   - name: review
     description: "Review the implementation plan and decide"
