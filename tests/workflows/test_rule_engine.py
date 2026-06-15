@@ -168,6 +168,25 @@ class TestRuleEngineLoadRules:
 
 
 class TestBlockEffect:
+    def test_block_effect_accepts_acknowledge_variable(self) -> None:
+        effect = RuleEffect(
+            type="block",
+            reason="blocked",
+            acknowledge_variable="context7_nudge_fired",
+        )
+
+        assert effect.acknowledge_variable == "context7_nudge_fired"
+        assert effect.model_dump()["acknowledge_variable"] == "context7_nudge_fired"
+
+    def test_acknowledge_variable_warns_on_non_block_effect(self) -> None:
+        with pytest.warns(UserWarning, match="acknowledge_variable"):
+            RuleEffect(
+                type="set_variable",
+                variable="flag",
+                value=True,
+                acknowledge_variable="flag",
+            )
+
     @pytest.mark.asyncio
     async def test_block_returns_deny(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager

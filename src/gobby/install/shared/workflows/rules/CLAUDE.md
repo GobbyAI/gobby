@@ -20,7 +20,7 @@ This directory contains bundled rule groups. These are **templates** — they ar
 | `error-recovery` | `error-recovery/` | 1 | Inject recovery guidance after tool failures |
 | `tdd-enforcement` | `tdd-enforcement/` | 2 | TDD one-shot Write nudge, track test file writes |
 | `skill-discovery` | `skill-discovery/` | 3 | Require language skills on first file write, reset loading tracking on context loss |
-| `context7` | `context7/` | 1 | Block first code file write/edit, require context7 docs skill |
+| `context7` | `context7/` | 1 | Block first code file write/edit with optional context7 docs nudge |
 | `deprecated/` | `deprecated/` | — | Old rules excluded from sync |
 
 ## File Convention

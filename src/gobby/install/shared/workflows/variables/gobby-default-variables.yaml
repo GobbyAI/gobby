@@ -96,6 +96,9 @@ variables:
   memory_nudge_fired:
     value: false
     description: "True after memory-capture-nudge has fired once this session"
+  context7_nudge_fired:
+    value: false
+    description: "True after block-and-teach-context7 has fired once this session"
   skill_discovery_instructions_shown:
     value: false
     description: "True after skill hub discovery instructions have been shown once this session"

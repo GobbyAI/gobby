@@ -44,6 +44,15 @@ class EvaluationContext:
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
 
 
+@dataclass(frozen=True)
+class BlockGate:
+    """Rendered block gate plus optional delivery acknowledgement metadata."""
+
+    rule_name: str
+    reason: str
+    acknowledge_variable: str | None = None
+
+
 class EvaluationMixin:
     """Mixin providing the RuleEngine evaluation loop and response assembly."""
 
@@ -217,8 +226,8 @@ class EvaluationMixin:
         evaluation: EvaluationContext,
         *,
         aggregate_blocks: bool,
-    ) -> list[tuple[str, str]]:
-        block_gates: list[tuple[str, str]] = []
+    ) -> list[BlockGate]:
+        block_gates: list[BlockGate] = []
 
         for row, body in rules:
             # Pre-filter: skip rule if tools field doesn't match current tool
@@ -258,15 +267,16 @@ class EvaluationMixin:
                     ):
                         continue
                     block_gates.append(
-                        (
-                            row.name,
-                            self._render_rule_block_reason(
+                        BlockGate(
+                            rule_name=row.name,
+                            reason=self._render_rule_block_reason(
                                 evaluation,
                                 row,
                                 effect,
                                 ctx,
                                 allowed_funcs,
                             ),
+                            acknowledge_variable=effect.acknowledge_variable,
                         )
                     )
                     break
@@ -321,7 +331,13 @@ class EvaluationMixin:
                         ctx,
                         allowed_funcs,
                     )
-                    block_gates.append((row.name, rendered_block_reason))
+                    block_gates.append(
+                        BlockGate(
+                            rule_name=row.name,
+                            reason=rendered_block_reason,
+                            acknowledge_variable=deferred_block.acknowledge_variable,
+                        )
+                    )
                     # Track the blocked tool so repeated retries can escalate,
                     # but do not mark this as a tool execution failure.
                     if evaluation.is_before_tool:
@@ -360,18 +376,18 @@ class EvaluationMixin:
         *,
         override_decision: str | None,
         override_reason: str | None,
-        block_gates: list[tuple[str, str]],
+        block_gates: list[BlockGate],
         include_rule_outputs: bool = True,
     ) -> HookResponse:
         block_reason: str | None = None
         if len(block_gates) > 1:
             block_reason = format_aggregated_block_reason(
-                block_gates,
+                [(gate.rule_name, gate.reason) for gate in block_gates],
                 tool_name=evaluation.block_tool_name,
             )
         elif block_gates:
-            rule_name, rendered_block_reason = block_gates[0]
-            block_reason = f"Rule enforced by Gobby: [{rule_name}]\n{rendered_block_reason}"
+            gate = block_gates[0]
+            block_reason = f"Rule enforced by Gobby: [{gate.rule_name}]\n{gate.reason}"
 
         ctx_str = "\n\n".join(evaluation.context_parts) if evaluation.context_parts else None
         meta = {"mcp_calls": evaluation.mcp_calls} if evaluation.mcp_calls else {}
@@ -443,6 +459,9 @@ class EvaluationMixin:
                 **response_kwargs,
             )
         if block_reason:
+            for gate in block_gates:
+                if gate.acknowledge_variable:
+                    evaluation.variables[gate.acknowledge_variable] = True
             return HookResponse(
                 decision="block",
                 reason=block_reason,

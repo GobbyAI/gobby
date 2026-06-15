@@ -124,6 +124,7 @@ class RuleEffect(BaseModel):
 
     # block — prevent the action
     reason: str | None = None
+    acknowledge_variable: str | None = None
     tools: list[str] | None = None
     mcp_tools: list[str] | None = None
     command_pattern: str | None = None
@@ -178,7 +179,7 @@ class RuleEffect(BaseModel):
 
         selector_fields = {"tools", "mcp_tools", "command_pattern", "command_not_pattern"}
         _fields_by_type: dict[str, set[str]] = {
-            "block": {"reason", *selector_fields},
+            "block": {"reason", "acknowledge_variable", *selector_fields},
             "set_variable": {"variable", "value"},
             "inject_context": {"template", *selector_fields},
             "mcp_call": {

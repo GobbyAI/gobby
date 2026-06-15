@@ -17,3 +17,6 @@ rules:
       - type: set_variable
         variable: memory_nudge_fired
         value: false
+      - type: set_variable
+        variable: context7_nudge_fired
+        value: false

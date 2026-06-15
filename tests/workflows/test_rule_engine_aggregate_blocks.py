@@ -183,6 +183,73 @@ class TestAggregateBlocks:
         )
 
     @pytest.mark.asyncio
+    async def test_aggregate_acknowledges_first_and_lookahead_block_gates(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "mandatory-gate",
+            [RuleEffect(type="block", reason="Load mandatory skill")],
+            priority=10,
+            when="not variables.get('mandatory_skill_loaded')",
+        )
+        _insert_rule(
+            manager,
+            "context7-gate",
+            [
+                RuleEffect(
+                    type="block",
+                    reason="Optional context7 nudge",
+                    acknowledge_variable="context7_nudge_fired",
+                )
+            ],
+            priority=20,
+            when="not variables.get('context7_nudge_fired')",
+        )
+        variables: dict[str, Any] = {}
+        engine = RuleEngine(db)
+
+        first = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+        variables["mandatory_skill_loaded"] = True
+        second = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+
+        assert first.reason == (
+            "Rule enforced by Gobby: [aggregated:2-gates]\n"
+            "Multiple gates blocked while retrying Edit.\n"
+            "1. [mandatory-gate] Load mandatory skill\n"
+            "2. [context7-gate] Optional context7 nudge"
+        )
+        assert variables["context7_nudge_fired"] is True
+        assert second.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_single_acknowledged_block_only_fires_once(
+        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
+    ) -> None:
+        _insert_rule(
+            manager,
+            "context7-gate",
+            [
+                RuleEffect(
+                    type="block",
+                    reason="Optional context7 nudge",
+                    acknowledge_variable="context7_nudge_fired",
+                )
+            ],
+            priority=10,
+            when="not variables.get('context7_nudge_fired')",
+        )
+        variables: dict[str, Any] = {}
+        engine = RuleEngine(db)
+
+        first = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+        second = await engine.evaluate(_make_event(), session_id="sess-1", variables=variables)
+
+        assert first.reason == "Rule enforced by Gobby: [context7-gate]\nOptional context7 nudge"
+        assert variables["context7_nudge_fired"] is True
+        assert second.decision == "allow"
+
+    @pytest.mark.asyncio
     async def test_repeated_identical_aggregate_uses_verbose_once(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
