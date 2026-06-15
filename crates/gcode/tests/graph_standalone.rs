@@ -253,6 +253,7 @@ fn graph_sync_file_classifies_missing_project_before_graph_access() {
 
 const LOCAL_IMPORT_PROJECT_ID: &str = "graph-standalone-local-import";
 const NO_PHANTOM_PROJECT_ID: &str = "graph-standalone-no-phantom";
+const GO_LOCAL_PROJECT_ID: &str = "graph-standalone-go-local";
 
 /// End-to-end check for the post-write local-import resolution (#790): indexing
 /// a two-file Python project must resolve the cross-file calls in `b.py` to the
@@ -369,6 +370,115 @@ fn index_resolves_cross_file_local_python_imports() {
         "recluster_project_entities",
         "caller",
         "after sync-file",
+    );
+}
+
+/// #792: a Go selector call `pkg.Fn()` into another local (same-module) package
+/// must resolve to the canonical symbol so `callers`/`blast-radius` include the
+/// caller. Go packages are directory-granular, so the target may live in any
+/// file of the package directory — here `Load` lives in `query.go`, not the
+/// eponymous `store.go`. Exercises the import path → package directory mapping
+/// across the index, rebuild, and sync-file projection paths.
+#[test]
+fn index_resolves_cross_package_local_go_calls() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-package Go local-call resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("pkg/store")).expect("create pkg/store");
+    fs::create_dir_all(project.path().join("cmd/app")).expect("create cmd/app");
+    fs::write(project.path().join("go.mod"), "module example.com/app\n").expect("write go.mod");
+    // Package `store` spans two files; the call target lives in the
+    // non-eponymous one to prove package-granular (directory) resolution.
+    fs::write(
+        project.path().join("pkg/store/store.go"),
+        "package store\n\ntype Record struct{}\n",
+    )
+    .expect("write store.go");
+    fs::write(
+        project.path().join("pkg/store/query.go"),
+        "package store\n\nfunc Load() {}\n",
+    )
+    .expect("write query.go");
+    fs::write(
+        project.path().join("cmd/app/main.go"),
+        "package main\n\nimport \"example.com/app/pkg/store\"\n\nfunc Run() {\n    store.Load()\n}\n",
+    )
+    .expect("write main.go");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": GO_LOCAL_PROJECT_ID,
+            "name": "graph-standalone-go-local",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, GO_LOCAL_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    // Canonical target id lives in the non-eponymous package file.
+    let load_id = required_symbol_id(&mut conn, GO_LOCAL_PROJECT_ID, "pkg/store/query.go", "Load");
+
+    // main.go's cross-package selector call resolved to the real indexed id
+    // even though `Load` is not in the package's eponymous file.
+    assert_eq!(
+        resolved_call_target(&mut conn, GO_LOCAL_PROJECT_ID, "cmd/app/main.go", "Load"),
+        Some(load_id.clone()),
+        "cross-package Go selector call did not resolve to the canonical symbol"
+    );
+    assert_eq!(
+        pending_local_import_count(&mut conn, GO_LOCAL_PROJECT_ID),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Projection path 1+2: rebuild from resolved PostgreSQL facts, then the
+    // cross-package caller must be reachable via callers and the target must be
+    // a real DEFINES-linked node (no phantom CALLS target).
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_caller_present(&env, project.path(), "Load", "Run", "after rebuild");
+
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, GO_LOCAL_PROJECT_ID),
+        0,
+        "no CALLS target may lack a DEFINES edge after rebuild"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, GO_LOCAL_PROJECT_ID, &load_id),
+        "the resolved Go target must be a defined, called CodeSymbol"
+    );
+
+    let blast = json_command(&env, project.path(), &["blast-radius", "Load"]);
+    assert!(
+        blast.get("center").is_some(),
+        "blast-radius should report a center: {blast}"
+    );
+
+    // Projection path 3: sync-file must recreate the same canonical edge.
+    let sync = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", "cmd/app/main.go"],
+    );
+    assert_success(sync, "graph sync-file cmd/app/main.go");
+    assert_caller_present(&env, project.path(), "Load", "Run", "after sync-file");
+    assert_eq!(
+        phantom_call_target_count(&mut graph, GO_LOCAL_PROJECT_ID),
+        0,
+        "sync-file must not introduce a phantom CALLS target"
     );
 }
 

@@ -91,7 +91,80 @@ func run() {
 }
 
 #[test]
-fn leaves_self_module_go_imports_unresolved() {
+fn resolves_self_module_go_selector_calls_to_local_package_files() {
+    let parsed = parse_go(
+        r#"
+package main
+
+import "example.com/app/pkg/tool"
+
+func run() {
+    tool.Run()
+}
+"#,
+        &[
+            ("go.mod", "module example.com/app\n"),
+            ("pkg/tool/tool.go", "package tool\n\nfunc Run() {}\n"),
+        ],
+    );
+
+    // The default package alias (last path segment `tool`) binds the selector
+    // call `tool.Run()` to the package directory's Go files; the post-write DB
+    // pass narrows it to the canonical `Run` symbol.
+    assert_rust_local_import!(&parsed, "Run", "pkg/tool/tool.go");
+}
+
+#[test]
+fn resolves_aliased_go_selector_calls_against_any_package_file() {
+    let parsed = parse_go(
+        r#"
+package main
+
+import svc "example.com/app/internal/service"
+
+func run() {
+    svc.Start()
+}
+"#,
+        &[
+            ("go.mod", "module example.com/app\n"),
+            (
+                "internal/service/service.go",
+                "package service\n\ntype Server struct{}\n",
+            ),
+            (
+                "internal/service/lifecycle.go",
+                "package service\n\nfunc Start() {}\n",
+            ),
+        ],
+    );
+
+    let call = parsed
+        .calls
+        .iter()
+        .find(|call| {
+            call.callee_target_kind.as_str() == "local_import" && call.callee_name == "Start"
+        })
+        .expect("local_import call for Start");
+    let candidates = call.local_import_candidate_files();
+    // Package-granular: the import alias binds the whole package directory, so
+    // the candidate set spans every Go file in it. The target `Start` lives in
+    // lifecycle.go, not the eponymous service.go, yet still resolves.
+    assert!(
+        candidates.contains(&"internal/service/lifecycle.go".to_string()),
+        "candidates {candidates:?} missing lifecycle.go"
+    );
+    assert!(
+        candidates.contains(&"internal/service/service.go".to_string()),
+        "candidates {candidates:?} missing service.go"
+    );
+}
+
+#[test]
+fn leaves_self_module_go_imports_without_package_files_unresolved() {
+    // A self-module import whose package directory has no indexed Go files
+    // produces no local binding, so the selector call degrades to unresolved
+    // rather than a guessed (phantom) target.
     let parsed = parse_go(
         r#"
 package main

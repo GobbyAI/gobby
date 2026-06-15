@@ -23,6 +23,11 @@ pub struct ImportResolutionContext {
     pub(super) js_external_packages: HashSet<String>,
     pub(super) js_self_package_name: Option<String>,
     pub(super) go_module_path: Option<String>,
+    /// Maps a project-relative package directory to the Go source files it
+    /// contains. A local selector call `pkg.Fn()` resolves `Fn` against any
+    /// file in the imported package's directory (Go packages are
+    /// directory-granular).
+    pub(super) go_package_files: HashMap<String, Vec<String>>,
     pub(super) rust_external_crates: HashSet<String>,
     pub(super) rust_self_crate_name: Option<String>,
     pub(super) java_local_classes: HashSet<String>,
@@ -79,6 +84,25 @@ impl ImportResolutionContext {
             candidate_files: rust_candidate_files(&target.source_root, &target.module),
             callee_name: target.name,
         })
+    }
+
+    /// Candidate target files for a local Go package `module` (a self-module
+    /// import path), found by mapping the import path to its package directory.
+    /// Go packages are directory-granular, so this returns every indexed Go
+    /// file in that directory; the post-write pass narrows to the real symbol.
+    /// Empty when `module` is external or names no indexed package directory.
+    pub(super) fn go_candidate_files(&self, module: &str) -> Vec<String> {
+        let Some(self_module) = self.go_module_path.as_deref() else {
+            return Vec::new();
+        };
+        let dir = if module == self_module {
+            String::new()
+        } else if let Some(rest) = module.strip_prefix(&format!("{self_module}/")) {
+            rest.to_string()
+        } else {
+            return Vec::new();
+        };
+        self.go_package_files.get(&dir).cloned().unwrap_or_default()
     }
 
     pub(super) fn ruby_require_root(&self, required: &str) -> Option<&str> {
@@ -233,6 +257,7 @@ pub fn build_import_resolution_context_with_overrides(
         js_external_packages: load_js_external_packages(root_path),
         js_self_package_name: load_js_self_package_name(root_path),
         go_module_path: load_go_module_path(root_path),
+        go_package_files: build_go_package_files(root_path, candidate_files),
         rust_external_crates: load_rust_external_crates(root_path),
         rust_self_crate_name: load_rust_self_crate_name(root_path),
         java_local_classes: build_java_local_class_index(candidate_files),
@@ -362,6 +387,40 @@ pub(super) fn load_go_module_path(root_path: &Path) -> Option<String> {
             .filter(|module| !module.is_empty())
             .map(ToOwned::to_owned)
     })
+}
+
+/// Index every discovered Go source file by its project-relative package
+/// directory. `go_candidate_files` consults this so a local selector call
+/// `pkg.Fn()` can resolve against any file in the imported package directory,
+/// matching Go's directory-granular package model.
+pub(super) fn build_go_package_files(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> HashMap<String, Vec<String>> {
+    let mut packages: HashMap<String, Vec<String>> = HashMap::new();
+    for path in candidate_files {
+        let ext = path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .unwrap_or_default();
+        if ext != "go" {
+            continue;
+        }
+        let Ok(rel) = path.strip_prefix(root_path) else {
+            continue;
+        };
+        let rel_str = rel.to_string_lossy().replace('\\', "/");
+        let dir = rel
+            .parent()
+            .map(|parent| parent.to_string_lossy().replace('\\', "/"))
+            .unwrap_or_default();
+        packages.entry(dir).or_default().push(rel_str);
+    }
+    for files in packages.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    packages
 }
 
 pub(super) fn load_rust_external_crates(root_path: &Path) -> HashSet<String> {

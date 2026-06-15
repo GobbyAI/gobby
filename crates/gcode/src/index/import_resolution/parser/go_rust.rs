@@ -58,11 +58,9 @@ fn parse_go_import_spec(
         module_name: module.clone(),
     });
 
-    if !is_external_go_module(&module, import_context) {
-        return;
-    }
-
     let alias = text[..text.find(['"', '`']).unwrap_or(0)].trim();
+    // `_` blank imports run init side effects only and `.` dot imports merge the
+    // package namespace; neither binds a selector alias we can resolve here.
     if matches!(alias, "_" | ".") {
         return;
     }
@@ -71,9 +69,30 @@ fn parse_go_import_spec(
     } else {
         alias.to_string()
     };
-    if !local_alias.is_empty() {
-        extracted.bindings.member.insert(local_alias, module);
+    if local_alias.is_empty() {
+        return;
     }
+
+    if is_external_go_module(&module, import_context) {
+        extracted.bindings.member.insert(local_alias, module);
+        return;
+    }
+
+    // Local (same-module) package import: bind the package alias to the
+    // package directory's Go files. A selector call `alias.Fn()` then resolves
+    // `Fn` against any file in that directory (Go packages are directory-
+    // granular). The post-write DB pass narrows the candidates to a real
+    // indexed symbol id, or degrades the call to unresolved.
+    let candidate_files = import_context.go_candidate_files(&module);
+    if candidate_files.is_empty() {
+        return;
+    }
+    extracted.bindings.bare.remove(&local_alias);
+    extracted.bindings.member.remove(&local_alias);
+    extracted
+        .bindings
+        .local_member
+        .insert(local_alias, candidate_files);
 }
 
 pub(crate) fn parse_rust_import_statement(
