@@ -169,6 +169,36 @@ class TestBuildHeuristicTitle:
         assert build_heuristic_title("[Request interrupted by user]") is None
         assert build_heuristic_title("[Request interrupted by user for tool use]") is None
 
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>\nProject rules.",
+            "\n".join(
+                [
+                    "<permissions instructions>",
+                    "Filesystem sandboxing defines which files can be read or written.",
+                    "</permissions instructions>",
+                    "<collaboration_mode>",
+                    "Known mode names are Default and Plan.",
+                    "</collaboration_mode>",
+                    "Gobby Session ID: #7404 (8a2d79bf-3f79-48aa-b516-f4bb97e0892f)",
+                    "",
+                    "## Instructions",
+                    "Use tools progressively.",
+                ]
+            ),
+            "<turn_aborted>The user interrupted the previous turn.</turn_aborted>",
+            "Message from Gobby daemon: New activity available.",
+            (
+                "Continue where you last left off. Before continuing, call "
+                '`gobby-sessions.wait_for_summary(session_id="s1")`. If it returns '
+                "`completed=false`, repeat the same wait call."
+            ),
+        ],
+    )
+    def test_returns_none_for_synthetic_bootstrap_prompts(self, prompt: str) -> None:
+        assert build_heuristic_title(prompt) is None
+
     def test_rejects_orchestration_boilerplate_without_h1(self) -> None:
         assert (
             build_heuristic_title(
@@ -232,6 +262,33 @@ class TestShouldUpdateDigestTitle:
             pass
 
         assert _should_update_digest_title(LegacySession()) is True
+
+    def test_provisional_title_is_replaceable(self) -> None:
+        session = MagicMock()
+        session.title = "#42 codex"
+        session.title_source = "provisional"
+
+        assert _should_update_digest_title(session) is True
+
+    @pytest.mark.parametrize(
+        ("title", "title_source", "expected"),
+        [
+            ("Manual Title", "manual", False),
+            ("Legacy Title", None, False),
+            ("", None, True),
+        ],
+    )
+    def test_manual_and_legacy_title_policy(
+        self,
+        title: str,
+        title_source: str | None,
+        expected: bool,
+    ) -> None:
+        session = MagicMock()
+        session.title = title
+        session.title_source = title_source
+
+        assert _should_update_digest_title(session) is expected
 
 
 class TestBootstrapSessionTitle:
@@ -384,6 +441,21 @@ class TestHeuristicTitleFromTranscript:
 
         title = await heuristic_title_from_transcript(str(transcript), "claude")
         assert title == "Investigate flaky digest titles"
+
+    @pytest.mark.asyncio
+    async def test_skips_synthetic_bootstrap_prompts(self, tmp_path: Path) -> None:
+        import json
+
+        transcript = tmp_path / "transcript.jsonl"
+        records = [
+            _claude_user_record("# AGENTS.md instructions for /repo\n\n<INSTRUCTIONS>", idx=1),
+            _claude_user_record("<turn_aborted>The user interrupted.</turn_aborted>", idx=2),
+            _claude_user_record("Fix the actual user request", idx=3),
+        ]
+        transcript.write_text("\n".join(json.dumps(r) for r in records))
+
+        title = await heuristic_title_from_transcript(str(transcript), "claude")
+        assert title == "Fix the actual user request"
 
     @pytest.mark.asyncio
     async def test_opening_prompt_wins_on_long_transcript(self, tmp_path: Path) -> None:
@@ -1056,6 +1128,34 @@ class TestBuildTurnAndDigest:
         mock_session_manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
+    async def test_replaces_provisional_title_with_digest_title(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """A provisional registration title is replaced by the first digest title."""
+        session = mock_session_manager.get.return_value
+        session.title = "#42 codex"
+        session.title_source = "provisional"
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text="Fix the authentication bug in auth.py",
+            llm_service=mock_llm_service,
+            config=_digest_config(),
+        )
+
+        assert result is not None
+        assert result["title"] == "Fix Auth Bug"
+        mock_session_manager.persist_digest_state.assert_called_once()
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title"] == "Fix Auth Bug"
+        assert mock_session_manager.persist_digest_state.call_args.kwargs["title_source"] == "llm"
+        mock_session_manager.update_title.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_updates_existing_llm_title_from_each_digest_turn(
         self,
         mock_memory_manager,
@@ -1381,6 +1481,47 @@ class TestBuildTurnAndDigestIdempotency:
         assert result is None
         mock_llm_service.call_feature.assert_not_called()
         mock_session_manager.update_title.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_synthesizes_provisional_title_from_existing_digest_when_duplicate(
+        self,
+        mock_memory_manager,
+        mock_session_manager,
+        mock_llm_service,
+    ):
+        """Duplicate digest input still replaces a provisional title."""
+        import hashlib
+
+        prompt = "Fix the bug"
+        expected_hash = hashlib.sha256(f"{prompt}||".encode()).hexdigest()[:16]
+        session = mock_session_manager.get.return_value
+        session.digest_markdown = "### Turn 1\nExisting digest"
+        session.last_digest_input_hash = expected_hash
+        session.title = "#42 codex"
+        session.title_source = "provisional"
+
+        mock_llm_service.call_feature = AsyncMock(return_value="Recovered Title")
+
+        result = await build_turn_and_digest(
+            memory_manager=mock_memory_manager,
+            session_manager=mock_session_manager,
+            session_id="session-123",
+            prompt_text=prompt,
+            llm_service=mock_llm_service,
+            config=_digest_config(),
+        )
+
+        assert result == {
+            "title": "Recovered Title",
+            "title_only": True,
+            "digest_length": len(session.digest_markdown),
+        }
+        mock_session_manager.update_title.assert_called_once_with(
+            "session-123",
+            "Recovered Title",
+            title_source="llm",
+        )
+        mock_session_manager.persist_digest_state.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_no_title_synthesis_when_no_digest_and_duplicate(

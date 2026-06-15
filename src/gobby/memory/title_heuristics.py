@@ -8,6 +8,8 @@ import re
 from pathlib import Path
 from typing import Any
 
+from gobby.memory.synthetic_prompts import synthetic_body_reason
+
 logger = logging.getLogger(__name__)
 
 LIFECYCLE_CMDS = ("/clear", "/exit", "/compact")
@@ -143,6 +145,8 @@ def build_heuristic_title(prompt_text: Any) -> str | None:
     if not raw_text.strip():
         return None
     if _is_control_marker(raw_text):
+        return None
+    if synthetic_body_reason(raw_text):
         return None
 
     cleaned = _TITLE_CODE_BLOCK_RE.sub(" ", raw_text)

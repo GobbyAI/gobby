@@ -13,6 +13,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.config.feature_base import FeatureProfile, default_candidates_for_profile
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.memory.synthetic_prompts import synthetic_prompt_reason
 from gobby.prompts.loader import PromptLoader
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -24,8 +25,6 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-WAKE_PROMPT_PREFIX = "Message from Gobby daemon: New activity available."
-SYSTEM_ACTIVITY_SOURCES = frozenset({"daemon", "system", "pipeline", "gobby_build", "build"})
 PARENT_USER_PROMPT_SOURCES = frozenset(
     {
         SessionSource.AGY,
@@ -36,49 +35,6 @@ PARENT_USER_PROMPT_SOURCES = frozenset(
         SessionSource.GROK,
         SessionSource.QWEN,
     }
-)
-SYNTHETIC_BOOLEAN_KEYS = frozenset({"synthetic", "_synthetic", "is_synthetic"})
-SYNTHETIC_METADATA_KEYS = frozenset(
-    {
-        "actor",
-        "kind",
-        "message_kind",
-        "origin",
-        "prompt_kind",
-        "prompt_origin",
-        "prompt_source",
-        "prompt_type",
-        "role",
-        "session_type",
-        "source",
-        "type",
-    }
-)
-SYNTHETIC_METADATA_VALUES = SYSTEM_ACTIVITY_SOURCES | frozenset(
-    {
-        "assistant",
-        "bootstrap",
-        "control",
-        "daemon_wake",
-        "developer",
-        "gobby",
-        "gobby_daemon",
-        "hook",
-        "internal",
-        "protocol",
-        "resume",
-        "system_protocol",
-        "tool",
-        "wait",
-        "workflow",
-    }
-)
-PROTOCOL_PROMPT_PREFIXES = (
-    "<codex_internal_context",
-    "<turn_aborted",
-    "<permissions instructions>",
-    "<collaboration_mode>",
-    "<environment_context>",
 )
 KEYWORD_PATTERN = re.compile(r"[A-Za-z][A-Za-z0-9_./:-]{2,}")
 KEYWORD_STOPWORDS = frozenset(
@@ -610,70 +566,7 @@ def _source_value(source: SessionSource | str) -> str:
 
 
 def _synthetic_prompt_reason(event: HookEvent, prompt: str) -> str | None:
-    for key in SYNTHETIC_BOOLEAN_KEYS:
-        if event.metadata.get(key) or event.data.get(key):
-            return f"metadata_{key}"
-
-    for key in SYNTHETIC_METADATA_KEYS:
-        value = event.metadata.get(key)
-        reason = _synthetic_metadata_reason(key, value)
-        if reason is not None:
-            return reason
-        value = event.data.get(key)
-        reason = _synthetic_metadata_reason(key, value)
-        if reason is not None:
-            return reason
-
-    return _synthetic_body_reason(prompt)
-
-
-def _synthetic_metadata_reason(key: str, value: Any) -> str | None:
-    if not isinstance(value, str):
-        return None
-    normalized = value.strip().lower()
-    if normalized in SYNTHETIC_METADATA_VALUES:
-        return f"metadata_{key}_{normalized}"
-    return None
-
-
-def _synthetic_body_reason(prompt: str) -> str | None:
-    stripped = prompt.strip()
-    lowered = stripped.lower()
-    if not stripped:
-        return "empty_prompt"
-    if stripped.startswith(WAKE_PROMPT_PREFIX) or stripped.startswith("Message from Gobby daemon:"):
-        return "daemon_wake_prompt"
-    if stripped.startswith("AGENTS.md instructions for ") or stripped.startswith(
-        "# AGENTS.md instructions for "
-    ):
-        return "agents_md_instructions"
-    if lowered.startswith(PROTOCOL_PROMPT_PREFIXES):
-        return "protocol_prompt"
-    if _looks_like_codex_bootstrap_prompt(stripped):
-        return "codex_bootstrap_prompt"
-    if _looks_like_wait_directive(stripped):
-        return "wait_directive"
-    return None
-
-
-def _looks_like_codex_bootstrap_prompt(prompt: str) -> bool:
-    return (
-        "<permissions instructions>" in prompt
-        and "<collaboration_mode>" in prompt
-        and "Gobby Session ID:" in prompt
-        and "## Instructions" in prompt
-    )
-
-
-def _looks_like_wait_directive(prompt: str) -> bool:
-    return (
-        prompt.startswith("Continue where you last left off.")
-        and "gobby-sessions.wait_for_summary" in prompt
-        and "`completed=false`" in prompt
-    ) or (
-        prompt.startswith("Task ")
-        and " has incomplete subtasks. Use suggest_next_task() and continue working." in prompt
-    )
+    return synthetic_prompt_reason(event.metadata, event.data, prompt)
 
 
 def _memory_to_payload(memory: Memory) -> dict[str, Any]:

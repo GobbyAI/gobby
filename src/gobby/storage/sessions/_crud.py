@@ -19,6 +19,7 @@ from gobby.storage.session_models import Session
 
 from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
+from ._title_defaults import PROVISIONAL_TITLE_SOURCE, format_provisional_session_title
 from ._upsert import is_session_unique_conflict, update_existing_session
 
 
@@ -156,6 +157,19 @@ class _SessionCRUDMixin:
                         existing = self.get(existing.id)
 
             if existing:
+                registration_title = title
+                registration_title_source = None
+                existing_seq_num = existing.seq_num
+                if (
+                    title is None
+                    and existing_seq_num is not None
+                    and not str(existing.title or "").strip()
+                ):
+                    registration_title = format_provisional_session_title(
+                        existing_seq_num,
+                        source,
+                    )
+                    registration_title_source = PROVISIONAL_TITLE_SOURCE
                 if existing.parent_session_id == existing.id:
                     repair_self_parent_session(conn, session_id=existing.id, now=now)
                 registration_parent_session_id = (
@@ -171,7 +185,8 @@ class _SessionCRUDMixin:
                     self,
                     conn,
                     existing,
-                    title=title,
+                    title=registration_title,
+                    title_source=registration_title_source,
                     transcript_path=transcript_path,
                     git_branch=git_branch,
                     parent_session_id=sanitized_parent_session_id,
@@ -207,6 +222,11 @@ class _SessionCRUDMixin:
                 )
 
                 try:
+                    insert_title = title
+                    insert_title_source = None
+                    if insert_title is None:
+                        insert_title = format_provisional_session_title(next_seq_num, source)
+                        insert_title_source = PROVISIONAL_TITLE_SOURCE
                     conn.execute(
                         """
                         INSERT INTO sessions (
@@ -217,7 +237,7 @@ class _SessionCRUDMixin:
                             status, created_at, updated_at, seq_num,
                             had_edits, message_count, turn_count, tool_call_count, last_assistant_content
                         )
-                        VALUES (%s, %s, %s, %s, %s, %s, NULL, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, FALSE, 0, 0, 0, NULL)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, 'active', %s, %s, %s, FALSE, 0, 0, 0, NULL)
                         """,
                         (
                             session_id,
@@ -225,7 +245,8 @@ class _SessionCRUDMixin:
                             machine_id,
                             source,
                             storage_project_id,
-                            title,
+                            insert_title,
+                            insert_title_source,
                             transcript_path,
                             git_branch,
                             sanitized_parent_session_id,
@@ -278,11 +299,25 @@ class _SessionCRUDMixin:
                         parent_session_id=parent_session_id,
                         context="session registration",
                     )
+                    registration_title = title
+                    registration_title_source = None
+                    conflicting_seq_num = conflicting.seq_num
+                    if (
+                        title is None
+                        and conflicting_seq_num is not None
+                        and not str(conflicting.title or "").strip()
+                    ):
+                        registration_title = format_provisional_session_title(
+                            conflicting_seq_num,
+                            source,
+                        )
+                        registration_title_source = PROVISIONAL_TITLE_SOURCE
                     session = update_existing_session(
                         self,
                         conn,
                         conflicting,
-                        title=title,
+                        title=registration_title,
+                        title_source=registration_title_source,
                         transcript_path=transcript_path,
                         git_branch=git_branch,
                         parent_session_id=sanitized_parent_session_id,

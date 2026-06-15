@@ -11,6 +11,7 @@ from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 from gobby.storage.sessions import _crud as session_crud
 from gobby.storage.sessions import _field_update as session_field_update
 from gobby.storage.sessions import _upsert as session_upsert
+from gobby.storage.sessions._title_defaults import PROVISIONAL_TITLE_SOURCE
 
 pytestmark = pytest.mark.unit
 
@@ -76,6 +77,7 @@ def test_update_existing_session_can_set_clear_or_preserve_is_local(
             conn,
             session,
             title=None,
+            title_source=None,
             transcript_path=None,
             git_branch=None,
             parent_session_id=None,
@@ -95,6 +97,7 @@ def test_update_existing_session_can_set_clear_or_preserve_is_local(
             conn,
             cleared,
             title=None,
+            title_source=None,
             transcript_path=None,
             git_branch=None,
             parent_session_id=None,
@@ -154,6 +157,7 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
         conn,
         session,
         title=None,
+        title_source=None,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -167,8 +171,8 @@ def test_update_existing_session_binds_is_local_as_booleans_for_postgres() -> No
 
     params = conn.calls[0][1]
 
-    assert params[6:9] == (True, True, True)
-    assert all(type(value) is bool for value in params[6:9])
+    assert params[7:10] == (True, True, True)
+    assert all(type(value) is bool for value in params[7:10])
 
 
 def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() -> None:
@@ -180,6 +184,7 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
         conn,
         session,
         title=None,
+        title_source=None,
         transcript_path=None,
         git_branch=None,
         parent_session_id=None,
@@ -193,9 +198,9 @@ def test_update_existing_session_preserve_is_local_uses_boolean_guard_param() ->
 
     params = conn.calls[0][1]
 
-    assert params[6:9] == (False, False, None)
-    assert type(params[6]) is bool
+    assert params[7:10] == (False, False, None)
     assert type(params[7]) is bool
+    assert type(params[8]) is bool
 
 
 class TestSessionManagerRegistration:
@@ -232,6 +237,95 @@ class TestSessionManagerRegistration:
         assert session.turn_count == 0
         assert session.tool_call_count == 0
         assert session.last_assistant_content is None
+
+    @pytest.mark.parametrize(
+        ("source", "provider_label"),
+        [
+            ("claude", "claude"),
+            ("codex", "codex"),
+            ("gemini", "gemini"),
+            ("grok", "grok"),
+            ("qwen", "qwen"),
+            ("droid", "droid"),
+            ("agy", "agy"),
+            ("pipeline", "pipeline"),
+            ("Custom Source!", "custom-source"),
+        ],
+    )
+    def test_register_without_title_uses_provisional_title(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        source: str,
+        provider_label: str,
+    ) -> None:
+        session = session_manager.register(
+            external_id=f"provisional-{provider_label}",
+            machine_id="machine",
+            source=source,
+            project_id=sample_project["id"],
+        )
+
+        assert session.title == f"#{session.seq_num} {provider_label}"
+        assert session.title_source == PROVISIONAL_TITLE_SOURCE
+
+    def test_register_with_explicit_title_does_not_mark_provisional(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="explicit-title",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            title="Caller Supplied Title",
+        )
+
+        assert session.title == "Caller Supplied Title"
+        assert session.title_source is None
+
+    def test_register_existing_blank_title_backfills_provisional_title(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.register(
+            external_id="blank-title",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+            title="",
+        )
+
+        updated = session_manager.register(
+            external_id="blank-title",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+
+        assert updated.id == session.id
+        assert updated.title == f"#{session.seq_num} codex"
+        assert updated.title_source == PROVISIONAL_TITLE_SOURCE
+
+    def test_create_web_chat_without_title_uses_provisional_title(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        session = session_manager.create_web_chat_session(
+            machine_id="machine",
+            project_id=sample_project["id"],
+            source="gemini",
+            model="gemini-pro",
+            sandbox_enabled=True,
+            sandbox_policy_hash="policy-hash-123",
+        )
+
+        assert session.session_type == "web_chat"
+        assert session.title == f"#{session.seq_num} gemini"
+        assert session.title_source == PROVISIONAL_TITLE_SOURCE
 
     def test_register_recreates_missing_system_parent_session(
         self,
@@ -523,25 +617,29 @@ class TestSessionManagerRegistration:
             title="Web chat",
             session_type="web_chat",
         )
-        session_manager.db.execute(
-            """
-            CREATE UNIQUE INDEX idx_sessions_unique_legacy_test
-            ON sessions(external_id, machine_id, source, project_id)
-            """
-        )
+        session_manager.db.execute("DROP INDEX IF EXISTS idx_sessions_unique_legacy_test")
+        try:
+            session_manager.db.execute(
+                """
+                CREATE UNIQUE INDEX idx_sessions_unique_legacy_test
+                ON sessions(external_id, machine_id, source, project_id)
+                """
+            )
 
-        recovered = session_manager.register(
-            external_id="runtime-key",
-            machine_id="machine-1",
-            source="codex",
-            project_id=sample_project["id"],
-            title="Recovered",
-            session_type="terminal",
-        )
+            recovered = session_manager.register(
+                external_id="runtime-key",
+                machine_id="machine-1",
+                source="codex",
+                project_id=sample_project["id"],
+                title="Recovered",
+                session_type="terminal",
+            )
 
-        assert recovered.id == created.id
-        assert recovered.session_type == "web_chat"
-        assert recovered.title == "Recovered"
+            assert recovered.id == created.id
+            assert recovered.session_type == "web_chat"
+            assert recovered.title == "Recovered"
+        finally:
+            session_manager.db.execute("DROP INDEX IF EXISTS idx_sessions_unique_legacy_test")
 
     def test_get_session(
         self,

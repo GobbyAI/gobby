@@ -353,7 +353,7 @@ def _should_update_digest_title(session: SessionTitlePolicy) -> bool:
         return False
     if not existing_title:
         return True
-    return title_source in {"heuristic", "llm"} or not title_source
+    return title_source in {"heuristic", "llm", "provisional"} or not title_source
 
 
 async def bootstrap_session_title(
@@ -684,7 +684,10 @@ async def build_turn_and_digest(
 
         title_source = str(getattr(session, "title_source", "") or "").strip().lower()
         needs_title_recovery = not bool(str(getattr(session, "title", "") or "").strip())
-        needs_title_recovery = needs_title_recovery or title_source == "heuristic"
+        needs_title_recovery = needs_title_recovery or title_source in {
+            "heuristic",
+            "provisional",
+        }
         existing_digest = getattr(session, "digest_markdown", None) or ""
 
         # 2. Resolve undigested pairs

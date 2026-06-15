@@ -108,6 +108,7 @@ def test_register_session_failure_returns_existing_canonical_session(
     assert session_mgr._session_metadata[canonical_id]["transcript_path"] == (
         "/tmp/resumed-codex.jsonl"
     )
+    assert session_mgr._session_metadata[canonical_id]["title"] == "#1 codex"
 
 
 def test_register_session_happy_path_populates_caches(
@@ -135,6 +136,26 @@ def test_register_session_happy_path_populates_caches(
         == session_id
     )
     assert session_mgr._session_metadata[session_id]["external_id"] == "storage-session"
+
+
+def test_register_session_happy_path_caches_persisted_provisional_title(
+    session_mgr: SessionManager,
+    project_id: str,
+) -> None:
+    session_id = session_mgr.register_session(
+        external_id="storage-provisional-session",
+        machine_id="machine-1",
+        source="codex",
+        project_id=project_id,
+        transcript_path="/tmp/storage-provisional-session.jsonl",
+    )
+
+    session = session_mgr.get(session_id)
+
+    assert session is not None
+    assert session.title == "#1 codex"
+    assert session.title_source == "provisional"
+    assert session_mgr._session_metadata[session_id]["title"] == session.title
 
 
 def test_register_existing_session_backfills_terminal_context(

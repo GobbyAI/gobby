@@ -34,6 +34,7 @@ def update_existing_session(
     existing: Session,
     *,
     title: str | None,
+    title_source: str | None,
     transcript_path: str | None,
     git_branch: str | None,
     parent_session_id: str | None,
@@ -48,6 +49,7 @@ def update_existing_session(
         """
         UPDATE sessions SET
             title = COALESCE(%s, title),
+            title_source = COALESCE(%s, title_source),
             transcript_path = COALESCE(%s, transcript_path),
             git_branch = COALESCE(%s, git_branch),
             parent_session_id = COALESCE(%s, parent_session_id),
@@ -65,6 +67,7 @@ def update_existing_session(
         """,
         (
             title,
+            title_source,
             transcript_path,
             git_branch,
             parent_session_id,

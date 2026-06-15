@@ -19,6 +19,7 @@ from ._query import _QueryMixin
 from ._registration_cache import _RegistrationCacheMixin
 from ._renumber import _RenumberMixin
 from ._terminal import _TerminalMixin
+from ._title_defaults import PROVISIONAL_TITLE_SOURCE
 from ._transcript import _TranscriptMixin
 from ._usage import _UsageMixin
 
@@ -55,7 +56,12 @@ class SessionManager(
     _session_metadata: dict[str, dict[str, Any]]
     _session_metadata_lock: threading.Lock
 
-    _VALID_TITLE_SOURCES: ClassVar[set[str]] = {"heuristic", "llm", "manual"}
+    _VALID_TITLE_SOURCES: ClassVar[set[str]] = {
+        "heuristic",
+        "llm",
+        "manual",
+        PROVISIONAL_TITLE_SOURCE,
+    }
 
     def __init__(
         self,
@@ -165,7 +171,7 @@ class SessionManager(
                 project_id=project_id,
                 parent_session_id=recovered.parent_session_id,
                 transcript_path=transcript_path,
-                title=title,
+                title=recovered.title,
                 git_branch=git_branch,
                 workflow_name=workflow_name,
                 agent_depth=agent_depth,
@@ -244,7 +250,7 @@ class SessionManager(
                 project_id=project_id,
                 parent_session_id=session.parent_session_id,
                 transcript_path=transcript_path,
-                title=title,
+                title=session.title,
                 git_branch=git_branch,
                 workflow_name=workflow_name,
                 agent_depth=agent_depth,
