@@ -9,6 +9,7 @@ use crate::ai_types::{AiError, VisionResult};
 use crate::config::{AiCapability, CapabilityBinding};
 
 const VISION_PROMPT: &str = "Describe the image and extract legible text. Return compact JSON with keys description and ocr_text. Use null for ocr_text when no text is visible.";
+const VISION_MAX_TOKENS: usize = 2_000;
 
 #[derive(Clone, Copy)]
 enum Section {
@@ -38,6 +39,7 @@ fn request_body(binding: &CapabilityBinding, bytes: Vec<u8>, mime: &str) -> Valu
     let encoded = base64::engine::general_purpose::STANDARD.encode(bytes);
     let data_uri = format!("data:{mime};base64,{encoded}");
     let mut body = json!({
+        "max_tokens": VISION_MAX_TOKENS,
         "messages": [{
             "role": "user",
             "content": [
@@ -204,6 +206,8 @@ mod tests {
         assert!(request.starts_with("POST /v1/chat/completions HTTP/1.1"));
         assert!(has_header(&request, "authorization", "Bearer vision-token"));
         assert_eq!(body["model"], "gpt-4.1-mini");
+        assert_eq!(body["max_tokens"], VISION_MAX_TOKENS);
+        assert!(body["max_tokens"].as_u64().unwrap() >= 1_500);
         assert_eq!(
             image_url["image_url"]["url"],
             "data:image/png;base64,aW1hZ2U="
