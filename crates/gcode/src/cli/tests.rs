@@ -73,6 +73,15 @@ fn parse_projection_lifecycle_commands() {
         }
     ));
 
+    let cli = Cli::try_parse_from(["gcode", "graph", "cleanup-orphans"])
+        .expect("graph cleanup-orphans parses");
+    assert!(matches!(
+        cli.command,
+        Command::Graph {
+            command: GraphCommand::CleanupOrphans
+        }
+    ));
+
     let cli = Cli::try_parse_from(["gcode", "graph", "report"]).expect("graph report parses");
     assert!(matches!(
         cli.command,

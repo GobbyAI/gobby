@@ -403,6 +403,8 @@ pub(crate) enum GraphCommand {
     },
     /// Rebuild the current project's code-index graph projection from PostgreSQL facts
     Rebuild,
+    /// Remove project-wide orphaned graph nodes (run periodically; not on every file sync)
+    CleanupOrphans,
     /// Generate a project graph report
     Report {
         /// Number of top hotspot and target rows to include

@@ -188,13 +188,19 @@ fn sync_file_graph(
         db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
         return Ok(GraphFileSyncOutcome::SkippedNoGraphFacts);
     }
+    // Per-file sync intentionally does NOT run project-wide orphan cleanup:
+    // `cleanup_orphans` performs O(project graph size) anti-join sweeps that are
+    // unbounded relative to this one file and caused the daemon's per-file sync to
+    // time out on large graphs. File-scoped stale records are still removed by
+    // `delete_stale_file_graph` inside the sync. Project-wide orphan GC runs in
+    // `graph rebuild` and the dedicated `graph cleanup-orphans` command instead.
     let relationships_written = code_graph::sync_file_graph(
         ctx,
         &facts.file_path,
         &facts.imports,
         &facts.definitions,
         &facts.calls,
-        true,
+        false,
     )?;
     db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
     Ok(GraphFileSyncOutcome::Synced {
@@ -322,6 +328,28 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
         format,
         &CodeGraphLifecycleBackend,
     )
+}
+
+/// Run project-wide orphan cleanup as a standalone maintenance command.
+///
+/// This is the same sweep that `graph rebuild` performs at the end, exposed on
+/// its own so the daemon can schedule it periodically instead of paying its
+/// O(project graph size) cost on every per-file `graph sync-file`.
+pub fn cleanup_orphans(ctx: &Context, format: Format) -> anyhow::Result<()> {
+    code_graph::require_graph_reads(ctx)?;
+    code_graph::cleanup_orphans(ctx)?;
+    let payload = json!({
+        "status": "ok",
+        "action": "cleanup_orphans",
+        "project_id": ctx.project_id.clone(),
+    });
+    match format {
+        Format::Json => output::print_json(&payload),
+        Format::Text => {
+            output::print_text("Removed project-wide orphaned code-graph nodes")?;
+            output::print_json_compact(&payload)
+        }
+    }
 }
 
 pub fn sync_file(

@@ -299,6 +299,9 @@ fn run() -> anyhow::Result<()> {
             commands::graph::rebuild(&ctx, format)
         }
         Command::Graph {
+            command: GraphCommand::CleanupOrphans,
+        } => commands::graph::cleanup_orphans(&ctx, format),
+        Command::Graph {
             command: GraphCommand::Report { top_n },
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
