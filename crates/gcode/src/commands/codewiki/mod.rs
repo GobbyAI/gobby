@@ -1,18 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 use std::path::{Path, PathBuf};
 
-use gobby_core::ai::{
-    daemon::generate_via_daemon_with_max_tokens, effective_route, text::generate_text,
-};
-use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
-use gobby_core::config::{AiCapability, AiRouting};
-
-use crate::config::{self, Context};
-use crate::db;
 use crate::graph::typed_query;
 use crate::index::hasher;
 use crate::models::Symbol;
-use crate::secrets;
 
 const DEFAULT_OUT_DIR: &str = "codewiki";
 const CODEWIKI_META_PATH: &str = "_meta/codewiki.json";

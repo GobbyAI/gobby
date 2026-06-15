@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::Context;
 use gobby_core::falkor::{GraphClient, Row};
 
 pub(crate) fn fetch_codewiki_graph_edges(
