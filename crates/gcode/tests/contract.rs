@@ -13,8 +13,13 @@ fn shared_graph_schema_doc() -> &'static str {
     include_str!("../../../docs/contracts/shared-graph-schema.md")
 }
 
-fn code_graph_writer() -> &'static str {
-    include_str!("../src/graph/code_graph/write.rs")
+fn code_graph_writer() -> String {
+    [
+        include_str!("../src/graph/code_graph/write.rs"),
+        include_str!("../src/graph/code_graph/write/mutation.rs"),
+        include_str!("../src/graph/code_graph/write/deletion.rs"),
+    ]
+    .join("\n")
 }
 
 #[test]
@@ -45,7 +50,7 @@ fn contract_command_emits_pinned_json() {
 fn code_graph_writer_matches_shared_schema_contract() {
     let docs = schema_node_identities(shared_graph_schema_doc());
     let relationships = schema_relationship_shapes(shared_graph_schema_doc());
-    let writer = parse_cypher_snippets(code_graph_writer());
+    let writer = parse_cypher_snippets(&code_graph_writer());
 
     assert!(!docs.is_empty(), "schema docs must declare node identities");
     assert!(
