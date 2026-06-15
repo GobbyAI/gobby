@@ -1,12 +1,10 @@
 import { useEffect, useRef, type Dispatch, type SetStateAction } from "react";
 
 interface UseAppKeyboardShortcutsArgs {
-  activeTab: string;
   setQuickCaptureOpen: Dispatch<SetStateAction<boolean>>;
 }
 
 export function useAppKeyboardShortcuts({
-  activeTab,
   setQuickCaptureOpen,
 }: UseAppKeyboardShortcutsArgs) {
   const chordPendingRef = useRef(false);
@@ -20,9 +18,7 @@ export function useAppKeyboardShortcuts({
     };
 
     const openCommandPalette = () => {
-      if (activeTab === "chat") {
-        window.dispatchEvent(new CustomEvent("gobby:open-command-palette"));
-      }
+      window.dispatchEvent(new CustomEvent("gobby:open-command-palette"));
     };
 
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -58,5 +54,5 @@ export function useAppKeyboardShortcuts({
       window.removeEventListener("keydown", handleKeyDown);
       clearChordTimeout();
     };
-  }, [activeTab, setQuickCaptureOpen]);
+  }, [setQuickCaptureOpen]);
 }

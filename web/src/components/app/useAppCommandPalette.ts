@@ -11,7 +11,6 @@ import type { CommandPaletteAction } from "../chat/CommandPalette";
 import type { ChatMode, QueuedFile } from "../../types/chat";
 import type { ActivityTab } from "../activity/ActivityPanelTabs";
 import { requestDaemonRestart } from "../../lib/api";
-import { APP_NAV_PAGES } from "./appNavigation";
 
 type ActiveModal = "skills" | "gobby" | null;
 
@@ -35,7 +34,6 @@ interface UseAppCommandPaletteArgs {
   updateChatMode: (mode: ChatMode) => void;
   sendMode: (mode: ChatMode) => void;
   addSystemMessage: (content: string) => void;
-  setActiveTab: Dispatch<SetStateAction<string>>;
   setActiveModal: Dispatch<SetStateAction<ActiveModal>>;
   setSettingsOpen: Dispatch<SetStateAction<boolean>>;
   setResumeModalOpen: Dispatch<SetStateAction<boolean>>;
@@ -53,7 +51,6 @@ export function useAppCommandPalette({
   updateChatMode,
   sendMode,
   addSystemMessage,
-  setActiveTab,
   setActiveModal,
   setSettingsOpen,
   setResumeModalOpen,
@@ -213,21 +210,11 @@ export function useAppCommandPalette({
         onSelect: () => { void restartDaemon(true); },
       },
     ];
-    for (const page of APP_NAV_PAGES) {
-      actions.push({
-        id: `nav-${page.id}`,
-        label: page.label,
-        icon: "\u2192",
-        category: "navigate",
-        onSelect: () => setActiveTab(page.id),
-      });
-    }
     return actions;
   }, [
     clearHistory,
     compactConversation,
     restartDaemon,
-    setActiveTab,
     setResumeModalOpen,
     setSettingsOpen,
     startNewChat,

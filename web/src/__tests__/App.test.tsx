@@ -4,9 +4,9 @@ import { render, act, waitFor, screen, fireEvent } from "@testing-library/react"
 import App from "../App";
 import { useChat } from "../hooks/useChat";
 import { useSessionCatalog } from "../hooks/useSessionCatalog";
+import { useAuth } from "../hooks/useAuth";
 
 const chatPagePropsSpy = vi.hoisted(() => vi.fn());
-const sidebarPropsSpy = vi.hoisted(() => vi.fn());
 
 vi.mock("../hooks/useAuth", () => ({
   useAuth: vi.fn(() => ({
@@ -246,19 +246,8 @@ vi.mock("../hooks/useAgentDefinitions", () => ({
   })),
 }));
 
-vi.mock("../components/Sidebar", () => ({
-  Sidebar: (props: unknown) => {
-    sidebarPropsSpy(props);
-    return null;
-  },
-}));
-
 vi.mock("../components/ProjectSelector", () => ({
   ProjectSelector: () => <div data-testid="project-selector" />,
-}));
-
-vi.mock("../components/dashboard/DashboardPage", () => ({
-  DashboardPage: () => <div>Dashboard</div>,
 }));
 
 vi.mock("../components/chat/ChatPage", () => ({
@@ -697,29 +686,38 @@ describe("App wiring", () => {
     expect(sendMode).toHaveBeenCalledWith("plan");
   });
 
-  it("omits retired and activity-only entries from sidebar navigation", async () => {
-    await act(async () => {
-      render(<App />);
-    });
+  it("shows a header Log out button that signs out when auth is enabled", async () => {
+    const logout = vi.fn();
+    vi.mocked(useAuth).mockReturnValue({
+      authRequired: true,
+      authenticated: true,
+      loading: false,
+      login: vi.fn(),
+      logout,
+    } as never);
+    try {
+      await act(async () => {
+        render(<App />);
+      });
 
-    await waitFor(() => {
-      expect(sidebarPropsSpy).toHaveBeenCalled();
-    });
-    const props = sidebarPropsSpy.mock.calls[
-      sidebarPropsSpy.mock.calls.length - 1
-    ]?.[0] as {
-      items: Array<{ id: string; label: string }>;
-    };
+      const logoutButton = await screen.findByRole("button", { name: "Log out" });
+      expect(logoutButton).toHaveClass("app-logout-btn");
+      expect(document.querySelector('[aria-label="Toggle navigation menu"]')).toBeNull();
 
-    const itemIds = props.items.map((item) => item.id);
-    const itemLabels = props.items.map((item) => item.label);
-    expect(itemIds).not.toContain("mcp");
-    expect(itemLabels).not.toContain("MCP");
-    for (const id of ["projects", "cron", "reports", "traces"]) {
-      expect(itemIds).not.toContain(id);
-    }
-    for (const label of ["Project", "Cron Jobs", "Reports", "Traces"]) {
-      expect(itemLabels).not.toContain(label);
+      await act(async () => {
+        fireEvent.click(logoutButton);
+      });
+      expect(logout).toHaveBeenCalled();
+    } finally {
+      // Restore the suite default (auth off) so later tests are unaffected;
+      // clearAllMocks does not drop a mockReturnValue override.
+      vi.mocked(useAuth).mockReturnValue({
+        authRequired: false,
+        authenticated: true,
+        loading: false,
+        login: vi.fn(),
+        logout: vi.fn(),
+      } as never);
     }
   });
 

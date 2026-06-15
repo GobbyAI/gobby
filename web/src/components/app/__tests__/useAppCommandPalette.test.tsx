@@ -19,7 +19,6 @@ function makeHookArgs(addSystemMessage = vi.fn()) {
     updateChatMode: vi.fn(),
     sendMode: vi.fn(),
     addSystemMessage,
-    setActiveTab: vi.fn(),
     setActiveModal: vi.fn(),
     setSettingsOpen: vi.fn(),
     setResumeModalOpen: vi.fn(),

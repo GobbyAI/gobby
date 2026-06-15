@@ -270,8 +270,8 @@ describe('mobile chrome CSS', () => {
 
     expectClassToken(appSource, 'app-header')
     expectClassToken(appSource, 'app-brand')
-    expectStringAttribute(appSource, 'variant', 'ghost')
-    expectClassToken(appSource, 'app-menu-button')
+    expectStringAttribute(appSource, 'aria-label', 'Log out')
+    expectClassToken(appSource, 'app-logout-btn')
     expectClassToken(appSource, 'app-brand-logo')
     expectClassToken(appSource, 'app-brand-title')
     expectClassToken(appSource, 'app-header-actions')
@@ -291,18 +291,6 @@ describe('mobile chrome CSS', () => {
     )
     expectDeclarations(shellCss, '.project-selector-compact-trigger', {
       background: 'var(--accent-tint)',
-      color: 'var(--accent)',
-    })
-    expectDeclarations(shellCss, '.app-menu-button', {
-      width: '2rem',
-      'min-height': 'var(--control-row-height)',
-      border: '1px solid color-mix(in srgb, var(--accent) 35%, transparent)',
-      background: 'var(--accent-tint)',
-      color: 'var(--accent)',
-    })
-    expectDeclarations(shellCss, '.app-menu-button:hover', {
-      'border-color': 'color-mix(in srgb, var(--accent) 55%, transparent)',
-      background: 'var(--accent-soft)',
       color: 'var(--accent)',
     })
     expectDeclarations(segmentedControlCss, '.segmented-control__option--sm', {

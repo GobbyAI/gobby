@@ -30,7 +30,6 @@ import {
 
 const SESSIONS_FILTERS_STORAGE_KEY = "gobby-sessions-filters";
 import { Settings } from "./components/Settings";
-import { Sidebar } from "./components/Sidebar";
 import { ChatPage } from "./components/chat/ChatPage";
 import { LoginPage } from "./components/auth/LoginPage";
 import { ProjectSelector } from "./components/ProjectSelector";
@@ -39,19 +38,13 @@ import { QuickCaptureTask } from "./components/tasks/QuickCaptureTask";
 import { SlashCommandModal } from "./components/command-browser/SlashCommandModal";
 import { ResumeSessionModal } from "./components/chat/ResumeSessionModal";
 import { Badge } from "./components/chat/ui/Badge";
-import { Button } from "./components/shared/Button";
 import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
 import { GobbyLogo } from "./components/shared/GobbyLogo";
-import {
-  ComingSoonPage,
-  DashboardPage,
-} from "./components/app/AppPages";
-import { APP_VALID_TABS, createAppNavItems } from "./components/app/appNavigation";
 import { useAppCommandPalette } from "./components/app/useAppCommandPalette";
 import { useAppKeyboardShortcuts } from "./components/app/useAppKeyboardShortcuts";
 import { useReasoningPreferences } from "./components/app/useReasoningPreferences";
 import { useSessionReconciliation } from "./components/app/useSessionReconciliation";
-import { HamburgerIcon, SettingsCogIcon } from "./components/icons";
+import { LogoutIcon, SettingsCogIcon } from "./components/icons";
 import { FilesProvider } from "./contexts/FilesContext";
 import { useSettingsOverlay } from "./components/settings/useSettingsOverlay";
 
@@ -206,17 +199,16 @@ export default function App() {
     () => ({ selectedProvider, onSelectProvider: setSelectedProvider }),
     [selectedProvider, setSelectedProvider],
   );
-  const initialHash = window.location.hash.slice(1);
   const [activityTabRequest, setActivityTabRequest] =
     useState<ActivityTab | null>(null);
-  const [activeTab, setActiveTab] = useState<string>(() => {
-    return APP_VALID_TABS.has(initialHash) ? initialHash : "chat";
-  });
+  // Chat is the only page surface. Any legacy hash (e.g. #dashboard, #sessions)
+  // normalizes to #chat via the effect below; activity tabs (Tasks/Sessions/MCP)
+  // live inside ChatPage and are driven by activityTabRequest, not the page hash.
+  const [activeTab, setActiveTab] = useState<string>("chat");
 
   useEffect(() => {
     window.location.hash = activeTab;
   }, [activeTab]);
-  const [sidebarOpen, setSidebarOpen] = useState(false);
   const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
     null,
   );
@@ -232,7 +224,7 @@ export default function App() {
     setActiveTab("chat");
   }, []);
 
-  useAppKeyboardShortcuts({ activeTab, setQuickCaptureOpen });
+  useAppKeyboardShortcuts({ setQuickCaptureOpen });
 
   // Build project options for the selector (exclude internal system projects)
   const projectOptions = useMemo(
@@ -673,7 +665,6 @@ export default function App() {
     updateChatMode,
     sendMode,
     addSystemMessage,
-    setActiveTab,
     setActiveModal,
     setSettingsOpen,
     setResumeModalOpen,
@@ -702,23 +693,12 @@ export default function App() {
     return <LoginPage onLogin={login} />;
   }
 
-  const navItems = createAppNavItems();
   const visibleToastMessage = toastMessage ?? transportError?.message ?? null;
 
   return (
     <div className="app">
       <header className="app-header">
         <div className="app-brand">
-          <Button
-            variant="ghost"
-            size="icon"
-            className="app-menu-button"
-            onClick={() => setSidebarOpen(!sidebarOpen)}
-            title="Toggle menu"
-            aria-label="Toggle navigation menu"
-          >
-            <HamburgerIcon />
-          </Button>
           <GobbyLogo className="app-brand-logo" size={44} />
           <span className="app-brand-title">Gobby</span>
         </div>
@@ -756,17 +736,19 @@ export default function App() {
           >
             <SettingsCogIcon />
           </button>
+          {authRequired && authenticated && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm app-logout-btn"
+              onClick={() => logout()}
+              aria-label="Log out"
+              title="Log out"
+            >
+              <LogoutIcon />
+            </button>
+          )}
         </div>
       </header>
-
-      <Sidebar
-        items={navItems}
-        activeItem={activeTab}
-        isOpen={sidebarOpen}
-        onItemSelect={setActiveTab}
-        onClose={() => setSidebarOpen(false)}
-        onLogout={authRequired && authenticated ? logout : undefined}
-      />
 
       <FilesProvider>
         <AppErrorBoundary
@@ -780,8 +762,7 @@ export default function App() {
               </main>
             }
           >
-            {activeTab === "chat" ? (
-              <ChatPage
+            <ChatPage
                 projectId={effectiveProjectId}
                 showPlanRef={showPlanRef}
                 planPendingVariant={settings.planPendingVariant}
@@ -904,15 +885,6 @@ export default function App() {
                   stopTTS: voice.stopTTS,
                 }}
               />
-            ) : activeTab === "dashboard" ? (
-              <DashboardPage />
-            ) : (
-              <ComingSoonPage
-                title={
-                  navItems.find((i) => i.id === activeTab)?.label ?? activeTab
-                }
-              />
-            )}
           </Suspense>
         </AppErrorBoundary>
       </FilesProvider>
