@@ -69,7 +69,7 @@ def _registry() -> AICapabilityRegistry:
 
 
 @pytest.mark.asyncio
-async def test_vision_service_selects_extract_provider() -> None:
+async def test_vision_service_does_not_invent_ocr_text_from_description() -> None:
     adapter = _FakeVisionAdapter()
     service = VisionExtractService(_registry(), {"local:lm-studio": adapter})
 
@@ -86,7 +86,8 @@ async def test_vision_service_selects_extract_provider() -> None:
     assert result.capability == AICapability.VISION_EXTRACT
     assert result.provider == "local:lm-studio"
     assert result.model == "llava"
-    assert result.ocr_text == "extracted:/tmp/image.png"
+    assert result.ocr_text is None
+    assert result.ocr_text != result.text
     assert adapter.requests == [
         VisionExtractRequest(
             image_path="/tmp/image.png",

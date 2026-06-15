@@ -31,8 +31,9 @@ pytestmark = pytest.mark.unit
 
 
 class _FakeVisionService:
-    def __init__(self) -> None:
+    def __init__(self, *, ocr_text: str | None = "Button label") -> None:
         self.request: VisionExtractRequest | None = None
+        self.ocr_text = ocr_text
 
     async def extract(self, request: VisionExtractRequest) -> VisionExtractResult:
         assert Path(request.image_path).exists()
@@ -42,7 +43,7 @@ class _FakeVisionService:
             capability=AICapability.VISION_EXTRACT,
             provider=request.provider or "local:lm-studio",
             model=request.model or "llava",
-            ocr_text="Button label",
+            ocr_text=self.ocr_text,
         )
 
 
@@ -716,6 +717,32 @@ def test_vision_extract_upload_executes_service(
     assert service.request.model == "llava"
     assert service.request.context == "settings screenshot"
     assert Path(service.request.image_path).exists() is False
+
+
+def test_vision_extract_upload_preserves_missing_ocr_text(
+    client: TestClient,
+) -> None:
+    service = _FakeVisionService(ocr_text=None)
+
+    with patch(
+        "gobby.servers.routes.llm.build_daemon_vision_extract_service",
+        return_value=service,
+    ):
+        response = client.post(
+            "/api/llm/vision/extract",
+            data={
+                "provider": "local:lm-studio",
+                "model": "llava",
+                "context": "no visible text",
+            },
+            files={"file": ("screen.png", b"image bytes", "image/png")},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["description"] == "Screen text"
+    assert data["ocr_text"] is None
+    assert data["ocr_text"] != data["description"]
 
 
 def test_vision_extract_rejects_unproven_provider(client: TestClient) -> None:
