@@ -205,6 +205,34 @@ pub(crate) fn get_imports_query(
     )
 }
 
+pub(crate) fn resolve_external_call_target_query(
+    project_id: &str,
+    input: &str,
+) -> (String, HashMap<String, String>) {
+    let (module, member) = input.rsplit_once('.').unwrap_or(("", input));
+    (
+        "MATCH (target:ExternalSymbol {project: $project}) \
+         WITH target, coalesce(target.module, target.external_module, '') AS module \
+         WHERE target.id = $input \
+            OR ($module <> '' AND target.name = $member AND module = $module) \
+            OR target.name = $input \
+         RETURN target.id AS id, target.name AS name, module AS module \
+         ORDER BY CASE \
+             WHEN target.id = $input THEN 0 \
+             WHEN $module <> '' AND target.name = $member AND module = $module THEN 1 \
+             ELSE 2 \
+         END, module, target.name, target.id \
+         LIMIT 11"
+            .to_string(),
+        typed_query::string_params(&[
+            ("project", project_id),
+            ("input", input),
+            ("module", module),
+            ("member", member),
+        ]),
+    )
+}
+
 pub(crate) fn blast_radius_query(depth: usize, limit: usize) -> String {
     let depth = depth.clamp(1, 5);
     let limit = clamp_limit(limit);

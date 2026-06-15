@@ -53,7 +53,7 @@ pub fn generate_report_with_options(
             Err(ProjectGraphReportError::GraphServiceUnreachable { message })
         }
         Err(error) => Err(ProjectGraphReportError::GraphQueryFailed {
-            message: error.to_string(),
+            message: format!("{error:#}"),
         }),
     }
 }

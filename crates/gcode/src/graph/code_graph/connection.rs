@@ -33,7 +33,7 @@ pub(super) fn with_required_core_graph<T>(
         }
         .into()),
         Err(error) => Err(GraphReadError::QueryFailed {
-            message: error.to_string(),
+            message: format!("{error:#}"),
         }
         .into()),
     }
@@ -61,7 +61,7 @@ pub(super) fn with_optional_core_graph<T>(
         }
         .into()),
         Err(error) => Err(GraphReadError::QueryFailed {
-            message: error.to_string(),
+            message: format!("{error:#}"),
         }
         .into()),
     }

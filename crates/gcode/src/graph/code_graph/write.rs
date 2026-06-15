@@ -369,7 +369,7 @@ pub fn clear_all_code_index(config: &crate::config::FalkorConfig) -> anyhow::Res
         }
         .into()),
         Err(error) => Err(GraphReadError::QueryFailed {
-            message: error.to_string(),
+            message: format!("{error:#}"),
         }
         .into()),
     }

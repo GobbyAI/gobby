@@ -10,11 +10,11 @@ pub use graph_payloads::{
 #[cfg(test)]
 pub(super) use payload_queries::{blast_radius_file_import_query, file_calls_query};
 #[cfg(test)]
-pub(crate) use relationship_queries::get_imports_query;
+pub(crate) use relationship_queries::{get_imports_query, resolve_external_call_target_query};
 pub use relationships::{
-    blast_radius, count_callers, count_usages, find_callee_ids_batch, find_callees_batch,
-    find_caller_ids, find_caller_ids_batch, find_callers, find_callers_batch, find_usage_ids,
-    find_usages, get_imports,
+    ResolvedExternalCallTarget, blast_radius, count_callers, count_usages, find_callee_ids_batch,
+    find_callees_batch, find_caller_ids, find_caller_ids_batch, find_callers, find_callers_batch,
+    find_usage_ids, find_usages, get_imports, resolve_external_call_target,
 };
 #[cfg(test)]
 pub(super) use support::dedupe_limited_blast_rows;

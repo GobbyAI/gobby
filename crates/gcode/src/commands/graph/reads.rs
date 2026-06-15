@@ -132,29 +132,70 @@ fn resolve_symbol_with_connection(
     fts::resolve_graph_symbol(conn, input, project_id)
 }
 
-/// Resolve user input to a canonical symbol id, printing suggestions on ambiguity.
-/// Returns None and prints an error message if no match found.
-fn resolve_symbol(ctx: &Context, input: &str) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
+fn resolve_symbol_candidates(
+    ctx: &Context,
+    input: &str,
+) -> anyhow::Result<(Option<ResolvedGraphSymbol>, Vec<String>)> {
     let mut conn = match db::connect_readonly(&ctx.database_url) {
         Ok(c) => c,
         Err(e) => {
             eprintln!("Failed to open index for graph resolution: {e}");
-            return Ok(None);
+            return Ok((None, Vec::new()));
         }
     };
-    let (resolved, suggestions) =
-        resolve_symbol_with_connection(&mut conn, &ctx.project_id, input)?;
+    resolve_symbol_with_connection(&mut conn, &ctx.project_id, input)
+}
+
+fn print_symbol_resolution_failure(input: &str, suggestions: &[String]) {
+    if suggestions.is_empty() {
+        eprintln!("No symbol matching '{input}' found");
+    } else {
+        eprintln!(
+            "Ambiguous symbol '{input}'. Refine the query. Matches: {}",
+            suggestions.join(", ")
+        );
+    }
+}
+
+/// Resolve user input to a canonical symbol id, printing suggestions on ambiguity.
+/// Returns None and prints an error message if no match found.
+fn resolve_symbol(ctx: &Context, input: &str) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
+    let (resolved, suggestions) = resolve_symbol_candidates(ctx, input)?;
     if resolved.is_none() {
-        if suggestions.is_empty() {
-            eprintln!("No symbol matching '{input}' found");
-        } else {
-            eprintln!(
-                "Ambiguous symbol '{input}'. Refine the query. Matches: {}",
-                suggestions.join(", ")
-            );
-        }
+        print_symbol_resolution_failure(input, &suggestions);
     }
     Ok(resolved)
+}
+
+fn resolve_blast_radius_target(
+    ctx: &Context,
+    input: &str,
+) -> anyhow::Result<Option<ResolvedGraphSymbol>> {
+    let (resolved, suggestions) = resolve_symbol_candidates(ctx, input)?;
+    if let Some(symbol) = resolved {
+        return Ok(Some(symbol));
+    }
+    if !suggestions.is_empty() {
+        print_symbol_resolution_failure(input, &suggestions);
+        return Ok(None);
+    }
+
+    let (external, external_suggestions) = code_graph::resolve_external_call_target(ctx, input)?;
+    if let Some(target) = external {
+        return Ok(Some(ResolvedGraphSymbol {
+            id: target.id,
+            display_name: target.display_name,
+        }));
+    }
+    if external_suggestions.is_empty() {
+        eprintln!("No symbol or external call target matching '{input}' found");
+    } else {
+        eprintln!(
+            "Ambiguous external call target '{input}'. Refine the query. Matches: {}",
+            external_suggestions.join(", ")
+        );
+    }
+    Ok(None)
 }
 
 fn resolve_symbol_or_empty_response(
@@ -363,7 +404,8 @@ pub fn blast_radius(
     else {
         return Ok(());
     };
-    let Some(symbol) = resolve_symbol_or_empty_response(ctx, target, 0, 0, format)? else {
+    let Some(symbol) = resolve_blast_radius_target(ctx, target)? else {
+        empty_paged_response::<crate::models::GraphResult>(ctx, 0, 0, format, None)?;
         return Ok(());
     };
     let Some(results) =

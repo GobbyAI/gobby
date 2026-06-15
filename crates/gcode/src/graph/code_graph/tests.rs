@@ -245,6 +245,32 @@ fn imports_query_returns_stable_id() {
 }
 
 #[test]
+fn external_call_target_resolution_matches_id_name_or_module_member() {
+    let (query, params) = resolve_external_call_target_query("project-1", "requests.get");
+
+    assert!(
+        query.contains("MATCH (target:ExternalSymbol {project: $project})"),
+        "{query}"
+    );
+    assert!(query.contains("target.id = $input"), "{query}");
+    assert!(query.contains("target.name = $input"), "{query}");
+    assert!(
+        query.contains("target.name = $member AND module = $module"),
+        "{query}"
+    );
+    assert_eq!(
+        params.get("project").map(String::as_str),
+        Some("'project-1'")
+    );
+    assert_eq!(
+        params.get("input").map(String::as_str),
+        Some("'requests.get'")
+    );
+    assert_eq!(params.get("module").map(String::as_str), Some("'requests'"));
+    assert_eq!(params.get("member").map(String::as_str), Some("'get'"));
+}
+
+#[test]
 fn file_import_blast_radius_traverses_import_edges_undirected() {
     let (query, _) = blast_radius_file_import_query("project-1", "src/lib.rs", 2, 10);
 
