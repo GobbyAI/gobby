@@ -290,10 +290,18 @@ free-form `## Phase 1` / `### 1.1` outline style. The full contract is
 `docs/contracts/plan-coverage.md`; the authoring surface is
 `src/gobby/install/shared/skills/plan-draft/SKILL.md`.
 
+The planning stage runs a constructive `plan-enhancer` pass before the
+`plan-adversary` gate. The enhancer proposes ranked Better/Bigger suggestions;
+the planner (autonomous) or coordinator (interactive) folds in accepted ones,
+then the unchanged adversary reviews and writes the manifest on approval. In
+autonomous `gobby build`, enhancement is opt-in via `--plan-enhancement-rounds`
+(default `0`); interactive `/gobby plan` runs one round by default.
+
 ```mermaid
 sequenceDiagram
     participant U as User
     participant P as /gobby plan
+    participant N as plan-enhancer
     participant R as plan-adversary
     participant E as /gobby expand
     participant EP as expand-task pipeline
@@ -301,6 +309,9 @@ sequenceDiagram
 
     U->>P: "Plan dark mode support"
     P->>P: Write typed plan + coverage ledger
+    P->>N: Enhance plan (Better/Bigger, x N rounds)
+    N-->>P: Ranked suggestions (advisory only)
+    P->>P: Fold accepted suggestions, re-validate
     P->>R: Review plan
     R->>R: Append M1 Task Manifest on approval
     U->>E: "/gobby expand #42 .gobby/plans/dark-mode.md"

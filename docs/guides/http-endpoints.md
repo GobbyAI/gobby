@@ -398,10 +398,17 @@ exist.
 
 `POST /api/build` accepts `input_ref`, `quick`, `skip_stages`, `stage`,
 `target_branch`, `agent`, `reset_expansion_output`, `max_active_agents`,
-`max_retries`, and build isolation fields. `isolation` accepts `none`,
-`worktree`, or `clone`; `workspace_backend` (`worktree` or `clone`) and `clone`
-remain backward-compatible aliases. Contradictory isolation inputs return `400`
-instead of silently choosing one value.
+`max_retries`, the planning-seed fields, and build isolation fields. `isolation`
+accepts `none`, `worktree`, or `clone`; `workspace_backend` (`worktree` or
+`clone`) and `clone` remain backward-compatible aliases. Contradictory isolation
+inputs return `400` instead of silently choosing one value.
+
+The planning-seed fields are `planning_seed_state` (`drafted`, `needs_review`,
+or `approved`), `completed_plan_review_rounds` (already-completed adversary
+rounds, `>= 0`), and `plan_enhancement_rounds` (target constructive
+`plan-enhancer` rounds before the adversary gate, `>= 0`, default `0`). Presence
+in the request body marks `plan_enhancement_rounds` as explicit, so an explicit
+`0` overrides the build profile default.
 
 ## Memory, Skills, Workflows, And Rules
 

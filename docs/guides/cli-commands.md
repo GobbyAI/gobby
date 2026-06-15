@@ -225,6 +225,7 @@ gobby build restart REF [--project PROJECT] [--dry-run] [--force] [--yes] [--no-
 | `--max-retries N` | Cap retries per build stage. |
 | `--planning-seed-state STATE` | For plan-file builds, seed planning as `drafted`, `needs_review`, or `approved`. |
 | `--completed-plan-review-rounds N` | Count already-completed plan adversary rounds when seeding from `needs_review` or `approved`. |
+| `--plan-enhancement-rounds N` | Target constructive `plan-enhancer` rounds before the adversary gate (`0` disables; overrides the build profile default). |
 | `--dry-run` | Preview `clean` or `restart` effects. |
 | `--force` | Force destructive cleanup for `clean` or `restart`. |
 | `--yes` | Confirm destructive `clean` or `restart` prompts. |
@@ -249,6 +250,13 @@ gobby build .gobby/plans/example.md --planning-seed-state approved --completed-p
 `planning_seed_state=approved` starts at expansion. `needs_review` starts at
 the remaining planning review loop with the completed round count already
 applied. `drafted` starts from planning.
+
+`--plan-enhancement-rounds N` seeds the target number of constructive
+`plan-enhancer` rounds that run as a pre-adversary sub-loop inside the planning
+stage. Autonomous builds default to `0` (no enhancement); pass `N > 0` to enable
+it. The explicit value wins over the build profile default, including an
+explicit `0`. Enhancement rounds are counted independently of the adversary
+review budget.
 
 ## Task Lifecycle
 

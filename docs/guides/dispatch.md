@@ -211,6 +211,19 @@ Common action classes:
 Prompting belongs in spawned agents. Dispatch rules route stage state; they do
 not draft plans, review docs, or repair artifacts inline.
 
+`planning_enhancement_rule` is registered immediately before
+`planning_review_rule` so a constructive enhancement pass runs as a sub-loop
+inside the `planning` stage, ahead of the adversary gate. Its helper logic lives
+in `src/gobby/dispatch/_planning_enhancement.py` to keep `rules.py` under the
+1,000-line limit. It fires when planning is `needs_review`, the task artifact
+`plan_enhancement_rounds > 0`, `plan_enhancement_rounds_completed < target`,
+`plan_enhancement_converged` is false, and a plan artifact exists — spawning
+`plan-enhancer` with round and max counters in `initial_variables`. Once the
+target is reached or the enhancer reports convergence it returns `None`, falling
+through to the unchanged `planning_review_rule` (the adversary). The enhancer
+records each round through the `record_plan_enhancement` verb, which never
+touches the adversary `review_round_count`.
+
 ## Build State
 
 Build state is resolved before dispatch:

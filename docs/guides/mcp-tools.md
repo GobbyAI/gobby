@@ -164,7 +164,7 @@ registries (`gobby-tasks`, `gobby-tasks-ops`, `gobby-workflows`,
 | Registry | Purpose | Tools |
 | :--- | :--- | :--- |
 | `gobby-tasks` | Task lifecycle, dependencies, claim/close, search, build observability | 38 |
-| `gobby-tasks-ops` | Expansion runs, artifacts, stage transitions, PR/merge state, build, GitHub | 40 |
+| `gobby-tasks-ops` | Expansion runs, artifacts, stage transitions, PR/merge state, build, GitHub | 45 |
 | `gobby-plans` | Plan-Coverage Contract registry | 8 |
 | `gobby-profiles` | Build profile registry | 8 |
 | `gobby-sessions` | Session lifecycle, handoffs, transcripts, tmux integration | 20 |
@@ -360,6 +360,7 @@ point.
 | `submit_for_review` | Submit a stage for review. |
 | `approve_review` | Approve review on a stage. |
 | `reject_review` | Reject review on a stage. |
+| `record_plan_enhancement` | Record a constructive plan-enhancement round on the `planning` stage. When suggestions exist, returns `needs_review` to `ready` for the planner **without** incrementing the adversary review budget; when converged or empty, leaves `needs_review` so adversary dispatch proceeds. |
 | `add_stage` | Insert a future ready stage into a manifest. |
 | `remove_stage` | Remove a future ready stage from a manifest. |
 

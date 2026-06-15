@@ -14,9 +14,16 @@ state, root task reference, and generated coverage manifest. They let Gobby
 validate that a plan maps to the tasks and files it is supposed to cover.
 
 Use `/gobby plan` to produce and approve a plan artifact. It drafts and revises
-the Markdown file with the user, runs taskless adversarial review after user
-approval, records review history in the plan, and hands approved artifacts to
-`gobby build`.
+the Markdown file with the user, runs a constructive enhancement pass and then
+taskless adversarial review after user approval, records review history in the
+plan, and hands approved artifacts to `gobby build`.
+
+Planning has three roles: the **planner** drafts and folds in changes, the
+**plan-enhancer** proposes constructive Better/Bigger improvements before the
+gate, and the **plan-adversary** gates the plan for correctness and contract
+compliance. The enhancer is advisory only — it never approves, rejects, edits
+the plan file, or writes the manifest. Only the planner or coordinator edits the
+plan, and the adversary remains the sole correctness gate.
 
 Use plan records to track a plan artifact through validation, archival, review,
 and deletion.
@@ -70,12 +77,33 @@ src/gobby/install/shared/workflows/rules/plan-mode/block-writes-outside-plan-art
 Rule templates are not runtime rules by themselves. Installed DB rules are the
 source of truth after daemon startup and sync.
 
+## Artifact-First Enhancement
+
+After the user approves the draft and before adversarial review, `/gobby plan`
+runs an enhancement loop (default `max_enhancement_rounds = 1`). The parent
+session spawns `plan-enhancer-taskless` (no `task_id`, `isolation="none"`) with
+the plan path, round number, max rounds, and parent session id. The enhancer
+loads `plan-enhance` and `proportionality`, then returns ranked Better/Bigger
+suggestions to the parent via `send_message` and calls `end_agent_run`. It never
+claims tasks, edits the plan file, or calls a review verdict.
+
+The coordinator surfaces the ranked suggestions to the user (impact-vs-effort,
+top first); the human is the scope gate. Accepted suggestions are folded into the
+plan artifact only, the plan is re-validated, and the round is recorded as
+`kind: enhancement` under `## V1 Plan Changelog`. The loop stops on
+`converged: true`, all-declined, or the round cap, then hands off to the
+unchanged adversary gate. Suggestions are offers — they must still pass the
+adversary.
+
 ## Artifact-First Review
 
 Taskless review uses `plan-adversary-taskless`. The parent session passes the
 plan path, round number, review cap, and parent session id. The adversary loads
-`plan-review`, returns structured findings or approval to the parent, and calls
-`end_agent_run`. It does not claim or mutate Gobby tasks.
+`plan-review` and `proportionality`, returns structured findings or approval to
+the parent, and calls `end_agent_run`. It does not claim or mutate Gobby tasks.
+The adversary now also carries an `over-engineering` review dimension: mechanism
+disproportionate to the goal is a finding, while ambition and net-new scope are
+not.
 
 Every review round is recorded in the plan under:
 

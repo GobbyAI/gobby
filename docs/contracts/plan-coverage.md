@@ -8,8 +8,12 @@ This page is the canonical reading order for the plan-coverage contract:
 2. `src/gobby/install/shared/skills/plan/SKILL.md` for interactive authoring.
 3. `src/gobby/install/shared/skills/plan-draft/SKILL.md` for the typed grammar.
 4. `src/gobby/install/shared/skills/plan-review/SKILL.md` for adversarial review.
-5. `src/gobby/install/shared/skills/expand/SKILL.md` for expansion obligations.
-6. `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` for QA gating.
+5. `src/gobby/install/shared/skills/plan-enhance/SKILL.md` for the constructive
+   pre-adversary enhancement pass.
+6. `src/gobby/install/shared/skills/proportionality/SKILL.md` for the shared
+   over-engineering / right-sizing criterion used by plan, epic, and leaf review.
+7. `src/gobby/install/shared/skills/expand/SKILL.md` for expansion obligations.
+8. `src/gobby/install/shared/workflows/agents/expansion-qa.yaml` for QA gating.
 
 Parser and coverage implementation surfaces live under `gobby.plans.parser`,
 `gobby plan coverage`, and the evidence resolver used by the coverage matrix.
@@ -248,6 +252,26 @@ Sequence on clean review (no blocking findings):
 On rejection rounds the adversary MUST NOT edit the plan file — plan edits
 between rounds are the parent planner's responsibility. Findings are recorded in
 `## V1 Plan Changelog`.
+
+### Enhancement And Over-Engineering Vocabulary
+
+A constructive `plan-enhancer` pass runs before the adversary gate (default on
+for interactive `/gobby plan`, opt-in via `--plan-enhancement-rounds` for
+autonomous `gobby build`). It loads `plan-enhance` and `proportionality` and
+emits ranked Better/Bigger suggestions. The enhancer is advisory only: it never
+approves, rejects, edits the plan file, or writes the manifest. Fold-ins are the
+planner's or coordinator's responsibility, and every suggestion must still pass
+the adversary. The manifest stays adversary-owned regardless of enhancement.
+
+The adversary's review vocabulary gains an `over-engineering` dimension, scored
+against the shared `proportionality` justification test: flag mechanism with no
+concrete consumer or stated requirement in the work under review (speculative
+abstraction, a subsystem where a function would do, single-value config or
+flags, indirection without payoff) and name the simpler alternative. Size,
+ambition, and large-but-justified epics are never findings on their own.
+Structural over-engineering is `blocking` ("simplify before expansion");
+ceremony is a `nit`. This dimension only *adds* to review — the adversary keeps
+sole correctness-gate authority and its write-scope invariant.
 
 ## Coverage CLI
 
