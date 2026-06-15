@@ -1,10 +1,21 @@
 import type { ReactNode } from 'react'
 import { NumberField, SwitchField, TextAreaField, TextField } from '../../activity/fields'
 import type { FieldOption } from '../../activity/fields'
-import { BoundedSelectField, KeyValueMapField, StringListField } from '../fields'
+import {
+  BoundedSelectField,
+  KeyValueMapField,
+  StringListField,
+  TypedListField,
+} from '../fields'
 import { enumOptionsAt, numberBoundsAt } from '../configSchema'
 import type { SettingsSectionFields } from './SettingsSection'
-import { asMap, asNumber, asString, asStringList } from './configAccessors'
+import {
+  asMap,
+  asNumber,
+  asString,
+  asStringList,
+  asTypedList,
+} from './configAccessors'
 
 /**
  * Shared field wrappers for config-backed settings sections. Every section that
@@ -191,6 +202,82 @@ export function MapConfigField({
       addLabel={addLabel}
       keyPlaceholder={keyPlaceholder}
       onChange={(value) => fields.setValue(path, value)}
+    />
+  )
+}
+
+/**
+ * A `dict[str, list[str]]` config row: a key/value map whose every value is an
+ * ordered string list (the audit's `map<array>` "fix" rows, e.g. the task
+ * expansion `pattern_criteria.*` templates and keyword sets). Reads coerce the
+ * outer object through `asMap` and each value through `asStringList`.
+ */
+export function ListMapConfigField({
+  fields,
+  path,
+  label,
+  ariaLabel,
+  valueLabel,
+  addLabel,
+  keyPlaceholder,
+  itemAddLabel,
+}: ConfigFieldBase & {
+  /** Label for each entry's nested string-list editor (its group name). */
+  valueLabel: string
+  addLabel?: string
+  keyPlaceholder?: string
+  itemAddLabel?: string
+}) {
+  return (
+    <KeyValueMapField<string[]>
+      label={label}
+      ariaLabel={ariaLabel}
+      value={asMap<string[]>(fields.getValue(path))}
+      addLabel={addLabel}
+      keyPlaceholder={keyPlaceholder}
+      createValue={() => []}
+      renderValue={(value, onValueChange, key) => (
+        <StringListField
+          label={valueLabel}
+          ariaLabel={`${ariaLabel} ${key || 'new entry'} values`}
+          value={asStringList(value)}
+          addLabel={itemAddLabel}
+          onChange={onValueChange}
+        />
+      )}
+      onChange={(value) => fields.setValue(path, value)}
+    />
+  )
+}
+
+/**
+ * A `list[int]` config row backed by an editable number list (the audit's
+ * `array<integer>` "fix" rows, e.g. `cron.backoff_delays`). Each row is a
+ * `NumberField`; a freshly added row seeds to 0.
+ */
+export function NumberListConfigField({
+  fields,
+  path,
+  label,
+  ariaLabel,
+  addLabel,
+}: ConfigFieldBase & { addLabel?: string }) {
+  return (
+    <TypedListField<number>
+      label={label}
+      ariaLabel={ariaLabel}
+      value={asTypedList<number>(fields.getValue(path))}
+      addLabel={addLabel}
+      createItem={() => 0}
+      onChange={(value) => fields.setValue(path, value)}
+      renderItem={(item, onItemChange, index) => (
+        <NumberField
+          label=""
+          ariaLabel={`${ariaLabel} item ${index + 1}`}
+          value={typeof item === 'number' ? item : null}
+          onChange={(next) => onItemChange(next ?? 0)}
+        />
+      )}
     />
   )
 }

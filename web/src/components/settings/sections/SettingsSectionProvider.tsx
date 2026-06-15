@@ -67,6 +67,8 @@ export function SettingsSectionProvider({
       clientSettings,
       providerSelection,
       projectSelection,
+      rulesEnforcement: config.rulesEnforcement,
+      setRulesEnforcement: config.setRulesEnforcement,
     }),
     [
       config.schema,
@@ -78,6 +80,8 @@ export function SettingsSectionProvider({
       clientSettings,
       providerSelection,
       projectSelection,
+      config.rulesEnforcement,
+      config.setRulesEnforcement,
     ],
   )
 

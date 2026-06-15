@@ -68,6 +68,16 @@ export interface SettingsSectionContextValue {
    * its absence.
    */
   projectSelection?: ProjectSelectionContextValue
+  /**
+   * Live rules-engine enforcement flag. Unlike the draft-backed config rows,
+   * this is a standalone surface (`/api/rules`) the provider reads/writes
+   * directly via `useConfiguration`; the Automation & Workflows section renders
+   * it as an immediate toggle. Absent when no provider is mounted (the fallback
+   * below); sections must tolerate its absence.
+   */
+  rulesEnforcement?: boolean
+  /** Persist the rules-enforcement flag; resolves true on a successful write. */
+  setRulesEnforcement?: (enabled: boolean) => Promise<boolean>
 }
 
 export const noopRegister: SettingsSectionContextValue['registerDirtyGuard'] =
