@@ -42,6 +42,7 @@ class BuildProfile:
     delivery_target_repo: str | None
     enabled: bool
     source: BuildProfileSource
+    plan_enhancement_rounds: int = 0
     project_id: str | None = None
     tags: list[str] | None = None
     bundled_hash: str | None = None
@@ -205,6 +206,17 @@ class BuildProfileLoader:
         tags = raw.get("tags", ["gobby"])
         if not isinstance(tags, list) or not all(isinstance(tag, str) for tag in tags):
             raise BuildProfileError(f"Build profile {name} tags must be a string list")
+        plan_enhancement_rounds = raw.get("plan_enhancement_rounds", 0)
+        if not isinstance(plan_enhancement_rounds, int) or isinstance(
+            plan_enhancement_rounds, bool
+        ):
+            raise BuildProfileError(
+                f"Build profile {name} plan_enhancement_rounds must be an integer"
+            )
+        if plan_enhancement_rounds < 0:
+            raise BuildProfileError(
+                f"Build profile {name} plan_enhancement_rounds must be greater than or equal to 0"
+            )
         return BuildProfile(
             id=str(uuid.uuid4()),
             name=name,
@@ -217,6 +229,7 @@ class BuildProfileLoader:
             delivery_target_repo=delivery_target_repo,
             enabled=enabled,
             source="installed",
+            plan_enhancement_rounds=plan_enhancement_rounds,
             project_id=None,
             tags=list(tags),
         )
@@ -308,6 +321,7 @@ class BuildProfileManager:
         enabled: bool = True,
         delivery_mode: DeliveryMode = "auto",
         delivery_target_repo: str | None = None,
+        plan_enhancement_rounds: int = 0,
         source: BuildProfileSource = "project",
         project_id: str | None = None,
         tags: Iterable[str] | None = None,
@@ -329,6 +343,7 @@ class BuildProfileManager:
             delivery_target_repo=delivery_target_repo,
             enabled=enabled,
             source=source,
+            plan_enhancement_rounds=plan_enhancement_rounds,
             project_id=project_id,
             tags=list(tags or []),
             bundled_hash=None,
@@ -481,9 +496,10 @@ class BuildProfileManager:
             """
             INSERT INTO build_profiles (
                 id, name, display_label, description, skip_stages_json, isolation,
-                unattended, delivery_mode, delivery_target_repo, enabled, source, project_id,
+                unattended, plan_enhancement_rounds, delivery_mode, delivery_target_repo,
+                enabled, source, project_id,
                 tags_json, bundled_hash, deleted_at, created_at, updated_at
-            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, NULL, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
             """,
             self._insert_params(profile),
         )
@@ -517,6 +533,7 @@ class BuildProfileManager:
                    skip_stages_json = %s,
                    isolation = %s,
                    unattended = %s,
+                   plan_enhancement_rounds = %s,
                    delivery_mode = %s,
                    delivery_target_repo = %s,
                    enabled = %s,
@@ -532,6 +549,7 @@ class BuildProfileManager:
                 json.dumps(profile.skip_stages),
                 profile.isolation,
                 bool(profile.unattended),
+                int(profile.plan_enhancement_rounds),
                 profile.delivery_mode,
                 profile.delivery_target_repo,
                 bool(profile.enabled),
@@ -551,6 +569,7 @@ class BuildProfileManager:
             json.dumps(profile.skip_stages),
             profile.isolation,
             bool(profile.unattended),
+            int(profile.plan_enhancement_rounds),
             profile.delivery_mode,
             profile.delivery_target_repo,
             bool(profile.enabled),
@@ -573,6 +592,7 @@ class BuildProfileManager:
             delivery_target_repo=row["delivery_target_repo"],
             enabled=bool(row["enabled"]),
             source=row["source"],
+            plan_enhancement_rounds=int(row["plan_enhancement_rounds"] or 0),
             project_id=row["project_id"],
             tags=_json_list(row["tags_json"], "tags_json"),
             bundled_hash=row["bundled_hash"],
@@ -598,6 +618,7 @@ class BuildProfileManager:
             "skip_stages": list(profile.skip_stages),
             "isolation": profile.isolation,
             "unattended": profile.unattended,
+            "plan_enhancement_rounds": profile.plan_enhancement_rounds,
             "delivery_mode": profile.delivery_mode,
             "delivery_target_repo": profile.delivery_target_repo,
             "enabled": profile.enabled,
@@ -614,6 +635,7 @@ class BuildProfileManager:
             "skip_stages": list(profile.skip_stages),
             "isolation": profile.isolation,
             "unattended": profile.unattended,
+            "plan_enhancement_rounds": profile.plan_enhancement_rounds,
             "delivery_mode": profile.delivery_mode,
             "delivery_target_repo": profile.delivery_target_repo,
             "enabled": profile.enabled,
@@ -636,6 +658,7 @@ class BuildProfileManager:
             "skip_stages": _json_list(row["skip_stages_json"], "skip_stages_json"),
             "isolation": row["isolation"],
             "unattended": bool(row["unattended"]),
+            "plan_enhancement_rounds": int(row["plan_enhancement_rounds"] or 0),
             "delivery_mode": row["delivery_mode"],
             "delivery_target_repo": row["delivery_target_repo"],
             "enabled": bool(row["enabled"]),
@@ -644,6 +667,10 @@ class BuildProfileManager:
 
     @staticmethod
     def _legacy_row_payload(row: Mapping[str, Any]) -> dict[str, Any]:
+        # Shape of the immediately-previous release's row payload (delivery fields
+        # present, plan_enhancement_rounds absent). Lets an unmodified bundled row
+        # whose stored hash predates plan_enhancement_rounds still match and refresh
+        # rather than being misread as a user edit.
         return {
             "name": row["name"],
             "display_label": row["display_label"],
@@ -651,6 +678,8 @@ class BuildProfileManager:
             "skip_stages": _json_list(row["skip_stages_json"], "skip_stages_json"),
             "isolation": row["isolation"],
             "unattended": bool(row["unattended"]),
+            "delivery_mode": row["delivery_mode"],
+            "delivery_target_repo": row["delivery_target_repo"],
             "enabled": bool(row["enabled"]),
             "tags": _json_list(row["tags_json"], "tags_json"),
         }
@@ -662,6 +691,8 @@ class BuildProfileManager:
             raise BuildProfileError("isolation must be one of: none, worktree, clone")
         if profile.delivery_mode not in {"auto", "pull_request"}:
             raise BuildProfileError("delivery_mode must be one of: auto, pull_request")
+        if profile.plan_enhancement_rounds < 0:
+            raise BuildProfileError("plan_enhancement_rounds must be greater than or equal to 0")
         _validate_delivery_target_repo(profile.delivery_target_repo)
         if profile.source not in _SOURCES:
             raise BuildProfileError("source must be installed or project")

@@ -71,6 +71,8 @@ def _build_payload(
         payload["coordinator"] = opts.coordinator_session_ref
     if opts.isolation_explicit:
         payload["isolation"] = opts.isolation
+    if opts.plan_enhancement_rounds_explicit:
+        payload["plan_enhancement_rounds"] = opts.plan_enhancement_rounds
     return payload
 
 
@@ -101,6 +103,8 @@ def _restart_options_payload(opts: BuildOptions) -> dict[str, object]:
         payload["coordinator"] = opts.coordinator_session_ref
     if opts.isolation_explicit:
         payload["isolation"] = opts.isolation
+    if opts.plan_enhancement_rounds_explicit:
+        payload["plan_enhancement_rounds"] = opts.plan_enhancement_rounds
     return payload
 
 

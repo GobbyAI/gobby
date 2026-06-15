@@ -77,5 +77,6 @@ def _restart_options_were_supplied(opts: BuildOptions) -> bool:
         or opts.max_retries is not None
         or opts.planning_seed_state != "drafted"
         or opts.completed_plan_review_rounds != 0
+        or opts.plan_enhancement_rounds_explicit
         or opts.coordinator_session_ref is not None
     )

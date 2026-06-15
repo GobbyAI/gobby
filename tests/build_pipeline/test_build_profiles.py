@@ -217,3 +217,61 @@ def test_explicit_delivery_options_override_profile_defaults(
     assert resolved.delivery_mode_explicit is True
     assert resolved.delivery_target_repo is None
     assert resolved.delivery_target_repo_explicit is True
+
+
+def test_plan_enhancement_rounds_inherits_profile_default_when_not_explicit(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    BuildProfileLoader().sync(temp_db)
+    BuildProfileManager(temp_db).create(
+        name="enhance",
+        display_label="Enhance",
+        description="Profile carrying a non-zero plan-enhancement default.",
+        skip_stages=[],
+        isolation="worktree",
+        unattended=False,
+        plan_enhancement_rounds=3,
+        source="project",
+        project_id=sample_project["id"],
+    )
+
+    resolved = resolve_build_profile_options(
+        _options(profile="enhance"),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert resolved.plan_enhancement_rounds == 3
+    assert resolved.plan_enhancement_rounds_explicit is False
+
+
+def test_explicit_zero_plan_enhancement_rounds_overrides_profile_default(
+    temp_db: HubDatabase, sample_project: dict[str, Any]
+) -> None:
+    BuildProfileLoader().sync(temp_db)
+    BuildProfileManager(temp_db).create(
+        name="enhance",
+        display_label="Enhance",
+        description="Profile carrying a non-zero plan-enhancement default.",
+        skip_stages=[],
+        isolation="worktree",
+        unattended=False,
+        plan_enhancement_rounds=3,
+        source="project",
+        project_id=sample_project["id"],
+    )
+
+    # Explicit 0 must win over the profile default of 3. A truthiness-based
+    # overlay would have wrongly kept 3; the _explicit marker keeps it at 0.
+    resolved = resolve_build_profile_options(
+        _options(
+            profile="enhance",
+            plan_enhancement_rounds=0,
+            plan_enhancement_rounds_explicit=True,
+        ),
+        db=temp_db,
+        project_id=sample_project["id"],
+    )
+
+    assert resolved.plan_enhancement_rounds == 0
+    assert resolved.plan_enhancement_rounds_explicit is True

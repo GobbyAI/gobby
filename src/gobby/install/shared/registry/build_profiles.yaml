@@ -8,6 +8,7 @@ profiles:
     unattended: false
     delivery_mode: auto
     delivery_target_repo: null
+    plan_enhancement_rounds: 0
     enabled: true
     tags: [gobby]
   - name: autopilot
@@ -18,6 +19,7 @@ profiles:
     unattended: true
     delivery_mode: auto
     delivery_target_repo: null
+    plan_enhancement_rounds: 0
     enabled: true
     tags: [gobby]
   - name: fix
@@ -28,6 +30,7 @@ profiles:
     unattended: false
     delivery_mode: auto
     delivery_target_repo: null
+    plan_enhancement_rounds: 0
     enabled: true
     tags: [gobby]
   - name: fix-merge
@@ -38,6 +41,7 @@ profiles:
     unattended: false
     delivery_mode: auto
     delivery_target_repo: null
+    plan_enhancement_rounds: 0
     enabled: true
     tags: [gobby]
   - name: submit
@@ -48,5 +52,6 @@ profiles:
     unattended: false
     delivery_mode: pull_request
     delivery_target_repo: null
+    plan_enhancement_rounds: 0
     enabled: true
     tags: [gobby]

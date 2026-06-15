@@ -145,6 +145,7 @@ def _make_build_options(
     max_retries: int | None,
     planning_seed_state: str,
     completed_plan_review_rounds: int,
+    plan_enhancement_rounds: int | None,
     dry_run: bool,
     coordinator: str | None,
     cwd: Path,
@@ -174,6 +175,10 @@ def _make_build_options(
         max_retries=max_retries,
         planning_seed_state=cast(BuildPlanningSeedState, planning_seed_state),
         completed_plan_review_rounds=completed_plan_review_rounds,
+        plan_enhancement_rounds=plan_enhancement_rounds
+        if plan_enhancement_rounds is not None
+        else 0,
+        plan_enhancement_rounds_explicit=plan_enhancement_rounds is not None,
         dry_run=dry_run,
         coordinator_session_ref=_coordinator_session_ref(
             coordinator,
@@ -241,6 +246,15 @@ def _make_build_options(
     help="Review rounds already completed before plan-file build handoff.",
 )
 @click.option(
+    "--plan-enhancement-rounds",
+    type=click.IntRange(min=0),
+    default=None,
+    help=(
+        "Target plan-enhancement rounds before the adversary gate. "
+        "Overrides the build profile default when supplied."
+    ),
+)
+@click.option(
     "--dry-run",
     is_flag=True,
     default=False,
@@ -287,6 +301,7 @@ def build_command(
     max_retries: int | None,
     planning_seed_state: str,
     completed_plan_review_rounds: int,
+    plan_enhancement_rounds: int | None,
     dry_run: bool,
     coordinator: str | None,
     project_ref: str | None,
@@ -338,6 +353,7 @@ def build_command(
         max_retries=max_retries,
         planning_seed_state=planning_seed_state,
         completed_plan_review_rounds=completed_plan_review_rounds,
+        plan_enhancement_rounds=plan_enhancement_rounds,
         dry_run=dry_run,
         coordinator=coordinator,
         cwd=project_context.cwd,

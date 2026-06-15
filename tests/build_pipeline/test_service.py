@@ -33,6 +33,10 @@ def _options(**overrides: object) -> BuildOptions:
         "quick": False,
         "skip_stages": [],
         "isolation": "worktree",
+        # Mirror the entry-layer contract: a build request that names an
+        # isolation also marks it explicit, so resolve_build_profile_options
+        # does not overlay the profile default back over the test's value.
+        "isolation_explicit": True,
         "no_merge": False,
         "pr": None,
         "target_branch": None,
@@ -2181,10 +2185,10 @@ async def test_build_task_ref_removes_skipped_pr_from_progressed_child_epic(
     temp_db.execute(
         """
         UPDATE tasks
-           SET claimed_by_session_id = %s, claimed_by_session_id = %s
+           SET claimed_by_session_id = %s
          WHERE id = %s
         """,
-        ("reviewer-session", "reviewer-session", child.id),
+        ("reviewer-session", child.id),
     )
     run = LocalExpansionRunManager(temp_db).create(
         parent_task_id=parent.id,

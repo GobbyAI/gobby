@@ -853,6 +853,10 @@ def _seed_restart_plan_file_stage_state(
                 task_id,
             ),
         )
+    task_manager.artifacts.set_artifacts_atomic(
+        task_id,
+        plan_enhancement_rounds=opts.plan_enhancement_rounds,
+    )
 
 
 def _has_children(db: HubDatabase, task_id: str) -> bool:

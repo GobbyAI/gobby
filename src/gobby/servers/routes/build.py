@@ -77,6 +77,7 @@ class BuildRequest(BaseModel):
     max_retries: int | None = Field(default=None, ge=0)
     planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
     completed_plan_review_rounds: int = Field(default=0, ge=0)
+    plan_enhancement_rounds: int = Field(default=0, ge=0)
     dry_run: bool = False
     coordinator: str | None = None
 
@@ -108,6 +109,7 @@ class BuildControlRequest(BaseModel):
     max_retries: int | None = Field(default=None, ge=0)
     planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
     completed_plan_review_rounds: int = Field(default=0, ge=0)
+    plan_enhancement_rounds: int = Field(default=0, ge=0)
     coordinator: str | None = None
 
 
@@ -128,6 +130,7 @@ _RESTART_OPTION_FIELDS = frozenset(
         "max_retries",
         "planning_seed_state",
         "completed_plan_review_rounds",
+        "plan_enhancement_rounds",
         "coordinator",
     }
 )
@@ -204,6 +207,8 @@ def _build_options(request_data: BuildRequest) -> BuildOptions:
         max_retries=request_data.max_retries,
         planning_seed_state=request_data.planning_seed_state,
         completed_plan_review_rounds=request_data.completed_plan_review_rounds,
+        plan_enhancement_rounds=request_data.plan_enhancement_rounds,
+        plan_enhancement_rounds_explicit="plan_enhancement_rounds" in request_data.model_fields_set,
         dry_run=request_data.dry_run,
         coordinator_session_ref=request_data.coordinator,
         project_explicit=_project_was_explicit(request_data),
@@ -236,6 +241,8 @@ def _restart_options(request_data: BuildControlRequest) -> BuildOptions:
         max_retries=request_data.max_retries,
         planning_seed_state=request_data.planning_seed_state,
         completed_plan_review_rounds=request_data.completed_plan_review_rounds,
+        plan_enhancement_rounds=request_data.plan_enhancement_rounds,
+        plan_enhancement_rounds_explicit="plan_enhancement_rounds" in request_data.model_fields_set,
         dry_run=request_data.dry_run,
         coordinator_session_ref=request_data.coordinator,
         project_explicit=_project_was_explicit(request_data),

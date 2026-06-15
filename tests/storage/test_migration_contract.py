@@ -188,6 +188,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "285_task_validation_backoff.sql",
         "286_code_index_prune_dirty_projects.sql",
         "287_plan_enhancement_artifacts.sql",
+        "288_build_profile_plan_enhancement_rounds.sql",
     ]
 
 
@@ -377,6 +378,20 @@ def test_plan_enhancement_artifacts_migration_and_baseline_define_columns() -> N
     )
     _assert_contains_all("plan enhancement artifacts migration", migration, snippets)
     _assert_contains_all("plan enhancement artifacts baseline", baseline, snippets)
+
+
+def test_build_profile_plan_enhancement_rounds_migration_and_baseline_define_column() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "288_build_profile_plan_enhancement_rounds.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+
+    snippets = (
+        "plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0",
+        "CHECK (plan_enhancement_rounds >= 0)",
+    )
+    _assert_contains_all("build profile plan enhancement migration", migration, snippets)
+    _assert_contains_all("build profile plan enhancement baseline", baseline, snippets)
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:

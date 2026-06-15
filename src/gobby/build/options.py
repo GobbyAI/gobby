@@ -38,6 +38,8 @@ class BuildOptions:
     max_retries: int | None = None
     planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted"
     completed_plan_review_rounds: int = 0
+    plan_enhancement_rounds: int = 0
+    plan_enhancement_rounds_explicit: bool = False
     dry_run: bool = False
     coordinator_session_ref: str | None = None
     project_explicit: bool = False

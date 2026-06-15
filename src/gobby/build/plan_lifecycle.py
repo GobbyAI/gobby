@@ -52,6 +52,7 @@ async def build_plan_file(
         task.id,
         plan_file_path=str(plan_file),
         target_branch=target_branch,
+        plan_enhancement_rounds=opts.plan_enhancement_rounds,
     )
     record_build_delivery_campaign(db, project_id=project_id, task_id=task.id, opts=opts)
     specs = initialize_stage_manifest(task_manager, task, opts, skip_stages, "plan_file")

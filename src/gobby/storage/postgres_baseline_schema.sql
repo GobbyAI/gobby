@@ -1980,6 +1980,8 @@ CREATE TABLE build_profiles (
                 isolation TEXT NOT NULL DEFAULT 'worktree'
                     CHECK (isolation IN ('none','worktree','clone')),
                 unattended BOOLEAN NOT NULL DEFAULT FALSE CHECK (unattended IN (FALSE, TRUE)),
+                plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0
+                    CHECK (plan_enhancement_rounds >= 0),
                 delivery_mode TEXT NOT NULL DEFAULT 'auto'
                     CHECK (delivery_mode IN ('auto','pull_request')),
                 delivery_target_repo TEXT,

@@ -220,3 +220,112 @@ def test_custom_profile_cannot_restore_without_bundled_counterpart(
 
     with pytest.raises(BuildProfileError, match="custom"):
         manager.restore("local-fast", source="project", project_id=sample_project["id"])
+
+
+def test_bundled_profiles_default_plan_enhancement_rounds_to_zero(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
+    BuildProfileLoader().sync(temp_db)
+    manager = BuildProfileManager(temp_db)
+
+    for name in ("default", "autopilot", "fix", "fix-merge", "submit"):
+        profile = manager.resolve(name, project_id=sample_project["id"])
+        assert profile.plan_enhancement_rounds == 0
+
+
+def test_project_profile_round_trips_plan_enhancement_rounds(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
+    manager = BuildProfileManager(temp_db)
+    created = manager.create(
+        name="enhance",
+        display_label="Enhance",
+        description="Non-zero plan-enhancement rounds.",
+        skip_stages=[],
+        isolation="worktree",
+        unattended=False,
+        plan_enhancement_rounds=2,
+        source="project",
+        project_id=sample_project["id"],
+    )
+    assert created.plan_enhancement_rounds == 2
+
+    fetched = manager.get("enhance", source="project", project_id=sample_project["id"])
+    assert fetched is not None
+    assert fetched.plan_enhancement_rounds == 2
+
+    updated = manager.update(
+        "enhance",
+        source="project",
+        project_id=sample_project["id"],
+        updates={"plan_enhancement_rounds": 5},
+    )
+    assert updated.plan_enhancement_rounds == 5
+
+
+def test_create_rejects_negative_plan_enhancement_rounds(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
+    manager = BuildProfileManager(temp_db)
+    with pytest.raises(BuildProfileError, match="plan_enhancement_rounds"):
+        manager.create(
+            name="bad-enhance",
+            display_label="Bad",
+            description="Negative rounds.",
+            skip_stages=[],
+            isolation="worktree",
+            unattended=False,
+            plan_enhancement_rounds=-1,
+            source="project",
+            project_id=sample_project["id"],
+        )
+
+
+def test_resync_after_plan_enhancement_field_does_not_drift(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
+    # The new plan_enhancement_rounds column must not make unchanged bundled
+    # rows look edited: a second sync should skip every profile.
+    first = BuildProfileLoader().sync(temp_db)
+    assert first.upserted == 5
+
+    second = BuildProfileLoader().sync(temp_db)
+    assert second.upserted == 0
+    assert second.skipped == 5
+
+    manager = BuildProfileManager(temp_db)
+    default = manager.resolve("default", project_id=sample_project["id"])
+    assert default.state == "bundled"
+
+
+def test_sync_refreshes_legacy_hashed_bundled_row(
+    temp_db: Any, sample_project: dict[str, Any]
+) -> None:
+    # A bundled row whose stored hash predates the plan_enhancement_rounds
+    # column (the legacy payload shape) must refresh on the next sync rather
+    # than be misread as a user edit and skipped.
+    BuildProfileLoader().sync(temp_db)
+    manager = BuildProfileManager(temp_db)
+    row = temp_db.fetchone(
+        "SELECT * FROM build_profiles WHERE name = %s AND source = 'installed'",
+        ("default",),
+    )
+    assert row is not None
+    new_hash = row["bundled_hash"]
+    legacy_hash = manager.legacy_row_hash(row)
+    assert legacy_hash != new_hash
+
+    temp_db.execute(
+        "UPDATE build_profiles SET bundled_hash = %s WHERE id = %s",
+        (legacy_hash, row["id"]),
+    )
+
+    result = BuildProfileLoader().sync(temp_db)
+    assert result.upserted >= 1
+
+    refreshed = temp_db.fetchone(
+        "SELECT bundled_hash FROM build_profiles WHERE id = %s",
+        (row["id"],),
+    )
+    assert refreshed is not None
+    assert refreshed["bundled_hash"] == new_hash

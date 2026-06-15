@@ -57,6 +57,10 @@ def resolve_build_profile_options(
         max_retries=opts.max_retries,
         planning_seed_state=opts.planning_seed_state,
         completed_plan_review_rounds=opts.completed_plan_review_rounds,
+        plan_enhancement_rounds=profile.plan_enhancement_rounds
+        if not opts.plan_enhancement_rounds_explicit
+        else opts.plan_enhancement_rounds,
+        plan_enhancement_rounds_explicit=opts.plan_enhancement_rounds_explicit,
         dry_run=opts.dry_run,
         coordinator_session_ref=opts.coordinator_session_ref,
         project_explicit=opts.project_explicit,

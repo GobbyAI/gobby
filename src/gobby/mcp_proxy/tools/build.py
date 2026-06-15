@@ -79,6 +79,7 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
         max_retries: int | None = None,
         planning_seed_state: Literal["drafted", "needs_review", "approved"] = "drafted",
         completed_plan_review_rounds: int = 0,
+        plan_enhancement_rounds: int | None = None,
         dry_run: bool = False,
         coordinator: str | None = None,
         project_id: str | None = None,
@@ -119,6 +120,10 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
             max_retries=max_retries,
             planning_seed_state=planning_seed_state,
             completed_plan_review_rounds=completed_plan_review_rounds,
+            plan_enhancement_rounds=(
+                plan_enhancement_rounds if plan_enhancement_rounds is not None else 0
+            ),
+            plan_enhancement_rounds_explicit=plan_enhancement_rounds is not None,
             dry_run=dry_run,
             coordinator_session_ref=_resolve_coordinator_session_ref(coordinator),
             project_explicit=project_id is not None,
@@ -290,6 +295,10 @@ def create_build_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "type": "integer",
                     "minimum": 0,
                     "default": 0,
+                },
+                "plan_enhancement_rounds": {
+                    "type": "integer",
+                    "minimum": 0,
                 },
                 "coordinator": {"type": "string"},
                 "project_id": {"type": "string"},

@@ -19,6 +19,10 @@ def _options(**overrides: object) -> BuildOptions:
         "quick": False,
         "skip_stages": ["qa"],
         "isolation": "none",
+        # A request that names an isolation marks it explicit, matching the
+        # entry layer; otherwise resolve_build_profile_options overlays the
+        # profile default back over the test's value.
+        "isolation_explicit": True,
         "no_merge": False,
         "pr": None,
         "target_branch": "main",
