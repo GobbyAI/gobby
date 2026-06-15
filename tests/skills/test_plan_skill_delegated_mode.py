@@ -65,6 +65,31 @@ def test_build_handoff_uses_manifest_and_seed_flags(body: str) -> None:
     assert "planning_seed_state=approved" in body
 
 
+def test_enhancement_phase_precedes_adversary_gate(body: str) -> None:
+    # Step 4.5: constructive enhancement runs after approval, before the adversary.
+    assert "Step 4.5" in body
+    assert "plan-enhancer-taskless" in body
+    assert "max_enhancement_rounds" in body
+    lowered = body.lower()
+    # Human is the scope gate; enhancer never gates.
+    assert "present-and-stop" in lowered
+    assert "scope gate" in lowered
+    # Advisory: accepted suggestions only, stop on convergence/decline/cap.
+    assert "accepted" in lowered
+    assert "converged" in lowered
+    assert "never gate" in lowered
+
+
+def test_enhancement_changelog_uses_kind_enhancement(body: str) -> None:
+    assert "`kind: enhancement`" in body
+    assert "enhancer_run" in body
+    assert "suggestions_presented" in body
+    # Round entries are bold labels; an actual `### Round` heading (line-start)
+    # fails plan validation, so the changelog examples must never use one.
+    assert "\n### Round" not in body
+    assert "**Round <N>**" in body
+
+
 def test_old_anchor_workflow_is_absent(body: str) -> None:
     for forbidden in (
         "active_anchor_id",
