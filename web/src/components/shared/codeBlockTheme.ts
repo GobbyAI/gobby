@@ -16,6 +16,13 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
  * darker than `--bg-primary` at L 15) to differentiate code chrome from
  * page chrome; light-theme panels sit at L 95-97 against the L 99 page
  * background for the same reason.
+ *
+ * `gutterText` is the one *text* token here, so it carries the 4.5:1 AA
+ * floor (vs the surface/divider tokens, which do not). It is set to the
+ * `--text-muted` lightness in each theme — dark L 62 ≈ 5.6:1, light L 48
+ * ≈ 6.0:1 against `--code-bg` — so the CodeMirror gutter reads identically
+ * to the muted line numbers used elsewhere. See `lib/colorContrast.ts` and
+ * the `codeBlockTheme.contrast` test, which gate this. (#17153)
  */
 export interface CodeChromePair {
   dark: string
@@ -26,7 +33,7 @@ export const CODE_CHROME: Record<string, CodeChromePair> = {
   bg: { dark: 'oklch(11% 0.005 125)', light: 'oklch(97% 0.003 125)' },
   bgBlock: { dark: 'oklch(13% 0.005 125)', light: 'oklch(95% 0.005 125)' },
   gutterBorder: { dark: 'oklch(28% 0.005 125)', light: 'oklch(85% 0.008 125)' },
-  gutterText: { dark: 'oklch(45% 0.005 125)', light: 'oklch(55% 0.005 125)' },
+  gutterText: { dark: 'oklch(62% 0.005 125)', light: 'oklch(48% 0.005 125)' },
   activeLineBg: { dark: 'oklch(18% 0.005 125)', light: 'oklch(92% 0.005 125)' },
 }
 
