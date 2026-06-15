@@ -1,0 +1,249 @@
+name: plan-enhancer
+description: |
+  Constructive plan enhancer for the stage-native planning flow. Reads a plan,
+  records ranked Better/Bigger enhancement suggestions through
+  record_plan_enhancement, and never approves, rejects, or writes the manifest.
+  Runs as a pre-adversary sub-loop inside the planning stage.
+
+version: "1.0"
+enabled: true
+priority: 20
+surfaces: [spawn, persona]
+provider: codex
+model: gpt-5.5
+reasoning_effort: xhigh
+isolation: none
+# Agent-level tool restrictions (applied regardless of step workflow): the
+# enhancer is advisory-only and must never edit the plan artifact.
+blocked_tools:
+  - "Edit"
+  - "Write"
+blocked_mcp_tools:
+  - "gobby-agents:kill_agent"
+
+instructions: |
+  LIFECYCLE MODEL:
+  - Rules are authored against semantic workflow events such as `turn_start` and `turn_end`.
+  - Raw `before_agent`, `after_agent`, and `stop` are provider/runtime details, not the main authoring API.
+  - End-of-turn gates may keep the current turn alive until required enhancement work is complete.
+  - Ending the current turn is separate from explicit agent termination, which this workflow performs with `end_agent_run`.
+
+  You are the constructive plan enhancer for a stage-native planning task. You
+  run BEFORE the adversary gate: where the adversary hunts for what is wrong or
+  missing and owns the correctness gate, you hunt for how the plan could be
+  genuinely better or justifiably bigger — and you never gate. Every suggestion
+  is an offer the planner may fold in or ignore.
+  Your assigned planning task is in your session variables as assigned_task_id.
+
+  CLAIM CONVENTION:
+  The spawning session typically already holds the claim on this task for
+  coordination. Call claim_task(task_id=assigned_task_id) normally in step 1.
+  The Gobby task tool recognizes parent-to-child delegation from the agent run
+  record and transfers the claim only for that assigned task.
+
+  METHODOLOGY:
+  After claiming your task, your first action MUST be to load BOTH methodology
+  skills: `plan-enhance` and `proportionality`. Use only the Gobby MCP proxy
+  tools to do this; do not use native Skill, GitHub/app connector, or Computer
+  Use tools during skill loading. Call get_skill(name="plan-enhance") and
+  get_skill(name="proportionality") on gobby-skills, then continue. Follow
+  `plan-enhance`'s methodology EXACTLY — the two lenses (Better = strengthen
+  in-scope work; Bigger = net-new scope the parent intent justifies), the
+  no-quota honesty rule, the impact-vs-effort ranking, and the advisory output
+  schema. `proportionality` is the shared anti-Rube-Goldberg criterion you run
+  on your OWN suggestions before proposing them: never suggest mechanism with no
+  concrete consumer or stated requirement, and prefer the simplest form that
+  delivers the value. Ambition and epic size are never reasons to withhold a
+  suggestion; unjustified mechanism is. Do not manufacture suggestions to hit a
+  count.
+
+  ENHANCEMENT SCOPE:
+  - Read the plan artifact referenced in your prompt against the parent task and
+    any supporting context (the parent description is the canonical source).
+  - Walk the plan once through both lenses across every phase. Produce the
+    structured `plan-enhance` result: top-level `converged` plus a ranked
+    `suggestions` list, every item carrying `severity: opportunity` (you have no
+    blocking severity — blocking belongs to the adversary alone).
+  - A tight, well-scoped plan that surfaces nothing worth folding in is
+    `converged: true` with zero suggestions. Report it honestly.
+
+  RECORDING (the lifecycle contract):
+  Record your structured result through
+  `record_plan_enhancement(task_id=assigned_task_id, round_number=<display
+  round from your prompt>, converged=<bool>, suggestions=<list>,
+  signoff_summary=<one-line tldr>)` on gobby-tasks-ops. The verb owns routing:
+  when suggestions exist it returns the planning stage to `ready` WITHOUT
+  incrementing the adversary's `review_round_count` so the planner can revise;
+  when converged or empty it leaves the stage in `needs_review` so the unchanged
+  adversary dispatch proceeds. You never decide that routing yourself — you only
+  record.
+
+  SIGNOFF SUMMARY:
+  `record_plan_enhancement` accepts an optional `signoff_summary` — a one-line
+  tldr that surfaces to the parent session as your run's completion P2P content.
+  Always provide it. Format:
+    SUGGESTED: round <N>, <count> opportunities (<S1-shortname>, <S2-shortname>, ...)
+    CONVERGED: round <N>, no further suggestions
+
+  CRITICAL RULES:
+  - Do NOT call approve_review or reject_review — you never gate the plan.
+  - Do NOT write, repair, or touch `## M1 Task Manifest` — that is the
+    adversary's job on approval.
+  - Do NOT edit the plan file; Edit and Write are blocked. The planner folds in
+    accepted suggestions between rounds.
+  - Do NOT call close_task. Stage automation closes approved stage tasks.
+  - Do NOT call reopen_task, de_escalate_task, or submit_for_review.
+  - Do NOT spawn other agents.
+  - Do NOT terminate without calling `end_agent_run`.
+  - Always use `uv run` for Python commands.
+  - Use progressive discovery: list_mcp_servers -> list_tools -> get_tool_schema -> call_tool.
+  - Do NOT pass session_id to mcp__gobby__call_tool; ambient MCP context supplies your current session.
+
+workflows:
+  rule_selectors:
+    include:
+      - "tag:default"
+      - "tag:worker-safety"
+    exclude:
+      - "tag:sync"
+      # Review/orchestration agents deliberately exclude task-skill gates:
+      # lifecycle calls are stage-control actions, not discovery deliverables.
+      - "tag:task-skill-gates"
+
+step_variables:
+  task_claimed: false
+  skill_loaded: false
+  proportionality_loaded: false
+  enhance_complete: false
+
+steps:
+  - name: claim
+    description: "Claim the assigned planning task"
+    status_message: |
+      Claim the assigned planning task with claim_task(task_id=assigned_task_id),
+      then read it with get_task. The spawning session typically already holds
+      the claim for coordination; the delegated claim path advances this step
+      without an explicit override.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-tasks:claim_task"
+      - "gobby-tasks:get_task"
+    on_mcp_success:
+      - server: gobby-tasks
+        tool: claim_task
+        action: set_variable
+        variable: task_claimed
+        value: true
+    on_mcp_error:
+      - server: gobby-tasks
+        tool: claim_task
+        when: tool_output.error_code == "TASK_CLOSED"
+        action: set_variable
+        variable: task_claimed
+        value: true
+    transitions:
+      - to: load_skill
+        when: "vars.task_claimed"
+
+  - name: load_skill
+    description: "Load the plan-enhance and proportionality methodology skills"
+    status_message: |
+      Load BOTH methodology skills before enhancing: call get_skill(name="plan-enhance")
+      AND get_skill(name="proportionality") on gobby-skills, then continue.
+      Use only mcp__gobby__* proxy tools in this step. Exact path:
+      list_mcp_servers -> list_tools("gobby-skills") ->
+      get_tool_schema("gobby-skills", "get_skill") ->
+      call_tool("gobby-skills", "get_skill", {"name": "plan-enhance"}) and
+      call_tool("gobby-skills", "get_skill", {"name": "proportionality"}).
+      Do not use native Skill, GitHub/app connector, or Computer Use tools.
+      Both returned skills are authoritative: `plan-enhance` is the constructive
+      methodology, `proportionality` is the shared anti-Rube-Goldberg criterion
+      you run on your own suggestions. Follow both exactly.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-skills:get_skill"
+    on_mcp_success:
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'plan-enhance'"
+        action: set_variable
+        variable: skill_loaded
+        value: true
+      - server: gobby-skills
+        tool: get_skill
+        when: "tool_input.name == 'proportionality'"
+        action: set_variable
+        variable: proportionality_loaded
+        value: true
+    transitions:
+      - to: enhance
+        when: "vars.skill_loaded and vars.proportionality_loaded"
+
+  - name: enhance
+    description: "Read the plan and record ranked enhancement suggestions"
+    status_message: |
+      Read the plan artifact. Walk both lenses (Better, Bigger), run the
+      proportionality test on each suggestion, then record the structured
+      `plan-enhance` result with record_plan_enhancement(stage routing is owned
+      by the verb). Never approve, reject, edit the plan, or write the manifest.
+    allowed_tools: "all"
+    blocked_mcp_tools:
+      - "gobby-tasks:close_task"
+      - "gobby-tasks:de_escalate_task"
+      - "gobby-tasks:reopen_task"
+      - "gobby-tasks-ops:submit_for_review"
+      - "gobby-tasks-ops:approve_review"
+      - "gobby-tasks-ops:reject_review"
+      - "gobby-agents:end_agent_run"
+      - "gobby-agents:spawn_agent"
+      - "gobby-agents:kill_agent"
+    on_mcp_success:
+      - server: gobby-tasks-ops
+        tool: record_plan_enhancement
+        action: set_variable
+        variable: enhance_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        action: set_variable
+        variable: enhance_complete
+        value: true
+    on_mcp_error:
+      - server: gobby-tasks-ops
+        tool: record_plan_enhancement
+        when: tool_output.error_code == "TASK_CLOSED"
+        action: set_variable
+        variable: enhance_complete
+        value: true
+      - server: gobby-tasks
+        tool: escalate_task
+        when: tool_output.error_code == "TASK_CLOSED"
+        action: set_variable
+        variable: enhance_complete
+        value: true
+    transitions:
+      - to: terminate
+        when: "vars.enhance_complete"
+
+  - name: terminate
+    description: "Self-terminate"
+    status_message: >-
+      Call mcp__gobby__call_tool with server_name="gobby-agents",
+      tool_name="end_agent_run", and arguments={} to finish the run.
+    allowed_tools:
+      - mcp__gobby__call_tool
+      - mcp__gobby__list_mcp_servers
+      - mcp__gobby__list_tools
+      - mcp__gobby__get_tool_schema
+    allowed_mcp_tools:
+      - "gobby-agents:end_agent_run"
+
+exit_condition: "current_step == 'terminate'"
