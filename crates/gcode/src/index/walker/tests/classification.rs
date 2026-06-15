@@ -127,3 +127,57 @@ fn walker_consumes_gobby_core_walker_settings() {
     assert!(source.contains(&settings));
     assert!(!source.contains(&direct_builder));
 }
+
+fn oversized_data_blob() -> Vec<u8> {
+    // One byte over the data-language AST cap; plain ASCII so it is not flagged
+    // as binary and stays under MAX_FILE_SIZE.
+    vec![b'a'; crate::index::MAX_DATA_LANGUAGE_AST_SIZE as usize + 1]
+}
+
+#[test]
+fn classifies_oversized_json_as_content_only_but_small_json_as_ast() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, "data/big.json", &oversized_data_blob());
+    write_file(root, "data/small.json", b"{\"key\": 1}\n");
+    let excludes: Vec<&str> = Vec::new();
+
+    assert_eq!(
+        classify_file(root, &root.join("data/big.json"), &excludes),
+        Some(FileClassification::ContentOnly),
+        "oversized JSON should fall back to content-only"
+    );
+    assert_eq!(
+        classify_file(root, &root.join("data/small.json"), &excludes),
+        Some(FileClassification::Ast),
+        "small JSON keeps its per-key AST symbols"
+    );
+}
+
+#[test]
+fn classifies_oversized_yaml_as_content_only() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, "data/big.yaml", &oversized_data_blob());
+    let excludes: Vec<&str> = Vec::new();
+
+    assert_eq!(
+        classify_file(root, &root.join("data/big.yaml"), &excludes),
+        Some(FileClassification::ContentOnly)
+    );
+}
+
+#[test]
+fn keeps_oversized_source_language_as_ast() {
+    // The cap is data-language-only, not size-only: a >1 MiB Rust file (an AST
+    // language) must still classify as Ast.
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, "src/big.rs", &oversized_data_blob());
+    let excludes: Vec<&str> = Vec::new();
+
+    assert_eq!(
+        classify_file(root, &root.join("src/big.rs"), &excludes),
+        Some(FileClassification::Ast)
+    );
+}

@@ -196,13 +196,6 @@ fn metadata_params(sync_token: &str) -> Vec<(&'static str, TypedValue)> {
     ]
 }
 
-fn append_sync_segment(cypher: &mut String, segment: &str) {
-    if !cypher.is_empty() {
-        cypher.push_str("\nWITH DISTINCT 1 AS _\n");
-    }
-    cypher.push_str(segment);
-}
-
 pub(super) struct SyncFileMutation<'a> {
     pub(super) project_id: &'a str,
     pub(super) file_path: &'a str,
@@ -211,44 +204,6 @@ pub(super) struct SyncFileMutation<'a> {
     pub(super) symbols: &'a [&'a Symbol],
     pub(super) calls: &'a CallGraphItems,
     pub(super) sync_token: &'a str,
-}
-
-pub(super) fn sync_file_mutation_query(input: SyncFileMutation<'_>) -> anyhow::Result<TypedQuery> {
-    let mut cypher = String::new();
-    append_sync_segment(
-        &mut cypher,
-        "MERGE (f:CodeFile {path: $file_path, project: $project})
-         SET f.updated_at = timestamp(),
-             f.symbol_count = $symbol_count,
-             f.sync_token = $sync_token",
-    );
-    if !input.imports.is_empty() {
-        append_sync_segment(&mut cypher, ADD_IMPORTS_CYPHER);
-    }
-    if !input.symbols.is_empty() {
-        append_sync_segment(&mut cypher, ADD_DEFINITIONS_CYPHER);
-    }
-    if !input.calls.symbol.is_empty() {
-        append_sync_segment(&mut cypher, ADD_SYMBOL_CALLS_CYPHER);
-    }
-    if !input.calls.external.is_empty() {
-        append_sync_segment(&mut cypher, ADD_EXTERNAL_CALLS_CYPHER);
-    }
-    if !input.calls.unresolved.is_empty() {
-        append_sync_segment(&mut cypher, ADD_UNRESOLVED_CALLS_CYPHER);
-    }
-    let mut params = vec![
-        ("project", TypedValue::String(input.project_id.to_string())),
-        ("file_path", TypedValue::String(input.file_path.to_string())),
-        ("symbol_count", usize_value(input.symbol_count)?),
-        ("imports", import_rows(input.imports)),
-        ("symbols", symbol_rows(input.symbols)?),
-        ("symbol_calls", call_rows(&input.calls.symbol)?),
-        ("external_calls", call_rows(&input.calls.external)?),
-        ("unresolved_calls", call_rows(&input.calls.unresolved)?),
-    ];
-    params.extend(metadata_params(input.sync_token));
-    typed_query(cypher, params)
 }
 
 pub(super) fn ensure_file_node_query(
@@ -402,48 +357,6 @@ fn call_rows(calls: &[CallGraphItem]) -> anyhow::Result<TypedValue> {
                         "callee_module",
                         TypedValue::String(call.callee_module.clone().unwrap_or_default()),
                     ),
-                ]))
-            })
-            .collect::<anyhow::Result<Vec<_>>>()?,
-    ))
-}
-
-fn import_rows(imports: &[ImportGraphItem]) -> TypedValue {
-    TypedValue::List(
-        imports
-            .iter()
-            .map(|import| {
-                map_value([
-                    (
-                        "source_file",
-                        TypedValue::String(import.source_file.clone()),
-                    ),
-                    (
-                        "target_module",
-                        TypedValue::String(import.target_module.clone()),
-                    ),
-                ])
-            })
-            .collect(),
-    )
-}
-
-fn symbol_rows(symbols: &[&Symbol]) -> anyhow::Result<TypedValue> {
-    Ok(TypedValue::List(
-        symbols
-            .iter()
-            .map(|symbol| {
-                Ok(map_value([
-                    ("id", TypedValue::String(symbol.id.clone())),
-                    ("name", TypedValue::String(symbol.name.clone())),
-                    (
-                        "qualified_name",
-                        TypedValue::String(symbol.qualified_name.clone()),
-                    ),
-                    ("kind", TypedValue::String(symbol.kind.clone())),
-                    ("language", TypedValue::String(symbol.language.clone())),
-                    ("line_start", usize_value(symbol.line_start)?),
-                    ("line_end", usize_value(symbol.line_end)?),
                 ]))
             })
             .collect::<anyhow::Result<Vec<_>>>()?,

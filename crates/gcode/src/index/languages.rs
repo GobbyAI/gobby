@@ -345,6 +345,19 @@ pub fn get_spec(lang: &str) -> Option<&'static LanguageSpec> {
         .map(|(_, s)| *s)
 }
 
+/// Returns `true` for "data" languages: specs whose `import_query` and
+/// `call_query` are both empty (JSON and YAML).
+///
+/// Such files carry no import/call-graph structure, only per-key `property`
+/// symbols, so an oversized one can be indexed content-only without losing any
+/// graph signal. Driven by the spec rather than a hard-coded extension list, so
+/// future data languages are covered automatically (gobby-cli #678).
+pub fn is_data_language(lang: &str) -> bool {
+    get_spec(lang)
+        .map(|spec| spec.import_query.is_empty() && spec.call_query.is_empty())
+        .unwrap_or(false)
+}
+
 /// Get the tree-sitter Language object for a given language name.
 pub fn get_ts_language(lang: &str) -> Option<Language> {
     let lang_fn = match lang {
@@ -439,5 +452,18 @@ mod tests {
         parser.set_language(&language).unwrap();
         let tree = parser.parse(source, None).unwrap();
         tree.root_node().has_error()
+    }
+
+    #[test]
+    fn is_data_language_matches_only_json_and_yaml() {
+        assert!(is_data_language("json"));
+        assert!(is_data_language("yaml"));
+        // AST languages carry import/call queries and must not be treated as data.
+        assert!(!is_data_language("rust"));
+        assert!(!is_data_language("python"));
+        // Dart has an empty call_query but a non-empty import_query, so it is excluded.
+        assert!(!is_data_language("dart"));
+        // Unknown languages are not data languages.
+        assert!(!is_data_language("not_a_language"));
     }
 }

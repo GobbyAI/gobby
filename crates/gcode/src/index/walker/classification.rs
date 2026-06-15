@@ -1,8 +1,8 @@
 use std::path::Path;
 
-use crate::index::MAX_FILE_SIZE;
 use crate::index::languages;
 use crate::index::security;
+use crate::index::{MAX_DATA_LANGUAGE_AST_SIZE, MAX_FILE_SIZE};
 
 use super::generated::is_generated_js_bundle;
 use super::hidden::{
@@ -31,8 +31,21 @@ pub fn classify_file(
         return Some(FileClassification::ContentOnly);
     }
 
-    if languages::detect_language(&path.to_string_lossy()).is_some() {
-        Some(FileClassification::Ast)
+    if let Some(lang) = languages::detect_language(&path.to_string_lossy()) {
+        // Oversized data files (JSON/YAML) would emit one `property` symbol per
+        // key; route them content-only so they don't bloat the graph/vector/FTS
+        // projections. `is_safe_text_file` already bounded len to (0, MAX_FILE_SIZE],
+        // so this is one extra `stat` on the data-language branch only (gobby-cli #678).
+        if languages::is_data_language(lang)
+            && path
+                .metadata()
+                .map(|m| m.len() > MAX_DATA_LANGUAGE_AST_SIZE)
+                .unwrap_or(false)
+        {
+            Some(FileClassification::ContentOnly)
+        } else {
+            Some(FileClassification::Ast)
+        }
     } else {
         Some(FileClassification::ContentOnly)
     }

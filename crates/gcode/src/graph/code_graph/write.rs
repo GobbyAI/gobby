@@ -17,6 +17,7 @@ use super::connection::with_required_core_graph;
 mod deletion;
 mod mutation;
 mod support;
+mod sync_plan;
 
 pub(crate) use deletion::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,
@@ -30,9 +31,10 @@ use deletion::delete_stale_file_graph_queries;
 use mutation::{
     SyncFileMutation, add_definitions_query, add_external_calls_query, add_imports_query,
     add_symbol_calls_query, add_unresolved_calls_query, definition_graph_symbols,
-    ensure_file_node_query, new_sync_token, sync_file_mutation_query,
+    ensure_file_node_query, new_sync_token,
 };
 use support::execute_write_query;
+use sync_plan::plan_sync_batches;
 
 const PROJECT_INDEXED_LABELS: &[&str] = &[
     "CodeFile",
@@ -69,29 +71,29 @@ impl<'a> CodeGraph<'a> {
         let sync_token = new_sync_token(file_path);
         let import_items = import_graph_items(file_path, imports);
         let symbols = definition_graph_symbols(definitions);
-        let current_symbol_ids = symbols
-            .iter()
-            .map(|symbol| symbol.id.clone())
-            .collect::<Vec<_>>();
         let call_groups = partition_call_graph_items(self.project_id, file_path, calls);
         let relationship_count = import_items.len()
             + symbols.len()
             + call_groups.symbol.len()
             + call_groups.external.len()
             + call_groups.unresolved.len();
-        execute_write_query(
-            self.client,
-            sync_file_mutation_query(SyncFileMutation {
-                project_id: self.project_id,
-                file_path,
-                symbol_count: definitions.len(),
-                imports: &import_items,
-                symbols: &symbols,
-                calls: &call_groups,
-                sync_token: &sync_token,
-            })?,
-        )?;
-        self.delete_stale_file_graph(file_path, &current_symbol_ids, &sync_token)?;
+        // Issue the mutation as bounded batches so no single FalkorDB request
+        // grows unbounded for pathological files (gobby-cli #678).
+        for query in plan_sync_batches(SyncFileMutation {
+            project_id: self.project_id,
+            file_path,
+            symbol_count: definitions.len(),
+            imports: &import_items,
+            symbols: &symbols,
+            calls: &call_groups,
+            sync_token: &sync_token,
+        })? {
+            execute_write_query(self.client, query)?;
+        }
+        // Stale delete is token-only: every current row was just written with the
+        // new sync_token, so a token mismatch alone identifies stale rows — no
+        // (potentially unbounded) symbol-id list is needed.
+        self.delete_stale_file_graph(file_path, &sync_token)?;
         if cleanup_orphans {
             self.cleanup_orphans()?;
         }
@@ -192,15 +194,9 @@ impl<'a> CodeGraph<'a> {
     pub fn delete_stale_file_graph(
         &mut self,
         file_path: &str,
-        current_symbol_ids: &[String],
         sync_token: &str,
     ) -> anyhow::Result<()> {
-        for query in delete_stale_file_graph_queries(
-            self.project_id,
-            file_path,
-            current_symbol_ids,
-            sync_token,
-        )? {
+        for query in delete_stale_file_graph_queries(self.project_id, file_path, sync_token)? {
             execute_write_query(self.client, query)?;
         }
         Ok(())

@@ -68,7 +68,6 @@ pub(crate) fn delete_file_graph_queries(
 pub(crate) fn delete_stale_file_graph_queries(
     project_id: &str,
     file_path: &str,
-    current_symbol_ids: &[String],
     sync_token: &str,
 ) -> anyhow::Result<Vec<TypedQuery>> {
     let base_params = || {
@@ -100,36 +99,15 @@ pub(crate) fn delete_stale_file_graph_queries(
         )?,
     ];
 
-    let mut symbol_params = vec![
-        ("project", TypedValue::String(project_id.to_string())),
-        ("file_path", TypedValue::String(file_path.to_string())),
-        sync_token_param(sync_token),
-    ];
-    if current_symbol_ids.is_empty() {
-        queries.push(typed_query(
-            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})
-             WHERE s.sync_token IS NULL OR s.sync_token <> $sync_token
-             DETACH DELETE s",
-            symbol_params,
-        )?);
-    } else {
-        symbol_params.push((
-            "symbol_ids",
-            TypedValue::List(
-                current_symbol_ids
-                    .iter()
-                    .map(|id| TypedValue::String(id.clone()))
-                    .collect(),
-            ),
-        ));
-        queries.push(typed_query(
-            "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})
-             WHERE (s.sync_token IS NULL OR s.sync_token <> $sync_token)
-               AND NOT s.id IN $symbol_ids
-             DETACH DELETE s",
-            symbol_params,
-        )?);
-    }
+    // Token-only stale delete: every current symbol was just written with the
+    // new sync_token, so a token mismatch alone identifies stale rows. Dropping
+    // the per-file symbol-id list keeps the sync request bounded (gobby-cli #678).
+    queries.push(typed_query(
+        "MATCH (s:CodeSymbol {project: $project, file_path: $file_path})
+         WHERE s.sync_token IS NULL OR s.sync_token <> $sync_token
+         DETACH DELETE s",
+        base_params(),
+    )?);
 
     Ok(queries)
 }
