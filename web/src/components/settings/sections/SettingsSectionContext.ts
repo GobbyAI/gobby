@@ -1,6 +1,7 @@
 import { createContext, useContext } from 'react'
 import type { SettingsSectionId } from '../sections'
 import type { UseSettingsReturn } from '../../../hooks/useSettings'
+import type { SecretInfo } from '../../../hooks/useConfiguration'
 
 /** Predicate reporting whether a section currently holds unsaved edits. */
 export type SectionDirtyGuard = () => boolean
@@ -94,6 +95,27 @@ export interface SettingsSectionContextValue {
   builtInApprovalExemptions?: string[]
   /** Persist the global auto-allow rules; resolves true on a successful write. */
   saveGlobalApprovalRules?: (rules: string[]) => Promise<boolean>
+  /**
+   * Live `$secret:` store entries (metadata only — encrypted values never leave
+   * the daemon). Like `rulesEnforcement` this is a standalone surface
+   * (`/api/config/secrets`) the provider reads/writes directly via
+   * `useConfiguration`; the Secrets & Auth section renders it as an
+   * immediate-save CRUD list, distinct from the draft-backed secret-typed config
+   * rows. Absent when no provider is mounted (the fallback below); sections must
+   * tolerate its absence.
+   */
+  secrets?: SecretInfo[]
+  /** Categories offered when creating a new secret-store entry. */
+  secretCategories?: string[]
+  /** Create or update a secret-store entry; resolves true on a successful write. */
+  saveSecret?: (
+    name: string,
+    value: string,
+    category?: string,
+    description?: string,
+  ) => Promise<boolean>
+  /** Delete a secret-store entry by name; resolves true on a successful write. */
+  deleteSecret?: (name: string) => Promise<boolean>
 }
 
 export const noopRegister: SettingsSectionContextValue['registerDirtyGuard'] =

@@ -1,5 +1,5 @@
 import type { ReactNode } from 'react'
-import { NumberField, SwitchField, TextAreaField, TextField } from '../../activity/fields'
+import { NumberField, SecretField, SwitchField, TextAreaField, TextField } from '../../activity/fields'
 import type { FieldOption } from '../../activity/fields'
 import {
   BoundedSelectField,
@@ -104,6 +104,32 @@ export function TextConfigField({
 }: ConfigFieldBase & { placeholder?: string; nullable?: boolean }) {
   return (
     <TextField
+      label={label}
+      ariaLabel={ariaLabel}
+      value={asString(fields.getValue(path))}
+      placeholder={placeholder}
+      onChange={(value) => fields.setValue(path, nullable && value === '' ? null : value)}
+    />
+  )
+}
+
+/**
+ * A masked secret row: a password input with a reveal toggle, bound to `path`.
+ * Set secrets arrive masked as "********" from `/api/config/values`; submitting
+ * that sentinel unchanged keeps the stored value server-side, while a typed
+ * replacement overwrites it. `nullable` clears optional daemon fields back to
+ * their default the same way `TextConfigField` does.
+ */
+export function SecretConfigField({
+  fields,
+  path,
+  label,
+  ariaLabel,
+  placeholder,
+  nullable,
+}: ConfigFieldBase & { placeholder?: string; nullable?: boolean }) {
+  return (
+    <SecretField
       label={label}
       ariaLabel={ariaLabel}
       value={asString(fields.getValue(path))}

@@ -70,6 +70,55 @@ export function TextField({
   );
 }
 
+export function SecretField({
+  label,
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  ariaLabel,
+}: TextFieldProps) {
+  const id = useId();
+  const [revealed, setRevealed] = useState(false);
+
+  return (
+    <label className={fieldShellClass} htmlFor={id}>
+      <span className={labelClass}>{label}</span>
+      <div className="relative">
+        <input
+          id={id}
+          type={revealed ? "text" : "password"}
+          className={cn(controlClass, "w-full pr-16")}
+          aria-label={ariaLabel}
+          value={value}
+          disabled={disabled}
+          placeholder={placeholder}
+          autoComplete="off"
+          spellCheck={false}
+          onChange={(event) => onChange(event.target.value)}
+        />
+        <button
+          type="button"
+          className={cn(
+            "absolute inset-y-0 right-0 flex items-center rounded-r-md px-3",
+            "text-xs font-medium text-muted-foreground transition-colors",
+            "hover:text-foreground focus-visible:outline-none focus-visible:ring-2",
+            "focus-visible:ring-accent focus-visible:ring-offset-2",
+            "focus-visible:ring-offset-background",
+            "disabled:cursor-not-allowed disabled:opacity-50",
+          )}
+          aria-label={revealed ? `Hide ${ariaLabel}` : `Show ${ariaLabel}`}
+          aria-pressed={revealed}
+          disabled={disabled}
+          onClick={() => setRevealed((current) => !current)}
+        >
+          {revealed ? "Hide" : "Show"}
+        </button>
+      </div>
+    </label>
+  );
+}
+
 export function NumberField({
   label,
   value,

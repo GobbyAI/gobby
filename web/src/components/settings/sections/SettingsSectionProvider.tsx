@@ -41,11 +41,12 @@ export function SettingsSectionProvider({
   children,
 }: SettingsSectionProviderProps) {
   const config = useConfiguration()
-  const { fetchConfig, saveConfig: persistConfig } = config
+  const { fetchConfig, saveConfig: persistConfig, fetchSecrets } = config
 
   useEffect(() => {
     void fetchConfig()
-  }, [fetchConfig])
+    void fetchSecrets()
+  }, [fetchConfig, fetchSecrets])
 
   const saveConfig = useCallback(
     async (values: Record<string, unknown>): Promise<SaveConfigResult> => {
@@ -73,6 +74,10 @@ export function SettingsSectionProvider({
       defaultApprovalRules: config.defaultApprovalRules,
       builtInApprovalExemptions: config.builtInApprovalExemptions,
       saveGlobalApprovalRules: config.saveGlobalApprovalRules,
+      secrets: config.secrets,
+      secretCategories: config.secretCategories,
+      saveSecret: config.saveSecret,
+      deleteSecret: config.deleteSecret,
     }),
     [
       config.schema,
@@ -90,6 +95,10 @@ export function SettingsSectionProvider({
       config.defaultApprovalRules,
       config.builtInApprovalExemptions,
       config.saveGlobalApprovalRules,
+      config.secrets,
+      config.secretCategories,
+      config.saveSecret,
+      config.deleteSecret,
     ],
   )
 

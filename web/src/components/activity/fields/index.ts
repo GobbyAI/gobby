@@ -1,5 +1,6 @@
 export {
   NumberField,
+  SecretField,
   SelectField,
   TagsField,
   TextAreaField,
