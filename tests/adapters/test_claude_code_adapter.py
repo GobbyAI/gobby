@@ -609,6 +609,7 @@ class TestTranslateFromHookResponse:
             decision="block",
             reason=(
                 "Rule enforced by Gobby: [aggregated:2-gates]\n"
+                "Multiple gates blocked while retrying Edit.\n"
                 '1. [require-code-index-skill] Call get_skill(name="code-index") on '
                 "gobby-skills through progressive discovery. Then continue.\n"
                 '2. [prefer-gcode-for-code-search] Use `gcode grep "pattern" [PATH...] '
@@ -650,6 +651,24 @@ class TestTranslateFromHookResponse:
                 ),
             },
         }
+
+    def test_pre_tool_use_block_preserves_command_call_fallback_action(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(
+            decision="block",
+            reason=(
+                "Rule enforced by Gobby: [require-task-before-edit]\n"
+                "Create or claim a Gobby task before editing source files.\n"
+                "The required task lifecycle call is create_task(title, category, claim=True)."
+            ),
+        )
+        result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
+
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
+            "Gobby blocked [require-task-before-edit]: "
+            "Create or claim a Gobby task before editing source files; "
+            "create_task(title, category, claim=True)"
+        )
 
     def test_block_decision(self) -> None:
         adapter = ClaudeCodeAdapter()

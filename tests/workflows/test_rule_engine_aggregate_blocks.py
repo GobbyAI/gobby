@@ -13,6 +13,7 @@ from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect, RuleTriggerEvent
+from gobby.workflows.engine.blocked_tool_recovery import format_aggregated_block_reason
 from gobby.workflows.engine.core import RuleEngine
 
 pytestmark = pytest.mark.unit
@@ -82,6 +83,17 @@ class TestAggregateBlocks:
 
         assert response.decision == "block"
         assert response.reason == (
+            "Rule enforced by Gobby: [aggregated:2-gates]\n"
+            "Multiple gates blocked while retrying Edit.\n"
+            "1. [first-gate] First gate\n"
+            "2. [second-gate] Second gate"
+        )
+
+    def test_aggregate_formatter_omits_placeholder_retry_target(self) -> None:
+        assert format_aggregated_block_reason(
+            [("first-gate", "First gate"), ("second-gate", "Second gate")],
+            tool_name="-",
+        ) == (
             "Rule enforced by Gobby: [aggregated:2-gates]\n"
             "1. [first-gate] First gate\n"
             "2. [second-gate] Second gate"
@@ -165,6 +177,7 @@ class TestAggregateBlocks:
         assert "mcp_calls" not in response.metadata
         assert response.reason == (
             "Rule enforced by Gobby: [aggregated:2-gates]\n"
+            "Multiple gates blocked while retrying Edit.\n"
             "1. [first-gate] First gate\n"
             "2. [second-gate] Second gate"
         )

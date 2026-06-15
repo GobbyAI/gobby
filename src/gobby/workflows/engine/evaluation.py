@@ -39,6 +39,7 @@ class EvaluationContext:
     variables: dict[str, Any]
     eval_context: dict[str, Any] | None
     is_before_tool: bool
+    block_tool_name: str
     context_parts: list[str] = field(default_factory=list)
     mcp_calls: list[dict[str, Any]] = field(default_factory=list)
 
@@ -364,7 +365,10 @@ class EvaluationMixin:
     ) -> HookResponse:
         block_reason: str | None = None
         if len(block_gates) > 1:
-            block_reason = format_aggregated_block_reason(block_gates)
+            block_reason = format_aggregated_block_reason(
+                block_gates,
+                tool_name=evaluation.block_tool_name,
+            )
         elif block_gates:
             rule_name, rendered_block_reason = block_gates[0]
             block_reason = f"Rule enforced by Gobby: [{rule_name}]\n{rendered_block_reason}"

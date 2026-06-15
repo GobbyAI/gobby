@@ -38,9 +38,16 @@ def block_reason_signature(rule_name: str, reason: str) -> str:
     return f"{rule_name}:{digest}"
 
 
-def format_aggregated_block_reason(gates: Sequence[tuple[str, str]]) -> str:
+def format_aggregated_block_reason(
+    gates: Sequence[tuple[str, str]],
+    *,
+    tool_name: str | None = None,
+) -> str:
     """Build a compact multi-gate block reason."""
     lines = [f"Rule enforced by Gobby: [aggregated:{len(gates)}-gates]"]
+    retry_target = (tool_name or "").strip()
+    if retry_target and retry_target != "-":
+        lines.append(f"Multiple gates blocked while retrying {retry_target}.")
     for index, (rule_name, reason) in enumerate(gates, start=1):
         compact_reason = _compact_gate_reason(reason)
         lines.append(f"{index}. [{rule_name}] {compact_reason}")

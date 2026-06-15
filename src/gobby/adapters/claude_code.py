@@ -40,6 +40,7 @@ _RULE_BLOCK_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]\s*(.*
 _AGGREGATED_RULE_NAME_RE = re.compile(r"^aggregated:(\d+)-gates$")
 _AGGREGATED_GATE_LINE_RE = re.compile(r"^\s*(\d+)\.\s+\[([^\]]+)\]\s*(.*)$")
 _GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
+_COMMAND_CALL_RE = re.compile(r"\b[a-z_][a-z0-9_]*\([^)]*\)")
 
 DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
     {
@@ -116,6 +117,10 @@ def _compact_single_claude_pre_tool_deny_reason(rule_name: str, body: str) -> st
             if idx > 0:
                 action = _first_sentence(body[idx:])
                 break
+        if not action:
+            command_match = _COMMAND_CALL_RE.search(body)
+            if command_match:
+                action = command_match.group(0)
 
     short_reason = _first_sentence(body)
     if action and short_reason == action:

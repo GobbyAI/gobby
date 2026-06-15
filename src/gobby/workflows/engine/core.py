@@ -170,6 +170,7 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                     variables=variables,
                     eval_context=eval_context,
                     is_before_tool=is_before_tool,
+                    block_tool_name=_block_tool_name(event),
                     mcp_calls=mcp_calls,
                 )
 
