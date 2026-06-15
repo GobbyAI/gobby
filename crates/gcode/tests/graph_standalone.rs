@@ -1,8 +1,10 @@
 mod common;
 
 use common::{ProjectCleanup, cleanup_project};
+use gobby_core::falkor::GraphClient;
 use postgres::{Client, NoTls};
 use serde_json::Value;
+use std::collections::HashMap;
 use std::fs;
 use std::process::{Command, Output};
 
@@ -250,6 +252,7 @@ fn graph_sync_file_classifies_missing_project_before_graph_access() {
 }
 
 const LOCAL_IMPORT_PROJECT_ID: &str = "graph-standalone-local-import";
+const NO_PHANTOM_PROJECT_ID: &str = "graph-standalone-no-phantom";
 
 /// End-to-end check for the post-write local-import resolution (#790): indexing
 /// a two-file Python project must resolve the cross-file calls in `b.py` to the
@@ -300,23 +303,33 @@ fn index_resolves_cross_file_local_python_imports() {
     assert_success(indexed, "gcode index --full");
 
     // Canonical target ids defined in a.py.
-    let recluster_id = required_symbol_id(&mut conn, "a.py", "recluster_project_entities");
-    let service_id = required_symbol_id(&mut conn, "a.py", "Service");
+    let recluster_id = required_symbol_id(
+        &mut conn,
+        LOCAL_IMPORT_PROJECT_ID,
+        "a.py",
+        "recluster_project_entities",
+    );
+    let service_id = required_symbol_id(&mut conn, LOCAL_IMPORT_PROJECT_ID, "a.py", "Service");
 
     // b.py's cross-file function call and aliased-constructor call resolved to
     // the real indexed ids (the alias `Svc` resolves back to `Service`).
     assert_eq!(
-        resolved_call_target(&mut conn, "b.py", "recluster_project_entities"),
+        resolved_call_target(
+            &mut conn,
+            LOCAL_IMPORT_PROJECT_ID,
+            "b.py",
+            "recluster_project_entities"
+        ),
         Some(recluster_id),
         "cross-file function call did not resolve to the canonical symbol"
     );
     assert_eq!(
-        resolved_call_target(&mut conn, "b.py", "Service"),
+        resolved_call_target(&mut conn, LOCAL_IMPORT_PROJECT_ID, "b.py", "Service"),
         Some(service_id),
         "aliased cross-file constructor did not resolve to the class symbol"
     );
     assert_eq!(
-        pending_local_import_count(&mut conn),
+        pending_local_import_count(&mut conn, LOCAL_IMPORT_PROJECT_ID),
         0,
         "no local_import rows should survive a completed index run"
     );
@@ -325,7 +338,13 @@ fn index_resolves_cross_file_local_python_imports() {
     // cross-file caller must be reachable via callers and blast-radius.
     let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
     assert_eq!(rebuilt["success"], true);
-    assert_cross_file_caller_present(&env, project.path(), "after rebuild");
+    assert_caller_present(
+        &env,
+        project.path(),
+        "recluster_project_entities",
+        "caller",
+        "after rebuild",
+    );
 
     let blast = json_command(
         &env,
@@ -344,38 +363,316 @@ fn index_resolves_cross_file_local_python_imports() {
         &["graph", "sync-file", "--file", "b.py"],
     );
     assert_success(sync, "graph sync-file b.py");
-    assert_cross_file_caller_present(&env, project.path(), "after sync-file");
+    assert_caller_present(
+        &env,
+        project.path(),
+        "recluster_project_entities",
+        "caller",
+        "after sync-file",
+    );
 }
 
-fn assert_cross_file_caller_present(env: &StandaloneEnv, cwd: &std::path::Path, when: &str) {
-    let callers = json_command(env, cwd, &["callers", "recluster_project_entities"]);
+/// Regression for #791 (no phantom / cross-file call targets). The #790 rework
+/// resolves local-import calls against the real `code_symbols` ids instead of a
+/// recomputed UUID, so a `CALLS` edge can never land on a fabricated (phantom)
+/// `CodeSymbol`. This locks that invariant across Python, Rust, and JS/TS using
+/// decorated / attributed / doc-commented and aliased top-level definitions —
+/// the exact shapes whose byte offsets shifted under the retired file-scan
+/// pre-scan and could have desynced a recomputed id. After indexing and
+/// projecting the graph, every `CALLS`-target `CodeSymbol` must be backed by a
+/// `DEFINES` edge (no orphan/phantom nodes), and `callers` must surface each
+/// cross-file caller.
+///
+/// #790 deleted the per-language pre-scan and the parse-time UUID compute
+/// entirely, so the original criteria's "pre-scan byte_start/kind parity" check
+/// and `with_symbol_target` UUID phantom-guard are now vacuous. The
+/// services-free half — that decorated/attributed definitions still record a
+/// resolvable `local_import` — is covered by the `decorated_*` parser unit
+/// tests; this is the live-graph half.
+#[test]
+fn index_creates_no_phantom_call_targets_across_languages() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping no-phantom cross-file resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    let root = project.path();
+    fs::create_dir_all(root.join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(root.join("src")).expect("create src");
+
+    fs::write(
+        root.join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": NO_PHANTOM_PROJECT_ID,
+            "name": "graph-standalone-no-phantom",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+    // Crate + package metadata so Rust self-crate and JS self-package
+    // resolution have a name to anchor on.
+    fs::write(root.join("Cargo.toml"), "[package]\nname = \"app\"\n").expect("write Cargo.toml");
+    fs::write(
+        root.join("package.json"),
+        r#"{"name":"app","dependencies":{}}"#,
+    )
+    .expect("write package.json");
+
+    // Python: a decorated function and a documented class, imported (one
+    // aliased) by a sibling module.
+    fs::write(
+        root.join("defs.py"),
+        "def _mark(fn):\n    return fn\n\n\n@_mark\ndef decorated_target():\n    \"\"\"Doc-commented, decorated target.\"\"\"\n    return 1\n\n\nclass DecoratedService:\n    \"\"\"Doc-commented service.\"\"\"\n\n    def __init__(self):\n        pass\n",
+    )
+    .expect("write defs.py");
+    fs::write(
+        root.join("caller.py"),
+        "from defs import decorated_target\nfrom defs import DecoratedService as Svc\n\n\ndef py_caller():\n    decorated_target()\n    Svc()\n",
+    )
+    .expect("write caller.py");
+
+    // Rust: an attributed + doc-commented target in a sibling module, called via
+    // a `crate::` use binding.
+    fs::write(
+        root.join("src/service.rs"),
+        "/// Doc-commented, attributed cross-file target.\n#[inline]\npub fn rust_target() {}\n",
+    )
+    .expect("write src/service.rs");
+    fs::write(
+        root.join("src/lib.rs"),
+        "pub mod service;\n\nuse crate::service::rust_target;\n\n/// Doc-commented caller.\npub fn rust_caller() {\n    rust_target();\n}\n",
+    )
+    .expect("write src/lib.rs");
+
+    // JavaScript: a JSDoc-commented export imported under an alias.
+    fs::write(
+        root.join("src/js_target.js"),
+        "/** Doc-commented target. */\nexport function jsTarget() {}\n",
+    )
+    .expect("write src/js_target.js");
+    fs::write(
+        root.join("src/js_caller.js"),
+        "import { jsTarget as runJsTarget } from \"./js_target\";\n\nexport function jsCaller() {\n  runJsTarget();\n}\n",
+    )
+    .expect("write src/js_caller.js");
+
+    // TypeScript: a JSDoc-commented export imported by name.
+    fs::write(
+        root.join("src/ts_target.ts"),
+        "/** Doc-commented target. */\nexport function tsTarget(): void {}\n",
+    )
+    .expect("write src/ts_target.ts");
+    fs::write(
+        root.join("src/ts_caller.ts"),
+        "import { tsTarget } from \"./ts_target\";\n\nexport function tsCaller(): void {\n  tsTarget();\n}\n",
+    )
+    .expect("write src/ts_caller.ts");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, NO_PHANTOM_PROJECT_ID);
+
+    assert_success(
+        run_gcode(&env, root, &["index", "--full"]),
+        "gcode index --full",
+    );
+
+    // (definition file, definition name, caller file, recorded callee name after
+    // the alias resolves back to the original export/symbol name).
+    let cases = [
+        (
+            "defs.py",
+            "decorated_target",
+            "caller.py",
+            "decorated_target",
+        ),
+        (
+            "defs.py",
+            "DecoratedService",
+            "caller.py",
+            "DecoratedService",
+        ),
+        ("src/service.rs", "rust_target", "src/lib.rs", "rust_target"),
+        (
+            "src/js_target.js",
+            "jsTarget",
+            "src/js_caller.js",
+            "jsTarget",
+        ),
+        (
+            "src/ts_target.ts",
+            "tsTarget",
+            "src/ts_caller.ts",
+            "tsTarget",
+        ),
+    ];
+
+    // Every cross-file local call resolved to the real indexed id, and no
+    // pending `local_import` row survived the run.
+    let mut target_ids = Vec::new();
+    for (def_file, def_name, caller_file, callee_name) in cases {
+        let target_id = required_symbol_id(&mut conn, NO_PHANTOM_PROJECT_ID, def_file, def_name);
+        assert_eq!(
+            resolved_call_target(&mut conn, NO_PHANTOM_PROJECT_ID, caller_file, callee_name),
+            Some(target_id.clone()),
+            "{caller_file} call `{callee_name}` did not resolve to {def_file}:{def_name}"
+        );
+        target_ids.push((def_name, target_id));
+    }
+    assert_eq!(
+        pending_local_import_count(&mut conn, NO_PHANTOM_PROJECT_ID),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Project the graph and assert the no-phantom invariant directly in
+    // FalkorDB: no `CALLS`-target `CodeSymbol` lacks a `DEFINES` edge, and every
+    // resolved target id is a defined, called node.
+    let rebuilt = json_command(&env, root, &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, NO_PHANTOM_PROJECT_ID),
+        0,
+        "a CALLS edge targeted a CodeSymbol with no DEFINES edge (phantom) after rebuild"
+    );
+    for (def_name, target_id) in &target_ids {
+        assert!(
+            resolved_target_is_defined_and_called(&mut graph, NO_PHANTOM_PROJECT_ID, target_id),
+            "resolved target `{def_name}` ({target_id}) is not a defined, called CodeSymbol"
+        );
+    }
+
+    // Each language's cross-file caller is reachable through `callers`.
+    for (target, caller) in [
+        ("decorated_target", "py_caller"),
+        ("rust_target", "rust_caller"),
+        ("jsTarget", "jsCaller"),
+        ("tsTarget", "tsCaller"),
+    ] {
+        assert_caller_present(&env, root, target, caller, "after rebuild");
+    }
+
+    // The sync-file projection path must also avoid phantoms.
+    assert_success(
+        run_gcode(&env, root, &["graph", "sync-file", "--file", "caller.py"]),
+        "graph sync-file caller.py",
+    );
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, NO_PHANTOM_PROJECT_ID),
+        0,
+        "a CALLS edge targeted a phantom CodeSymbol after sync-file"
+    );
+    assert_caller_present(
+        &env,
+        root,
+        "decorated_target",
+        "py_caller",
+        "after sync-file",
+    );
+}
+
+/// Connect a read client to the shared code graph (project-scoped by node
+/// property), reusing the standalone FalkorDB env.
+fn phantom_graph_client(env: &StandaloneEnv) -> GraphClient {
+    let config = gobby_core::config::FalkorConfig {
+        host: env.falkor_host.clone(),
+        port: env.falkor_port.parse().expect("falkor port"),
+        password: env.falkor_password.clone(),
+    };
+    GraphClient::from_config(&config, gobby_core::config::CODE_GRAPH_NAME)
+        .expect("connect FalkorDB")
+}
+
+/// Count of `CALLS`-target `CodeSymbol` nodes with no incoming `DEFINES` edge —
+/// i.e. phantom nodes. Must be zero after a clean projection.
+fn phantom_call_target_count(graph: &mut GraphClient, project_id: &str) -> i64 {
+    let params = HashMap::from([("project".to_string(), project_id.to_string())]);
+    let rows = graph
+        .query(
+            "MATCH ()-[:CALLS]->(s:CodeSymbol {project: $project})
+             WHERE NOT (:CodeFile {project: $project})-[:DEFINES]->(s)
+             RETURN count(DISTINCT s) AS phantoms",
+            Some(params),
+        )
+        .expect("phantom count query");
+    rows.first()
+        .and_then(|row| row.get("phantoms"))
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or_else(|| panic!("expected a phantom count row: {rows:?}"))
+}
+
+/// Whether `symbol_id` is a `CodeSymbol` that is both defined (incoming
+/// `DEFINES` from its `CodeFile`) and called (incoming `CALLS`).
+fn resolved_target_is_defined_and_called(
+    graph: &mut GraphClient,
+    project_id: &str,
+    symbol_id: &str,
+) -> bool {
+    let params = HashMap::from([
+        ("project".to_string(), project_id.to_string()),
+        ("id".to_string(), symbol_id.to_string()),
+    ]);
+    let rows = graph
+        .query(
+            "MATCH (:CodeFile {project: $project})-[:DEFINES]->(s:CodeSymbol {project: $project, id: $id})
+             WHERE ()-[:CALLS]->(s)
+             RETURN count(s) AS defined",
+            Some(params),
+        )
+        .expect("defined-target query");
+    rows.first()
+        .and_then(|row| row.get("defined"))
+        .and_then(serde_json::Value::as_i64)
+        .unwrap_or(0)
+        > 0
+}
+
+fn assert_caller_present(
+    env: &StandaloneEnv,
+    cwd: &std::path::Path,
+    target: &str,
+    caller: &str,
+    when: &str,
+) {
+    let callers = json_command(env, cwd, &["callers", target]);
     assert!(
         callers["total"].as_u64().is_some_and(|total| total >= 1),
-        "expected a cross-file caller {when}: {callers}"
+        "expected a cross-file caller of `{target}` {when}: {callers}"
     );
     assert!(
         callers["results"]
             .as_array()
-            .is_some_and(|results| results.iter().any(|result| result["name"] == "caller")),
-        "expected b.py `caller` in results {when}: {callers}"
+            .is_some_and(|results| results.iter().any(|result| result["name"] == caller)),
+        "expected `{caller}` among callers of `{target}` {when}: {callers}"
     );
 }
 
-fn required_symbol_id(conn: &mut Client, file_path: &str, name: &str) -> String {
+fn required_symbol_id(conn: &mut Client, project_id: &str, file_path: &str, name: &str) -> String {
     conn.query_one(
         "SELECT id FROM code_symbols WHERE project_id = $1 AND file_path = $2 AND name = $3",
-        &[&LOCAL_IMPORT_PROJECT_ID, &file_path, &name],
+        &[&project_id, &file_path, &name],
     )
     .unwrap_or_else(|err| panic!("symbol {file_path}:{name} not indexed: {err}"))
     .get::<_, String>(0)
 }
 
-fn resolved_call_target(conn: &mut Client, file_path: &str, callee_name: &str) -> Option<String> {
+fn resolved_call_target(
+    conn: &mut Client,
+    project_id: &str,
+    file_path: &str,
+    callee_name: &str,
+) -> Option<String> {
     let row = conn
         .query_opt(
             "SELECT callee_symbol_id, callee_target_kind FROM code_calls
              WHERE project_id = $1 AND file_path = $2 AND callee_name = $3",
-            &[&LOCAL_IMPORT_PROJECT_ID, &file_path, &callee_name],
+            &[&project_id, &file_path, &callee_name],
         )
         .expect("read code_calls row")?;
     let kind: String = row.get("callee_target_kind");
@@ -383,11 +680,11 @@ fn resolved_call_target(conn: &mut Client, file_path: &str, callee_name: &str) -
     (kind == "symbol" && !callee_symbol_id.is_empty()).then_some(callee_symbol_id)
 }
 
-fn pending_local_import_count(conn: &mut Client) -> i64 {
+fn pending_local_import_count(conn: &mut Client, project_id: &str) -> i64 {
     conn.query_one(
         "SELECT COUNT(*) FROM code_calls
          WHERE project_id = $1 AND callee_target_kind = 'local_import'",
-        &[&LOCAL_IMPORT_PROJECT_ID],
+        &[&project_id],
     )
     .expect("count local_import rows")
     .get::<_, i64>(0)

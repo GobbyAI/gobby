@@ -580,3 +580,35 @@ class Sample {
             .all(|call| call.callee_target_kind.as_str() == "unresolved")
     );
 }
+
+/// #791 no-phantom regression (services-free half), Rust arm: an attributed,
+/// doc-commented `pub fn` is extracted as a top-level symbol, and a `crate::`
+/// use of it from a sibling module is recorded as a resolvable `local_import`
+/// pointing at the defining file. Post-#790 the resolver matches the imported
+/// name against the extracted symbol, so the `#[inline]`/doc-comment byte offset
+/// shift cannot desync the target id.
+#[test]
+fn attributed_rust_definitions_extract_and_resolve_as_local_imports() {
+    let defs =
+        "/// Doc-commented, attributed cross-file target.\n#[inline]\npub fn rust_target() {}\n";
+    let cargo = "[package]\nname = \"app\"\n";
+
+    let target = parse_source("src/service.rs", defs, &[("Cargo.toml", cargo)]);
+    let symbol = target
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "rust_target")
+        .expect("rust_target symbol");
+    assert_eq!(symbol.kind.as_str(), "function");
+    assert!(
+        symbol.parent_symbol_id.is_none(),
+        "rust_target should be a top-level symbol"
+    );
+
+    let caller = parse_source(
+        "src/lib.rs",
+        "pub mod service;\nuse crate::service::rust_target;\nfn run() {\n    rust_target();\n}\n",
+        &[("Cargo.toml", cargo), ("src/service.rs", defs)],
+    );
+    assert_rust_local_import!(&caller, "rust_target", "src/service.rs");
+}
