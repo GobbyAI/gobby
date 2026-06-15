@@ -126,11 +126,7 @@ fn unsafe_link_replacements(text: &str) -> Vec<Replacement> {
                 });
             }
             Event::End(TagEnd::Link) => {
-                if active_links
-                    .last()
-                    .is_some_and(|frame| frame.range == range)
-                {
-                    let frame = active_links.pop().expect("active link frame checked above");
+                if let Some(frame) = active_links.pop_if(|frame| frame.range == range) {
                     replacements.push(Replacement {
                         range: frame.range,
                         label: frame.label,
