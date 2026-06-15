@@ -127,6 +127,7 @@ mod tests {
         let import_context = ImportResolutionContext::default();
         let ctx = CallExtractionContext {
             language,
+            project_id: "proj",
             ts_lang: &ts_lang,
             rel_path: "src/app.js",
             symbols: &[],

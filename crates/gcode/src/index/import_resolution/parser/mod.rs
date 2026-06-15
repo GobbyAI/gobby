@@ -3,7 +3,7 @@ use crate::models::{ImportRelation, Symbol};
 use super::UNPARSED_IMPORT_PREFIX;
 use super::context::{
     ExternalCallTarget, ExternalRootBinding, ExtractedImports, ImportBindings,
-    ImportResolutionContext,
+    ImportResolutionContext, LocalImportBinding,
 };
 use super::predicates::rust_external_roots;
 
@@ -200,4 +200,19 @@ pub(crate) fn resolve_external_callee(
         module,
         callee_name: callee_name.to_string(),
     })
+}
+
+pub(crate) fn resolve_local_callee<'a>(
+    import_bindings: &'a ImportBindings,
+    symbols: &[Symbol],
+    callee_name: &str,
+    is_bare_call: bool,
+) -> Option<&'a LocalImportBinding> {
+    if !is_bare_call {
+        return None;
+    }
+    if symbols.iter().any(|symbol| symbol.name == callee_name) {
+        return None;
+    }
+    import_bindings.local_bare.get(callee_name)
 }

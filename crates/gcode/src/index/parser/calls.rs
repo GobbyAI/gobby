@@ -22,6 +22,7 @@ pub(super) use text::line_terminator_len;
 
 pub(super) struct CallExtractionContext<'a> {
     pub(super) language: &'a str,
+    pub(super) project_id: &'a str,
     pub(super) ts_lang: &'a tree_sitter::Language,
     pub(super) rel_path: &'a str,
     pub(super) symbols: &'a [Symbol],
@@ -95,24 +96,38 @@ fn materialize_call(
             site.syntax == CallSyntaxKind::Bare,
         )
     };
-    let semantic_target =
+    let local_import_target =
         if local_target.is_none() && external_target.is_none() && !external_shadowed {
-            if let Some(resolver) = semantic_resolver {
-                resolver.resolve(&SemanticCallRequest {
-                    language: ctx.language,
-                    file_path: ctx.file_path,
-                    root_path: ctx.root_path,
-                    source,
-                    callee_name: &site.callee_name,
-                    line: site.line,
-                    column: text::utf16_column_at_byte(source, site.name_byte),
-                })?
-            } else {
-                None
-            }
+            import_resolution::resolve_local_callee(
+                ctx.import_bindings,
+                ctx.symbols,
+                &site.callee_name,
+                site.syntax == CallSyntaxKind::Bare,
+            )
         } else {
             None
         };
+    let semantic_target = if local_target.is_none()
+        && external_target.is_none()
+        && local_import_target.is_none()
+        && !external_shadowed
+    {
+        if let Some(resolver) = semantic_resolver {
+            resolver.resolve(&SemanticCallRequest {
+                language: ctx.language,
+                file_path: ctx.file_path,
+                root_path: ctx.root_path,
+                source,
+                callee_name: &site.callee_name,
+                line: site.line,
+                column: text::utf16_column_at_byte(source, site.name_byte),
+            })?
+        } else {
+            None
+        }
+    } else {
+        None
+    };
 
     let mut call = CallRelation::new(
         caller_symbol_id,
@@ -122,6 +137,8 @@ fn materialize_call(
     );
     if let Some(callee_symbol_id) = local_target {
         call = call.with_symbol_target(callee_symbol_id);
+    } else if let Some(local_import_target) = local_import_target {
+        call = call.with_symbol_target(local_import_target.symbol_id(ctx.project_id));
     } else if let Some(external_target) = external_target {
         call = call.with_external_target(external_target.callee_name, external_target.module);
     } else if let Some(semantic_target) = semantic_target {

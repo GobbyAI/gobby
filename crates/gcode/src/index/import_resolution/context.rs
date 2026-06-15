@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 use rayon::prelude::*;
 use regex::Regex;
 
-use crate::models::ImportRelation;
+use crate::models::{ImportRelation, Symbol};
 
 use super::helpers::{is_elixir_alias, is_ruby_constant_name};
 use super::predicates::{
@@ -18,6 +18,7 @@ use super::predicates::{
 #[derive(Debug, Clone, Default)]
 pub struct ImportResolutionContext {
     pub(super) python_modules: HashSet<String>,
+    pub(super) python_local_symbols: HashMap<String, Vec<LocalImportBinding>>,
     pub(super) js_external_packages: HashSet<String>,
     pub(super) js_self_package_name: Option<String>,
     pub(super) go_module_path: Option<String>,
@@ -37,6 +38,23 @@ pub struct ImportResolutionContext {
 }
 
 impl ImportResolutionContext {
+    pub(super) fn python_local_symbol(
+        &self,
+        module: &str,
+        name: &str,
+    ) -> Option<&LocalImportBinding> {
+        let mut bindings = self
+            .python_local_symbols
+            .get(&python_local_symbol_key(module, name))?
+            .iter();
+        let first = bindings.next()?;
+        if bindings.next().is_some() {
+            None
+        } else {
+            Some(first)
+        }
+    }
+
     pub(super) fn ruby_require_root(&self, required: &str) -> Option<&str> {
         self.ruby_require_root_overrides
             .get(required)
@@ -58,9 +76,30 @@ pub(crate) struct ExternalImportBinding {
     pub(crate) callee_name: String,
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct LocalImportBinding {
+    pub(crate) file_path: String,
+    pub(crate) name: String,
+    pub(crate) kind: String,
+    pub(crate) byte_start: usize,
+}
+
+impl LocalImportBinding {
+    pub(crate) fn symbol_id(&self, project_id: &str) -> String {
+        Symbol::make_id(
+            project_id,
+            &self.file_path,
+            &self.name,
+            &self.kind,
+            self.byte_start,
+        )
+    }
+}
+
 #[derive(Debug, Clone, Default)]
 pub(crate) struct ImportBindings {
     pub(crate) bare: HashMap<String, ExternalImportBinding>,
+    pub(crate) local_bare: HashMap<String, LocalImportBinding>,
     pub(crate) bare_wildcard_modules: Vec<String>,
     pub(crate) member: HashMap<String, String>,
     pub(crate) external_roots: HashMap<String, ExternalRootBinding>,
@@ -169,6 +208,7 @@ pub fn build_import_resolution_context_with_overrides(
 ) -> ImportResolutionContext {
     ImportResolutionContext {
         python_modules: build_python_module_index(root_path, candidate_files),
+        python_local_symbols: build_python_local_symbol_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
         js_self_package_name: load_js_self_package_name(root_path),
         go_module_path: load_go_module_path(root_path),
@@ -195,36 +235,140 @@ pub(super) fn build_python_module_index(
     let mut modules = HashSet::new();
 
     for path in candidate_files {
-        let Ok(rel) = path.strip_prefix(root_path) else {
-            continue;
-        };
-        let ext = rel
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or_default()
-            .to_ascii_lowercase();
-        if !matches!(ext.as_str(), "py" | "pyi") {
-            continue;
-        }
-
-        let mut module = rel
-            .with_extension("")
-            .to_string_lossy()
-            .replace(['/', '\\'], ".");
-        if module.ends_with(".__init__") {
-            module.truncate(module.len() - ".__init__".len());
-        }
-        if module.is_empty() {
-            continue;
-        }
-        modules.insert(module.clone());
-
-        if let Some(stripped) = module.strip_prefix("src.") {
-            modules.insert(stripped.to_string());
-        }
+        modules.extend(python_module_names_for_path(root_path, path));
     }
 
     modules
+}
+
+pub(super) fn build_python_local_symbol_index(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> HashMap<String, Vec<LocalImportBinding>> {
+    let entries = candidate_files
+        .par_iter()
+        .flat_map(|path| {
+            let modules = python_module_names_for_path(root_path, path);
+            if modules.is_empty() {
+                return Vec::new();
+            }
+
+            let Ok(source) = std::fs::read_to_string(path) else {
+                return Vec::new();
+            };
+            let rel_path = relative_path_string(root_path, path);
+            let definitions = python_top_level_definitions(&source, &rel_path);
+            let mut entries = Vec::new();
+            for module in modules {
+                for definition in &definitions {
+                    entries.push((
+                        python_local_symbol_key(&module, &definition.name),
+                        definition.clone(),
+                    ));
+                }
+            }
+            entries
+        })
+        .collect::<Vec<_>>();
+
+    let mut index: HashMap<String, Vec<LocalImportBinding>> = HashMap::new();
+    for (key, binding) in entries {
+        index.entry(key).or_default().push(binding);
+    }
+    index
+}
+
+fn python_module_names_for_path(root_path: &Path, path: &Path) -> Vec<String> {
+    let Ok(rel) = path.strip_prefix(root_path) else {
+        return Vec::new();
+    };
+    let ext = rel
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or_default()
+        .to_ascii_lowercase();
+    if !matches!(ext.as_str(), "py" | "pyi") {
+        return Vec::new();
+    }
+
+    let mut module = rel
+        .with_extension("")
+        .to_string_lossy()
+        .replace(['/', '\\'], ".");
+    if module.ends_with(".__init__") {
+        module.truncate(module.len() - ".__init__".len());
+    }
+    if module.is_empty() {
+        return Vec::new();
+    }
+
+    let mut modules = vec![module.clone()];
+    if let Some(stripped) = module.strip_prefix("src.") {
+        modules.push(stripped.to_string());
+    }
+    modules
+}
+
+fn relative_path_string(root_path: &Path, path: &Path) -> String {
+    path.canonicalize()
+        .ok()
+        .and_then(|abs| {
+            root_path.canonicalize().ok().and_then(|root| {
+                abs.strip_prefix(&root)
+                    .ok()
+                    .map(|p| p.to_string_lossy().to_string())
+            })
+        })
+        .unwrap_or_else(|| path.to_string_lossy().to_string())
+}
+
+fn python_top_level_definitions(source: &str, rel_path: &str) -> Vec<LocalImportBinding> {
+    let mut definitions = Vec::new();
+    let mut byte_start = 0;
+    for line in source.split_inclusive('\n') {
+        if let Some((kind, name)) = python_top_level_definition(line) {
+            definitions.push(LocalImportBinding {
+                file_path: rel_path.to_string(),
+                name: name.to_string(),
+                kind: kind.to_string(),
+                byte_start,
+            });
+        }
+        byte_start += line.len();
+    }
+    definitions
+}
+
+fn python_top_level_definition(line: &str) -> Option<(&'static str, &str)> {
+    if line.starts_with(' ') || line.starts_with('\t') {
+        return None;
+    }
+    if let Some(name) = python_identifier_after(line, "async def ") {
+        return Some(("function", name));
+    }
+    if let Some(name) = python_identifier_after(line, "def ") {
+        return Some(("function", name));
+    }
+    python_identifier_after(line, "class ").map(|name| ("class", name))
+}
+
+fn python_identifier_after<'a>(line: &'a str, prefix: &str) -> Option<&'a str> {
+    let rest = line.strip_prefix(prefix)?.trim_start();
+    let end = rest
+        .char_indices()
+        .find_map(|(idx, ch)| {
+            if ch == '_' || ch.is_alphanumeric() {
+                None
+            } else {
+                Some(idx)
+            }
+        })
+        .unwrap_or(rest.len());
+    if end == 0 { None } else { Some(&rest[..end]) }
+}
+
+fn python_local_symbol_key(module: &str, name: &str) -> String {
+    format!("{module}:{name}")
 }
 
 pub(super) fn load_js_external_packages(root_path: &Path) -> HashSet<String> {

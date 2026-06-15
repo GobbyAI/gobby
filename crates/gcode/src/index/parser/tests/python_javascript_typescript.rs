@@ -1,4 +1,11 @@
 use super::common::{parse_javascript, parse_python, parse_source, parse_tsx, parse_typescript};
+use crate::models::Symbol;
+
+const TEST_PROJECT_ID: &str = "proj";
+
+fn canonical_symbol_id(file_path: &str, name: &str, kind: &str, byte_start: usize) -> String {
+    Symbol::make_id(TEST_PROJECT_ID, file_path, name, kind, byte_start)
+}
 
 #[test]
 fn classifies_external_python_from_import_calls() {
@@ -19,7 +26,31 @@ def run():
 }
 
 #[test]
-fn leaves_local_python_imports_unresolved() {
+fn resolves_direct_python_calls_to_canonical_symbol() {
+    let parsed = parse_python(
+        r#"
+def helper():
+    pass
+
+def run():
+    helper()
+"#,
+        &[],
+    );
+
+    let helper = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "helper")
+        .expect("helper symbol");
+    let call = parsed.calls.first().expect("call");
+
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_eq!(call.callee_symbol_id.as_deref(), Some(helper.id.as_str()));
+}
+
+#[test]
+fn resolves_local_python_imports_to_canonical_symbol() {
     let parsed = parse_source(
         "pkg/main.py",
         r#"
@@ -32,8 +63,56 @@ def run():
     );
 
     let call = parsed.calls.first().expect("call");
-    assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    let helper_id = canonical_symbol_id("pkg/utils.py", "helper", "function", 0);
+
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_eq!(call.callee_symbol_id.as_deref(), Some(helper_id.as_str()));
     assert!(call.callee_external_module.is_none());
+}
+
+#[test]
+fn resolves_aliased_local_python_imports_to_canonical_symbol() {
+    let parsed = parse_source(
+        "pkg/main.py",
+        r#"
+from .service import Service as ApiService
+
+def run():
+    ApiService()
+"#,
+        &[("pkg/service.py", "class Service:\n    pass\n")],
+    );
+
+    let call = parsed.calls.first().expect("call");
+    let service_id = canonical_symbol_id("pkg/service.py", "Service", "class", 0);
+
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_eq!(call.callee_symbol_id.as_deref(), Some(service_id.as_str()));
+    assert!(call.callee_external_module.is_none());
+}
+
+#[test]
+fn resolves_python_class_constructor_calls_to_canonical_symbol() {
+    let parsed = parse_python(
+        r#"
+class Service:
+    pass
+
+def run():
+    Service()
+"#,
+        &[],
+    );
+
+    let service = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "Service")
+        .expect("Service symbol");
+    let call = parsed.calls.first().expect("call");
+
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_eq!(call.callee_symbol_id.as_deref(), Some(service.id.as_str()));
 }
 
 #[test]

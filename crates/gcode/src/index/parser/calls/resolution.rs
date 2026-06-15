@@ -61,7 +61,7 @@ fn is_memberish_kind(kind: &str) -> bool {
 }
 
 fn is_callable_kind(kind: &str) -> bool {
-    matches!(kind, "function" | "method")
+    matches!(kind, "function" | "method" | "class")
 }
 
 fn resolve_same_file_callee(

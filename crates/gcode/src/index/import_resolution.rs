@@ -13,4 +13,6 @@ pub use context::{
     ImportResolutionContext, build_import_resolution_context,
     build_import_resolution_context_with_overrides,
 };
-pub(crate) use parser::{parse_import_statement, resolve_external_callee, seed_import_bindings};
+pub(crate) use parser::{
+    parse_import_statement, resolve_external_callee, resolve_local_callee, seed_import_bindings,
+};

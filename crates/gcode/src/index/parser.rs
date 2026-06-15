@@ -113,6 +113,7 @@ pub(crate) fn parse_file_with_semantic(
         spec,
         CallExtractionContext {
             language,
+            project_id,
             ts_lang: &ts_lang,
             rel_path: &rel_path,
             symbols: &symbols,
