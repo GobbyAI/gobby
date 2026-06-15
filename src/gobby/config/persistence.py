@@ -260,6 +260,14 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         default=500,
         description="Maximum stale candidates to include in one dream run",
     )
+    planner_batch_size: int = Field(
+        default=25,
+        description="Maximum stale candidates sent to the planner in one LLM call",
+    )
+    planner_max_concurrency: int = Field(
+        default=3,
+        description="Maximum concurrent planner LLM calls per dream run",
+    )
     max_scan_rows: int = Field(
         default=5000,
         description="Maximum memory rows to scan while finding stale candidates",
@@ -297,7 +305,14 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         description="Provider-agnostic capability profile for memory dream planning",
     )
 
-    @field_validator("scan_limit", "max_scan_rows", "stale_age_days", "max_tokens")
+    @field_validator(
+        "scan_limit",
+        "planner_batch_size",
+        "planner_max_concurrency",
+        "max_scan_rows",
+        "stale_age_days",
+        "max_tokens",
+    )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:
         """Validate positive integer settings."""

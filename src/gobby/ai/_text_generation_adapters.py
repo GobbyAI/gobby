@@ -290,18 +290,7 @@ class _GeminiCLITextGenerateAdapter:
 
     async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
         request = _with_one_shot_directive(_json_request(request))
-        with neutral_textgen_cwd() as cwd:
-            raw = await _run_cli_text_generation_command(
-                "Gemini",
-                self.build_command(request, output_format="json"),
-                neutral_cwd=cwd,
-                timeout_seconds=self._timeout_seconds,
-                env_overrides=self._env,
-            )
-        try:
-            wrapper = json.loads(raw)
-        except json.JSONDecodeError as exc:
-            raise ValueError(f"Gemini CLI returned invalid JSON wrapper: {exc}") from exc
+        wrapper = await self._run_json_wrapper_with_retry(request)
         if not isinstance(wrapper, dict):
             raise ValueError("Gemini CLI JSON output must be an object")
         if error := wrapper.get("error"):
@@ -310,6 +299,38 @@ class _GeminiCLITextGenerateAdapter:
         if not isinstance(response, str):
             raise ValueError("Gemini CLI JSON output missing string response")
         return _parse_json_text(response)
+
+    async def _run_json_wrapper_with_retry(self, request: TextGenerationRequest) -> Any:
+        """Run the Gemini JSON CLI, retrying once on empty/invalid wrapper output.
+
+        The CLI intermittently emits empty (or otherwise non-JSON) stdout for
+        JSON-mode one-shots; ``json.loads`` then raises ``JSONDecodeError`` and
+        instantly burns the candidate. A single transient hiccup should not fail
+        the run, so retry once with a fresh subprocess before surfacing the error.
+        """
+        attempts = 2
+        for attempt in range(attempts):
+            with neutral_textgen_cwd() as cwd:
+                raw = await _run_cli_text_generation_command(
+                    "Gemini",
+                    self.build_command(request, output_format="json"),
+                    neutral_cwd=cwd,
+                    timeout_seconds=self._timeout_seconds,
+                    env_overrides=self._env,
+                )
+            try:
+                return json.loads(raw)
+            except json.JSONDecodeError as exc:
+                if attempt + 1 < attempts:
+                    logger.warning(
+                        "Gemini CLI returned invalid JSON wrapper; retrying once: %s",
+                        exc,
+                    )
+                    continue
+                raise ValueError(
+                    f"Gemini CLI returned invalid JSON wrapper: {exc}"
+                ) from exc
+        raise AssertionError("unreachable: retry loop returns or raises")
 
 
 class _QwenCLITextGenerateAdapter:

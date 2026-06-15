@@ -17,6 +17,7 @@ from gobby.memory.dream.models import (
     CONTENT_TRUNCATION_MARKER,
     DreamAction,
     DreamCandidate,
+    DuplicateGroup,
 )
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
@@ -198,6 +199,146 @@ async def test_build_raw_plan_logs_non_dict_actions(
     assert record.invalid_actions == ["invalid"]
     assert record.project_id == "proj-1"
     assert record.candidate_ids == ["memory-1"]
+
+
+@pytest.mark.asyncio
+async def test_build_raw_plan_batches_candidates_into_pages() -> None:
+    candidates = [_candidate(f"m{i}") for i in range(5)]
+    planner = AsyncMock(
+        side_effect=[
+            {"actions": [{"action": "keep", "memory_id": "p0"}]},
+            {"actions": [{"action": "keep", "memory_id": "p1"}]},
+            {"actions": [{"action": "keep", "memory_id": "p2"}]},
+        ]
+    )
+
+    with patch("gobby.memory.dream.planner._call_llm_planner", planner):
+        plan = await build_raw_plan(
+            candidates=candidates,
+            duplicate_groups=[],
+            dream_config=SimpleNamespace(planner_batch_size=2),
+            llm_service=MagicMock(),
+            db=None,
+            project_id="proj-1",
+            skip_consolidation=False,
+        )
+
+    assert planner.call_count == 3  # ceil(5 / 2)
+    page_sizes = sorted(len(call.kwargs["candidates"]) for call in planner.call_args_list)
+    assert page_sizes == [1, 2, 2]
+    seen = {
+        candidate.id
+        for call in planner.call_args_list
+        for candidate in call.kwargs["candidates"]
+    }
+    assert seen == {f"m{i}" for i in range(5)}
+    assert plan["planner_errors"] == []
+    assert {action["memory_id"] for action in plan["actions"]} == {"p0", "p1", "p2"}
+
+
+@pytest.mark.asyncio
+async def test_build_raw_plan_isolates_failed_page() -> None:
+    candidates = [_candidate(f"m{i}") for i in range(3)]
+    planner = AsyncMock(
+        side_effect=[
+            {"actions": [{"action": "keep", "memory_id": "m0"}]},
+            ValueError("page boom"),
+            {"actions": [{"action": "keep", "memory_id": "m2"}]},
+        ]
+    )
+
+    with patch("gobby.memory.dream.planner._call_llm_planner", planner):
+        plan = await build_raw_plan(
+            candidates=candidates,
+            duplicate_groups=[],
+            dream_config=SimpleNamespace(planner_batch_size=1, planner_max_concurrency=1),
+            llm_service=MagicMock(),
+            db=None,
+            project_id="proj-1",
+            skip_consolidation=False,
+        )
+
+    assert plan["planner_errors"] == ["page boom"]
+    assert {action["memory_id"] for action in plan["actions"]} == {"m0", "m2"}
+
+
+@pytest.mark.asyncio
+async def test_build_raw_plan_excludes_duplicate_members_and_merges_once() -> None:
+    candidates = [_candidate("m0"), _candidate("m1"), _candidate("m2")]
+    groups = [
+        DuplicateGroup(
+            memory_ids=["m1", "m2"],
+            canonical_content="canonical",
+            reason="exact duplicate",
+        )
+    ]
+    planner = AsyncMock(return_value={"actions": [{"action": "keep", "memory_id": "m0"}]})
+
+    with patch("gobby.memory.dream.planner._call_llm_planner", planner):
+        plan = await build_raw_plan(
+            candidates=candidates,
+            duplicate_groups=groups,
+            dream_config=SimpleNamespace(planner_batch_size=25),
+            llm_service=MagicMock(),
+            db=None,
+            project_id="proj-1",
+            skip_consolidation=False,
+        )
+
+    assert planner.call_count == 1
+    planned_ids = [candidate.id for candidate in planner.call_args.kwargs["candidates"]]
+    assert planned_ids == ["m0"]  # duplicate members are not sent to the planner
+    assert planner.call_args.kwargs["duplicate_groups"] == []
+    merge_actions = [action for action in plan["actions"] if action["action"] == "merge"]
+    assert len(merge_actions) == 1
+    assert merge_actions[0]["memory_ids"] == ["m1", "m2"]
+    keep_ids = [
+        action["memory_id"] for action in plan["actions"] if action["action"] == "keep"
+    ]
+    assert keep_ids == ["m0"]
+
+
+@pytest.mark.asyncio
+async def test_build_raw_plan_limits_planner_concurrency() -> None:
+    candidates = [_candidate(f"m{i}") for i in range(6)]
+    cap = 2
+    active = 0
+    max_active = 0
+    saturated = asyncio.Event()
+    release = asyncio.Event()
+
+    async def fake_planner(**_kwargs: Any) -> dict[str, Any]:
+        nonlocal active, max_active
+        active += 1
+        max_active = max(max_active, active)
+        if active >= cap:
+            saturated.set()
+        await release.wait()
+        active -= 1
+        return {"actions": []}
+
+    with patch("gobby.memory.dream.planner._call_llm_planner", fake_planner):
+        task = asyncio.create_task(
+            build_raw_plan(
+                candidates=candidates,
+                duplicate_groups=[],
+                dream_config=SimpleNamespace(
+                    planner_batch_size=1, planner_max_concurrency=cap
+                ),
+                llm_service=MagicMock(),
+                db=None,
+                project_id="proj-1",
+                skip_consolidation=False,
+            )
+        )
+        # The first wave fills the cap; the semaphore must block any extra call.
+        await saturated.wait()
+        assert active == cap
+        release.set()
+        plan = await task
+
+    assert max_active == cap  # semaphore caps concurrent planner calls
+    assert plan["planner_errors"] == []
 
 
 @pytest.mark.asyncio

@@ -2288,6 +2288,73 @@ async def test_gemini_cli_text_generate_adapter_reports_json_wrapper_error(
 
 
 @pytest.mark.asyncio
+async def test_gemini_cli_text_generate_adapter_retries_empty_json_output(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    outputs = [
+        b"\n",  # transient empty stdout -> JSONDecodeError -> retry once
+        b'{"response":"{\\"ok\\":true}","stats":{}}\n',
+    ]
+    calls = 0
+
+    async def fake_create_subprocess_exec(
+        *_command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        nonlocal calls
+        process = FakeProcess(outputs[calls])
+        calls += 1
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
+        command_path="/usr/local/bin/gemini",
+    )
+
+    response = await adapter.generate_json(
+        TextGenerationRequest(prompt="extract", model="gemini-3-pro")
+    )
+
+    assert response == {"ok": True}
+    assert calls == 2  # retried once after the empty wrapper
+
+
+@pytest.mark.asyncio
+async def test_gemini_cli_text_generate_adapter_raises_after_two_invalid_json_outputs(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = 0
+
+    async def fake_create_subprocess_exec(
+        *_command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        nonlocal calls
+        calls += 1
+        return FakeProcess(b"\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
+        command_path="/usr/local/bin/gemini",
+    )
+
+    with pytest.raises(ValueError, match="invalid JSON wrapper"):
+        await adapter.generate_json(TextGenerationRequest(prompt="extract"))
+
+    assert calls == 2  # one retry, then surface the error
+
+
+@pytest.mark.asyncio
 async def test_qwen_cli_text_generate_adapter_disables_recording_and_tool_calls(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
