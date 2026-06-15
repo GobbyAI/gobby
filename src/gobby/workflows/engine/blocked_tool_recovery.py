@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import re
+from collections.abc import Sequence
 from typing import Any
 
 from gobby.hooks.events import HookEventType
@@ -35,6 +36,15 @@ def block_source_for_rule(rule_name: str) -> str:
 def block_reason_signature(rule_name: str, reason: str) -> str:
     digest = hashlib.sha256(reason.encode("utf-8")).hexdigest()[:16]
     return f"{rule_name}:{digest}"
+
+
+def format_aggregated_block_reason(gates: Sequence[tuple[str, str]]) -> str:
+    """Build a compact multi-gate block reason."""
+    lines = [f"Rule enforced by Gobby: [aggregated:{len(gates)}-gates]"]
+    for index, (rule_name, reason) in enumerate(gates, start=1):
+        compact_reason = _compact_gate_reason(reason)
+        lines.append(f"{index}. [{rule_name}] {compact_reason}")
+    return "\n".join(lines)
 
 
 def ensure_block_reason(
@@ -151,6 +161,11 @@ def _warn_block_fallback(
         rule_name,
         detail,
     )
+
+
+def _compact_gate_reason(reason: str) -> str:
+    compact = " ".join(line.strip() for line in reason.splitlines() if line.strip())
+    return re.sub(r"\s+", " ", compact).strip() or "No reason supplied."
 
 
 def _event_value(event_type: HookEventType | str) -> str:

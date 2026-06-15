@@ -8,6 +8,7 @@ rewrite_input, load_skill.
 import json
 import logging
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -40,6 +41,7 @@ from gobby.workflows.engine.blocked_tool_recovery import (
     clear_blocked_tool_recovery_state,
     ensure_block_reason,
     extract_rule_name,
+    format_aggregated_block_reason,
     format_consecutive_tool_block_reason,
     log_block,
     remember_blocked_tool_recovery_state,
@@ -329,6 +331,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 config_store = ConfigStore(self.db)
                 if config_store.get("rules.enforcement_enabled") is False:
                     return HookResponse(decision="allow")
+                aggregate_blocks = config_store.get("rules.aggregate_blocks") is not False
 
                 # Collect mcp_call effects from hardcoded rules and DB rules.
                 # Initialized early so hardcoded turn-start rules can append.
@@ -591,6 +594,28 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if _step_transition_msg:
                     context_parts.append(_step_transition_msg)
                 block_reason: str | None = None
+                block_gates: list[tuple[str, str]] = []
+
+                def render_rule_block_reason(
+                    row: WorkflowDefinitionRow,
+                    effect: RuleEffect,
+                    ctx: dict[str, Any],
+                    allowed_funcs: dict[str, Callable[..., Any]],
+                ) -> str:
+                    reason = ensure_block_reason(
+                        session_id=session_id,
+                        event_type=event.event_type,
+                        tool_name=_block_tool_name(event),
+                        source="rule",
+                        rule_name=row.name,
+                        reason=effect.reason,
+                        fallback_reason=(
+                            "Rule block effect omitted a reason. Update the rule "
+                            "definition to explain why the event was blocked."
+                        ),
+                        warn_detail="rule block effect omitted a reason",
+                    )
+                    return self._render_template(reason, ctx, allowed_funcs)
 
                 for _row, body in rules:
                     # Pre-filter: skip rule if tools field doesn't match current tool
@@ -613,6 +638,25 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         )
                         if not self._evaluate_condition(body.when, ctx, first_type, allowed_funcs):
                             continue
+
+                    if block_gates:
+                        for effect in body.resolved_effects:
+                            if effect.type != "block" or not self._effect_matches_event(
+                                effect, event
+                            ):
+                                continue
+                            if effect.when and not self._evaluate_condition(
+                                effect.when, ctx, effect.type, allowed_funcs
+                            ):
+                                continue
+                            block_gates.append(
+                                (
+                                    _row.name,
+                                    render_rule_block_reason(_row, effect, ctx, allowed_funcs),
+                                )
+                            )
+                            break
+                        continue
 
                     # Process effects: non-block effects first, then block (if any)
                     effects = body.resolved_effects
@@ -653,21 +697,13 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     if deferred_block is not None:
                         if self._effect_matches_event(deferred_block, event):
                             rule_blocked = True
-                            block_reason = ensure_block_reason(
-                                session_id=session_id,
-                                event_type=event.event_type,
-                                tool_name=_block_tool_name(event),
-                                source="rule",
-                                rule_name=_row.name,
-                                reason=deferred_block.reason,
-                                fallback_reason=(
-                                    "Rule block effect omitted a reason. Update the rule "
-                                    "definition to explain why the event was blocked."
-                                ),
-                                warn_detail="rule block effect omitted a reason",
+                            rendered_block_reason = render_rule_block_reason(
+                                _row, deferred_block, ctx, allowed_funcs
                             )
-                            block_reason = self._render_template(block_reason, ctx, allowed_funcs)
-                            block_reason = f"Rule enforced by Gobby: [{_row.name}]\n{block_reason}"
+                            block_reason = (
+                                f"Rule enforced by Gobby: [{_row.name}]\n{rendered_block_reason}"
+                            )
+                            block_gates.append((_row.name, rendered_block_reason))
                             # Track the blocked tool so repeated retries can escalate,
                             # but do not mark this as a tool execution failure.
                             if is_before_tool:
@@ -692,11 +728,14 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             logger.debug(f"Metrics recording failed: {e}")
 
                     if rule_blocked:
-                        # First block wins — stop evaluating
-                        break
+                        # First block runs normal effects; later aggregation is read-only.
+                        if not aggregate_blocks:
+                            break
 
                 # 6. Build response — overrides take precedence over rule-evaluated decisions,
                 # but the rule loop always runs so mcp_calls are always collected.
+                if len(block_gates) > 1:
+                    block_reason = format_aggregated_block_reason(block_gates)
                 ctx_str = "\n\n".join(context_parts) if context_parts else None
                 meta = {"mcp_calls": mcp_calls} if mcp_calls else {}
 

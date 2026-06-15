@@ -19,6 +19,7 @@ from typing import Any, Literal
 import pytest
 from starlette.testclient import TestClient
 
+from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from tests.servers.conftest import create_http_server
@@ -149,6 +150,40 @@ class TestListRules:
         assert data["status"] == "success"
         assert data["count"] == 0
         assert data["rules"] == []
+        assert data["aggregate_blocks"] is True
+
+
+class TestRulesCollectionSettings:
+    """PUT /api/rules updates collection-level settings."""
+
+    def test_updates_aggregate_blocks(self, client: TestClient, db: HubDatabase) -> None:
+        resp = client.put("/api/rules", json={"aggregate_blocks": False})
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "success",
+            "enforcement_enabled": True,
+            "aggregate_blocks": False,
+        }
+        assert ConfigStore(db).get("rules.aggregate_blocks") is False
+
+    def test_updates_enforcement_and_aggregate_blocks(
+        self, client: TestClient, db: HubDatabase
+    ) -> None:
+        resp = client.put(
+            "/api/rules",
+            json={"enforcement_enabled": False, "aggregate_blocks": True},
+        )
+
+        assert resp.status_code == 200
+        assert resp.json() == {
+            "status": "success",
+            "enforcement_enabled": False,
+            "aggregate_blocks": True,
+        }
+        store = ConfigStore(db)
+        assert store.get("rules.enforcement_enabled") is False
+        assert store.get("rules.aggregate_blocks") is True
 
 
 # ═══════════════════════════════════════════════════════════════════════

@@ -603,6 +603,29 @@ class TestTranslateFromHookResponse:
             f"Gobby blocked [prefer-gcode-for-source-read]: {guidance}"
         )
 
+    def test_pre_tool_use_aggregate_block_preserves_each_gate_action(self) -> None:
+        adapter = ClaudeCodeAdapter()
+        response = HookResponse(
+            decision="block",
+            reason=(
+                "Rule enforced by Gobby: [aggregated:2-gates]\n"
+                '1. [require-code-index-skill] Call get_skill(name="code-index") on '
+                "gobby-skills through progressive discovery. Then continue.\n"
+                '2. [prefer-gcode-for-code-search] Use `gcode grep "pattern" [PATH...] '
+                "-m 50` for exact text search."
+            ),
+        )
+
+        result = adapter.translate_from_hook_response(response, hook_type="pre-tool-use")
+
+        assert result["hookSpecificOutput"]["permissionDecisionReason"] == (
+            "Gobby blocked [aggregated:2-gates]:\n"
+            '1. [require-code-index-skill]: Call get_skill(name="code-index") on '
+            "gobby-skills through progressive discovery.\n"
+            '2. [prefer-gcode-for-code-search]: Use `gcode grep "pattern" [PATH...] '
+            "-m 50` for exact text search."
+        )
+
     def test_pre_tool_use_block_compacts_rule_reason_and_preserves_action(self) -> None:
         adapter = ClaudeCodeAdapter()
         response = HookResponse(

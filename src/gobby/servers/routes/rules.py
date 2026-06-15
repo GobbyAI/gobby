@@ -62,6 +62,7 @@ class RulesCollectionUpdate(BaseModel):
     """Request body for updating rules collection settings."""
 
     enforcement_enabled: bool | None = Field(default=None, description="Global enforcement toggle")
+    aggregate_blocks: bool | None = Field(default=None, description="Aggregate rule block gates")
 
 
 class RuleToggleRequest(BaseModel):
@@ -165,11 +166,13 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
             )
             config_store = ConfigStore(server.services.database)
             enforcement = config_store.get("rules.enforcement_enabled")
+            aggregate_blocks = config_store.get("rules.aggregate_blocks")
             return {
                 "status": "success",
                 "rules": result["rules"],
                 "count": result["count"],
                 "enforcement_enabled": enforcement is not False,
+                "aggregate_blocks": aggregate_blocks is not False,
             }
         except Exception as e:
             logger.exception("Error listing rules")
@@ -206,8 +209,15 @@ def create_rules_router(server: "HTTPServer") -> APIRouter:
         config_store = ConfigStore(server.services.database)
         if request.enforcement_enabled is not None:
             config_store.set("rules.enforcement_enabled", request.enforcement_enabled)
-        val = config_store.get("rules.enforcement_enabled")
-        return {"status": "success", "enforcement_enabled": val is not False}
+        if request.aggregate_blocks is not None:
+            config_store.set("rules.aggregate_blocks", request.aggregate_blocks)
+        enforcement = config_store.get("rules.enforcement_enabled")
+        aggregate_blocks = config_store.get("rules.aggregate_blocks")
+        return {
+            "status": "success",
+            "enforcement_enabled": enforcement is not False,
+            "aggregate_blocks": aggregate_blocks is not False,
+        }
 
     # -----------------------------------------------------------------
     # PUT /api/rules/bulk-toggle

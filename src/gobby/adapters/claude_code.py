@@ -37,6 +37,8 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 _RULE_BLOCK_REASON_RE = re.compile(r"^Rule enforced by Gobby: \[([^\]]+)\]\s*(.*)$", re.DOTALL)
+_AGGREGATED_RULE_NAME_RE = re.compile(r"^aggregated:(\d+)-gates$")
+_AGGREGATED_GATE_LINE_RE = re.compile(r"^\s*(\d+)\.\s+\[([^\]]+)\]\s*(.*)$")
 _GET_SKILL_RE = re.compile(r'get_skill\(name=(["\']).+?\1\)')
 
 DECISION_STYLES_ALLOWED_TO_CONTINUE_ON_DENY = frozenset(
@@ -70,6 +72,32 @@ def _compact_claude_pre_tool_deny_reason(reason: str) -> str:
 
     rule_name = match.group(1)
     body = match.group(2).strip()
+    if _AGGREGATED_RULE_NAME_RE.match(rule_name):
+        return _compact_aggregated_claude_pre_tool_deny_reason(rule_name, body)
+
+    return _compact_single_claude_pre_tool_deny_reason(rule_name, body)
+
+
+def _compact_aggregated_claude_pre_tool_deny_reason(rule_name: str, body: str) -> str:
+    lines: list[str] = []
+    for line in body.splitlines():
+        gate_match = _AGGREGATED_GATE_LINE_RE.match(line)
+        if not gate_match:
+            continue
+        gate_number = gate_match.group(1)
+        gate_rule = gate_match.group(2)
+        gate_body = gate_match.group(3).strip()
+        compact_gate = _compact_single_claude_pre_tool_deny_reason(
+            gate_rule, gate_body
+        ).removeprefix("Gobby blocked ")
+        lines.append(f"{gate_number}. {compact_gate}")
+
+    if not lines:
+        return _compact_single_claude_pre_tool_deny_reason(rule_name, body)
+    return f"Gobby blocked [{rule_name}]:\n" + "\n".join(lines)
+
+
+def _compact_single_claude_pre_tool_deny_reason(rule_name: str, body: str) -> str:
     if not body:
         return f"Gobby blocked [{rule_name}]."
 
