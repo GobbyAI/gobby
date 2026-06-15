@@ -245,6 +245,65 @@ fn architecture_page_renders_layered_narrative_and_child_module_levels() {
     );
 }
 
+#[test]
+fn architecture_page_has_structural_diagram_and_range_free_frontmatter_without_graph_edges() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec![
+            "crates/gcode/src/lib.rs".to_string(),
+            "crates/gcore/src/lib.rs".to_string(),
+        ],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Unavailable,
+        symbols: vec![
+            test_symbol(
+                "crates/gcode/src/lib.rs",
+                "Gcode",
+                "class",
+                1,
+                "pub struct Gcode;",
+            ),
+            test_symbol(
+                "crates/gcore/src/lib.rs",
+                "Gcore",
+                "class",
+                1,
+                "pub struct Gcore;",
+            ),
+        ],
+    };
+
+    let docs = generate_hierarchical_docs(&input, None);
+    let docs_by_path = docs.into_iter().collect::<BTreeMap<_, _>>();
+    let rendered = docs_by_path
+        .get("code/_architecture.md")
+        .expect("architecture overview doc");
+    let yaml = rendered
+        .strip_prefix("---\n")
+        .and_then(|content| content.split_once("---\n\n"))
+        .map(|(yaml, _)| yaml)
+        .expect("frontmatter block");
+    let frontmatter: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse frontmatter");
+    let provenance = frontmatter
+        .get("provenance")
+        .and_then(serde_yaml::Value::as_sequence)
+        .expect("provenance entries");
+
+    assert!(rendered.contains("## Subsystem Map"), "{rendered}");
+    assert!(rendered.contains("```mermaid"), "{rendered}");
+    assert!(rendered.contains("graph TD"), "{rendered}");
+    assert!(
+        rendered.contains("m_[\"repo\"] --> m_crates_gcode[\"crates/gcode\"]"),
+        "{rendered}"
+    );
+    assert!(
+        rendered.contains("m_[\"repo\"] --> m_crates_gcore[\"crates/gcore\"]"),
+        "{rendered}"
+    );
+    assert!(provenance.iter().all(|entry| entry.get("file").is_some()));
+    assert!(provenance.iter().all(|entry| entry.get("ranges").is_none()));
+}
+
 fn inline_marker_count(text: &str) -> usize {
     text.split_whitespace()
         .filter(|token| {

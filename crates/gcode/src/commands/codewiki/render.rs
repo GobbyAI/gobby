@@ -119,6 +119,45 @@ pub(crate) fn render_subsystem_dependency_mermaid(
     Some(diagram)
 }
 
+/// Structural fallback for the architecture overview when graph-derived
+/// subsystem dependencies are unavailable or edge-free.
+pub(crate) fn render_architecture_structure_mermaid(
+    subsystems: &[ArchitectureSubsystem],
+) -> Option<String> {
+    if subsystems.is_empty() {
+        return None;
+    }
+
+    let mut links = Vec::new();
+    for subsystem in subsystems {
+        links.push(("".to_string(), subsystem.module.clone()));
+        for child in &subsystem.child_modules {
+            links.push((subsystem.module.clone(), child.clone()));
+        }
+    }
+
+    let omitted_links = links.len().saturating_sub(MAX_MERMAID_EDGES);
+    let mut diagram = "```mermaid\ngraph TD\n".to_string();
+    if omitted_links > 0 {
+        let _ = writeln!(
+            diagram,
+            "    %% {omitted_links} additional subsystem links omitted"
+        );
+    }
+    for (source, target) in links.into_iter().take(MAX_MERMAID_EDGES) {
+        let _ = writeln!(
+            diagram,
+            "    {}[\"{}\"] --> {}[\"{}\"]",
+            mermaid_node_id(&source),
+            mermaid_label(&source),
+            mermaid_node_id(&target),
+            mermaid_label(&target)
+        );
+    }
+    diagram.push_str("```\n");
+    Some(diagram)
+}
+
 /// Import edges between distinct subsystem roots, attributed through each
 /// component's owning file.
 pub(crate) fn collect_subsystem_dependency_edges(
@@ -568,7 +607,7 @@ pub(crate) fn render_repo_doc(
 }
 
 pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String {
-    let mut doc = frontmatter_with_degradation(
+    let mut doc = frontmatter_with_degradation_without_ranges(
         "Architecture Overview",
         "code_architecture",
         &architecture.source_spans,

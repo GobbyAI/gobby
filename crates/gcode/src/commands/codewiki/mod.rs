@@ -69,9 +69,10 @@ pub(crate) use paths::{
 };
 // Rendered markdown and graph diagrams.
 pub(crate) use render::{
-    build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc, render_file_doc,
-    render_hotspots_doc, render_module_call_mermaid, render_module_dependency_mermaid,
-    render_module_doc, render_onboarding_doc, render_subsystem_dependency_mermaid,
+    build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,
+    render_architecture_structure_mermaid, render_file_doc, render_hotspots_doc,
+    render_module_call_mermaid, render_module_dependency_mermaid, render_module_doc,
+    render_onboarding_doc, render_subsystem_dependency_mermaid,
 };
 // Reuse of unchanged docs without regeneration.
 pub(crate) use reuse::{ReusePlan, span_files};

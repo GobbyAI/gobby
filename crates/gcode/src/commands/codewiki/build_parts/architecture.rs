@@ -156,7 +156,8 @@ pub(crate) fn build_architecture_doc(
         CodewikiGraphAvailability::Available | CodewikiGraphAvailability::Truncated => {
             render_subsystem_dependency_mermaid(&subsystem_names, files, graph_edges)
         }
-    };
+    }
+    .or_else(|| render_architecture_structure_mermaid(&subsystems));
 
     ArchitectureDoc {
         source_spans,
