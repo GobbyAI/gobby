@@ -71,6 +71,19 @@ ai.embeddings:
         config.get(embedding_keys::AI_API_KEY),
         Some("local-api-key")
     );
+    assert_eq!(config.get(ai_keys::TEXT_GENERATE_ROUTING), Some("direct"));
+    assert_eq!(
+        config.get(ai_keys::TEXT_GENERATE_API_BASE),
+        Some("http://localhost:1234/v1")
+    );
+    assert_eq!(
+        config.get(ai_keys::TEXT_GENERATE_MODEL),
+        Some(DEFAULT_LM_STUDIO_TEXT_MODEL)
+    );
+    assert_eq!(
+        config.get(ai_keys::TEXT_GENERATE_API_KEY),
+        Some("local-api-key")
+    );
 }
 
 #[test]

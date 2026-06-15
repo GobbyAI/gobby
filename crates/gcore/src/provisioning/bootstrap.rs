@@ -14,6 +14,13 @@ pub struct EmbeddingBootstrap {
     pub api_key: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TextGenerationBootstrap {
+    pub api_base: String,
+    pub model: String,
+    pub api_key: Option<String>,
+}
+
 impl EmbeddingBootstrap {
     pub fn lm_studio() -> Self {
         Self {
@@ -35,6 +42,57 @@ impl EmbeddingBootstrap {
             query_prefix: None,
             api_key: None,
         }
+    }
+}
+
+impl TextGenerationBootstrap {
+    pub fn from_embedding(embedding: &EmbeddingBootstrap) -> Self {
+        Self::from_endpoint(
+            Some(&embedding.provider),
+            embedding.api_base.clone(),
+            embedding.api_key.clone(),
+        )
+    }
+
+    pub fn from_endpoint(
+        provider: Option<&str>,
+        api_base: impl Into<String>,
+        api_key: Option<String>,
+    ) -> Self {
+        let api_base = api_base.into();
+        Self {
+            model: default_text_model(provider, &api_base).to_string(),
+            api_base,
+            api_key,
+        }
+    }
+}
+
+pub fn apply_text_generation_bootstrap(
+    config: &mut StandaloneConfig,
+    text_generation: &TextGenerationBootstrap,
+) {
+    config.set(ai_keys::TEXT_GENERATE_ROUTING, "direct");
+    config.set(ai_keys::TEXT_GENERATE_API_BASE, &text_generation.api_base);
+    config.set(ai_keys::TEXT_GENERATE_MODEL, &text_generation.model);
+    config.remove(ai_keys::TEXT_GENERATE_TRANSPORT);
+    config.remove(ai_keys::TEXT_GENERATE_PROVIDER);
+    config.remove(ai_keys::TEXT_GENERATE_PROFILE);
+    match text_generation.api_key.as_deref() {
+        Some(api_key) => config.set(ai_keys::TEXT_GENERATE_API_KEY, api_key),
+        None => config.remove(ai_keys::TEXT_GENERATE_API_KEY),
+    }
+}
+
+fn default_text_model(provider: Option<&str>, api_base: &str) -> &'static str {
+    let provider = provider.map(|value| value.trim().to_ascii_lowercase());
+    let api_base = api_base.trim().trim_end_matches('/');
+    if provider.as_deref() == Some("ollama")
+        || api_base == DEFAULT_OLLAMA_API_BASE.trim_end_matches('/')
+    {
+        DEFAULT_OLLAMA_TEXT_MODEL
+    } else {
+        DEFAULT_LM_STUDIO_TEXT_MODEL
     }
 }
 
@@ -62,6 +120,10 @@ pub fn write_standalone_bootstrap(
         if let Some(api_key) = &embedding.api_key {
             config.set(embedding_keys::AI_API_KEY, api_key);
         }
+        apply_text_generation_bootstrap(
+            &mut config,
+            &TextGenerationBootstrap::from_embedding(embedding),
+        );
     }
     if let Some(compose_file) = compose_file {
         config.set("services.compose_file", compose_file.display().to_string());

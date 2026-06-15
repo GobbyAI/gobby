@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Context as _;
 use serde::Deserialize;
 
-use crate::config::{ConfigSource, embedding_keys, resolve_env_pattern};
+use crate::config::{ConfigSource, ai_keys, embedding_keys, resolve_env_pattern};
 use crate::degradation::CoreError;
 
 pub const GCORE_CONFIG_FILENAME: &str = "gcore.yaml";
@@ -35,8 +35,10 @@ pub const DEFAULT_QDRANT_GRPC_PORT: u16 = 6334;
 
 pub const DEFAULT_LM_STUDIO_API_BASE: &str = "http://localhost:1234/v1";
 pub const DEFAULT_LM_STUDIO_MODEL: &str = "text-embedding-nomic-embed-text-v1.5@f16";
+pub const DEFAULT_LM_STUDIO_TEXT_MODEL: &str = "qwen2.5-vl-7b-instruct";
 pub const DEFAULT_OLLAMA_API_BASE: &str = "http://localhost:11434/v1";
 pub const DEFAULT_OLLAMA_MODEL: &str = "nomic-embed-text";
+pub const DEFAULT_OLLAMA_TEXT_MODEL: &str = "qwen3-coder";
 pub const DEFAULT_EMBEDDING_VECTOR_DIM: usize = 768;
 
 pub const COMPOSE_TEMPLATE: &str = include_str!("../../assets/docker-compose.services.yml");

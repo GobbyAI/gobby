@@ -3,7 +3,8 @@ use gobby_core::config::embedding_keys;
 use gobby_core::provisioning::{
     DEFAULT_EMBEDDING_VECTOR_DIM, DEFAULT_LM_STUDIO_API_BASE, DEFAULT_OLLAMA_API_BASE,
     DEFAULT_OLLAMA_MODEL, DockerProvisioningReport, DockerServiceOptions, EmbeddingBootstrap,
-    EnsureHubOptions, StandaloneConfig, compose_file_path, ensure_hub, gcore_config_path,
+    EnsureHubOptions, StandaloneConfig, TextGenerationBootstrap, apply_text_generation_bootstrap,
+    compose_file_path, ensure_hub, gcore_config_path,
 };
 use postgres::Client;
 use std::net::{TcpStream, ToSocketAddrs};
@@ -274,6 +275,10 @@ fn write_gcore_config(
             Some(api_key) => config.set(embedding_keys::AI_API_KEY, api_key),
             None => config.remove(embedding_keys::AI_API_KEY),
         }
+        apply_text_generation_bootstrap(
+            &mut config,
+            &TextGenerationBootstrap::from_embedding(embedding),
+        );
     } else {
         remove_embedding_keys(&mut config);
     }
@@ -435,6 +440,22 @@ mod tests {
         assert_eq!(config.get(embedding_keys::AI_QUERY_PREFIX), Some("query: "));
         assert_eq!(
             config.get(embedding_keys::AI_API_KEY),
+            Some("local-api-key")
+        );
+        assert_eq!(
+            config.get(gobby_core::config::ai_keys::TEXT_GENERATE_ROUTING),
+            Some("direct")
+        );
+        assert_eq!(
+            config.get(gobby_core::config::ai_keys::TEXT_GENERATE_API_BASE),
+            Some("http://localhost:1234/v1")
+        );
+        assert_eq!(
+            config.get(gobby_core::config::ai_keys::TEXT_GENERATE_MODEL),
+            Some(gobby_core::provisioning::DEFAULT_LM_STUDIO_TEXT_MODEL)
+        );
+        assert_eq!(
+            config.get(gobby_core::config::ai_keys::TEXT_GENERATE_API_KEY),
             Some("local-api-key")
         );
 

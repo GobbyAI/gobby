@@ -3,7 +3,8 @@ use std::path::{Path, PathBuf};
 use gobby_core::config::{embedding_keys, resolve_falkordb_config, resolve_qdrant_config};
 use gobby_core::provisioning::{
     DockerProvisioningReport, DockerServiceOptions, EnsureHubOptions, StandaloneConfig,
-    compose_file_path, ensure_hub, gcore_config_path,
+    TextGenerationBootstrap, apply_text_generation_bootstrap, compose_file_path, ensure_hub,
+    gcore_config_path,
 };
 use gobby_core::setup::{SetupContext, StandaloneSetup};
 use serde_json::json;
@@ -229,6 +230,16 @@ fn apply_embedding_options(
     if let Some(api_key) = options.embedding_api_key.as_deref() {
         config.set(embedding_keys::AI_API_KEY, api_key);
     }
+    if let Some(api_base) = options.embedding_api_base.as_deref() {
+        apply_text_generation_bootstrap(
+            config,
+            &TextGenerationBootstrap::from_endpoint(
+                options.embedding_provider.as_deref(),
+                api_base,
+                options.embedding_api_key.clone(),
+            ),
+        );
+    }
     Ok(())
 }
 
@@ -295,7 +306,7 @@ fn setup_status(
 mod tests {
     use super::{apply_embedding_options, setup_status, write_gwiki_gcore_config};
     use crate::SetupOptions;
-    use gobby_core::config::embedding_keys;
+    use gobby_core::config::{ai_keys, embedding_keys};
     use gobby_core::provisioning::{DockerServiceOptions, StandaloneConfig, gcore_config_path};
 
     #[test]
@@ -431,5 +442,38 @@ mod tests {
                 Some("existing-provider")
             );
         }
+    }
+
+    #[test]
+    fn embedding_options_write_text_generation_bootstrap() {
+        let mut config = StandaloneConfig::empty();
+        let options = SetupOptions {
+            embedding_provider: Some("openai-compatible".to_string()),
+            embedding_api_base: Some("http://localhost:1234/v1".to_string()),
+            embedding_model: Some("embed-small".to_string()),
+            embedding_vector_dim: Some(1024),
+            embedding_api_key: Some("local-api-key".to_string()),
+            ..SetupOptions::default()
+        };
+
+        apply_embedding_options(&options, &mut config).expect("apply embedding options");
+
+        assert_eq!(
+            config.get(embedding_keys::AI_API_BASE),
+            Some("http://localhost:1234/v1")
+        );
+        assert_eq!(config.get(ai_keys::TEXT_GENERATE_ROUTING), Some("direct"));
+        assert_eq!(
+            config.get(ai_keys::TEXT_GENERATE_API_BASE),
+            Some("http://localhost:1234/v1")
+        );
+        assert_eq!(
+            config.get(ai_keys::TEXT_GENERATE_MODEL),
+            Some(gobby_core::provisioning::DEFAULT_LM_STUDIO_TEXT_MODEL)
+        );
+        assert_eq!(
+            config.get(ai_keys::TEXT_GENERATE_API_KEY),
+            Some("local-api-key")
+        );
     }
 }
