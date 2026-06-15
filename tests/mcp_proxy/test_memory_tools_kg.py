@@ -6,6 +6,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.memory.services.knowledge_graph.clustering import ClusterRunResult
+
 pytestmark = pytest.mark.unit
 
 
@@ -77,6 +79,57 @@ class TestSearchKnowledgeGraphTool:
 
         assert result["success"] is True
         assert result["results"] == []
+
+
+class TestReclusterKnowledgeGraphEntitiesTool:
+    """Tests for the recluster_knowledge_graph_entities MCP tool."""
+
+    def test_recluster_knowledge_graph_entities_tool_exists(self) -> None:
+        registry, _ = _make_registry()
+        tool_names = [t["name"] for t in registry.list_tools()]
+        assert "recluster_knowledge_graph_entities" in tool_names
+
+    @pytest.mark.asyncio
+    async def test_recluster_knowledge_graph_entities_returns_summary(self) -> None:
+        registry, manager = _make_registry()
+        kg_service = MagicMock()
+        kg_service.recluster_entities = AsyncMock(
+            return_value=ClusterRunResult(
+                project_id="project-1",
+                entity_count=5,
+                valid_entity_count=4,
+                clustered_entity_count=3,
+                noise_count=1,
+                invalid_count=1,
+                cluster_count=1,
+                cluster_ids_by_entity_key={"a": 0, "b": 0, "c": 0, "d": None, "e": None},
+                cluster_sizes={0: 3},
+                invalid_entity_keys=["e"],
+                quality_metrics={"silhouette": None, "clustered_ratio": 0.6},
+            )
+        )
+        manager._kg_service = kg_service
+
+        tool_fn = registry.get_tool("recluster_knowledge_graph_entities")
+        result = await tool_fn(project_id="project-1")
+
+        assert result["success"] is True
+        assert result["project_id"] == "project-1"
+        assert result["clusters"] == [{"cluster_id": 0, "entity_count": 3}]
+        assert result["noise_count"] == 1
+        assert result["invalid_count"] == 1
+        kg_service.recluster_entities.assert_awaited_once_with(project_id="project-1")
+
+    @pytest.mark.asyncio
+    async def test_recluster_knowledge_graph_entities_errors_without_kg_service(self) -> None:
+        registry, manager = _make_registry()
+        assert manager._kg_service is None
+
+        tool_fn = registry.get_tool("recluster_knowledge_graph_entities")
+        result = await tool_fn(project_id="project-1")
+
+        assert result["success"] is False
+        assert result["error"] == "Knowledge graph service not available"
 
 
 class TestExportMemoryGraphRemoved:

@@ -85,6 +85,8 @@ def test_kept_fields_still_exist() -> None:
     assert hasattr(config, "code_link_min_score")
     assert hasattr(config, "recall_signal_logging")
     assert hasattr(config, "recall_signal_log_path")
+    assert hasattr(config, "cluster_recall_expansion")
+    assert hasattr(config, "cluster_expansion_per_entity")
 
 
 def test_recall_signal_logging_defaults_off() -> None:
@@ -92,6 +94,19 @@ def test_recall_signal_logging_defaults_off() -> None:
     config = MemoryConfig()
     assert config.recall_signal_logging is False
     assert config.recall_signal_log_path is None
+
+
+def test_cluster_recall_expansion_defaults_off() -> None:
+    """Cluster recall expansion should be explicitly opt-in."""
+    config = MemoryConfig()
+    assert config.cluster_recall_expansion is False
+    assert config.cluster_expansion_per_entity == 3
+
+
+def test_cluster_expansion_per_entity_rejects_negative_values() -> None:
+    """Cluster expansion fanout should be non-negative."""
+    with pytest.raises(ValueError, match="cluster_expansion_per_entity must be >= 0"):
+        MemoryConfig(cluster_expansion_per_entity=-1)
 
 
 def test_old_config_with_removed_fields_does_not_crash() -> None:

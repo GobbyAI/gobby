@@ -109,6 +109,8 @@ def _weighting_snapshot(config: MemoryConfig) -> dict[str, object]:
         "graph_edge_decay": getattr(config, "graph_edge_decay", False),
         "edge_half_life_days": _finite_or_none(getattr(config, "edge_half_life_days", None)),
         "materialize_cooccurrence": getattr(config, "materialize_cooccurrence", False),
+        "cluster_recall_expansion": getattr(config, "cluster_recall_expansion", False),
+        "cluster_expansion_per_entity": getattr(config, "cluster_expansion_per_entity", 3),
         "temporal_decay_half_life_days": _finite_or_none(
             getattr(config, "temporal_decay_half_life_days", None)
         ),

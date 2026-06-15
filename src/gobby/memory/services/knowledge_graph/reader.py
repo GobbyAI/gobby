@@ -10,6 +10,8 @@ from typing import TYPE_CHECKING, Any
 from gobby.memory.falkor_client import FalkorConnectionError
 from gobby.memory.scoring import temporal_decay
 
+from .clustering import EntityVector
+
 if TYPE_CHECKING:
     from collections.abc import Callable
 
@@ -28,6 +30,7 @@ _STRUCTURAL_RELATIONSHIP_TYPES = ("MENTIONED_IN", "RELATES_TO_CODE")
 _TRAVERSAL_TIMEOUT_THRESHOLD = 3
 _TRAVERSAL_TIMEOUT_COOLDOWN_SECONDS = 60.0
 _TRAVERSAL_WARNING_INTERVAL_SECONDS = 60.0
+_CLUSTER_ENTITY_QUERY_LIMIT = 256
 
 
 def _edge_timestamp_to_iso(value: Any) -> str | None:
@@ -60,12 +63,16 @@ class KnowledgeGraphReader:
         embedding_dim: int,
         graph_edge_decay: bool = False,
         edge_half_life_days: float = 30.0,
+        cluster_recall_expansion: bool = False,
+        cluster_expansion_per_entity: int = 3,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn
         self._embedding_dim = embedding_dim
         self._graph_edge_decay = graph_edge_decay
         self._edge_half_life_days = edge_half_life_days
+        self._cluster_recall_expansion = cluster_recall_expansion
+        self._cluster_expansion_per_entity = max(cluster_expansion_per_entity, 0)
         self._vector_index_ensured = False
         self._traversal_timeout_count = 0
         self._traversal_disabled_until = 0.0
@@ -298,6 +305,94 @@ class KnowledgeGraphReader:
 
         return related_keys
 
+    async def fetch_project_entity_vectors(
+        self,
+        project_id: str | None,
+    ) -> list[EntityVector]:
+        """Fetch project-scoped entity embeddings for offline clustering."""
+        rows = await self._falkor.query(
+            "MATCH (e:_Entity) "
+            "WHERE (e.project_id = $project_id "
+            "OR ($project_id IS NULL AND e.project_id IS NULL)) "
+            "RETURN e.entity_key AS entity_key, e.name AS name, e.embedding AS embedding "
+            "ORDER BY e.entity_key",
+            {"project_id": project_id},
+        )
+        return [
+            EntityVector(
+                entity_key=str(row.get("entity_key") or ""),
+                name=str(row.get("name") or ""),
+                embedding=row.get("embedding"),
+            )
+            for row in rows
+            if row.get("entity_key")
+        ]
+
+    async def _find_cluster_entity_keys(
+        self,
+        source_keys: list[str],
+        seed_keys: list[str],
+        related_entity_keys: list[str],
+        project_id: str | None,
+    ) -> list[str]:
+        if not self._cluster_recall_expansion or self._cluster_expansion_per_entity <= 0:
+            return []
+        expansion_sources = list(dict.fromkeys([*source_keys, *related_entity_keys]))
+        if not expansion_sources:
+            return []
+        expansion_limit = min(
+            len(expansion_sources) * self._cluster_expansion_per_entity,
+            _CLUSTER_ENTITY_QUERY_LIMIT,
+        )
+        if expansion_limit <= 0:
+            return []
+
+        excluded_keys = list(dict.fromkeys([*seed_keys, *related_entity_keys]))
+        try:
+            rows = await self._falkor.query(
+                "UNWIND $source_keys AS source_key "
+                "MATCH (source:_Entity {entity_key: source_key}) "
+                "WHERE (source.project_id = $project_id "
+                "OR ($project_id IS NULL AND source.project_id IS NULL)) "
+                "AND source.cluster_id IS NOT NULL AND source.cluster_id >= 0 "
+                "MATCH (candidate:_Entity {cluster_id: source.cluster_id}) "
+                "WHERE (candidate.project_id = $project_id "
+                "OR ($project_id IS NULL AND candidate.project_id IS NULL)) "
+                "AND candidate.cluster_id IS NOT NULL AND candidate.cluster_id >= 0 "
+                "AND NOT (candidate.entity_key IN $excluded_keys) "
+                "RETURN DISTINCT candidate.entity_key AS entity_key, "
+                "candidate.cluster_id AS cluster_id "
+                "ORDER BY cluster_id ASC, entity_key ASC LIMIT $limit",
+                {
+                    "source_keys": expansion_sources,
+                    "excluded_keys": excluded_keys,
+                    "project_id": project_id,
+                    "limit": expansion_limit,
+                },
+            )
+        except Exception as e:
+            if self._is_query_timeout_error(e):
+                self._record_traversal_timeout(e)
+            else:
+                logger.debug("Cluster recall expansion failed: %s", e)
+            return []
+
+        cluster_keys: list[str] = []
+        seen = set(excluded_keys)
+        for row in rows:
+            entity_key = row.get("entity_key")
+            cluster_id = row.get("cluster_id")
+            if not entity_key or entity_key in seen or cluster_id is None:
+                continue
+            try:
+                if int(cluster_id) < 0:
+                    continue
+            except (TypeError, ValueError):
+                continue
+            seen.add(entity_key)
+            cluster_keys.append(entity_key)
+        return cluster_keys
+
     async def find_related_memory_ids(
         self,
         entity_keys: list[str],
@@ -323,7 +418,14 @@ class KnowledgeGraphReader:
                 limit,
                 project_id,
             )
-            if not related_entity_keys:
+            cluster_entity_keys = await self._find_cluster_entity_keys(
+                seed_keys,
+                seed_keys,
+                related_entity_keys,
+                project_id,
+            )
+            memory_entity_keys = list(dict.fromkeys([*related_entity_keys, *cluster_entity_keys]))
+            if not memory_entity_keys:
                 self._record_traversal_success()
                 return []
 
@@ -337,7 +439,7 @@ class KnowledgeGraphReader:
                 "OR ($project_id IS NULL AND m.project_id IS NULL)) "
                 "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
                 "ORDER BY updated_at DESC LIMIT $limit",
-                {"entity_keys": related_entity_keys, "limit": limit, "project_id": project_id},
+                {"entity_keys": memory_entity_keys, "limit": limit, "project_id": project_id},
             )
             self._record_traversal_success()
             return [r["memory_id"] for r in rows if r.get("memory_id")]

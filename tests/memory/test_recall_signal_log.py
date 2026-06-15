@@ -77,6 +77,8 @@ def test_build_recall_signal_event_records_search_features_and_sanitizes_floats(
             "graph_edge_decay": False,
             "edge_half_life_days": 30.0,
             "materialize_cooccurrence": False,
+            "cluster_recall_expansion": False,
+            "cluster_expansion_per_entity": 3,
             "temporal_decay_half_life_days": 30.0,
         },
     )
@@ -176,6 +178,8 @@ def test_make_recall_signal_sink_is_default_off_and_writes_when_enabled(tmp_path
             recall_signal_logging=True,
             recall_signal_log_path=str(path),
             graph_edge_weighting=True,
+            cluster_recall_expansion=True,
+            cluster_expansion_per_entity=7,
         )
     )
     assert sink is not None
@@ -186,3 +190,5 @@ def test_make_recall_signal_sink_is_default_off_and_writes_when_enabled(tmp_path
     event = json.loads(line)
     assert event["query"] == "raw user query"
     assert event["weighting"]["graph_edge_weighting"] is True
+    assert event["weighting"]["cluster_recall_expansion"] is True
+    assert event["weighting"]["cluster_expansion_per_entity"] == 7

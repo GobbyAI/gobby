@@ -11,6 +11,7 @@ from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.falkor_client import FalkorConnectionError, FalkorQueryError
 from gobby.search.similarity import cosine_similarity as _cosine_similarity
 
+from .clustering import ClusterRunResult, recluster_project_entities
 from .code_linker import KnowledgeGraphCodeLinker
 from .extraction import KnowledgeGraphExtractor
 from .maintenance import KnowledgeGraphMaintenance
@@ -62,6 +63,8 @@ class KnowledgeGraphService:
         materialize_cooccurrence: bool = False,
         graph_edge_decay: bool = False,
         edge_half_life_days: float = 30.0,
+        cluster_recall_expansion: bool = False,
+        cluster_expansion_per_entity: int = 3,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn
@@ -86,6 +89,8 @@ class KnowledgeGraphService:
             embedding_dim=embedding_dim,
             graph_edge_decay=graph_edge_decay,
             edge_half_life_days=edge_half_life_days,
+            cluster_recall_expansion=cluster_recall_expansion,
+            cluster_expansion_per_entity=cluster_expansion_per_entity,
         )
         self._code_linker = KnowledgeGraphCodeLinker(
             falkor_client,
@@ -564,6 +569,10 @@ class KnowledgeGraphService:
     async def get_graph_counts(self, project_id: str | None = None) -> dict[str, Any]:
         """Return actual FalkorDB knowledge-graph counts."""
         return await self._falkor.get_graph_counts(project_id=project_id)
+
+    async def recluster_entities(self, project_id: str | None = None) -> ClusterRunResult:
+        """Recompute and persist deterministic HDBSCAN entity cluster IDs."""
+        return await recluster_project_entities(self._reader, self._writer, project_id)
 
     async def clear_project_graph(self, project_id: str) -> dict[str, int]:
         """Delete all Memory nodes for a project, then clean orphaned entities."""

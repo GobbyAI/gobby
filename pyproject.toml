@@ -277,6 +277,7 @@ dev = [
     "pytest-mock>=3.14.0",
     "pytest-xdist>=3.8.0",
     "ruff>=0.8.0",
+    "scikit-learn>=1.5",
     "types-croniter>=6.0.0.20250809",
     "types-PyYAML>=6.0.12.12",
     "aiosmtplib>=2.0",

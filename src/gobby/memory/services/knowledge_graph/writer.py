@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Mapping
 from typing import TYPE_CHECKING, Any
 
 from gobby.memory.falkor_client import FalkorConnectionError
@@ -27,6 +28,7 @@ COOCCUR_SUPPORT_CAP: int = 5
 # Bounded fanout: only the top-N salient entities of a memory form co-occurrence
 # pairs (N=8 -> <=28 pairs), keeping pairwise cost bounded as the graph densifies.
 COOCCUR_MAX_ENTITIES: int = 8
+CLUSTER_WRITE_BATCH_SIZE: int = 500
 
 
 def cooccurrence_weight(cosine: float, support: int, *, alpha: float, cap: int) -> float:
@@ -122,6 +124,44 @@ class KnowledgeGraphWriter:
             entity_key=entity_key,
             embedding=embedding,
         )
+
+    async def write_entity_clusters(
+        self,
+        cluster_ids_by_entity_key: Mapping[str, int | None],
+        project_id: str | None,
+    ) -> dict[str, int]:
+        """Persist entity cluster labels and remove stale labels from noise rows."""
+        set_rows = [
+            {"entity_key": entity_key, "cluster_id": cluster_id}
+            for entity_key, cluster_id in cluster_ids_by_entity_key.items()
+            if cluster_id is not None
+        ]
+        clear_keys = [
+            entity_key
+            for entity_key, cluster_id in cluster_ids_by_entity_key.items()
+            if cluster_id is None
+        ]
+
+        proj_e = _project_scope("e")
+        for index in range(0, len(set_rows), CLUSTER_WRITE_BATCH_SIZE):
+            set_batch = set_rows[index : index + CLUSTER_WRITE_BATCH_SIZE]
+            await self._falkor.query(
+                "UNWIND $rows AS row "
+                "MATCH (e:_Entity {entity_key: row.entity_key}) "
+                f"WHERE {proj_e} "
+                "SET e.cluster_id = row.cluster_id",
+                {"rows": set_batch, "project_id": project_id},
+            )
+        for index in range(0, len(clear_keys), CLUSTER_WRITE_BATCH_SIZE):
+            clear_batch = clear_keys[index : index + CLUSTER_WRITE_BATCH_SIZE]
+            await self._falkor.query(
+                "UNWIND $entity_keys AS entity_key "
+                "MATCH (e:_Entity {entity_key: entity_key}) "
+                f"WHERE {proj_e} "
+                "REMOVE e.cluster_id",
+                {"entity_keys": clear_batch, "project_id": project_id},
+            )
+        return {"clustered": len(set_rows), "noise": len(clear_keys)}
 
     async def fetch_existing_relations(self, entity_keys: list[str]) -> list[dict[str, str]]:
         """Fetch existing relationships involving the given entities."""

@@ -417,6 +417,20 @@ class MemoryConfig(BaseModel):
             "(graph_edge_decay). Set to 0 to disable edge decay."
         ),
     )
+    cluster_recall_expansion: bool = Field(
+        default=False,
+        description=(
+            "Enable read-path recall expansion through stored _Entity.cluster_id labels. "
+            "Default off; labels are written only by the offline reclustering tool."
+        ),
+    )
+    cluster_expansion_per_entity: int = Field(
+        default=3,
+        description=(
+            "Maximum co-clustered non-seed entities to add per seed or traversed entity "
+            "when cluster_recall_expansion is enabled."
+        ),
+    )
     recall_signal_logging: bool = Field(
         default=False,
         description=(
@@ -463,6 +477,14 @@ class MemoryConfig(BaseModel):
         """Validate edge_half_life_days is non-negative."""
         if v < 0:
             raise ValueError("edge_half_life_days must be >= 0")
+        return v
+
+    @field_validator("cluster_expansion_per_entity")
+    @classmethod
+    def validate_cluster_expansion(cls, v: int) -> int:
+        """Validate cluster expansion fanout is non-negative."""
+        if v < 0:
+            raise ValueError("cluster_expansion_per_entity must be >= 0")
         return v
 
     @field_validator("backend")

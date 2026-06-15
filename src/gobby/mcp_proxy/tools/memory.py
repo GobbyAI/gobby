@@ -575,6 +575,45 @@ def create_memory_registry(
             return {"success": False, "error": str(e)}
 
     @registry.tool(
+        name="recluster_knowledge_graph_entities",
+        description="Run offline HDBSCAN clustering over knowledge-graph entity embeddings and persist _Entity.cluster_id labels.",
+    )
+    async def recluster_knowledge_graph_entities(
+        project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Recluster knowledge graph entities for a project.
+
+        Args:
+            project_id: Optional project ID. Defaults to the current project.
+        """
+        try:
+            kg_service = memory_manager.kg_service
+            if not kg_service:
+                return {"success": False, "error": "Knowledge graph service not available"}
+
+            effective_project_id = (
+                project_id if project_id is not None else get_current_project_id()
+            )
+            result = await kg_service.recluster_entities(project_id=effective_project_id)
+            return {
+                "success": True,
+                "project_id": result.project_id,
+                "entity_count": result.entity_count,
+                "valid_entity_count": result.valid_entity_count,
+                "clustered_entity_count": result.clustered_entity_count,
+                "cluster_count": result.cluster_count,
+                "noise_count": result.noise_count,
+                "invalid_count": result.invalid_count,
+                "clusters": result.cluster_summaries,
+                "quality_metrics": result.quality_metrics,
+            }
+        except ImportError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
         name="rebuild_crossrefs",
         description="Rebuild cross-references between all memories based on semantic similarity. Creates edges for the 2D memory graph.",
     )

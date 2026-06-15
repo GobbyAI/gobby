@@ -246,6 +246,8 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 materialize_cooccurrence=self.config.materialize_cooccurrence,
                 graph_edge_decay=self.config.graph_edge_decay,
                 edge_half_life_days=self.config.edge_half_life_days,
+                cluster_recall_expansion=self.config.cluster_recall_expansion,
+                cluster_expansion_per_entity=self.config.cluster_expansion_per_entity,
             )
             logger.debug("KnowledgeGraphService initialized")
             return kg_service

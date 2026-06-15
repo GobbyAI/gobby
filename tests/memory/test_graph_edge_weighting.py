@@ -11,10 +11,11 @@ import sys
 import types
 from datetime import UTC, datetime
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.config.persistence import MemoryKnowledgeGraphConfig
 from gobby.mcp_proxy import semantic_search as semantic_search_mod
 from gobby.memory.services.knowledge_graph import service as service_mod
 from gobby.memory.services.knowledge_graph import writer as writer_mod
@@ -269,6 +270,21 @@ def test_cooccurrence_is_traversable_not_structural() -> None:
     assert _STRUCTURAL_RELATIONSHIP_TYPES == ("MENTIONED_IN", "RELATES_TO_CODE")
 
 
+def test_service_wires_cluster_recall_flags_to_reader() -> None:
+    service = service_mod.KnowledgeGraphService(
+        falkor_client=RecordingFalkor(),  # type: ignore[arg-type]
+        embed_fn=None,
+        prompt_loader=MagicMock(),
+        llm_service=MagicMock(),
+        feature_config=MemoryKnowledgeGraphConfig(),
+        cluster_recall_expansion=True,
+        cluster_expansion_per_entity=9,
+    )
+
+    assert service._reader._cluster_recall_expansion is True
+    assert service._reader._cluster_expansion_per_entity == 9
+
+
 # --------------------------------------------------------------------------- #
 # Reader weight/decay-aware traversal                                         #
 # --------------------------------------------------------------------------- #
@@ -279,6 +295,8 @@ def _reader(
     *,
     graph_edge_decay: bool = False,
     edge_half_life_days: float = 30.0,
+    cluster_recall_expansion: bool = False,
+    cluster_expansion_per_entity: int = 3,
 ) -> KnowledgeGraphReader:
     return KnowledgeGraphReader(
         falkor,  # type: ignore[arg-type]
@@ -286,6 +304,8 @@ def _reader(
         embedding_dim=8,
         graph_edge_decay=graph_edge_decay,
         edge_half_life_days=edge_half_life_days,
+        cluster_recall_expansion=cluster_recall_expansion,
+        cluster_expansion_per_entity=cluster_expansion_per_entity,
     )
 
 
@@ -330,6 +350,120 @@ async def test_traversal_unweighted_edges_use_neutral_weight() -> None:
     result = await reader._find_related_entity_keys(["seed"], max_hops=1, limit=20, project_id=None)
 
     assert result == ["alpha", "beta"]
+
+
+async def test_fetch_project_entity_vectors_uses_project_scope() -> None:
+    def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        assert "MATCH (e:_Entity)" in cypher
+        assert "e.project_id = $project_id" in cypher
+        assert "RETURN e.entity_key AS entity_key" in cypher
+        assert params == {"project_id": "project-1"}
+        return [{"entity_key": "entity-a", "name": "Entity A", "embedding": [1.0, 0.0]}]
+
+    reader = _reader(RecordingFalkor(respond))
+
+    entities = await reader.fetch_project_entity_vectors(project_id="project-1")
+
+    assert len(entities) == 1
+    assert entities[0].entity_key == "entity-a"
+    assert entities[0].embedding == [1.0, 0.0]
+
+
+async def test_write_entity_clusters_sets_labels_and_clears_noise() -> None:
+    falkor = RecordingFalkor()
+    writer = KnowledgeGraphWriter(falkor)  # type: ignore[arg-type]
+
+    counts = await writer.write_entity_clusters(
+        {"entity-a": 0, "entity-b": None, "entity-c": 1},
+        project_id="project-1",
+    )
+
+    assert counts == {"clustered": 2, "noise": 1}
+    set_cypher, set_params = falkor.find("SET e.cluster_id = row.cluster_id")[0]
+    assert "UNWIND $rows AS row" in set_cypher
+    assert "e.project_id = $project_id" in set_cypher
+    assert set_params == {
+        "rows": [
+            {"entity_key": "entity-a", "cluster_id": 0},
+            {"entity_key": "entity-c", "cluster_id": 1},
+        ],
+        "project_id": "project-1",
+    }
+    clear_cypher, clear_params = falkor.find("REMOVE e.cluster_id")[0]
+    assert "UNWIND $entity_keys AS entity_key" in clear_cypher
+    assert clear_params == {"entity_keys": ["entity-b"], "project_id": "project-1"}
+
+
+async def test_cluster_expansion_runs_from_seed_when_traversal_has_no_neighbors() -> None:
+    def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        if "related_entity_key" in cypher:
+            return []
+        if "candidate.cluster_id" in cypher:
+            assert params is not None
+            assert params["source_keys"] == ["seed"]
+            assert params["excluded_keys"] == ["seed"]
+            assert params["limit"] == 2
+            return [{"entity_key": "cluster-a", "cluster_id": 0}]
+        if "RETURN DISTINCT m.memory_id" in cypher:
+            assert params is not None
+            assert params["entity_keys"] == ["cluster-a"]
+            return [{"memory_id": "memory-from-cluster", "updated_at": 1}]
+        return []
+
+    reader = _reader(
+        RecordingFalkor(respond),
+        cluster_recall_expansion=True,
+        cluster_expansion_per_entity=2,
+    )
+
+    memory_ids = await reader.find_related_memory_ids(
+        ["seed"],
+        max_hops=1,
+        limit=5,
+        project_id="project-1",
+    )
+
+    assert memory_ids == ["memory-from-cluster"]
+
+
+async def test_cluster_expansion_is_default_off_for_seed_only_traversal() -> None:
+    falkor = RecordingFalkor(_neighbor_responder([]))
+    reader = _reader(falkor)
+
+    memory_ids = await reader.find_related_memory_ids(["seed"], max_hops=1, limit=5)
+
+    assert memory_ids == []
+    assert not falkor.find("candidate.cluster_id")
+
+
+async def test_cluster_expansion_bounds_fanout_and_excludes_seed_related_and_noise() -> None:
+    def respond(cypher: str, params: dict[str, Any] | None) -> list[dict[str, Any]]:
+        assert "candidate.cluster_id" in cypher
+        assert params is not None
+        assert params["source_keys"] == ["seed", "related"]
+        assert params["excluded_keys"] == ["seed", "related"]
+        assert params["limit"] == 2
+        return [
+            {"entity_key": "seed", "cluster_id": 0},
+            {"entity_key": "related", "cluster_id": 0},
+            {"entity_key": "noise", "cluster_id": -1},
+            {"entity_key": "candidate", "cluster_id": 0},
+        ]
+
+    reader = _reader(
+        RecordingFalkor(respond),
+        cluster_recall_expansion=True,
+        cluster_expansion_per_entity=1,
+    )
+
+    cluster_keys = await reader._find_cluster_entity_keys(
+        ["seed"],
+        ["seed"],
+        ["related"],
+        project_id="project-1",
+    )
+
+    assert cluster_keys == ["candidate"]
 
 
 def test_edge_score_applies_decay_only_when_enabled() -> None:
