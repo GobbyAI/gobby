@@ -9,7 +9,10 @@ import {
 } from './sections'
 import { getSettingsSectionComponent } from './sections/index'
 import { SettingsSectionProvider } from './sections/SettingsSectionProvider'
-import type { SettingsSectionContextValue } from './sections/SettingsSectionContext'
+import type {
+  ProviderSelectionContextValue,
+  SettingsSectionContextValue,
+} from './sections/SettingsSectionContext'
 import type { UseSettingsReturn } from '../../hooks/useSettings'
 
 interface SettingsOverlayProps {
@@ -30,6 +33,12 @@ interface SettingsOverlayProps {
    * can mount the shell standalone.
    */
   clientSettings?: UseSettingsReturn
+  /**
+   * App-owned default-provider selection, forwarded to the section provider so
+   * the Providers & Models section drives the same `selectedProvider` state as
+   * the chat picker. Optional so tests can mount the shell standalone.
+   */
+  providerSelection?: ProviderSelectionContextValue
 }
 
 const SECTION_OPTIONS = SETTINGS_SECTIONS.map((section) => ({
@@ -69,6 +78,7 @@ export function SettingsOverlay({
   onSelectSection,
   registerDirtyGuard,
   clientSettings,
+  providerSelection,
 }: SettingsOverlayProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
@@ -182,6 +192,7 @@ export function SettingsOverlay({
         <SettingsSectionProvider
           registerDirtyGuard={registerDirtyGuard}
           clientSettings={clientSettings}
+          providerSelection={providerSelection}
         >
           <div className="settings-overlay-shell__body">
             {/* Remount on section change so each section starts from a fresh

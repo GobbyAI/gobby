@@ -201,6 +201,12 @@ export default function App() {
   );
   const [settingsOpen, setSettingsOpen] = useState(false);
   const settingsOverlay = useSettingsOverlay();
+  // The Providers & Models settings section drives the same default-provider
+  // state as the chat picker; App owns its persistence (see effects below).
+  const providerSelection = useMemo(
+    () => ({ selectedProvider, onSelectProvider: setSelectedProvider }),
+    [selectedProvider, setSelectedProvider],
+  );
   const initialHash = window.location.hash.slice(1);
   const [activityTabRequest, setActivityTabRequest] =
     useState<ActivityTab | null>(null);
@@ -923,6 +929,7 @@ export default function App() {
             onSelectSection={settingsOverlay.selectSection}
             registerDirtyGuard={settingsOverlay.registerDirtyGuard}
             clientSettings={clientSettings}
+            providerSelection={providerSelection}
           />
         </Suspense>
       )}

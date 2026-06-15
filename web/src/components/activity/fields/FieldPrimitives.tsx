@@ -8,6 +8,14 @@ interface TextFieldProps extends DraftFieldBaseProps {
   onChange: (value: string) => void;
 }
 
+interface NumberFieldProps extends DraftFieldBaseProps {
+  value: number | null;
+  onChange: (value: number | null) => void;
+  min?: number;
+  max?: number;
+  step?: number;
+}
+
 interface TextAreaFieldProps extends DraftFieldBaseProps {
   value: string;
   onChange: (value: string) => void;
@@ -57,6 +65,47 @@ export function TextField({
         disabled={disabled}
         placeholder={placeholder}
         onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+export function NumberField({
+  label,
+  value,
+  onChange,
+  disabled,
+  placeholder,
+  ariaLabel,
+  min,
+  max,
+  step,
+}: NumberFieldProps) {
+  const id = useId();
+
+  return (
+    <label className={fieldShellClass} htmlFor={id}>
+      <span className={labelClass}>{label}</span>
+      <input
+        id={id}
+        type="number"
+        className={controlClass}
+        aria-label={ariaLabel}
+        value={value ?? ""}
+        min={min}
+        max={max}
+        step={step}
+        disabled={disabled}
+        placeholder={placeholder}
+        onChange={(event) => {
+          const raw = event.target.value.trim();
+          if (raw === "") {
+            onChange(null);
+            return;
+          }
+          const parsed = Number(raw);
+          onChange(Number.isFinite(parsed) ? parsed : null);
+        }}
       />
     </label>
   );

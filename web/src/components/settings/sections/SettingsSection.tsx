@@ -28,13 +28,32 @@ export interface SettingsSectionProps {
 
 type SectionDraft = Record<string, unknown>
 
+/**
+ * Read a value out of the nested config object by dotted path. `/api/config/values`
+ * returns config as a nested object (not flat dotted keys), so a dotted owned
+ * path must be walked segment by segment.
+ */
+function getByPath(source: Record<string, unknown>, path: string): unknown {
+  let current: unknown = source
+  for (const segment of path.split('.')) {
+    if (current === null || typeof current !== 'object') return undefined
+    current = (current as Record<string, unknown>)[segment]
+  }
+  return current
+}
+
+/**
+ * Build the section's draft source: a flat record keyed by each owned dotted
+ * path, with values pulled from the nested config. The draft stays flat-keyed so
+ * the section addresses fields by dotted path; the backend re-flattens on save.
+ */
 function pickPaths(
   configValues: Record<string, unknown>,
   paths: readonly string[],
 ): SectionDraft {
   const slice: SectionDraft = {}
   for (const path of paths) {
-    slice[path] = configValues[path]
+    slice[path] = getByPath(configValues, path)
   }
   return slice
 }

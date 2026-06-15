@@ -400,6 +400,39 @@
   text-align: right;
 }
 
+/* ---- Section subgroups (Providers & Models and its peers) ---- */
+
+/* Sections that own many config rows cluster them under labelled subgroups.
+   The section body already spaces direct children by 1.5rem, so each subsection
+   reads as a distinct block without borders or stripes. */
+.settings-subsection {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.settings-subsection__head {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+
+.settings-subsection__title {
+  color: var(--text-primary);
+  font-size: var(--text-base);
+  font-weight: var(--font-weight-semibold);
+  line-height: 1.3;
+}
+
+/* A named endpoint record's fields stack inside the map editor's value cell. */
+.settings-endpoint-editor {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 0.75rem;
+  min-width: 0;
+}
+
 /* Touch targets: inputs and the section nav clear the 44px floor on coarse
    pointers. Buttons inherit the same bump from .btn-sm/.btn-icon in
    buttons.css, so they are intentionally not listed here. */

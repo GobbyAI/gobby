@@ -5,6 +5,7 @@ import type { UseSettingsReturn } from '../../../hooks/useSettings'
 import {
   noopRegister,
   SettingsSectionContext,
+  type ProviderSelectionContextValue,
   type SaveConfigResult,
   type SettingsSectionContextValue,
 } from './SettingsSectionContext'
@@ -18,6 +19,8 @@ export interface SettingsSectionProviderProps {
    * can mount the provider without it.
    */
   clientSettings?: UseSettingsReturn
+  /** App-owned default-provider selection for the Providers & Models section. */
+  providerSelection?: ProviderSelectionContextValue
   children: ReactNode
 }
 
@@ -30,6 +33,7 @@ export interface SettingsSectionProviderProps {
 export function SettingsSectionProvider({
   registerDirtyGuard = noopRegister,
   clientSettings,
+  providerSelection,
   children,
 }: SettingsSectionProviderProps) {
   const config = useConfiguration()
@@ -57,6 +61,7 @@ export function SettingsSectionProvider({
       saveConfig,
       registerDirtyGuard,
       clientSettings,
+      providerSelection,
     }),
     [
       config.schema,
@@ -66,6 +71,7 @@ export function SettingsSectionProvider({
       saveConfig,
       registerDirtyGuard,
       clientSettings,
+      providerSelection,
     ],
   )
 

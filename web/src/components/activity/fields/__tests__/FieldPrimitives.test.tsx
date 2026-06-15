@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   KeyValueField,
+  NumberField,
   SelectField,
   SwitchField,
   TagsField,
@@ -138,5 +139,33 @@ describe("draft field primitives (#17014)", () => {
 
     fireEvent.click(within(group).getByRole("button", { name: "Remove API_KEY" }));
     expect(onChange).toHaveBeenCalledWith({});
+  });
+
+  it("renders a numeric input that emits parsed numbers and null when cleared", () => {
+    const onChange = vi.fn();
+
+    render(
+      <NumberField
+        label="Timeout"
+        value={600}
+        onChange={onChange}
+        ariaLabel="Timeout"
+        min={1}
+        max={3600}
+      />,
+    );
+
+    const input = screen.getByLabelText("Timeout");
+    expect(input).toHaveAttribute("type", "number");
+    expect(input).toHaveAttribute("min", "1");
+    expect(input).toHaveAttribute("max", "3600");
+    expect(input).toHaveClass("min-h-11");
+    expect(input).toHaveValue(600);
+
+    fireEvent.change(input, { target: { value: "120" } });
+    expect(onChange).toHaveBeenCalledWith(120);
+
+    fireEvent.change(input, { target: { value: "" } });
+    expect(onChange).toHaveBeenCalledWith(null);
   });
 });

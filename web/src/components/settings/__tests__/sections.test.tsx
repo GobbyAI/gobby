@@ -41,7 +41,9 @@ describe('settings section registry', () => {
 
 // A stable config slice — a fresh object each render would re-key the draft's
 // source memo and clobber edits, so the fixtures are module-level constants.
-const DEMO_CONFIG: Record<string, unknown> = { 'demo.value': 'initial' }
+// Config arrives nested (as `/api/config/values` returns it), and owned paths
+// are dotted; the shell resolves them by walking the nested object.
+const DEMO_CONFIG: Record<string, unknown> = { demo: { value: 'initial' } }
 const OWNED_PATHS: readonly string[] = ['demo.value']
 
 function makeContext(

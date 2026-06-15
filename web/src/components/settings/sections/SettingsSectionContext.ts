@@ -5,6 +5,17 @@ import type { UseSettingsReturn } from '../../../hooks/useSettings'
 /** Predicate reporting whether a section currently holds unsaved edits. */
 export type SectionDirtyGuard = () => boolean
 
+/**
+ * The app-owned default-provider selection, threaded so the Providers & Models
+ * section can drive the same `selectedProvider` state (persisted by App) that
+ * the chat ProviderPicker uses. The model half lives in `clientSettings`
+ * (`ui_settings.model`); provider is App-local state, not a `useSettings` field.
+ */
+export interface ProviderSelectionContextValue {
+  selectedProvider: string | null
+  onSelectProvider: (provider: string) => void
+}
+
 export interface SaveConfigResult {
   ok: boolean
   errors?: string[]
@@ -34,6 +45,12 @@ export interface SettingsSectionContextValue {
    * mounted (the fallback below), which sections must tolerate.
    */
   clientSettings?: UseSettingsReturn
+  /**
+   * App-owned default-provider selection. Absent when no provider is mounted
+   * (the fallback below) or the host does not supply it; sections must tolerate
+   * its absence.
+   */
+  providerSelection?: ProviderSelectionContextValue
 }
 
 export const noopRegister: SettingsSectionContextValue['registerDirtyGuard'] =
