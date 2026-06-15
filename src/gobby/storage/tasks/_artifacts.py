@@ -23,8 +23,23 @@ _ARTIFACT_FIELDS = frozenset(
         "integration_clone_id",
         "expansion_run_id",
         "expansion_attempts",
+        "plan_enhancement_rounds",
+        "plan_enhancement_rounds_completed",
+        "plan_enhancement_converged",
     }
 )
+
+# Integer counters default to 0 and are coerced like expansion_attempts on every
+# read/write so a NULL row value never leaks out as None.
+_INT_ARTIFACT_FIELDS = frozenset(
+    {
+        "expansion_attempts",
+        "plan_enhancement_rounds",
+        "plan_enhancement_rounds_completed",
+    }
+)
+# Boolean flags default to False.
+_BOOL_ARTIFACT_FIELDS = frozenset({"plan_enhancement_converged"})
 
 
 class TaskArtifactConstraintError(ValueError):
@@ -64,6 +79,9 @@ class TaskArtifacts:
     integration_clone_id: str | None = None
     expansion_run_id: str | None = None
     expansion_attempts: int = 0
+    plan_enhancement_rounds: int = 0
+    plan_enhancement_rounds_completed: int = 0
+    plan_enhancement_converged: bool = False
     updated_at: str | None = None
 
     @classmethod
@@ -83,6 +101,9 @@ class TaskArtifacts:
             integration_clone_id=row["integration_clone_id"],
             expansion_run_id=row["expansion_run_id"],
             expansion_attempts=int(row["expansion_attempts"] or 0),
+            plan_enhancement_rounds=int(row["plan_enhancement_rounds"] or 0),
+            plan_enhancement_rounds_completed=int(row["plan_enhancement_rounds_completed"] or 0),
+            plan_enhancement_converged=bool(row["plan_enhancement_converged"]),
             updated_at=row["updated_at"],
         )
 
@@ -136,6 +157,14 @@ def _validate_constraints(values: dict[str, Any]) -> None:
             "integration_branch is required when setting an integration workspace id",
         )
 
+    for rounds_field in ("plan_enhancement_rounds", "plan_enhancement_rounds_completed"):
+        rounds_value = values.get(rounds_field)
+        if rounds_value is not None and int(rounds_value) < 0:
+            raise TaskArtifactConstraintError(
+                f"{rounds_field}_negative",
+                f"{rounds_field} must be greater than or equal to 0",
+            )
+
 
 def _optional_int(value: Any) -> int | None:
     return None if value is None else int(value)
@@ -183,13 +212,19 @@ def _set_artifacts_in_transaction(
     _validate_field_names(set(fields))
     current = asdict(_get_artifacts_in_transaction(conn, task_id))
     next_values = {
-        field: current[field] for field in _ARTIFACT_FIELDS if field != "expansion_attempts"
+        field: current[field]
+        for field in _ARTIFACT_FIELDS
+        if field not in _INT_ARTIFACT_FIELDS and field not in _BOOL_ARTIFACT_FIELDS
     }
-    next_values["expansion_attempts"] = int(current["expansion_attempts"] or 0)
+    for field in _INT_ARTIFACT_FIELDS:
+        next_values[field] = int(current[field] or 0)
+    for field in _BOOL_ARTIFACT_FIELDS:
+        next_values[field] = bool(current[field])
     next_values.update(fields)
-    if next_values["expansion_attempts"] is None:
-        next_values["expansion_attempts"] = 0
-    next_values["expansion_attempts"] = int(next_values["expansion_attempts"])
+    for field in _INT_ARTIFACT_FIELDS:
+        next_values[field] = int(next_values[field] or 0)
+    for field in _BOOL_ARTIFACT_FIELDS:
+        next_values[field] = bool(next_values[field])
     _validate_constraints(next_values)
     _enforce_isolation_base(current, fields, next_values)
 

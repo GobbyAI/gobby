@@ -174,3 +174,52 @@ def test_clear_worktree_references_rolls_back_partial_failure(temp_db, sample_pr
     assert artifacts_b.worktree_id == "wt-rollback"
     assert artifacts_b.worktree_path == "/tmp/wt-b"
     assert artifacts_b.base_commit_sha == "abc123"
+
+
+def test_plan_enhancement_fields_default_to_zero_and_false(temp_db, sample_project) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Enhancement defaults",
+    )
+    artifacts = TaskArtifactManager(temp_db).get_artifacts(task.id)
+
+    assert artifacts.plan_enhancement_rounds == 0
+    assert artifacts.plan_enhancement_rounds_completed == 0
+    assert artifacts.plan_enhancement_converged is False
+
+
+def test_set_artifacts_atomic_round_trips_plan_enhancement_fields(temp_db, sample_project) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Enhancement round trip",
+    )
+    manager = TaskArtifactManager(temp_db)
+
+    manager.set_artifacts_atomic(task.id, plan_enhancement_rounds=2)
+    manager.set_artifacts_atomic(
+        task.id,
+        plan_enhancement_rounds_completed=1,
+        plan_enhancement_converged=True,
+    )
+    artifacts = manager.get_artifacts(task.id)
+
+    # Earlier-set counter survives the second partial write.
+    assert artifacts.plan_enhancement_rounds == 2
+    assert artifacts.plan_enhancement_rounds_completed == 1
+    assert artifacts.plan_enhancement_converged is True
+
+
+def test_set_artifacts_atomic_rejects_negative_plan_enhancement_rounds(
+    temp_db,
+    sample_project,
+) -> None:
+    task = LocalTaskManager(temp_db).create_task(
+        project_id=sample_project["id"],
+        title="Enhancement negative",
+    )
+    manager = TaskArtifactManager(temp_db)
+
+    with pytest.raises(TaskArtifactConstraintError) as exc_info:
+        manager.set_artifacts_atomic(task.id, plan_enhancement_rounds=-1)
+
+    assert exc_info.value.predicate == "plan_enhancement_rounds_negative"

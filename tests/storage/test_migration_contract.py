@@ -187,6 +187,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "284_task_validation_status_error.sql",
         "285_task_validation_backoff.sql",
         "286_code_index_prune_dirty_projects.sql",
+        "287_plan_enhancement_artifacts.sql",
     ]
 
 
@@ -361,6 +362,21 @@ def test_code_index_prune_dirty_projects_migration_and_baseline_define_schema() 
     )
     _assert_contains_all("code index prune dirty migration", migration, migration_snippets)
     _assert_contains_all("code index prune dirty baseline", baseline, baseline_snippets)
+
+
+def test_plan_enhancement_artifacts_migration_and_baseline_define_columns() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "287_plan_enhancement_artifacts.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+
+    snippets = (
+        "plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0",
+        "plan_enhancement_rounds_completed INTEGER NOT NULL DEFAULT 0",
+        "plan_enhancement_converged BOOLEAN NOT NULL DEFAULT FALSE",
+    )
+    _assert_contains_all("plan enhancement artifacts migration", migration, snippets)
+    _assert_contains_all("plan enhancement artifacts baseline", baseline, snippets)
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:

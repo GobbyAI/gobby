@@ -1853,6 +1853,9 @@ CREATE TABLE task_artifacts (
             expansion_run_id TEXT,
             expansion_attempts INTEGER NOT NULL DEFAULT 0,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_reviewed_plan_hash TEXT, plan_review_attempts INTEGER NOT NULL DEFAULT 0, qa_attempts INTEGER NOT NULL DEFAULT 0, holistic_attempts INTEGER NOT NULL DEFAULT 0, merge_attempts INTEGER NOT NULL DEFAULT 0,
+            plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0,
+            plan_enhancement_rounds_completed INTEGER NOT NULL DEFAULT 0,
+            plan_enhancement_converged BOOLEAN NOT NULL DEFAULT FALSE,
             CHECK (
                 (worktree_path IS NULL) = (worktree_id IS NULL)
                 AND (clone_path IS NULL) = (clone_id IS NULL)
