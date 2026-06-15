@@ -1,0 +1,382 @@
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
+import { describe, it, expect, vi } from 'vitest'
+import { MemoryKnowledgeSection } from '../MemoryKnowledgeSection'
+import {
+  SettingsSectionContext,
+  type SettingsSectionContextValue,
+} from '../SettingsSectionContext'
+
+// Schema covering the rows the assertions touch. The three `profile` selects
+// (`memory_recall.profile`, `memory.kg.profile`, `memory.dream.profile`) prove
+// multi-hop `$ref` traversal through the real DaemonConfig shape down to the
+// shared `FeatureProfile` enum; `candidates`, `wiki.roots`, and `ignore_globs`
+// cover the array "fix" rows from the configuration audit.
+const FEATURE_PROFILE = {
+  enum: ['feature_low', 'feature_mid', 'feature_high'],
+  type: 'string',
+}
+
+const SCHEMA: Record<string, unknown> = {
+  $defs: {
+    FeatureProfile: FEATURE_PROFILE,
+    MemoryRecallConfig: {
+      type: 'object',
+      properties: {
+        profile: { $ref: '#/$defs/FeatureProfile' },
+        candidates: { type: 'array', items: { type: 'string' } },
+        enabled: { type: 'boolean' },
+        timeout: { type: 'integer' },
+        candidate_limit: { type: 'integer' },
+        selected_limit: { type: 'integer' },
+        min_score: { type: 'number' },
+        query_synthesis_threshold: { type: 'integer' },
+        query_max_chars: { type: 'integer' },
+      },
+    },
+    MemoryKnowledgeGraphConfig: {
+      type: 'object',
+      properties: {
+        profile: { $ref: '#/$defs/FeatureProfile' },
+        candidates: { type: 'array', items: { type: 'string' } },
+      },
+    },
+    MemoryDreamConfig: {
+      type: 'object',
+      properties: {
+        profile: { $ref: '#/$defs/FeatureProfile' },
+        candidates: { type: 'array', items: { type: 'string' } },
+        enabled: { type: 'boolean' },
+        schedule_cron: { type: 'string' },
+      },
+    },
+    MemoryConfig: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean' },
+        backend: { type: 'string' },
+        auto_crossref: { type: 'boolean' },
+        crossref_threshold: { type: 'number' },
+        kg: { $ref: '#/$defs/MemoryKnowledgeGraphConfig' },
+        dream: { $ref: '#/$defs/MemoryDreamConfig' },
+        recall_signal_logging: { type: 'boolean' },
+        recall_signal_log_path: {
+          anyOf: [{ type: 'string' }, { type: 'null' }],
+        },
+      },
+    },
+    EmbeddingsConfig: {
+      type: 'object',
+      properties: {
+        model: { type: 'string' },
+        dim: { type: 'integer' },
+        api_base: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        api_key: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        query_prefix: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+      },
+    },
+    QdrantConfig: {
+      type: 'object',
+      properties: {
+        url: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        api_key: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        port: { type: 'integer' },
+        collection_prefix: { type: 'string' },
+      },
+    },
+    FalkorConfig: {
+      type: 'object',
+      properties: {
+        host: { type: 'string' },
+        port: { type: 'integer' },
+        password: { anyOf: [{ type: 'string' }, { type: 'null' }] },
+        graph_name: { type: 'string' },
+        graph_search: { type: 'boolean' },
+        graph_min_score: { type: 'number' },
+        rrf_k: { type: 'integer' },
+      },
+    },
+    DatabasesConfig: {
+      type: 'object',
+      properties: {
+        qdrant: { $ref: '#/$defs/QdrantConfig' },
+        falkordb: { $ref: '#/$defs/FalkorConfig' },
+      },
+    },
+    KnowledgeGraphQueueConfig: {
+      type: 'object',
+      properties: {
+        interval_minutes: { type: 'integer' },
+        batch_size: { type: 'integer' },
+      },
+    },
+    MemoryBackupConfig: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean' },
+        export_debounce: { type: 'number' },
+        export_path: { type: 'string' },
+      },
+    },
+    WikiRootConfig: {
+      type: 'object',
+      properties: {
+        scope: { type: 'string' },
+        path: { type: 'string' },
+      },
+      required: ['scope', 'path'],
+    },
+    WikiConfig: {
+      type: 'object',
+      properties: {
+        enabled: { type: 'boolean' },
+        roots: { type: 'array', items: { $ref: '#/$defs/WikiRootConfig' } },
+        debounce_interval: { type: 'number' },
+        poll_interval: { type: 'number' },
+        ignore_globs: { type: 'array', items: { type: 'string' } },
+        codewiki_on_commit: { type: 'boolean' },
+      },
+    },
+  },
+  type: 'object',
+  properties: {
+    memory: { $ref: '#/$defs/MemoryConfig' },
+    memory_recall: { $ref: '#/$defs/MemoryRecallConfig' },
+    embeddings: { $ref: '#/$defs/EmbeddingsConfig' },
+    databases: { $ref: '#/$defs/DatabasesConfig' },
+    knowledge_graph_queue: { $ref: '#/$defs/KnowledgeGraphQueueConfig' },
+    memory_sync: { $ref: '#/$defs/MemoryBackupConfig' },
+    wiki: { $ref: '#/$defs/WikiConfig' },
+  },
+}
+
+function makeConfigValues(): Record<string, unknown> {
+  return {
+    memory: {
+      enabled: true,
+      backend: 'local',
+      auto_crossref: true,
+      crossref_threshold: 0.7,
+      crossref_max_links: 5,
+      access_debounce_seconds: 2,
+      kg: { profile: 'feature_low', candidates: ['claude/haiku'] },
+      dream: {
+        profile: 'feature_mid',
+        candidates: ['codex/gpt-5.4-mini'],
+        enabled: false,
+        schedule_cron: '0 3 * * *',
+        prompt_path: 'prompts/dream.md',
+        max_tokens: 4000,
+        scan_limit: 200,
+        max_scan_rows: 5000,
+        candidate_page_timeout_seconds: 30,
+        stale_age_days: 90,
+        min_action_confidence: 0.6,
+        min_delete_confidence: 0.8,
+        include_global_memories: true,
+        reconcile_after_apply: true,
+        reconcile_after_revert: false,
+      },
+      code_link_min_score: 0.5,
+      temporal_decay_half_life_days: 30,
+      min_recall_score: 0.2,
+      graph_edge_weighting: true,
+      materialize_cooccurrence: false,
+      graph_edge_decay: true,
+      edge_half_life_days: 14,
+      recall_signal_logging: false,
+      recall_signal_log_path: null,
+    },
+    memory_recall: {
+      profile: 'feature_high',
+      candidates: ['claude/sonnet'],
+      enabled: true,
+      timeout: 15,
+      candidate_limit: 40,
+      selected_limit: 8,
+      min_score: 0.3,
+      query_synthesis_threshold: 3,
+      query_max_chars: 2000,
+    },
+    embeddings: {
+      model: 'text-embedding-3-small',
+      dim: 1536,
+      api_base: 'https://api.example/v1',
+      api_key: 'sk-secret',
+      query_prefix: 'query: ',
+    },
+    databases: {
+      qdrant: {
+        url: 'http://localhost:6333',
+        api_key: 'qdrant-secret',
+        port: 6333,
+        collection_prefix: 'gobby_',
+      },
+      falkordb: {
+        host: 'localhost',
+        port: 6379,
+        password: 'falkor-secret',
+        graph_name: 'gobby',
+        graph_search: true,
+        graph_min_score: 0.1,
+        rrf_k: 60,
+      },
+    },
+    knowledge_graph_queue: { interval_minutes: 5, batch_size: 25 },
+    memory_sync: {
+      enabled: true,
+      export_debounce: 1.5,
+      export_path: '.gobby/memory',
+    },
+    wiki: {
+      enabled: true,
+      roots: [{ scope: 'project', path: 'docs/wiki' }],
+      debounce_interval: 0.5,
+      poll_interval: 0.25,
+      ignore_globs: ['outputs/**'],
+      codewiki_on_commit: false,
+    },
+  }
+}
+
+function makeContext(
+  overrides: Partial<SettingsSectionContextValue> = {},
+): SettingsSectionContextValue {
+  return {
+    schema: SCHEMA,
+    configValues: makeConfigValues(),
+    secretKeys: [],
+    isLoading: false,
+    saveConfig: vi.fn(async () => ({ ok: true })),
+    registerDirtyGuard: () => () => {},
+    ...overrides,
+  }
+}
+
+function renderSection(ctx: SettingsSectionContextValue) {
+  return render(
+    <SettingsSectionContext.Provider value={ctx}>
+      <MemoryKnowledgeSection />
+    </SettingsSectionContext.Provider>,
+  )
+}
+
+describe('MemoryKnowledgeSection', () => {
+  it('reads core memory scalar rows', () => {
+    renderSection(makeContext())
+
+    expect(screen.getByRole('switch', { name: 'Enable memory' })).toBeChecked()
+    expect(screen.getByLabelText('Cross-reference threshold')).toHaveValue(0.7)
+    expect(screen.getByLabelText('Minimum recall score')).toHaveValue(0.2)
+    expect(
+      screen.getByRole('switch', { name: 'Log recall signals' }),
+    ).not.toBeChecked()
+  })
+
+  it('renders memory backend as a bounded local/null select', () => {
+    renderSection(makeContext())
+
+    const backend = screen.getByLabelText('Memory backend')
+    expect(backend).toHaveValue('local')
+    expect(within(backend).getAllByRole('option')).toHaveLength(2)
+  })
+
+  it('resolves the recall profile enum through a multi-hop $ref', () => {
+    renderSection(makeContext())
+
+    const profile = screen.getByLabelText('Recall model profile')
+    expect(profile).toHaveValue('feature_high')
+    expect(within(profile).getAllByRole('option')).toHaveLength(3)
+  })
+
+  it('resolves the knowledge-graph and dream profile enums', () => {
+    renderSection(makeContext())
+
+    expect(screen.getByLabelText('Knowledge graph model profile')).toHaveValue(
+      'feature_low',
+    )
+    expect(screen.getByLabelText('Dream model profile')).toHaveValue(
+      'feature_mid',
+    )
+  })
+
+  it('renders candidate arrays as editable string lists', () => {
+    renderSection(makeContext())
+
+    expect(screen.getByLabelText('Recall model candidates item 1')).toHaveValue(
+      'claude/sonnet',
+    )
+    expect(
+      screen.getByLabelText('Knowledge graph model candidates item 1'),
+    ).toHaveValue('claude/haiku')
+    expect(screen.getByLabelText('Dream model candidates item 1')).toHaveValue(
+      'codex/gpt-5.4-mini',
+    )
+  })
+
+  it('reads embeddings, vector store, and graph store rows', () => {
+    renderSection(makeContext())
+
+    expect(screen.getByLabelText('Embedding model')).toHaveValue(
+      'text-embedding-3-small',
+    )
+    expect(screen.getByLabelText('Embedding dimensions')).toHaveValue(1536)
+    expect(screen.getByLabelText('Qdrant URL')).toHaveValue(
+      'http://localhost:6333',
+    )
+    expect(screen.getByLabelText('Qdrant port')).toHaveValue(6333)
+    expect(screen.getByLabelText('FalkorDB host')).toHaveValue('localhost')
+    expect(
+      screen.getByRole('switch', { name: 'FalkorDB graph search' }),
+    ).toBeChecked()
+    expect(screen.getByLabelText('FalkorDB RRF k')).toHaveValue(60)
+  })
+
+  it('routes secret credentials to Secrets & Auth (not rendered here)', () => {
+    renderSection(makeContext())
+
+    expect(screen.queryByLabelText('Embedding API key')).toBeNull()
+    expect(screen.queryByLabelText('Qdrant API key')).toBeNull()
+    expect(screen.queryByLabelText('FalkorDB password')).toBeNull()
+  })
+
+  it('reads knowledge-graph queue and memory sync rows', () => {
+    renderSection(makeContext())
+
+    expect(screen.getByLabelText('Queue interval (minutes)')).toHaveValue(5)
+    expect(screen.getByLabelText('Queue batch size')).toHaveValue(25)
+    expect(
+      screen.getByRole('switch', { name: 'Enable memory sync' }),
+    ).toBeChecked()
+    expect(screen.getByLabelText('Memory export path')).toHaveValue(
+      '.gobby/memory',
+    )
+  })
+
+  it('renders wiki.roots as a typed scope/path sub-form', () => {
+    renderSection(makeContext())
+
+    expect(screen.getByLabelText('Wiki root 1 scope')).toHaveValue('project')
+    expect(screen.getByLabelText('Wiki root 1 path')).toHaveValue('docs/wiki')
+    expect(screen.getByLabelText('Wiki ignore globs item 1')).toHaveValue(
+      'outputs/**',
+    )
+    expect(
+      screen.getByRole('switch', { name: 'Refresh codewiki on commit' }),
+    ).not.toBeChecked()
+  })
+
+  it('persists an edited draft row through the section Save', async () => {
+    const ctx = makeContext()
+    renderSection(ctx)
+
+    fireEvent.click(screen.getByRole('switch', { name: 'Enable memory' }))
+    const save = screen.getByRole('button', { name: 'Save' })
+    await waitFor(() => expect(save).toBeEnabled())
+    fireEvent.click(save)
+
+    await waitFor(() => expect(ctx.saveConfig).toHaveBeenCalledTimes(1))
+    expect(ctx.saveConfig).toHaveBeenCalledWith(
+      expect.objectContaining({ 'memory.enabled': false }),
+    )
+  })
+})
