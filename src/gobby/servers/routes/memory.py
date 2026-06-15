@@ -251,6 +251,7 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 query=q,
                 project_id=project_id,
                 limit=limit,
+                caller="http.memory.search",
             )
             return {
                 "query": q,

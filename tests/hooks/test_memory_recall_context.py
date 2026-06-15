@@ -4,6 +4,7 @@ import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
+from uuid import UUID
 
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.dispatchers.mcp import PROJECT_MEMORY_CLOSE_TAG, PROJECT_MEMORY_OPEN_TAG
@@ -117,5 +118,8 @@ def test_turn_start_memory_recall_context_excludes_low_score_candidates(
     assert "Strong memory should render." in context
     assert "Weak memory should not render." not in context
     assert memory_manager.calls[0]["min_score"] == 0.7
+    assert memory_manager.calls[0]["session_id"] == SESSION_ID
+    UUID(memory_manager.calls[0]["recall_request_id"])
+    assert memory_manager.calls[0]["caller"] == "memory.recall"
     assert '"strong"' in llm_service.calls[0]["prompt"]
     assert '"weak"' not in llm_service.calls[0]["prompt"]

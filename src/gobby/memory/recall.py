@@ -10,6 +10,7 @@ import re
 import time
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
+from uuid import uuid4
 
 from gobby.config.feature_base import FeatureProfile, default_candidates_for_profile
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -78,6 +79,7 @@ class MemoryRecallResult:
     """Selected memories plus the parent turn freshness token."""
 
     origin_turn_seq: int
+    recall_request_id: str
     memories: list[dict[str, Any]]
 
 
@@ -192,10 +194,16 @@ class MemoryRecallRunner:
 
         origin_turn_seq = variables["parent_turn_seq"]
         prompt = decision.prompt
+        recall_request_id = str(uuid4())
 
         query = await self._query_for_prompt(prompt, decision, session_id, event)
         retrieval_start = time.monotonic()
-        candidates = await self._search_candidates(query.text, event.project_id)
+        candidates = await self._search_candidates(
+            query.text,
+            event.project_id,
+            session_id=session_id,
+            recall_request_id=recall_request_id,
+        )
         retrieval_latency_ms = _elapsed_ms(retrieval_start)
         self._log_recall_diagnostic(
             "Memory recall retrieval completed",
@@ -287,7 +295,11 @@ class MemoryRecallRunner:
             )
             return None
 
-        return MemoryRecallResult(origin_turn_seq=origin_turn_seq, memories=selected)
+        return MemoryRecallResult(
+            origin_turn_seq=origin_turn_seq,
+            recall_request_id=recall_request_id,
+            memories=selected,
+        )
 
     async def _query_for_prompt(
         self,
@@ -337,7 +349,14 @@ class MemoryRecallRunner:
                 latency_ms=latency_ms,
             )
 
-    async def _search_candidates(self, prompt: str, project_id: str | None) -> list[Memory]:
+    async def _search_candidates(
+        self,
+        prompt: str,
+        project_id: str | None,
+        *,
+        session_id: str,
+        recall_request_id: str,
+    ) -> list[Memory]:
         try:
             return await self.memory_manager.search_memories(
                 query=prompt,
@@ -345,6 +364,9 @@ class MemoryRecallRunner:
                 limit=self.config.candidate_limit,
                 min_score=self.config.min_score,
                 tags_none=[REVIEW_LESSON_TAG],
+                session_id=session_id,
+                recall_request_id=recall_request_id,
+                caller="memory.recall",
             )
         except Exception as exc:  # noqa: BLE001 - hook recall must fail open
             self.logger.warning("Memory recall candidate search failed: %s", exc)

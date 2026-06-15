@@ -61,6 +61,9 @@ class SearchDebugSnapshot:
     rrf_applied: bool
     query: str = ""
     project_id: str | None = None
+    session_id: str | None = None
+    recall_request_id: str | None = None
+    caller: str = "memory.search"
     graph_score_map: dict[str, float] = field(default_factory=dict)
     returned_hits: list[SearchDebugHit] = field(default_factory=list)
     graph_synthetic_similarity_discount: float = _GRAPH_SYNTHETIC_SIM_DISCOUNT
@@ -149,6 +152,10 @@ class SearchService:
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         min_score: float | None = None,
+        *,
+        session_id: str | None = None,
+        recall_request_id: str | None = None,
+        caller: str = "memory.search",
     ) -> list[Memory]:
         """Retrieve memories via VectorStore + optional FalkorDB graph search."""
         if query and self._vector_store and self._embed_fn:
@@ -178,6 +185,9 @@ class SearchService:
                     tags_none=tags_none,
                     half_life=half_life,
                     effective_min_score=effective_min_score,
+                    session_id=session_id,
+                    recall_request_id=recall_request_id,
+                    caller=caller,
                 )
             else:
                 memories = await self._search_qdrant_keyword(
@@ -192,6 +202,9 @@ class SearchService:
                     tags_none=tags_none,
                     half_life=half_life,
                     effective_min_score=effective_min_score,
+                    session_id=session_id,
+                    recall_request_id=recall_request_id,
+                    caller=caller,
                 )
         else:
             if query:
@@ -225,6 +238,9 @@ class SearchService:
         tags_none: list[str] | None,
         half_life: float,
         effective_min_score: float,
+        session_id: str | None = None,
+        recall_request_id: str | None = None,
+        caller: str = "memory.search",
     ) -> list[Memory]:
         graph_min_score = self._falkordb_graph_min_score
         rrf_k = self._falkordb_rrf_k
@@ -321,6 +337,9 @@ class SearchService:
         self._emit_search_debug(
             query=query,
             project_id=project_id,
+            session_id=session_id,
+            recall_request_id=recall_request_id,
+            caller=caller,
             merged_ids=merged_ids,
             returned=results,
             ranking_score_map=ranking_score_map,
@@ -343,6 +362,9 @@ class SearchService:
         tags_none: list[str] | None,
         half_life: float,
         effective_min_score: float,
+        session_id: str | None = None,
+        recall_request_id: str | None = None,
+        caller: str = "memory.search",
     ) -> list[Memory]:
         rrf_k = self._rrf_k
 
@@ -422,6 +444,9 @@ class SearchService:
         self._emit_search_debug(
             query=query,
             project_id=project_id,
+            session_id=session_id,
+            recall_request_id=recall_request_id,
+            caller=caller,
             merged_ids=merged_ids,
             returned=results,
             ranking_score_map=ranking_score_map,
@@ -434,6 +459,9 @@ class SearchService:
         *,
         query: str,
         project_id: str | None,
+        session_id: str | None,
+        recall_request_id: str | None,
+        caller: str,
         merged_ids: list[str],
         returned: list[Memory],
         ranking_score_map: dict[str, float],
@@ -451,6 +479,9 @@ class SearchService:
             rrf_applied=rrf_applied,
             query=query,
             project_id=project_id,
+            session_id=session_id,
+            recall_request_id=recall_request_id,
+            caller=caller,
             graph_score_map=graph_scores,
             returned_hits=[
                 SearchDebugHit(

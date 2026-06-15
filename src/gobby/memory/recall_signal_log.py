@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-RECALL_SIGNAL_SCHEMA_VERSION = 1
+RECALL_SIGNAL_SCHEMA_VERSION = 2
 
 _WRITE_LOCK = threading.Lock()
 
@@ -66,6 +66,9 @@ def build_recall_signal_event(
         "schema_version": RECALL_SIGNAL_SCHEMA_VERSION,
         "timestamp": timestamp,
         "project_id": snapshot.project_id,
+        "session_id": snapshot.session_id,
+        "recall_request_id": snapshot.recall_request_id,
+        "caller": snapshot.caller,
         "query": snapshot.query,
         "merged_ids": list(snapshot.merged_ids),
         "returned_ids": list(snapshot.returned_ids),

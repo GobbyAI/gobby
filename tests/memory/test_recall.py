@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from typing import Any
+from uuid import UUID
 
 import pytest
 
@@ -288,6 +289,7 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
 
     assert payload is not None
     assert payload.origin_turn_seq == 3
+    UUID(payload.recall_request_id)
     assert payload.memories == [
         {
             "id": "mem-1",
@@ -306,6 +308,9 @@ async def test_runner_selects_memory_with_json_feature_call_and_no_child_session
             "limit": 8,
             "min_score": 0.7,
             "tags_none": ["review-lesson"],
+            "session_id": SESSION_ID,
+            "recall_request_id": payload.recall_request_id,
+            "caller": "memory.recall",
         }
     ]
     assert llm.calls[0]["caller"] == "memory.recall"

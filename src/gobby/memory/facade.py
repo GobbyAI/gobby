@@ -141,6 +141,10 @@ class MemoryManagerFacadeMethods:
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
         min_score: float | None = None,
+        *,
+        session_id: str | None = None,
+        recall_request_id: str | None = None,
+        caller: str = "memory.search",
     ) -> list[Memory]:
         return await self._search_service.search(
             query=query,
@@ -152,6 +156,9 @@ class MemoryManagerFacadeMethods:
             tags_any=tags_any,
             tags_none=tags_none,
             min_score=min_score,
+            session_id=session_id,
+            recall_request_id=recall_request_id,
+            caller=caller,
         )
 
     async def search_memories_as_context(
@@ -159,7 +166,11 @@ class MemoryManagerFacadeMethods:
         project_id: str | None = None,
         limit: int = DEFAULT_SEARCH_LIMIT,
     ) -> str:
-        memories = await self.search_memories(project_id=project_id, limit=limit)
+        memories = await self.search_memories(
+            project_id=project_id,
+            limit=limit,
+            caller="memory.context",
+        )
         return build_memory_context(memories)
 
     def _update_access_stats(self, memories: list[Memory]) -> None:

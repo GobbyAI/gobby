@@ -243,6 +243,7 @@ def create_memory_registry(
                     query=content,
                     project_id=project_id,
                     limit=4,  # fetch 4 since the new memory itself may appear
+                    caller="mcp_proxy.memory.create_memory.similar_existing",
                 )
                 for m in similar:
                     if m.id != memory.id:
@@ -306,6 +307,7 @@ def create_memory_registry(
                 tags_all=tags_all,
                 tags_any=tags_any,
                 tags_none=tags_none,
+                caller="mcp_proxy.memory.search_memories",
             )
 
             # Split by threshold

@@ -63,6 +63,7 @@ class ReviewLearningMemoryManager(PromotionMemoryManager, Protocol):
         project_id: str,
         limit: int,
         tags_all: list[str] | None,
+        caller: str = "memory.search",
     ) -> list[Any]: ...
 
     async def alist_memories(
@@ -285,6 +286,7 @@ class ReviewLearningService:
                     project_id=project_id,
                     limit=5,
                     tags_all=tags_all,
+                    caller="review_learning.related_lessons",
                 )
                 for memory in memories:
                     memory_id = str(memory.id)

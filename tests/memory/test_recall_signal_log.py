@@ -26,6 +26,9 @@ def _snapshot() -> SearchDebugSnapshot:
         rrf_applied=True,
         query="raw user query",
         project_id="project-1",
+        session_id="session-1",
+        recall_request_id="request-1",
+        caller="memory.recall",
         graph_score_map={"graph": 0.8, "bad": float("nan")},
         returned_hits=[
             SearchDebugHit(
@@ -78,9 +81,12 @@ def test_build_recall_signal_event_records_search_features_and_sanitizes_floats(
         },
     )
 
-    assert event["schema_version"] == 1
+    assert event["schema_version"] == 2
     assert event["timestamp"] == "2026-06-15T00:00:00+00:00"
     assert event["project_id"] == "project-1"
+    assert event["session_id"] == "session-1"
+    assert event["recall_request_id"] == "request-1"
+    assert event["caller"] == "memory.recall"
     assert event["query"] == "raw user query"
     assert event["merged_ids"] == ["semantic", "graph"]
     assert event["returned_ids"] == ["semantic", "graph"]
@@ -92,6 +98,43 @@ def test_build_recall_signal_event_records_search_features_and_sanitizes_floats(
     assert event["hits"][1]["graph_score"] == 0.8
     assert event["hits"][1]["ranking_score"] is None
     json.dumps(event, allow_nan=False)
+
+
+def test_build_recall_signal_event_includes_join_metadata_when_present() -> None:
+    event = build_recall_signal_event(
+        snapshot=SearchDebugSnapshot(
+            merged_ids=[],
+            returned_ids=[],
+            ranking_score_map={},
+            rrf_applied=False,
+            session_id="session-1",
+            recall_request_id="request-1",
+            caller="memory.recall",
+        ),
+        timestamp="2026-06-15T00:00:00+00:00",
+        weighting={},
+    )
+
+    assert event["session_id"] == "session-1"
+    assert event["recall_request_id"] == "request-1"
+    assert event["caller"] == "memory.recall"
+
+
+def test_build_recall_signal_event_defaults_join_metadata_for_non_recall() -> None:
+    event = build_recall_signal_event(
+        snapshot=SearchDebugSnapshot(
+            merged_ids=[],
+            returned_ids=[],
+            ranking_score_map={},
+            rrf_applied=False,
+        ),
+        timestamp="2026-06-15T00:00:00+00:00",
+        weighting={},
+    )
+
+    assert event["session_id"] is None
+    assert event["recall_request_id"] is None
+    assert event["caller"] == "memory.search"
 
 
 def test_append_recall_signal_events_writes_parseable_jsonl_and_appends(tmp_path: Path) -> None:

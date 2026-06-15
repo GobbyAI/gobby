@@ -66,6 +66,7 @@ def recall(
             tags_all=parse_tags(tags_all),
             tags_any=parse_tags(tags_any),
             tags_none=parse_tags(tags_none),
+            caller="cli.memory.recall",
         )
     )
     if not memories:

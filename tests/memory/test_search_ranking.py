@@ -226,6 +226,9 @@ async def test_qdrant_keyword_path_emits_debug_snapshot() -> None:
         tags_none=None,
         half_life=0.0,
         effective_min_score=0.0,
+        session_id="session-1",
+        recall_request_id="request-1",
+        caller="memory.recall",
     )
 
     assert [mem.id for mem in results] == ["semantic"]
@@ -236,6 +239,9 @@ async def test_qdrant_keyword_path_emits_debug_snapshot() -> None:
             ranking_score_map={"semantic": 0.9},
             rrf_applied=False,
             query="query",
+            session_id="session-1",
+            recall_request_id="request-1",
+            caller="memory.recall",
             returned_hits=[
                 SearchDebugHit(
                     memory_id="semantic",
@@ -305,6 +311,9 @@ def test_debug_sink_failure_does_not_change_results() -> None:
     service._emit_search_debug(
         query="query",
         project_id=None,
+        session_id=None,
+        recall_request_id=None,
+        caller="memory.search",
         merged_ids=["semantic"],
         returned=[],
         ranking_score_map={},
