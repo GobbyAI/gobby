@@ -1,4 +1,4 @@
-"""Async gateway for gcode-owned code graph operations."""
+"""Async gateway for gcode-owned code-index projection operations."""
 
 from __future__ import annotations
 
@@ -148,7 +148,7 @@ def _classify_gcode_command_error(
 
 
 class GcodeGateway:
-    """Small async subprocess wrapper for `gcode graph` commands."""
+    """Small async subprocess wrapper for gcode projection commands."""
 
     def __init__(
         self,
@@ -263,6 +263,37 @@ class GcodeGateway:
             timeout=self._rebuild_timeout_seconds,
         )
 
+    async def vector_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+        file_path = _validate_user_gcode_value("file_path", file_path)
+        return await self._run_json(
+            [
+                "vector",
+                "sync-file",
+                "--file",
+                file_path,
+                "--project",
+                str(project_root),
+            ]
+        )
+
+    async def vector_clear(self, project_root: Path) -> dict[str, Any]:
+        return await self._run_json(
+            ["vector", "clear", "--project", str(project_root)],
+            timeout=self._rebuild_timeout_seconds,
+        )
+
+    async def vector_rebuild(self, project_root: Path) -> dict[str, Any]:
+        return await self._run_json(
+            ["vector", "rebuild", "--project", str(project_root)],
+            timeout=self._rebuild_timeout_seconds,
+        )
+
+    async def prune(self, project_root: Path) -> dict[str, Any]:
+        return await self._run_json_or_text(
+            ["prune", "--force", "--project", str(project_root)],
+            timeout=self._rebuild_timeout_seconds,
+        )
+
     async def codewiki(
         self,
         project_root: Path,
@@ -295,6 +326,24 @@ class GcodeGateway:
             parsed = json.loads(text)
         except json.JSONDecodeError as exc:
             raise GcodeJsonError(f"gcode returned invalid JSON: {text[:500]}") from exc
+        if not isinstance(parsed, dict):
+            raise GcodeJsonError("gcode returned JSON that was not an object")
+        return parsed
+
+    async def _run_json_or_text(
+        self,
+        args: Sequence[str],
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
+        binary = await self._ensure_version()
+        command = [binary, *args, "--format", "json", "--quiet"]
+        stdout, _stderr = await self._run_command(command, timeout=timeout)
+        text = stdout.decode(errors="replace").strip()
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            return {"success": True, "output": text}
         if not isinstance(parsed, dict):
             raise GcodeJsonError("gcode returned JSON that was not an object")
         return parsed

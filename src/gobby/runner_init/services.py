@@ -155,11 +155,8 @@ def _init_code_indexer(runner: GobbyRunner) -> None:
             ci_storage = CodeIndexStorage(runner.database)
             ci_gcode_gateway = GcodeGateway()
 
-            ci_vector_store = runner.vector_store if ci_config.embedding_enabled else None
-
             runner.code_indexer = CodeIndexContext(
                 storage=ci_storage,
-                vector_store=ci_vector_store,
                 gcode_gateway=ci_gcode_gateway,
                 config=ci_config,
                 run_db=runner.db_executor.run,

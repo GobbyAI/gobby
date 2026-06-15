@@ -24,6 +24,7 @@ MIN_CRON_INTERVAL_SECONDS = 60
 CRON_JOB_NAME_PRIORITIES = {
     "gobby:pipeline-heartbeat": 0,
     "gobby:dispatcher": 1,
+    "gobby:code-index-prune": 3,
 }
 DEFAULT_CRON_JOB_PRIORITY = 2
 

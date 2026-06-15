@@ -186,6 +186,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "283_mcp_server_auth_timeout_fields.sql",
         "284_task_validation_status_error.sql",
         "285_task_validation_backoff.sql",
+        "286_code_index_prune_dirty_projects.sql",
     ]
 
 
@@ -339,6 +340,27 @@ def test_code_index_failure_attempts_migration_and_baseline_define_columns() -> 
     )
     _assert_contains_all("code index failure attempts migration", migration, snippets)
     _assert_contains_all("code index failure attempts baseline", baseline, snippets)
+
+
+def test_code_index_prune_dirty_projects_migration_and_baseline_define_schema() -> None:
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "286_code_index_prune_dirty_projects.sql"
+    ).read_text(encoding="utf-8")
+    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+
+    migration_snippets = (
+        "CREATE TABLE IF NOT EXISTS code_index_prune_dirty_projects",
+        "project_id TEXT PRIMARY KEY",
+        "root_path TEXT NOT NULL",
+        "reason TEXT NOT NULL",
+        "attempts INTEGER NOT NULL DEFAULT 0",
+        "CREATE INDEX IF NOT EXISTS idx_cipdp_updated",
+    )
+    baseline_snippets = tuple(
+        snippet.replace(" IF NOT EXISTS", "") for snippet in migration_snippets
+    )
+    _assert_contains_all("code index prune dirty migration", migration, migration_snippets)
+    _assert_contains_all("code index prune dirty baseline", baseline, baseline_snippets)
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:

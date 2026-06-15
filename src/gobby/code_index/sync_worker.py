@@ -1,7 +1,7 @@
-"""Background sync worker for code index external stores.
+"""Background sync worker for code index external projections.
 
 Polls hub-indexed files with unsynced vector or graph flags and syncs them
-to Qdrant (embeddings) and the gcode-owned graph projection.
+to gcode-owned vector and graph projections.
 """
 
 from __future__ import annotations
@@ -25,11 +25,9 @@ if TYPE_CHECKING:
     from gobby.code_index.models import IndexedFile
     from gobby.code_index.storage import CodeIndexStorage
     from gobby.config.code_index import CodeIndexConfig
-    from gobby.config.persistence import EmbeddingsConfig
 
 logger = logging.getLogger(__name__)
 
-_VECTOR_EMBEDDING_PROBE_TEXT = "gobby code index embedding probe"
 _GRAPH_SYNC_LANGUAGES = frozenset(
     {
         "c",
@@ -74,36 +72,14 @@ async def _run_db(
     return await run_db(func, *args, **kwargs)
 
 
-async def _build_embed_model(embeddings_config: EmbeddingsConfig) -> Any:
-    from gobby.search.embeddings import generate_embeddings
-
-    class _EmbedAdapter:
-        """Adapter wrapping generate_embeddings() to match embed_model.embed() interface."""
-
-        async def embed(self, texts: list[str]) -> list[list[float]]:
-            return await generate_embeddings(
-                texts,
-                model=embeddings_config.model,
-                api_base=embeddings_config.api_base,
-                api_key=embeddings_config.api_key,
-                expected_dim=embeddings_config.dim,
-            )
-
-    embed_model = _EmbedAdapter()
-    await embed_model.embed([_VECTOR_EMBEDDING_PROBE_TEXT])
-    return embed_model
-
-
 async def sync_worker_loop(
     storage: CodeIndexStorage,
-    vector_store: Any | None,
     context: CodeIndexContext,
     config: CodeIndexConfig,
-    embeddings_config: EmbeddingsConfig,
     shutdown_flag: asyncio.Event,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
-    """Continuous worker that syncs pending files to Qdrant and gcode graph.
+    """Continuous worker that syncs pending files to gcode projections.
 
     Polls every config.sync_worker_interval_seconds (default 5s).
     Processes up to config.sync_worker_batch_size files per poll (default 50).
@@ -112,41 +88,22 @@ async def sync_worker_loop(
     """
     interval = config.sync_worker_interval_seconds
     batch_size = config.sync_worker_batch_size
-    vector_batch_size = config.sync_worker_vector_batch_size
-    embed_model = None
 
     logger.info(
-        "Code index sync worker started (interval=%ss, batch=%s, vector_batch=%s)",
+        "Code index sync worker started (interval=%ss, batch=%s)",
         interval,
         batch_size,
-        vector_batch_size,
     )
-
-    # Set up embedding adapter for vector sync
-    if config.embedding_enabled and vector_store is not None:
-        try:
-            embed_model = await _build_embed_model(embeddings_config)
-        except Exception as e:
-            logger.warning("Sync worker: embedding unavailable at startup: %s", e)
 
     while not shutdown_flag.is_set():
         gcode_gateway = context.gcode_gateway
-        if config.embedding_enabled and vector_store is not None and embed_model is None:
-            try:
-                embed_model = await _build_embed_model(embeddings_config)
-                logger.info("Sync worker: embedding backend became available")
-            except Exception as e:
-                logger.warning("Sync worker: embedding unavailable: %s", e)
 
         try:
             await _sync_pass(
                 storage=storage,
-                vector_store=vector_store,
                 gcode_gateway=gcode_gateway,
                 config=config,
-                embed_model=embed_model,
                 batch_size=batch_size,
-                embedding_dim=embeddings_config.dim,
                 clear_graph=context.clear_graph,
                 run_db=run_db,
             )
@@ -164,12 +121,9 @@ async def sync_worker_loop(
 
 async def _sync_pass(
     storage: CodeIndexStorage,
-    vector_store: Any | None,
     gcode_gateway: GcodeGateway | None,
     config: CodeIndexConfig,
-    embed_model: Any | None,
     batch_size: int,
-    embedding_dim: int,
     clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
@@ -189,9 +143,7 @@ async def _sync_pass(
             storage.get_pending_sync_files,
             project.id,
             limit=batch_size,
-            vectors=config.embedding_enabled
-            and vector_store is not None
-            and embed_model is not None,
+            vectors=config.embedding_enabled and gcode_gateway is not None,
             graph=config.graph_enabled,
         )
         if not files:
@@ -203,14 +155,11 @@ async def _sync_pass(
             try:
                 did_sync = await _sync_file(
                     storage=storage,
-                    vector_store=vector_store,
                     gcode_gateway=gcode_gateway,
                     config=config,
-                    embed_model=embed_model,
                     project_id=project.id,
                     root=root,
                     file=file,
-                    embedding_dim=embedding_dim,
                     clear_graph=clear_graph,
                     run_db=run_db,
                 )
@@ -232,14 +181,11 @@ async def _sync_pass(
 
 async def _sync_file(
     storage: CodeIndexStorage,
-    vector_store: Any | None,
     gcode_gateway: GcodeGateway | None,
     config: CodeIndexConfig,
-    embed_model: Any | None,
     project_id: str,
     root: Path,
     file: IndexedFile,
-    embedding_dim: int,
     clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None = None,
     run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> bool:
@@ -258,18 +204,11 @@ async def _sync_file(
 
     # Vector sync
     if not current.vectors_synced and config.embedding_enabled:
-        if vector_store is not None and embed_model is not None:
+        if gcode_gateway is not None:
             try:
                 await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
-                await _sync_vectors(
-                    storage=storage,
-                    vector_store=vector_store,
-                    embed_model=embed_model,
-                    config=config,
-                    project_id=project_id,
-                    file=current,
-                    embedding_dim=embedding_dim,
-                    run_db=run_db,
+                await _sync_vector_file(
+                    gcode_gateway=gcode_gateway, project_root=root, file=current
                 )
                 await _run_db(run_db, storage.mark_vectors_synced, current.id, current.content_hash)
                 await _run_db(
@@ -335,7 +274,6 @@ async def _sync_file(
                         project=_MissingProject(id=project_id, root_path=str(root)),
                         storage=storage,
                         config=config,
-                        vector_store=vector_store,
                         clear_graph=clear_graph,
                         run_db=run_db,
                     )
@@ -355,7 +293,6 @@ async def _sync_file(
                         project=_MissingProject(id=project_id, root_path=str(root)),
                         storage=storage,
                         config=config,
-                        vector_store=vector_store,
                         clear_graph=clear_graph,
                         run_db=run_db,
                     )
@@ -379,74 +316,16 @@ async def _sync_file(
     return did_work
 
 
-async def _sync_vectors(
-    storage: CodeIndexStorage,
-    vector_store: Any,
-    embed_model: Any,
-    config: CodeIndexConfig,
-    project_id: str,
+async def _sync_vector_file(
+    gcode_gateway: GcodeGateway,
+    project_root: Path,
     file: IndexedFile,
-    embedding_dim: int,
-    run_db: Callable[..., Awaitable[Any]] | None = None,
-) -> None:
-    """Generate embeddings and upsert to Qdrant for a file's symbols."""
-    symbols = await _run_db(run_db, storage.get_symbols_for_file, project_id, file.file_path)
-    collection = f"{config.qdrant_collection_prefix}{project_id}"
-
-    if symbols:
-        await vector_store.ensure_collection(collection, embedding_dim)
-
-    # Delete old vectors for this file's symbols
-    try:
-        await vector_store.delete(
-            filters={"file_path": file.file_path, "project_id": project_id},
-            collection_name=collection,
-        )
-    except Exception:
-        pass  # Collection may not exist yet
-
-    if not symbols:
-        return
-
-    for start in range(0, len(symbols), config.sync_worker_vector_batch_size):
-        batch = symbols[start : start + config.sync_worker_vector_batch_size]
-
-        # Build embedding texts (same format as CodeIndexer._embed_symbols)
-        texts = []
-        ids = []
-        for sym in batch:
-            parts = [sym.qualified_name]
-            if sym.signature:
-                parts.append(sym.signature)
-            if sym.docstring:
-                parts.append(sym.docstring[:200])
-            texts.append(" ".join(parts))
-            ids.append(sym.id)
-
-        embeddings = await embed_model.embed(texts)
-        if len(embeddings) != len(batch):
-            raise RuntimeError(
-                f"Embedding backend returned {len(embeddings)} vector(s) for {len(batch)} symbol(s)"
-            )
-
-        items = []
-        for i, emb in enumerate(embeddings):
-            if emb is not None:
-                items.append(
-                    (
-                        ids[i],
-                        emb,
-                        {
-                            "name": batch[i].name,
-                            "kind": batch[i].kind,
-                            "file_path": batch[i].file_path,
-                            "project_id": project_id,
-                        },
-                    )
-                )
-
-        if items:
-            await vector_store.batch_upsert(items=items, collection_name=collection)
+) -> bool:
+    """Delegate one file's vector projection sync to gcode."""
+    result = await gcode_gateway.vector_sync_file(project_root, file.file_path)
+    if not result.get("success", True):
+        raise RuntimeError(result.get("error", "gcode vector sync-file failed"))
+    return True
 
 
 async def _sync_graph(

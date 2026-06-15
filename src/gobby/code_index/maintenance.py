@@ -111,7 +111,6 @@ async def _run_maintenance(
                     project=project,
                     storage=context.storage,
                     config=context.config,
-                    vector_store=context.vector_store,
                     clear_graph=context.clear_graph,
                     run_db=context.run_db,
                 )
@@ -178,7 +177,6 @@ async def _run_maintenance(
                     project=project,
                     storage=context.storage,
                     config=context.config,
-                    vector_store=context.vector_store,
                     clear_graph=context.clear_graph,
                     run_db=context.run_db,
                 )
@@ -207,15 +205,13 @@ async def _reconcile_orphan_files(
     if not orphan_paths:
         return
 
-    collection = f"{context.config.qdrant_collection_prefix}{project_id}"
     cleaned_paths: list[str] = []
     for file_path in orphan_paths:
-        if context.vector_store is not None:
+        if context.config.embedding_enabled and context.gcode_gateway is not None:
             try:
-                await context.vector_store.delete(
-                    filters={"file_path": file_path, "project_id": project_id},
-                    collection_name=collection,
-                )
+                result = await context.gcode_gateway.vector_sync_file(root, file_path)
+                if not result.get("success", True):
+                    raise RuntimeError(result.get("error", "gcode vector sync-file failed"))
             except Exception as e:
                 logger.warning(
                     "Vector cleanup failed for orphaned code index file %s:%s: %s",
@@ -232,6 +228,14 @@ async def _reconcile_orphan_files(
         await context.run_db(context.storage.delete_symbols_for_file, project_id, file_path)
         await context.run_db(context.storage.delete_file, project_id, file_path)
         cleaned_paths.append(file_path)
+
+    if cleaned_paths:
+        await context.run_db(
+            context.storage.mark_prune_dirty,
+            project_id,
+            str(root),
+            "orphan_files",
+        )
 
     if not cleaned_paths or not context.config.graph_enabled:
         return
@@ -323,7 +327,7 @@ async def _retry_pending_graph_cleanup(context: CodeIndexContext, project_id: st
 
 
 async def _retry_pending_vector_cleanup(context: CodeIndexContext, project_id: str) -> None:
-    if context.vector_store is None:
+    if not context.config.embedding_enabled or context.gcode_gateway is None:
         await context.run_db(
             context.storage.record_projection_cleanup_failure,
             project_id,
@@ -332,9 +336,16 @@ async def _retry_pending_vector_cleanup(context: CodeIndexContext, project_id: s
         )
         return
 
-    collection = f"{context.config.qdrant_collection_prefix}{project_id}"
+    project = await context.run_db(context.storage.get_project_stats, project_id)
+    if project is None or not project.root_path:
+        await context.run_db(context.storage.clear_projection_cleanup_pending, project_id, "vector")
+        return
+
+    root = Path(project.root_path).expanduser()
     try:
-        await context.vector_store.delete_collection(collection)
+        result = await context.gcode_gateway.vector_clear(root)
+        if not result.get("success", True):
+            raise RuntimeError(result.get("error", "gcode vector clear failed"))
     except Exception as e:
         await context.run_db(
             context.storage.record_projection_cleanup_failure,

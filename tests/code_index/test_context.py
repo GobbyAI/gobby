@@ -100,7 +100,10 @@ async def test_context_raises_when_project_root_missing() -> None:
 
 def test_context_does_not_create_gateway_when_graph_disabled() -> None:
     storage = MagicMock()
-    context = CodeIndexContext(storage=storage, config=CodeIndexConfig(graph_enabled=False))
+    context = CodeIndexContext(
+        storage=storage,
+        config=CodeIndexConfig(graph_enabled=False, embedding_enabled=False),
+    )
 
     assert context.gcode_gateway is None
 
@@ -119,7 +122,7 @@ def test_context_continues_when_gateway_unavailable(caplog: pytest.LogCaptureFix
         context = CodeIndexContext(storage=storage, config=CodeIndexConfig(graph_enabled=True))
 
     assert context.gcode_gateway is None
-    assert "Code graph gateway unavailable" in caplog.text
+    assert "gcode gateway unavailable" in caplog.text
 
 
 def test_context_propagates_unexpected_gateway_init_errors() -> None:
@@ -132,3 +135,38 @@ def test_context_propagates_unexpected_gateway_init_errors() -> None:
         )
         with pytest.raises(RuntimeError, match="boom"):
             CodeIndexContext(storage=storage, config=CodeIndexConfig(graph_enabled=True))
+
+
+@pytest.mark.asyncio
+async def test_context_invalidate_marks_dirty_and_delegates_vector_clear_to_gcode(
+    tmp_path: Path,
+) -> None:
+    storage = MagicMock()
+    storage.get_project_stats.return_value = _project(tmp_path)
+    storage.delete_project_index.return_value = {"files": 1, "projects": 1}
+    gateway = MagicMock()
+    gateway.graph_clear = AsyncMock(return_value={"success": True})
+    gateway.vector_clear = AsyncMock(return_value={"success": True})
+    context = CodeIndexContext(
+        storage=storage,
+        gcode_gateway=gateway,
+        config=CodeIndexConfig(graph_enabled=True, embedding_enabled=True),
+    )
+
+    result = await context.invalidate("proj-1")
+
+    assert result["status"] == "ok"
+    assert result["project_id"] == "proj-1"
+    assert result["failed_stores"] == []
+    assert result["stores"] == {
+        "graph": {"status": "ok"},
+        "vector": {"status": "ok"},
+        "hub": {"status": "ok", "deleted": {"files": 1, "projects": 1}},
+    }
+    storage.get_project_stats.assert_called_once_with("proj-1")
+    storage.mark_prune_dirty.assert_called_once_with("proj-1", str(tmp_path), "invalidate")
+    gateway.graph_clear.assert_awaited_once_with("proj-1")
+    gateway.vector_clear.assert_awaited_once_with(tmp_path)
+    storage.clear_projection_cleanup_pending.assert_any_call("proj-1", "graph")
+    storage.clear_projection_cleanup_pending.assert_any_call("proj-1", "vector")
+    storage.delete_project_index.assert_called_once_with("proj-1")

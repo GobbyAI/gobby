@@ -310,6 +310,26 @@ def init_orchestration(runner: GobbyRunner) -> None:
         else:
             logger.debug("Skipping memory dream cron registration; memory.dream config missing")
 
+        runner.code_index_pruner = None
+        if runner.code_indexer is not None:
+            try:
+                from gobby.code_index.prune import (
+                    CodeIndexPruner,
+                    register_code_index_prune_cron,
+                )
+
+                runner.code_index_pruner = CodeIndexPruner(runner.code_indexer)
+                register_code_index_prune_cron(
+                    cron_storage=runner.cron_storage,
+                    cron_executor=cron_executor,
+                    pruner=runner.code_index_pruner,
+                    project_id=runner.project_id,
+                )
+                logger.debug("Code index prune cron handler registered")
+            except Exception as e:
+                runner.code_index_pruner = None
+                logger.error("Failed to register code index prune cron handler: %s", e)
+
         runner.cron_scheduler = CronScheduler(
             storage=runner.cron_storage,
             executor=cron_executor,

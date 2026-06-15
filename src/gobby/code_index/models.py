@@ -274,6 +274,31 @@ class ProjectionCleanupPending:
 
 
 @dataclass
+class CodeIndexPruneDirtyProject:
+    """Project root that needs a gcode prune retry."""
+
+    project_id: str
+    root_path: str
+    reason: str
+    attempts: int = 0
+    last_error: str | None = None
+    created_at: str = ""
+    updated_at: str = ""
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> CodeIndexPruneDirtyProject:
+        return cls(
+            project_id=row["project_id"],
+            root_path=row["root_path"],
+            reason=row["reason"],
+            attempts=row["attempts"],
+            last_error=row["last_error"],
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+
+@dataclass
 class ContentChunk:
     """A chunk of file content for full-text search."""
 

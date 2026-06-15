@@ -22,7 +22,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeProjectNotFoundError,
     GcodeUnavailableError,
 )
-from gobby.code_index.models import Symbol
+from gobby.code_index.models import IndexedProject, Symbol
 from gobby.config.code_index import CodeIndexConfig
 from gobby.servers.routes.code_index import create_code_index_router
 
@@ -350,7 +350,12 @@ def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> Non
         return func(*args, **kwargs)
 
     storage = MagicMock()
-    storage.get_project_stats.return_value = MagicMock()
+    storage.get_project_stats.return_value = IndexedProject(
+        id="proj-1",
+        root_path="/repo",
+        total_files=0,
+        total_symbols=0,
+    )
     storage.delete_project_index.return_value = {
         "symbols": 0,
         "files": 0,
@@ -360,11 +365,13 @@ def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> Non
         "projects": 1,
     }
     storage.clear_projection_cleanup_pending.return_value = False
-    vector_store = SimpleNamespace(delete_collection=AsyncMock(side_effect=RuntimeError("down")))
+    gcode_gateway = SimpleNamespace(
+        vector_clear=AsyncMock(return_value={"success": False, "error": "down"})
+    )
     code_indexer = CodeIndexContext(
         storage=storage,
-        vector_store=vector_store,
-        config=CodeIndexConfig(graph_enabled=False),
+        gcode_gateway=gcode_gateway,
+        config=CodeIndexConfig(graph_enabled=False, embedding_enabled=True),
         run_db=run_db,
     )
     server = MagicMock()
@@ -383,7 +390,8 @@ def test_invalidate_reports_projection_partial_failure_and_retry_marker() -> Non
         "error": "down",
         "pending_retry": True,
     }
-    storage.record_projection_cleanup_failure.assert_called_once_with("proj-1", "vector", "down")
+    storage.mark_prune_dirty.assert_called_once_with("proj-1", "/repo", "invalidate")
+    storage.record_projection_cleanup_failure.assert_not_called()
 
 
 def test_clear_graph_returns_500_on_exception(client: TestClient, mock_server: MagicMock) -> None:

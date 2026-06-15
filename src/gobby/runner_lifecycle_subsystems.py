@@ -361,10 +361,8 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
         runner._sync_worker_task = asyncio.create_task(
             sync_worker_loop(
                 storage=runner.code_indexer.storage,
-                vector_store=runner.vector_store,
                 context=runner.code_indexer,
                 config=runner.config.code_index,
-                embeddings_config=runner.config.embeddings,
                 shutdown_flag=sync_shutdown,
                 run_db=runner.code_indexer.run_db,
             ),
@@ -372,6 +370,13 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
         )
         if tracker:
             tracker.schedule("Code index sync")
+
+        code_index_pruner = getattr(runner, "code_index_pruner", None)
+        runner._code_index_startup_prune_task = None
+        if code_index_pruner is not None:
+            runner._code_index_startup_prune_task = code_index_pruner.schedule_startup_prunes()
+            if tracker:
+                tracker.schedule("Code index startup prune")
 
 
 async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None) -> None:

@@ -16,6 +16,7 @@ from gobby.code_index.models import (
     ProjectionCleanupStore,
     Symbol,
 )
+from gobby.code_index.prune_storage import CodeIndexPruneStorageMixin
 from gobby.code_index.summary_safety import sanitize_symbol_summary
 from gobby.search.keyword import fetch_all, pick_search_backend, placeholder
 from gobby.storage.hub.protocol import HubDatabase
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 _SYNC_FAILURE_COOLOFF_SECONDS = 300
 
 
-class CodeIndexStorage:
+class CodeIndexStorage(CodeIndexPruneStorageMixin):
     """Storage for code symbols, indexed files, and projects in the runtime hub."""
 
     def __init__(self, db: HubDatabase | HubDatabase) -> None:

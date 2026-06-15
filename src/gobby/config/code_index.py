@@ -114,11 +114,6 @@ class CodeIndexConfig(BaseModel):
         default=50,
         description="Max files to sync per poll iteration",
     )
-    sync_worker_vector_batch_size: int = Field(
-        default=128,
-        ge=1,
-        description="Max symbols to embed and upsert per vector sync request",
-    )
     content_extensions: list[str] = Field(
         default=[
             ".html",
@@ -143,6 +138,16 @@ class CodeIndexConfig(BaseModel):
         ],
         description="Additional file extensions to index for content search only (no AST parsing)",
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def drop_deprecated_vector_batch_size(cls, data: object) -> object:
+        """Ignore old daemon-owned vector batching config after gcode cutover."""
+        if isinstance(data, dict) and "sync_worker_vector_batch_size" in data:
+            updated = dict(data)
+            updated.pop("sync_worker_vector_batch_size", None)
+            return updated
+        return data
 
     @model_validator(mode="after")
     def populate_summary_candidates(self) -> "CodeIndexConfig":

@@ -430,7 +430,6 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | code_index.summary_max_concurrency | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.sync_worker_interval_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.sync_worker_batch_size | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
-| code_index.sync_worker_vector_batch_size | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.content_extensions | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
 | indexing.respect_gitignore | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
 | bin_freshness.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |

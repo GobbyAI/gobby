@@ -1,8 +1,8 @@
 """Thin context object for code index daemon integration.
 
-Holds storage, gcode graph gateway, and vector_store references for the
-daemon's background tasks (maintenance, sync worker, HTTP routes). All actual
-indexing and graph projection work is handled by gcode (Rust CLI).
+Holds storage and gcode gateway references for daemon background tasks
+(maintenance, sync worker, HTTP routes). Actual indexing and projection work is
+handled by gcode (Rust CLI).
 """
 
 from __future__ import annotations
@@ -55,36 +55,32 @@ class CodeIndexContext:
 
     Replaces the old CodeIndexer orchestrator — gcode now handles
     parsing, hashing, chunking, and hub writes. This object
-    provides access to storage/graph/vectors for the sync worker,
-    maintenance loop, and HTTP invalidate endpoint.
+    provides access to storage and gcode projection lifecycle operations for
+    the sync worker, maintenance loop, and HTTP invalidate endpoint.
     """
 
     def __init__(
         self,
         storage: CodeIndexStorage,
-        vector_store: Any | None = None,
         gcode_gateway: GcodeGateway | None = None,
         config: CodeIndexConfig | None = None,
         run_db: Callable[..., Awaitable[Any]] | None = None,
     ) -> None:
         self._storage = storage
-        self._vector_store = vector_store
         self._config = config or CodeIndexConfig()
         self._gcode_gateway: GcodeGateway | None = gcode_gateway
-        if self._gcode_gateway is None and self._config.graph_enabled:
+        if self._gcode_gateway is None and (
+            self._config.graph_enabled or self._config.embedding_enabled
+        ):
             try:
                 self._gcode_gateway = GcodeGateway()
             except GcodeGatewayError as e:
-                logger.warning("Code graph gateway unavailable during context init: %s", e)
+                logger.warning("gcode gateway unavailable during code-index context init: %s", e)
         self._run_db = run_db
 
     @property
     def storage(self) -> CodeIndexStorage:
         return self._storage
-
-    @property
-    def vector_store(self) -> Any | None:
-        return self._vector_store
 
     @property
     def gcode_gateway(self) -> GcodeGateway | None:
@@ -103,8 +99,16 @@ class CodeIndexContext:
     async def invalidate(self, project_id: str) -> dict[str, Any]:
         """Clear all index data for a project."""
         stores: dict[str, InvalidateStoreOutcome] = {}
-        counts = await self.run_db(self._storage.delete_project_index, project_id)
-        stores["hub"] = InvalidateStoreOutcome("hub", "ok", deleted=counts)
+        project = await self.run_db(self._storage.get_project_stats, project_id)
+        root = Path(project.root_path).expanduser() if project and project.root_path else None
+
+        if root is not None:
+            await self.run_db(
+                self._storage.mark_prune_dirty,
+                project_id,
+                str(root),
+                "invalidate",
+            )
 
         if self._config.graph_enabled and self._gcode_gateway is not None:
             try:
@@ -157,25 +161,32 @@ class CodeIndexContext:
         else:
             stores["graph"] = InvalidateStoreOutcome("graph", "skipped")
 
-        if self._vector_store is not None:
-            collection = f"{self._config.qdrant_collection_prefix}{project_id}"
+        if self._config.embedding_enabled and self._gcode_gateway is not None and root is not None:
             try:
-                await self._vector_store.delete_collection(collection)
-                await self.run_db(
-                    self._storage.clear_projection_cleanup_pending,
-                    project_id,
-                    "vector",
-                )
-                stores["vector"] = InvalidateStoreOutcome("vector", "ok")
-            except Exception as e:
+                result = await self._gcode_gateway.vector_clear(root)
+                if not result.get("success", True):
+                    error = str(result.get("error", "unknown error"))
+                    logger.warning(
+                        "Vector clear during invalidate reported failure for %s: %s",
+                        project_id,
+                        error,
+                    )
+                    stores["vector"] = InvalidateStoreOutcome(
+                        "vector",
+                        "failed",
+                        error=error,
+                        pending_retry=True,
+                    )
+                else:
+                    await self.run_db(
+                        self._storage.clear_projection_cleanup_pending,
+                        project_id,
+                        "vector",
+                    )
+                    stores["vector"] = InvalidateStoreOutcome("vector", "ok")
+            except GcodeGatewayError as e:
                 error = str(e)
-                logger.warning("Vector collection delete failed for %s: %s", collection, e)
-                await self.run_db(
-                    self._storage.record_projection_cleanup_failure,
-                    project_id,
-                    "vector",
-                    error,
-                )
+                logger.warning("Vector clear during invalidate failed for %s: %s", project_id, e)
                 stores["vector"] = InvalidateStoreOutcome(
                     "vector",
                     "failed",
@@ -184,6 +195,9 @@ class CodeIndexContext:
                 )
         else:
             stores["vector"] = InvalidateStoreOutcome("vector", "skipped")
+
+        counts = await self.run_db(self._storage.delete_project_index, project_id)
+        stores["hub"] = InvalidateStoreOutcome("hub", "ok", deleted=counts)
 
         logger.info("Invalidated code index for project %s", project_id)
         failed = [store for store, outcome in stores.items() if outcome.status == "failed"]

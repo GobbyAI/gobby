@@ -421,6 +421,28 @@ def test_projection_cleanup_pending_round_trip(code_storage: CodeIndexStorage) -
     ] == [("proj-1", "vector")]
 
 
+def test_prune_dirty_projects_round_trip(code_storage: CodeIndexStorage) -> None:
+    code_storage.mark_prune_dirty("proj-1", "/repo/one", "orphan_files")
+    code_storage.mark_prune_dirty("proj-2", "/repo/two", "invalidate")
+    code_storage.mark_prune_dirty("proj-1", "/repo/one-renamed", "invalidate")
+    code_storage.record_prune_failure("proj-1", "gcode prune failed")
+
+    dirty = code_storage.list_prune_dirty_projects()
+
+    dirty_by_project = {row.project_id: row for row in dirty}
+    assert {
+        project_id: (row.root_path, row.reason, row.attempts)
+        for project_id, row in dirty_by_project.items()
+    } == {
+        "proj-1": ("/repo/one-renamed", "invalidate", 1),
+        "proj-2": ("/repo/two", "invalidate", 0),
+    }
+    assert dirty_by_project["proj-1"].last_error == "gcode prune failed"
+    assert code_storage.clear_prune_dirty("proj-1") is True
+    assert code_storage.clear_prune_dirty("proj-1") is False
+    assert [row.project_id for row in code_storage.list_prune_dirty_projects()] == ["proj-2"]
+
+
 def test_upsert_project_stats_updates(code_storage: CodeIndexStorage) -> None:
     """Second upsert updates existing project stats."""
     project = IndexedProject(

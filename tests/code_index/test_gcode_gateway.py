@@ -161,6 +161,85 @@ async def test_gateway_builds_clear_and_rebuild_args(
     ]
 
 
+async def test_gateway_builds_vector_and_prune_args_with_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"success": true, "file": "src/app.py"}'),
+        FakeProcess(stdout=b'{"success": true, "cleared": true}'),
+        FakeProcess(stdout=b'{"success": true, "rebuilt": true}'),
+        FakeProcess(stdout=b"No stale projects found."),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
+    timeouts: list[float | None] = []
+
+    async def fake_wait_for(awaitable: Any, timeout: float | None = None) -> Any:
+        timeouts.append(timeout)
+        return await awaitable
+
+    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+    gateway = GcodeGateway(binary="/tmp/gcode", timeout_seconds=7.0, rebuild_timeout_seconds=42.0)
+
+    assert await gateway.vector_sync_file(tmp_path, "src/app.py") == {
+        "success": True,
+        "file": "src/app.py",
+    }
+    assert await gateway.vector_clear(tmp_path) == {"success": True, "cleared": True}
+    assert await gateway.vector_rebuild(tmp_path) == {"success": True, "rebuilt": True}
+    assert await gateway.prune(tmp_path) == {
+        "success": True,
+        "output": "No stale projects found.",
+    }
+
+    assert timeouts == [7.0, 7.0, 42.0, 42.0, 42.0]
+    assert calls[1:] == [
+        (
+            "/tmp/gcode",
+            "vector",
+            "sync-file",
+            "--file",
+            "src/app.py",
+            "--project",
+            str(tmp_path),
+            "--format",
+            "json",
+            "--quiet",
+        ),
+        (
+            "/tmp/gcode",
+            "vector",
+            "clear",
+            "--project",
+            str(tmp_path),
+            "--format",
+            "json",
+            "--quiet",
+        ),
+        (
+            "/tmp/gcode",
+            "vector",
+            "rebuild",
+            "--project",
+            str(tmp_path),
+            "--format",
+            "json",
+            "--quiet",
+        ),
+        (
+            "/tmp/gcode",
+            "prune",
+            "--force",
+            "--project",
+            str(tmp_path),
+            "--format",
+            "json",
+            "--quiet",
+        ),
+    ]
+
+
 @pytest.mark.asyncio
 async def test_gateway_builds_codewiki_args(
     monkeypatch: pytest.MonkeyPatch,

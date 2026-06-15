@@ -21,11 +21,6 @@ class CodeIndexStorageCleanup(Protocol):
 
 class CodeIndexCleanupConfig(Protocol):
     graph_enabled: bool
-    qdrant_collection_prefix: str
-
-
-class VectorStoreCleanup(Protocol):
-    async def delete_collection(self, collection_name: str) -> Any: ...
 
 
 async def _run_db(
@@ -44,7 +39,6 @@ async def purge_missing_project(
     project: MissingProject,
     storage: CodeIndexStorageCleanup,
     config: CodeIndexCleanupConfig,
-    vector_store: VectorStoreCleanup | None,
     clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None,
     run_db: Callable[..., Awaitable[Any]] | None,
 ) -> None:
@@ -78,18 +72,6 @@ async def purge_missing_project(
             counts,
         )
         raise TypeError(f"delete_project_index returned {type(counts).__name__}, expected dict")
-
-    if vector_store is not None:
-        collection = f"{config.qdrant_collection_prefix}{project_id}"
-        try:
-            await vector_store.delete_collection(collection)
-        except Exception as e:
-            logger.warning(
-                "Vector cleanup failed for missing code index project %s: %s",
-                project_id,
-                e,
-                exc_info=True,
-            )
 
     logger.info(
         "Purged stale code index project %s at %s: %s files, %s symbols",
