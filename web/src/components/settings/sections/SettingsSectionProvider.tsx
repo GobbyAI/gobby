@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import { useConfiguration } from '../../../hooks/useConfiguration'
+import type { UseSettingsReturn } from '../../../hooks/useSettings'
 import {
   noopRegister,
   SettingsSectionContext,
@@ -11,6 +12,12 @@ import {
 export interface SettingsSectionProviderProps {
   /** The overlay controller's dirty-guard registrar (see useSettingsOverlay). */
   registerDirtyGuard?: SettingsSectionContextValue['registerDirtyGuard']
+  /**
+   * The app-wide `useSettings` instance, supplied by the overlay so client-side
+   * sections share the same ui_settings state as the chrome. Optional so tests
+   * can mount the provider without it.
+   */
+  clientSettings?: UseSettingsReturn
   children: ReactNode
 }
 
@@ -22,6 +29,7 @@ export interface SettingsSectionProviderProps {
  */
 export function SettingsSectionProvider({
   registerDirtyGuard = noopRegister,
+  clientSettings,
   children,
 }: SettingsSectionProviderProps) {
   const config = useConfiguration()
@@ -48,6 +56,7 @@ export function SettingsSectionProvider({
       isLoading: config.isLoading,
       saveConfig,
       registerDirtyGuard,
+      clientSettings,
     }),
     [
       config.schema,
@@ -56,6 +65,7 @@ export function SettingsSectionProvider({
       config.isLoading,
       saveConfig,
       registerDirtyGuard,
+      clientSettings,
     ],
   )
 

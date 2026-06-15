@@ -243,6 +243,19 @@
   }
 }
 
+/* Compact display density (client-only; see useSettings Density). Tightens the
+   global control and list-row heights on fine pointers only — touch pointers
+   keep the 44px floor from the coarse override above, so density never shrinks
+   a touch target below the accessibility minimum. Comfortable is the :root
+   default and needs no rule. */
+@media (pointer: fine) {
+  [data-density="compact"] {
+    --control-row-height: 2rem;
+    --control-row-height-sm: 1.5rem;
+    --activity-panel-row-height: 2rem;
+  }
+}
+
 [data-theme="light"] {
   --gobby-logo-image: url("/logo-light.png");
 

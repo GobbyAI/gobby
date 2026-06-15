@@ -1,5 +1,6 @@
 import { createContext, useContext } from 'react'
 import type { SettingsSectionId } from '../sections'
+import type { UseSettingsReturn } from '../../../hooks/useSettings'
 
 /** Predicate reporting whether a section currently holds unsaved edits. */
 export type SectionDirtyGuard = () => boolean
@@ -26,6 +27,13 @@ export interface SettingsSectionContextValue {
     section: SettingsSectionId,
     isDirty: SectionDirtyGuard,
   ) => () => void
+  /**
+   * The single app-wide `useSettings` instance, shared so client-side sections
+   * (Appearance, Chat & Voice, Providers, Projects) read and mutate the same
+   * ui_settings state the app chrome uses. Absent only when no provider is
+   * mounted (the fallback below), which sections must tolerate.
+   */
+  clientSettings?: UseSettingsReturn
 }
 
 export const noopRegister: SettingsSectionContextValue['registerDirtyGuard'] =

@@ -135,6 +135,7 @@ export default function App() {
     selectedProvider,
     setSelectedProvider,
   } = useChat();
+  const clientSettings = useSettings();
   const {
     settings,
     updateFontSize,
@@ -146,7 +147,7 @@ export default function App() {
     updateTtsEnabled,
     updateVoiceInputMode,
     resetSettings,
-  } = useSettings();
+  } = clientSettings;
   const voiceConversationId =
     attachedSessionId && sessionInteractionMode === "proxy"
       ? attachedSessionId
@@ -921,6 +922,7 @@ export default function App() {
             onClose={settingsOverlay.close}
             onSelectSection={settingsOverlay.selectSection}
             registerDirtyGuard={settingsOverlay.registerDirtyGuard}
+            clientSettings={clientSettings}
           />
         </Suspense>
       )}

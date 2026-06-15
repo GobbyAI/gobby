@@ -342,11 +342,70 @@
   gap: 0.75rem;
 }
 
+/* ---- Appearance section ---- */
+
+/* Appearance rows lay the label/description beside the control and wrap to a
+   stacked layout when the dialog is narrow. */
+.settings-field--appearance {
+  flex-direction: row;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.settings-field__text {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  min-width: 0;
+}
+
+.settings-field__hint {
+  max-width: 48ch;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  line-height: 1.4;
+}
+
+.settings-field__control {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+}
+
+.appearance-font-size {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+.appearance-font-size__range {
+  width: 12rem;
+  max-width: 100%;
+  accent-color: var(--accent);
+  cursor: pointer;
+}
+
+.appearance-font-size__range:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+
+.appearance-font-size__value {
+  min-width: 3.5ch;
+  color: var(--text-secondary);
+  font-size: var(--text-sm);
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+
 /* Touch targets: inputs and the section nav clear the 44px floor on coarse
    pointers. Buttons inherit the same bump from .btn-sm/.btn-icon in
    buttons.css, so they are intentionally not listed here. */
 @media (pointer: coarse) {
   .settings-field__input,
+  .appearance-font-size__range,
   .settings-overlay-shell__section-trigger {
     min-height: 2.75rem;
   }

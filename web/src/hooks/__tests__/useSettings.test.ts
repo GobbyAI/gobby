@@ -18,12 +18,14 @@ describe('useSettings', () => {
       <link rel="apple-touch-icon" href="/logo.png?v=2">
     `
     document.documentElement.removeAttribute('data-theme')
+    document.documentElement.removeAttribute('data-density')
     vi.stubGlobal('fetch', vi.fn(async () => ({ ok: false })))
   })
 
   afterEach(() => {
     document.head.innerHTML = ''
     document.documentElement.removeAttribute('data-theme')
+    document.documentElement.removeAttribute('data-density')
     vi.unstubAllGlobals()
     vi.restoreAllMocks()
   })
@@ -82,6 +84,46 @@ describe('useSettings', () => {
     const { result } = renderHook(() => useSettings())
 
     expect(result.current.settings.planPendingVariant).toBe('info')
+  })
+
+  it('applies density to the document, persists it to localStorage, and never sends it to the API', async () => {
+    const { result } = renderHook(() => useSettings())
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute('data-density', 'comfortable')
+    })
+
+    const fetchMock = vi.mocked(fetch)
+    fetchMock.mockClear()
+
+    act(() => {
+      result.current.updateDensity('compact')
+    })
+
+    await waitFor(() => {
+      expect(document.documentElement).toHaveAttribute('data-density', 'compact')
+    })
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('gobby-settings') ?? '{}')
+      expect(stored.density).toBe('compact')
+    })
+
+    // density has no backend field, so it must be excluded from the ui_settings
+    // PUT payload — sending it would be a silent no-op (dead-frontend).
+    const putCall = fetchMock.mock.calls.find(
+      ([url, init]) => url === '/api/config/ui-settings' && init?.method === 'PUT',
+    )
+    expect(putCall).toBeDefined()
+    const body = JSON.parse((putCall?.[1]?.body as string) ?? '{}')
+    expect(body).not.toHaveProperty('density')
+    expect(body).toHaveProperty('theme')
+  })
+
+  it('normalizes an out-of-range persisted density to comfortable', () => {
+    localStorage.setItem('gobby-settings', JSON.stringify({ density: 'spacious' }))
+    const { result } = renderHook(() => useSettings())
+
+    expect(result.current.settings.density).toBe('comfortable')
   })
 
   it('replaces the icon cache param while preserving other query params and fragments', () => {

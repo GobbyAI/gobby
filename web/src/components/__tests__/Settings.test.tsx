@@ -12,6 +12,7 @@ const baseSettings = {
   ttsEnabled: false,
   voiceInputMode: 'ptt' as const,
   planPendingVariant: 'info' as const,
+  density: 'comfortable' as const,
 }
 
 describe('Settings voice section', () => {

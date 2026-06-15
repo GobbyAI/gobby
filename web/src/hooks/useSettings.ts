@@ -8,6 +8,13 @@ import { normalizeChatMode, type ChatMode } from '../types/chat'
 
 export type Theme = 'dark' | 'light' | 'system'
 export type VoiceInputMode = 'ptt' | 'vad'
+/**
+ * Display density for the app chrome. Client-only: persisted to localStorage
+ * and applied as `data-density` on the document root, but never sent to the
+ * backend — the ui_settings API has no density field, so a write would be a
+ * silent no-op. Kept out of PERSISTABLE_KEYS for exactly that reason.
+ */
+export type Density = 'comfortable' | 'compact'
 
 export interface Settings {
   fontSize: number // Base font size in pixels (12-24)
@@ -19,6 +26,7 @@ export interface Settings {
   ttsEnabled: boolean
   voiceInputMode: VoiceInputMode
   planPendingVariant: PlanPendingVariant
+  density: Density
 }
 
 export const MODEL_OPTIONS = [
@@ -38,6 +46,7 @@ const DEFAULT_SETTINGS: Settings = {
   ttsEnabled: false,
   voiceInputMode: 'ptt',
   planPendingVariant: DEFAULT_PLAN_PENDING_VARIANT,
+  density: 'comfortable',
 }
 
 const STORAGE_KEY = 'gobby-settings'
@@ -86,6 +95,12 @@ function saveToLocalStorage(settings: Settings): void {
   }
 }
 
+const DENSITY_VALUES: readonly Density[] = ['comfortable', 'compact']
+
+function normalizeDensity(value: unknown): Density {
+  return DENSITY_VALUES.includes(value as Density) ? (value as Density) : 'comfortable'
+}
+
 function normalizePersistedSettings(settings: Partial<Settings>): Partial<Settings> {
   const normalized: Partial<Settings> = { ...settings }
   if (settings.chatMode) normalized.chatMode = normalizeChatMode(settings.chatMode)
@@ -94,6 +109,9 @@ function normalizePersistedSettings(settings: Partial<Settings>): Partial<Settin
   }
   if (settings.planPendingVariant !== undefined && settings.planPendingVariant !== null) {
     normalized.planPendingVariant = normalizePlanPendingVariant(settings.planPendingVariant)
+  }
+  if (settings.density !== undefined && settings.density !== null) {
+    normalized.density = normalizeDensity(settings.density)
   }
   return normalized
 }
@@ -212,6 +230,13 @@ export function useSettings() {
     }
   }, [settings.theme])
 
+  // Apply display density to document (client-only; see Density type). Mirrors
+  // the theme effect so the preference takes hold app-wide on mount and on any
+  // change, regardless of which surface toggled it.
+  useEffect(() => {
+    document.documentElement.setAttribute('data-density', settings.density)
+  }, [settings.density])
+
   // Persist settings on change (localStorage + API)
   // Skip the initial render to avoid writing defaults before API fetch
   const isFirstRender = useRef(true)
@@ -260,6 +285,10 @@ export function useSettings() {
     setSettings((prev) => ({ ...prev, planPendingVariant }))
   }, [])
 
+  const updateDensity = useCallback((density: Density) => {
+    setSettings((prev) => ({ ...prev, density }))
+  }, [])
+
   const resetSettings = useCallback(() => {
     setSettings(DEFAULT_SETTINGS)
   }, [])
@@ -275,6 +304,14 @@ export function useSettings() {
     updateTtsEnabled,
     updateVoiceInputMode,
     updatePlanPendingVariant,
+    updateDensity,
     resetSettings,
   }
 }
+
+/**
+ * The full return shape of {@link useSettings}. Shared with the settings
+ * overlay so one instance drives both the app chrome and the overlay section,
+ * keeping prop-threaded values (e.g. planPendingVariant) live without reload.
+ */
+export type UseSettingsReturn = ReturnType<typeof useSettings>

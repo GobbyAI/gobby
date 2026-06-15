@@ -10,6 +10,7 @@ import {
 import { getSettingsSectionComponent } from './sections/index'
 import { SettingsSectionProvider } from './sections/SettingsSectionProvider'
 import type { SettingsSectionContextValue } from './sections/SettingsSectionContext'
+import type { UseSettingsReturn } from '../../hooks/useSettings'
 
 interface SettingsOverlayProps {
   isOpen: boolean
@@ -22,6 +23,13 @@ interface SettingsOverlayProps {
    * edits. Optional so tests can mount the shell without the controller.
    */
   registerDirtyGuard?: SettingsSectionContextValue['registerDirtyGuard']
+  /**
+   * The app-wide `useSettings` instance from App. Forwarded to the section
+   * provider so client-side sections (Appearance, etc.) drive the same state
+   * the chrome reads — changes stay live without a reload. Optional so tests
+   * can mount the shell standalone.
+   */
+  clientSettings?: UseSettingsReturn
 }
 
 const SECTION_OPTIONS = SETTINGS_SECTIONS.map((section) => ({
@@ -60,6 +68,7 @@ export function SettingsOverlay({
   onClose,
   onSelectSection,
   registerDirtyGuard,
+  clientSettings,
 }: SettingsOverlayProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
@@ -170,7 +179,10 @@ export function SettingsOverlay({
             ) : null}
           </div>
         </div>
-        <SettingsSectionProvider registerDirtyGuard={registerDirtyGuard}>
+        <SettingsSectionProvider
+          registerDirtyGuard={registerDirtyGuard}
+          clientSettings={clientSettings}
+        >
           <div className="settings-overlay-shell__body">
             {/* Remount on section change so each section starts from a fresh
                 draft of its owned config paths. */}
