@@ -45,6 +45,20 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
         ),
         (200, json!({"result": {"operation_id": 4}})),
         (200, json!({"result": {"operation_id": 5}})),
+        (
+            200,
+            json!({
+                "result": {
+                    "points": [
+                        {"id": "projection-standalone-caller", "payload": {"project_id": TEST_PROJECT_ID, "file_path": TEST_FILE}},
+                        {"id": "stale-vector", "payload": {"project_id": TEST_PROJECT_ID, "file_path": "src/stale.rs"}}
+                    ],
+                    "next_page_offset": null
+                }
+            }),
+        ),
+        (200, json!({"result": {"count": 1}})),
+        (200, json!({"result": {"operation_id": 6}})),
     ]);
 
     let project = tempfile::tempdir().expect("temp project");
@@ -144,6 +158,18 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
     assert_eq!(vector_rebuild["synced_files"], 1);
     assert_eq!(vector_rebuild["synced_symbols"], 2);
 
+    let vector_cleanup = json_command(
+        &env,
+        project.path(),
+        &qdrant_url,
+        &embedding_url,
+        &["vector", "cleanup-orphans"],
+    );
+    assert_eq!(vector_cleanup["status"], "ok");
+    assert_eq!(vector_cleanup["vector_files_scanned"], 2);
+    assert_eq!(vector_cleanup["orphan_files_deleted"], 1);
+    assert_eq!(vector_cleanup["vectors_deleted"], 1);
+
     let embedding_requests = embedding_handle.join().expect("embedding requests");
     let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
     assert_eq!(embedding_requests.len(), 4);
@@ -154,6 +180,14 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
         qdrant_requests.iter().any(|request| request.contains(
             "PUT /collections/code_symbols_projection-standalone-project/points HTTP/1.1"
         ))
+    );
+    assert!(qdrant_requests.iter().any(|request| request.contains(
+        "POST /collections/code_symbols_projection-standalone-project/points/scroll HTTP/1.1"
+    )));
+    assert!(
+        qdrant_requests
+            .iter()
+            .any(|request| request.contains(r#""value":"src/stale.rs""#))
     );
 }
 

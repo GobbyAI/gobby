@@ -21,8 +21,9 @@ pub use read::{
     project_overview_graph, symbol_neighbors,
 };
 pub use write::{
-    CodeGraph, call_target_id, cleanup_orphans, clear_all_code_index, clear_project,
-    delete_file_graph, delete_file_projection, sync_file_graph, with_code_graph,
+    CodeGraph, GraphOrphanCleanup, call_target_id, cleanup_deleted_files, cleanup_orphans,
+    clear_all_code_index, clear_project, delete_file_graph, delete_file_projection,
+    sync_file_graph, with_code_graph,
 };
 
 pub(crate) use lifecycle::extract_summary_text;
@@ -40,6 +41,6 @@ use read::{blast_radius_file_import_query, dedupe_limited_blast_rows, file_calls
 #[cfg(test)]
 use write::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,
-    delete_file_graph_queries, delete_file_node_query, import_graph_items,
-    partition_call_graph_items,
+    count_file_projection_nodes_query, delete_file_graph_queries, delete_file_node_query,
+    import_graph_items, partition_call_graph_items, project_file_path_queries,
 };

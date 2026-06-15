@@ -82,18 +82,16 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
 
     match command {
         Command::Index { .. } => ServiceConfigSelection::all(),
-        Command::Status => ServiceConfigSelection {
-            falkordb: true,
-            qdrant: true,
-            embedding: false,
-            code_vectors: false,
-        },
+        Command::Status => ServiceConfigSelection::projection_cleanup(),
         Command::Graph { .. }
         | Command::Codewiki { .. }
         | Command::Callers { .. }
         | Command::Usages { .. }
         | Command::Imports { .. }
         | Command::BlastRadius { .. } => ServiceConfigSelection::falkordb_only(),
+        Command::Vector {
+            command: VectorCommand::CleanupOrphans,
+        } => ServiceConfigSelection::qdrant_only(),
         Command::Vector { .. } | Command::Embeddings { .. } => ServiceConfigSelection::vectors(),
         Command::Search { .. } => ServiceConfigSelection::hybrid_search(),
         Command::SearchSymbol { with_graph, .. } => {
@@ -107,7 +105,6 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         | Command::Init
         | Command::Setup { .. }
         | Command::Projects
-        | Command::Prune { .. }
         | Command::Invalidate { .. }
         | Command::SearchText { .. }
         | Command::SearchContent { .. }
@@ -119,6 +116,7 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         | Command::Kinds
         | Command::Tree
         | Command::RepoOutline => ServiceConfigSelection::database_only(),
+        Command::Prune { .. } => ServiceConfigSelection::projection_cleanup(),
     }
 }
 
@@ -188,7 +186,7 @@ where
             Ok(true)
         }
         Command::Prune { force } => {
-            commands::status::prune(*force)?;
+            commands::status::prune(*force, cli.project.as_deref(), cli.quiet)?;
             Ok(true)
         }
         Command::Graph {
@@ -321,6 +319,12 @@ fn run() -> anyhow::Result<()> {
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::vector::rebuild(&ctx, format)
+        }
+        Command::Vector {
+            command: VectorCommand::CleanupOrphans,
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::vector::cleanup_orphans(&ctx, format)
         }
         Command::Embeddings {
             command: EmbeddingsCommand::Doctor,

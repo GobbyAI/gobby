@@ -5,9 +5,10 @@ use crate::projection::sync::{ProjectionStatus, ProjectionSyncReport};
 use crate::vector::code_symbols::{
     self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleAction,
     CodeSymbolVectorLifecycleOutput, CodeSymbolVectorLifecycleStatus, EmbeddingSource,
-    VectorLifecycleError, embedding_source_from_context,
+    VectorLifecycleError, VectorOrphanCleanup, embedding_source_from_context,
 };
 use serde::Serialize;
+use std::collections::HashSet;
 
 pub fn lifecycle_status(
     ctx: &Context,
@@ -82,12 +83,47 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
     print_lifecycle_output(&output, report, format)
 }
 
+pub fn cleanup_orphans(ctx: &Context, format: Format) -> anyhow::Result<()> {
+    let qdrant = ctx
+        .qdrant
+        .as_ref()
+        .ok_or(VectorLifecycleError::MissingQdrantConfig)?;
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let indexed_file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?
+        .into_iter()
+        .collect::<HashSet<_>>();
+    let cleanup =
+        code_symbols::cleanup_orphan_file_vectors(qdrant, &ctx.project_id, &indexed_file_paths)?;
+    print_orphan_cleanup(&cleanup, format)
+}
+
 fn print_lifecycle_output(
     output: &CodeSymbolVectorLifecycleOutput,
     report: ProjectionSyncReport,
     format: Format,
 ) -> anyhow::Result<()> {
     let payload = lifecycle_json_payload(output, report);
+    match format {
+        Format::Json => output::print_json(&payload),
+        Format::Text => output::print_text(&serde_json::to_string(&payload)?),
+    }
+}
+
+fn print_orphan_cleanup(cleanup: &VectorOrphanCleanup, format: Format) -> anyhow::Result<()> {
+    let payload = serde_json::json!({
+        "project_id": cleanup.project_id.as_str(),
+        "projection": "vector",
+        "action": "cleanup_orphans",
+        "collection": cleanup.collection.as_str(),
+        "status": ProjectionStatus::Ok,
+        "vector_files_scanned": cleanup.vector_files_scanned,
+        "orphan_files_deleted": cleanup.orphan_files_deleted,
+        "vectors_deleted": cleanup.vectors_deleted,
+        "summary": format!(
+            "Removed {} orphaned vector file(s) and {} vector point(s)",
+            cleanup.orphan_files_deleted, cleanup.vectors_deleted
+        ),
+    });
     match format {
         Format::Json => output::print_json(&payload),
         Format::Text => output::print_text(&serde_json::to_string(&payload)?),

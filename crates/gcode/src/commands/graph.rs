@@ -2,6 +2,7 @@ mod lifecycle;
 mod payload;
 mod reads;
 
+pub(crate) use lifecycle::cleanup_deleted_project_graph;
 pub use lifecycle::{
     GRAPH_SYNC_CONTRACT_EXIT_CODE, GraphSyncContractError, cleanup_orphans, clear, rebuild,
     sync_file,

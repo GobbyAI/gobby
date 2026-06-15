@@ -90,6 +90,24 @@ impl ServiceConfigSelection {
         }
     }
 
+    pub const fn qdrant_only() -> Self {
+        Self {
+            falkordb: false,
+            qdrant: true,
+            embedding: false,
+            code_vectors: false,
+        }
+    }
+
+    pub const fn projection_cleanup() -> Self {
+        Self {
+            falkordb: true,
+            qdrant: true,
+            embedding: false,
+            code_vectors: false,
+        }
+    }
+
     pub const fn vectors() -> Self {
         Self {
             falkordb: false,

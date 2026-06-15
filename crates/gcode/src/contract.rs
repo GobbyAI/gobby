@@ -247,6 +247,35 @@ pub fn contract() -> CliContract {
                     "Rebuild the current project's code-index graph projection from PostgreSQL facts.",
                 )
             },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: graph_cleanup_keys(),
+                ..CommandContract::new(
+                    "graph cleanup-orphans",
+                    "Remove graph projection data for files missing from PostgreSQL.",
+                )
+            },
+            CommandContract {
+                daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vector_cleanup_keys(),
+                ..CommandContract::new(
+                    "vector cleanup-orphans",
+                    "Remove Qdrant code-symbol vectors for files missing from PostgreSQL.",
+                )
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![FlagContract::switch("--force")],
+                json_output_keys: vec![],
+                ..CommandContract::new(
+                    "prune",
+                    "Remove stale project records and reconcile current-project projections.",
+                )
+            },
         ],
         error_codes: vec![
             "invalid_input",
@@ -387,6 +416,30 @@ fn graph_lifecycle_keys() -> Vec<&'static str> {
         "synced_relationships",
         "deleted_nodes",
         "deleted_relationships",
+        "summary",
+    ]
+}
+
+fn graph_cleanup_keys() -> Vec<&'static str> {
+    vec![
+        "status",
+        "action",
+        "project_id",
+        "stale_graph_files_deleted",
+        "graph_nodes_deleted",
+    ]
+}
+
+fn vector_cleanup_keys() -> Vec<&'static str> {
+    vec![
+        "project_id",
+        "projection",
+        "action",
+        "collection",
+        "status",
+        "vector_files_scanned",
+        "orphan_files_deleted",
+        "vectors_deleted",
         "summary",
     ]
 }

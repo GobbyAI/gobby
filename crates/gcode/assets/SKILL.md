@@ -74,6 +74,9 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 - `gcode graph clear` — clear the current project's graph projection
 - `gcode graph clear --project-id <id>` — clear a projection without resolving a project root
 - `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
+- `gcode graph cleanup-orphans` — remove graph projection data for files missing from PostgreSQL and run project graph orphan cleanup
+- `gcode vector cleanup-orphans` — remove Qdrant code-symbol vectors for files missing from PostgreSQL, without resolving embeddings
+- `gcode prune` — remove stale project records globally and, when a current project resolves, reconcile graph and vector projections independently
 
 ## When to use which
 

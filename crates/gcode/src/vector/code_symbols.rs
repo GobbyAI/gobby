@@ -12,8 +12,9 @@ pub use embedding::{
 };
 pub use lifecycle::{CodeSymbolVectorLifecycle, lifecycle_status, resolve_lifecycle_qdrant_config};
 pub use qdrant::{
-    VECTOR_DISTANCE_COSINE, collection_name, delete_code_symbol_collections_with_prefix,
-    delete_file_vectors, delete_project_collection, vector_search,
+    VECTOR_DISTANCE_COSINE, VectorOrphanCleanup, cleanup_orphan_file_vectors, collection_name,
+    delete_code_symbol_collections_with_prefix, delete_file_vectors, delete_project_collection,
+    vector_search,
 };
 pub use repository::{fetch_symbols_for_file, fetch_symbols_for_project};
 pub use search::{SearchError, search_code_symbols, semantic_search};

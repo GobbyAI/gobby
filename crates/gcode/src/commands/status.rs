@@ -372,13 +372,29 @@ fn stale_projects(projects: &[IndexedProject]) -> Vec<StaleProject<'_>> {
 }
 
 /// Remove stale project entries from the code index.
-pub fn prune(force: bool) -> anyhow::Result<()> {
+pub fn prune(force: bool, project_override: Option<&str>, quiet: bool) -> anyhow::Result<()> {
+    if prune_stale_projects(force)?.is_none() {
+        return Ok(());
+    }
+
+    match Context::resolve_with_services(
+        project_override,
+        quiet,
+        config::ServiceConfigSelection::projection_cleanup(),
+    ) {
+        Ok(ctx) => prune_current_project_projections(&ctx),
+        Err(error) if project_override.is_none() && is_missing_project_context(&error) => Ok(()),
+        Err(error) => Err(error),
+    }
+}
+
+fn prune_stale_projects(force: bool) -> anyhow::Result<Option<usize>> {
     let all_projects = collect_projects()?;
     let stale = stale_projects(&all_projects);
 
     if stale.is_empty() {
         eprintln!("No stale projects found.");
-        return Ok(());
+        return Ok(Some(0));
     }
 
     eprintln!("Found {} stale project(s):", stale.len());
@@ -398,7 +414,7 @@ pub fn prune(force: bool) -> anyhow::Result<()> {
         std::io::stdin().read_line(&mut input)?;
         if !input.trim().eq_ignore_ascii_case("y") {
             eprintln!("Aborted.");
-            return Ok(());
+            return Ok(None);
         }
     }
 
@@ -411,7 +427,63 @@ pub fn prune(force: bool) -> anyhow::Result<()> {
     }
 
     eprintln!("Pruned {} stale project(s).", stale.len());
+    Ok(Some(stale.len()))
+}
+
+fn prune_current_project_projections(ctx: &Context) -> anyhow::Result<()> {
+    match prune_graph_orphans(ctx) {
+        Ok(Some(cleanup)) => eprintln!(
+            "Pruned graph projection: {} stale file(s), {} file-scoped node(s).",
+            cleanup.stale_files_deleted, cleanup.graph_nodes_deleted
+        ),
+        Ok(None) => {
+            eprintln!("Skipped graph projection orphan cleanup: FalkorDB is not configured.")
+        }
+        Err(error) => eprintln!("Warning: graph projection orphan cleanup failed: {error}"),
+    }
+
+    match prune_vector_orphans(ctx) {
+        Ok(Some(cleanup)) => eprintln!(
+            "Pruned vector projection: {} stale file(s), {} vector point(s).",
+            cleanup.orphan_files_deleted, cleanup.vectors_deleted
+        ),
+        Ok(None) => {
+            eprintln!("Skipped vector projection orphan cleanup: Qdrant is not configured.")
+        }
+        Err(error) => eprintln!("Warning: vector projection orphan cleanup failed: {error}"),
+    }
+
     Ok(())
+}
+
+fn prune_graph_orphans(
+    ctx: &Context,
+) -> anyhow::Result<Option<crate::graph::code_graph::GraphOrphanCleanup>> {
+    if ctx.falkordb.is_none() {
+        return Ok(None);
+    }
+    crate::commands::graph::cleanup_deleted_project_graph(ctx).map(Some)
+}
+
+fn prune_vector_orphans(
+    ctx: &Context,
+) -> anyhow::Result<Option<code_symbols::VectorOrphanCleanup>> {
+    let Some(qdrant) = &ctx.qdrant else {
+        return Ok(None);
+    };
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let indexed_file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?
+        .into_iter()
+        .collect::<HashSet<_>>();
+    code_symbols::cleanup_orphan_file_vectors(qdrant, &ctx.project_id, &indexed_file_paths)
+        .map(Some)
+        .map_err(anyhow::Error::from)
+}
+
+fn is_missing_project_context(error: &anyhow::Error) -> bool {
+    error
+        .to_string()
+        .contains("No gcode project found. Run `gcode init`")
 }
 
 pub fn repo_outline(ctx: &Context, format: Format) -> anyhow::Result<()> {

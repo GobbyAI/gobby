@@ -148,6 +148,40 @@ pub(crate) fn delete_file_node_query(
     )
 }
 
+pub(crate) fn project_file_path_queries(project_id: &str) -> anyhow::Result<Vec<TypedQuery>> {
+    let project_param = || [("project", TypedValue::String(project_id.to_string()))];
+    Ok(vec![
+        typed_query(
+            "MATCH (f:CodeFile {project: $project})
+             WHERE f.path IS NOT NULL
+             RETURN DISTINCT f.path AS path",
+            project_param(),
+        )?,
+        typed_query(
+            "MATCH (s:CodeSymbol {project: $project})
+             WHERE s.file_path IS NOT NULL
+             RETURN DISTINCT s.file_path AS path",
+            project_param(),
+        )?,
+    ])
+}
+
+pub(crate) fn count_file_projection_nodes_query(
+    project_id: &str,
+    file_path: &str,
+) -> anyhow::Result<TypedQuery> {
+    typed_query(
+        "MATCH (n {project: $project})
+         WHERE (n:CodeFile AND n.path = $file_path)
+            OR (n:CodeSymbol AND n.file_path = $file_path)
+         RETURN count(n) AS nodes",
+        [
+            ("project", TypedValue::String(project_id.to_string())),
+            ("file_path", TypedValue::String(file_path.to_string())),
+        ],
+    )
+}
+
 pub(crate) fn cleanup_orphans_queries(project_id: &str) -> anyhow::Result<Vec<TypedQuery>> {
     let project_param = || [("project", TypedValue::String(project_id.to_string()))];
     // Orphan cleanup runs after low-activity sync paths so failed writes leave

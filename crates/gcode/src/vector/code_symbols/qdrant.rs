@@ -1,5 +1,6 @@
 use reqwest::StatusCode;
 use serde_json::{Value, json};
+use std::collections::{BTreeSet, HashSet};
 use std::sync::OnceLock;
 use std::time::Duration;
 
@@ -13,7 +14,17 @@ use super::types::{ExistingVectorCollectionSchema, VectorLifecycleError};
 pub const VECTOR_DISTANCE_COSINE: &str = "Cosine";
 const QDRANT_DELETE_TIMEOUT_SECS_ENV: &str = "GCODE_QDRANT_DELETE_TIMEOUT_SECS";
 const DEFAULT_QDRANT_DELETE_TIMEOUT: Duration = Duration::from_secs(60);
+const QDRANT_SCROLL_LIMIT: usize = 256;
 static QDRANT_HTTP_CLIENT: OnceLock<reqwest::blocking::Client> = OnceLock::new();
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VectorOrphanCleanup {
+    pub project_id: String,
+    pub collection: String,
+    pub vector_files_scanned: usize,
+    pub orphan_files_deleted: usize,
+    pub vectors_deleted: usize,
+}
 
 pub fn collection_name(
     collection_prefix: &str,
@@ -44,6 +55,111 @@ pub fn delete_file_vectors(
     let client = qdrant_http_client()?;
     let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)?;
     delete_vectors_for_filter(&client, qdrant, &collection, project_id, Some(file_path))
+}
+
+pub fn cleanup_orphan_file_vectors(
+    qdrant: &QdrantConfig,
+    project_id: &str,
+    indexed_file_paths: &HashSet<String>,
+) -> Result<VectorOrphanCleanup, VectorLifecycleError> {
+    let vector_file_paths = list_project_vector_file_paths(qdrant, project_id)?;
+    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)?;
+    let mut orphan_files_deleted = 0;
+    let mut vectors_deleted = 0;
+
+    for file_path in vector_file_paths
+        .iter()
+        .filter(|file_path| !indexed_file_paths.contains(*file_path))
+    {
+        orphan_files_deleted += 1;
+        vectors_deleted += delete_file_vectors(qdrant, project_id, file_path)?;
+    }
+
+    Ok(VectorOrphanCleanup {
+        project_id: project_id.to_string(),
+        collection,
+        vector_files_scanned: vector_file_paths.len(),
+        orphan_files_deleted,
+        vectors_deleted,
+    })
+}
+
+pub(super) fn list_project_vector_file_paths(
+    qdrant: &QdrantConfig,
+    project_id: &str,
+) -> Result<BTreeSet<String>, VectorLifecycleError> {
+    let client = qdrant_http_client()?;
+    let collection = collection_name(CODE_SYMBOL_COLLECTION_PREFIX, project_id)?;
+    let mut file_paths = BTreeSet::new();
+    let mut offset = None;
+
+    loop {
+        let mut body = json!({
+            "filter": {
+                "must": [
+                    {
+                        "key": "project_id",
+                        "match": {"value": project_id},
+                    },
+                ],
+            },
+            "with_payload": ["project_id", "file_path"],
+            "with_vector": false,
+            "limit": QDRANT_SCROLL_LIMIT,
+        });
+        if let Some(next_offset) = offset.take() {
+            body["offset"] = next_offset;
+        }
+
+        let resp = qdrant_request_for_config(
+            &client,
+            qdrant,
+            reqwest::Method::POST,
+            &format!("{}/points/scroll", collection_path(&collection)),
+        )?
+        .json(&body)
+        .send()
+        .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+        let status = resp.status();
+        if status == StatusCode::NOT_FOUND {
+            return Ok(file_paths);
+        }
+        if !status.is_success() {
+            return Err(qdrant_http_error("scroll points", status, resp));
+        }
+
+        let data: Value = resp
+            .json()
+            .map_err(|err| VectorLifecycleError::QdrantOperation(err.to_string()))?;
+        collect_file_paths_from_scroll_page(&data, &mut file_paths)?;
+        offset = data
+            .pointer("/result/next_page_offset")
+            .filter(|offset| !offset.is_null())
+            .cloned();
+        if offset.is_none() {
+            return Ok(file_paths);
+        }
+    }
+}
+
+fn collect_file_paths_from_scroll_page(
+    data: &Value,
+    file_paths: &mut BTreeSet<String>,
+) -> Result<(), VectorLifecycleError> {
+    let points = data
+        .pointer("/result/points")
+        .and_then(Value::as_array)
+        .ok_or_else(|| {
+            VectorLifecycleError::QdrantOperation(
+                "missing result.points in Qdrant scroll response".to_string(),
+            )
+        })?;
+    for point in points {
+        if let Some(file_path) = point.pointer("/payload/file_path").and_then(Value::as_str) {
+            file_paths.insert(file_path.to_string());
+        }
+    }
+    Ok(())
 }
 
 pub fn delete_code_symbol_collections_with_prefix(

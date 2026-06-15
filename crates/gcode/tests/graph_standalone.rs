@@ -202,6 +202,10 @@ fn graph_commands_run_without_daemon_when_services_are_available() {
     assert_eq!(rebuild["success"], true);
     assert_eq!(rebuild["files_processed"], 1);
     assert_eq!(rebuild["files_synced"], 1);
+
+    let cleanup = json_command(&env, project.path(), &["graph", "cleanup-orphans"]);
+    assert_eq!(cleanup["status"], "ok");
+    assert_eq!(cleanup["stale_graph_files_deleted"], 0);
 }
 
 #[test]

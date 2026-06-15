@@ -1,5 +1,6 @@
 use super::*;
 use serde_json::json;
+use std::collections::HashSet;
 
 #[test]
 fn delete_file_vectors_filters_by_project_and_file_without_embedding() {
@@ -71,6 +72,76 @@ fn delete_file_vectors_skips_delete_when_count_is_zero() {
     assert_eq!(requests.len(), 1);
     assert!(requests[0].contains("POST /collections/code_symbols_project-1/points/count HTTP/1.1"));
     assert!(!requests[0].contains("/points/delete"));
+}
+
+#[test]
+fn cleanup_orphan_file_vectors_scrolls_and_deletes_only_paths_missing_from_postgres() {
+    let (qdrant_url, handle) = spawn_http_responses(vec![
+        (
+            200,
+            json!({
+                "result": {
+                    "points": [
+                        {"id": "1", "payload": {"project_id": "project-1", "file_path": "src/lib.rs"}},
+                        {"id": "2", "payload": {"project_id": "project-1", "file_path": "src/stale.rs"}},
+                        {"id": "3", "payload": {"project_id": "project-1", "file_path": "src/stale.rs"}},
+                        {"id": "4", "payload": {"project_id": "project-1"}}
+                    ],
+                    "next_page_offset": "page-2"
+                }
+            }),
+        ),
+        (
+            200,
+            json!({
+                "result": {
+                    "points": [
+                        {"id": "5", "payload": {"project_id": "project-1", "file_path": "src/deleted.rs"}}
+                    ],
+                    "next_page_offset": null
+                }
+            }),
+        ),
+        (200, json!({"result": {"count": 4}})),
+        (200, json!({"result": {"operation_id": 1}})),
+        (200, json!({"result": {"count": 2}})),
+        (200, json!({"result": {"operation_id": 2}})),
+    ]);
+    let cleanup = cleanup_orphan_file_vectors(
+        &QdrantConfig {
+            url: Some(qdrant_url),
+            api_key: None,
+        },
+        "project-1",
+        &HashSet::from(["src/lib.rs".to_string()]),
+    )
+    .expect("cleanup vectors");
+    let requests = handle.join().expect("qdrant requests");
+
+    assert_eq!(cleanup.vector_files_scanned, 3);
+    assert_eq!(cleanup.orphan_files_deleted, 2);
+    assert_eq!(cleanup.vectors_deleted, 6);
+    assert_eq!(requests.len(), 6);
+    assert!(
+        requests[0].contains("POST /collections/code_symbols_project-1/points/scroll HTTP/1.1")
+    );
+    assert!(
+        requests[1].contains("POST /collections/code_symbols_project-1/points/scroll HTTP/1.1")
+    );
+    assert!(requests[0].contains(r#""key":"project_id""#));
+    assert!(requests[0].contains(r#""value":"project-1""#));
+    assert!(requests[0].contains(r#""with_payload":["project_id","file_path"]"#));
+    assert!(requests[0].contains(r#""with_vector":false"#));
+    assert!(requests[1].contains(r#""offset":"page-2""#));
+    assert!(requests[2].contains(r#""value":"src/deleted.rs""#));
+    assert!(requests[3].contains(r#""value":"src/deleted.rs""#));
+    assert!(requests[4].contains(r#""value":"src/stale.rs""#));
+    assert!(requests[5].contains(r#""value":"src/stale.rs""#));
+    assert!(
+        requests[2..]
+            .iter()
+            .all(|request| !request.contains(r#""value":"src/lib.rs""#))
+    );
 }
 
 #[test]

@@ -145,8 +145,15 @@ mod tests {
     fn indexing_search_primitive_migration() {
         let manifest_dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));
 
-        let walker = std::fs::read_to_string(manifest_dir.join("src/index/walker.rs"))
-            .expect("read index/walker.rs");
+        let walker = [
+            std::fs::read_to_string(manifest_dir.join("src/index/walker.rs"))
+                .expect("read index/walker.rs"),
+            std::fs::read_to_string(manifest_dir.join("src/index/walker/classification.rs"))
+                .expect("read index/walker/classification.rs"),
+            std::fs::read_to_string(manifest_dir.join("src/index/walker/discovery.rs"))
+                .expect("read index/walker/discovery.rs"),
+        ]
+        .join("\n");
         assert!(walker.contains("gobby_core::indexing::WalkerSettings"));
         let local_walker_builder = ["WalkBuilder", "::new(root)"].concat();
         assert!(!walker.contains(&local_walker_builder));

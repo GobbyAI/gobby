@@ -4,6 +4,7 @@ use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput}
 use crate::output::{self, Format};
 use crate::projection::sync::ProjectionSyncReport;
 use serde_json::{Value, json};
+use std::collections::HashSet;
 
 pub const GRAPH_SYNC_CONTRACT_EXIT_CODE: u8 = 2;
 
@@ -337,19 +338,34 @@ pub fn rebuild(ctx: &Context, format: Format) -> anyhow::Result<()> {
 /// O(project graph size) cost on every per-file `graph sync-file`.
 pub fn cleanup_orphans(ctx: &Context, format: Format) -> anyhow::Result<()> {
     code_graph::require_graph_reads(ctx)?;
-    code_graph::cleanup_orphans(ctx)?;
+    let cleanup = cleanup_deleted_project_graph(ctx)?;
     let payload = json!({
         "status": "ok",
         "action": "cleanup_orphans",
         "project_id": ctx.project_id.clone(),
+        "stale_graph_files_deleted": cleanup.stale_files_deleted,
+        "graph_nodes_deleted": cleanup.graph_nodes_deleted,
     });
     match format {
         Format::Json => output::print_json(&payload),
         Format::Text => {
-            output::print_text("Removed project-wide orphaned code-graph nodes")?;
+            output::print_text(&format!(
+                "Removed {} stale code-graph file(s) and {} file-scoped graph node(s)",
+                cleanup.stale_files_deleted, cleanup.graph_nodes_deleted
+            ))?;
             output::print_json_compact(&payload)
         }
     }
+}
+
+pub(crate) fn cleanup_deleted_project_graph(
+    ctx: &Context,
+) -> anyhow::Result<code_graph::GraphOrphanCleanup> {
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let indexed_file_paths = db::list_indexed_file_paths(&mut conn, &ctx.project_id)?
+        .into_iter()
+        .collect::<HashSet<_>>();
+    code_graph::cleanup_deleted_files(ctx, &indexed_file_paths)
 }
 
 pub fn sync_file(

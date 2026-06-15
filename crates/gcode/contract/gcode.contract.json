@@ -844,6 +844,79 @@
         "deleted_relationships",
         "summary"
       ]
+    },
+    {
+      "name": "graph cleanup-orphans",
+      "summary": "Remove graph projection data for files missing from PostgreSQL.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "status",
+        "action",
+        "project_id",
+        "stale_graph_files_deleted",
+        "graph_nodes_deleted"
+      ]
+    },
+    {
+      "name": "vector cleanup-orphans",
+      "summary": "Remove Qdrant code-symbol vectors for files missing from PostgreSQL.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "projection",
+        "action",
+        "collection",
+        "status",
+        "vector_files_scanned",
+        "orphan_files_deleted",
+        "vectors_deleted",
+        "summary"
+      ]
+    },
+    {
+      "name": "prune",
+      "summary": "Remove stale project records and reconcile current-project projections.",
+      "daemon_consumed": false,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--force",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": []
     }
   ],
   "error_codes": [

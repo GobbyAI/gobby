@@ -8,6 +8,8 @@ use crate::config::Context;
 use crate::models::{CallRelation, ImportRelation, Symbol};
 use gobby_core::degradation::ServiceState;
 use gobby_core::falkor::GraphClient;
+use serde_json::Value;
+use std::collections::{BTreeSet, HashSet};
 
 use super::GraphReadError;
 use super::connection::with_required_core_graph;
@@ -18,7 +20,8 @@ mod support;
 
 pub(crate) use deletion::{
     cleanup_orphans_queries, clear_all_code_index_query, clear_project_query,
-    delete_file_graph_queries, delete_file_node_query,
+    count_file_projection_nodes_query, delete_file_graph_queries, delete_file_node_query,
+    project_file_path_queries,
 };
 pub use mutation::call_target_id;
 pub(in crate::graph::code_graph) use mutation::{import_graph_items, partition_call_graph_items};
@@ -42,6 +45,12 @@ const PROJECT_INDEXED_LABELS: &[&str] = &[
 pub struct CodeGraph<'a> {
     project_id: &'a str,
     client: &'a mut GraphClient,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GraphOrphanCleanup {
+    pub stale_files_deleted: usize,
+    pub graph_nodes_deleted: usize,
 }
 
 impl<'a> CodeGraph<'a> {
@@ -228,9 +237,64 @@ impl<'a> CodeGraph<'a> {
         Ok(())
     }
 
+    pub fn cleanup_deleted_files(
+        &mut self,
+        indexed_file_paths: &HashSet<String>,
+    ) -> anyhow::Result<GraphOrphanCleanup> {
+        let graph_file_paths = self.project_file_paths()?;
+        let stale_file_paths = graph_file_paths
+            .into_iter()
+            .filter(|file_path| !indexed_file_paths.contains(file_path))
+            .collect::<Vec<_>>();
+        let mut graph_nodes_deleted = 0;
+
+        for file_path in &stale_file_paths {
+            graph_nodes_deleted += self.count_file_projection_nodes(file_path)?;
+            self.delete_file_graph(file_path, &[])?;
+            self.delete_file_node(file_path)?;
+        }
+
+        self.cleanup_orphans()?;
+        Ok(GraphOrphanCleanup {
+            stale_files_deleted: stale_file_paths.len(),
+            graph_nodes_deleted,
+        })
+    }
+
+    fn project_file_paths(&mut self) -> anyhow::Result<BTreeSet<String>> {
+        let mut file_paths = BTreeSet::new();
+        for query in project_file_path_queries(self.project_id)? {
+            let crate::graph::typed_query::TypedQuery { cypher, params } = query;
+            for row in self.client.query(&cypher, Some(params))? {
+                if let Some(file_path) = row.get("path").and_then(Value::as_str) {
+                    file_paths.insert(file_path.to_string());
+                }
+            }
+        }
+        Ok(file_paths)
+    }
+
+    fn count_file_projection_nodes(&mut self, file_path: &str) -> anyhow::Result<usize> {
+        let query = count_file_projection_nodes_query(self.project_id, file_path)?;
+        let crate::graph::typed_query::TypedQuery { cypher, params } = query;
+        let rows = self.client.query(&cypher, Some(params))?;
+        Ok(rows
+            .first()
+            .and_then(|row| row.get("nodes"))
+            .and_then(value_to_usize)
+            .unwrap_or(0))
+    }
+
     pub fn clear_project(&mut self) -> anyhow::Result<()> {
         execute_write_query(self.client, clear_project_query(self.project_id)?)
     }
+}
+
+fn value_to_usize(value: &Value) -> Option<usize> {
+    if let Some(value) = value.as_u64() {
+        return usize::try_from(value).ok();
+    }
+    value.as_i64().and_then(|value| usize::try_from(value).ok())
 }
 
 pub fn sync_file_graph(
@@ -275,6 +339,13 @@ pub fn delete_file_projection(ctx: &Context, file_path: &str) -> anyhow::Result<
 
 pub fn cleanup_orphans(ctx: &Context) -> anyhow::Result<()> {
     with_code_graph(ctx, |graph| graph.cleanup_orphans())
+}
+
+pub fn cleanup_deleted_files(
+    ctx: &Context,
+    indexed_file_paths: &HashSet<String>,
+) -> anyhow::Result<GraphOrphanCleanup> {
+    with_code_graph(ctx, |graph| graph.cleanup_deleted_files(indexed_file_paths))
 }
 
 pub fn clear_project(ctx: &Context) -> anyhow::Result<()> {

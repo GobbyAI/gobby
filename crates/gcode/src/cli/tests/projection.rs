@@ -211,6 +211,15 @@ fn parse_projection_lifecycle_commands() {
         }
     ));
 
+    let cli = Cli::try_parse_from(["gcode", "vector", "cleanup-orphans"])
+        .expect("vector cleanup-orphans parses");
+    assert!(matches!(
+        cli.command,
+        Command::Vector {
+            command: VectorCommand::CleanupOrphans
+        }
+    ));
+
     let cli = Cli::try_parse_from(["gcode", "index", "--sync-projections"]).expect("index parses");
     match cli.command {
         Command::Index {

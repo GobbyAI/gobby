@@ -463,6 +463,8 @@ pub(crate) enum VectorCommand {
     Clear,
     /// Rebuild the current project's code-symbol vector projection from PostgreSQL facts
     Rebuild,
+    /// Remove code-symbol vectors for files no longer indexed in PostgreSQL
+    CleanupOrphans,
 }
 
 #[derive(Subcommand)]

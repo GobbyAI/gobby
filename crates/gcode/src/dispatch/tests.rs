@@ -101,6 +101,14 @@ fn graph_and_ai_commands_request_only_needed_services() {
         config::ServiceConfigSelection::falkordb_only()
     );
     assert_eq!(
+        services_for(&["vector", "cleanup-orphans"]),
+        config::ServiceConfigSelection::qdrant_only()
+    );
+    assert_eq!(
+        services_for(&["prune", "--force"]),
+        config::ServiceConfigSelection::projection_cleanup()
+    );
+    assert_eq!(
         services_for(&["embeddings", "doctor"]),
         config::ServiceConfigSelection::vectors()
     );

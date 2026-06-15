@@ -374,6 +374,56 @@ fn cleanup_orphans_is_project_scoped() {
 }
 
 #[test]
+fn deleted_file_cleanup_queries_are_project_scoped_and_count_file_nodes() {
+    let path_queries = project_file_path_queries("project-1").expect("path queries");
+    assert_eq!(path_queries.len(), 2);
+
+    for query in &path_queries {
+        assert_eq!(
+            query.params.get("project").map(String::as_str),
+            Some("'project-1'")
+        );
+        assert!(
+            query.cypher.contains("{project: $project}") && query.cypher.contains(" AS path"),
+            "{}",
+            query.cypher
+        );
+    }
+    assert!(
+        path_queries[0].cypher.contains("MATCH (f:CodeFile")
+            && path_queries[0].cypher.contains("f.path IS NOT NULL"),
+        "{}",
+        path_queries[0].cypher
+    );
+    assert!(
+        path_queries[1].cypher.contains("MATCH (s:CodeSymbol")
+            && path_queries[1].cypher.contains("s.file_path IS NOT NULL"),
+        "{}",
+        path_queries[1].cypher
+    );
+
+    let count_query =
+        count_file_projection_nodes_query("project-1", "src/stale.rs").expect("count query");
+    assert_eq!(
+        count_query.params.get("project").map(String::as_str),
+        Some("'project-1'")
+    );
+    assert_eq!(
+        count_query.params.get("file_path").map(String::as_str),
+        Some("'src/stale.rs'")
+    );
+    assert!(
+        count_query.cypher.contains("n:CodeFile")
+            && count_query.cypher.contains("n.path = $file_path")
+            && count_query.cypher.contains("n:CodeSymbol")
+            && count_query.cypher.contains("n.file_path = $file_path")
+            && count_query.cypher.contains("count(n) AS nodes"),
+        "{}",
+        count_query.cypher
+    );
+}
+
+#[test]
 fn delete_file_node_is_project_and_path_scoped() {
     let query = delete_file_node_query("project-1", "src/lib.rs").expect("query");
 
