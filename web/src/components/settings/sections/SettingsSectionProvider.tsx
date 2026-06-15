@@ -69,6 +69,10 @@ export function SettingsSectionProvider({
       projectSelection,
       rulesEnforcement: config.rulesEnforcement,
       setRulesEnforcement: config.setRulesEnforcement,
+      globalApprovalRules: config.globalApprovalRules,
+      defaultApprovalRules: config.defaultApprovalRules,
+      builtInApprovalExemptions: config.builtInApprovalExemptions,
+      saveGlobalApprovalRules: config.saveGlobalApprovalRules,
     }),
     [
       config.schema,
@@ -82,6 +86,10 @@ export function SettingsSectionProvider({
       projectSelection,
       config.rulesEnforcement,
       config.setRulesEnforcement,
+      config.globalApprovalRules,
+      config.defaultApprovalRules,
+      config.builtInApprovalExemptions,
+      config.saveGlobalApprovalRules,
     ],
   )
 

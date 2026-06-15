@@ -78,6 +78,22 @@ export interface SettingsSectionContextValue {
   rulesEnforcement?: boolean
   /** Persist the rules-enforcement flag; resolves true on a successful write. */
   setRulesEnforcement?: (enabled: boolean) => Promise<boolean>
+  /**
+   * Live global tool-approval rules: the daemon-wide auto-allow list. Like
+   * `rulesEnforcement` this is a standalone surface
+   * (`/api/config/tool-approvals/global`) the provider reads/writes directly via
+   * `useConfiguration`; the Tool Approvals section renders it as an
+   * immediate-save editor, distinct from the draft-backed `tool_approval.*`
+   * rows. Absent when no provider is mounted (the fallback below); sections must
+   * tolerate its absence.
+   */
+  globalApprovalRules?: string[]
+  /** Read-only recommended default auto-allow rules, shown as context. */
+  defaultApprovalRules?: string[]
+  /** Read-only built-in exemptions that are always auto-allowed. */
+  builtInApprovalExemptions?: string[]
+  /** Persist the global auto-allow rules; resolves true on a successful write. */
+  saveGlobalApprovalRules?: (rules: string[]) => Promise<boolean>
 }
 
 export const noopRegister: SettingsSectionContextValue['registerDirtyGuard'] =
