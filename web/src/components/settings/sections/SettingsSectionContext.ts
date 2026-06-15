@@ -1,7 +1,12 @@
 import { createContext, useContext } from 'react'
 import type { SettingsSectionId } from '../sections'
 import type { UseSettingsReturn } from '../../../hooks/useSettings'
-import type { SecretInfo } from '../../../hooks/useConfiguration'
+import type {
+  ConfigExportBundle,
+  PromptDetail,
+  PromptInfo,
+  SecretInfo,
+} from '../../../hooks/useConfiguration'
 
 /** Predicate reporting whether a section currently holds unsaved edits. */
 export type SectionDirtyGuard = () => boolean
@@ -116,6 +121,40 @@ export interface SettingsSectionContextValue {
   ) => Promise<boolean>
   /** Delete a secret-store entry by name; resolves true on a successful write. */
   deleteSecret?: (name: string) => Promise<boolean>
+  /**
+   * Bundled/overridden prompt list ($secret-style standalone surface,
+   * `/api/config/prompts`). Like the secret store this is read/written directly
+   * via `useConfiguration`; the Prompts & Templates section renders a per-prompt
+   * markdown override editor. Absent when no provider is mounted (the fallback
+   * below); sections must tolerate its absence.
+   */
+  prompts?: PromptInfo[]
+  /** Prompt category -> count map, for the section's category filter. */
+  promptCategories?: Record<string, number>
+  /** Fetch one prompt's detail (content + bundled default); null on failure. */
+  getPromptDetail?: (path: string) => Promise<PromptDetail | null>
+  /** Save a prompt override body; resolves true on a successful write. */
+  savePromptOverride?: (path: string, content: string) => Promise<boolean>
+  /** Delete a prompt override, reverting to bundled; true on success. */
+  deletePromptOverride?: (path: string) => Promise<boolean>
+  /**
+   * Full defaults-plus-overrides configuration document as YAML
+   * (`/api/config/template`). Saved through `saveTemplate`; requires a daemon
+   * restart to apply. Absent when no provider is mounted (the fallback below).
+   */
+  templateContent?: string
+  /** Persist the full YAML template; ok=false carries validation errors. */
+  saveTemplate?: (
+    content: string,
+  ) => Promise<{ ok: boolean; errors?: string[] }>
+  /** Export the full config bundle (`/api/config/export`); null on failure. */
+  exportConfig?: () => Promise<ConfigExportBundle | null>
+  /** Import a config bundle (`/api/config/import`); the provider refetches. */
+  importConfig?: (bundle: {
+    config_store?: Record<string, unknown>
+    config?: Record<string, unknown>
+    prompts?: Record<string, string>
+  }) => Promise<{ success: boolean; summary: string }>
 }
 
 export const noopRegister: SettingsSectionContextValue['registerDirtyGuard'] =

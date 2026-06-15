@@ -41,12 +41,21 @@ export function SettingsSectionProvider({
   children,
 }: SettingsSectionProviderProps) {
   const config = useConfiguration()
-  const { fetchConfig, saveConfig: persistConfig, fetchSecrets } = config
+  const {
+    fetchConfig,
+    saveConfig: persistConfig,
+    fetchSecrets,
+    fetchPrompts,
+    fetchTemplate,
+    importConfig: persistImport,
+  } = config
 
   useEffect(() => {
     void fetchConfig()
     void fetchSecrets()
-  }, [fetchConfig, fetchSecrets])
+    void fetchPrompts()
+    void fetchTemplate()
+  }, [fetchConfig, fetchSecrets, fetchPrompts, fetchTemplate])
 
   const saveConfig = useCallback(
     async (values: Record<string, unknown>): Promise<SaveConfigResult> => {
@@ -55,6 +64,23 @@ export function SettingsSectionProvider({
       return result
     },
     [persistConfig, fetchConfig],
+  )
+
+  // Import rewrites the config store, prompts, and config at once, so refetch
+  // every surface this provider exposes once it succeeds.
+  const importConfig = useCallback(
+    async (bundle: {
+      config_store?: Record<string, unknown>
+      config?: Record<string, unknown>
+      prompts?: Record<string, string>
+    }) => {
+      const result = await persistImport(bundle)
+      if (result.success) {
+        await Promise.all([fetchConfig(), fetchPrompts(), fetchTemplate()])
+      }
+      return result
+    },
+    [persistImport, fetchConfig, fetchPrompts, fetchTemplate],
   )
 
   const value = useMemo<SettingsSectionContextValue>(
@@ -78,6 +104,15 @@ export function SettingsSectionProvider({
       secretCategories: config.secretCategories,
       saveSecret: config.saveSecret,
       deleteSecret: config.deleteSecret,
+      prompts: config.prompts,
+      promptCategories: config.promptCategories,
+      getPromptDetail: config.getPromptDetail,
+      savePromptOverride: config.savePromptOverride,
+      deletePromptOverride: config.deletePromptOverride,
+      templateContent: config.templateContent,
+      saveTemplate: config.saveTemplate,
+      exportConfig: config.exportConfig,
+      importConfig,
     }),
     [
       config.schema,
@@ -99,6 +134,15 @@ export function SettingsSectionProvider({
       config.secretCategories,
       config.saveSecret,
       config.deleteSecret,
+      config.prompts,
+      config.promptCategories,
+      config.getPromptDetail,
+      config.savePromptOverride,
+      config.deletePromptOverride,
+      config.templateContent,
+      config.saveTemplate,
+      config.exportConfig,
+      importConfig,
     ],
   )
 
