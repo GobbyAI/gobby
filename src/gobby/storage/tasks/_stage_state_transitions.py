@@ -658,6 +658,13 @@ class StageStateTransitions:
             if row.state != "needs_review" or row.review_policy == "none":
                 raise illegal(row, verb)
             return "ready", "reject_review"
+        if verb == "route_enhancement":
+            # Enhancement routes the plan back to the planner from needs_review
+            # WITHOUT consuming the adversary's review_round_count budget (only
+            # the reject_review verb increments that counter in transition()).
+            if row.state != "needs_review" or row.review_policy == "none":
+                raise illegal(row, verb)
+            return "ready", "route_enhancement"
         if verb == "complete_stage":
             if row.state == "review_approved" and row.review_policy in {"required", "optional"}:
                 return "done", "complete_stage"

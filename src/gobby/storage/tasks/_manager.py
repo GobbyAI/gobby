@@ -108,6 +108,9 @@ from gobby.storage.tasks._transitions import (
     reconcile_task_state as _reconcile_task_state,
 )
 from gobby.storage.tasks._transitions import (
+    record_plan_enhancement as _record_plan_enhancement,
+)
+from gobby.storage.tasks._transitions import (
     reject_review as _reject_review,
 )
 from gobby.storage.tasks._transitions import (
@@ -680,6 +683,33 @@ class LocalTaskManager(TaskDecompositionMixin):
             stage_name=stage_name,
             rejection_notes=rejection_notes,
             round_number=round_number,
+            by_session_id=by_session_id,
+        )
+        self._notify_listeners()
+        return task
+
+    def record_plan_enhancement(
+        self,
+        task_id: str,
+        *,
+        round_number: int,
+        converged: bool,
+        suggestions: Sequence[str] | None = None,
+        signoff_summary: str | None = None,
+        by_session_id: str | None = None,
+    ) -> Task:
+        """Record an enhancement round and route the plan back to the planner.
+
+        Suggestions return the planning stage to ready without consuming the
+        adversary review budget; convergence leaves it in needs_review.
+        """
+        task = _record_plan_enhancement(
+            self.db,
+            task_id,
+            round_number=round_number,
+            converged=converged,
+            suggestions=suggestions,
+            signoff_summary=signoff_summary,
             by_session_id=by_session_id,
         )
         self._notify_listeners()

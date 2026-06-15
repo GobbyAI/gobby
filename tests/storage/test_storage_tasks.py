@@ -3,7 +3,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.storage.task_dependencies import TaskDependencyManager
-from gobby.storage.tasks import LocalTaskManager, TaskIDCollisionError
+from gobby.storage.tasks import LocalTaskManager, StageManifestSpec, TaskIDCollisionError
 from gobby.tasks.state_semantics import (
     current_stage_state,
     is_task_closed,
@@ -38,6 +38,26 @@ def _start_current_stage(
         current = task_manager.stage_states.current_stage(task_id)
     assert current is not None
     task_manager.stage_states.start_stage(task_id, current.stage_name, by_session_id=session_id)
+
+
+def _planning_needs_review(
+    task_manager: LocalTaskManager,
+    project_id: str,
+    session_id: str,
+    *,
+    title: str = "Enhance me",
+):
+    """Create a task whose single planning stage is in needs_review."""
+    task = task_manager.create_task(project_id, title)
+    task_manager.stage_states.initialize_manifest(
+        task.id,
+        [StageManifestSpec("planning", 0)],
+        by_session_id=session_id,
+    )
+    task_manager.claim_task(task.id, session_id)
+    task_manager.stage_states.start_stage(task.id, "planning", by_session_id=session_id)
+    task_manager.submit_for_review(task.id, "planning", by_session_id=session_id)
+    return task
 
 
 def _mark_closed_without_stage_cleanup(task_manager: LocalTaskManager, task_id: str) -> None:
@@ -1153,6 +1173,170 @@ class TestLocalTaskManager:
         assert (second.description or "").count("## Adversary Findings — Round 7") == 1
         assert "updated findings" in (second.description or "")
         assert "initial findings" not in (second.description or "")
+
+    def test_record_plan_enhancement_suggestions_route_back_to_ready(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """A suggestions round returns planning to ready WITHOUT bumping review rounds."""
+        session = session_manager.register(
+            external_id="enhance-suggestions-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = _planning_needs_review(task_manager, project_id, session.id)
+        assert task_manager.stage_states.get(task.id, "planning").review_round_count == 0
+
+        updated = task_manager.record_plan_enhancement(
+            task.id,
+            round_number=1,
+            converged=False,
+            suggestions=["Tighten the acceptance items", "Cover the empty case"],
+            by_session_id=session.id,
+        )
+
+        _assert_stage_state(updated, "ready")
+        assert updated.claimed_by_session_id is None
+        assert "## Enhancement Suggestions — Round 1" in (updated.description or "")
+        assert "Tighten the acceptance items" in (updated.description or "")
+
+        # Enhancement is tracked independently of the adversary review budget.
+        stage = task_manager.stage_states.get(task.id, "planning")
+        assert stage.review_round_count == 0
+
+        artifacts = task_manager.artifacts.get_artifacts(task.id)
+        assert artifacts.plan_enhancement_rounds_completed == 1
+        assert artifacts.plan_enhancement_converged is False
+
+    def test_record_plan_enhancement_converged_stays_in_needs_review(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """A converged round leaves needs_review so the adversary gate proceeds."""
+        session = session_manager.register(
+            external_id="enhance-converged-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = _planning_needs_review(task_manager, project_id, session.id)
+
+        updated = task_manager.record_plan_enhancement(
+            task.id,
+            round_number=2,
+            converged=True,
+            suggestions=[],
+            by_session_id=session.id,
+        )
+
+        _assert_stage_state(updated, "needs_review")
+        stage = task_manager.stage_states.get(task.id, "planning")
+        assert stage.review_round_count == 0
+
+        artifacts = task_manager.artifacts.get_artifacts(task.id)
+        # rounds_completed takes the max of current and the reported round.
+        assert artifacts.plan_enhancement_rounds_completed == 2
+        assert artifacts.plan_enhancement_converged is True
+
+    def test_record_plan_enhancement_dedups_same_round(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Re-running the same round replaces its section and never bumps review rounds."""
+        session = session_manager.register(
+            external_id="enhance-dedup-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = _planning_needs_review(task_manager, project_id, session.id)
+
+        first = task_manager.record_plan_enhancement(
+            task.id,
+            round_number=2,
+            converged=False,
+            suggestions=["Add retry budget"],
+            by_session_id=session.id,
+        )
+        assert (first.description or "").count("## Enhancement Suggestions — Round 2") == 1
+        assert "Add retry budget" in (first.description or "")
+
+        # Re-enter needs_review and re-run the same round with different suggestions.
+        task_manager.stage_states.start_stage(task.id, "planning", by_session_id=session.id)
+        task_manager.submit_for_review(task.id, "planning", by_session_id=session.id)
+        second = task_manager.record_plan_enhancement(
+            task.id,
+            round_number=2,
+            converged=False,
+            suggestions=["Add idempotency guard"],
+            by_session_id=session.id,
+        )
+
+        assert (second.description or "").count("## Enhancement Suggestions — Round 2") == 1
+        assert "Add idempotency guard" in (second.description or "")
+        assert "Add retry budget" not in (second.description or "")
+
+        # Two enhancement rounds, zero review-budget consumption.
+        assert task_manager.stage_states.get(task.id, "planning").review_round_count == 0
+
+    def test_record_plan_enhancement_requires_needs_review_state(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Recording outside needs_review raises and preserves ownership."""
+        session = session_manager.register(
+            external_id="enhance-wrong-state-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Planning in progress")
+        task_manager.stage_states.initialize_manifest(
+            task.id,
+            [StageManifestSpec("planning", 0)],
+            by_session_id=session.id,
+        )
+        task_manager.claim_task(task.id, session.id)
+        task_manager.stage_states.start_stage(task.id, "planning", by_session_id=session.id)
+
+        with pytest.raises(ValueError):
+            task_manager.record_plan_enhancement(
+                task.id,
+                round_number=1,
+                converged=False,
+                suggestions=["x"],
+                by_session_id=session.id,
+            )
+
+        unchanged = task_manager.get_task(task.id)
+        _assert_stage_state(unchanged, "in_progress")
+        assert unchanged.claimed_by_session_id == session.id
+
+    def test_record_plan_enhancement_requires_planning_stage(
+        self, task_manager, project_id, session_manager
+    ) -> None:
+        """Recording against a non-planning needs_review stage raises."""
+        session = session_manager.register(
+            external_id="enhance-wrong-stage-ext",
+            machine_id="test-machine",
+            source="codex",
+            project_id=project_id,
+        )
+        task = task_manager.create_task(project_id, "Development review")
+        task_manager.stage_states.initialize_manifest(
+            task.id,
+            [StageManifestSpec("development", 0)],
+            by_session_id=session.id,
+        )
+        task_manager.claim_task(task.id, session.id)
+        task_manager.stage_states.start_stage(task.id, "development", by_session_id=session.id)
+        task_manager.submit_for_review(task.id, "development", by_session_id=session.id)
+
+        with pytest.raises(ValueError):
+            task_manager.record_plan_enhancement(
+                task.id,
+                round_number=1,
+                converged=False,
+                suggestions=["x"],
+                by_session_id=session.id,
+            )
 
     def test_reject_review_preserves_other_round_headings(
         self, task_manager, project_id, session_manager

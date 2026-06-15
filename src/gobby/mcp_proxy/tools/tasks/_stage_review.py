@@ -541,3 +541,100 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
         output_schema={"type": "object"},
         func=reject_review,
     )
+
+    def record_plan_enhancement(
+        task_id: str,
+        round_number: int,
+        converged: bool,
+        suggestions: list[str] | None = None,
+        signoff_summary: str | None = None,
+    ) -> dict[str, Any]:
+        """Record a constructive plan-enhancement round on the planning stage."""
+        session_or_error = _resolve_session(ctx)
+        if isinstance(session_or_error, dict):
+            return session_or_error
+        resolved_session_id = session_or_error
+
+        resolved_id, error = _resolve_task(ctx, task_id)
+        if error is not None:
+            return error
+        assert resolved_id is not None
+
+        task = ctx.task_manager.get_task(resolved_id)
+        if not task:
+            return task_error(f"Task {task_id} not found", TaskToolErrorCode.TASK_NOT_FOUND)
+        prior_owner_session_id = get_claimed_session_id(task)
+        _release_current_agent_dispatch_mutex(
+            ctx,
+            task_id=resolved_id,
+            session_id=resolved_session_id,
+        )
+
+        try:
+            updated = ctx.task_manager.record_plan_enhancement(
+                resolved_id,
+                round_number=round_number,
+                converged=converged,
+                suggestions=suggestions,
+                signoff_summary=signoff_summary,
+                by_session_id=resolved_session_id,
+            )
+        except ValueError as e:
+            return _lifecycle_value_error(str(e))
+        if not updated:
+            return {"error": f"Failed to record plan enhancement for task {task_id}"}
+
+        has_suggestions = bool([s for s in (suggestions or []) if s and s.strip()])
+        new_state = "ready" if has_suggestions else "needs_review"
+
+        _clear_prior_claim_session_variables(
+            ctx,
+            resolved_id,
+            prior_owner_session_id,
+            action="record_plan_enhancement",
+        )
+        notify_parent_on_task_state_change(
+            ctx.task_manager.db,
+            resolved_id,
+            new_state,
+            task_ref=f"#{task.seq_num}" if task.seq_num else None,
+        )
+        try:
+            ctx.session_task_manager.link_task(resolved_session_id, resolved_id, new_state)
+        except Exception:
+            pass  # nosec B110 # best-effort linking
+        schedule_dispatcher_tick(
+            ctx,
+            project_id=task.project_id,
+            reason="record_plan_enhancement",
+        )
+        return _operation_response(ctx, resolved_id, "planning")
+
+    registry.register(
+        name="record_plan_enhancement",
+        description=(
+            "Record a constructive plan-enhancement round for the planning stage. "
+            "When suggestions exist, returns the planning stage from needs_review to "
+            "ready for the planner WITHOUT incrementing the adversary review budget; "
+            "when converged or empty, leaves needs_review so adversary dispatch "
+            "proceeds. Persists plan_enhancement_rounds_completed and "
+            "plan_enhancement_converged and folds the round's suggestions into the "
+            "task description idempotently."
+        ),
+        input_schema={
+            "type": "object",
+            "properties": {
+                "task_id": {"type": "string"},
+                "round_number": {"type": "integer", "minimum": 1},
+                "converged": {"type": "boolean"},
+                "suggestions": {
+                    "type": ["array", "null"],
+                    "items": {"type": "string"},
+                },
+                "signoff_summary": {"type": ["string", "null"]},
+            },
+            "required": ["task_id", "round_number", "converged"],
+        },
+        output_schema={"type": "object"},
+        func=record_plan_enhancement,
+    )

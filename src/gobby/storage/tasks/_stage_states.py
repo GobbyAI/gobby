@@ -212,6 +212,27 @@ class StageStatesManager:
             reason=reason,
         )
 
+    def route_enhancement(
+        self,
+        task_id: str,
+        stage_name: str,
+        *,
+        by_session_id: str | None,
+        notes: str | None = None,
+    ) -> StageState:
+        """Return a needs_review stage to ready for an enhancement re-plan.
+
+        Unlike ``reject_review`` this does not increment ``review_round_count``;
+        enhancement rounds are tracked independently in task artifacts.
+        """
+        return self._transition(
+            task_id,
+            stage_name,
+            "route_enhancement",
+            by_session_id=by_session_id,
+            notes=notes,
+        )
+
     def complete_stage(
         self,
         task_id: str,

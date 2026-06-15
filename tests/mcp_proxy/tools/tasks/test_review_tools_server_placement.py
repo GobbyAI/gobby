@@ -48,3 +48,14 @@ def test_review_tool_schemas_require_stage_name(registries) -> None:
         schema = ops_registry.get_schema(tool_name)
         assert schema is not None
         assert set(schema["inputSchema"]["required"]) == {"task_id", "stage_name"}
+
+
+def test_record_plan_enhancement_registered_on_gobby_tasks_ops(registries) -> None:
+    task_registry, ops_registry = registries
+
+    # The enhancer-feedback verb lives on gobby-tasks-ops, never gobby-tasks.
+    assert task_registry.get_schema("record_plan_enhancement") is None
+    schema = ops_registry.get_schema("record_plan_enhancement")
+    assert schema is not None
+    # It infers the planning stage itself, so it takes no stage_name.
+    assert set(schema["inputSchema"]["required"]) == {"task_id", "round_number", "converged"}
