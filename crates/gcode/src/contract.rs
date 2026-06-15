@@ -28,6 +28,40 @@ pub fn contract() -> CliContract {
                 ..CommandContract::new("contract", "Emit this CLI contract.")
             },
             CommandContract {
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: vec![],
+                ..CommandContract::new(
+                    "init",
+                    "Initialize project context for the current repository.",
+                )
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::switch("--standalone").required(),
+                    FlagContract::value("--database-url", "DATABASE_URL"),
+                    FlagContract::switch("--no-services"),
+                    FlagContract::switch("--overwrite-code-index"),
+                    FlagContract::value("--schema", "SCHEMA"),
+                    FlagContract::value("--embedding-provider", "PROVIDER"),
+                    FlagContract::value("--embedding-api-base", "URL"),
+                    FlagContract::value("--embedding-model", "MODEL"),
+                    FlagContract::value("--embedding-query-prefix", "PREFIX"),
+                    FlagContract::value("--embedding-vector-dim", "N"),
+                    FlagContract::value("--embedding-api-key", "KEY"),
+                    FlagContract::value("--falkordb-host", "HOST"),
+                    FlagContract::value("--falkordb-port", "PORT"),
+                    FlagContract::value("--falkordb-password", "PASSWORD"),
+                    FlagContract::value("--qdrant-url", "URL"),
+                ],
+                json_output_keys: vec![],
+                ..CommandContract::new(
+                    "setup",
+                    "Create gcode-owned standalone database objects and local service config.",
+                )
+            },
+            CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract {
                     name: "PATH",
@@ -52,6 +86,18 @@ pub fn contract() -> CliContract {
                     "index",
                     "Index a directory or specific files into the code index.",
                 )
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vec![],
+                ..CommandContract::new("status", "Show project index status.")
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![FlagContract::switch("--force")],
+                json_output_keys: vec![],
+                ..CommandContract::new("invalidate", "Clear index state and force re-index.")
             },
             CommandContract {
                 daemon_consumed: true,
@@ -92,6 +138,46 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                positionals: vec![
+                    PositionalContract::required("QUERY"),
+                    PositionalContract {
+                        name: "PATH",
+                        required: false,
+                        repeatable: true,
+                    },
+                ],
+                flags: vec![
+                    FlagContract::value("--limit", "N"),
+                    FlagContract::value("--offset", "N"),
+                    FlagContract::value("--language", "LANG"),
+                ],
+                json_output_keys: search_keys(),
+                ..CommandContract::new(
+                    "search-text",
+                    "Search indexed symbol metadata with BM25 ranking.",
+                )
+            },
+            CommandContract {
+                positionals: vec![
+                    PositionalContract::required("QUERY"),
+                    PositionalContract {
+                        name: "PATH",
+                        required: false,
+                        repeatable: true,
+                    },
+                ],
+                flags: vec![
+                    FlagContract::value("--limit", "N"),
+                    FlagContract::value("--offset", "N"),
+                    FlagContract::value("--language", "LANG"),
+                ],
+                json_output_keys: search_keys(),
+                ..CommandContract::new(
+                    "search-content",
+                    "Search indexed file content chunks with BM25 ranking.",
+                )
+            },
+            CommandContract {
                 daemon_consumed: true,
                 positionals: vec![
                     PositionalContract::required("PATTERN"),
@@ -109,6 +195,49 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                positionals: vec![PositionalContract::required("FILE")],
+                flags: vec![FlagContract::switch("--summarize")],
+                json_output_keys: vec![],
+                ..CommandContract::new("outline", "Show a hierarchical symbol tree for a file.")
+            },
+            CommandContract {
+                positionals: vec![PositionalContract::required("ID")],
+                flags: vec![format_flag()],
+                json_output_keys: vec![],
+                ..CommandContract::new("symbol", "Fetch symbol source code by ID.")
+            },
+            CommandContract {
+                positionals: vec![
+                    PositionalContract::required("PATH[:LINE[:COLUMN]]"),
+                    PositionalContract {
+                        name: "LINE",
+                        required: false,
+                        repeatable: false,
+                    },
+                ],
+                flags: vec![format_flag()],
+                json_output_keys: vec![],
+                ..CommandContract::new("symbol-at", "Fetch symbol source code at a file location.")
+            },
+            CommandContract {
+                positionals: vec![PositionalContract::repeatable("ID")],
+                flags: vec![format_flag()],
+                json_output_keys: vec![],
+                ..CommandContract::new("symbols", "Batch retrieve symbols by ID.")
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vec![],
+                ..CommandContract::new("kinds", "List distinct symbol kinds in the index.")
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vec![],
+                ..CommandContract::new("tree", "Show file tree with symbol counts.")
+            },
+            CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("SYMBOL")],
                 flags: graph_read_flags(),
@@ -123,6 +252,21 @@ pub fn contract() -> CliContract {
                 ..CommandContract::new(
                     "usages",
                     "Find incoming call usages of a symbol UUID or name.",
+                )
+            },
+            CommandContract {
+                positionals: vec![PositionalContract::required("FILE")],
+                flags: vec![format_flag()],
+                json_output_keys: graph_read_keys(),
+                ..CommandContract::new("imports", "Show import graph for a file.")
+            },
+            CommandContract {
+                positionals: vec![PositionalContract::required("SYMBOL")],
+                flags: vec![FlagContract::value("--depth", "N"), format_flag()],
+                json_output_keys: graph_read_keys(),
+                ..CommandContract::new(
+                    "blast-radius",
+                    "Show transitive impact analysis for a symbol query.",
                 )
             },
             CommandContract {
@@ -258,6 +402,39 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                positionals: vec![],
+                flags: vec![FlagContract::value("--top-n", "N"), format_flag()],
+                json_output_keys: graph_report_keys(),
+                ..CommandContract::new("graph report", "Generate a project graph report.")
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![FlagContract::value("--file", "FILE"), format_flag()],
+                json_output_keys: vector_lifecycle_keys(),
+                ..CommandContract::new(
+                    "vector sync-file",
+                    "Sync one indexed file into the code-symbol vector projection.",
+                )
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vector_lifecycle_keys(),
+                ..CommandContract::new(
+                    "vector clear",
+                    "Clear the current project's code-symbol vector projection.",
+                )
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vector_lifecycle_keys(),
+                ..CommandContract::new(
+                    "vector rebuild",
+                    "Rebuild the current project's code-symbol vector projection from PostgreSQL facts.",
+                )
+            },
+            CommandContract {
                 daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![format_flag()],
@@ -266,6 +443,27 @@ pub fn contract() -> CliContract {
                     "vector cleanup-orphans",
                     "Remove Qdrant code-symbol vectors for files missing from PostgreSQL.",
                 )
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![],
+                json_output_keys: embeddings_doctor_keys(),
+                ..CommandContract::new(
+                    "embeddings doctor",
+                    "Emit embedding configuration doctor JSON.",
+                )
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vec![],
+                ..CommandContract::new("repo-outline", "Show directory-grouped project stats.")
+            },
+            CommandContract {
+                positionals: vec![],
+                flags: vec![format_flag()],
+                json_output_keys: vec![],
+                ..CommandContract::new("projects", "List indexed projects.")
             },
             CommandContract {
                 positionals: vec![],
@@ -430,6 +628,25 @@ fn graph_cleanup_keys() -> Vec<&'static str> {
     ]
 }
 
+fn graph_report_keys() -> Vec<&'static str> {
+    vec!["project_id", "summary", "hotspots", "bridges", "degraded"]
+}
+
+fn vector_lifecycle_keys() -> Vec<&'static str> {
+    vec![
+        "success",
+        "status",
+        "project_id",
+        "action",
+        "provider",
+        "collection",
+        "points_written",
+        "points_deleted",
+        "degraded",
+        "error",
+    ]
+}
+
 fn vector_cleanup_keys() -> Vec<&'static str> {
     vec![
         "project_id",
@@ -441,5 +658,17 @@ fn vector_cleanup_keys() -> Vec<&'static str> {
         "orphan_files_deleted",
         "vectors_deleted",
         "summary",
+    ]
+}
+
+fn embeddings_doctor_keys() -> Vec<&'static str> {
+    vec![
+        "status",
+        "project_id",
+        "source",
+        "model",
+        "vector_dim",
+        "peer",
+        "drift",
     ]
 }
