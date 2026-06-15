@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any
 
 from gobby.config.persistence import MemoryConfig
-from gobby.memory.services.search import SearchDebugSnapshot, SearchService
+from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot, SearchService
 from gobby.storage.memories import Memory
 
 
@@ -235,6 +235,20 @@ async def test_qdrant_keyword_path_emits_debug_snapshot() -> None:
             returned_ids=["semantic"],
             ranking_score_map={"semantic": 0.9},
             rrf_applied=False,
+            query="query",
+            returned_hits=[
+                SearchDebugHit(
+                    memory_id="semantic",
+                    rank=0,
+                    search_via="semantic",
+                    similarity=0.9,
+                    raw_semantic_score=0.9,
+                    temporal_decay_factor=1.0,
+                    ranking_score=0.9,
+                    ranking_mode="semantic_only",
+                    graph_score=None,
+                )
+            ],
         )
     ]
 
@@ -271,6 +285,11 @@ async def test_graph_path_emits_debug_snapshot(monkeypatch: Any) -> None:
     assert snapshots[0].merged_ids == ["semantic", "graph"]
     assert snapshots[0].returned_ids == ["semantic", "graph"]
     assert snapshots[0].rrf_applied is True
+    assert snapshots[0].query == "query"
+    assert snapshots[0].graph_score_map == {"graph": 0.05}
+    assert snapshots[0].returned_hits[1].memory_id == "graph"
+    assert snapshots[0].returned_hits[1].ranking_mode == "graph_synthetic"
+    assert snapshots[0].returned_hits[1].graph_score == 0.05
 
 
 def test_debug_sink_failure_does_not_change_results() -> None:
@@ -284,6 +303,8 @@ def test_debug_sink_failure_does_not_change_results() -> None:
     service = _service(["semantic"], search_debug_sink=failing_sink)
 
     service._emit_search_debug(
+        query="query",
+        project_id=None,
         merged_ids=["semantic"],
         returned=[],
         ranking_score_map={},

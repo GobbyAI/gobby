@@ -83,6 +83,15 @@ def test_kept_fields_still_exist() -> None:
     assert hasattr(config, "access_debounce_seconds")
     assert hasattr(config, "kg")
     assert hasattr(config, "code_link_min_score")
+    assert hasattr(config, "recall_signal_logging")
+    assert hasattr(config, "recall_signal_log_path")
+
+
+def test_recall_signal_logging_defaults_off() -> None:
+    """Recall/search signal logging should be explicitly opt-in."""
+    config = MemoryConfig()
+    assert config.recall_signal_logging is False
+    assert config.recall_signal_log_path is None
 
 
 def test_old_config_with_removed_fields_does_not_crash() -> None:

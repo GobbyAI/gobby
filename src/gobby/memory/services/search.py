@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -37,6 +37,21 @@ _GRAPH_TRAVERSAL_CONFIDENCE_FACTOR = 0.9
 
 
 @dataclass(frozen=True)
+class SearchDebugHit:
+    """Returned hit features captured for observational search telemetry."""
+
+    memory_id: str
+    rank: int
+    search_via: str | None
+    similarity: float | None
+    raw_semantic_score: float | None
+    temporal_decay_factor: float | None
+    ranking_score: float | None
+    ranking_mode: str | None
+    graph_score: float | None
+
+
+@dataclass(frozen=True)
 class SearchDebugSnapshot:
     """Diagnostic ranking snapshot emitted after a search path materializes results."""
 
@@ -44,6 +59,11 @@ class SearchDebugSnapshot:
     returned_ids: list[str]
     ranking_score_map: dict[str, float]
     rrf_applied: bool
+    query: str = ""
+    project_id: str | None = None
+    graph_score_map: dict[str, float] = field(default_factory=dict)
+    returned_hits: list[SearchDebugHit] = field(default_factory=list)
+    graph_synthetic_similarity_discount: float = _GRAPH_SYNTHETIC_SIM_DISCOUNT
 
 
 class SearchService:
@@ -299,10 +319,13 @@ class SearchService:
             limit=limit,
         )
         self._emit_search_debug(
+            query=query,
+            project_id=project_id,
             merged_ids=merged_ids,
             returned=results,
             ranking_score_map=ranking_score_map,
             rrf_applied=rrf_applied,
+            graph_score_map=graph_score_map,
         )
         return results
 
@@ -397,6 +420,8 @@ class SearchService:
             limit=limit,
         )
         self._emit_search_debug(
+            query=query,
+            project_id=project_id,
             merged_ids=merged_ids,
             returned=results,
             ranking_score_map=ranking_score_map,
@@ -407,19 +432,40 @@ class SearchService:
     def _emit_search_debug(
         self,
         *,
+        query: str,
+        project_id: str | None,
         merged_ids: list[str],
         returned: list[Memory],
         ranking_score_map: dict[str, float],
         rrf_applied: bool,
+        graph_score_map: dict[str, float] | None = None,
     ) -> None:
         if self._search_debug_sink is None:
             return
 
+        graph_scores = dict(graph_score_map or {})
         snapshot = SearchDebugSnapshot(
             merged_ids=list(merged_ids),
             returned_ids=[mem.id for mem in returned],
             ranking_score_map=dict(ranking_score_map),
             rrf_applied=rrf_applied,
+            query=query,
+            project_id=project_id,
+            graph_score_map=graph_scores,
+            returned_hits=[
+                SearchDebugHit(
+                    memory_id=mem.id,
+                    rank=rank,
+                    search_via=mem.search_via,
+                    similarity=mem.similarity,
+                    raw_semantic_score=mem.raw_semantic_score,
+                    temporal_decay_factor=mem.temporal_decay_factor,
+                    ranking_score=mem.ranking_score,
+                    ranking_mode=mem.ranking_mode,
+                    graph_score=graph_scores.get(mem.id),
+                )
+                for rank, mem in enumerate(returned)
+            ],
         )
         try:
             self._search_debug_sink(snapshot)

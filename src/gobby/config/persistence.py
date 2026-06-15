@@ -417,6 +417,21 @@ class MemoryConfig(BaseModel):
             "(graph_edge_decay). Set to 0 to disable edge decay."
         ),
     )
+    recall_signal_logging: bool = Field(
+        default=False,
+        description=(
+            "Append observational recall/search ranking signal events to a dedicated "
+            "JSONL file (default ~/.gobby/logs/recall_signal.jsonl). Purely "
+            "observational; search, recall, and injection behavior are unchanged."
+        ),
+    )
+    recall_signal_log_path: str | None = Field(
+        default=None,
+        description=(
+            "Override path for the recall-signal JSONL log. None resolves to "
+            "~/.gobby/logs/recall_signal.jsonl. '~' is expanded."
+        ),
+    )
 
     @field_validator("crossref_threshold", "code_link_min_score", "min_recall_score")
     @classmethod

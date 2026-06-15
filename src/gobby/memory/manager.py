@@ -17,6 +17,7 @@ from gobby.memory.facade import (
 )
 from gobby.memory.falkor_client import FalkorClient
 from gobby.memory.protocol import MemoryBackendProtocol
+from gobby.memory.recall_signal_log import make_recall_signal_sink
 from gobby.memory.services.crossref import CrossrefRebuildError, CrossrefService
 from gobby.memory.services.indexing import IndexingService
 from gobby.memory.services.keyword import MemoryKeywordSearchService
@@ -149,6 +150,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
             falkordb_rrf_k=falkordb_rrf_k,
             vector_store_failure_logger=self._log_vector_store_failure,
             run_db=run_db,
+            search_debug_sink=make_recall_signal_sink(config),
         )
         self._indexing_service = IndexingService(
             storage=self.storage,
