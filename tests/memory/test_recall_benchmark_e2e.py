@@ -204,6 +204,9 @@ class _ArmConfig:
     falkordb_graph_search: bool
     graph_edge_weighting: bool
     materialize_cooccurrence: bool
+    cluster_recall_expansion: bool = False
+    recluster_entities: bool = False
+    cluster_expansion_per_entity: int = 3
 
 
 @dataclass
@@ -291,6 +294,8 @@ async def _build_service(
         graph_edge_weighting=arm.graph_edge_weighting,
         materialize_cooccurrence=arm.materialize_cooccurrence,
         graph_edge_decay=False,
+        cluster_recall_expansion=arm.cluster_recall_expansion,
+        cluster_expansion_per_entity=arm.cluster_expansion_per_entity,
     )
     service._extractor = _StubExtractor({mem.memory_id: mem for mem in corpus})  # type: ignore[assignment]
 
@@ -301,6 +306,9 @@ async def _build_service(
             project_id=None,
         )
         assert result.status.value in {"success", "partial_failure"}, result
+
+    if arm.recluster_entities:
+        await service.recluster_entities(project_id=None)
 
     vector_store = VectorStore(
         path=str(tmp_path / f"qdrant_{arm.name}"),
@@ -321,7 +329,10 @@ async def _build_service(
         embed_fn=embed_fn,
         kg_service=service,
         keyword_search=lambda query, limit, project_id: [],
-        config=MemoryConfig(),
+        config=MemoryConfig(
+            cluster_recall_expansion=arm.cluster_recall_expansion,
+            cluster_expansion_per_entity=arm.cluster_expansion_per_entity,
+        ),
         falkordb_graph_search=arm.falkordb_graph_search,
         falkordb_graph_min_score=_GRAPH_MIN_SCORE,
         rrf_k=60,
@@ -462,6 +473,7 @@ async def test_search_memories_e2e_recall_gate(tmp_path: Any) -> None:
         arms = [
             _ArmConfig("graph_off", False, False, False),
             _ArmConfig("flags_off", True, False, False),
+            _ArmConfig("cluster_expansion", True, False, False, True, True),
             _ArmConfig("flags_on", True, True, True),
         ]
         results: dict[str, _ArmResult] = {}
@@ -477,9 +489,15 @@ async def test_search_memories_e2e_recall_gate(tmp_path: Any) -> None:
 
         graph_off = results["graph_off"]
         flags_off = results["flags_off"]
+        cluster_expansion = results["cluster_expansion"]
         flags_on = results["flags_on"]
         flags_off.lifted_relevant_graph_ids = _lifted_relevant_graph_ids(
             baseline=graph_off, candidate=flags_off, expected_by_query=expected_by_query
+        )
+        cluster_expansion.lifted_relevant_graph_ids = _lifted_relevant_graph_ids(
+            baseline=graph_off,
+            candidate=cluster_expansion,
+            expected_by_query=expected_by_query,
         )
         flags_on.lifted_relevant_graph_ids = _lifted_relevant_graph_ids(
             baseline=graph_off, candidate=flags_on, expected_by_query=expected_by_query
@@ -491,7 +509,7 @@ async def test_search_memories_e2e_recall_gate(tmp_path: Any) -> None:
             f"({ANCHORS_PER_CLUSTER} anchor + {HIDDEN_PER_CLUSTER} hidden + "
             f"{DECOYS_PER_CLUSTER} decoy each), recall@{K}"
         )
-        for name in ("graph_off", "flags_off", "flags_on"):
+        for name in ("graph_off", "flags_off", "cluster_expansion", "flags_on"):
             result = results[name]
             print(
                 f"{name:<10} production recall@{K}={result.production_recall:.3f} "
@@ -501,7 +519,15 @@ async def test_search_memories_e2e_recall_gate(tmp_path: Any) -> None:
             print(f"  search_via={dict(result.search_via_counts)}")
             print(f"  ranking_mode={dict(result.ranking_mode_counts)}")
         print(f"flags_off lifted relevant graph IDs: {flags_off.lifted_relevant_graph_ids}")
+        print(
+            "cluster_expansion lifted relevant graph IDs: "
+            f"{cluster_expansion.lifted_relevant_graph_ids}"
+        )
         print(f"flags_on  lifted relevant graph IDs: {flags_on.lifted_relevant_graph_ids}")
+        print(
+            "cluster_expansion adoption gate: "
+            f"{cluster_expansion.production_recall > graph_off.production_recall and cluster_expansion.production_mrr >= graph_off.production_mrr - 1e-9}"
+        )
 
         # ----------------------------------------------------------------- #
         # Gate (#17104): graph-on lifts relevant graph-only hits into top-K #

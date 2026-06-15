@@ -9,6 +9,7 @@ with four arms:
     cooccurrence_unweighted -> CO_OCCURS materialized, neutral traversal weights
     cooccurrence_weighted   -> typed = cosine, CO_OCCURS = support+cosine blend
     weighted_decay          -> + edge-recency decay during candidate selection
+    cluster_expansion       -> stored HDBSCAN _Entity.cluster_id expansion
 
 The benchmark drives ``KnowledgeGraphService.add_to_graph`` /
 ``find_related_memory_ids`` directly with a stubbed (deterministic) extractor and
@@ -65,6 +66,8 @@ class ArmMetrics:
     recall_at_k: float
     mrr: float
     cooccurs_edges: int
+    cluster_count: int = 0
+    clustered_entities: int = 0
 
 
 async def _evaluate(service: KnowledgeGraphService, corpus: list[MemoryDef]) -> tuple[float, float]:
@@ -106,6 +109,9 @@ async def _run_arm(
     materialize_cooccurrence: bool,
     graph_edge_decay: bool,
     edge_half_life_days: float = 30.0,
+    cluster_recall_expansion: bool = False,
+    recluster_entities: bool = False,
+    cluster_expansion_per_entity: int = 3,
 ) -> ArmMetrics:
     await client.query("MATCH (n) DETACH DELETE n")
 
@@ -122,6 +128,8 @@ async def _run_arm(
         materialize_cooccurrence=materialize_cooccurrence,
         graph_edge_decay=graph_edge_decay,
         edge_half_life_days=edge_half_life_days,
+        cluster_recall_expansion=cluster_recall_expansion,
+        cluster_expansion_per_entity=cluster_expansion_per_entity,
     )
     service._extractor = _StubExtractor(by_content)  # type: ignore[assignment]
 
@@ -131,11 +139,24 @@ async def _run_arm(
         )
         assert result.status.value in {"success", "partial_failure"}, result
 
+    cluster_count = 0
+    clustered_entities = 0
+    if recluster_entities:
+        cluster_result = await service.recluster_entities(project_id=None)
+        cluster_count = cluster_result.cluster_count
+        clustered_entities = cluster_result.clustered_entity_count
+
     rows = await client.query("MATCH ()-[r:CO_OCCURS]->() RETURN count(r) AS n")
     cooccurs = int(rows[0]["n"]) if rows else 0
 
     recall, mrr = await _evaluate(service, corpus)
-    return ArmMetrics(recall_at_k=recall, mrr=mrr, cooccurs_edges=cooccurs)
+    return ArmMetrics(
+        recall_at_k=recall,
+        mrr=mrr,
+        cooccurs_edges=cooccurs,
+        cluster_count=cluster_count,
+        clustered_entities=clustered_entities,
+    )
 
 
 # --------------------------------------------------------------------------- #
@@ -191,6 +212,15 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
             materialize_cooccurrence=True,
             graph_edge_decay=False,
         )
+        cluster_expansion = await _run_arm(
+            client,
+            corpus,
+            graph_edge_weighting=False,
+            materialize_cooccurrence=False,
+            graph_edge_decay=False,
+            cluster_recall_expansion=True,
+            recluster_entities=True,
+        )
 
         # Sweep (alpha, cap) for the weighted arm; freeze winners as module constants.
         sweep: dict[tuple[float, int], ArmMetrics] = {}
@@ -229,11 +259,13 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
         def line(label: str, m: ArmMetrics) -> str:
             return (
                 f"{label:<26} recall@{K}={m.recall_at_k:.3f}  "
-                f"MRR={m.mrr:.3f}  CO_OCCURS={m.cooccurs_edges}"
+                f"MRR={m.mrr:.3f}  CO_OCCURS={m.cooccurs_edges}  "
+                f"clusters={m.cluster_count}/{m.clustered_entities}"
             )
 
         print(line("baseline", baseline))
         print(line("cooccurrence_unweighted", cooc_unweighted))
+        print(line("cluster_expansion", cluster_expansion))
         print(line(f"cooccurrence_weighted{best_combo}", cooc_weighted))
         print(line("weighted_decay", weighted_decay))
         print("--- weighted sweep grid (alpha, cap) ---")
@@ -242,13 +274,14 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
 
         print("--- decision gate ---")
         print(f"  densify helps:   {cooc_unweighted.recall_at_k > baseline.recall_at_k}")
+        print(f"  cluster helps:   {cluster_expansion.recall_at_k > baseline.recall_at_k}")
         print(f"  weighting helps: {cooc_weighted.recall_at_k > cooc_unweighted.recall_at_k}")
         print(f"  decay helps:     {weighted_decay.recall_at_k > cooc_weighted.recall_at_k}")
 
         # ----------------------------------------------------------------- #
         # Harness assertions (the gate decision is recorded, not asserted)  #
         # ----------------------------------------------------------------- #
-        for m in (baseline, cooc_unweighted, cooc_weighted, weighted_decay):
+        for m in (baseline, cooc_unweighted, cluster_expansion, cooc_weighted, weighted_decay):
             assert 0.0 <= m.recall_at_k <= 1.0
             assert 0.0 <= m.mrr <= 1.0
         # Densification must create CO_OCCURS edges and recover cross-memory recall
@@ -256,6 +289,9 @@ async def test_recall_benchmark_arms(monkeypatch: pytest.MonkeyPatch) -> None:
         assert baseline.cooccurs_edges == 0
         assert cooc_unweighted.cooccurs_edges > 0
         assert cooc_unweighted.recall_at_k > baseline.recall_at_k
+        assert cluster_expansion.cluster_count > 0
+        assert cluster_expansion.clustered_entities > 0
+        assert cluster_expansion.recall_at_k > baseline.recall_at_k
         assert cooc_weighted.recall_at_k >= cooc_unweighted.recall_at_k
     finally:
         try:
