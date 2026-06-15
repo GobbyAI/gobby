@@ -87,9 +87,7 @@ export function SkillsInstalledDetail({
         onDiscard={draftState.discard}
         actions={
           <>
-            <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-              {skillSourceLabel(draft)}
-            </span>
+            <span className="activity-chip">{skillSourceLabel(draft)}</span>
             {viewMode === "content" ? (
               <DetailActionButton label="Close" onClick={() => setViewMode("detail")} />
             ) : (

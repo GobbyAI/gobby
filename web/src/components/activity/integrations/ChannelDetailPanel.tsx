@@ -218,13 +218,10 @@ export function ChannelDetailPanel({
         actions={
           <>
             {mode === "create" ? (
-              <button
-                type="button"
-                className="inline-flex min-h-8 items-center justify-center rounded-md px-2.5 text-xs font-medium text-muted-foreground transition-colors hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+              <DetailActionButton
+                label="Cancel"
                 onClick={() => draftState.confirmIfDirty(onCancelCreate)}
-              >
-                Cancel
-              </button>
+              />
             ) : (
               channel && (
                 <>
@@ -233,13 +230,11 @@ export function ChannelDetailPanel({
                     icon={<MessagesIcon />}
                     onClick={() => draftState.confirmIfDirty(onShowMessages)}
                   />
-                  <button
-                    type="button"
-                    className="inline-flex min-h-8 items-center justify-center rounded-md px-2.5 text-xs font-medium text-error transition-colors hover:bg-error-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+                  <DetailActionButton
+                    label="Delete"
+                    variant="destructive"
                     onClick={() => onDelete(channel)}
-                  >
-                    Delete
-                  </button>
+                  />
                 </>
               )
             )}
@@ -258,7 +253,7 @@ export function ChannelDetailPanel({
                   />
                   {statusLabel(status)}
                 </div>
-                <span className="rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+                <span className="activity-chip">
                   {CHANNEL_DISPLAY_NAMES[draft.channel_type]}
                 </span>
               </div>

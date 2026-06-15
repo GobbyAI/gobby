@@ -142,6 +142,49 @@
   font-variant-numeric: tabular-nums;
 }
 
+/* Shared metadata chip — the single pill metric for Agents, Stages,
+   Profiles, Skills, Pipelines, and Memory metadata badges. Matches the
+   Sessions .chip and .activity-mcp-chip base (pill, text-2xs, sans) so
+   every tab's chips read at one size. Variants tint by the semantic
+   palette; the text label always carries the meaning, so chips stay
+   legible in grayscale for deutan viewers. */
+.activity-chip {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  height: 1.25rem;
+  padding: 0 0.375rem;
+  border-radius: 9999px;
+  font-family: var(--font-sans);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+}
+
+.activity-chip--accent {
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  color: var(--accent);
+}
+
+.activity-chip--info {
+  background: color-mix(in srgb, var(--color-info) 14%, transparent);
+  color: var(--color-info);
+}
+
+.activity-chip--warning {
+  background: color-mix(in srgb, var(--color-warning) 14%, transparent);
+  color: var(--color-warning);
+}
+
+.activity-chip--error {
+  background: color-mix(in srgb, var(--color-error) 14%, transparent);
+  color: var(--color-error);
+}
+
 /* ============================================
    Activity Panel — shared list row
    The single source of truth for every activity top-list row. Mirrors the

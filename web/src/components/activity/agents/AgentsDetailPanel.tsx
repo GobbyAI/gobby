@@ -130,9 +130,7 @@ export function AgentsDetailPanel({
         onDiscard={draftState.discard}
         actions={
           !creating && agent ? (
-            <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-              {agent.source}
-            </span>
+            <span className="activity-chip">{agent.source}</span>
           ) : null
         }
       />

@@ -61,7 +61,7 @@ export function MemoryTabList({
               aria-label={`Select ${memory.content}`}
               onClick={() => onSelect(memory)}
             >
-              <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
+              <span className="activity-chip">
                 {memoryTypeLabel(memory.memory_type)}
               </span>
               <span className="activity-row-title">{previewContent(memory.content)}</span>

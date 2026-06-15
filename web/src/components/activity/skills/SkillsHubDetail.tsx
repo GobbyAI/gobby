@@ -188,7 +188,7 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
             <button
               type="button"
               aria-label="Scan hub skill"
-              className="inline-flex min-h-8 items-center justify-center rounded-md border border-border bg-[var(--bg-secondary)] px-2.5 text-xs font-medium text-foreground transition-colors hover:bg-[var(--surface-tint-subtle)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+              className="btn btn-secondary btn-sm"
               disabled={!canScan}
               onClick={() => void handleScan()}
             >
@@ -196,7 +196,7 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
             </button>
             <button
               type="button"
-              className="inline-flex min-h-8 items-center justify-center rounded-md bg-accent px-2.5 text-xs font-medium text-accent-foreground transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50 pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+              className="btn btn-primary btn-sm"
               disabled={!canAttemptInstall}
               aria-label="Install hub skill"
               title={installReason}

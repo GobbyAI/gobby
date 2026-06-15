@@ -11,6 +11,7 @@ import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { WikiSourceRemovalDialog } from "./WikiSourceRemovalDialog";
+import { FilterIcon, RefreshIcon } from "../icons/AppIcons";
 import {
   WIKI_SOURCE_FILTERS,
   buildWikiSummary,
@@ -128,12 +129,13 @@ export const WikiTab = memo(function WikiTab({ projectId }: WikiTabProps) {
         <div className="relative">
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
             aria-label="Filter wiki sources"
             aria-expanded={filtersOpen}
             onClick={() => setFiltersOpen((open) => !open)}
           >
-            {selectedFilterLabel}
+            <FilterIcon />
+            <span className="activity-panel-action-btn__label">{selectedFilterLabel}</span>
           </button>
           {filtersOpen && (
             <div className="absolute right-0 top-10 z-20 w-56 rounded-md border border-border bg-[var(--bg-primary)] p-2 shadow-lg">
@@ -160,12 +162,13 @@ export const WikiTab = memo(function WikiTab({ projectId }: WikiTabProps) {
         </div>
         <button
           type="button"
-          className="btn btn-secondary btn-sm"
+          className="btn btn-accent btn-sm activity-panel-action-btn"
           aria-label="Refresh wiki"
           disabled={isLoading}
           onClick={() => void refresh()}
         >
-          Refresh
+          <RefreshIcon />
+          <span className="activity-panel-action-btn__label">Refresh</span>
         </button>
         <div className="ml-auto">
           <WikiChatActions projectId={projectId} onActionComplete={() => void refresh()} />

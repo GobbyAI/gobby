@@ -79,16 +79,10 @@ export function ProfilesList({
                 pulse={profile.enabled}
               />
               <span className="activity-row-title">{profile.display_label}</span>
-              <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-                {profile.source}
-              </span>
-              <span className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-                {profile.isolation}
-              </span>
+              <span className="activity-chip">{profile.source}</span>
+              <span className="activity-chip">{profile.isolation}</span>
               {profile.name === "default" && (
-                <span className="shrink-0 rounded-md bg-[var(--accent-tint)] px-2 py-1 text-xs font-medium text-accent">
-                  default
-                </span>
+                <span className="activity-chip activity-chip--accent">default</span>
               )}
             </button>
             <div className="px-1">

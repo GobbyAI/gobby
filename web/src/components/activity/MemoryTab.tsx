@@ -7,6 +7,7 @@ import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { DetailActionButton } from "./fields";
+import { FilterIcon, RefreshIcon } from "../icons/AppIcons";
 import {
   copyMemoryContent,
   deleteMemoryWithRefresh,
@@ -185,12 +186,13 @@ export const MemoryTab = memo(function MemoryTab({
         <div className="relative">
           <button
             type="button"
-            className="btn btn-secondary btn-sm"
+            className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
             aria-label="Filter memories"
             aria-expanded={filtersOpen}
             onClick={() => setFiltersOpen((open) => !open)}
           >
-            Filters
+            <FilterIcon />
+            <span className="activity-panel-action-btn__label">Filters</span>
           </button>
           {filtersOpen && (
             <div className="absolute right-0 top-10 z-20 w-56 rounded-md border border-border bg-[var(--bg-primary)] p-2 shadow-lg">
@@ -243,12 +245,13 @@ export const MemoryTab = memo(function MemoryTab({
         </div>
         <button
           type="button"
-          className="btn btn-secondary btn-sm"
+          className="btn btn-accent btn-sm activity-panel-action-btn"
           aria-label="Refresh memories"
           disabled={isLoading}
           onClick={refreshMemories}
         >
-          Refresh
+          <RefreshIcon />
+          <span className="activity-panel-action-btn__label">Refresh</span>
         </button>
       </div>
 

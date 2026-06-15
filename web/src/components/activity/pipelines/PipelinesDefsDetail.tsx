@@ -108,7 +108,7 @@ export function PipelinesDefsDetail({
         onDiscard={draftState.discard}
         actions={
           <>
-            <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+            <span className="activity-chip">
               PIPELINE
             </span>
             <DetailActionButton

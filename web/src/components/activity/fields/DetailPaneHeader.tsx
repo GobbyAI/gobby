@@ -48,10 +48,20 @@ export function DetailPaneHeader({
 interface DetailActionButtonProps {
   label: string;
   onClick: () => void | Promise<void>;
-  variant?: "ghost" | "accent";
+  variant?: "ghost" | "accent" | "secondary" | "destructive";
   disabled?: boolean;
   icon?: ReactNode;
 }
+
+const DETAIL_ACTION_VARIANT_CLASS: Record<
+  NonNullable<DetailActionButtonProps["variant"]>,
+  string
+> = {
+  ghost: "btn-ghost",
+  accent: "btn-primary",
+  secondary: "btn-secondary",
+  destructive: "btn-destructive",
+};
 
 export function DetailActionButton({
   label,
@@ -63,17 +73,7 @@ export function DetailActionButton({
   return (
     <button
       type="button"
-      className={cn(
-        "inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md px-2.5",
-        "pointer-coarse:min-h-11 pointer-coarse:min-w-11",
-        "text-xs font-medium transition-colors",
-        "focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent",
-        "focus-visible:ring-offset-2 focus-visible:ring-offset-background",
-        "disabled:cursor-not-allowed disabled:opacity-50",
-        variant === "accent"
-          ? "bg-accent text-accent-foreground hover:bg-accent/90"
-          : "text-muted-foreground hover:bg-muted hover:text-foreground",
-      )}
+      className={cn("btn btn-sm", DETAIL_ACTION_VARIANT_CLASS[variant])}
       disabled={disabled}
       onClick={onClick}
     >

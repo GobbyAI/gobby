@@ -66,11 +66,11 @@ export function ChannelsList({
                 label={statusLabelForChannel(channel)}
               />
               <span className="activity-row-title">{channel.name}</span>
-              <span className="hidden shrink-0 items-center gap-1 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground sm:inline-flex">
+              <span className="activity-chip gap-1">
                 <IntegrationPlatformIcon type={channel.channel_type} size={12} />
                 {CHANNEL_DISPLAY_NAMES[channel.channel_type]}
               </span>
-              <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
+              <span className="activity-chip">
                 {channel.enabled ? "On" : "Off"}
               </span>
             </button>

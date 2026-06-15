@@ -136,7 +136,7 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
             </label>
             <button
               type="button"
-              className="mt-auto inline-flex min-h-11 items-center justify-center rounded-md bg-accent px-3 text-sm font-medium text-accent-foreground transition-colors hover:bg-accent-hover focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent focus-visible:ring-offset-2 focus-visible:ring-offset-background disabled:cursor-not-allowed disabled:opacity-50"
+              className="btn btn-primary mt-auto"
               aria-label="Search hub skills"
               disabled={searching}
               onClick={() => void handleSearch()}
@@ -207,10 +207,10 @@ export function SkillsHubView({ projectId, onInstalled, onError }: SkillsHubView
                           {result.description || "No description"}
                         </span>
                       </span>
-                      <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
+                      <span className="activity-chip">
                         {result.hub_name}
                       </span>
-                      <span className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+                      <span className="activity-chip">
                         {result.version ? `v${result.version}` : "latest"}
                       </span>
                     </button>

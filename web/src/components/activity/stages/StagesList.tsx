@@ -57,12 +57,8 @@ export function StagesList({
                 label={stage.requires_human ? "Human review required" : "Automated stage"}
               />
               <span className="activity-row-title">{stage.display_label}</span>
-              <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
-                {stage.category}
-              </span>
-              <span className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-                {stage.name}
-              </span>
+              <span className="activity-chip">{stage.category}</span>
+              <span className="activity-chip">{stage.name}</span>
             </button>
             <div className="px-1">
               <QuickMenu

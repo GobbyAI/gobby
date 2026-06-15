@@ -70,9 +70,7 @@ export function StageDetailPanel({
         onSave={() => void draftState.save()}
         onDiscard={draftState.discard}
         actions={
-          <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-            {draft.name}
-          </span>
+          <span className="activity-chip">{draft.name}</span>
         }
       />
       <div className="min-h-0 flex-1 overflow-y-auto p-3">

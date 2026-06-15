@@ -72,10 +72,10 @@ export function AgentsTabList({
                 pulse={agent.enabled}
               />
               <span className="activity-row-title">{agent.definition.name}</span>
-              <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+              <span className="activity-chip">
                 {agent.definition.provider}
               </span>
-              <span className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+              <span className="activity-chip">
                 {sourceLabel}
               </span>
             </button>

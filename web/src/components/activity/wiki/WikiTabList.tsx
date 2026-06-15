@@ -57,7 +57,7 @@ export function WikiTabList({
             >
               <span className="activity-row-title">{label}</span>
               {links.length > 0 && (
-                <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs text-muted-foreground">
+                <span className="activity-chip">
                   Linked
                 </span>
               )}

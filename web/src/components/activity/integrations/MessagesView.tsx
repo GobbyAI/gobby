@@ -136,7 +136,7 @@ export function MessagesView({ channel, onClose }: MessagesViewProps) {
             <div className="flex justify-center">
               <button
                 type="button"
-                className="inline-flex min-h-8 items-center justify-center rounded-md border border-border px-3 text-xs font-medium text-muted-foreground hover:bg-muted hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-accent pointer-coarse:min-h-11 pointer-coarse:min-w-11"
+                className="btn btn-secondary btn-sm"
                 disabled={isLoading}
                 onClick={loadOlder}
               >

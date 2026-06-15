@@ -91,9 +91,7 @@ export function ProfileDetailPanel({
         onDiscard={draftState.discard}
         actions={
           !creating ? (
-            <span className="rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-              {draft.source}
-            </span>
+            <span className="activity-chip">{draft.source}</span>
           ) : null
         }
       />

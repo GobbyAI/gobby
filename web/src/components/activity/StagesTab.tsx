@@ -4,6 +4,7 @@ import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { PlusIcon } from "../icons/AppIcons";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import {
   deleteProfile,
@@ -190,8 +191,13 @@ export const StagesTab = memo(function StagesTab({ projectId }: StagesTabProps) 
           className="activity-panel-toolbar-segmented"
         />
         {segment === "profiles" && (
-          <button type="button" className="btn btn-accent btn-sm ml-auto" onClick={handleCreateProfile}>
-            + Profile
+          <button
+            type="button"
+            className="btn btn-accent btn-sm activity-panel-action-btn ml-auto"
+            onClick={handleCreateProfile}
+          >
+            <PlusIcon />
+            <span className="activity-panel-action-btn__label">Profile</span>
           </button>
         )}
       </div>

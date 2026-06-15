@@ -72,13 +72,13 @@ export function PipelinesDefsList({
                 label={definition.enabled ? "Enabled pipeline" : "Disabled pipeline"}
               />
               <span className="activity-row-title">{definition.name}</span>
-              <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
+              <span className="activity-chip">
                 PIPELINE
               </span>
-              <span className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+              <span className="activity-chip">
                 {definition.enabled ? "On" : "Off"}
               </span>
-              <span className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
+              <span className="activity-chip">
                 {stepCount(definition)} step{stepCount(definition) !== 1 ? "s" : ""}
               </span>
             </button>

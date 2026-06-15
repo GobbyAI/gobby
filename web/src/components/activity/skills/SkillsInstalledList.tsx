@@ -93,15 +93,9 @@ export function SkillsInstalledList({
                 label={statusLabel(skill)}
               />
               <span className="activity-row-title">{skill.name}</span>
-              <span className="hidden shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground sm:inline-flex">
-                {skillCategory(skill)}
-              </span>
-              <span className="shrink-0 rounded-md bg-muted px-2 py-1 text-xs font-semibold text-muted-foreground">
-                {skillSourceLabel(skill)}
-              </span>
-              <span className="shrink-0 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground">
-                {skill.enabled ? "On" : "Off"}
-              </span>
+              <span className="activity-chip">{skillCategory(skill)}</span>
+              <span className="activity-chip">{skillSourceLabel(skill)}</span>
+              <span className="activity-chip">{skill.enabled ? "On" : "Off"}</span>
             </button>
             <div className="px-1">
               <QuickMenu

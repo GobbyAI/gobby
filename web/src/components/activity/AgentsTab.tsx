@@ -5,6 +5,7 @@ import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { SegmentedControl } from "../ui/SegmentedControl";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { ActivityPanelSearch } from "./ActivityPanelSearch";
+import { PlusIcon } from "../icons/AppIcons";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import {
   deleteAgentDefinition,
@@ -182,8 +183,13 @@ export const AgentsTab = memo(function AgentsTab({ projectId }: AgentsTabProps) 
           ariaLabel="Agent source"
           controlHeight="sm"
         />
-        <button type="button" className="btn btn-accent btn-sm ml-auto" onClick={handleCreate}>
-          + Agent
+        <button
+          type="button"
+          className="btn btn-accent btn-sm activity-panel-action-btn ml-auto"
+          onClick={handleCreate}
+        >
+          <PlusIcon />
+          <span className="activity-panel-action-btn__label">Agent</span>
         </button>
       </div>
       {error && (
