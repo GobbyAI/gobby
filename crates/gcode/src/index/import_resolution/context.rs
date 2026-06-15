@@ -14,6 +14,10 @@ use super::predicates::{
     csharp_declared_types, elixir_dependency_roots, java_declared_types, php_declared_symbols,
     ruby_require_root,
 };
+use super::rust_local::{
+    build_rust_local_symbol_index, rust_import_target, rust_local_symbol_key,
+    rust_qualified_call_target,
+};
 
 #[derive(Debug, Clone, Default)]
 pub struct ImportResolutionContext {
@@ -24,6 +28,7 @@ pub struct ImportResolutionContext {
     pub(super) go_module_path: Option<String>,
     pub(super) rust_external_crates: HashSet<String>,
     pub(super) rust_self_crate_name: Option<String>,
+    pub(super) rust_local_symbols: HashMap<String, Vec<LocalImportBinding>>,
     pub(super) java_local_classes: HashSet<String>,
     pub(super) csharp_local_roots: HashSet<String>,
     pub(super) php_local_symbols: HashSet<String>,
@@ -53,6 +58,48 @@ impl ImportResolutionContext {
         } else {
             Some(first)
         }
+    }
+
+    pub(super) fn rust_local_symbol(
+        &self,
+        source_root: &str,
+        module: &str,
+        name: &str,
+    ) -> Option<&LocalImportBinding> {
+        let mut bindings = self
+            .rust_local_symbols
+            .get(&rust_local_symbol_key(source_root, module, name))?
+            .iter();
+        let first = bindings.next()?;
+        if bindings.next().is_some() {
+            None
+        } else {
+            Some(first)
+        }
+    }
+
+    pub(super) fn rust_local_import(
+        &self,
+        rel_path: &str,
+        path: &str,
+    ) -> Option<&LocalImportBinding> {
+        let target = rust_import_target(rel_path, self.rust_self_crate_name.as_deref(), path)?;
+        self.rust_local_symbol(&target.source_root, &target.module, &target.name)
+    }
+
+    pub(super) fn rust_local_qualified_symbol(
+        &self,
+        rel_path: &str,
+        qualifier_path: &str,
+        name: &str,
+    ) -> Option<&LocalImportBinding> {
+        let target = rust_qualified_call_target(
+            rel_path,
+            self.rust_self_crate_name.as_deref(),
+            qualifier_path,
+            name,
+        )?;
+        self.rust_local_symbol(&target.source_root, &target.module, &target.name)
     }
 
     pub(super) fn ruby_require_root(&self, required: &str) -> Option<&str> {
@@ -214,6 +261,7 @@ pub fn build_import_resolution_context_with_overrides(
         go_module_path: load_go_module_path(root_path),
         rust_external_crates: load_rust_external_crates(root_path),
         rust_self_crate_name: load_rust_self_crate_name(root_path),
+        rust_local_symbols: build_rust_local_symbol_index(root_path, candidate_files),
         java_local_classes: build_java_local_class_index(candidate_files),
         csharp_local_roots: build_csharp_local_roots(candidate_files),
         php_local_symbols: build_php_local_symbol_index(candidate_files),

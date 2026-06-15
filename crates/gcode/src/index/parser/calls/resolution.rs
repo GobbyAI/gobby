@@ -55,6 +55,7 @@ fn is_memberish_kind(kind: &str) -> bool {
             | "member_access_expression"
             | "member_call_expression"
             | "navigation_expression"
+            | "scoped_identifier"
             | "scoped_call_expression"
             | "dot"
     )
@@ -68,6 +69,7 @@ fn resolve_same_file_callee(
     symbols: &[Symbol],
     caller_symbol: Option<&Symbol>,
     callee_name: &str,
+    qualifier_path: Option<&str>,
     syntax: CallSyntaxKind,
 ) -> Option<String> {
     match syntax {
@@ -77,13 +79,17 @@ fn resolve_same_file_callee(
                 .filter(|symbol| symbol.name == callee_name && is_callable_kind(&symbol.kind)),
         ),
         CallSyntaxKind::Member => {
-            let parent_symbol_id =
-                caller_symbol.and_then(|symbol| symbol.parent_symbol_id.as_deref())?;
-            unique_symbol_id(symbols.iter().filter(|symbol| {
-                symbol.name == callee_name
-                    && symbol.kind == "method"
-                    && symbol.parent_symbol_id.as_deref() == Some(parent_symbol_id)
-            }))
+            resolve_same_file_associated_callee(symbols, callee_name, qualifier_path).or_else(
+                || {
+                    let parent_symbol_id =
+                        caller_symbol.and_then(|symbol| symbol.parent_symbol_id.as_deref())?;
+                    unique_symbol_id(symbols.iter().filter(|symbol| {
+                        symbol.name == callee_name
+                            && symbol.kind == "method"
+                            && symbol.parent_symbol_id.as_deref() == Some(parent_symbol_id)
+                    }))
+                },
+            )
         }
         CallSyntaxKind::Other => None,
     }
@@ -94,6 +100,7 @@ pub(super) fn resolve_same_file_callee_for_language(
     symbols: &[Symbol],
     caller_symbol: Option<&Symbol>,
     callee_name: &str,
+    qualifier_path: Option<&str>,
     syntax: CallSyntaxKind,
 ) -> Option<String> {
     if language == "ruby" && syntax == CallSyntaxKind::Bare {
@@ -101,7 +108,7 @@ pub(super) fn resolve_same_file_callee_for_language(
         // name matching creates noisy false edges here.
         return None;
     }
-    resolve_same_file_callee(symbols, caller_symbol, callee_name, syntax)
+    resolve_same_file_callee(symbols, caller_symbol, callee_name, qualifier_path, syntax)
 }
 
 fn unique_symbol_id<'a>(symbols: impl Iterator<Item = &'a Symbol>) -> Option<String> {
@@ -112,6 +119,29 @@ fn unique_symbol_id<'a>(symbols: impl Iterator<Item = &'a Symbol>) -> Option<Str
     } else {
         Some(first.id.clone())
     }
+}
+
+fn resolve_same_file_associated_callee(
+    symbols: &[Symbol],
+    callee_name: &str,
+    qualifier_path: Option<&str>,
+) -> Option<String> {
+    let qualifier = qualifier_path?;
+    let parent_symbol_ids = symbols
+        .iter()
+        .filter(|symbol| {
+            symbol.name == qualifier && matches!(symbol.kind.as_str(), "class" | "type")
+        })
+        .map(|symbol| symbol.id.as_str())
+        .collect::<Vec<_>>();
+    unique_symbol_id(symbols.iter().filter(|symbol| {
+        symbol.name == callee_name
+            && symbol.kind == "method"
+            && symbol
+                .parent_symbol_id
+                .as_deref()
+                .is_some_and(|parent_id| parent_symbol_ids.contains(&parent_id))
+    }))
 }
 
 pub(super) fn member_qualifier_path(

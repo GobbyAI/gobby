@@ -216,3 +216,17 @@ pub(crate) fn resolve_local_callee<'a>(
     }
     import_bindings.local_bare.get(callee_name)
 }
+
+pub(crate) fn resolve_rust_local_qualified_callee<'a>(
+    import_context: &'a ImportResolutionContext,
+    rel_path: &str,
+    callee_name: &str,
+    qualifier_path: Option<&str>,
+    is_member_call: bool,
+) -> Option<&'a LocalImportBinding> {
+    if !is_member_call {
+        return None;
+    }
+    let qualifier_path = qualifier_path?;
+    import_context.rust_local_qualified_symbol(rel_path, qualifier_path, callee_name)
+}

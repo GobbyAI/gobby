@@ -68,6 +68,7 @@ fn materialize_call(
         ctx.symbols,
         caller_symbol,
         &site.callee_name,
+        site.qualifier_path.as_deref(),
         site.syntax,
     );
     let root_alias = site
@@ -96,19 +97,35 @@ fn materialize_call(
             site.syntax == CallSyntaxKind::Bare,
         )
     };
-    let local_import_target =
+    let local_qualified_target =
         if local_target.is_none() && external_target.is_none() && !external_shadowed {
-            import_resolution::resolve_local_callee(
-                ctx.import_bindings,
-                ctx.symbols,
+            import_resolution::resolve_rust_local_qualified_callee(
+                ctx.import_context,
+                ctx.rel_path,
                 &site.callee_name,
-                site.syntax == CallSyntaxKind::Bare,
+                site.qualifier_path.as_deref(),
+                site.syntax == CallSyntaxKind::Member,
             )
         } else {
             None
         };
+    let local_import_target = if local_target.is_none()
+        && external_target.is_none()
+        && local_qualified_target.is_none()
+        && !external_shadowed
+    {
+        import_resolution::resolve_local_callee(
+            ctx.import_bindings,
+            ctx.symbols,
+            &site.callee_name,
+            site.syntax == CallSyntaxKind::Bare,
+        )
+    } else {
+        None
+    };
     let semantic_target = if local_target.is_none()
         && external_target.is_none()
+        && local_qualified_target.is_none()
         && local_import_target.is_none()
         && !external_shadowed
     {
@@ -137,6 +154,8 @@ fn materialize_call(
     );
     if let Some(callee_symbol_id) = local_target {
         call = call.with_symbol_target(callee_symbol_id);
+    } else if let Some(local_qualified_target) = local_qualified_target {
+        call = call.with_symbol_target(local_qualified_target.symbol_id(ctx.project_id));
     } else if let Some(local_import_target) = local_import_target {
         call = call.with_symbol_target(local_import_target.symbol_id(ctx.project_id));
     } else if let Some(external_target) = external_target {

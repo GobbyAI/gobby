@@ -93,7 +93,7 @@ pub(crate) fn parse_rust_import_statement(
     });
 
     if let Some((prefix, group)) = split_rust_use_group(rest) {
-        register_rust_group_imports(prefix, group, import_context, extracted);
+        register_rust_group_imports(prefix, group, rel_path, import_context, extracted);
         return;
     }
 
@@ -102,12 +102,13 @@ pub(crate) fn parse_rust_import_statement(
         return;
     }
 
-    register_rust_path_import(rest, import_context, extracted);
+    register_rust_path_import(rest, rel_path, import_context, extracted);
 }
 
 fn register_rust_group_imports(
     prefix: &str,
     group: &str,
+    rel_path: &str,
     import_context: &ImportResolutionContext,
     extracted: &mut ExtractedImports,
 ) {
@@ -122,7 +123,13 @@ fn register_rust_group_imports(
             let Some(full_prefix) = rust_join_use_path(prefix, nested_prefix) else {
                 continue;
             };
-            register_rust_group_imports(&full_prefix, nested_group, import_context, extracted);
+            register_rust_group_imports(
+                &full_prefix,
+                nested_group,
+                rel_path,
+                import_context,
+                extracted,
+            );
             continue;
         }
         if item.contains('*') {
@@ -131,12 +138,13 @@ fn register_rust_group_imports(
         let Some(path) = rust_join_use_path(prefix, item) else {
             continue;
         };
-        register_rust_path_import(&path, import_context, extracted);
+        register_rust_path_import(&path, rel_path, import_context, extracted);
     }
 }
 
 fn register_rust_path_import(
     path_and_alias: &str,
+    rel_path: &str,
     import_context: &ImportResolutionContext,
     extracted: &mut ExtractedImports,
 ) {
@@ -145,6 +153,18 @@ fn register_rust_path_import(
         return;
     }
     let (path, alias) = split_alias(normalized);
+    if let Some(local_target) = import_context.rust_local_import(rel_path, path) {
+        let local_alias = alias.unwrap_or(&local_target.name);
+        if !local_alias.is_empty() {
+            extracted.bindings.bare.remove(local_alias);
+            extracted
+                .bindings
+                .local_bare
+                .insert(local_alias.to_string(), local_target.clone());
+        }
+        return;
+    }
+
     let segments: Vec<&str> = path.split("::").filter(|part| !part.is_empty()).collect();
     let Some(root) = segments.first().copied() else {
         return;

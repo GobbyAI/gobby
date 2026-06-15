@@ -1,4 +1,33 @@
-use super::common::{parse_csharp, parse_go, parse_java, parse_rust};
+use super::common::{parse_csharp, parse_go, parse_java, parse_rust, parse_source};
+use crate::models::{ParseResult, Symbol};
+
+fn parsed_symbol_id(parsed: &ParseResult, file_path: &str, name: &str, kind: &str) -> String {
+    parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.file_path == file_path && symbol.name == name && symbol.kind == kind)
+        .unwrap_or_else(|| panic!("{file_path}:{kind}:{name} symbol"))
+        .id
+        .clone()
+}
+
+fn canonical_symbol_id(
+    file_path: &str,
+    source: &str,
+    declaration: &str,
+    name: &str,
+    kind: &str,
+) -> String {
+    Symbol::make_id(
+        "proj",
+        file_path,
+        name,
+        kind,
+        source
+            .find(declaration)
+            .unwrap_or_else(|| panic!("{declaration} source")),
+    )
+}
 
 #[test]
 fn classifies_external_go_import_alias_selector_calls() {
@@ -162,6 +191,137 @@ serde_json = "1"
             .iter()
             .all(|call| call.callee_target_kind.as_str() == "unresolved")
     );
+}
+
+#[test]
+fn resolves_rust_local_imported_and_module_qualified_calls() {
+    let service_source = r#"
+pub fn helper() {}
+pub fn other() {}
+pub fn direct() {}
+"#;
+    let parsed = parse_rust(
+        r#"
+use crate::service::helper as run_helper;
+use app::service::other;
+
+fn run() {
+    run_helper();
+    other();
+    crate::service::direct();
+}
+"#,
+        &[
+            (
+                "Cargo.toml",
+                r#"[package]
+name = "app"
+"#,
+            ),
+            ("src/service.rs", service_source),
+        ],
+    );
+
+    for (callee, symbol_name, declaration) in [
+        ("run_helper", "helper", "pub fn helper"),
+        ("other", "other", "pub fn other"),
+        ("direct", "direct", "pub fn direct"),
+    ] {
+        let expected_id = canonical_symbol_id(
+            "src/service.rs",
+            service_source,
+            declaration,
+            symbol_name,
+            "function",
+        );
+        let call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == callee)
+            .unwrap_or_else(|| panic!("{callee} call"));
+        assert_eq!(call.callee_target_kind.as_str(), "symbol");
+        assert_eq!(call.callee_symbol_id.as_deref(), Some(expected_id.as_str()));
+    }
+}
+
+#[test]
+fn resolves_rust_grouped_super_imports_to_canonical_symbols() {
+    let helper_source = r#"
+pub(crate) fn helper() {}
+pub(crate) fn other() {}
+"#;
+    let parsed = parse_source(
+        "src/index/import_resolution/context.rs",
+        r#"
+use super::rust_local::{helper, other as run_other};
+
+fn run() {
+    helper();
+    run_other();
+}
+"#,
+        &[
+            (
+                "Cargo.toml",
+                r#"[package]
+name = "app"
+"#,
+            ),
+            ("src/index/import_resolution/rust_local.rs", helper_source),
+        ],
+    );
+
+    for (callee, symbol_name) in [("helper", "helper"), ("run_other", "other")] {
+        let declaration = format!("pub(crate) fn {symbol_name}");
+        let expected_id = canonical_symbol_id(
+            "src/index/import_resolution/rust_local.rs",
+            helper_source,
+            &declaration,
+            symbol_name,
+            "function",
+        );
+        let call = parsed
+            .calls
+            .iter()
+            .find(|call| call.callee_name == callee)
+            .unwrap_or_else(|| panic!("{callee} call"));
+        assert_eq!(call.callee_target_kind.as_str(), "symbol");
+        assert_eq!(call.callee_symbol_id.as_deref(), Some(expected_id.as_str()));
+    }
+}
+
+#[test]
+fn resolves_rust_associated_same_file_calls_to_canonical_method() {
+    let parsed = parse_rust(
+        r#"
+struct Parser;
+
+impl Parser {
+    fn new() -> Self {
+        Parser
+    }
+}
+
+fn run() {
+    Parser::new();
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+
+    let expected_id = parsed_symbol_id(&parsed, "src/main.rs", "new", "method");
+    let call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "new")
+        .expect("new call");
+    assert_eq!(call.callee_target_kind.as_str(), "symbol");
+    assert_eq!(call.callee_symbol_id.as_deref(), Some(expected_id.as_str()));
 }
 
 #[test]
