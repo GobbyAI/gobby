@@ -46,12 +46,18 @@ export function useSettingsOverlay(
   const [activeSection, setActiveSection] = useState<SettingsSectionId>(
     DEFAULT_SETTINGS_SECTION,
   )
-  const dirtyGuards = useRef(new Map<SettingsSectionId, DirtyGuard>())
+  // Each section can hold more than one dirty guard (e.g. the section shell
+  // plus a test harness), so guards are stored per-section as a Set and the
+  // section counts as dirty if any guard reports dirty.
+  const dirtyGuards = useRef(new Map<SettingsSectionId, Set<DirtyGuard>>())
 
   const guardAllows = useCallback(
     (section: SettingsSectionId): boolean => {
-      const isDirty = dirtyGuards.current.get(section)
-      if (!isDirty || !isDirty()) return true
+      const guards = dirtyGuards.current.get(section)
+      const anyDirty = guards
+        ? Array.from(guards).some((isDirty) => isDirty())
+        : false
+      if (!anyDirty) return true
       const ask = confirmDiscard ?? ((message: string) => window.confirm(message))
       return ask(DISCARD_MESSAGE)
     },
@@ -79,11 +85,17 @@ export function useSettingsOverlay(
 
   const registerDirtyGuard = useCallback(
     (section: SettingsSectionId, isDirty: DirtyGuard) => {
-      dirtyGuards.current.set(section, isDirty)
+      let guards = dirtyGuards.current.get(section)
+      if (!guards) {
+        guards = new Set()
+        dirtyGuards.current.set(section, guards)
+      }
+      guards.add(isDirty)
       return () => {
-        if (dirtyGuards.current.get(section) === isDirty) {
-          dirtyGuards.current.delete(section)
-        }
+        const current = dirtyGuards.current.get(section)
+        if (!current) return
+        current.delete(isDirty)
+        if (current.size === 0) dirtyGuards.current.delete(section)
       }
     },
     [],

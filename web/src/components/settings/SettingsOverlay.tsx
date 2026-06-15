@@ -1,4 +1,4 @@
-import { useEffect, useId, useRef, useState } from 'react'
+import { createElement, useEffect, useId, useRef, useState } from 'react'
 import type { KeyboardEvent as ReactKeyboardEvent } from 'react'
 import { ChevronDownIcon, CloseIcon } from '../icons'
 import { ActivityFilterDropdown } from '../activity/ActivityFilterDropdown'
@@ -7,12 +7,21 @@ import {
   SETTINGS_SECTIONS,
   type SettingsSectionId,
 } from './sections'
+import { getSettingsSectionComponent } from './sections/index'
+import { SettingsSectionProvider } from './sections/SettingsSectionProvider'
+import type { SettingsSectionContextValue } from './sections/SettingsSectionContext'
 
 interface SettingsOverlayProps {
   isOpen: boolean
   activeSection: SettingsSectionId
   onClose: () => void
   onSelectSection: (section: SettingsSectionId) => void
+  /**
+   * The overlay controller's dirty-guard registrar (useSettingsOverlay). Passed
+   * down so the active section can gate switching/closing while it has unsaved
+   * edits. Optional so tests can mount the shell without the controller.
+   */
+  registerDirtyGuard?: SettingsSectionContextValue['registerDirtyGuard']
 }
 
 const SECTION_OPTIONS = SETTINGS_SECTIONS.map((section) => ({
@@ -50,12 +59,12 @@ export function SettingsOverlay({
   activeSection,
   onClose,
   onSelectSection,
+  registerDirtyGuard,
 }: SettingsOverlayProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
   const [sectionMenuOpen, setSectionMenuOpen] = useState(false)
   const headingId = useId()
-  const sectionHeadingId = `${headingId}-section`
 
   useEffect(() => {
     if (!isOpen) return
@@ -161,26 +170,15 @@ export function SettingsOverlay({
             ) : null}
           </div>
         </div>
-        <section
-          className="settings-overlay-shell__content"
-          aria-labelledby={sectionHeadingId}
-        >
-          <div className="settings-overlay-shell__section-head">
-            <h3
-              id={sectionHeadingId}
-              className="settings-overlay-shell__section-title"
-            >
-              {section.label}
-            </h3>
-            <p className="settings-overlay-shell__section-desc">
-              {section.description}
-            </p>
+        <SettingsSectionProvider registerDirtyGuard={registerDirtyGuard}>
+          <div className="settings-overlay-shell__body">
+            {/* Remount on section change so each section starts from a fresh
+                draft of its owned config paths. */}
+            {createElement(getSettingsSectionComponent(activeSection), {
+              key: activeSection,
+            })}
           </div>
-          <div className="settings-overlay-shell__placeholder" role="note">
-            Controls for this section arrive in the next step of the settings
-            migration.
-          </div>
-        </section>
+        </SettingsSectionProvider>
       </div>
     </div>
   )

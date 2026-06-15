@@ -7,7 +7,7 @@ import {
   screen,
   within,
 } from '@testing-library/react'
-import { afterEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { SettingsOverlay } from '../SettingsOverlay'
 import { useSettingsOverlay } from '../useSettingsOverlay'
 import {
@@ -50,6 +50,7 @@ function Harness({ confirmDiscard, dirtySections = NO_DIRTY }: HarnessProps) {
           activeSection={overlay.activeSection}
           onClose={overlay.close}
           onSelectSection={overlay.selectSection}
+          registerDirtyGuard={overlay.registerDirtyGuard}
         />
       ) : null}
     </div>
@@ -72,8 +73,24 @@ function selectSection(dialog: HTMLElement, label: string): void {
   fireEvent.click(within(dialog).getByRole('option', { name: label }))
 }
 
+// The overlay now mounts the config provider, which fetches on open. Stub the
+// network so these UI tests stay hermetic; the stub sections render regardless.
+beforeEach(() => {
+  vi.stubGlobal(
+    'fetch',
+    vi.fn(
+      async () =>
+        new Response(
+          JSON.stringify({ values: {}, schema: {}, secret_keys: [] }),
+          { status: 200, headers: { 'Content-Type': 'application/json' } },
+        ),
+    ),
+  )
+})
+
 afterEach(() => {
   cleanup()
+  vi.unstubAllGlobals()
 })
 
 describe('SettingsOverlay', () => {

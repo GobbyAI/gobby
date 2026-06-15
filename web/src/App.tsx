@@ -920,6 +920,7 @@ export default function App() {
             activeSection={settingsOverlay.activeSection}
             onClose={settingsOverlay.close}
             onSelectSection={settingsOverlay.selectSection}
+            registerDirtyGuard={settingsOverlay.registerDirtyGuard}
           />
         </Suspense>
       )}
