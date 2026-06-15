@@ -108,15 +108,21 @@ def test_holistic_review_skill_defines_methodology_and_verdict_block() -> None:
         "### spec_compliance",
         "### code_quality",
         "### testing",
-        "### yagni",
+        "### proportionality",
     ):
         assert heading in skill_text
+    # The epic dimension is reframed onto the shared proportionality criterion;
+    # the legacy `yagni` heading must be gone.
+    assert "### yagni" not in skill_text
+    assert "proportionality` criterion" in skill_text
+    assert "simpler form" in skill_text
     assert "## Holistic Findings" in skill_text
     assert "verdict: approve | request_changes | needs_discussion" in skill_text
     assert "spec_compliance: OK | Drift | Gap" in skill_text
     assert "code_quality: OK | Drift | Gap" in skill_text
     assert "testing: OK | Drift | Gap" in skill_text
-    assert "yagni: OK | Drift | Gap" in skill_text
+    assert "proportionality: OK | Drift | Gap" in skill_text
+    assert "yagni: OK | Drift | Gap" not in skill_text
     assert "operational_risk" not in skill_text
 
 

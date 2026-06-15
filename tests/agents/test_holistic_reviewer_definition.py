@@ -78,14 +78,20 @@ def test_docs_epics_can_use_discovery_brief_plan_substitute() -> None:
     assert "plan substitute" in status
 
 
-def test_holistic_review_order_is_spec_quality_testing_yagni() -> None:
+def test_holistic_review_order_is_spec_quality_testing_proportionality() -> None:
     agent = _agent()
     instructions = agent["instructions"]
     status = next(step for step in agent["steps"] if step["name"] == "review")["status_message"]
 
-    ordered = ["spec_compliance", "code_quality", "testing", "yagni"]
+    # Anchor on the explicit "Review in order" sentence: the `proportionality`
+    # skill name also appears earlier in the skill-load list, so a bare
+    # str.index would resolve it before the review dimensions.
+    order_anchor = instructions.index("Review in order")
+    ordered = ["spec_compliance", "code_quality", "testing", "proportionality"]
     for earlier, later in zip(ordered, ordered[1:], strict=False):
-        assert instructions.index(earlier) < instructions.index(later)
+        assert instructions.index(earlier, order_anchor) < instructions.index(later, order_anchor)
+    # The dimension is reframed from yagni onto the shared proportionality criterion.
+    assert "yagni" not in instructions
     assert "operational_risk" not in instructions
     assert "aggregate diff" in status
 
@@ -100,6 +106,7 @@ def test_loads_required_skills_before_review() -> None:
         "holistic-review",
         "tech-writer",
         "task-transitions",
+        "proportionality",
     ]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
     for skill_name in agent["step_variables"]["required_skills"]:

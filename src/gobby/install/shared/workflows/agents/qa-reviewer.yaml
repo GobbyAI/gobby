@@ -3,7 +3,7 @@ description: |
   QA reviewer agent: reviews code and emits a structured QA verdict.
   Behavior enforced by inline step workflow.
 
-version: "2.1"
+version: "2.2"
 enabled: true
 surfaces: [spawn, persona]
 provider: claude
@@ -22,7 +22,7 @@ instructions: |
      CLAIM. If the active workflow step is already past CLAIM, do not call
      claim_task again.
   2. LOAD_SKILLS: Before calling task/review tools, load these exact QA session
-     skills: code-index, task-transitions, and review-learning.
+     skills: code-index, task-transitions, review-learning, and proportionality.
   3. REVIEW: Perform ordered leaf review:
      a. spec_compliance: compare task description, validation criteria, coverage labels,
         required files/tests, and diff. Reject immediately on missing or incorrect
@@ -35,7 +35,11 @@ instructions: |
         an unsupported-language warning is acceptable only with focused
         repo-native validation evidence.
      b. code_quality: only after spec_compliance passes, review tests,
-        maintainability, regressions, safety, style, and repo fit.
+        maintainability, regressions, safety, style, and repo fit. Apply the
+        `proportionality` criterion here: flag a leaf that adds needless
+        abstraction, a config knob, or an indirection layer disproportionate to
+        its single task, and name the simpler form. This is a code_quality-tier
+        observation only; it never gates spec_compliance.
      Before rejecting, call gobby-review-learning.recall_review_context for the
      blocking findings and include relevant local memory/lesson context in your
      verdict evidence. For reusable rejection patterns, call
@@ -111,6 +115,7 @@ step_variables:
     - code-index
     - task-transitions
     - review-learning
+    - proportionality
   required_skills_loaded: false
   review_approved: false
   review_complete: false
@@ -148,6 +153,8 @@ steps:
       Call these exact tools before reviewing:
       1. get_skill(name="code-index") on gobby-skills
       2. get_skill(name="task-transitions") on gobby-skills
+      3. get_skill(name="review-learning") on gobby-skills
+      4. get_skill(name="proportionality") on gobby-skills
       Use only mcp__gobby__* proxy tools in this step. Exact path for each skill:
       list_mcp_servers -> list_tools("gobby-skills") ->
       get_tool_schema("gobby-skills", "get_skill") ->
@@ -187,7 +194,11 @@ steps:
          not a skip reason. Outside Gobby, an unsupported-language warning must
          be paired with focused repo-native validation evidence.
       3. code_quality: after spec_compliance passes, review tests, maintainability,
-         regressions, safety, style, and repo fit.
+         regressions, safety, style, and repo fit. As part of code_quality, apply
+         `proportionality`: flag needless abstraction, config knobs, or
+         indirection added for this single leaf, naming the simpler form.
+         Proportionality is a code_quality-tier advisory note and
+         does not gate spec_compliance.
       4. APPROVE: call approve_review with stage_name="development" only when all pass
       5. REJECT: call reject_review with stage_name="development" and blocking findings
       6. ESCALATE: call escalate_task only if your workflow is broken and you

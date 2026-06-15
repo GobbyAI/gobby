@@ -17,6 +17,7 @@ metadata:
 > by the `holistic-reviewer` agent before it reviews an implemented epic.
 
 REQUIRED SKILL: review-learning.
+REQUIRED SKILL: proportionality.
 
 Use this skill to decide whether an epic's implementation matches the approved
 plan or equivalent review scope, the observed diff, and the linked subtasks'
@@ -77,11 +78,16 @@ not a skip reason. Outside Gobby, an unsupported-language warning is acceptable
 only with focused repo-native validation evidence. Missing TDD evidence is a
 testing gap and blocks approval.
 
-### yagni
+### proportionality
 
-Flag speculative abstractions, unnecessary rewrites, duplicate frameworks,
-scope creep, and unplanned product behavior that was not needed to deliver the
-plan.
+Apply the shared `proportionality` criterion (anti-Rube-Goldberg) at epic
+altitude: flag mechanism with no concrete consumer or requirement in the plan —
+speculative abstractions, unnecessary rewrites, and indirection the plan never
+needed. Weigh the cross-leaf signals only a holistic view can see: duplicate
+frameworks built independently across leaves, a framework introduced by one leaf
+and used by none, and product behavior no plan section asked for. Size,
+ambition, and a large but justified epic are never findings on their own; name
+the simpler form whenever you flag.
 
 ## Finding Attribution
 
@@ -107,7 +113,7 @@ verdict: approve | request_changes | needs_discussion
 spec_compliance: OK | Drift | Gap - <citation and one-line rationale>
 code_quality: OK | Drift | Gap - <citation and one-line rationale>
 testing: OK | Drift | Gap - <citation and one-line rationale>
-yagni: OK | Drift | Gap - <citation and one-line rationale>
+proportionality: OK | Drift | Gap - <citation and one-line rationale>
 
 findings:
 - [blocking] <plan section, subtask, file/commit citation>: <actionable issue>

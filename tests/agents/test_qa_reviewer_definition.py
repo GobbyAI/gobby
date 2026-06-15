@@ -106,6 +106,8 @@ def test_loads_required_skills_before_review() -> None:
     assert agent["step_variables"]["required_skills"] == [
         "code-index",
         "task-transitions",
+        "review-learning",
+        "proportionality",
     ]
     assert claim_step["transitions"] == [{"to": "load_skills", "when": "vars.task_claimed"}]
     assert load_step["allowed_mcp_tools"] == ["gobby-skills:get_skill"]
@@ -113,8 +115,11 @@ def test_loads_required_skills_before_review() -> None:
     assert "task-transitions" in load_step["status_message"]
     assert "tech-writer" not in load_step["status_message"]
     assert "Do not call claim_task" in load_step["status_message"]
-    assert 'get_skill(name="code-index")' in load_step["status_message"]
-    assert 'get_skill(name="task-transitions")' in load_step["status_message"]
+    # Every required skill must be named in the load step prompt; the prior
+    # mismatch (review-learning gated but never instructed) deadlocked the
+    # transition that requires all required_skills in loaded_skills.
+    for skill_name in agent["step_variables"]["required_skills"]:
+        assert f'get_skill(name="{skill_name}")' in load_step["status_message"]
     assert load_step["transitions"] == [
         {
             "to": "review",
@@ -201,3 +206,28 @@ def test_tdd_audit_evidence_is_language_aware() -> None:
         assert "not a skip reason" in text
         assert "unsupported-language warning" in text
         assert "repo-native validation" in text
+
+
+def test_proportionality_is_code_quality_tier_and_does_not_gate_spec() -> None:
+    """Leaf-altitude proportionality is a code_quality-tier sub-check.
+
+    It flags needless abstraction/config/indirection for a single leaf and names
+    the simpler form, but it is advisory only: a correct-but-mildly-over-built
+    leaf is a quality note, not a spec_compliance rejection.
+    """
+    agent = _agent()
+    instructions = agent["instructions"]
+    review_step = next(step for step in agent["steps"] if step["name"] == "review")
+    status_message = review_step["status_message"]
+
+    # Loaded as a required QA skill (consistent with the deadlock fix).
+    assert "proportionality" in agent["step_variables"]["required_skills"]
+
+    # Applied inside the code_quality tier, after spec_compliance, naming the
+    # simpler form, and explicitly not gating spec_compliance.
+    assert "proportionality" in instructions
+    assert "proportionality" in status_message
+    assert "simpler form" in instructions
+    assert "never gates spec_compliance" in instructions
+    assert "does not gate spec_compliance" in status_message
+    assert status_message.index("code_quality") < status_message.index("proportionality")

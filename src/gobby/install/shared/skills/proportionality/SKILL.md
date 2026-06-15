@@ -137,7 +137,7 @@ The criterion is identical at every altitude; the unit under review changes.
   leaves. Watch for cross-leaf duplication that should have been one shared
   thing, frameworks introduced by one leaf and used by none, and product
   behavior no plan section asked for. This is the same criterion the
-  `yagni`/proportionality dimension carries.
+  holistic-review `proportionality` dimension carries.
 - **Leaf altitude (`qa-reviewer`).** Unit = a single leaf's diff. Flag a leaf
   that introduces an abstraction, config knob, or indirection layer
   disproportionate to its single task, and name the simpler form. This is a
