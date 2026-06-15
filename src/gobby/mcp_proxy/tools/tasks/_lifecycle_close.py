@@ -266,11 +266,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
 
             if is_leaf and ctx.task_validator and task.validation_criteria:
                 # Gather validation context
-                validation_context, raw_diff = gather_validation_context(
+                validation_evidence = gather_validation_context(
                     task, changes_summary, repo_path, ctx.task_manager
                 )
                 validation_context = _append_verification_evidence_context(
-                    validation_context,
+                    validation_evidence.validation_context,
                     ctx,
                     resolved_session_id,
                 )
@@ -281,10 +281,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                         task=task,
                         task_validator=ctx.task_validator,
                         validation_context=validation_context,
-                        raw_diff=raw_diff,
+                        raw_diff=validation_evidence.raw_diff,
                         ctx=ctx,
                         resolved_id=resolved_id,
                         validation_config=ctx.validation_config,
+                        file_context_text=validation_evidence.file_context_text,
                     )
                     if not llm_result.can_close:
                         response = {

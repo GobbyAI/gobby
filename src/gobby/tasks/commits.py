@@ -180,12 +180,119 @@ def is_doc_only_diff(diff: str) -> bool:
     return True
 
 
+@dataclass(frozen=True)
+class _DiffFile:
+    path: str
+    additions: int
+    deletions: int
+    diff: str
+
+
+_FILE_DIFF_TRUNCATION_MARKER = "\n... [file diff truncated] ...\n"
+_DIFF_TRUNCATION_MARKER = "\n... [diff truncated] ...\n"
+_DIFF_TOO_LARGE_MESSAGE = (
+    "## Diff Summary\n\n"
+    "Diff too large to validate safely: the changed-file manifest does not fit "
+    "inside the validation budget. Close-task validation should return pending "
+    "instead of treating omitted files as missing.\n"
+)
+
+
+def _diff_path_from_header(header: str) -> str:
+    try:
+        parts = shlex.split(header.removeprefix("diff --git "))
+    except ValueError:
+        parts = []
+    if len(parts) >= 2:
+        old_path = _strip_diff_path_prefix(parts[0])
+        new_path = _strip_diff_path_prefix(parts[1])
+        return new_path if new_path != "/dev/null" else old_path
+
+    match = re.match(r"diff --git a/(.+?) b/", header)
+    return match.group(1) if match else "(unknown)"
+
+
+def _parse_diff_files(diff: str) -> list[_DiffFile]:
+    file_diffs = re.split(r"(?=^diff --git )", diff, flags=re.MULTILINE)
+    parsed: list[_DiffFile] = []
+    for file_diff in file_diffs:
+        if not file_diff.strip():
+            continue
+        lines = file_diff.splitlines()
+        path = _diff_path_from_header(lines[0] if lines else "")
+        additions = sum(1 for line in lines if line.startswith("+") and not line.startswith("+++"))
+        deletions = sum(1 for line in lines if line.startswith("-") and not line.startswith("---"))
+        parsed.append(
+            _DiffFile(path=path, additions=additions, deletions=deletions, diff=file_diff)
+        )
+    return parsed
+
+
+def changed_files_from_diff(diff: str | None) -> list[str]:
+    """Return changed file paths from a git diff in diff order."""
+    if not diff:
+        return []
+    return [file.path for file in _parse_diff_files(diff)]
+
+
+def _priority_key(path: str, priority_files: list[str] | None) -> tuple[int, str]:
+    if not priority_files:
+        return (1, path)
+    normalized = path.lstrip("./")
+    for priority in priority_files:
+        cleaned = priority.lstrip("./")
+        if normalized == cleaned or normalized.endswith(f"/{cleaned}"):
+            return (0, path)
+        if "/" not in cleaned and Path(normalized).name == cleaned:
+            return (0, path)
+    return (1, path)
+
+
+def _safe_truncate(text: str, max_chars: int, marker: str) -> str:
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= len(marker):
+        return marker if len(marker) <= max_chars else ""
+    cutoff = max_chars - len(marker)
+    newline_cutoff = text.rfind("\n", 0, cutoff)
+    if newline_cutoff > 0:
+        cutoff = newline_cutoff
+    return text[:cutoff].rstrip() + marker
+
+
+def _limit_hunk_lines(file_diff: str, max_hunk_lines: int) -> str:
+    if max_hunk_lines <= 0:
+        return file_diff
+
+    kept: list[str] = []
+    hunk_line_count = 0
+    truncated = False
+    in_hunk = False
+    for line in file_diff.splitlines(keepends=True):
+        if line.startswith("@@"):
+            in_hunk = True
+            hunk_line_count = 0
+            kept.append(line)
+            continue
+        if in_hunk and line and line[0] in "+- ":
+            hunk_line_count += 1
+            if hunk_line_count > max_hunk_lines:
+                truncated = True
+                continue
+        kept.append(line)
+
+    limited = "".join(kept)
+    if truncated:
+        limited = limited.rstrip() + _FILE_DIFF_TRUNCATION_MARKER
+    return limited
+
+
 def summarize_diff_for_validation(
-    diff: str,
+    diff: str | None,
     max_chars: int = 30000,
     max_hunk_lines: int = 50,
     priority_files: list[str] | None = None,
-) -> str:
+) -> str | None:
     """Summarize a diff for LLM validation, ensuring all files are visible.
 
     For large diffs, this:
@@ -207,126 +314,63 @@ def summarize_diff_for_validation(
     if not diff or len(diff) <= max_chars:
         return diff
 
-    # Parse the diff into files
-    file_diffs = re.split(r"(?=^diff --git)", diff, flags=re.MULTILINE)
-    file_diffs = [f for f in file_diffs if f.strip()]
+    diff_files = _parse_diff_files(diff)
+    if not diff_files:
+        return _safe_truncate(diff, max_chars, _DIFF_TRUNCATION_MARKER)
 
-    if not file_diffs:
-        return diff[:max_chars] + "\n\n... [diff truncated] ..."
-
-    # First, collect file stats
-    file_stats: list[dict[str, str | int]] = []
-    for file_diff in file_diffs:
-        # Extract file name
-        name_match = re.match(r"diff --git a/(.+?) b/", file_diff)
-        if name_match:
-            file_name = name_match.group(1)
-        else:
-            file_name = "(unknown)"
-
-        # Count additions/deletions
-        additions = len(re.findall(r"^\+[^+]", file_diff, re.MULTILINE))
-        deletions = len(re.findall(r"^-[^-]", file_diff, re.MULTILINE))
-
-        file_stats.append(
-            {
-                "name": file_name,
-                "additions": additions,
-                "deletions": deletions,
-                "diff": file_diff,
-            }
-        )
-
-    # Separate into priority and non-priority groups if priority_files provided
-    priority_stats: list[dict[str, str | int]] = []
-    non_priority_stats: list[dict[str, str | int]] = []
-
-    if priority_files:
-        priority_set = set(priority_files)
-        for f in file_stats:
-            if str(f["name"]) in priority_set:
-                priority_stats.append(f)
-            else:
-                non_priority_stats.append(f)
-    else:
-        # No priority files - all are non-priority (original behavior)
-        non_priority_stats = file_stats
-
-    # Build summary header
-    total_additions = sum(int(f["additions"]) for f in file_stats)
-    total_deletions = sum(int(f["deletions"]) for f in file_stats)
-
-    summary_parts: list[str] = [
-        f"## Diff Summary ({len(file_stats)} files, +{total_additions}/-{total_deletions})\n",
+    total_additions = sum(file.additions for file in diff_files)
+    total_deletions = sum(file.deletions for file in diff_files)
+    ordered_files = sorted(diff_files, key=lambda file: _priority_key(file.path, priority_files))
+    manifest = [
+        f"## Diff Summary ({len(diff_files)} files, +{total_additions}/-{total_deletions})\n",
         "### Files Changed:\n",
+        *[f"- {file.path} (+{file.additions}/-{file.deletions})\n" for file in ordered_files],
     ]
+    manifest_text = "".join(manifest)
+    if len(manifest_text) > max_chars:
+        return _safe_truncate(_DIFF_TOO_LARGE_MESSAGE, max_chars, _DIFF_TRUNCATION_MARKER)
 
-    # Show priority files first in the summary
-    if priority_stats:
-        summary_parts.append("#### Priority Files:\n")
-        for f in priority_stats:
-            summary_parts.append(f"- {f['name']} (+{f['additions']}/-{f['deletions']})\n")
-        if non_priority_stats:
-            summary_parts.append("\n#### Other Files:\n")
+    details_header = "\n### File Details:\n\n"
+    omission_marker = "\n... [file details omitted: validation budget exhausted] ...\n"
+    if len(manifest_text) + len(details_header) > max_chars:
+        if len(manifest_text) + len(omission_marker) <= max_chars:
+            return manifest_text.rstrip() + omission_marker
+        return manifest_text
 
-    for f in non_priority_stats:
-        summary_parts.append(f"- {f['name']} (+{f['additions']}/-{f['deletions']})\n")
+    manifest_text += details_header
+    remaining_chars = max_chars - len(manifest_text)
+    if remaining_chars <= len(_FILE_DIFF_TRUNCATION_MARKER):
+        if len(manifest_text) + len(omission_marker) <= max_chars:
+            return manifest_text.rstrip() + omission_marker
+        return manifest_text
 
-    summary_parts.append("\n### File Details:\n\n")
-
-    # Calculate remaining space for file contents
-    header_size = sum(len(p) for p in summary_parts)
-    remaining_chars = max_chars - header_size - 100  # Buffer for truncation message
-
-    # Allocate space: 60% to priority files, 40% to non-priority (if priority_files provided)
-    if priority_files and priority_stats:
-        priority_space = int(remaining_chars * 0.6)
-        non_priority_space = remaining_chars - priority_space
-
-        chars_per_priority = priority_space // len(priority_stats) if priority_stats else 0
-        chars_per_non_priority = (
-            non_priority_space // len(non_priority_stats) if non_priority_stats else 0
-        )
+    priority_paths = {
+        file.path for file in ordered_files if _priority_key(file.path, priority_files)[0] == 0
+    }
+    non_priority_count = len(ordered_files) - len(priority_paths)
+    if priority_paths and non_priority_count:
+        priority_pool = int(remaining_chars * 0.6)
+        non_priority_pool = remaining_chars - priority_pool
     else:
-        # Original behavior: equal distribution
-        chars_per_priority = 0
-        chars_per_non_priority = (
-            remaining_chars // len(file_stats) if file_stats else remaining_chars
-        )
+        priority_pool = remaining_chars
+        non_priority_pool = remaining_chars
 
-    def truncate_file_content(file_content: str, max_file_chars: int) -> str:
-        """Truncate a file diff to fit within max_file_chars."""
-        if len(file_content) <= max_file_chars:
-            return file_content
-
-        # Truncate this file's diff but keep the header
-        header_end = file_content.find("@@")
-        if header_end > 0:
-            header = file_content[:header_end]
-            hunks = file_content[header_end:]
-            # Keep first part of hunks
-            truncated_hunks = hunks[: max_file_chars - len(header) - 50]
-            return header + truncated_hunks + "\n... [file diff truncated] ...\n"
+    parts = [manifest_text]
+    for index, file in enumerate(ordered_files):
+        if file.path in priority_paths:
+            planned_budget = max(1, priority_pool // len(priority_paths))
+        elif non_priority_count:
+            planned_budget = max(1, non_priority_pool // non_priority_count)
         else:
-            return file_content[:max_file_chars] + "\n... [file diff truncated] ...\n"
+            planned_budget = max(1, remaining_chars // len(ordered_files))
+        remaining_budget = max_chars - len("".join(parts))
+        budget = planned_budget if index < len(ordered_files) - 1 else remaining_budget
+        limited = (
+            _limit_hunk_lines(file.diff, max_hunk_lines) if len(file.diff) > budget else file.diff
+        )
+        parts.append(_safe_truncate(limited, budget, _FILE_DIFF_TRUNCATION_MARKER))
 
-    # Add priority files first
-    for f in priority_stats:
-        file_content = truncate_file_content(str(f["diff"]), chars_per_priority)
-        summary_parts.append(file_content)
-
-    # Add non-priority files
-    for f in non_priority_stats:
-        file_content = truncate_file_content(str(f["diff"]), chars_per_non_priority)
-        summary_parts.append(file_content)
-
-    result = "".join(summary_parts)
-
-    # Final safety check
-    if len(result) > max_chars:
-        result = result[:max_chars] + "\n\n... [diff truncated] ..."
-
-    return result
+    return "".join(parts)
 
 
 def _build_file_patterns(

@@ -32,6 +32,12 @@ failing, or required evidence is absent. Do not return `valid` while describing 
 failed criterion, non-clean mypy/ruff/test result, missing verification, or errors
 that prevented a required gate from passing.
 
+If evidence is explicitly unavailable because the diff or file context exceeded
+the validation prompt budget, return `pending` with feedback naming the unavailable
+evidence. Do not treat `[file diff truncated]`, `[changes section truncated]`, or
+`[file context truncated]` as proof that a file is missing or incomplete; use the
+changed-file manifest and available file context.
+
 Task: {{ title }}
 {{ category_section }}{{ criteria_text }}
 
@@ -41,4 +47,5 @@ File Context:
 {{ file_context }}
 {% endif %}
 IMPORTANT: Return ONLY a JSON object, nothing else. No explanation, no preamble.
-Format: {"status": "valid", "feedback": "..."} or {"status": "invalid", "feedback": "..."}
+Format: {"status": "valid", "feedback": "..."}, {"status": "invalid", "feedback": "..."},
+or {"status": "pending", "feedback": "..."}

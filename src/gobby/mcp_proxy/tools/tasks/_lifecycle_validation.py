@@ -8,6 +8,7 @@ import logging
 import re
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.mcp_proxy.tools.tasks._helpers import SKIP_REASONS
@@ -137,6 +138,95 @@ class ValidationResult:
     error_type: str | None = None
     message: str | None = None
     extra: dict[str, Any] | None = None
+
+
+@dataclass(frozen=True)
+class ValidationContext:
+    """Evidence packet passed from close_task into LLM validation."""
+
+    validation_context: str | None
+    raw_diff: str | None
+    file_context_text: str | None = None
+
+
+def _path_matches_reference(path: str, reference: str) -> bool:
+    normalized_path = path.replace("\\", "/").lstrip("./")
+    normalized_reference = reference.replace("\\", "/").lstrip("./")
+    if not normalized_path or not normalized_reference:
+        return False
+    if normalized_path == normalized_reference:
+        return True
+    if normalized_path.endswith(f"/{normalized_reference}"):
+        return True
+    return "/" not in normalized_reference and Path(normalized_path).name == normalized_reference
+
+
+def _resolve_referenced_files(
+    *,
+    mentioned_files: list[str],
+    changed_files: list[str],
+    repo_path: str | None,
+    max_files: int = 5,
+) -> list[Path]:
+    """Resolve task-mentioned files that are not part of the linked diff."""
+    if not mentioned_files:
+        return []
+
+    from gobby.utils.git import run_git_command
+
+    base_path = Path(repo_path) if repo_path else Path.cwd()
+    tracked_output = run_git_command(["git", "ls-files"], cwd=base_path) or ""
+    tracked_files = [line.strip() for line in tracked_output.splitlines() if line.strip()]
+    resolved: list[Path] = []
+
+    for mention in mentioned_files:
+        reference = mention.strip().strip("`'\"").lstrip("./")
+        if not reference:
+            continue
+        if any(_path_matches_reference(changed_file, reference) for changed_file in changed_files):
+            continue
+
+        candidates: list[Path] = []
+        direct = Path(reference)
+        candidates.append(direct if direct.is_absolute() else base_path / direct)
+        candidates.extend(
+            base_path / tracked_file
+            for tracked_file in tracked_files
+            if _path_matches_reference(tracked_file, reference)
+        )
+
+        for candidate in candidates:
+            if len(resolved) >= max_files:
+                return resolved
+            if candidate.is_file() and candidate not in resolved:
+                resolved.append(candidate)
+
+    return resolved
+
+
+def _read_referenced_file_context(
+    *,
+    mentioned_files: list[str],
+    changed_files: list[str],
+    repo_path: str | None,
+    max_chars: int,
+) -> str | None:
+    from gobby.tasks.validation import read_files_content
+
+    files = _resolve_referenced_files(
+        mentioned_files=mentioned_files,
+        changed_files=changed_files,
+        repo_path=repo_path,
+    )
+    if not files:
+        return None
+
+    content = read_files_content(files, max_chars=max_chars)
+    return (
+        "Referenced current file context "
+        "(task-mentioned files not present in the linked commit diff):\n"
+        f"{content}"
+    )
 
 
 def feedback_admits_required_validation_failure(feedback: str | None) -> bool:
@@ -289,7 +379,7 @@ def gather_validation_context(
     changes_summary: str | None,
     repo_path: str | None,
     task_manager: "LocalTaskManager",
-) -> tuple[str | None, str | None]:
+) -> ValidationContext:
     """Gather context for LLM validation.
 
     Uses provided changes_summary or auto-fetches via smart context gathering.
@@ -301,12 +391,29 @@ def gather_validation_context(
         task_manager: LocalTaskManager for fetching task diff
 
     Returns:
-        Tuple of (validation_context, raw_diff)
+        Structured validation evidence containing summarized changes, raw diff,
+        and optional referenced-file context.
     """
-    from gobby.tasks.commits import get_task_diff, summarize_diff_for_validation
+    from gobby.tasks.commits import (
+        changed_files_from_diff,
+        extract_mentioned_files,
+        get_task_diff,
+        summarize_diff_for_validation,
+    )
+    from gobby.tasks.validation import (
+        VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
+        VALIDATION_PROMPT_BUDGET_CHARS,
+    )
 
     validation_context = ""
     raw_diff = None
+    file_context_text = None
+    task_payload = {
+        "title": task.title,
+        "description": task.description,
+        "validation_criteria": task.validation_criteria,
+    }
+    mentioned_files = extract_mentioned_files(task_payload)
 
     # First try commit-based diff if task has linked commits. The linked
     # commits are the authoritative implementation artifact; changes_summary
@@ -321,12 +428,28 @@ def gather_validation_context(
             )
             if diff_result.diff:
                 raw_diff = diff_result.diff
-                summarized_diff = summarize_diff_for_validation(raw_diff)
+                changed_files = changed_files_from_diff(raw_diff)
+                file_context_text = _read_referenced_file_context(
+                    mentioned_files=mentioned_files,
+                    changed_files=changed_files,
+                    repo_path=repo_path,
+                    max_chars=VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
+                )
+                diff_budget = VALIDATION_PROMPT_BUDGET_CHARS
+                if file_context_text:
+                    diff_budget -= VALIDATION_FILE_CONTEXT_BUDGET_CHARS
+                summarized_diff = summarize_diff_for_validation(
+                    raw_diff,
+                    max_chars=diff_budget,
+                    priority_files=mentioned_files,
+                )
                 logger.info(
-                    "Validation diff for task %s: raw_diff_chars=%d diff_chars=%d",
+                    "Validation diff for task %s: raw_diff_chars=%d diff_chars=%d "
+                    "file_context_chars=%d",
                     task.id,
                     len(raw_diff),
-                    len(summarized_diff),
+                    len(summarized_diff or ""),
+                    len(file_context_text or ""),
                 )
                 validation_context = (
                     f"Commit-based diff ({len(diff_result.commits)} commits, "
@@ -357,7 +480,11 @@ def gather_validation_context(
         if smart_context:
             validation_context = f"Validation context:\n\n{smart_context}"
 
-    return validation_context, raw_diff
+    return ValidationContext(
+        validation_context=validation_context,
+        raw_diff=raw_diff,
+        file_context_text=file_context_text,
+    )
 
 
 async def validate_leaf_task_with_llm(
@@ -368,6 +495,7 @@ async def validate_leaf_task_with_llm(
     ctx: "RegistryContext",
     resolved_id: str,
     validation_config: "TaskValidationConfig | None",
+    file_context_text: str | None = None,
 ) -> ValidationResult:
     """Run LLM validation on a leaf task.
 
@@ -431,6 +559,7 @@ async def validate_leaf_task_with_llm(
         changes_summary=validation_context,
         validation_criteria=task.validation_criteria,
         category=task.category,
+        file_context_text=file_context_text,
     )
 
     # An LLM infrastructure failure (no candidate produced a usable result) is not a

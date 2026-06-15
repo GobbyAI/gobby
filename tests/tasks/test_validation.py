@@ -22,6 +22,7 @@ from gobby.ai.text_generation import FeatureGenerationUnavailableError
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.tasks.validation import (
+    VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
     VALIDATION_PROMPT_BUDGET_CHARS,
     TaskValidator,
     ValidationResult,
@@ -56,10 +57,13 @@ class TestValidationPromptBudget:
 
     def test_budget_helper_prioritizes_changes_over_file_context(self) -> None:
         budgeted = _budget_validation_sections("D" * 30000, "F" * 20000)
-        assert len(budgeted.changes_section) == VALIDATION_PROMPT_BUDGET_CHARS
-        assert budgeted.file_context == ""  # changes consume the whole budget
-        assert budgeted.changes_truncated_chars == 30000 - VALIDATION_PROMPT_BUDGET_CHARS
-        assert budgeted.file_context_truncated_chars == 20000
+        assert (
+            len(budgeted.changes_section)
+            == VALIDATION_PROMPT_BUDGET_CHARS - VALIDATION_FILE_CONTEXT_BUDGET_CHARS
+        )
+        assert len(budgeted.file_context) == VALIDATION_FILE_CONTEXT_BUDGET_CHARS
+        assert budgeted.changes_section.endswith("... [changes section truncated] ...\n")
+        assert budgeted.file_context.endswith("... [file context truncated] ...\n")
 
     def test_budget_helper_gives_file_context_remaining_budget(self) -> None:
         budgeted = _budget_validation_sections("D" * 5000, "F" * 20000)
@@ -83,6 +87,62 @@ class TestValidationPromptBudget:
         prompt = mock_llm.call_json_feature.call_args.args[1]
         # The whole prompt stays near the budget plus small boilerplate/criteria.
         assert len(prompt) < VALIDATION_PROMPT_BUDGET_CHARS + 2000
+
+    @pytest.mark.asyncio
+    async def test_large_raw_git_diff_is_structurally_summarized(self, config, mock_llm) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
+
+        def file_diff(path: str, token: str) -> str:
+            body = "".join(
+                f"+{token}_{index:03d}_value_with_padding_payload\n" for index in range(250)
+            )
+            return (
+                f"diff --git a/{path} b/{path}\n"
+                "index abc..def 100644\n"
+                f"--- a/{path}\n"
+                f"+++ b/{path}\n"
+                "@@ -1,1 +1,250 @@\n"
+                f"{body}"
+            )
+
+        await validator.validate_task(
+            task_id="task-raw-diff",
+            title="Big raw diff",
+            description="d",
+            changes_summary="\n".join(
+                [
+                    file_diff("src/a.ts", "a"),
+                    file_diff("src/b.ts", "b"),
+                    file_diff("src/c.ts", "c"),
+                    file_diff("src/zz-later.ts", "z"),
+                ]
+            ),
+            validation_criteria="criteria",
+        )
+
+        prompt = mock_llm.call_json_feature.call_args.args[1]
+        assert "## Diff Summary (4 files" in prompt
+        assert "src/zz-later.ts" in prompt
+        assert "... [file diff truncated] ..." in prompt
+
+    @pytest.mark.asyncio
+    async def test_file_context_survives_oversized_changes(self, config, mock_llm) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {"status": "valid", "feedback": "OK"}
+
+        await validator.validate_task(
+            task_id="task-file-context",
+            title="Big change with context",
+            description="d",
+            changes_summary="@@ diff @@\n" + ("x" * 60000),
+            validation_criteria="criteria",
+            file_context_text="=== src/index.ts ===\nREGISTERED_MCP_TOOLS_SECTION",
+        )
+
+        prompt = mock_llm.call_json_feature.call_args.args[1]
+        assert "REGISTERED_MCP_TOOLS_SECTION" in prompt
+        assert "... [changes section truncated] ..." in prompt
 
     @pytest.mark.asyncio
     async def test_prompt_size_observability_logged(self, config, mock_llm, caplog) -> None:

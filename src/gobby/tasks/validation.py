@@ -38,6 +38,7 @@ RELATED_TEST_MAX_FILES = 5
 # small enough to finish well under that cap; the change section is prioritized
 # over raw file context because the diff already shows what changed.
 VALIDATION_PROMPT_BUDGET_CHARS = 14000
+VALIDATION_FILE_CONTEXT_BUDGET_CHARS = 3500
 VALIDATION_GATES = {
     ("plan_review", "needs_review"): "plan_review",
     ("in_development", "needs_review"): "qa",
@@ -58,22 +59,51 @@ class _BudgetedSections:
     file_context_truncated_chars: int
 
 
+_CHANGES_SECTION_TRUNCATED_MARKER = "\n... [changes section truncated] ...\n"
+_FILE_CONTEXT_TRUNCATED_MARKER = "\n... [file context truncated] ...\n"
+
+
+def _truncate_with_marker(text: str, max_chars: int, marker: str) -> str:
+    if len(text) <= max_chars:
+        return text
+    if max_chars <= len(marker):
+        return marker if len(marker) <= max_chars else ""
+    cutoff = max_chars - len(marker)
+    newline_cutoff = text.rfind("\n", 0, cutoff)
+    if newline_cutoff > 0:
+        cutoff = newline_cutoff
+    return text[:cutoff].rstrip() + marker
+
+
 def _budget_validation_sections(
     changes_section: str,
     file_context: str,
     *,
     budget_chars: int = VALIDATION_PROMPT_BUDGET_CHARS,
+    reserved_file_context_chars: int = VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
 ) -> _BudgetedSections:
     """Trim the change section and file context to a single shared char budget.
 
     The change section (diff/summary plus appended verification evidence) is the
-    authoritative implementation artifact and takes priority; raw file context
-    only receives whatever budget remains. Deterministic by construction so the
-    same inputs always yield the same prompt.
+    authoritative implementation artifact. When referenced file context exists,
+    reserve a small slice for it so large diffs cannot erase task-mentioned
+    registration/config files from the prompt. Deterministic by construction so
+    the same inputs always yield the same prompt.
     """
-    changes_kept = changes_section[:budget_chars]
+    file_budget = min(reserved_file_context_chars, budget_chars) if file_context else 0
+    changes_budget = max(0, budget_chars - file_budget)
+    changes_kept = _truncate_with_marker(
+        changes_section,
+        changes_budget,
+        _CHANGES_SECTION_TRUNCATED_MARKER,
+    )
     remaining = max(0, budget_chars - len(changes_kept))
-    file_context_kept = file_context[:remaining]
+    file_context_budget = min(max(file_budget, remaining), budget_chars)
+    file_context_kept = _truncate_with_marker(
+        file_context,
+        file_context_budget,
+        _FILE_CONTEXT_TRUNCATED_MARKER,
+    )
     return _BudgetedSections(
         changes_section=changes_kept,
         file_context=file_context_kept,
@@ -686,6 +716,8 @@ class TaskValidator:
         validation_criteria: str | None = None,
         context_files: list[str] | None = None,
         category: str | None = None,
+        *,
+        file_context_text: str | None = None,
     ) -> ValidationResult:
         """
         Validate task completion.
@@ -698,6 +730,8 @@ class TaskValidator:
             validation_criteria: Specific criteria to validate against (optional)
             context_files: List of files to read for context (optional)
             category: Task domain category (e.g., 'manual', 'code', 'test')
+            file_context_text: Pre-gathered file context to include with any
+                context_files content.
 
         Returns:
             ValidationResult with status and feedback
@@ -714,9 +748,12 @@ class TaskValidator:
         logger.info(f"Validating task {task_id}: {title}")
 
         # Gather context if provided
-        file_context = ""
+        file_context_parts: list[str] = []
+        if file_context_text:
+            file_context_parts.append(file_context_text)
         if context_files:
-            file_context = await self.gather_validation_context(context_files)
+            file_context_parts.append(await self.gather_validation_context(context_files))
+        file_context = "\n\n".join(part for part in file_context_parts if part)
 
         # Build prompt
         criteria_text = (
@@ -726,7 +763,27 @@ class TaskValidator:
         )
 
         # Detect if changes_summary is a git diff
-        is_git_diff = changes_summary.startswith("Git diff") or "@@" in changes_summary
+        is_git_diff = (
+            changes_summary.startswith("Git diff")
+            or changes_summary.lstrip().startswith("diff --git")
+            or "@@" in changes_summary
+        )
+        if (
+            changes_summary.lstrip().startswith("diff --git")
+            and len(changes_summary) > VALIDATION_PROMPT_BUDGET_CHARS
+        ):
+            from gobby.tasks.commits import summarize_diff_for_validation
+
+            diff_budget = VALIDATION_PROMPT_BUDGET_CHARS
+            if file_context:
+                diff_budget -= VALIDATION_FILE_CONTEXT_BUDGET_CHARS
+            changes_summary = (
+                summarize_diff_for_validation(
+                    changes_summary,
+                    max_chars=diff_budget,
+                )
+                or ""
+            )
 
         if is_git_diff:
             changes_section = (

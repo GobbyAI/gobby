@@ -774,6 +774,46 @@ class TestSummarizeDiffForValidation:
 
         assert len(result) <= 10000
 
+    def test_multifile_diff_keeps_manifest_under_prompt_budget(self) -> None:
+        """Regression: later files survive when raw diff is 14k-30k chars."""
+
+        def file_diff(path: str, token: str) -> str:
+            body = "".join(f"+{token}_{index:03d}_connect_timeout_value\n" for index in range(180))
+            return (
+                f"diff --git a/{path} b/{path}\n"
+                "index abc..def 100644\n"
+                f"--- a/{path}\n"
+                f"+++ b/{path}\n"
+                "@@ -1,1 +1,180 @@\n"
+                f"{body}"
+            )
+
+        diff = "\n".join(
+            [
+                file_diff("src/settings/aaa-large.tsx", "aaa"),
+                file_diff("src/settings/McpToolsSection.test.tsx", "test"),
+                file_diff("src/settings/shared-field.ts", "field"),
+                file_diff("src/settings/zz-late.css", "late"),
+            ]
+        )
+        assert 14000 < len(diff) < 30000
+
+        result = summarize_diff_for_validation(
+            diff,
+            max_chars=14000,
+            priority_files=["McpToolsSection.test.tsx"],
+        )
+
+        assert result is not None
+        assert len(result) <= 14000
+        assert "src/settings/aaa-large.tsx" in result
+        assert "src/settings/McpToolsSection.test.tsx" in result
+        assert "src/settings/shared-field.ts" in result
+        assert "src/settings/zz-late.css" in result
+        assert result.rstrip().endswith("... [file diff truncated] ...")
+        before_marker = result.rsplit("... [file diff truncated] ...", 1)[0]
+        assert before_marker.endswith("\n")
+
     def test_handles_empty_diff(self) -> None:
         """Test graceful handling of empty diff."""
         result = summarize_diff_for_validation("")
