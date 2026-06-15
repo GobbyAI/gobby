@@ -139,6 +139,28 @@ class TestVectorSearch:
         assert params["candidate_limit"] > 5
         assert params["min_score"] == 0.5
 
+    async def test_vector_search_converts_cosine_distance_to_similarity(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """FalkorDB's cosine index returns a DISTANCE (0.0 == identical); vector_search
+        must convert it to similarity so `min_score` is a similarity floor and callers
+        get a higher-is-better score. Regression guard for the inverted-filter bug where
+        a query-identical entity (distance 0.0) was excluded by `score >= min_score`."""
+        client = _client(monkeypatch)
+        client.query.return_value = []
+
+        await client.vector_search(
+            query_embedding=[0.1, 0.2, 0.3],
+            limit=5,
+            min_score=0.5,
+            project_id="proj-1",
+        )
+
+        cypher, _params = client.query.call_args.args
+        assert "(1.0 - score) >= $min_score" in cypher
+        assert "(1.0 - score) AS score" in cypher
+        assert "WHERE score >= $min_score" not in cypher
+
     async def test_vector_search_filters_project_after_overfetch(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

@@ -24,6 +24,16 @@ DEFAULT_SEARCH_LIMIT = 10
 _USER_SOURCE_BOOST = 1.2
 _GRAPH_EXPANSION_ENTITY_SEED_LIMIT = 8
 _GRAPH_RELATED_EXPANSION_TIMEOUT_SECONDS = 2.0
+# Recall expander (#17104): a memory the vector index missed, surfaced by an entity it
+# mentions that matched the query, enters the similarity axis at its entity-match cosine
+# discounted by this factor. The discount reflects the indirection (entity match, not a
+# direct document match) and keeps graph-only hits conservative, so a strong real
+# semantic hit always outranks them. Both values are cosines, so the larger always wins
+# and semantic-first is preserved for every hit carrying a real similarity score.
+_GRAPH_SYNTHETIC_SIM_DISCOUNT = 0.9
+# A CO_OCCURS-traversed memory is one structural hop removed from a direct entity match,
+# so its synthetic confidence is the seed entity cosine attenuated by this factor.
+_GRAPH_TRAVERSAL_CONFIDENCE_FACTOR = 0.9
 
 
 @dataclass(frozen=True)
@@ -205,7 +215,7 @@ class SearchService:
             limit=limit * 2,
             filters=filters or None,
         )
-        graph_coro = self._search_graph_for_memories(
+        graph_coro = self._search_graph_scored(
             query_embedding=query_embedding,
             limit=limit * 2,
             min_score=graph_min_score,
@@ -233,9 +243,12 @@ class SearchService:
 
         if isinstance(graph_result, BaseException):
             logger.warning(f"Graph search failed: {graph_result}")
-            graph_ranked: list[str] = []
+            graph_scored: list[tuple[str, float]] = []
         else:
-            graph_ranked = graph_result
+            graph_scored = graph_result
+
+        graph_ranked = [memory_id for memory_id, _ in graph_scored]
+        graph_score_map = dict(graph_scored)
 
         if isinstance(keyword_result, BaseException):
             logger.debug(f"Keyword search failed: {keyword_result}")
@@ -274,6 +287,7 @@ class SearchService:
             qdrant_set=set(qdrant_ranked),
             keyword_set=set(keyword_ranked),
             graph_set=set(graph_ranked),
+            graph_score_map=graph_score_map,
             rrf_applied=rrf_applied,
             project_id=project_id,
             memory_type=memory_type,
@@ -421,6 +435,7 @@ class SearchService:
         qdrant_set: set[str],
         keyword_set: set[str],
         graph_set: set[str] | None,
+        graph_score_map: dict[str, float] | None = None,
         rrf_applied: bool,
         project_id: str | None,
         memory_type: str | None,
@@ -456,12 +471,26 @@ class SearchService:
             raw_semantic_score = qdrant_score_map.get(memory_id)
             decay_factor: float | None = None
             similarity: float | None = None
+            synthetic_similarity = False
             if raw_semantic_score is not None:
                 similarity = raw_semantic_score
                 if mem.source_type == "user":
                     similarity *= _USER_SOURCE_BOOST
                 decay_factor = temporal_decay(mem.updated_at, half_life)
                 similarity *= decay_factor
+            elif graph_score_map is not None:
+                # Recall expander (#17104): the vector index missed this memory, but an
+                # entity it mentions matched the query. Place it on the similarity axis
+                # at a discounted entity-match cosine so a confident graph hit can
+                # displace a weak semantic hit -- never a higher-similarity one, since
+                # both are cosines and the larger wins. Without this, a graph-only hit
+                # has similarity=None, sorts below every semantic hit, and is truncated;
+                # measurement showed that backfill yields zero recall lift (#17104).
+                graph_confidence = graph_score_map.get(memory_id)
+                if graph_confidence is not None:
+                    decay_factor = temporal_decay(mem.updated_at, half_life)
+                    similarity = graph_confidence * _GRAPH_SYNTHETIC_SIM_DISCOUNT * decay_factor
+                    synthetic_similarity = True
 
             if (
                 effective_min_score > 0
@@ -483,7 +512,9 @@ class SearchService:
             mem.temporal_decay_factor = decay_factor
             mem.similarity = similarity
             mem.ranking_score = ranking_score_map.get(memory_id, 0.0)
-            if rrf_applied:
+            if synthetic_similarity:
+                mem.ranking_mode = "graph_synthetic"
+            elif rrf_applied:
                 mem.ranking_mode = "rrf"
             elif raw_semantic_score is not None:
                 mem.ranking_mode = "semantic_only"
@@ -492,12 +523,14 @@ class SearchService:
 
             scored.append((mem, mem.ranking_score, similarity))
 
-        # Semantic-first ordering: similarity is the quality signal; RRF/keyword/graph
-        # lists expand recall and break ties but must never displace a high-similarity
-        # hit from the top-K. Making ranking_score primary (attempted in #17102) made the
-        # default graph_search=True path regress -- a low-RRF graph hit buried a
-        # high-similarity result. See #17105. The principled similarity-aware merge blend
-        # is tracked in #17104; until then, semantic-first holds for every path.
+        # Semantic-first ordering on the cosine axis. similarity is the quality signal:
+        # real document cosines for semantic hits, and discounted entity-match cosines
+        # for graph-only recall-expander hits (#17104). Because both are cosines, the
+        # larger always wins -- a graph-only hit can fill a slot a weak semantic hit
+        # would have taken, but can never displace a higher-similarity semantic hit.
+        # RRF (item[1]) is only a tiebreak. Making RRF rank primary (attempted in
+        # #17102) regressed the default graph_search=True path -- a low-RRF graph hit
+        # buried a high-similarity result -- and was reverted in #17105.
         scored.sort(
             key=lambda item: (
                 item[2] is not None,
@@ -508,14 +541,23 @@ class SearchService:
         )
         return [mem for mem, _, _ in scored[:limit]]
 
-    async def _search_graph_for_memories(
+    async def _search_graph_scored(
         self,
         query_embedding: list[float],
         limit: int = 10,
         min_score: float = 0.5,
         project_id: str | None = None,
-    ) -> list[str]:
-        """Search FalkorDB graph for memory IDs via entity vector similarity."""
+    ) -> list[tuple[str, float]]:
+        """Search FalkorDB graph for memory IDs, each scored by entity-match confidence.
+
+        Confidence is a cosine on the same axis as vector similarity: for a directly
+        mentioned memory it is the max cosine of the query to the entities that surfaced
+        it; for a CO_OCCURS-traversed memory it is the seed entity cosine attenuated by
+        one structural hop (``_GRAPH_TRAVERSAL_CONFIDENCE_FACTOR``). ``_build_results``
+        uses it to place graph-only hits on the similarity axis as a recall expander.
+        Ordering matches the IDs-only contract: direct hits first (in entity-match
+        order, deduplicated), then traversed hits.
+        """
         kg_service = self._require_kg_service()
         entity_results = await kg_service.search_entities_by_vector(
             query_embedding=query_embedding,
@@ -527,11 +569,14 @@ class SearchService:
         if not entity_results:
             return []
 
+        confidence: dict[str, float] = {}
         direct_memory_ids: list[str] = []
         entity_keys: list[str] = []
         seen_entity_keys: set[str] = set()
+        seed_max_score = 0.0
         for result in entity_results:
             entity_key = result.get("entity_key")
+            entity_score = float(result.get("score") or 0.0)
             if (
                 entity_key
                 and entity_key not in seen_entity_keys
@@ -539,9 +584,12 @@ class SearchService:
             ):
                 seen_entity_keys.add(entity_key)
                 entity_keys.append(entity_key)
+                seed_max_score = max(seed_max_score, entity_score)
             for mid in result.get("memory_ids", []):
                 if mid not in direct_memory_ids:
                     direct_memory_ids.append(mid)
+                if entity_score > confidence.get(mid, 0.0):
+                    confidence[mid] = entity_score
 
         traversed_memory_ids: list[str] = []
         if entity_keys:
@@ -564,14 +612,37 @@ class SearchService:
             except Exception as e:
                 logger.warning("Graph related-memory expansion failed: %s", e)
 
+        traversed_confidence = seed_max_score * _GRAPH_TRAVERSAL_CONFIDENCE_FACTOR
         seen = set(direct_memory_ids)
         merged = list(direct_memory_ids)
         for mid in traversed_memory_ids:
             if mid not in seen:
                 seen.add(mid)
                 merged.append(mid)
+            if traversed_confidence > confidence.get(mid, 0.0):
+                confidence[mid] = traversed_confidence
 
-        return merged[:limit]
+        return [(mid, confidence.get(mid, 0.0)) for mid in merged[:limit]]
+
+    async def _search_graph_for_memories(
+        self,
+        query_embedding: list[float],
+        limit: int = 10,
+        min_score: float = 0.5,
+        project_id: str | None = None,
+    ) -> list[str]:
+        """Search FalkorDB graph for memory IDs via entity vector similarity.
+
+        Thin IDs-only view over :meth:`_search_graph_scored` for callers (the RRF merge,
+        the memory facade) that only need the ranked list, not per-hit confidence.
+        """
+        scored = await self._search_graph_scored(
+            query_embedding=query_embedding,
+            limit=limit,
+            min_score=min_score,
+            project_id=project_id,
+        )
+        return [memory_id for memory_id, _ in scored]
 
     async def _keyword_ranked(
         self,

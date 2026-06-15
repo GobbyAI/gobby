@@ -109,6 +109,74 @@ def test_build_results_keeps_semantic_primary_even_when_rrf_applied() -> None:
     assert results[0].search_via == "semantic"
 
 
+def test_build_results_graph_only_hit_displaces_weak_semantic_via_synthetic_similarity() -> None:
+    # #17104 mechanism: a graph-only hit (the vector index missed it) whose mentioned
+    # entity strongly matched the query is placed on the similarity axis at a discounted
+    # entity-match cosine, so it can take a top-K slot a weak semantic hit would have had.
+    # limit=2 forces an explicit displacement decision. Measurement showed the prior
+    # backfill behavior (synthetic=None -> sorts last -> truncated) gave zero recall lift.
+    service = _service(["strong-semantic", "weak-semantic", "graph-only"])
+
+    results = service._build_results(
+        merged_ids=["strong-semantic", "weak-semantic", "graph-only"],
+        ranking_score_map={"strong-semantic": 0.01, "weak-semantic": 0.01, "graph-only": 0.5},
+        qdrant_score_map={"strong-semantic": 0.95, "weak-semantic": 0.10},
+        qdrant_set={"strong-semantic", "weak-semantic"},
+        keyword_set=set(),
+        graph_set={"graph-only"},
+        graph_score_map={"graph-only": 0.8},  # entity cosine 0.8 -> synthetic 0.8*0.9=0.72
+        rrf_applied=True,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=0.0,
+        effective_min_score=0.0,
+        limit=2,
+    )
+
+    # strong-semantic (0.95) keeps slot 1; the graph-only synthetic (0.72) outranks the
+    # weak semantic hit (0.10) for slot 2. The higher-similarity semantic hit is never
+    # displaced -- both are cosines and the larger wins.
+    assert [mem.id for mem in results] == ["strong-semantic", "graph-only"]
+    assert results[0].search_via == "semantic"
+    assert results[0].ranking_mode == "rrf"
+    assert results[1].search_via == "graph"
+    assert results[1].ranking_mode == "graph_synthetic"
+    assert results[1].similarity is not None
+    assert abs(results[1].similarity - 0.72) < 1e-9
+
+
+def test_build_results_graph_only_hit_never_outranks_higher_similarity_semantic() -> None:
+    # Invariant guard: even a maximally confident graph-only hit (entity cosine 1.0 ->
+    # synthetic 0.9) must sit below a higher-similarity semantic hit. With room for all
+    # three it slots strictly by its synthetic cosine: below the 0.95 hit, above the 0.40.
+    service = _service(["top-semantic", "low-semantic", "graph-only"])
+
+    results = service._build_results(
+        merged_ids=["graph-only", "top-semantic", "low-semantic"],
+        ranking_score_map={"graph-only": 0.9, "top-semantic": 0.01, "low-semantic": 0.01},
+        qdrant_score_map={"top-semantic": 0.95, "low-semantic": 0.40},
+        qdrant_set={"top-semantic", "low-semantic"},
+        keyword_set=set(),
+        graph_set={"graph-only"},
+        graph_score_map={"graph-only": 1.0},  # synthetic 1.0*0.9 = 0.90
+        rrf_applied=True,
+        project_id=None,
+        memory_type=None,
+        tags_all=None,
+        tags_any=None,
+        tags_none=None,
+        half_life=0.0,
+        effective_min_score=0.0,
+        limit=3,
+    )
+
+    assert [mem.id for mem in results] == ["top-semantic", "graph-only", "low-semantic"]
+    assert results[1].ranking_mode == "graph_synthetic"
+
+
 def test_build_results_preserves_semantic_primary_order_without_rrf() -> None:
     service = _service(["low-semantic", "high-semantic", "keyword"])
 
@@ -180,10 +248,10 @@ async def test_graph_path_emits_debug_snapshot(monkeypatch: Any) -> None:
         falkordb_graph_search=True,
     )
 
-    async def graph_search(**kwargs: Any) -> list[str]:
-        return ["graph"]
+    async def graph_search(**kwargs: Any) -> list[tuple[str, float]]:
+        return [("graph", 0.05)]
 
-    monkeypatch.setattr(service, "_search_graph_for_memories", graph_search)
+    monkeypatch.setattr(service, "_search_graph_scored", graph_search)
     results = await service._search_with_graph(
         query="query",
         query_embedding=[1.0, 0.0],

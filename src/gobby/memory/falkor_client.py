@@ -634,16 +634,14 @@ class FalkorClient:
         )
         if "weight" in props:
             cypher = (
-                match_clause
-                + "ON CREATE SET r += $props, r.count = 1, r.updated_at = timestamp() "
+                match_clause + "ON CREATE SET r += $props, r.count = 1, r.updated_at = timestamp() "
                 "ON MATCH SET r += $props, r.count = coalesce(r.count, 0) + 1, "
                 "r.updated_at = timestamp() "
                 "RETURN type(r) AS rel_type"
             )
         else:
             cypher = (
-                match_clause
-                + "ON CREATE SET r += $props "
+                match_clause + "ON CREATE SET r += $props "
                 "ON MATCH SET r += $props "
                 "RETURN type(r) AS rel_type"
             )
@@ -704,14 +702,20 @@ class FalkorClient:
             limit * _VECTOR_SEARCH_PROJECT_OVERFETCH_FACTOR,
             _VECTOR_SEARCH_PROJECT_OVERFETCH_LIMIT,
         )
+        # FalkorDB's cosine vector index returns a DISTANCE in `score` (0.0 == identical,
+        # higher == less similar; verified on graph module v41807). Convert to cosine
+        # similarity (1.0 - distance) so callers get a higher-is-better score and
+        # `min_score` acts as a similarity floor. The previous `WHERE score >= min_score`
+        # filtered on raw distance, which kept the LEAST similar entities and dropped the
+        # most similar (a query-identical entity scored 0.0 and was excluded).
         cypher = (
             "CALL db.idx.vector.queryNodes('_Entity', 'embedding', "
             "$candidate_limit, vecf32($embedding)) "
             "YIELD node, score "
-            "WHERE score >= $min_score "
+            "WHERE (1.0 - score) >= $min_score "
             "RETURN node.entity_key AS entity_key, node.name AS name, "
             "node.entity_type AS entity_type, node.project_id AS project_id, "
-            "labels(node) AS labels, score, "
+            "labels(node) AS labels, (1.0 - score) AS score, "
             "properties(node) AS props"
         )
         rows = await self.query(
