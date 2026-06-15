@@ -25,8 +25,10 @@ A plan is one Markdown file. The current authoring shape is narrative first:
 - One `### N.M {Task Title} [category: X]` deliverable per atomic unit of work.
 - Optional `kind: verification` sections for end-to-end checks.
 - Optional `kind: deferred` sections for work deliberately moved out of scope.
-- `## Plan Changelog` as `kind: framing` for adversarial revision rounds when
-  the planner updates an existing draft after review findings.
+- `## V1 Plan Changelog` as `kind: framing` for adversarial revision rounds when
+  the planner updates an existing draft after review findings. The `V1` section
+  id is required by the canonical heading regex; a bare `## Plan Changelog` is
+  dropped.
 
 Every section heading from `##` through `######` needs a first non-blank
 front-matter line:

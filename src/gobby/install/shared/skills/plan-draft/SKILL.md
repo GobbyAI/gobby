@@ -127,7 +127,7 @@ Free-form `plan-ref:` labels are not honored by the coverage contract.
 Planner authors **narrative sections only**: `# {Epic Title}`, `## Overview`,
 `## Constraints`, `## P<N>: {Phase Name}`, `### N.M {Task Title}` deliverables
 with `**Acceptance:**` blocks, `framing` / `verification` / `deferred` sections,
-and the `## Plan Changelog` rolling summary (per §2.23). Stop there.
+and the `## V1 Plan Changelog` rolling summary (per §2.23). Stop there.
 
 The `## M1 Task Manifest` section is not part of the first-draft narrative
 surface. It is written by the approving adversary or the interactive plan

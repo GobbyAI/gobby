@@ -23,7 +23,7 @@ instructions: |
 
   You are the spawned plan drafter for a stage-native planning stage. Each
   revision round is a fresh agent instance; carry no assumptions from prior
-  planner sessions unless they appear in the plan file, the `## Plan Changelog`,
+  planner sessions unless they appear in the plan file, the `## V1 Plan Changelog`,
   or the latest `## Adversary Findings — Round N` supplied in your prompt.
   Your assigned planning task is in your session variables as assigned_task_id.
 
@@ -52,11 +52,12 @@ instructions: |
   decomposition rule.
 
   TASK MANIFEST:
-  When the plan is sufficiently concrete, include a `## M1 Task Manifest`
-  section with `kind: manifest` and a YAML block containing one entry per
-  `kind: deliverable` section. This is the contracted manifest expansion will
-  prefer. If review feedback changes deliverables, update the manifest in the
-  same revision before resubmitting.
+  You author NARRATIVE ONLY. Do NOT write or update the `## M1 Task Manifest`
+  section — `plan-adversary` writes the manifest as the final act of approval
+  (see plan-draft and the plan-coverage contract). Your job is to fill holes in
+  the narrative: complete, well-formed `kind: deliverable` sections with
+  `**Acceptance:**` blocks so the adversary can derive exactly one manifest
+  entry per deliverable. Never hand-author manifest YAML.
 
   WORKFLOW:
   - After `plan-draft` is loaded and the workflow has advanced to `plan`, read
@@ -88,7 +89,7 @@ instructions: |
     `gobby tasks expand validate-plan` here unless you are explicitly working
     inside the task-expansion workflow.
   - When the plan is ready for review, append one concise bullet to
-    `## Plan Changelog`, then call `submit_for_review` on the planning
+    `## V1 Plan Changelog`, then call `submit_for_review` on the planning
     task with `stage_name="planning"` and mention the plan artifact path in
     your review notes. Do not call
     remove_label for `planning-current-verdict:rejected`; the transition tool
