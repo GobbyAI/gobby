@@ -7,8 +7,6 @@ rewrite_input, load_skill.
 
 import json
 import logging
-import time
-from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
@@ -17,7 +15,7 @@ if TYPE_CHECKING:
 from opentelemetry.trace import Status, StatusCode
 from pydantic import ValidationError
 
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.config_store import ConfigStore
 from gobby.storage.hub.protocol import HubDatabase
@@ -31,153 +29,53 @@ from gobby.telemetry.tracing import create_span
 from gobby.workflows.definitions import (
     AgentDefinitionBody,
     RuleDefinitionBody,
-    RuleEffect,
     RuleTriggerEvent,
 )
 from gobby.workflows.engine.blocked_tool_recovery import (
-    CONSECUTIVE_TOOL_BLOCK_RULE,
-    block_reason_signature,
-    block_source_for_rule,
     clear_blocked_tool_recovery_state,
-    ensure_block_reason,
-    extract_rule_name,
-    format_aggregated_block_reason,
     format_consecutive_tool_block_reason,
-    log_block,
-    remember_blocked_tool_recovery_state,
 )
 from gobby.workflows.engine.effects import EffectsMixin
 from gobby.workflows.engine.enforcement import EnforcementMixin
+from gobby.workflows.engine.evaluation import EvaluationContext, EvaluationMixin
+from gobby.workflows.engine.event_utils import (
+    _COMPACT_TURN_END_BYPASS_PENDING,
+    _block_tool_name,
+    _clear_edit_write_state,
+    _event_value,
+    _get_tool_identity,
+    _is_manual_compact_event,
+    _is_pipeline_direct_mcp_event,
+    _is_turn_end_event,
+    _is_turn_start_event,
+    _is_write_like_event_data,
+    _project_id_from_event,
+    _resolve_rule_events,
+)
 from gobby.workflows.engine.templating import TemplatingMixin
 from gobby.workflows.selectors import rule_matches_agent
 from gobby.workflows.state_manager import WorkflowInstanceManager
 
 logger = logging.getLogger(__name__)
 
-_TURN_START_EVENT_VALUES = frozenset(
-    {
-        HookEventType.BEFORE_AGENT.value,
-    }
-)
-
-_TURN_END_EVENT_VALUES = frozenset(
-    {
-        HookEventType.AFTER_AGENT.value,
-        HookEventType.STOP.value,
-        HookEventType.STOP_FAILURE.value,
-    }
-)
-_COMPACT_TURN_END_BYPASS_PENDING = "_compact_turn_end_bypass_pending"
-_MANUAL_COMPACT_TRIGGERS = frozenset({"manual", "user", "clear", "compact", "compress"})
-
-
-def _get_tool_identity(event_data: dict[str, Any]) -> str:
-    """Return effective tool identity for consecutive-block tracking.
-
-    For MCP calls (mcp__gobby__call_tool / call_tool), returns 'server:tool'
-    so different MCP tools are tracked independently. This prevents one failing
-    MCP tool from blocking all other MCP tools.
-    """
-    tool_name = event_data.get("tool_name", "")
-    if tool_name in ("call_tool", "mcp__gobby__call_tool"):
-        tool_input = event_data.get("tool_input") or {}
-        if isinstance(tool_input, dict):
-            server = tool_input.get("server_name", "")
-            tool = tool_input.get("tool_name", "")
-            if server and tool:
-                return f"{server}:{tool}"
-    return str(tool_name)
+__all__ = [
+    "RuleEngine",
+    "_COMPACT_TURN_END_BYPASS_PENDING",
+    "_block_tool_name",
+    "_clear_edit_write_state",
+    "_event_value",
+    "_get_tool_identity",
+    "_is_manual_compact_event",
+    "_is_pipeline_direct_mcp_event",
+    "_is_turn_end_event",
+    "_is_turn_start_event",
+    "_is_write_like_event_data",
+    "_project_id_from_event",
+    "_resolve_rule_events",
+]
 
 
-def _is_pipeline_direct_mcp_event(event: HookEvent) -> bool:
-    """Return True for direct MCP calls emitted by pipeline sessions."""
-    if event.source != SessionSource.PIPELINE:
-        return False
-
-    tool_name = event.data.get("tool_name", "")
-    return tool_name in ("call_tool", "mcp__gobby__call_tool")
-
-
-def _event_value(event_type: HookEventType | str) -> str:
-    if isinstance(event_type, HookEventType):
-        return event_type.value
-    return str(event_type)
-
-
-def _project_id_from_event(event: HookEvent) -> str | None:
-    """Return project_id from the normalized event or its data payload."""
-    if event.project_id:
-        return event.project_id
-    project_id = event.data.get("project_id") if isinstance(event.data, dict) else None
-    return project_id if isinstance(project_id, str) and project_id else None
-
-
-def _is_manual_compact_event(event: HookEvent) -> bool:
-    if _event_value(event.event_type) != HookEventType.PRE_COMPACT.value:
-        return False
-
-    data = event.data if isinstance(event.data, dict) else {}
-    trigger = data.get("trigger")
-    trigger_value = getattr(trigger, "value", trigger)
-    if isinstance(trigger_value, str) and trigger_value.lower() in _MANUAL_COMPACT_TRIGGERS:
-        return True
-
-    return "custom_instructions" in data and data.get("custom_instructions") is not None
-
-
-def _is_turn_start_event(event_type: HookEventType | str) -> bool:
-    return _event_value(event_type) in _TURN_START_EVENT_VALUES
-
-
-def _is_turn_end_event(event_type: HookEventType | str) -> bool:
-    return _event_value(event_type) in _TURN_END_EVENT_VALUES
-
-
-def _resolve_rule_events(event_type: HookEventType | str) -> list[RuleTriggerEvent]:
-    """Resolve an incoming hook event into rule trigger events."""
-    resolved: list[RuleTriggerEvent] = []
-    raw_value = _event_value(event_type)
-
-    if _is_turn_start_event(raw_value):
-        resolved.append(RuleTriggerEvent.TURN_START)
-
-    if _is_turn_end_event(raw_value):
-        resolved.append(RuleTriggerEvent.TURN_END)
-
-    try:
-        resolved.append(RuleTriggerEvent(raw_value))
-    except ValueError:
-        pass
-
-    deduped: list[RuleTriggerEvent] = []
-    seen: set[RuleTriggerEvent] = set()
-    for trigger in resolved:
-        if trigger not in seen:
-            deduped.append(trigger)
-            seen.add(trigger)
-    return deduped
-
-
-def _clear_edit_write_state(variables: dict[str, Any]) -> None:
-    """Clear edit/write pending state and stop-block counter."""
-    variables["edit_write_pending"] = False
-    variables["edit_write_stop_blocks"] = 0
-
-
-def _is_write_like_event_data(event_data: dict[str, Any]) -> bool:
-    """Return True when normalized event data represents a file mutation."""
-    return bool(event_data.get("canonical_repo_mutation")) or (
-        event_data.get("canonical_tool_kind") == "write"
-    )
-
-
-def _block_tool_name(event: HookEvent) -> str:
-    """Return tool identity used in structured block logs."""
-    tool_name = _get_tool_identity(event.data)
-    return tool_name or "-"
-
-
-class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
+class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixin):
     """Single-pass rule evaluation engine.
 
     Loads rules from workflow_definitions (workflow_type='rule'),
@@ -230,76 +128,6 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
             attributes={"event_type": str(event.event_type), "session_id": session_id},
         ) as span:
             try:
-
-                def finalize_response(
-                    response: HookResponse,
-                    *,
-                    source: str | None = None,
-                    rule_name: str | None = None,
-                    fallback_reason: str | None = None,
-                    warn_detail: str = "block response omitted reason",
-                ) -> HookResponse:
-                    """Normalize block responses, log them, and attach tracing fields."""
-                    if response.decision == "block":
-                        resolved_rule_name = (
-                            rule_name or extract_rule_name(response.reason) or "rule-engine-block"
-                        )
-                        resolved_source = source or block_source_for_rule(resolved_rule_name)
-                        resolved_fallback = fallback_reason or (
-                            f"Rule enforced by Gobby: [{resolved_rule_name}]\n"
-                            "Gobby blocked this event without providing a reason. "
-                            "This is a bug."
-                        )
-                        blocked_tool_name = _get_tool_identity(event.data)
-                        response.reason = ensure_block_reason(
-                            session_id=session_id,
-                            event_type=event.event_type,
-                            tool_name=blocked_tool_name or "-",
-                            source=resolved_source,
-                            rule_name=resolved_rule_name,
-                            reason=response.reason,
-                            fallback_reason=resolved_fallback,
-                            warn_detail=warn_detail,
-                        )
-                        log_block(
-                            session_id=session_id,
-                            event_type=event.event_type,
-                            tool_name=blocked_tool_name,
-                            source=resolved_source,
-                            rule_name=resolved_rule_name,
-                            reason=response.reason,
-                        )
-                        if is_before_tool and resolved_rule_name != CONSECUTIVE_TOOL_BLOCK_RULE:
-                            remember_blocked_tool_recovery_state(
-                                variables,
-                                tool_name=blocked_tool_name,
-                                rule_name=resolved_rule_name,
-                                reason=response.reason,
-                            )
-                        # Verbose-once: collapse repeat identical blocks within a turn.
-                        # Dynamic reasons from the same rule still render in full.
-                        # Cleared on TURN_START.
-                        # Stored as list[str] because session variables are JSON-persisted.
-                        shown = variables.get("_block_reasons_shown")
-                        if not isinstance(shown, list):
-                            shown = []
-                            variables["_block_reasons_shown"] = shown
-                        block_signature = block_reason_signature(
-                            resolved_rule_name, response.reason
-                        )
-                        if block_signature in shown:
-                            response.reason = (
-                                f"Rule enforced by Gobby: [{resolved_rule_name}] "
-                                "(full reason shown earlier this turn — scroll up)."
-                            )
-                        else:
-                            shown.append(block_signature)
-                    if span.is_recording():
-                        span.set_attribute("final_decision", response.decision)
-                        if response.reason:
-                            span.set_attribute("block_reason", response.reason)
-                    return response
-
                 if isinstance(event.data, dict):
                     normalize_tool_fields(event.data)
 
@@ -336,6 +164,14 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 # Collect mcp_call effects from hardcoded rules and DB rules.
                 # Initialized early so hardcoded turn-start rules can append.
                 mcp_calls: list[dict[str, Any]] = []
+                evaluation = EvaluationContext(
+                    event=event,
+                    session_id=session_id,
+                    variables=variables,
+                    eval_context=eval_context,
+                    is_before_tool=is_before_tool,
+                    mcp_calls=mcp_calls,
+                )
 
                 # Auto-track consecutive retries after a blocked BEFORE_TOOL.
                 # _last_blocked_tool is only set by pre-execution gate/enforcement blocks.
@@ -364,8 +200,10 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                                         variables=variables,
                                     ),
                                 )
-                                return finalize_response(
+                                return self._finalize_block_response(
                                     resp,
+                                    evaluation,
+                                    span,
                                     source="rule",
                                     rule_name="consecutive-tool-block",
                                 )
@@ -440,8 +278,10 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         variables["_last_blocked_tool"] = _get_tool_identity(event.data)
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
-                        return finalize_response(
+                        return self._finalize_block_response(
                             agent_block,
+                            evaluation,
+                            span,
                             source="step-enforcement",
                             rule_name="agent-tool-enforcement",
                             fallback_reason=(
@@ -460,8 +300,10 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                         # Blocked edit/write never executed — nothing to recover
                         if _is_write_like_event_data(event.data):
                             _clear_edit_write_state(variables)
-                        return finalize_response(
+                        return self._finalize_block_response(
                             step_block,
+                            evaluation,
+                            span,
                             source="step-enforcement",
                             rule_name="step-tool-enforcement",
                             fallback_reason=(
@@ -478,6 +320,8 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                     _step_transition_msg = await self._process_step_after_tool(
                         event, session_id, variables
                     )
+                    if _step_transition_msg:
+                        evaluation.context_parts.append(_step_transition_msg)
 
                 # Deferred overrides — these used to early-return, but that skipped rule
                 # evaluation entirely, preventing mcp_call effects (like digest-on-response)
@@ -522,292 +366,37 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                 if not rules:
                     # Auto-manage tool_block_pending on after_tool execution results.
                     if is_after_tool:
-                        is_failure = event.metadata.get("is_failure", False) or event.data.get(
-                            "is_error", False
-                        )
-                        if is_failure:
-                            variables["tool_block_pending"] = True
-                            self._check_catastrophic_failure(event, variables)
-                        else:
-                            # Snapshot before clearing — if a tool just failed,
-                            # a parallel non-edit success shouldn't clear edit state.
-                            had_pending_failure = variables.get("tool_block_pending", False)
-
-                            # Clear tool_block_pending on successful tool completion
-                            variables["tool_block_pending"] = False
-                            clear_blocked_tool_recovery_state(variables)
-                            variables["consecutive_tool_blocks"] = 0
-
-                            # Clear edit_write_pending when the successful tool is an
-                            # edit/write, OR when no failure is pending (stale flag).
-                            # Don't clear on non-edit success during a parallel failure
-                            # — the edit wasn't recovered yet.
-                            if variables.get("edit_write_pending"):
-                                if _is_write_like_event_data(event.data) or not had_pending_failure:
-                                    _clear_edit_write_state(variables)
+                        self._manage_after_tool_recovery_state(event, variables)
                     # Honour hardcoded override decisions (e.g. tool_block_pending stop gate)
                     # even when no declarative rules are installed for this event.
-                    _no_rules_ctx = _step_transition_msg or None
-                    meta = {"mcp_calls": mcp_calls} if mcp_calls else {}
-                    if override_decision == "block":
-                        resp = HookResponse(
-                            decision="block",
-                            reason=override_reason or "",
-                            context=_no_rules_ctx,
-                            metadata=meta,
-                        )
-                    elif override_decision == "allow":
-                        resp = HookResponse(decision="allow", context=_no_rules_ctx, metadata=meta)
-                    else:
-                        resp = HookResponse(decision="allow", context=_no_rules_ctx, metadata=meta)
-
-                    return finalize_response(resp)
+                    resp = self._assemble_response(
+                        evaluation,
+                        override_decision=override_decision,
+                        override_reason=override_reason,
+                        block_gates=[],
+                        include_rule_outputs=False,
+                    )
+                    return self._finalize_block_response(resp, evaluation, span)
 
                 # Auto-manage tool_block_pending on after_tool before rule eval.
                 if is_after_tool:
-                    is_failure = event.metadata.get("is_failure", False) or event.data.get(
-                        "is_error", False
-                    )
-                    if is_failure:
-                        variables["tool_block_pending"] = True
-                        self._check_catastrophic_failure(event, variables)
-                    else:
-                        # Snapshot before clearing — if a tool just failed,
-                        # a parallel non-edit success shouldn't clear edit state.
-                        had_pending_failure = variables.get("tool_block_pending", False)
-
-                        # Clear tool_block_pending on successful tool completion
-                        variables["tool_block_pending"] = False
-                        clear_blocked_tool_recovery_state(variables)
-                        variables["consecutive_tool_blocks"] = 0
-
-                        # Clear edit_write_pending when the successful tool is an
-                        # edit/write, OR when no failure is pending (stale flag).
-                        # Don't clear on non-edit success during a parallel failure
-                        # — the edit wasn't recovered yet.
-                        if variables.get("edit_write_pending"):
-                            if _is_write_like_event_data(event.data) or not had_pending_failure:
-                                _clear_edit_write_state(variables)
+                    self._manage_after_tool_recovery_state(event, variables)
 
                 # 5. Evaluate rules in priority order
-                context_parts: list[str] = []
-                if _step_transition_msg:
-                    context_parts.append(_step_transition_msg)
-                block_reason: str | None = None
-                block_gates: list[tuple[str, str]] = []
-
-                def render_rule_block_reason(
-                    row: WorkflowDefinitionRow,
-                    effect: RuleEffect,
-                    ctx: dict[str, Any],
-                    allowed_funcs: dict[str, Callable[..., Any]],
-                ) -> str:
-                    reason = ensure_block_reason(
-                        session_id=session_id,
-                        event_type=event.event_type,
-                        tool_name=_block_tool_name(event),
-                        source="rule",
-                        rule_name=row.name,
-                        reason=effect.reason,
-                        fallback_reason=(
-                            "Rule block effect omitted a reason. Update the rule "
-                            "definition to explain why the event was blocked."
-                        ),
-                        warn_detail="rule block effect omitted a reason",
-                    )
-                    return self._render_template(reason, ctx, allowed_funcs)
-
-                for _row, body in rules:
-                    # Pre-filter: skip rule if tools field doesn't match current tool
-                    if body.tools:
-                        tool_name = event.data.get("tool_name", "")
-                        if tool_name not in body.tools:
-                            continue
-
-                    # Build fresh eval context with current variables
-                    ctx = self._build_eval_context(event, variables, eval_context)
-
-                    # Build allowed_funcs once per iteration — shared by condition and templates
-                    allowed_funcs = self._build_allowed_funcs(ctx)
-
-                    # Check rule-level `when` condition
-                    if body.when:
-                        # Use first effect type for fail-open/closed heuristic
-                        first_type = (
-                            body.resolved_effects[0].type if body.resolved_effects else "block"
-                        )
-                        if not self._evaluate_condition(body.when, ctx, first_type, allowed_funcs):
-                            continue
-
-                    if block_gates:
-                        for effect in body.resolved_effects:
-                            if effect.type != "block" or not self._effect_matches_event(
-                                effect, event
-                            ):
-                                continue
-                            if effect.when and not self._evaluate_condition(
-                                effect.when, ctx, effect.type, allowed_funcs
-                            ):
-                                continue
-                            block_gates.append(
-                                (
-                                    _row.name,
-                                    render_rule_block_reason(_row, effect, ctx, allowed_funcs),
-                                )
-                            )
-                            break
-                        continue
-
-                    # Process effects: non-block effects first, then block (if any)
-                    effects = body.resolved_effects
-                    deferred_block: RuleEffect | None = None
-                    rule_start = time.perf_counter()
-                    rule_blocked = False
-
-                    for effect in effects:
-                        if not self._effect_matches_event(effect, event):
-                            continue
-
-                        # Check per-effect `when` condition
-                        if effect.when:
-                            if not self._evaluate_condition(
-                                effect.when, ctx, effect.type, allowed_funcs
-                            ):
-                                continue
-
-                        if effect.type == "block":
-                            # Defer block to after all sibling non-block effects
-                            deferred_block = effect
-                            continue
-
-                        # Apply non-block effects immediately
-                        should_continue = await self._apply_effect(
-                            effect,
-                            _row,
-                            variables,
-                            ctx,
-                            allowed_funcs,
-                            context_parts,
-                            mcp_calls,
-                        )
-                        if not should_continue:
-                            break  # Inline dispatch failed — skip remaining effects
-
-                    # Now apply deferred block (if any)
-                    if deferred_block is not None:
-                        if self._effect_matches_event(deferred_block, event):
-                            rule_blocked = True
-                            rendered_block_reason = render_rule_block_reason(
-                                _row, deferred_block, ctx, allowed_funcs
-                            )
-                            block_reason = (
-                                f"Rule enforced by Gobby: [{_row.name}]\n{rendered_block_reason}"
-                            )
-                            block_gates.append((_row.name, rendered_block_reason))
-                            # Track the blocked tool so repeated retries can escalate,
-                            # but do not mark this as a tool execution failure.
-                            if is_before_tool:
-                                variables["_last_blocked_tool"] = _get_tool_identity(event.data)
-                                # Blocked edit/write never executed — nothing to recover
-                                if _is_write_like_event_data(event.data):
-                                    _clear_edit_write_state(variables)
-
-                    # Record rule evaluation metric
-                    if self._event_store:
-                        rule_latency = (time.perf_counter() - rule_start) * 1000
-                        try:
-                            self._event_store.record_event(
-                                event_type="rule_eval",
-                                name=_row.name,
-                                session_id=session_id,
-                                success=not rule_blocked,
-                                result="block" if rule_blocked else "allow",
-                                latency_ms=rule_latency,
-                            )
-                        except Exception as e:
-                            logger.debug(f"Metrics recording failed: {e}")
-
-                    if rule_blocked:
-                        # First block runs normal effects; later aggregation is read-only.
-                        if not aggregate_blocks:
-                            break
+                block_gates = await self._run_rule_loop(
+                    rules,
+                    evaluation,
+                    aggregate_blocks=aggregate_blocks,
+                )
 
                 # 6. Build response — overrides take precedence over rule-evaluated decisions,
                 # but the rule loop always runs so mcp_calls are always collected.
-                if len(block_gates) > 1:
-                    block_reason = format_aggregated_block_reason(block_gates)
-                ctx_str = "\n\n".join(context_parts) if context_parts else None
-                meta = {"mcp_calls": mcp_calls} if mcp_calls else {}
-
-                # Propagate rewrite_input from variables to response
-                rewrite_meta = variables.pop("_rewrite_input", None)
-                modified_input: dict[str, Any] | None = None
-                auto_approve = False
-                if rewrite_meta and isinstance(rewrite_meta, dict):
-                    modified_input = rewrite_meta.get("input_updates")
-                    auto_approve = rewrite_meta.get("auto_approve", False)
-
-                permission_meta = variables.pop("_permission_response", None)
-                permission_decision: str | None = None
-                updated_permissions: list[dict[str, Any]] | None = None
-                if permission_meta and isinstance(permission_meta, dict):
-                    if permission_meta.get("input_updates") is not None:
-                        modified_input = permission_meta.get("input_updates")
-                    permission_decision = permission_meta.get("permission_decision")
-                    updated_permissions = permission_meta.get("updated_permissions")
-
-                watch_paths = variables.pop("_watch_paths", None)
-                worktree_path = variables.pop("_worktree_path", None)
-                retry = bool(variables.pop("_retry", False))
-                elicitation_meta = variables.pop("_elicitation", None)
-                elicitation_action: str | None = None
-                elicitation_content: dict[str, Any] | None = None
-                elicitation_error: str | None = None
-                if elicitation_meta and isinstance(elicitation_meta, dict):
-                    elicitation_action = elicitation_meta.get("action")
-                    elicitation_content = elicitation_meta.get("content")
-                    elicitation_error = elicitation_meta.get("error")
-
-                response_kwargs = {
-                    "metadata": meta,
-                    "modified_input": modified_input,
-                    "auto_approve": auto_approve,
-                    "permission_decision": permission_decision,
-                    "updated_permissions": updated_permissions,
-                    "retry": retry,
-                    "watch_paths": watch_paths,
-                    "worktree_path": worktree_path,
-                    "elicitation_action": elicitation_action,
-                    "elicitation_content": elicitation_content,
-                    "elicitation_error": elicitation_error,
-                }
-
-                if override_decision == "block":
-                    resp = HookResponse(
-                        decision="block",
-                        reason=override_reason or "",
-                        context=ctx_str,
-                        **response_kwargs,
-                    )
-                elif override_decision == "allow":
-                    resp = HookResponse(
-                        decision="allow",
-                        context=ctx_str,
-                        **response_kwargs,
-                    )
-                elif block_reason:
-                    resp = HookResponse(
-                        decision="block",
-                        reason=block_reason,
-                        context=ctx_str,
-                        **response_kwargs,
-                    )
-                else:
-                    resp = HookResponse(
-                        decision="allow",
-                        context=ctx_str,
-                        **response_kwargs,
-                    )
+                resp = self._assemble_response(
+                    evaluation,
+                    override_decision=override_decision,
+                    override_reason=override_reason,
+                    block_gates=block_gates,
+                )
 
                 if span.is_recording():
                     span.set_attribute(
@@ -819,7 +408,7 @@ class RuleEngine(EffectsMixin, TemplatingMixin, EnforcementMixin):
                             "rules.mcp_calls",
                             [f"{c.get('server')}/{c.get('tool')}" for c in mcp_calls],
                         )
-                return finalize_response(resp)
+                return self._finalize_block_response(resp, evaluation, span)
             except Exception as e:
                 if span.is_recording():
                     span.record_exception(e)
