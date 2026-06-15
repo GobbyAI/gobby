@@ -432,7 +432,9 @@ class TestRenameTmuxWindow:
         session.ref = "#99"
 
         assert _resolve_window_title(session, {}, "#99: My Title") == "#99: My Title"
-        assert _resolve_window_title(session, {}, "  #99: My Title") == "  #99: My Title"
+        assert _resolve_window_title(session, {}, "  #99: My Title") == "#99: My Title"
+        assert _resolve_window_title(session, {}, "#99 codex") == "#99: codex"
+        assert _resolve_window_title(session, {}, "#99: #99 codex") == "#99: codex"
 
     @pytest.mark.asyncio
     async def test_unresolved_title_falls_back_before_prefixing(self) -> None:
@@ -667,6 +669,27 @@ class TestEnforceWindowNameIfUnmanaged:
         assert rename_calls == [("%42", "#99: claude")]
 
     @pytest.mark.asyncio
+    async def test_repairs_managed_window_with_duplicated_provisional_ref(self) -> None:
+        from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
+
+        _EnforceTmuxManager.instances = []
+        _EnforceTmuxManager.auto_rename_return = False
+        _EnforceTmuxManager.window_name_return = "#99: #99 codex"
+        session = MagicMock()
+        session.terminal_context = {"tmux_pane": "%42"}
+        session.agent_depth = 0
+        session.ref = "#99"
+        session.title = "#99 codex"
+        session.source = "codex"
+
+        with patch("gobby.sessions.tmux_context.TmuxSessionManager", _EnforceTmuxManager):
+            acted = await enforce_window_name_if_unmanaged(session)
+
+        assert acted is True
+        rename_calls = [c for m in _EnforceTmuxManager.instances for c in m.rename_calls]
+        assert rename_calls == [("%42", "#99: codex")]
+
+    @pytest.mark.asyncio
     async def test_skips_when_window_unreadable(self) -> None:
         """A vanished window (automatic-rename None) is not renamed."""
         from gobby.workflows.summary_actions import enforce_window_name_if_unmanaged
@@ -839,6 +862,34 @@ class TestRepairMissingSessionTitle:
         manager.update_title.assert_called_once_with(
             "sess-1",
             "Fix the Vite HMR websocket subprotocol bug",
+            title_source="heuristic",
+        )
+
+    @pytest.mark.asyncio
+    async def test_replaces_provisional_title_from_transcript(self, tmp_path) -> None:
+        from gobby.workflows.summary_actions import repair_missing_session_title
+
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(transcript, opening="Fix duplicated tmux title refs")
+
+        session = MagicMock()
+        session.id = "sess-1"
+        session.ref = "#42"
+        session.source = "claude"
+        session.title = "#42 claude"
+        session.title_source = "provisional"
+        session.turn_count = 1
+        session.transcript_path = str(transcript)
+
+        manager = MagicMock()
+        manager.update_title.return_value = session
+
+        result = await repair_missing_session_title(manager, session)
+
+        assert result == "Fix duplicated tmux title refs"
+        manager.update_title.assert_called_once_with(
+            "sess-1",
+            "Fix duplicated tmux title refs",
             title_source="heuristic",
         )
 

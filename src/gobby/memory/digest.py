@@ -74,7 +74,7 @@ async def _provider_cancelled_fallback(
     session = session_manager.get(session_id)
     if session is None:
         return result
-    if str(getattr(session, "title", "") or "").strip():
+    if not _can_replace_with_heuristic_title(session):
         return result
 
     title = await heuristic_title_from_transcript(
@@ -356,6 +356,15 @@ def _should_update_digest_title(session: SessionTitlePolicy) -> bool:
     return title_source in {"heuristic", "llm", "provisional"} or not title_source
 
 
+def _can_replace_with_heuristic_title(session: Any) -> bool:
+    """Return whether a prompt/transcript heuristic may set this session title."""
+    existing_title = str(getattr(session, "title", "") or "").strip()
+    title_source = str(getattr(session, "title_source", "") or "").strip().lower()
+    if title_source == "manual":
+        return False
+    return not existing_title or title_source == "provisional"
+
+
 async def bootstrap_session_title(
     session_manager: Any,
     session_id: str,
@@ -369,8 +378,7 @@ async def bootstrap_session_title(
     if session is None:
         return None
 
-    existing_title = str(getattr(session, "title", "") or "").strip()
-    if existing_title:
+    if not _can_replace_with_heuristic_title(session):
         return None
 
     title = build_heuristic_title(prompt_text)

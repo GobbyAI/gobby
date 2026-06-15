@@ -316,6 +316,28 @@ class TestBootstrapSessionTitle:
         )
 
     @pytest.mark.asyncio
+    async def test_replaces_provisional_title_from_prompt(self) -> None:
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = "#123 codex"
+        session.title_source = "provisional"
+        session_manager.get.return_value = session
+        session_manager.update_title.return_value = session
+
+        title = await bootstrap_session_title(
+            session_manager,
+            "session-123",
+            "Please fix daemon tmux window titles",
+        )
+
+        assert title == "Fix daemon tmux window titles"
+        session_manager.update_title.assert_called_once_with(
+            "session-123",
+            "Fix daemon tmux window titles",
+            title_source="heuristic",
+        )
+
+    @pytest.mark.asyncio
     async def test_skips_when_title_already_exists(self) -> None:
         session_manager = MagicMock()
         session = MagicMock()

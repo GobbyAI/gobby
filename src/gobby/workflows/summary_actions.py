@@ -363,6 +363,16 @@ def _contains_unresolved_session_ref(value: Any) -> bool:
     return isinstance(value, str) and _UNRESOLVED_SESSION_REF_RE.search(value.lower()) is not None
 
 
+def _strip_window_ref_prefix(title: str, ref: str | None) -> str:
+    title = title.strip()
+    if not ref:
+        return title
+    if title == ref:
+        return ""
+    prefix_re = re.compile(rf"^(?:{re.escape(ref)}(?::\s*|\s+))+")
+    return prefix_re.sub("", title).strip()
+
+
 def _session_ref_for_window_title(session: Any) -> str | None:
     seq_num = getattr(session, "seq_num", None)
     if isinstance(seq_num, int) and seq_num > 0:
@@ -382,11 +392,17 @@ def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title:
 
     Prepends the session ref (e.g. ``#3605``) so the window reads ``#N: title``.
     """
+    ref = _session_ref_for_window_title(session)
     if not title or _contains_unresolved_session_ref(title):
         title = _synthesize_fallback_title(session, terminal_context)
-    ref = _session_ref_for_window_title(session)
-    if ref and not title.lstrip().startswith(f"{ref}:"):
-        title = f"{ref}: {title}"
+    title = _strip_window_ref_prefix(str(title), ref)
+    if not title:
+        title = _strip_window_ref_prefix(
+            _synthesize_fallback_title(session, terminal_context),
+            ref,
+        )
+    if ref:
+        return f"{ref}: {title}"
     return title
 
 
@@ -445,15 +461,28 @@ async def _apply_window_rename(
     return applied
 
 
-async def _window_name_has_unresolved_session_ref(mgr: Any, pane: str) -> bool:
+async def _managed_window_name_needs_repair(
+    mgr: Any,
+    pane: str,
+    session: Any,
+    terminal_context: dict[str, Any],
+) -> bool:
     getter = getattr(mgr, "get_window_name", None)
     if getter is None:
         return False
     try:
-        return _contains_unresolved_session_ref(await getter(pane))
+        window_name = await getter(pane)
     except Exception:
         logger.debug("Failed to read window name for pane %s", pane, exc_info=True)
         return False
+    if _contains_unresolved_session_ref(window_name):
+        return True
+    if not isinstance(window_name, str):
+        return False
+    current = window_name.strip()
+    if not current:
+        return False
+    return _resolve_window_title(session, terminal_context, current) != current
 
 
 async def _rename_tmux_window(session: Any, title: str) -> None:
@@ -474,12 +503,12 @@ async def _rename_tmux_window(session: Any, title: str) -> None:
 
 
 async def enforce_window_name_if_unmanaged(session: Any) -> bool:
-    """Rename a tracked session's tmux window iff Gobby has not named it yet.
+    """Rename a tracked session's tmux window when unmanaged or visibly stale.
 
     Used by the periodic repair sweep. A window Gobby has already named has
     ``automatic-rename`` off (``rename_window`` disables it); such windows are
-    left untouched so the sweep stays cheap and idempotent and does not fight
-    the title-change rename path. Returns True when a rename was issued.
+    left untouched unless their current title still normalizes to a different
+    Gobby-owned title. Returns True when a rename was issued.
 
     This is the durable safety net for sessions whose session-start rename never
     lands — notably interactive Claude sessions in a VSCode tmux pane, which keep
@@ -507,7 +536,7 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
     # from older builds are repaired even though they are already managed.
     if auto_rename is None:
         return False
-    if auto_rename is False and not await _window_name_has_unresolved_session_ref(mgr, pane):
+    if auto_rename is False and not await _managed_window_name_needs_repair(mgr, pane, session, tc):
         return False
 
     title = getattr(session, "title", None) or ""
@@ -515,13 +544,13 @@ async def enforce_window_name_if_unmanaged(session: Any) -> bool:
 
 
 async def repair_missing_session_title(session_manager: Any, session: Any) -> str | None:
-    """Synthesize and persist a heuristic title for a title-less session.
+    """Synthesize and persist a heuristic title for a title-less or provisional session.
 
     The provider-agnostic backstop for the repair sweep: when a tracked session
-    still carries no title — because the per-turn heuristic and LLM digest paths
-    both missed (e.g. a session interrupted before ``turn_end``, or one whose
-    hooks were mis-routed before the routing fix) — derive a cheap title from the
-    transcript's opening user prompt (no LLM) and persist it with
+    still carries no real title — because the per-turn heuristic and LLM digest
+    paths both missed (e.g. a session interrupted before ``turn_end``, or one
+    whose hooks were mis-routed before the routing fix) — derive a cheap title
+    from the transcript's opening user prompt (no LLM) and persist it with
     ``title_source="heuristic"``.
 
     The transcript is the guard, not a DB stat. ``heuristic_title_from_transcript``
@@ -533,15 +562,17 @@ async def repair_missing_session_title(session_manager: Any, session: Any) -> st
 
     Persisting routes through ``session_manager.update_title``, whose
     title-change side effects schedule the tmux window rename, so the window
-    stops showing the empty-title fallback. Returns the persisted title, or
-    ``None`` when no synthesis was applicable (an existing or manual title, a
-    missing session id, or no usable transcript prompt).
+    stops showing the empty/provisional fallback. Returns the persisted title,
+    or ``None`` when no synthesis was applicable (an existing non-provisional or
+    manual title, a missing session id, or no usable transcript prompt).
     """
     if not session_manager or session is None:
         return None
-    if str(getattr(session, "title", "") or "").strip():
+    title_source = str(getattr(session, "title_source", "") or "").strip().lower()
+    existing_title = str(getattr(session, "title", "") or "").strip()
+    if title_source == "manual":
         return None
-    if str(getattr(session, "title_source", "") or "").strip().lower() == "manual":
+    if existing_title and title_source != "provisional":
         return None
 
     session_id = getattr(session, "id", None)
