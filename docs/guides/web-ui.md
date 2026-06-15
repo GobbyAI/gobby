@@ -70,7 +70,6 @@ The application shell lives in `web/src/App.tsx` and
 | Memory | `/#memory` | `web/src/components/memory/MemoryPage.tsx` |
 | Skills | `/#skills` | `web/src/components/skills/SkillsPage.tsx` |
 | Integrations | `/#integrations` | `web/src/components/integrations/IntegrationsPage.tsx` |
-| Configuration | `/#configuration` | `web/src/components/ConfigurationPage.tsx` |
 | Dashboard | `/#dashboard` | `web/src/components/dashboard/DashboardPage.tsx` |
 
 Project-scoped pages should read the active project from the shell rather than

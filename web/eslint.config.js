@@ -7,7 +7,6 @@ import globals from "globals";
 import tseslint from "typescript-eslint";
 
 const SET_STATE_IN_EFFECT_EXEMPTIONS = [
-  "src/components/ConfigurationPage.tsx",
   "src/components/activity/FilesTab.tsx",
   "src/components/activity/PipelinesTab.tsx",
   "src/components/activity/SessionInteractionModal.tsx",

@@ -1,9 +1,9 @@
 import type { FieldOption } from '../activity/fields'
 
 /**
- * Schema helpers for the settings overlay, owned here so the overlay does not
- * depend on `ConfigurationPage.helpers.ts` (removed when the legacy page is
- * deleted). The daemon config schema (`/api/config/schema`) is a nested
+ * Schema helpers for the settings overlay, owned here rather than imported from
+ * the legacy configuration page, which has been deleted. The daemon config
+ * schema (`/api/config/schema`) is a nested
  * JSON-schema with `$defs` + `$ref`: nested config objects are `$ref`s into
  * `$defs`, and even scalar leaves like `*.profile` are `$ref`s to an enum def.
  */

@@ -6,7 +6,7 @@ import { parseVariableInput, variableDisplayValue } from './workflowVariables'
 
 /**
  * Live editor for workflow variable defaults (`/api/workflows?workflow_type=
- * variable`), re-homed from the legacy ConfigurationPage so it survives that
+ * variable`), re-homed from the legacy configuration page so it survives that
  * page's deletion. Unlike the draft-backed config rows in the section, variable
  * add / toggle / delete write immediately through `useWorkflows`. Bundled
  * `template` variables are read-only; variables you add (`source: installed`)

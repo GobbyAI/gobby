@@ -44,7 +44,6 @@ import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
 import { GobbyLogo } from "./components/shared/GobbyLogo";
 import {
   ComingSoonPage,
-  ConfigurationPage,
   DashboardPage,
 } from "./components/app/AppPages";
 import { APP_VALID_TABS, createAppNavItems } from "./components/app/appNavigation";
@@ -905,8 +904,6 @@ export default function App() {
                   stopTTS: voice.stopTTS,
                 }}
               />
-            ) : activeTab === "configuration" ? (
-              <ConfigurationPage />
             ) : activeTab === "dashboard" ? (
               <DashboardPage />
             ) : (
