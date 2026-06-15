@@ -376,7 +376,7 @@ pub(crate) enum Command {
     RepoOutline,
     /// List indexed projects
     Projects,
-    /// Remove stale projects (dead paths, invalid entries)
+    /// Remove stale projects (dead paths, invalid entries) and prune orphaned graph + vector projection state for deleted files
     Prune {
         /// Skip confirmation prompt
         #[arg(long)]
