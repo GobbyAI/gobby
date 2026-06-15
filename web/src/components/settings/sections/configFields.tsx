@@ -1,10 +1,10 @@
 import type { ReactNode } from 'react'
-import { NumberField, SwitchField, TextField } from '../../activity/fields'
+import { NumberField, SwitchField, TextAreaField, TextField } from '../../activity/fields'
 import type { FieldOption } from '../../activity/fields'
-import { BoundedSelectField, StringListField } from '../fields'
+import { BoundedSelectField, KeyValueMapField, StringListField } from '../fields'
 import { enumOptionsAt, numberBoundsAt } from '../configSchema'
 import type { SettingsSectionFields } from './SettingsSection'
-import { asNumber, asString, asStringList } from './configAccessors'
+import { asMap, asNumber, asString, asStringList } from './configAccessors'
 
 /**
  * Shared field wrappers for config-backed settings sections. Every section that
@@ -139,6 +139,57 @@ export function OptionsSelectField({
       ariaLabel={ariaLabel}
       value={asString(fields.getValue(path))}
       options={options}
+      onChange={(value) => fields.setValue(path, value)}
+    />
+  )
+}
+
+/**
+ * A multi-line free-text config row, for long templates and prompts. When
+ * `nullable`, an empty input writes `null` rather than an empty string so
+ * optional daemon fields clear back to their default.
+ */
+export function TextAreaConfigField({
+  fields,
+  path,
+  label,
+  ariaLabel,
+  placeholder,
+  nullable,
+  rows,
+}: ConfigFieldBase & { placeholder?: string; nullable?: boolean; rows?: number }) {
+  return (
+    <TextAreaField
+      label={label}
+      ariaLabel={ariaLabel}
+      value={asString(fields.getValue(path))}
+      placeholder={placeholder}
+      rows={rows}
+      onChange={(value) => fields.setValue(path, nullable && value === '' ? null : value)}
+    />
+  )
+}
+
+/**
+ * A `dict[str, str]` config row backed by a key-value editor. The daemon stores
+ * the value as a plain object, so reads coerce through `asMap` and writes pass
+ * the edited map straight back.
+ */
+export function MapConfigField({
+  fields,
+  path,
+  label,
+  ariaLabel,
+  addLabel,
+  keyPlaceholder,
+}: ConfigFieldBase & { addLabel?: string; keyPlaceholder?: string }) {
+  return (
+    <KeyValueMapField
+      label={label}
+      ariaLabel={ariaLabel}
+      value={asMap<string>(fields.getValue(path))}
+      addLabel={addLabel}
+      keyPlaceholder={keyPlaceholder}
       onChange={(value) => fields.setValue(path, value)}
     />
   )

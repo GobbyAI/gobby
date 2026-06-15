@@ -10,6 +10,7 @@ import {
 import { getSettingsSectionComponent } from './sections/index'
 import { SettingsSectionProvider } from './sections/SettingsSectionProvider'
 import type {
+  ProjectSelectionContextValue,
   ProviderSelectionContextValue,
   SettingsSectionContextValue,
 } from './sections/SettingsSectionContext'
@@ -39,6 +40,13 @@ interface SettingsOverlayProps {
    * the chat picker. Optional so tests can mount the shell standalone.
    */
   providerSelection?: ProviderSelectionContextValue
+  /**
+   * App-owned active-project selection, forwarded to the section provider so
+   * the Projects & Sessions section drives the same `selectedProjectId` state
+   * as the chrome's ProjectSelector. Optional so tests can mount the shell
+   * standalone.
+   */
+  projectSelection?: ProjectSelectionContextValue
 }
 
 const SECTION_OPTIONS = SETTINGS_SECTIONS.map((section) => ({
@@ -79,6 +87,7 @@ export function SettingsOverlay({
   registerDirtyGuard,
   clientSettings,
   providerSelection,
+  projectSelection,
 }: SettingsOverlayProps) {
   const dialogRef = useRef<HTMLDivElement>(null)
   const restoreFocusRef = useRef<HTMLElement | null>(null)
@@ -193,6 +202,7 @@ export function SettingsOverlay({
           registerDirtyGuard={registerDirtyGuard}
           clientSettings={clientSettings}
           providerSelection={providerSelection}
+          projectSelection={projectSelection}
         >
           <div className="settings-overlay-shell__body">
             {/* Remount on section change so each section starts from a fresh

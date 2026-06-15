@@ -16,6 +16,17 @@ export interface ProviderSelectionContextValue {
   onSelectProvider: (provider: string) => void
 }
 
+/**
+ * The app-owned active-project selection, threaded so the Projects & Sessions
+ * section can drive the same `selectedProjectId` state (persisted by App to
+ * `ui_settings.selectedProjectId`) that the chrome's ProjectSelector uses.
+ * Project selection is App-local state, not a `useSettings` field.
+ */
+export interface ProjectSelectionContextValue {
+  selectedProjectId: string | null
+  onSelectProject: (projectId: string) => void
+}
+
 export interface SaveConfigResult {
   ok: boolean
   errors?: string[]
@@ -51,6 +62,12 @@ export interface SettingsSectionContextValue {
    * its absence.
    */
   providerSelection?: ProviderSelectionContextValue
+  /**
+   * App-owned active-project selection. Absent when no provider is mounted
+   * (the fallback below) or the host does not supply it; sections must tolerate
+   * its absence.
+   */
+  projectSelection?: ProjectSelectionContextValue
 }
 
 export const noopRegister: SettingsSectionContextValue['registerDirtyGuard'] =

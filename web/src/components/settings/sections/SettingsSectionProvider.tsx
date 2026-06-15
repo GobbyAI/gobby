@@ -5,6 +5,7 @@ import type { UseSettingsReturn } from '../../../hooks/useSettings'
 import {
   noopRegister,
   SettingsSectionContext,
+  type ProjectSelectionContextValue,
   type ProviderSelectionContextValue,
   type SaveConfigResult,
   type SettingsSectionContextValue,
@@ -21,6 +22,8 @@ export interface SettingsSectionProviderProps {
   clientSettings?: UseSettingsReturn
   /** App-owned default-provider selection for the Providers & Models section. */
   providerSelection?: ProviderSelectionContextValue
+  /** App-owned active-project selection for the Projects & Sessions section. */
+  projectSelection?: ProjectSelectionContextValue
   children: ReactNode
 }
 
@@ -34,6 +37,7 @@ export function SettingsSectionProvider({
   registerDirtyGuard = noopRegister,
   clientSettings,
   providerSelection,
+  projectSelection,
   children,
 }: SettingsSectionProviderProps) {
   const config = useConfiguration()
@@ -62,6 +66,7 @@ export function SettingsSectionProvider({
       registerDirtyGuard,
       clientSettings,
       providerSelection,
+      projectSelection,
     }),
     [
       config.schema,
@@ -72,6 +77,7 @@ export function SettingsSectionProvider({
       registerDirtyGuard,
       clientSettings,
       providerSelection,
+      projectSelection,
     ],
   )
 

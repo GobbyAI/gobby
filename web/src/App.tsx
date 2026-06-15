@@ -271,6 +271,16 @@ export default function App() {
   const isPersonalProject =
     projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
     "Personal";
+  // Threaded into the settings overlay so the Projects & Sessions section's
+  // active-project control drives the same selection (and the same persist
+  // effect) as the chrome's ProjectSelector.
+  const projectSelection = useMemo(
+    () => ({
+      selectedProjectId: effectiveProjectId,
+      onSelectProject: setSelectedProjectId,
+    }),
+    [effectiveProjectId, setSelectedProjectId],
+  );
   const [sessionsFilters, setSessionsFilters] = useState<SessionsFilters>(
     () => {
       try {
@@ -930,6 +940,7 @@ export default function App() {
             registerDirtyGuard={settingsOverlay.registerDirtyGuard}
             clientSettings={clientSettings}
             providerSelection={providerSelection}
+            projectSelection={projectSelection}
           />
         </Suspense>
       )}
