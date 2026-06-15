@@ -7,6 +7,7 @@
 mod file;
 mod freshness_probe;
 mod lifecycle;
+mod local_imports;
 mod overlay;
 mod pipeline;
 mod sink;

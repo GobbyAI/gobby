@@ -1,5 +1,5 @@
 use super::common::{parse_csharp, parse_go, parse_java, parse_rust, parse_source};
-use crate::models::{ParseResult, Symbol};
+use crate::models::ParseResult;
 
 fn parsed_symbol_id(parsed: &ParseResult, file_path: &str, name: &str, kind: &str) -> String {
     parsed
@@ -11,22 +11,31 @@ fn parsed_symbol_id(parsed: &ParseResult, file_path: &str, name: &str, kind: &st
         .clone()
 }
 
-fn canonical_symbol_id(
-    file_path: &str,
-    source: &str,
-    declaration: &str,
-    name: &str,
-    kind: &str,
-) -> String {
-    Symbol::make_id(
-        "proj",
-        file_path,
-        name,
-        kind,
-        source
-            .find(declaration)
-            .unwrap_or_else(|| panic!("{declaration} source")),
-    )
+/// Assert a cross-file Rust local call was recorded as a pending `local_import`
+/// with the original name and the right candidate module file. The canonical id
+/// is resolved post-write against `code_symbols` (covered by the live
+/// integration test), not at parse time.
+///
+/// A macro (rather than a function) so the assertions expand directly into each
+/// test body.
+macro_rules! assert_rust_local_import {
+    ($parsed:expr, $callee_name:expr, $expected_file:expr) => {{
+        let callee_name: &str = $callee_name;
+        let call = $parsed
+            .calls
+            .iter()
+            .find(|call| {
+                call.callee_target_kind.as_str() == "local_import"
+                    && call.callee_name == callee_name
+            })
+            .unwrap_or_else(|| panic!("missing local_import call for {callee_name}"));
+        let candidates = call.local_import_candidate_files();
+        assert!(
+            candidates.iter().any(|file| file == $expected_file),
+            "candidate files {candidates:?} did not contain {}",
+            $expected_file
+        );
+    }};
 }
 
 #[test]
@@ -162,7 +171,7 @@ serde_json = { version = "1" }
 }
 
 #[test]
-fn leaves_rust_self_crate_and_glob_imports_unresolved() {
+fn records_rust_self_crate_import_and_leaves_glob_unresolved() {
     let parsed = parse_rust(
         r#"
 use app::helper;
@@ -185,21 +194,21 @@ serde_json = "1"
     );
 
     assert_eq!(parsed.calls.len(), 2);
-    assert!(
-        parsed
-            .calls
-            .iter()
-            .all(|call| call.callee_target_kind.as_str() == "unresolved")
-    );
+    // `use app::helper` names this crate's own crate-root item, so it is a local
+    // import resolved against the crate-root files (lib.rs/main.rs) post-write.
+    assert_rust_local_import!(&parsed, "helper", "src/lib.rs");
+    // A glob import binds no specific name, so the bare `from_str` call stays
+    // unresolved.
+    let from_str = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "from_str")
+        .expect("from_str call");
+    assert_eq!(from_str.callee_target_kind.as_str(), "unresolved");
 }
 
 #[test]
-fn resolves_rust_local_imported_and_module_qualified_calls() {
-    let service_source = r#"
-pub fn helper() {}
-pub fn other() {}
-pub fn direct() {}
-"#;
+fn records_rust_local_imported_and_module_qualified_calls() {
     let parsed = parse_rust(
         r#"
 use crate::service::helper as run_helper;
@@ -218,38 +227,23 @@ fn run() {
 name = "app"
 "#,
             ),
-            ("src/service.rs", service_source),
+            (
+                "src/service.rs",
+                "pub fn helper() {}\npub fn other() {}\npub fn direct() {}\n",
+            ),
         ],
     );
 
-    for (callee, symbol_name, declaration) in [
-        ("run_helper", "helper", "pub fn helper"),
-        ("other", "other", "pub fn other"),
-        ("direct", "direct", "pub fn direct"),
-    ] {
-        let expected_id = canonical_symbol_id(
-            "src/service.rs",
-            service_source,
-            declaration,
-            symbol_name,
-            "function",
-        );
-        let call = parsed
-            .calls
-            .iter()
-            .find(|call| call.callee_name == callee)
-            .unwrap_or_else(|| panic!("{callee} call"));
-        assert_eq!(call.callee_target_kind.as_str(), "symbol");
-        assert_eq!(call.callee_symbol_id.as_deref(), Some(expected_id.as_str()));
+    // `use` alias (`run_helper` -> `helper`), self-crate path (`app::service`),
+    // and a bare path-qualified call (`crate::service::direct`) all record the
+    // original name and resolve to `src/service.rs`.
+    for name in ["helper", "other", "direct"] {
+        assert_rust_local_import!(&parsed, name, "src/service.rs");
     }
 }
 
 #[test]
-fn resolves_rust_grouped_super_imports_to_canonical_symbols() {
-    let helper_source = r#"
-pub(crate) fn helper() {}
-pub(crate) fn other() {}
-"#;
+fn records_rust_grouped_super_imports_as_local_import_calls() {
     let parsed = parse_source(
         "src/index/import_resolution/context.rs",
         r#"
@@ -267,26 +261,16 @@ fn run() {
 name = "app"
 "#,
             ),
-            ("src/index/import_resolution/rust_local.rs", helper_source),
+            (
+                "src/index/import_resolution/rust_local.rs",
+                "pub(crate) fn helper() {}\npub(crate) fn other() {}\n",
+            ),
         ],
     );
 
-    for (callee, symbol_name) in [("helper", "helper"), ("run_other", "other")] {
-        let declaration = format!("pub(crate) fn {symbol_name}");
-        let expected_id = canonical_symbol_id(
-            "src/index/import_resolution/rust_local.rs",
-            helper_source,
-            &declaration,
-            symbol_name,
-            "function",
-        );
-        let call = parsed
-            .calls
-            .iter()
-            .find(|call| call.callee_name == callee)
-            .unwrap_or_else(|| panic!("{callee} call"));
-        assert_eq!(call.callee_target_kind.as_str(), "symbol");
-        assert_eq!(call.callee_symbol_id.as_deref(), Some(expected_id.as_str()));
+    // `super::` normalizes against the caller module tree to the sibling file.
+    for name in ["helper", "other"] {
+        assert_rust_local_import!(&parsed, name, "src/index/import_resolution/rust_local.rs");
     }
 }
 

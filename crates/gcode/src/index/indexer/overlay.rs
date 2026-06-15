@@ -18,6 +18,7 @@ use super::file::{create_semantic_resolver_if_needed, index_content_only, index_
 use super::lifecycle::{
     attach_projection_sync, cleanup_deleted_file_projections, refresh_project_stats,
 };
+use super::local_imports::resolve_local_import_calls;
 use super::sink::{CodeFactSink, PostgresCodeFactSink};
 use super::types::{IndexOutcome, IndexRequest, OverlayIndexMetadata};
 use super::util::{
@@ -237,6 +238,10 @@ pub(super) fn index_overlay_files(
             }
         }
     }
+    // Resolve cross-file local-import calls against the overlay's own symbols.
+    // Calls into inherited (not re-indexed) files miss and degrade to unresolved,
+    // matching pre-resolution behavior; no project-wide file scan is performed.
+    resolve_local_import_calls(conn, overlay_project_id, &outcome.indexed_file_paths)?;
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
     let stats_start = Instant::now();

@@ -285,6 +285,12 @@ pub enum CallTargetKind {
     Symbol,
     Unresolved,
     External,
+    /// Transient marker for a cross-file local import whose canonical target is
+    /// resolved against `code_symbols` in a post-write pass (see
+    /// `index::indexer::local_imports`). After resolution a row is rewritten to
+    /// `Symbol` (hit) or `Unresolved` (miss), so this kind never persists past a
+    /// completed index run.
+    LocalImport,
 }
 
 impl CallTargetKind {
@@ -293,6 +299,7 @@ impl CallTargetKind {
             Self::Symbol => "symbol",
             Self::Unresolved => "unresolved",
             Self::External => "external",
+            Self::LocalImport => "local_import",
         }
     }
 }
@@ -343,7 +350,51 @@ impl CallRelation {
         self.callee_external_module = Some(callee_external_module);
         self
     }
+
+    /// Mark this call as a pending cross-file local import. `callee_name` is the
+    /// originally imported name (not the local alias) and `candidate_files` are
+    /// the project-relative files the target symbol might live in, derived from
+    /// the import by pure path logic (no file reads). The post-write resolution
+    /// pass (`index::indexer::local_imports`) looks the target up in
+    /// `code_symbols` and rewrites this row to `Symbol` or `Unresolved`.
+    ///
+    /// Candidate files ride in `callee_external_module` joined by `\n`; the
+    /// column is unused for local imports otherwise and is cleared on resolution.
+    pub fn with_local_import_target(
+        mut self,
+        callee_name: String,
+        candidate_files: Vec<String>,
+    ) -> Self {
+        self.callee_name = callee_name;
+        self.callee_target_kind = CallTargetKind::LocalImport;
+        self.callee_symbol_id = None;
+        self.callee_external_module = Some(candidate_files.join(LOCAL_IMPORT_CANDIDATE_SEP));
+        self
+    }
+
+    /// Candidate target files carried by a `LocalImport` call, parsed back out of
+    /// `callee_external_module`. Empty for any other kind.
+    pub fn local_import_candidate_files(&self) -> Vec<String> {
+        if self.callee_target_kind != CallTargetKind::LocalImport {
+            return Vec::new();
+        }
+        self.callee_external_module
+            .as_deref()
+            .map(|joined| {
+                joined
+                    .split(LOCAL_IMPORT_CANDIDATE_SEP)
+                    .filter(|part| !part.is_empty())
+                    .map(ToOwned::to_owned)
+                    .collect()
+            })
+            .unwrap_or_default()
+    }
 }
+
+/// Separator for the candidate-file list carried in `callee_external_module`
+/// while a call is a pending `LocalImport`. Newlines never appear in project
+/// file paths, so the join/split round-trips losslessly.
+pub const LOCAL_IMPORT_CANDIDATE_SEP: &str = "\n";
 
 /// Project index statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]

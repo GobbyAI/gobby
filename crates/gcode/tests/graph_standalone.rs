@@ -249,6 +249,150 @@ fn graph_sync_file_classifies_missing_project_before_graph_access() {
     assert_eq!(payload["reason"], "project_not_indexed");
 }
 
+const LOCAL_IMPORT_PROJECT_ID: &str = "graph-standalone-local-import";
+
+/// End-to-end check for the post-write local-import resolution (#790): indexing
+/// a two-file Python project must resolve the cross-file calls in `b.py` to the
+/// real `code_symbols` ids defined in `a.py` (no recomputed UUID, so no phantom
+/// node), leave no `local_import` rows behind, and surface the cross-file caller
+/// through `callers`/`blast-radius` across all three projection paths
+/// (index-time sync via rebuild, rebuild, and sync-file). Order-independence
+/// holds for free: resolution reads the fully-populated `code_symbols` after the
+/// whole run, regardless of which file was indexed first.
+#[test]
+fn index_resolves_cross_file_local_python_imports() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-file local-import resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::write(
+        project.path().join("a.py"),
+        "def recluster_project_entities():\n    pass\n\n\nclass Service:\n    pass\n",
+    )
+    .expect("write a.py");
+    fs::write(
+        project.path().join("b.py"),
+        "from a import recluster_project_entities\n\
+         from a import Service as Svc\n\n\n\
+         def caller():\n    recluster_project_entities()\n    Svc()\n",
+    )
+    .expect("write b.py");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": LOCAL_IMPORT_PROJECT_ID,
+            "name": "graph-standalone-local-import",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, LOCAL_IMPORT_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    // Canonical target ids defined in a.py.
+    let recluster_id = required_symbol_id(&mut conn, "a.py", "recluster_project_entities");
+    let service_id = required_symbol_id(&mut conn, "a.py", "Service");
+
+    // b.py's cross-file function call and aliased-constructor call resolved to
+    // the real indexed ids (the alias `Svc` resolves back to `Service`).
+    assert_eq!(
+        resolved_call_target(&mut conn, "b.py", "recluster_project_entities"),
+        Some(recluster_id),
+        "cross-file function call did not resolve to the canonical symbol"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, "b.py", "Service"),
+        Some(service_id),
+        "aliased cross-file constructor did not resolve to the class symbol"
+    );
+    assert_eq!(
+        pending_local_import_count(&mut conn),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Projection path 1+2: rebuild from the resolved PostgreSQL facts, then the
+    // cross-file caller must be reachable via callers and blast-radius.
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_cross_file_caller_present(&env, project.path(), "after rebuild");
+
+    let blast = json_command(
+        &env,
+        project.path(),
+        &["blast-radius", "recluster_project_entities"],
+    );
+    assert!(
+        blast.get("center").is_some(),
+        "blast-radius should report a center: {blast}"
+    );
+
+    // Projection path 3: sync-file must recreate the same canonical edge.
+    let sync = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", "b.py"],
+    );
+    assert_success(sync, "graph sync-file b.py");
+    assert_cross_file_caller_present(&env, project.path(), "after sync-file");
+}
+
+fn assert_cross_file_caller_present(env: &StandaloneEnv, cwd: &std::path::Path, when: &str) {
+    let callers = json_command(env, cwd, &["callers", "recluster_project_entities"]);
+    assert!(
+        callers["total"].as_u64().is_some_and(|total| total >= 1),
+        "expected a cross-file caller {when}: {callers}"
+    );
+    assert!(
+        callers["results"]
+            .as_array()
+            .is_some_and(|results| results.iter().any(|result| result["name"] == "caller")),
+        "expected b.py `caller` in results {when}: {callers}"
+    );
+}
+
+fn required_symbol_id(conn: &mut Client, file_path: &str, name: &str) -> String {
+    conn.query_one(
+        "SELECT id FROM code_symbols WHERE project_id = $1 AND file_path = $2 AND name = $3",
+        &[&LOCAL_IMPORT_PROJECT_ID, &file_path, &name],
+    )
+    .unwrap_or_else(|err| panic!("symbol {file_path}:{name} not indexed: {err}"))
+    .get::<_, String>(0)
+}
+
+fn resolved_call_target(conn: &mut Client, file_path: &str, callee_name: &str) -> Option<String> {
+    let row = conn
+        .query_opt(
+            "SELECT callee_symbol_id, callee_target_kind FROM code_calls
+             WHERE project_id = $1 AND file_path = $2 AND callee_name = $3",
+            &[&LOCAL_IMPORT_PROJECT_ID, &file_path, &callee_name],
+        )
+        .expect("read code_calls row")?;
+    let kind: String = row.get("callee_target_kind");
+    let callee_symbol_id: String = row.get("callee_symbol_id");
+    (kind == "symbol" && !callee_symbol_id.is_empty()).then_some(callee_symbol_id)
+}
+
+fn pending_local_import_count(conn: &mut Client) -> i64 {
+    conn.query_one(
+        "SELECT COUNT(*) FROM code_calls
+         WHERE project_id = $1 AND callee_target_kind = 'local_import'",
+        &[&LOCAL_IMPORT_PROJECT_ID],
+    )
+    .expect("count local_import rows")
+    .get::<_, i64>(0)
+}
+
 struct StandaloneEnv {
     database_url: String,
     falkor_host: String,

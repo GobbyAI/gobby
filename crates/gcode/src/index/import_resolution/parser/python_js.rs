@@ -1,6 +1,9 @@
 use crate::models::ImportRelation;
 
-use super::super::context::{ExternalImportBinding, ExtractedImports, ImportResolutionContext};
+use super::super::context::{
+    ExternalImportBinding, ExtractedImports, ImportResolutionContext, LocalCallBinding,
+    python_candidate_files,
+};
 use super::super::helpers::{
     collapse_whitespace, extract_js_import_clause, extract_js_module_specifier, split_alias,
     split_top_level,
@@ -68,6 +71,7 @@ pub(crate) fn parse_python_import_statement(
         let Some(local_module) = python_local_module_lookup(module, rel_path) else {
             return Ok(());
         };
+        let candidate_files = python_candidate_files(&local_module);
         let imported = imported.trim().trim_matches(|ch| matches!(ch, '(' | ')'));
         let Ok(entries) = split_top_level(imported, ',') else {
             return Ok(());
@@ -78,16 +82,15 @@ pub(crate) fn parse_python_import_statement(
                 continue;
             }
             let (imported_name, alias) = split_alias(entry);
-            let Some(binding) = import_context.python_local_symbol(&local_module, imported_name)
-            else {
-                continue;
-            };
             let local_alias = alias.unwrap_or(imported_name).to_string();
             extracted.bindings.bare.remove(&local_alias);
-            extracted
-                .bindings
-                .local_bare
-                .insert(local_alias, binding.clone());
+            extracted.bindings.local_bare.insert(
+                local_alias,
+                LocalCallBinding {
+                    candidate_files: candidate_files.clone(),
+                    callee_name: imported_name.to_string(),
+                },
+            );
         }
         return Ok(());
     }
@@ -258,9 +261,10 @@ fn parse_js_local_import_clause(
     import_context: &ImportResolutionContext,
     extracted: &mut ExtractedImports,
 ) -> anyhow::Result<()> {
-    let Some(module) = import_context.js_local_module(rel_path, specifier) else {
+    let candidate_files = import_context.js_candidate_files(rel_path, specifier);
+    if candidate_files.is_empty() {
         return Ok(());
-    };
+    }
 
     let Ok(parts) = split_top_level(clause, ',') else {
         return Ok(());
@@ -277,7 +281,7 @@ fn parse_js_local_import_clause(
                 extracted
                     .bindings
                     .local_member
-                    .insert(alias.to_string(), module.exports.clone());
+                    .insert(alias.to_string(), candidate_files.clone());
             }
             continue;
         }
@@ -292,34 +296,24 @@ fn parse_js_local_import_clause(
                     continue;
                 }
                 let (imported_name, alias) = split_alias(item);
-                if let Some(binding) = module.exports.get(imported_name) {
-                    let local_alias = alias.unwrap_or(imported_name).to_string();
-                    extracted.bindings.bare.remove(&local_alias);
-                    extracted.bindings.member.remove(&local_alias);
-                    extracted
-                        .bindings
-                        .local_bare
-                        .insert(local_alias, binding.clone());
-                }
+                let local_alias = alias.unwrap_or(imported_name).to_string();
+                extracted.bindings.bare.remove(&local_alias);
+                extracted.bindings.member.remove(&local_alias);
+                extracted.bindings.local_bare.insert(
+                    local_alias,
+                    LocalCallBinding {
+                        candidate_files: candidate_files.clone(),
+                        callee_name: imported_name.to_string(),
+                    },
+                );
             }
             continue;
         }
 
-        if part.starts_with("type ") {
-            continue;
-        }
-        let alias = part.trim();
-        if alias.is_empty() {
-            continue;
-        }
-        if let Some(binding) = module.exports.get("default") {
-            extracted.bindings.bare.remove(alias);
-            extracted.bindings.member.remove(alias);
-            extracted
-                .bindings
-                .local_bare
-                .insert(alias.to_string(), binding.clone());
-        }
+        // Default imports (`import foo from "./m"`) bind the local alias to the
+        // module's default export. The DB resolver keys on the original name and
+        // a default export carries its own declared name, so there is nothing to
+        // match — leave the call unresolved rather than record a guaranteed miss.
     }
     Ok(())
 }

@@ -3,7 +3,7 @@ use crate::models::{ImportRelation, Symbol};
 use super::UNPARSED_IMPORT_PREFIX;
 use super::context::{
     ExternalCallTarget, ExternalRootBinding, ExtractedImports, ImportBindings,
-    ImportResolutionContext, LocalImportBinding,
+    ImportResolutionContext, LocalCallBinding,
 };
 use super::predicates::rust_external_roots;
 
@@ -202,28 +202,28 @@ pub(crate) fn resolve_external_callee(
     })
 }
 
-pub(crate) fn resolve_local_callee<'a>(
-    import_bindings: &'a ImportBindings,
+pub(crate) fn resolve_local_callee(
+    import_bindings: &ImportBindings,
     symbols: &[Symbol],
     callee_name: &str,
     is_bare_call: bool,
-) -> Option<&'a LocalImportBinding> {
+) -> Option<LocalCallBinding> {
     if !is_bare_call {
         return None;
     }
     if symbols.iter().any(|symbol| symbol.name == callee_name) {
         return None;
     }
-    import_bindings.local_bare.get(callee_name)
+    import_bindings.local_bare.get(callee_name).cloned()
 }
 
-pub(crate) fn resolve_local_member_callee<'a>(
-    import_bindings: &'a ImportBindings,
+pub(crate) fn resolve_local_member_callee(
+    import_bindings: &ImportBindings,
     symbols: &[Symbol],
     callee_name: &str,
     root_alias: Option<&str>,
     is_member_call: bool,
-) -> Option<&'a LocalImportBinding> {
+) -> Option<LocalCallBinding> {
     if !is_member_call {
         return None;
     }
@@ -231,22 +231,23 @@ pub(crate) fn resolve_local_member_callee<'a>(
     if symbols.iter().any(|symbol| symbol.name == root_alias) {
         return None;
     }
-    import_bindings
-        .local_member
-        .get(root_alias)?
-        .get(callee_name)
+    let candidate_files = import_bindings.local_member.get(root_alias)?.clone();
+    Some(LocalCallBinding {
+        candidate_files,
+        callee_name: callee_name.to_string(),
+    })
 }
 
-pub(crate) fn resolve_rust_local_qualified_callee<'a>(
-    import_context: &'a ImportResolutionContext,
+pub(crate) fn resolve_rust_local_qualified_callee(
+    import_context: &ImportResolutionContext,
     rel_path: &str,
     callee_name: &str,
     qualifier_path: Option<&str>,
     is_member_call: bool,
-) -> Option<&'a LocalImportBinding> {
+) -> Option<LocalCallBinding> {
     if !is_member_call {
         return None;
     }
     let qualifier_path = qualifier_path?;
-    import_context.rust_local_qualified_symbol(rel_path, qualifier_path, callee_name)
+    import_context.rust_qualified_candidate(rel_path, qualifier_path, callee_name)
 }

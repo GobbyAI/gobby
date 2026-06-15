@@ -153,14 +153,16 @@ fn register_rust_path_import(
         return;
     }
     let (path, alias) = split_alias(normalized);
-    if let Some(local_target) = import_context.rust_local_import(rel_path, path) {
-        let local_alias = alias.unwrap_or(&local_target.name);
+    if let Some(local_target) = import_context.rust_import_candidate(rel_path, path) {
+        let local_alias = alias
+            .map(ToOwned::to_owned)
+            .unwrap_or_else(|| local_target.callee_name.clone());
         if !local_alias.is_empty() {
-            extracted.bindings.bare.remove(local_alias);
+            extracted.bindings.bare.remove(&local_alias);
             extracted
                 .bindings
                 .local_bare
-                .insert(local_alias.to_string(), local_target.clone());
+                .insert(local_alias, local_target);
         }
         return;
     }

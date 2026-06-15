@@ -358,28 +358,65 @@ pub fn upsert_calls(
     )?;
     let mut rows_affected = 0usize;
     for call in calls {
-        rows_affected += conn.execute(
-            "INSERT INTO code_calls
-             (project_id, caller_symbol_id, callee_symbol_id, callee_name, \
-              callee_target_kind, callee_external_module, file_path, line)
-             VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
-             ON CONFLICT (
-                project_id, caller_symbol_id, callee_symbol_id, callee_name,
-                callee_target_kind, callee_external_module, file_path, line
-             ) DO NOTHING",
-            &[
-                &project_id,
-                &call.caller_symbol_id,
-                &call.callee_symbol_id.as_deref().unwrap_or(""),
-                &call.callee_name,
-                &call.callee_target_kind.as_str(),
-                &call.callee_external_module.as_deref().unwrap_or(""),
-                &call.file_path,
-                &to_i32(call.line),
-            ],
-        )? as usize;
+        rows_affected += insert_call(conn, project_id, call)?;
     }
     Ok(rows_affected)
+}
+
+fn insert_call(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    call: &CallRelation,
+) -> anyhow::Result<usize> {
+    let rows = conn.execute(
+        "INSERT INTO code_calls
+         (project_id, caller_symbol_id, callee_symbol_id, callee_name, \
+          callee_target_kind, callee_external_module, file_path, line)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+         ON CONFLICT (
+            project_id, caller_symbol_id, callee_symbol_id, callee_name,
+            callee_target_kind, callee_external_module, file_path, line
+         ) DO NOTHING",
+        &[
+            &project_id,
+            &call.caller_symbol_id,
+            &call.callee_symbol_id.as_deref().unwrap_or(""),
+            &call.callee_name,
+            &call.callee_target_kind.as_str(),
+            &call.callee_external_module.as_deref().unwrap_or(""),
+            &call.file_path,
+            &to_i32(call.line),
+        ],
+    )?;
+    Ok(rows as usize)
+}
+
+/// Replace a pending `local_import` call row with its resolved form. The exact
+/// pending row (identified by its persisted columns) is deleted and the
+/// `resolved` call — a `Symbol` target on a hit, `Unresolved` on a miss — is
+/// inserted in its place. Used by the post-write local-import resolution pass.
+pub fn promote_local_import_call(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    original: &CallRelation,
+    resolved: &CallRelation,
+) -> anyhow::Result<()> {
+    conn.execute(
+        "DELETE FROM code_calls
+         WHERE project_id = $1 AND caller_symbol_id = $2 AND callee_symbol_id = ''
+           AND callee_name = $3 AND callee_target_kind = 'local_import'
+           AND callee_external_module = $4 AND file_path = $5 AND line = $6",
+        &[
+            &project_id,
+            &original.caller_symbol_id,
+            &original.callee_name,
+            &original.callee_external_module.as_deref().unwrap_or(""),
+            &original.file_path,
+            &to_i32(original.line),
+        ],
+    )?;
+    insert_call(conn, project_id, resolved)?;
+    Ok(())
 }
 
 fn to_i32(value: usize) -> i32 {

@@ -401,3 +401,51 @@ pub(super) fn add_unresolved_calls_query(
     params.extend(metadata_params(sync_token));
     typed_query(ADD_UNRESOLVED_CALLS_CYPHER, params)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::models::CallRelation;
+
+    #[test]
+    fn unresolved_local_import_projects_as_unresolved_not_external() {
+        // A `local_import` row the post-write pass could not resolve (empty
+        // callee_symbol_id) must degrade to an UnresolvedCallee — never an
+        // External node — even though it still carries candidate files in
+        // callee_external_module. Guards the no-regression degradation path.
+        let call = CallRelation::new(
+            "caller-1".to_string(),
+            "helper".to_string(),
+            "pkg/main.py".to_string(),
+            3,
+        )
+        .with_local_import_target(
+            "helper".to_string(),
+            vec![
+                "pkg/utils.py".to_string(),
+                "pkg/utils/__init__.py".to_string(),
+            ],
+        );
+
+        let groups = partition_call_graph_items("proj", "pkg/main.py", &[call]);
+        assert_eq!(groups.symbol.len(), 0);
+        assert_eq!(groups.external.len(), 0);
+        assert_eq!(groups.unresolved.len(), 1);
+        assert!(groups.unresolved[0].callee_module.is_none());
+    }
+
+    #[test]
+    fn resolved_local_import_projects_as_symbol() {
+        let call = CallRelation::new(
+            "caller-1".to_string(),
+            "helper".to_string(),
+            "pkg/main.py".to_string(),
+            3,
+        )
+        .with_symbol_target("callee-uuid".to_string());
+
+        let groups = partition_call_graph_items("proj", "pkg/main.py", &[call]);
+        assert_eq!(groups.symbol.len(), 1);
+        assert_eq!(groups.symbol[0].target_id, "callee-uuid");
+    }
+}

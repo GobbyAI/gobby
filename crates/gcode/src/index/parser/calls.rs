@@ -22,7 +22,6 @@ pub(super) use text::line_terminator_len;
 
 pub(super) struct CallExtractionContext<'a> {
     pub(super) language: &'a str,
-    pub(super) project_id: &'a str,
     pub(super) ts_lang: &'a tree_sitter::Language,
     pub(super) rel_path: &'a str,
     pub(super) symbols: &'a [Symbol],
@@ -171,12 +170,15 @@ fn materialize_call(
     );
     if let Some(callee_symbol_id) = local_target {
         call = call.with_symbol_target(callee_symbol_id);
-    } else if let Some(local_qualified_target) = local_qualified_target {
-        call = call.with_symbol_target(local_qualified_target.symbol_id(ctx.project_id));
-    } else if let Some(local_member_target) = local_member_target {
-        call = call.with_symbol_target(local_member_target.symbol_id(ctx.project_id));
-    } else if let Some(local_import_target) = local_import_target {
-        call = call.with_symbol_target(local_import_target.symbol_id(ctx.project_id));
+    } else if let Some(local_binding) = local_qualified_target
+        .or(local_member_target)
+        .or(local_import_target)
+    {
+        // Cross-file local import: record the original name plus the candidate
+        // target files. The post-write pass resolves it against `code_symbols`
+        // to a real indexed id (or degrades it to unresolved).
+        call =
+            call.with_local_import_target(local_binding.callee_name, local_binding.candidate_files);
     } else if let Some(external_target) = external_target {
         call = call.with_external_target(external_target.callee_name, external_target.module);
     } else if let Some(semantic_target) = semantic_target {

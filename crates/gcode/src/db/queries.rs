@@ -217,22 +217,109 @@ fn read_calls_for_file(
          ORDER BY line, caller_symbol_id, callee_name",
         &[&project_id, &file_path],
     )?;
-    rows.into_iter()
+    rows.iter().map(call_relation_from_row).collect()
+}
+
+fn call_relation_from_row(row: &postgres::Row) -> anyhow::Result<CallRelation> {
+    let target_kind: String = row.try_get("callee_target_kind")?;
+    let callee_symbol_id: String = row.try_get("callee_symbol_id")?;
+    let callee_external_module: String = row.try_get("callee_external_module")?;
+    Ok(CallRelation {
+        caller_symbol_id: row.try_get("caller_symbol_id")?,
+        callee_symbol_id: non_empty(callee_symbol_id),
+        callee_name: row.try_get("callee_name")?,
+        callee_target_kind: call_target_kind_from_str(&target_kind)?,
+        callee_external_module: non_empty(callee_external_module),
+        file_path: row.try_get("file_path")?,
+        line: i64_to_usize(row.try_get("line")?, "line")?,
+    })
+}
+
+/// Read the pending `local_import` calls written for `file_paths` during the
+/// current index run. Each returned `CallRelation` carries its candidate target
+/// files in `callee_external_module` (see `CallRelation::with_local_import_target`).
+pub fn read_local_import_calls(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    file_paths: &[String],
+) -> anyhow::Result<Vec<CallRelation>> {
+    if file_paths.is_empty() {
+        return Ok(Vec::new());
+    }
+    let rows = conn.query(
+        "SELECT caller_symbol_id, callee_symbol_id, callee_name,
+                callee_target_kind, callee_external_module, file_path, line::BIGINT AS line
+         FROM code_calls
+         WHERE project_id = $1 AND file_path = ANY($2)
+           AND callee_target_kind = 'local_import'
+         ORDER BY file_path, line, caller_symbol_id, callee_name",
+        &[&project_id, &file_paths],
+    )?;
+    rows.iter().map(call_relation_from_row).collect()
+}
+
+/// Resolve a cross-file local-import call target to its canonical `code_symbols`
+/// id by `(candidate files, original name)`. Returns the real indexed id (no
+/// UUID recompute, so a phantom edge is structurally impossible), or `None` when
+/// nothing matches or the match is ambiguous.
+///
+/// Preference tiers, highest first:
+/// 1. top-level (`parent_symbol_id IS NULL`) `function`/`class`
+/// 2. `method`
+///
+/// The best non-empty tier must contain exactly one symbol; otherwise the call
+/// degrades to unresolved rather than risk a wrong edge.
+pub fn resolve_local_callee_symbol_id(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    target_files: &[String],
+    name: &str,
+) -> anyhow::Result<Option<String>> {
+    if target_files.is_empty() || name.is_empty() {
+        return Ok(None);
+    }
+    let rows = conn.query(
+        "SELECT id, kind, parent_symbol_id
+         FROM code_symbols
+         WHERE project_id = $1 AND file_path = ANY($2) AND name = $3
+         ORDER BY file_path, byte_start",
+        &[&project_id, &target_files, &name],
+    )?;
+
+    let candidates: Vec<(String, String, Option<String>)> = rows
+        .iter()
         .map(|row| {
-            let target_kind: String = row.try_get("callee_target_kind")?;
-            let callee_symbol_id: String = row.try_get("callee_symbol_id")?;
-            let callee_external_module: String = row.try_get("callee_external_module")?;
-            Ok(CallRelation {
-                caller_symbol_id: row.try_get("caller_symbol_id")?,
-                callee_symbol_id: non_empty(callee_symbol_id),
-                callee_name: row.try_get("callee_name")?,
-                callee_target_kind: call_target_kind_from_str(&target_kind)?,
-                callee_external_module: non_empty(callee_external_module),
-                file_path: row.try_get("file_path")?,
-                line: i64_to_usize(row.try_get("line")?, "line")?,
-            })
+            let id: String = row.try_get("id")?;
+            let kind: String = row.try_get("kind")?;
+            let parent: Option<String> = row.try_get("parent_symbol_id")?;
+            Ok::<_, anyhow::Error>((id, kind, parent))
         })
-        .collect()
+        .collect::<Result<_, _>>()?;
+
+    let top_level: Vec<&String> = candidates
+        .iter()
+        .filter(|(_, kind, parent)| {
+            parent.is_none() && matches!(kind.as_str(), "function" | "class")
+        })
+        .map(|(id, _, _)| id)
+        .collect();
+    if !top_level.is_empty() {
+        return Ok(unique_id(&top_level));
+    }
+
+    let methods: Vec<&String> = candidates
+        .iter()
+        .filter(|(_, kind, _)| kind == "method")
+        .map(|(id, _, _)| id)
+        .collect();
+    Ok(unique_id(&methods))
+}
+
+fn unique_id(ids: &[&String]) -> Option<String> {
+    match ids {
+        [single] => Some((*single).clone()),
+        _ => None,
+    }
 }
 
 fn non_empty(value: String) -> Option<String> {
@@ -244,6 +331,10 @@ fn call_target_kind_from_str(value: &str) -> anyhow::Result<CallTargetKind> {
         "symbol" => Ok(CallTargetKind::Symbol),
         "unresolved" => Ok(CallTargetKind::Unresolved),
         "external" => Ok(CallTargetKind::External),
+        // A completed index run rewrites every `local_import` row to `symbol` or
+        // `unresolved`, but an interrupted run can leave one behind; parse it so
+        // read-back (and the post-write resolver) never hard-errors.
+        "local_import" => Ok(CallTargetKind::LocalImport),
         other => bail!("unknown code_calls.callee_target_kind `{other}`"),
     }
 }

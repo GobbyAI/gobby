@@ -1,42 +1,33 @@
 use super::common::{parse_javascript, parse_python, parse_source, parse_tsx, parse_typescript};
-use crate::models::{CallRelation, ParseResult, Symbol};
+use crate::models::CallRelation;
 
-const TEST_PROJECT_ID: &str = "proj";
-
-fn canonical_symbol_id(file_path: &str, name: &str, kind: &str, byte_start: usize) -> String {
-    Symbol::make_id(TEST_PROJECT_ID, file_path, name, kind, byte_start)
-}
-
-fn assert_call_targets_parsed_symbol(
-    call: &CallRelation,
-    target: &ParseResult,
-    name: &str,
-    kind: &str,
-) {
-    let matching_ids = target
-        .symbols
-        .iter()
-        .filter(|symbol| symbol.name == name && symbol.kind == kind)
-        .map(|symbol| symbol.id.as_str())
-        .collect::<Vec<_>>();
-    assert!(
-        !matching_ids.is_empty(),
-        "missing target symbol {name}/{kind}; symbols: {:?}",
-        target
-            .symbols
-            .iter()
-            .map(|symbol| (&symbol.name, &symbol.kind, &symbol.id))
-            .collect::<Vec<_>>()
-    );
-    assert_eq!(call.callee_target_kind.as_str(), "symbol");
-    assert!(
-        matching_ids
-            .iter()
-            .any(|id| Some(*id) == call.callee_symbol_id.as_deref()),
-        "call target {:?} was not one of {matching_ids:?}",
-        call.callee_symbol_id
-    );
-    assert!(call.callee_external_module.is_none());
+/// A cross-file local import is now recorded at parse time as a pending
+/// `local_import` call: the original name plus the candidate target files. The
+/// canonical symbol id is resolved later against `code_symbols` (covered by the
+/// live `graph_standalone` integration test), so the parser-level contract is
+/// the `local_import` shape and that the real target file is among the
+/// candidates the post-write resolver will search.
+///
+/// A macro (rather than a function) so the assertions expand directly into each
+/// test body.
+macro_rules! assert_local_import_call {
+    ($call:expr, $callee_name:expr, $expected_file:expr) => {{
+        let call: &CallRelation = $call;
+        assert_eq!(
+            call.callee_target_kind.as_str(),
+            "local_import",
+            "expected a local_import call, got {} (module {:?})",
+            call.callee_target_kind.as_str(),
+            call.callee_external_module
+        );
+        assert_eq!(call.callee_name, $callee_name);
+        let candidates = call.local_import_candidate_files();
+        assert!(
+            candidates.iter().any(|file| file == $expected_file),
+            "candidate files {candidates:?} did not contain {}",
+            $expected_file
+        );
+    }};
 }
 
 #[test]
@@ -82,7 +73,7 @@ def run():
 }
 
 #[test]
-fn resolves_local_python_imports_to_canonical_symbol() {
+fn records_local_python_imports_as_local_import_calls() {
     let parsed = parse_source(
         "pkg/main.py",
         r#"
@@ -95,15 +86,37 @@ def run():
     );
 
     let call = parsed.calls.first().expect("call");
-    let helper_id = canonical_symbol_id("pkg/utils.py", "helper", "function", 0);
-
-    assert_eq!(call.callee_target_kind.as_str(), "symbol");
-    assert_eq!(call.callee_symbol_id.as_deref(), Some(helper_id.as_str()));
-    assert!(call.callee_external_module.is_none());
+    assert_local_import_call!(call, "helper", "pkg/utils.py");
 }
 
 #[test]
-fn resolves_aliased_local_python_imports_to_canonical_symbol() {
+fn parse_records_local_import_without_reading_target_file_contents() {
+    // The retired file-scan approach only created a local binding when the
+    // imported name was found by reading and line-scanning the target file. The
+    // post-write design derives candidate files from the import path alone, so a
+    // local import is recorded even when the target file does NOT define the
+    // name (it degrades to unresolved during the DB pass). This is the
+    // parse-time guarantee that indexing performs no per-source-file scan (#790).
+    let parsed = parse_source(
+        "pkg/main.py",
+        r#"
+from pkg.utils import not_defined_here
+
+def run():
+    not_defined_here()
+"#,
+        // The target exists (so `pkg.utils` classifies as local) but does not
+        // define `not_defined_here`; the old scanner would have left this
+        // unresolved.
+        &[("pkg/utils.py", "def something_else():\n    pass\n")],
+    );
+
+    let call = parsed.calls.first().expect("call");
+    assert_local_import_call!(call, "not_defined_here", "pkg/utils.py");
+}
+
+#[test]
+fn records_aliased_relative_python_imports_as_local_import_calls() {
     let parsed = parse_source(
         "pkg/main.py",
         r#"
@@ -115,12 +128,10 @@ def run():
         &[("pkg/service.py", "class Service:\n    pass\n")],
     );
 
+    // `.service` normalizes against the caller's package, and the alias resolves
+    // back to the original `Service` name for the post-write lookup.
     let call = parsed.calls.first().expect("call");
-    let service_id = canonical_symbol_id("pkg/service.py", "Service", "class", 0);
-
-    assert_eq!(call.callee_target_kind.as_str(), "symbol");
-    assert_eq!(call.callee_symbol_id.as_deref(), Some(service_id.as_str()));
-    assert!(call.callee_external_module.is_none());
+    assert_local_import_call!(call, "Service", "pkg/service.py");
 }
 
 #[test]
@@ -213,8 +224,7 @@ function run() {
 }
 
 #[test]
-fn resolves_local_javascript_named_import_aliases_to_canonical_symbol() {
-    let target_source = "export function helper() {}\n";
+fn records_local_javascript_named_import_aliases_as_local_import_calls() {
     let parsed = parse_javascript(
         r#"
 import { helper as runHelper } from "./utils";
@@ -223,18 +233,20 @@ function run() {
 runHelper();
 }
 "#,
-        &[("src/utils.js", target_source)],
+        &[("src/utils.js", "export function helper() {}\n")],
     );
-    let target = parse_source("src/utils.js", target_source, &[]);
 
+    // The alias `runHelper` resolves back to the original export name `helper`.
     let call = parsed.calls.first().expect("call");
-    assert_eq!(call.callee_target_kind.as_str(), "symbol");
-    assert_call_targets_parsed_symbol(call, &target, "helper", "function");
+    assert_local_import_call!(call, "helper", "src/utils.js");
 }
 
 #[test]
-fn resolves_local_javascript_default_imports_to_canonical_symbol() {
-    let target_source = "export default function helper() {}\n";
+fn leaves_local_javascript_default_imports_unresolved() {
+    // A default export carries its own declared name, which the parse-time
+    // binding cannot know, so default imports degrade to unresolved rather than
+    // record a guaranteed-miss local_import. (A named export of the same symbol
+    // resolves fine — see the named-import test.)
     let parsed = parse_javascript(
         r#"
 import helper from "./utils";
@@ -243,18 +255,16 @@ function run() {
 helper();
 }
 "#,
-        &[("src/utils.js", target_source)],
+        &[("src/utils.js", "export default function helper() {}\n")],
     );
-    let target = parse_source("src/utils.js", target_source, &[]);
 
     let call = parsed.calls.first().expect("call");
-    assert_eq!(call.callee_target_kind.as_str(), "symbol");
-    assert_call_targets_parsed_symbol(call, &target, "helper", "function");
+    assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    assert!(call.callee_external_module.is_none());
 }
 
 #[test]
-fn resolves_local_javascript_namespace_member_calls_to_canonical_symbol() {
-    let target_source = "export function helper() {}\nexport function other() {}\n";
+fn records_local_javascript_namespace_member_calls_as_local_import_calls() {
     let parsed = parse_javascript(
         r#"
 import * as Utils from "./utils";
@@ -263,18 +273,18 @@ function run() {
 Utils.helper();
 }
 "#,
-        &[("src/utils.js", target_source)],
+        &[(
+            "src/utils.js",
+            "export function helper() {}\nexport function other() {}\n",
+        )],
     );
-    let target = parse_source("src/utils.js", target_source, &[]);
 
     let call = parsed.calls.first().expect("call");
-    assert_eq!(call.callee_target_kind.as_str(), "symbol");
-    assert_call_targets_parsed_symbol(call, &target, "helper", "function");
+    assert_local_import_call!(call, "helper", "src/utils.js");
 }
 
 #[test]
-fn resolves_self_package_javascript_imports_to_canonical_symbol() {
-    let target_source = "export function helper() {}\n";
+fn records_self_package_javascript_imports_as_local_import_calls() {
     let parsed = parse_javascript(
         r#"
 import { helper } from "app/utils";
@@ -285,19 +295,16 @@ helper();
 "#,
         &[
             ("package.json", r#"{"name":"app","dependencies":{}}"#),
-            ("src/utils.js", target_source),
+            ("src/utils.js", "export function helper() {}\n"),
         ],
     );
-    let target = parse_source("src/utils.js", target_source, &[]);
 
     let call = parsed.calls.first().expect("call");
-    assert_eq!(call.callee_target_kind.as_str(), "symbol");
-    assert_call_targets_parsed_symbol(call, &target, "helper", "function");
+    assert_local_import_call!(call, "helper", "src/utils.js");
 }
 
 #[test]
-fn resolves_local_typescript_named_import_aliases_to_canonical_symbol() {
-    let target_source = "export function loadUser(): void {}\n";
+fn records_local_typescript_named_import_aliases_as_local_import_calls() {
     let parsed = parse_typescript(
         r#"
 import { loadUser as load } from "./api";
@@ -306,13 +313,11 @@ export function run(): void {
 load();
 }
 "#,
-        &[("src/api.ts", target_source)],
+        &[("src/api.ts", "export function loadUser(): void {}\n")],
     );
-    let target = parse_source("src/api.ts", target_source, &[]);
 
     let call = parsed.calls.first().expect("call");
-    assert_eq!(call.callee_target_kind.as_str(), "symbol");
-    assert_call_targets_parsed_symbol(call, &target, "loadUser", "function");
+    assert_local_import_call!(call, "loadUser", "src/api.ts");
 }
 
 #[test]
@@ -403,7 +408,10 @@ function run() {
 }
 
 #[test]
-fn leaves_unlisted_javascript_package_aliases_unresolved() {
+fn records_javascript_at_path_alias_imports_as_local_import_calls() {
+    // `@/` (and `~/`) are the conventional `src/` path aliases, so `@/utils`
+    // resolves to `src/utils.*` as a local import rather than an external
+    // package; the post-write pass narrows it against the indexed symbols.
     let parsed = parse_javascript(
         r#"
 import { helper } from "@/utils";
@@ -419,5 +427,5 @@ function run() {
     );
 
     let call = parsed.calls.first().expect("call");
-    assert_eq!(call.callee_target_kind.as_str(), "unresolved");
+    assert_local_import_call!(call, "helper", "src/utils.js");
 }

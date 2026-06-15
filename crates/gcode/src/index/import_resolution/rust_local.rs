@@ -1,10 +1,3 @@
-use std::collections::HashMap;
-use std::path::{Path, PathBuf};
-
-use rayon::prelude::*;
-
-use super::context::LocalImportBinding;
-
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RustLocalTarget {
     pub(crate) source_root: String,
@@ -18,46 +11,22 @@ struct RustModuleContext {
     module: String,
 }
 
-pub(crate) fn build_rust_local_symbol_index(
-    root_path: &Path,
-    candidate_files: &[PathBuf],
-) -> HashMap<String, Vec<LocalImportBinding>> {
-    let entries = candidate_files
-        .par_iter()
-        .flat_map(|path| {
-            let rel_path = relative_path_string(root_path, path);
-            let Some(module_context) = rust_module_context_for_rel_path(&rel_path) else {
-                return Vec::new();
-            };
-            let Ok(source) = std::fs::read_to_string(path) else {
-                return Vec::new();
-            };
-
-            rust_top_level_definitions(&source, &rel_path)
-                .into_iter()
-                .map(|binding| {
-                    (
-                        rust_local_symbol_key(
-                            &module_context.source_root,
-                            &module_context.module,
-                            &binding.name,
-                        ),
-                        binding,
-                    )
-                })
-                .collect::<Vec<_>>()
-        })
-        .collect::<Vec<_>>();
-
-    let mut index: HashMap<String, Vec<LocalImportBinding>> = HashMap::new();
-    for (key, binding) in entries {
-        index.entry(key).or_default().push(binding);
+/// Project-relative files a Rust module path could be defined in, given the
+/// crate `source_root` (e.g. `crates/gcode/src`) and the crate-relative `module`
+/// (`::`-separated). Inverts [`rust_module_context_for_rel_path`] to cover both
+/// `foo/bar.rs` and `foo/bar/mod.rs`; an empty module is the crate root
+/// (`lib.rs`/`main.rs`). No file reads — the post-write pass narrows against the
+/// indexed symbols.
+pub(crate) fn rust_candidate_files(source_root: &str, module: &str) -> Vec<String> {
+    let root = source_root.trim_end_matches('/');
+    if module.is_empty() {
+        return vec![format!("{root}/lib.rs"), format!("{root}/main.rs")];
     }
-    index
-}
-
-pub(crate) fn rust_local_symbol_key(source_root: &str, module: &str, name: &str) -> String {
-    format!("{source_root}:{module}:{name}")
+    let module_path = module.replace("::", "/");
+    vec![
+        format!("{root}/{module_path}.rs"),
+        format!("{root}/{module_path}/mod.rs"),
+    ]
 }
 
 pub(crate) fn rust_import_target(
@@ -123,7 +92,10 @@ fn rust_module_for_segments(
         "self" => Some(join_rust_module(&context.module, rest)),
         "super" => Some(rust_super_module(&context.module, rest)),
         root if Some(root) == self_crate_name => Some(rest.join("::")),
-        _ => Some(segments.join("::")),
+        // Any other leading segment names an external crate (Rust 2018+: a bare
+        // `foo::bar` path is the crate `foo`, not a local module). Leave it for
+        // external resolution rather than inventing a local candidate file.
+        _ => None,
     }
 }
 
@@ -152,99 +124,47 @@ fn rust_path_segments(path: &str) -> Vec<&str> {
         .collect()
 }
 
-fn rust_top_level_definitions(source: &str, rel_path: &str) -> Vec<LocalImportBinding> {
-    let mut definitions = Vec::new();
-    let mut line_start = 0usize;
-    for line in source.split_inclusive('\n') {
-        let line_without_newline = line.trim_end_matches(['\r', '\n']);
-        if let Some((kind, name, name_offset)) = rust_top_level_definition(line_without_newline) {
-            definitions.push(LocalImportBinding {
-                file_path: rel_path.to_string(),
-                name,
-                kind: kind.to_string(),
-                byte_start: line_start + name_offset,
-            });
-        }
-        line_start += line.len();
-    }
-    definitions
-}
+#[cfg(test)]
+mod tests {
+    use super::*;
 
-fn rust_top_level_definition(line: &str) -> Option<(&'static str, String, usize)> {
-    if line.starts_with(char::is_whitespace) {
-        return None;
+    #[test]
+    fn candidate_files_cover_module_file_and_mod_rs() {
+        assert_eq!(
+            rust_candidate_files("crates/gcode/src", "index::foo"),
+            vec![
+                "crates/gcode/src/index/foo.rs".to_string(),
+                "crates/gcode/src/index/foo/mod.rs".to_string(),
+            ]
+        );
     }
-    let code = line.split_once("//").map(|(code, _)| code).unwrap_or(line);
-    let (code, _offset) = strip_rust_decl_prefixes(code, 0);
-    for (keyword, kind) in [
-        ("fn ", "function"),
-        ("struct ", "class"),
-        ("enum ", "type"),
-        ("trait ", "type"),
-        ("type ", "type"),
-    ] {
-        if let Some(rest) = code.strip_prefix(keyword) {
-            let (name, _) = rust_identifier(rest)?;
-            return Some((kind, name, 0));
-        }
-    }
-    None
-}
 
-fn strip_rust_decl_prefixes(mut code: &str, mut offset: usize) -> (&str, usize) {
-    loop {
-        let trimmed = code.trim_start();
-        offset += code.len() - trimmed.len();
-        code = trimmed;
-        if let Some(rest) = strip_rust_visibility(code) {
-            offset += code.len() - rest.len();
-            code = rest;
-            continue;
-        }
-        let Some(rest) = code
-            .strip_prefix("async ")
-            .or_else(|| code.strip_prefix("const "))
-            .or_else(|| code.strip_prefix("unsafe "))
-        else {
-            return (code, offset);
-        };
-        offset += code.len() - rest.len();
-        code = rest;
+    #[test]
+    fn candidate_files_for_crate_root_are_lib_and_main() {
+        assert_eq!(
+            rust_candidate_files("src", ""),
+            vec!["src/lib.rs".to_string(), "src/main.rs".to_string()]
+        );
     }
-}
 
-fn strip_rust_visibility(code: &str) -> Option<&str> {
-    if let Some(rest) = code.strip_prefix("pub ") {
-        return Some(rest);
-    }
-    let rest = code.strip_prefix("pub(")?;
-    let close = rest.find(')')?;
-    rest.get(close + 1..)?.strip_prefix(' ')
-}
+    #[test]
+    fn import_target_resolves_crate_self_super_and_self_crate_roots() {
+        let rel = "src/index/context.rs";
+        let crate_target = rust_import_target(rel, Some("app"), "crate::service::helper").unwrap();
+        assert_eq!(crate_target.module, "service");
+        assert_eq!(crate_target.name, "helper");
 
-fn rust_identifier(text: &str) -> Option<(String, usize)> {
-    let leading = text.len() - text.trim_start().len();
-    let text = text.trim_start();
-    let mut chars = text.char_indices();
-    let (_, first) = chars.next()?;
-    if !(first == '_' || first.is_ascii_alphabetic()) {
-        return None;
-    }
-    let mut end = first.len_utf8();
-    for (idx, ch) in chars {
-        if ch == '_' || ch.is_ascii_alphanumeric() {
-            end = idx + ch.len_utf8();
-        } else {
-            break;
-        }
-    }
-    let name = text[..end].to_string();
-    Some((name, leading))
-}
+        let super_target = rust_import_target(rel, Some("app"), "super::sibling::run").unwrap();
+        assert_eq!(super_target.module, "index::sibling");
 
-fn relative_path_string(root_path: &Path, path: &Path) -> String {
-    path.strip_prefix(root_path)
-        .unwrap_or(path)
-        .to_string_lossy()
-        .replace('\\', "/")
+        let self_crate_target = rust_import_target(rel, Some("app"), "app::service::run").unwrap();
+        assert_eq!(self_crate_target.module, "service");
+    }
+
+    #[test]
+    fn import_target_leaves_external_crate_paths_unresolved() {
+        // External crate roots must not be invented as local candidate files.
+        assert!(rust_import_target("src/lib.rs", Some("app"), "serde_json::from_str").is_none());
+        assert!(rust_import_target("src/lib.rs", None, "std::fs::read").is_none());
+    }
 }
