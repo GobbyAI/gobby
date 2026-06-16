@@ -10,6 +10,7 @@ mod gemini;
 mod grok;
 mod metadata;
 mod qwen;
+mod redaction;
 
 use codex::CODEX_SESSION_ADAPTER;
 use droid::DROID_SESSION_ADAPTER;
@@ -18,6 +19,7 @@ use grok::GROK_SESSION_ADAPTER;
 pub(crate) use metadata::ParsedSessionMetadata;
 use metadata::session_metadata_fields;
 use qwen::QWEN_SESSION_ADAPTER;
+use redaction::{redact_session_markdown, redact_session_text};
 
 use crate::WikiError;
 use crate::ingest::{
@@ -81,21 +83,24 @@ pub(crate) fn ingest_session_file_without_index(
     let parsed = parse_session_archive(&envelopes, &adapters)?;
     let title =
         non_empty_string(&parsed.title).unwrap_or_else(|| markdown_title(&snapshot.file_name));
+    let source_location = redact_session_text(&snapshot.location);
+    let source_title = redact_session_text(&title);
     let record = SourceManifest::register_borrowed(
         vault_root,
         SourceDraftRef {
-            location: snapshot.location.clone(),
+            location: source_location.clone(),
             kind: SourceKind::Session,
             fetched_at: snapshot.fetched_at.clone(),
             content: &snapshot.bytes,
-            title: Some(title.clone()),
-            citation: Some(snapshot.location.clone()),
+            title: Some(source_title),
+            citation: Some(source_location),
             license: None,
             ingestion_method: IngestionMethod::Manual,
             compile_status: CompileStatus::Pending,
         },
     )?;
     let markdown = render_session_markdown(&snapshot, &parsed, &title, &record.content_hash);
+    let markdown = redact_session_markdown(&markdown);
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
 
     Ok(IngestResult {
