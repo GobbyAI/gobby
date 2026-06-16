@@ -339,7 +339,7 @@ def _pipeline_action(task_id: str) -> StartPipelineAction:
 
 def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:
     """Candidate filter excludes claimed leased blocked terminal."""
-    from gobby.storage.tasks import _crud
+    from gobby.storage.tasks import _automation
 
     ready = _task(temp_db, sample_project, "ready")
     _task(
@@ -368,10 +368,10 @@ def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, samp
         (blocked.id, blocker.id, datetime.now(UTC).isoformat()),
     )
 
-    candidates = _crud.list_automation_candidates(temp_db, project_id=sample_project["id"])
+    candidates = _automation.list_automation_candidates(temp_db, project_id=sample_project["id"])
 
     assert [candidate.id for candidate in candidates] == [ready.id]
-    assert not _crud.is_blocked_by_deps(candidates[0])
+    assert not _automation.is_blocked_by_deps(candidates[0])
 
 
 @pytest.mark.asyncio
@@ -380,7 +380,7 @@ async def test_heartbeat_blocks_child_development_while_parent_expansion_needs_r
     sample_project,
 ) -> None:
     from gobby.dispatch import dispatcher
-    from gobby.storage.tasks import _crud
+    from gobby.storage.tasks import _automation
 
     parent = _parent_with_stage_order(
         temp_db,
@@ -396,7 +396,7 @@ async def test_heartbeat_blocks_child_development_while_parent_expansion_needs_r
         stage_state="ready",
     )
 
-    candidates = _crud.list_automation_candidates(temp_db, project_id=sample_project["id"])
+    candidates = _automation.list_automation_candidates(temp_db, project_id=sample_project["id"])
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
     assert child.id not in {candidate.id for candidate in candidates}

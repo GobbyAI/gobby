@@ -109,6 +109,13 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
         def reserve(self, task_id: str) -> None:
             raise AssertionError("reserve should not run when no action reserves files")
 
+    class FakeAgentRunManager:
+        def __init__(self, _db: object) -> None:
+            pass
+
+        def cleanup_stale_pending_runs(self) -> int:
+            return 0
+
     monkeypatch.setattr(dispatcher, "RuntimeDispatchMutex", SpyMutex)
     monkeypatch.setattr(dispatcher, "list_automation_candidates", lambda *a, **k: [candidate])
     monkeypatch.setattr(dispatcher, "sweep_stale_claims", lambda *a, **k: 0)
@@ -118,6 +125,7 @@ async def test_heartbeat_passes_snapshot(monkeypatch: pytest.MonkeyPatch) -> Non
     monkeypatch.setattr(dispatcher, "build_context", lambda *a, **k: SimpleNamespace())
     monkeypatch.setattr(dispatcher.dispatch_rules, "evaluate", lambda *a, **k: None)
     monkeypatch.setattr(dispatcher, "DispatchWriteSetGuard", SpyWriteSetGuard)
+    monkeypatch.setattr(dispatcher, "LocalAgentRunManager", FakeAgentRunManager)
 
     result = await dispatcher.run_heartbeat(db=heartbeat_db, project_id="project-1")
 

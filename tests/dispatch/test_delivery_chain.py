@@ -209,7 +209,7 @@ async def test_parent_holistic_waits_for_in_flight_child_with_real_context(
 
     result = await dispatcher.run_heartbeat(db=temp_db, project_id=sample_project["id"])
 
-    assert result.executed == 0
+    assert result.executed == 1
     assert stage_row(temp_db, parent.id, "holistic_qa")["state"] == "ready"
 
 

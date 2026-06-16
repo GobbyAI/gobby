@@ -4,17 +4,17 @@ from __future__ import annotations
 
 import asyncio
 import inspect
-import json
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
-from dataclasses import dataclass
-from datetime import UTC, datetime
 from typing import Any, ParamSpec, TypeVar, cast
 
 import psycopg
 
+from gobby.dispatch import results as dispatch_results
 from gobby.dispatch import rules as dispatch_rules
+from gobby.dispatch import spawn_actions as _spawn_actions
+from gobby.dispatch import stage_pipeline as _stage_pipeline
 from gobby.dispatch.actions import (
     Action,
     AdvanceStageAction,
@@ -44,11 +44,9 @@ from gobby.dispatch.mutex import (
     DispatchCandidateChangedError,
     DispatchMutexUnavailableError,
     RuntimeDispatchMutex,
-    RuntimeDispatchMutexError,
     RuntimeStageSnapshotState,
 )
 from gobby.dispatch.spawn import (
-    MAX_DISPATCH_SPAWN_ATTEMPTS,
     DispatchSpawnFailed,
     DispatchSpawnUnavailable,
     spawn_agent,
@@ -75,23 +73,13 @@ from gobby.storage.tasks._lifecycle_events import TaskLifecycleEventManager
 from gobby.storage.tasks._models import Task
 from gobby.storage.tasks._read import get_task
 from gobby.storage.tasks._stage_states import StageStatesManager
-from gobby.storage.tasks._stage_types import IllegalStageTransitionError
 from gobby.storage.tasks._transitions import escalate_task as _escalate_task
 from gobby.storage.tasks._updates import update_task
-from gobby.utils.id import generate_prefixed_id
-from gobby.workflows.pipeline.renderer import StepRenderer
-from gobby.workflows.templates import TemplateEngine
 
 logger = logging.getLogger(__name__)
 _HEARTBEAT_LOCK = asyncio.Lock()
 _P = ParamSpec("_P")
 _T = TypeVar("_T")
-
-_PIPELINE_ATTACH_DATABASE_ERRORS = (
-    psycopg.IntegrityError,
-    psycopg.OperationalError,
-    psycopg.Error,
-)
 
 
 async def run_db(func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) -> _T:
@@ -99,41 +87,11 @@ async def run_db(func: Callable[_P, _T], *args: _P.args, **kwargs: _P.kwargs) ->
     return await asyncio.to_thread(func, *args, **kwargs)
 
 
-@dataclass(frozen=True)
-class HeartbeatResult:
-    scanned: int = 0
-    executed: int = 0
-    skipped: int = 0
-    cap_reached: bool = False
-    reason: str | None = None
-
-
-def _skipped(result: HeartbeatResult) -> HeartbeatResult:
-    return HeartbeatResult(
-        result.scanned,
-        result.executed,
-        result.skipped + 1,
-        result.cap_reached,
-        result.reason,
-    )
-
-
-def _cap_reached(result: HeartbeatResult) -> HeartbeatResult:
-    return HeartbeatResult(
-        scanned=result.scanned,
-        executed=result.executed,
-        skipped=result.skipped,
-        cap_reached=True,
-        reason=result.reason,
-    )
-
-
-def _action_cap_reached(result: HeartbeatResult, max_actions: int | None) -> bool:
-    return max_actions is not None and result.executed >= max_actions
-
-
-def _unavailable(result: HeartbeatResult, reason: str) -> HeartbeatResult:
-    return HeartbeatResult(result.scanned, result.executed, result.skipped + 1, False, reason)
+HeartbeatResult = dispatch_results.HeartbeatResult
+_skipped = dispatch_results.skipped
+_cap_reached = dispatch_results.cap_reached
+_action_cap_reached = dispatch_results.action_cap_reached
+_unavailable = dispatch_results.unavailable
 
 
 _AGENT_CAP_REACHED = object()
@@ -399,17 +357,31 @@ async def _execute_action_with_agent_cap(
             services=services,
         )
 
+    spawn_failure: DispatchSpawnFailed | None = None
     with db.transaction_immediate(AgentCapAdmission(project_id=project_id)):
         if count_active_agents(db, project_id=project_id) >= cap:
             mutex.release()
             return _AGENT_CAP_REACHED
-        return await _execute_action(
-            action,
-            mutex=mutex,
-            db=db,
-            context=context,
-            services=services,
-        )
+        try:
+            return await _execute_action(
+                action,
+                mutex=mutex,
+                db=db,
+                context=context,
+                services=services,
+            )
+        except DispatchSpawnFailed as exc:
+            spawn_failure = exc
+
+    await _handle_spawn_failure(
+        action,
+        mutex=mutex,
+        db=db,
+        context=context,
+        error=str(spawn_failure),
+        cited_subtasks=spawn_failure.stage_failure_cited_subtasks if spawn_failure else None,
+    )
+    return None
 
 
 async def _execute_spawn_action(
@@ -420,59 +392,18 @@ async def _execute_spawn_action(
     context: object | None,
     services: object | None,
 ) -> str | None:
-    resume_result = await try_resume_daemon_stop_run(
+    return await _spawn_actions.execute_spawn_action(
         action,
         mutex=mutex,
         db=db,
         context=context,
         services=services,
+        run_db=run_db,
+        spawn_agent=spawn_agent,
+        handle_spawn_failure=_handle_spawn_failure,
+        cleanup_unattached_spawned_run=_cleanup_unattached_spawned_run,
+        try_resume_daemon_stop_run=try_resume_daemon_stop_run,
     )
-    if resume_result.handled:
-        return resume_result.run_id
-    try:
-        raw_run_id: object = spawn_agent(
-            action,
-            db=db,
-            context=context,
-            services=services,
-            mutex=mutex,
-        )
-        if inspect.isawaitable(raw_run_id):
-            raw_run_id = await cast(Awaitable[str | None], raw_run_id)
-    except DispatchSpawnUnavailable:
-        await run_db(mutex.release)
-        raise
-    except DispatchSpawnFailed as exc:
-        await _handle_spawn_failure(
-            action,
-            mutex=mutex,
-            db=db,
-            context=context,
-            error=str(exc),
-            cited_subtasks=exc.stage_failure_cited_subtasks,
-        )
-        return None
-    except BaseException:
-        if mutex.run_id is None:
-            await run_db(mutex.release)
-        raise
-    if raw_run_id:
-        run_id = str(raw_run_id)
-        try:
-            await run_db(mutex.attach, run_id)
-        except RuntimeDispatchMutexError as exc:
-            await _cleanup_unattached_spawned_run(run_id, db=db, error=str(exc))
-            await _handle_spawn_failure(
-                action,
-                mutex=mutex,
-                db=db,
-                context=context,
-                error=f"dispatch_mutex_attach_failed:{exc}",
-            )
-            return None
-        return run_id
-    await _handle_spawn_failure(action, mutex=mutex, db=db, context=context, error="missing run_id")
-    return None
 
 
 async def _cleanup_unattached_spawned_run(
@@ -481,28 +412,7 @@ async def _cleanup_unattached_spawned_run(
     db: HubDatabase,
     error: str,
 ) -> None:
-    run_storage = LocalAgentRunManager(db)
-    run = run_storage.get(run_id)
-    if run is None or run.status not in ("pending", "running"):
-        return
-
-    try:
-        from gobby.agents.kill import kill_agent
-
-        await kill_agent(run, db, close_terminal=True)
-    except Exception:
-        logger.warning(
-            "Failed to kill unattached spawned agent run %s after mutex attach failure",
-            run_id,
-            exc_info=True,
-        )
-
-    failed = run_storage.fail(run_id, error=f"dispatch mutex attach failed: {error}")
-    if failed is None:
-        logger.debug(
-            "Unattached spawned agent run %s was already terminal during attach-failure cleanup",
-            run_id,
-        )
+    await _spawn_actions.cleanup_unattached_spawned_run(run_id, db=db, error=error)
 
 
 async def execute_action(
@@ -578,75 +488,20 @@ async def _start_pipeline_action(
     context: object | None,
     services: object | None,
 ) -> dict[str, object]:
-    executor = getattr(services, "pipeline_executor", None)
-    loader = getattr(services, "workflow_loader", None) or getattr(executor, "loader", None)
-    if executor is None:
-        return _escalate_pipeline_dispatch(action, mutex, db, "pipeline_executor_missing")
-    if loader is None:
-        return _escalate_pipeline_dispatch(action, mutex, db, "pipeline_loader_missing")
-
-    try:
-        pipeline = await loader.load_pipeline(action.pipeline_name)
-    except ValueError as exc:
-        return _escalate_pipeline_dispatch(action, mutex, db, f"pipeline_invalid:{exc}")
-    if pipeline is None:
-        return _escalate_pipeline_dispatch(
-            action, mutex, db, f"pipeline_missing:{action.pipeline_name}"
-        )
-    if not getattr(pipeline, "enabled", True):
-        return _escalate_pipeline_dispatch(
-            action, mutex, db, f"pipeline_disabled:{action.pipeline_name}"
-        )
-    if getattr(pipeline, "deprecated", False):
-        return _escalate_pipeline_dispatch(
-            action, mutex, db, f"pipeline_deprecated:{action.pipeline_name}"
-        )
-
-    try:
-        inputs = _render_dispatch_inputs(action, context, services)
-    except ValueError as exc:
-        return _escalate_pipeline_dispatch(action, mutex, db, f"pipeline_render_failed:{exc}")
-
-    try:
-        execution_id = _create_stage_pipeline_execution(
-            action,
-            pipeline=pipeline,
-            inputs=inputs,
-            mutex=mutex,
-            db=db,
-            services=services,
-        )
-    except _PIPELINE_ATTACH_DATABASE_ERRORS as exc:
-        return _escalate_pipeline_dispatch(
-            action, mutex, db, f"pipeline_attach_failed:database:{exc}"
-        )
-    except RuntimeDispatchMutexError as exc:
-        return _retry_neutral_pipeline_dispatch(action, mutex, db, str(exc))
-    except RuntimeError as exc:
-        return _escalate_pipeline_dispatch(action, mutex, db, f"pipeline_attach_failed:{exc}")
-    except Exception as exc:
-        logger.exception(
-            "Unexpected pipeline attach failure for task %s pipeline %s",
-            action.task_id,
-            action.pipeline_name,
-        )
-        return _escalate_pipeline_dispatch(
-            action, mutex, db, f"pipeline_attach_failed:unexpected:{exc}"
-        )
-    task = asyncio.create_task(
-        _execute_pipeline_background(
-            executor,
-            pipeline,
-            inputs,
-            str(_field(context, "project_id", "")),
-            execution_id,
-            action.pipeline_name,
-            session_id=getattr(services, "triggering_session_id", None),
-        ),
-        name=f"stage-pipeline-{action.pipeline_name}-{execution_id[:8]}",
+    return await _stage_pipeline.start_pipeline_action(
+        action,
+        mutex=mutex,
+        db=db,
+        context=context,
+        services=services,
+        field=_field,
+        escalate_pipeline_dispatch=_escalate_pipeline_dispatch,
+        retry_neutral_pipeline_dispatch=_retry_neutral_pipeline_dispatch,
+        render_dispatch_inputs=_render_dispatch_inputs,
+        create_stage_pipeline_execution=_create_stage_pipeline_execution,
+        execute_pipeline_background=_execute_pipeline_background,
+        register_background_task=_register_background_task,
     )
-    _register_background_task(task)
-    return {"success": True, "execution_id": execution_id, "status": "running"}
 
 
 def _escalate_pipeline_dispatch(
@@ -655,9 +510,13 @@ def _escalate_pipeline_dispatch(
     db: HubDatabase,
     reason: str,
 ) -> dict[str, object]:
-    escalate_task(db=db, task_id=action.task_id, reason=f"stage_pipeline_dispatch:{reason}")
-    mutex.release()
-    return {"success": False, "error": reason}
+    return _stage_pipeline.escalate_pipeline_dispatch(
+        action,
+        mutex,
+        db,
+        reason,
+        escalate_task=escalate_task,
+    )
 
 
 def _retry_neutral_pipeline_dispatch(
@@ -666,9 +525,13 @@ def _retry_neutral_pipeline_dispatch(
     db: HubDatabase,
     reason: str,
 ) -> dict[str, object]:
-    mutex.release()
-    _restore_stage_pipeline_retry(db, action.task_id, action.stage_name, reason=reason)
-    return {"success": False, "error": reason, "retry_neutral": True}
+    return _stage_pipeline.retry_neutral_pipeline_dispatch(
+        action,
+        mutex,
+        db,
+        reason,
+        restore_stage_pipeline_retry=_restore_stage_pipeline_retry,
+    )
 
 
 def _restore_stage_pipeline_retry(
@@ -678,40 +541,13 @@ def _restore_stage_pipeline_retry(
     *,
     reason: str,
 ) -> bool:
-    stage = _stage_states_manager(db=db, services=None).get(task_id, stage_name)
-    if stage is None or stage.state != "in_progress":
-        return False
-    now = datetime.now(UTC).isoformat()
-    with db.transaction() as conn:
-        cursor = conn.execute(
-            """
-            UPDATE task_stage_states
-               SET state = 'ready',
-                   entered_at = NULL,
-                   entered_by_session_id = NULL,
-                   artifact_refs = NULL,
-                   notes = NULL,
-                   work_attempt_count = CASE
-                       WHEN work_attempt_count > 0 THEN work_attempt_count - 1
-                       ELSE 0
-                   END,
-                   updated_at = %s
-             WHERE task_id = %s
-               AND stage_name = %s
-               AND state = 'in_progress'
-            """,
-            (now, task_id, stage_name),
-        )
-        restored = cursor.rowcount > 0
-    if restored:
-        TaskLifecycleEventManager(db).record_lifecycle_event(
-            task_id,
-            f"{stage_name}:in_progress",
-            f"{stage_name}:ready",
-            f"stage_pipeline_dispatch_retry_neutral:{reason}",
-            by_actor="dispatcher",
-        )
-    return restored
+    return _stage_pipeline.restore_stage_pipeline_retry(
+        db,
+        task_id,
+        stage_name,
+        reason=reason,
+        stage_states_manager=_stage_states_manager,
+    )
 
 
 def _render_dispatch_inputs(
@@ -719,9 +555,7 @@ def _render_dispatch_inputs(
     context: object | None,
     services: object | None,
 ) -> dict[str, Any]:
-    render_context = _pipeline_render_context(action, context, services)
-    renderer = StepRenderer(TemplateEngine())
-    return renderer.render_mcp_arguments(dict(action.dispatch_inputs or {}), render_context)
+    return _stage_pipeline.render_dispatch_inputs(action, context, services, field=_field)
 
 
 def _pipeline_render_context(
@@ -729,23 +563,7 @@ def _pipeline_render_context(
     context: object | None,
     services: object | None,
 ) -> dict[str, Any]:
-    task = _field(context, "task")
-    artifacts = _field(context, "artifacts", {})
-    children = _field(context, "children", [])
-    stage_state = _field(context, "current_stage")
-    project_id = _field(task, "project_id", _field(context, "project_id"))
-    return {
-        "task": task,
-        "stage": stage_state,
-        "artifacts": artifacts,
-        "children": children,
-        "task_id": action.task_id,
-        "task_ref": action.task_ref,
-        "stage_name": action.stage_name,
-        "stage_state": stage_state,
-        "project_id": project_id,
-        "session_id": getattr(services, "triggering_session_id", None),
-    }
+    return _stage_pipeline.pipeline_render_context(action, context, services, field=_field)
 
 
 def _create_stage_pipeline_execution(
@@ -757,48 +575,14 @@ def _create_stage_pipeline_execution(
     db: HubDatabase,
     services: object | None,
 ) -> str:
-    execution_id = generate_prefixed_id("pe")
-    session_id = getattr(services, "triggering_session_id", None)
-    try:
-        definition_json = cast(Any, pipeline).model_dump_json()
-    except Exception:
-        definition_json = json.dumps(
-            {"name": action.pipeline_name, "error": "serialization failed"}
-        )
-    with db.transaction_immediate() as conn:
-        conn.execute(
-            """
-            INSERT INTO pipeline_executions (
-                id, pipeline_name, project_id, status, inputs_json, session_id,
-                definition_json, created_at, updated_at
-            )
-            SELECT %s, %s, project_id, 'pending', %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
-              FROM tasks
-             WHERE id = %s
-            """,
-            (
-                execution_id,
-                action.pipeline_name,
-                json.dumps(inputs),
-                session_id,
-                definition_json,
-                action.task_id,
-            ),
-        )
-        cursor = conn.execute(
-            """
-            UPDATE task_dispatch_mutex
-               SET run_id = %s,
-                   action_kind = %s,
-                   updated_at = CURRENT_TIMESTAMP
-             WHERE task_id = %s
-            """,
-            (execution_id, f"stage-pipeline:{action.stage_name}", action.task_id),
-        )
-        if cursor.rowcount < 1:
-            raise RuntimeError(f"dispatch mutex missing before attaching {execution_id}")
-    mutex.mark_attached_run_id(execution_id)
-    return execution_id
+    return _stage_pipeline.create_stage_pipeline_execution(
+        action,
+        pipeline=pipeline,
+        inputs=inputs,
+        mutex=mutex,
+        db=db,
+        services=services,
+    )
 
 
 def _stage_states_manager(*, db: HubDatabase, services: object | None) -> StageStatesManager:
@@ -818,61 +602,21 @@ async def _handle_spawn_failure(
     error: str,
     cited_subtasks: Sequence[str] | None = None,
 ) -> None:
-    try:
-        await append_audit_marker(db, action.task_id, "Dispatch spawn failed", error)
-        cited_subtask_ids = tuple(cited_subtasks or ())
-        failure_count = 0
-        if not cited_subtask_ids:
-            task = get_task(db, action.task_id)
-            failure_count = int(getattr(task, "dispatch_failure_count", 0) or 0) + 1
-            update_task(db, action.task_id, dispatch_failure_count=failure_count)
-        stage = _field(context, "current_stage")
-        stage_name = _stage_name(stage)
-        if stage_name and _field(stage, "state") == "in_progress":
-            failure_reason = (
-                f"dispatch_spawn_failed:{error}" if cited_subtask_ids else "dispatch_spawn_failed"
-            )
-            try:
-                mutex.release()
-                _stage_states_manager(
-                    db=db,
-                    services=getattr(context, "services", None),
-                ).fail_stage(
-                    action.task_id,
-                    stage_name,
-                    reason=failure_reason,
-                    by_session_id="dispatcher",
-                    cited_subtasks=cited_subtask_ids,
-                )
-            except IllegalStageTransitionError:
-                fresh_stage = _stage_states_manager(
-                    db=db,
-                    services=getattr(context, "services", None),
-                ).get(action.task_id, stage_name)
-                if fresh_stage is None or fresh_stage.state != "ready":
-                    raise
-                logger.info(
-                    "Dispatch spawn failure rollback already applied: task_id=%s stage_name=%s",
-                    action.task_id,
-                    stage_name,
-                )
-            except Exception:
-                logger.warning(
-                    "Failed to roll back stage after dispatch spawn failure: "
-                    "task_id=%s stage_name=%s by_session_id=%s",
-                    action.task_id,
-                    stage_name,
-                    "dispatcher",
-                    exc_info=True,
-                )
-        if not cited_subtask_ids and failure_count >= MAX_DISPATCH_SPAWN_ATTEMPTS:
-            escalate_task(
-                db=db,
-                task_id=action.task_id,
-                reason=f"dispatch_spawn_max_attempts:{error}",
-            )
-    finally:
-        mutex.release()
+    await _spawn_actions.handle_spawn_failure(
+        action,
+        mutex=mutex,
+        db=db,
+        context=context,
+        error=error,
+        cited_subtasks=cited_subtasks,
+        append_audit_marker=append_audit_marker,
+        get_task=get_task,
+        update_task=update_task,
+        escalate_task=escalate_task,
+        field=_field,
+        stage_name=_stage_name,
+        stage_states_manager=_stage_states_manager,
+    )
 
 
 def allocate_expansion_run_id() -> str:
