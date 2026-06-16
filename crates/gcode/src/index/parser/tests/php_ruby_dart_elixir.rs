@@ -657,6 +657,61 @@ dependencies:
 }
 
 #[test]
+fn extracts_parameterized_elixir_function_symbols() {
+    let parsed = parse_elixir(
+        r#"
+defmodule App.Sample do
+  def greet(name) do
+    name
+  end
+
+  defp normalize(value) when is_binary(value) do
+    String.trim(value)
+  end
+
+  defmacro wrap(expr) do
+    quote do
+      unquote(expr)
+    end
+  end
+
+  def shout do
+    :ok
+  end
+end
+"#,
+        &[],
+    );
+
+    let symbols: Vec<_> = parsed
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.name.as_str(), symbol.kind.as_str()))
+        .collect();
+
+    for expected in [
+        ("greet", "function"),
+        ("normalize", "function"),
+        ("wrap", "function"),
+        ("shout", "function"),
+    ] {
+        assert!(
+            symbols.contains(&expected),
+            "missing {expected:?}; symbols: {symbols:?}"
+        );
+    }
+
+    let shout_count = symbols
+        .iter()
+        .filter(|symbol| symbol.0 == "shout" && symbol.1 == "function")
+        .count();
+    assert_eq!(
+        shout_count, 1,
+        "expected exactly one shout function symbol; symbols: {symbols:?}"
+    );
+}
+
+#[test]
 fn classifies_external_elixir_remote_alias_and_required_calls() {
     let parsed = parse_elixir(
         r#"

@@ -248,7 +248,16 @@ const OBJC: LanguageSpec = LanguageSpec {
 const ELIXIR: LanguageSpec = LanguageSpec {
     extensions: &[".ex", ".exs"],
     symbol_query: r#"
-        (call target: (identifier) @_keyword (#any-of? @_keyword "def" "defp" "defmacro") (arguments (identifier) @name)) @definition.function
+        (call
+            target: (identifier) @_keyword
+            (#any-of? @_keyword "def" "defp" "defmacro")
+            (arguments [
+                (identifier) @name
+                (call target: (identifier) @name)
+                (binary_operator
+                    left: (call target: (identifier) @name)
+                    operator: "when")
+            ])) @definition.function
         (call target: (identifier) @_keyword (#any-of? @_keyword "defmodule") (arguments (alias) @name)) @definition.class
     "#,
     import_query: r#"

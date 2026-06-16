@@ -251,7 +251,9 @@ fn link_parents(symbols: &mut [Symbol]) {
                 let sym = &mut symbols[i];
                 sym.parent_symbol_id = Some(parent_id);
                 sym.qualified_name = format!("{}.{}", parent_name, sym.name);
-                if sym.kind == "function" {
+                // Elixir module functions are still function symbols, even
+                // when nested under a defmodule symbol.
+                if sym.kind == "function" && sym.language != "elixir" {
                     sym.kind = "method".to_string();
                 }
                 break;

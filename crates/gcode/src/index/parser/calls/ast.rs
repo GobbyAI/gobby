@@ -1,5 +1,5 @@
 use streaming_iterator::StreamingIterator;
-use tree_sitter::{Query, QueryCursor};
+use tree_sitter::{Node, Query, QueryCursor};
 
 use anyhow::Context as _;
 
@@ -66,6 +66,10 @@ pub(super) fn extract_ast_calls(
         }
 
         let target = call_node.unwrap_or(name_n);
+        if is_elixir_definition_head_call(language, target, source) {
+            continue;
+        }
+
         // If the captured callee is already qualified, trust that text over a
         // prefix inferred from the wider call node.
         let qualifier_path = call_qualifier_path(qualifier_from_name, || {
@@ -96,6 +100,38 @@ pub(super) fn extract_ast_calls(
     }
 
     Ok(calls)
+}
+
+fn is_elixir_definition_head_call(language: &str, call_node: Node<'_>, source: &[u8]) -> bool {
+    if language != "elixir" || call_node.kind() != "call" {
+        return false;
+    }
+
+    let Some(parent) = call_node.parent() else {
+        return false;
+    };
+
+    let arguments = match parent.kind() {
+        "arguments" => parent,
+        "binary_operator" => match parent.parent() {
+            Some(grandparent) if grandparent.kind() == "arguments" => grandparent,
+            _ => return false,
+        },
+        _ => return false,
+    };
+
+    let Some(definition_call) = arguments.parent() else {
+        return false;
+    };
+    if definition_call.kind() != "call" {
+        return false;
+    }
+
+    let Some(target) = definition_call.child_by_field_name("target") else {
+        return false;
+    };
+    let keyword = String::from_utf8_lossy(&source[target.start_byte()..target.end_byte()]);
+    matches!(keyword.as_ref(), "def" | "defp" | "defmacro")
 }
 
 #[cfg(test)]
