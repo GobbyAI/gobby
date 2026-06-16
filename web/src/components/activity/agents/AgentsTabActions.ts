@@ -6,6 +6,13 @@ function optionalString(value: string): string | null {
   return trimmed ? trimmed : null;
 }
 
+function requireNonNegativeNumber(value: number, label: string): number {
+  if (!Number.isFinite(value) || value < 0) {
+    throw new Error(`${label} must be a non-negative number`);
+  }
+  return value;
+}
+
 function workflowPayload(draft: AgentDraft): Record<string, unknown> | null {
   const workflows: Record<string, unknown> = {};
   if (draft.form.pipeline) workflows.pipeline = draft.form.pipeline;
@@ -40,8 +47,8 @@ export function buildAgentDefinitionBody(
     mode: draft.form.mode,
     isolation: draft.form.isolation,
     base_branch: draft.form.base_branch,
-    timeout: Number(draft.form.timeout) || 0,
-    max_turns: Number(draft.form.max_turns) || 0,
+    timeout: requireNonNegativeNumber(draft.form.timeout, "Timeout"),
+    max_turns: requireNonNegativeNumber(draft.form.max_turns, "Max turns"),
     enabled: draft.enabled,
     tags: draft.tags,
     workflows: workflowPayload(draft),
@@ -60,7 +67,19 @@ async function sendJson(url: string, method: string, body?: Record<string, unkno
     body: body ? JSON.stringify(body) : undefined,
   });
   if (!response.ok) {
-    throw new Error(`Agent request failed with ${response.status}`);
+    const detail = await response
+      .json()
+      .then((data: unknown) =>
+        data && typeof data === "object" && "detail" in data
+          ? String((data as { detail: unknown }).detail)
+          : null,
+      )
+      .catch(() => null);
+    throw new Error(
+      detail
+        ? `Agent request failed with ${response.status}: ${detail}`
+        : `Agent request failed with ${response.status}`,
+    );
   }
   return response.json().catch(() => ({}));
 }

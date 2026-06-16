@@ -1,3 +1,4 @@
+import type { ReactNode } from "react";
 import type { ChannelType } from "../../../hooks/useIntegrations";
 
 interface IntegrationPlatformIconProps {
@@ -5,7 +6,10 @@ interface IntegrationPlatformIconProps {
   size?: number;
 }
 
-export function IntegrationPlatformIcon({ type, size = 16 }: IntegrationPlatformIconProps) {
+export function IntegrationPlatformIcon({
+  type,
+  size = 16,
+}: IntegrationPlatformIconProps): ReactNode {
   const props = {
     width: size,
     height: size,
@@ -70,5 +74,9 @@ export function IntegrationPlatformIcon({ type, size = 16 }: IntegrationPlatform
           <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z" />
         </svg>
       );
+    default: {
+      const exhaustive: never = type;
+      throw new Error(`Unhandled channel type: ${String(exhaustive)}`);
+    }
   }
 }

@@ -194,9 +194,13 @@ export function ChannelDetailPanel({
   };
   const copyWebhookUrl = async () => {
     if (!webhookUrl) return;
-    await navigator.clipboard.writeText(webhookUrl);
-    setCopied(true);
-    window.setTimeout(() => setCopied(false), 2000);
+    try {
+      await navigator.clipboard.writeText(webhookUrl);
+      setCopied(true);
+      window.setTimeout(() => setCopied(false), 2000);
+    } catch (error) {
+      console.error("Failed to copy webhook URL", error);
+    }
   };
 
   return (

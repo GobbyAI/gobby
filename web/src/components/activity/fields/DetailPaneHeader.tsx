@@ -70,12 +70,17 @@ export function DetailActionButton({
   disabled,
   icon,
 }: DetailActionButtonProps) {
+  const handleClick = () => {
+    void Promise.resolve(onClick()).catch((error) => {
+      console.error(`Detail action "${label}" failed`, error);
+    });
+  };
   return (
     <button
       type="button"
       className={cn("btn btn-sm", DETAIL_ACTION_VARIANT_CLASS[variant])}
       disabled={disabled}
-      onClick={onClick}
+      onClick={handleClick}
     >
       {icon}
       <span>{label}</span>

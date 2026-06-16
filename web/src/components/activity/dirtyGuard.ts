@@ -48,12 +48,16 @@ export function useDirtyGuardController(): DirtyGuardContextValue {
     }
 
     void (async () => {
-      for (const guard of dirtyGuards) {
-        if (!(await guard.confirmLeave())) {
-          return;
+      try {
+        for (const guard of dirtyGuards) {
+          if (!(await guard.confirmLeave())) {
+            return;
+          }
         }
+        action();
+      } catch (error) {
+        console.error("Dirty-guard confirmation failed", error);
       }
-      action();
     })();
   }, []);
 

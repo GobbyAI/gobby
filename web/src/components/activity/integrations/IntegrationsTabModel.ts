@@ -102,8 +102,12 @@ export function integrationPayloadFromDraft(draft: IntegrationDraft): Integratio
     if (!rawValue) continue;
     if (field.secret) {
       secrets[field.key] = rawValue;
+    } else if (field.type === "number") {
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric)) continue;
+      config[field.key] = numeric;
     } else {
-      config[field.key] = field.type === "number" ? Number(rawValue) : rawValue;
+      config[field.key] = rawValue;
     }
   }
 

@@ -224,6 +224,15 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
   }
 
   function updateKey(index: number, nextKey: string) {
+    const isDuplicate =
+      nextKey !== '' &&
+      entries.some((entry, i) => i !== index && entry[0] === nextKey)
+    if (isDuplicate) {
+      console.warn(
+        `SkillHubsField: ignored rename to duplicate hub "${nextKey}" to avoid overwriting an existing entry`,
+      )
+      return
+    }
     commit(
       Object.fromEntries(
         entries.map((entry, i) => (i === index ? [nextKey, entry[1]] : entry)),

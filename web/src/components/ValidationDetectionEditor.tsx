@@ -56,11 +56,31 @@ export function ValidationDetectionEditor({
   title = 'Validation Detection',
 }: ValidationDetectionEditorProps) {
   const normalized = useMemo(() => normalizeValue(value), [value])
-  const [jsonText, setJsonText] = useState(() => JSON.stringify(normalized, null, 2))
+  const incoming = useMemo(() => JSON.stringify(normalized, null, 2), [normalized])
+  const [jsonText, setJsonText] = useState(incoming)
+  const [syncedValue, setSyncedValue] = useState(incoming)
   const [jsonError, setJsonError] = useState<string | null>(null)
   const [command, setCommand] = useState('')
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
+
+  // Resync the editor text when the external value changes (e.g. a different
+  // record is loaded), without clobbering in-progress edits that already
+  // produced this same value. Adjusting state during render is the codebase
+  // convention (see RulesDetailPanel).
+  if (syncedValue !== incoming) {
+    setSyncedValue(incoming)
+    let currentCanonical: string | null = null
+    try {
+      currentCanonical = JSON.stringify(normalizeValue(JSON.parse(jsonText)), null, 2)
+    } catch {
+      currentCanonical = null
+    }
+    if (currentCanonical !== incoming) {
+      setJsonText(incoming)
+      setJsonError(null)
+    }
+  }
 
   const handleJsonChange = (next: string) => {
     setJsonText(next)

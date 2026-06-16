@@ -245,6 +245,19 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
   const [expandedId, setExpandedId] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [isDirty, setDirty] = useState(false)
+  const [loadedPipelineId, setLoadedPipelineId] = useState(pipeline.id)
+
+  // Reset editor state when a different pipeline is loaded into this instance.
+  // Adjusting state during render (rather than in an effect) is the codebase
+  // convention and avoids an extra commit/flash.
+  if (loadedPipelineId !== pipeline.id) {
+    setLoadedPipelineId(pipeline.id)
+    setName(pipeline.name)
+    setDescription(pipeline.description ?? '')
+    setSteps(initSteps)
+    setExpandedId(null)
+    setDirty(false)
+  }
 
   const markDirty = useCallback(() => setDirty(true), [])
 

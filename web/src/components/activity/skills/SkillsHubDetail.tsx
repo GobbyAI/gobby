@@ -91,6 +91,18 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
   const [scanning, setScanning] = useState(false);
   const [installing, setInstalling] = useState(false);
 
+  // Reset transient scan/install state when a different hub result is selected,
+  // so a prior scan can't enable install for newly shown content. Adjusting
+  // state during render is the codebase convention (see RulesDetailPanel).
+  const resultKey = result ? `${result.hub_name}/${result.slug}` : null;
+  const [loadedResultKey, setLoadedResultKey] = useState(resultKey);
+  if (loadedResultKey !== resultKey) {
+    setLoadedResultKey(resultKey);
+    setScanResult(null);
+    setScanning(false);
+    setInstalling(false);
+  }
+
   const content = result?.content?.trim() ?? "";
   const sortedFindings = useMemo(
     () => [...(scanResult?.findings ?? [])].sort((a, b) => findingSortValue(b) - findingSortValue(a)),

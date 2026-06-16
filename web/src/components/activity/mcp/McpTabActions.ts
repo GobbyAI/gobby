@@ -84,7 +84,9 @@ async function sendMcpServerRequest(
     body: JSON.stringify(body),
   });
   if (!response.ok) return false;
-  const data = (await response.json().catch(() => ({}))) as { success?: boolean };
+  const data = (await response.json().catch(() => ({ success: false }))) as {
+    success?: boolean;
+  };
   return data.success !== false;
 }
 

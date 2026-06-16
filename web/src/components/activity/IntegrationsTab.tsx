@@ -160,8 +160,8 @@ export const IntegrationsTab = memo(function IntegrationsTab() {
 
   const handleDelete = useCallback(
     (channel: Channel) => {
+      if (!window.confirm(`Delete ${channel.name}?`)) return;
       void withChannelBusy(channel, async () => {
-        if (!window.confirm(`Delete ${channel.name}?`)) return;
         await removeIntegrationChannel(channel);
         const loaded = await refreshChannels();
         if (selectedId === channel.id) {

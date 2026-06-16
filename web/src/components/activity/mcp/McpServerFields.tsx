@@ -183,7 +183,7 @@ export function McpServerFields({
                 const next = Number.parseFloat(value);
                 draftState.setField(
                   "connect_timeout",
-                  Number.isFinite(next) ? next : 0,
+                  Number.isFinite(next) ? next : 30,
                 );
               }}
             />

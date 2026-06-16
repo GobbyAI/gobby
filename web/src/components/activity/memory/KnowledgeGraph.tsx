@@ -259,10 +259,16 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   // Initial data fetch (refetches when limit changes)
   useEffect(() => {
     let cancelled = false
-    fetchKnowledgeGraph(limit).then(data => {
-      if (!cancelled && data) setGraphData(data)
-      if (!cancelled) setLoading(false)
-    })
+    fetchKnowledgeGraph(limit)
+      .then(data => {
+        if (!cancelled && data) setGraphData(data)
+        if (!cancelled) setLoading(false)
+      })
+      .catch(error => {
+        if (cancelled) return
+        console.error('Failed to load knowledge graph', error)
+        setLoading(false)
+      })
     return () => { cancelled = true }
   }, [fetchKnowledgeGraph, limit])
 

@@ -89,6 +89,6 @@ export async function deleteIntegrationChannel(channelId: string): Promise<void>
     method: "DELETE",
   });
   if (!response.ok) {
-    throw new Error(`Request failed: ${response.status}`);
+    throw new IntegrationApiError(`Request failed: ${response.status}`, response.status);
   }
 }
