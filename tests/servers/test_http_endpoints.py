@@ -484,13 +484,11 @@ class TestHooksEndpoints:
             assert response.status_code == 200
             assert response.json()["continue"] is True
 
-    def test_execute_hook_noops_grok_payload_routed_as_claude(
+    def test_execute_hook_routes_claude_payload_with_camel_case_fields_to_adapter(
         self,
         session_storage: SessionManager,
-        caplog: pytest.LogCaptureFixture,
     ) -> None:
-        """Grok/ACP payloads misrouted as Claude should not create Claude sessions."""
-        caplog.set_level("WARNING", logger="gobby.servers.routes.mcp.hooks")
+        """Claude source controls adapter dispatch, not inner input_data field names."""
         services = ServiceContainer(
             config=None,
             database=session_storage.db,
@@ -507,29 +505,40 @@ class TestHooksEndpoints:
         server.app.state.hook_manager = mock_hook_manager
 
         with patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter:
+            mock_adapter_instance = MagicMock()
+            mock_adapter_instance.handle_native.return_value = {"continue": True}
+            MockAdapter.return_value = mock_adapter_instance
+
             client = TestClient(server.app)
+            payload = _hook_envelope(
+                hook_type="session_start",
+                source="claude",
+                input_data={
+                    "hookEventName": "session_start",
+                    "sessionId": "claude-hook-session",
+                    "cwd": "/tmp/project",
+                },
+            )
             response = client.post(
                 "/api/hooks/execute",
-                json=_hook_envelope(
-                    hook_type="session_start",
-                    source="claude",
-                    input_data={
-                        "hookEventName": "session_start",
-                        "sessionId": "grok-hook-session",
-                        "cwd": "/tmp/project",
-                    },
-                ),
+                json=payload,
             )
 
         assert response.status_code == 200
-        assert response.json() == {
-            "continue": True,
-            "decision": "approve",
-            "reason": "provider mismatch: ACP/Grok payload routed as Claude",
-        }
-        MockAdapter.assert_not_called()
-        mock_hook_manager.handle.assert_not_called()
-        assert any("routed as Claude" in record.message for record in caplog.records)
+        assert response.json()["continue"] is True
+        MockAdapter.assert_called_once_with(hook_manager=mock_hook_manager)
+        mock_adapter_instance.handle_native.assert_called_once_with(
+            {
+                "hook_type": "session_start",
+                "input_data": {
+                    "hookEventName": "session_start",
+                    "sessionId": "claude-hook-session",
+                    "cwd": "/tmp/project",
+                },
+                "source": "claude",
+            },
+            mock_hook_manager,
+        )
 
     def test_execute_hook_graceful_error_on_adapter_exception(
         self, session_storage: SessionManager

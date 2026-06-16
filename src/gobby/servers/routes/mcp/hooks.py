@@ -191,23 +191,6 @@ def _normalize_hook_request(payload: Any) -> tuple[dict[str, Any], dict[str, Any
     return normalized_payload, metadata
 
 
-def _looks_like_acp_hook_payload(payload: dict[str, Any]) -> bool:
-    input_data = payload.get("input_data")
-    if not isinstance(input_data, dict):
-        return False
-    acp_keys = {
-        "hookEventName",
-        "hook_event_name",
-        "sessionId",
-        "workspaceRoot",
-        "promptId",
-        "toolName",
-        "toolInput",
-        "toolUseId",
-    }
-    return any(key in input_data for key in acp_keys)
-
-
 def _hook_log_extra(
     hook_type: str | None,
     metadata: dict[str, Any],
@@ -559,25 +542,6 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             if envelope_id and is_envelope_processed(envelope_id):
                 logger.info("Skipping already-processed hook envelope %s", envelope_id)
                 return {"continue": True, "decision": "approve", "reason": "duplicate envelope"}
-
-            if source == "claude" and _looks_like_acp_hook_payload(payload):
-                logger.warning(
-                    "Ignoring ACP/Grok-shaped hook payload routed as Claude: %s",
-                    hook_type,
-                    extra=_hook_log_extra(
-                        hook_type,
-                        request_metadata,
-                        source=source,
-                        mismatch="acp_payload_with_claude_source",
-                    ),
-                )
-                return mark_processed_and_return(
-                    {
-                        "continue": True,
-                        "decision": "approve",
-                        "reason": "provider mismatch: ACP/Grok payload routed as Claude",
-                    }
-                )
 
             # Get HookManager from app.state
             if not hasattr(request.app.state, "hook_manager"):
