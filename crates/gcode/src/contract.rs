@@ -594,6 +594,7 @@ fn graph_read_keys() -> Vec<&'static str> {
         "name",
         "file_path",
         "line",
+        "confidence",
         "relation",
         "distance",
         "metadata",

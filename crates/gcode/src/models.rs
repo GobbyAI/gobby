@@ -1,5 +1,6 @@
 use postgres::Row;
 use serde::{Deserialize, Serialize};
+use std::fmt;
 use uuid::Uuid;
 
 use crate::utils::i64_to_usize;
@@ -13,15 +14,24 @@ pub const CODE_INDEX_UUID_NAMESPACE: Uuid = Uuid::from_bytes([
 pub const SOURCE_SYSTEM_GCODE: &str = "gcode";
 
 /// Producer confidence classification for graph and vector projection facts.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "SCREAMING_SNAKE_CASE")]
 pub enum ProjectionProvenance {
+    #[default]
     Extracted,
     Inferred,
     Ambiguous,
 }
 
 impl ProjectionProvenance {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Extracted => "EXTRACTED",
+            Self::Inferred => "INFERRED",
+            Self::Ambiguous => "AMBIGUOUS",
+        }
+    }
+
     pub fn from_wire_value(value: &str) -> Option<Self> {
         match value {
             "EXTRACTED" | "extracted" => Some(Self::Extracted),
@@ -29,6 +39,12 @@ impl ProjectionProvenance {
             "AMBIGUOUS" | "ambiguous" => Some(Self::Ambiguous),
             _ => None,
         }
+    }
+}
+
+impl fmt::Display for ProjectionProvenance {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.as_str())
     }
 }
 
@@ -467,6 +483,9 @@ pub struct GraphResult {
     pub name: String,
     pub file_path: String,
     pub line: usize,
+    /// Edge confidence/provenance label; numeric scores live in `metadata.confidence`.
+    #[serde(default)]
+    pub confidence: ProjectionProvenance,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub relation: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -635,9 +654,11 @@ mod tests {
 
         let parsed: GraphResult =
             serde_json::from_value(json).expect("graph result JSON parses without metadata");
+        assert_eq!(parsed.confidence, ProjectionProvenance::Extracted);
         assert!(parsed.metadata.is_none());
 
         let serialized = serde_json::to_value(&parsed).expect("graph result serializes");
+        assert_eq!(serialized["confidence"], "EXTRACTED");
         assert!(serialized.get("metadata").is_none());
     }
 
@@ -663,6 +684,7 @@ mod tests {
                         name,
                         file_path,
                         line,
+                        confidence: ProjectionProvenance::Extracted,
                         relation,
                         distance,
                         metadata: None,
@@ -670,6 +692,7 @@ mod tests {
 
                     let serialized =
                         serde_json::to_value(&result).expect("graph result serializes");
+                    assert_eq!(serialized["confidence"], "EXTRACTED");
                     assert_eq!(serialized.get("metadata"), None);
 
                     Ok(())

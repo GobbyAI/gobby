@@ -2,7 +2,9 @@ use std::collections::HashMap;
 
 use crate::graph::typed_query;
 
-use super::support::{CALL_TARGET_PREDICATE, clamp_limit, clamp_offset};
+use super::support::{
+    CALL_TARGET_PREDICATE, CONFIDENCE_LABEL_CASE, LINK_METADATA_RETURN, clamp_limit, clamp_offset,
+};
 
 pub(crate) fn count_callers_query(
     project_id: &str,
@@ -47,8 +49,11 @@ pub(crate) fn find_callers_query(
         format!(
             "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
              WHERE {CALL_TARGET_PREDICATE} \
-             RETURN DISTINCT caller.id AS caller_id, caller.name AS caller_name, \
-                    caller.file_path AS file, caller.line_start AS line \
+             WITH caller, collect(coalesce(r.provenance, 'EXTRACTED')) AS provenances \
+             WITH caller, {CONFIDENCE_LABEL_CASE} AS confidence_label \
+             RETURN caller.id AS caller_id, caller.name AS caller_name, \
+                    caller.file_path AS file, caller.line_start AS line, \
+                    confidence_label AS confidence_label \
              ORDER BY caller.id \
              SKIP {offset} LIMIT {limit}"
         ),
@@ -69,7 +74,8 @@ pub(crate) fn find_usages_query(
             "MATCH (source:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{id: $id, project: $project}}) \
              WHERE {CALL_TARGET_PREDICATE} \
              RETURN source.id AS source_id, source.name AS source_name, \
-                    'CALLS' AS rel_type, r.file AS file, r.line AS line \
+                    'CALLS' AS rel_type, r.file AS file, r.line AS line, \
+                    {LINK_METADATA_RETURN} \
              ORDER BY source.id, r.line, r.file \
              SKIP {offset} LIMIT {limit}"
         ),
@@ -124,9 +130,11 @@ pub(crate) fn find_callers_batch_query(
         format!(
             "MATCH (caller:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
 			 WHERE ({CALL_TARGET_PREDICATE}) AND target.id IN [{ids}] \
-			 WITH caller, min(r.file) AS file, min(r.line) AS line \
+			 WITH caller, min(r.file) AS file, min(r.line) AS line, \
+			      collect(coalesce(r.provenance, 'EXTRACTED')) AS provenances \
+			 WITH caller, file, line, {CONFIDENCE_LABEL_CASE} AS confidence_label \
 			 RETURN caller.id AS caller_id, caller.name AS caller_name, \
-			        file AS file, line AS line \
+			        file AS file, line AS line, confidence_label AS confidence_label \
 			 ORDER BY caller.id \
 			 LIMIT {limit}"
         ),
@@ -164,9 +172,11 @@ pub(crate) fn find_callees_batch_query(
         format!(
             "MATCH (src:CodeSymbol {{project: $project}})-[r:CALLS]->(target {{project: $project}}) \
 			 WHERE src.id IN [{ids}] AND ({CALL_TARGET_PREDICATE}) \
-			 WITH target, min(r.file) AS file, min(r.line) AS line \
+			 WITH target, min(r.file) AS file, min(r.line) AS line, \
+			      collect(coalesce(r.provenance, 'EXTRACTED')) AS provenances \
+			 WITH target, file, line, {CONFIDENCE_LABEL_CASE} AS confidence_label \
 			 RETURN target.id AS callee_id, target.name AS callee_name, \
-			        file AS file, line AS line \
+			        file AS file, line AS line, confidence_label AS confidence_label \
 			 ORDER BY target.id \
 			 LIMIT {limit}"
         ),
@@ -284,4 +294,37 @@ pub(crate) fn blast_radius_query(depth: usize, limit: usize) -> String {
          ORDER BY distance ASC, affected.name ASC \
          LIMIT {limit}"
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn callers_query_projects_confidence_without_edge_metadata_duplication() {
+        let (query, _) = find_callers_query("project-1", "symbol-1", 0, 10);
+
+        assert!(query.contains("confidence_label AS confidence_label"));
+        assert!(query.contains("WHEN 'AMBIGUOUS' IN provenances THEN 'AMBIGUOUS'"));
+        assert!(!query.contains("r.confidence AS confidence"));
+    }
+
+    #[test]
+    fn usages_query_projects_edge_confidence_and_metadata() {
+        let (query, _) = find_usages_query("project-1", "symbol-1", 0, 10);
+
+        assert!(query.contains("r.provenance AS provenance"));
+        assert!(query.contains("r.confidence AS confidence"));
+    }
+
+    #[test]
+    fn batched_relationship_queries_project_confidence_label() {
+        let ids = vec!["symbol-1".to_string()];
+
+        let (callers_query, _) = find_callers_batch_query("project-1", &ids, 10);
+        let (callees_query, _) = find_callees_batch_query("project-1", &ids, 10);
+
+        assert!(callers_query.contains("confidence_label AS confidence_label"));
+        assert!(callees_query.contains("confidence_label AS confidence_label"));
+    }
 }

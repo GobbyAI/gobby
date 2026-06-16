@@ -3,7 +3,10 @@ use super::lifecycle::{
     skipped_missing_indexed_file_payload, skipped_no_graph_facts_payload,
 };
 use super::payload::format_report_text;
-use super::reads::{format_grouped_graph_results, format_symbol_path_text};
+use super::reads::{
+    format_blast_radius_result_line, format_caller_result_line, format_grouped_graph_results,
+    format_symbol_path_text, format_usage_result_line,
+};
 use super::{imports, report};
 use crate::config::Context;
 use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput};
@@ -59,6 +62,7 @@ fn graph_text_groups_by_file_and_sorts_entries() {
             name: "beta".to_string(),
             file_path: "src/b.rs".to_string(),
             line: 9,
+            confidence: ProjectionProvenance::Extracted,
             relation: Some("CALLS".to_string()),
             distance: None,
             metadata: None,
@@ -68,6 +72,7 @@ fn graph_text_groups_by_file_and_sorts_entries() {
             name: "zeta".to_string(),
             file_path: "src/a.rs".to_string(),
             line: 8,
+            confidence: ProjectionProvenance::Extracted,
             relation: Some("CALLS".to_string()),
             distance: None,
             metadata: None,
@@ -77,6 +82,7 @@ fn graph_text_groups_by_file_and_sorts_entries() {
             name: "alpha".to_string(),
             file_path: "src/a.rs".to_string(),
             line: 3,
+            confidence: ProjectionProvenance::Extracted,
             relation: Some("CALLS".to_string()),
             distance: None,
             metadata: None,
@@ -88,6 +94,33 @@ fn graph_text_groups_by_file_and_sorts_entries() {
     });
 
     assert_eq!(text, "src/a.rs\n3 alpha\n8 zeta\nsrc/b.rs\n9 beta");
+}
+
+#[test]
+fn graph_read_text_lines_surface_confidence_labels() {
+    let result = GraphResult {
+        id: "sym-1".to_string(),
+        name: "run".to_string(),
+        file_path: "src/lib.rs".to_string(),
+        line: 12,
+        confidence: ProjectionProvenance::Inferred,
+        relation: Some("CALLS".to_string()),
+        distance: Some(2),
+        metadata: None,
+    };
+
+    assert_eq!(
+        format_caller_result_line(&result, "main"),
+        "12 [INFERRED] run -> main"
+    );
+    assert_eq!(
+        format_usage_result_line(&result, "main"),
+        "12 [INFERRED] [CALLS] run -> main"
+    );
+    assert_eq!(
+        format_blast_radius_result_line(&result),
+        "12 [INFERRED] [distance=2] run"
+    );
 }
 
 #[test]
@@ -394,6 +427,7 @@ fn top_level_read_commands_preserve_json_shape() {
             name: "run".to_string(),
             file_path: "src/lib.rs".to_string(),
             line: 12,
+            confidence: ProjectionProvenance::Extracted,
             relation: Some("CALLS".to_string()),
             distance: Some(1),
             metadata: None,
@@ -411,6 +445,7 @@ fn top_level_read_commands_preserve_json_shape() {
     assert_eq!(value["results"][0]["name"], "run");
     assert_eq!(value["results"][0]["file_path"], "src/lib.rs");
     assert_eq!(value["results"][0]["line"], 12);
+    assert_eq!(value["results"][0]["confidence"], "EXTRACTED");
     assert_eq!(value["results"][0]["relation"], "CALLS");
     assert_eq!(value["results"][0]["distance"], 1);
     assert!(value["hint"].is_null());
@@ -426,6 +461,7 @@ fn top_level_read_commands_preserve_json_shape() {
             name: "run".to_string(),
             file_path: "src/lib.rs".to_string(),
             line: 12,
+            confidence: ProjectionProvenance::Inferred,
             relation: Some("CALLS".to_string()),
             distance: Some(1),
             metadata: Some(
@@ -437,6 +473,7 @@ fn top_level_read_commands_preserve_json_shape() {
     };
     let value = serde_json::to_value(&response).expect("serialize metadata response");
 
+    assert_eq!(value["results"][0]["confidence"], "INFERRED");
     assert_eq!(
         value["results"][0]["metadata"]["source_file_path"],
         "src/lib.rs"

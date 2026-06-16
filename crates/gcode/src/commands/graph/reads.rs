@@ -117,6 +117,29 @@ where
     lines.join("\n")
 }
 
+pub(super) fn format_caller_result_line(result: &GraphResult, target_name: &str) -> String {
+    format!(
+        "{} [{}] {} -> {}",
+        result.line, result.confidence, result.name, target_name
+    )
+}
+
+pub(super) fn format_usage_result_line(result: &GraphResult, target_name: &str) -> String {
+    let rel = result.relation.as_deref().unwrap_or("unknown");
+    format!(
+        "{} [{}] [{}] {} -> {}",
+        result.line, result.confidence, rel, result.name, target_name
+    )
+}
+
+pub(super) fn format_blast_radius_result_line(result: &GraphResult) -> String {
+    let distance = result.distance.unwrap_or(0);
+    format!(
+        "{} [{}] [distance={}] {}",
+        result.line, result.confidence, distance, result.name
+    )
+}
+
 #[derive(Serialize)]
 struct GraphPathEndpoint {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -385,7 +408,7 @@ pub fn callers(
                 eprintln!("No callers at offset {offset} (total {total})");
             } else {
                 output::print_text(&format_grouped_graph_results(&results, |r| {
-                    format!("{} {} -> {}", r.line, r.name, symbol.display_name)
+                    format_caller_result_line(r, &symbol.display_name)
                 }))?;
                 if total > offset + results.len() {
                     eprintln!(
@@ -438,8 +461,7 @@ pub fn usages(
                 eprintln!("No usages at offset {offset} (total {total})");
             } else {
                 output::print_text(&format_grouped_graph_results(&results, |r| {
-                    let rel = r.relation.as_deref().unwrap_or("unknown");
-                    format!("{} [{}] {} -> {}", r.line, rel, r.name, symbol.display_name)
+                    format_usage_result_line(r, &symbol.display_name)
                 }))?;
                 if total > offset + results.len() {
                     eprintln!(
@@ -556,8 +578,7 @@ pub fn blast_radius(
                 print_graph_hint_text(ctx, None);
             } else {
                 output::print_text(&format_grouped_graph_results(&results, |r| {
-                    let dist = r.distance.unwrap_or(0);
-                    format!("{} [distance={}] {}", r.line, dist, r.name)
+                    format_blast_radius_result_line(r)
                 }))?;
             }
             Ok(())

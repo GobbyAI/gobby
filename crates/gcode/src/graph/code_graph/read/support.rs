@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use crate::graph::typed_query;
-use crate::models::GraphResult;
+use crate::models::{GraphResult, ProjectionProvenance};
 use gobby_core::falkor::Row;
 
 use super::super::payload::{row_string_owned, row_to_projection_metadata, row_usize};
@@ -19,6 +19,11 @@ pub(super) const NEIGHBOR_TYPE_CASE: &str = "CASE \
      WHEN neighbor:CodeSymbol THEN coalesce(neighbor.kind, 'function') \
      WHEN neighbor:ExternalSymbol THEN 'external' \
      ELSE 'unresolved' \
+     END";
+pub(super) const CONFIDENCE_LABEL_CASE: &str = "CASE \
+     WHEN 'AMBIGUOUS' IN provenances THEN 'AMBIGUOUS' \
+     WHEN 'INFERRED' IN provenances THEN 'INFERRED' \
+     ELSE 'EXTRACTED' \
      END";
 pub(super) const NODE_TYPE_CASE: &str = "CASE \
      WHEN n:CodeFile THEN 'file' \
@@ -69,6 +74,12 @@ pub(crate) fn row_to_graph_result(row: &Row) -> GraphResult {
             .and_then(|v| v.as_u64())
             .and_then(|value| usize::try_from(value).ok())
             .unwrap_or(0),
+        confidence: row
+            .get("confidence_label")
+            .or_else(|| row.get("provenance"))
+            .and_then(|v| v.as_str())
+            .and_then(ProjectionProvenance::from_wire_value)
+            .unwrap_or_default(),
         relation: row
             .get("relation")
             .or_else(|| row.get("rel_type"))
@@ -128,4 +139,50 @@ pub(super) fn count_from_rows(rows: &[Row]) -> usize {
         })
         .and_then(|value| usize::try_from(value).ok())
         .unwrap_or(0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn graph_result_confidence_defaults_to_extracted_without_metadata() {
+        let row = Row::from([
+            ("caller_id".to_string(), json!("caller-1")),
+            ("caller_name".to_string(), json!("run")),
+            ("file".to_string(), json!("src/lib.rs")),
+            ("line".to_string(), json!(12)),
+        ]);
+
+        let result = row_to_graph_result(&row);
+
+        assert_eq!(result.confidence, ProjectionProvenance::Extracted);
+        assert!(result.metadata.is_none());
+    }
+
+    #[test]
+    fn graph_result_confidence_uses_provenance_label_with_metadata_score() {
+        let row = Row::from([
+            ("source_id".to_string(), json!("caller-1")),
+            ("source_name".to_string(), json!("run")),
+            ("file".to_string(), json!("src/lib.rs")),
+            ("line".to_string(), json!(12)),
+            ("rel_type".to_string(), json!("CALLS")),
+            ("provenance".to_string(), json!("INFERRED")),
+            ("confidence".to_string(), json!(0.72)),
+            ("source_system".to_string(), json!("semantic")),
+        ]);
+
+        let result = row_to_graph_result(&row);
+
+        assert_eq!(result.confidence, ProjectionProvenance::Inferred);
+        assert_eq!(
+            result
+                .metadata
+                .as_ref()
+                .and_then(|metadata| metadata.confidence),
+            Some(0.72)
+        );
+    }
 }
