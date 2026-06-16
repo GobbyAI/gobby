@@ -361,4 +361,21 @@ describe("Integrations activity tab", () => {
       screen.queryByRole("button", { name: "Dismiss error: Request failed: 503" }),
     ).not.toBeInTheDocument();
   });
+
+  it("renders communications setup state when the feature is disabled (404)", async () => {
+    setupFetchFailure(404);
+
+    render(<IntegrationsTab />);
+
+    expect(await screen.findByText("Communications not configured")).toBeInTheDocument();
+    expect(
+      screen.getByText("Start the communications manager before managing notification channels."),
+    ).toBeInTheDocument();
+    expect(
+      screen.queryByText("Communication channels appear here after they are configured."),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByRole("button", { name: "Dismiss error: Request failed: 404" }),
+    ).not.toBeInTheDocument();
+  });
 });

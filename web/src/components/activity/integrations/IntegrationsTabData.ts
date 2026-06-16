@@ -12,7 +12,13 @@ export class IntegrationApiError extends Error {
 }
 
 export function isCommunicationsUnavailable(error: unknown): boolean {
-  return error instanceof IntegrationApiError && error.status === 503;
+  // 404 = comms router unmounted (feature disabled); 503 = router mounted but
+  // the CommunicationsManager is unavailable. Both mean "not configured", so the
+  // channel-list load path should render the friendly setup state, not a generic error.
+  return (
+    error instanceof IntegrationApiError &&
+    (error.status === 404 || error.status === 503)
+  );
 }
 
 async function fetchJson<T>(url: string, init?: RequestInit): Promise<T> {
