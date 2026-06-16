@@ -188,8 +188,13 @@ fn graph_commands_run_without_daemon_when_services_are_available() {
 
     let rebuild = json_command(&env, project.path(), &["graph", "rebuild"]);
     assert_eq!(rebuild["success"], true);
-    assert_eq!(rebuild["files_processed"], 1);
-    assert_eq!(rebuild["files_synced"], 1);
+    assert_eq!(rebuild["files_processed"], 2);
+    assert_eq!(rebuild["files_synced"], 2);
+    let overview_after_rebuild = json_command(&env, project.path(), &["graph", "overview"]);
+    assert!(
+        !overview_has_file(&overview_after_rebuild, CONTENT_ONLY_FILE),
+        "rebuild should sync content-only files without creating graph nodes: {overview_after_rebuild}"
+    );
 
     let cleanup = json_command(&env, project.path(), &["graph", "cleanup-orphans"]);
     assert_eq!(cleanup["status"], "ok");

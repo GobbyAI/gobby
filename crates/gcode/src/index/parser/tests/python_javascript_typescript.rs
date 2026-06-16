@@ -508,11 +508,17 @@ fn documented_typescript_definitions_extract_and_resolve_as_local_imports() {
     let defs = "/** Doc-commented target. */\nexport function tsTarget(): void {}\n";
 
     let target = parse_source("src/api.ts", defs, &[]);
-    let symbol = target
+    let symbols = target
         .symbols
         .iter()
-        .find(|symbol| symbol.name == "tsTarget")
-        .expect("tsTarget symbol");
+        .filter(|symbol| symbol.name == "tsTarget")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        symbols.len(),
+        1,
+        "expected one tsTarget symbol: {symbols:?}"
+    );
+    let symbol = symbols[0];
     assert_eq!(symbol.kind.as_str(), "function");
     assert!(
         symbol.parent_symbol_id.is_none(),
@@ -526,4 +532,39 @@ fn documented_typescript_definitions_extract_and_resolve_as_local_imports() {
     );
     let call = caller.calls.first().expect("call");
     assert_local_import_call!(call, "tsTarget", "src/api.ts");
+}
+
+/// #791 no-phantom regression (services-free half), JS arm: the JavaScript
+/// grammar uses a `declaration` supertype under exported declarations, so a
+/// JSDoc-commented export must still be extracted as the real target symbol
+/// that the post-write resolver matches.
+#[test]
+fn documented_javascript_definitions_extract_and_resolve_as_local_imports() {
+    let defs = "/** Doc-commented target. */\nexport function jsTarget() {}\n";
+
+    let target = parse_source("src/api.js", defs, &[]);
+    let symbols = target
+        .symbols
+        .iter()
+        .filter(|symbol| symbol.name == "jsTarget")
+        .collect::<Vec<_>>();
+    assert_eq!(
+        symbols.len(),
+        1,
+        "expected one jsTarget symbol: {symbols:?}"
+    );
+    let symbol = symbols[0];
+    assert_eq!(symbol.kind.as_str(), "function");
+    assert!(
+        symbol.parent_symbol_id.is_none(),
+        "jsTarget should be a top-level symbol"
+    );
+
+    let caller = parse_source(
+        "src/caller.js",
+        "import { jsTarget as runJsTarget } from \"./api\";\n\nexport function run() {\n  runJsTarget();\n}\n",
+        &[("src/api.js", defs)],
+    );
+    let call = caller.calls.first().expect("call");
+    assert_local_import_call!(call, "jsTarget", "src/api.js");
 }

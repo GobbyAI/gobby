@@ -255,6 +255,12 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
                     .and_then(|_| {
                         let facts =
                             db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+                        if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
+                            graph.delete_file_graph(&facts.file_path, &[])?;
+                            graph.delete_file_node(&facts.file_path)?;
+                            db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                            return Ok(0);
+                        }
                         graph.sync_file(
                             &facts.file_path,
                             &facts.imports,

@@ -1,8 +1,8 @@
 pub(super) use crate::common::{ProjectCleanup, cleanup_project};
+pub(super) use gobby_code::graph::typed_query::string_params;
 pub(super) use gobby_core::falkor::GraphClient;
 pub(super) use postgres::{Client, NoTls};
 pub(super) use serde_json::Value;
-pub(super) use std::collections::HashMap;
 pub(super) use std::fs;
 pub(super) use std::process::{Command, Output};
 
@@ -204,7 +204,7 @@ pub(super) fn phantom_graph_client(env: &StandaloneEnv) -> GraphClient {
 /// Count of `CALLS`-target `CodeSymbol` nodes with no incoming `DEFINES` edge —
 /// i.e. phantom nodes. Must be zero after a clean projection.
 pub(super) fn phantom_call_target_count(graph: &mut GraphClient, project_id: &str) -> i64 {
-    let params = HashMap::from([("project".to_string(), project_id.to_string())]);
+    let params = string_params(&[("project", project_id)]);
     let rows = graph
         .query(
             "MATCH ()-[:CALLS]->(s:CodeSymbol {project: $project})
@@ -226,10 +226,7 @@ pub(super) fn resolved_target_is_defined_and_called(
     project_id: &str,
     symbol_id: &str,
 ) -> bool {
-    let params = HashMap::from([
-        ("project".to_string(), project_id.to_string()),
-        ("id".to_string(), symbol_id.to_string()),
-    ]);
+    let params = string_params(&[("project", project_id), ("id", symbol_id)]);
     let rows = graph
         .query(
             "MATCH (:CodeFile {project: $project})-[:DEFINES]->(s:CodeSymbol {project: $project, id: $id})
@@ -262,6 +259,21 @@ pub(super) fn assert_caller_present(
             .as_array()
             .is_some_and(|results| results.iter().any(|result| result["name"] == caller)),
         "expected `{caller}` among callers of `{target}` {when}: {callers}"
+    );
+}
+
+pub(super) fn assert_blast_radius_reports_affected_callers(blast: &Value) {
+    let results = blast["results"]
+        .as_array()
+        .unwrap_or_else(|| panic!("blast-radius results must be an array: {blast}"));
+    assert!(
+        results.iter().any(|result| {
+            result["id"].as_str().is_some()
+                && result["distance"]
+                    .as_i64()
+                    .is_some_and(|distance| distance >= 1)
+        }),
+        "blast-radius should report affected callers: {blast}"
     );
 }
 

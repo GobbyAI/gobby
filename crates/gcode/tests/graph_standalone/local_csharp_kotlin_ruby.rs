@@ -93,10 +93,7 @@ fn index_resolves_cross_file_local_csharp_calls() {
     );
 
     let blast = json_command(&env, project.path(), &["blast-radius", "Render"]);
-    assert!(
-        blast.get("center").is_some(),
-        "blast-radius should report a center: {blast}"
-    );
+    assert_blast_radius_reports_affected_callers(&blast);
 
     // Projection path 3: sync-file must recreate the same canonical edges.
     let sync = run_gcode(
@@ -212,10 +209,7 @@ fn index_resolves_cross_file_local_kotlin_calls() {
     );
 
     let blast = json_command(&env, project.path(), &["blast-radius", "render"]);
-    assert!(
-        blast.get("center").is_some(),
-        "blast-radius should report a center: {blast}"
-    );
+    assert_blast_radius_reports_affected_callers(&blast);
 
     // Projection path 3: sync-file must recreate the same canonical edges.
     let sync = run_gcode(
@@ -325,10 +319,7 @@ fn index_resolves_cross_file_local_ruby_calls() {
     );
 
     let blast = json_command(&env, project.path(), &["blast-radius", "build"]);
-    assert!(
-        blast.get("center").is_some(),
-        "blast-radius should report a center: {blast}"
-    );
+    assert_blast_radius_reports_affected_callers(&blast);
 
     // Projection path 3: sync-file must recreate the same canonical edges.
     let sync = run_gcode(

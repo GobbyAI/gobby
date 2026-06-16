@@ -1,3 +1,9 @@
+//! Env-gated graph integration tests. CI can run this suite only when it
+//! provisions a migrated PostgreSQL hub plus FalkorDB and exports
+//! `GCODE_GRAPH_STANDALONE_DATABASE_URL`, `GCODE_GRAPH_STANDALONE_FALKOR_HOST`,
+//! `GCODE_GRAPH_STANDALONE_FALKOR_PORT`, and optionally
+//! `GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD`.
+
 mod common;
 
 #[path = "graph_standalone/local_csharp_kotlin_ruby.rs"]

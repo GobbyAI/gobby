@@ -519,6 +519,22 @@ void run() {
         "bare calls to imported local symbols must classify as local_import: {:?}",
         parsed.calls
     );
+
+    let run_id = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.file_path == "lib/sample.dart" && symbol.name == "run")
+        .map(|symbol| symbol.id.as_str())
+        .expect("run function symbol");
+    assert!(
+        parsed
+            .calls
+            .iter()
+            .filter(|call| matches!(call.callee_name.as_str(), "greet" | "Button"))
+            .all(|call| call.caller_symbol_id == run_id),
+        "Dart cross-file calls should carry the enclosing caller id: {:?}",
+        parsed.calls
+    );
 }
 
 #[test]

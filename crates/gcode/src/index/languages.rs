@@ -37,8 +37,6 @@ const JAVASCRIPT: LanguageSpec = LanguageSpec {
         (function_declaration name: (identifier) @name) @definition.function
         (class_declaration name: (identifier) @name) @definition.class
         (method_definition name: (property_identifier) @name) @definition.method
-        (export_statement declaration: (function_declaration name: (identifier) @name)) @definition.function
-        (export_statement declaration: (class_declaration name: (identifier) @name)) @definition.class
         (lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function))) @definition.function
     "#,
     import_query: r#"
@@ -60,12 +58,6 @@ const TYPESCRIPT: LanguageSpec = LanguageSpec {
         (type_alias_declaration name: (type_identifier) @name) @definition.type
         (enum_declaration name: (identifier) @name) @definition.type
         (lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function))) @definition.function
-        (export_statement declaration: (function_declaration name: (identifier) @name)) @definition.function
-        (export_statement declaration: (class_declaration name: (type_identifier) @name)) @definition.class
-        (export_statement declaration: (interface_declaration name: (type_identifier) @name)) @definition.type
-        (export_statement declaration: (type_alias_declaration name: (type_identifier) @name)) @definition.type
-        (export_statement declaration: (enum_declaration name: (identifier) @name)) @definition.type
-        (export_statement declaration: (lexical_declaration (variable_declarator name: (identifier) @name value: (arrow_function)))) @definition.function
     "#,
     import_query: r#"
         (import_statement) @import
@@ -154,9 +146,10 @@ const PHP: LanguageSpec = LanguageSpec {
 const DART: LanguageSpec = LanguageSpec {
     extensions: &[".dart"],
     symbol_query: r#"
-        (function_signature name: (identifier) @name) @definition.function
+        (function_declaration signature: (function_signature name: (identifier) @name)) @definition.function
+        (external_function_declaration signature: (function_signature name: (identifier) @name)) @definition.function
         (class_declaration name: (identifier) @name) @definition.class
-        (method_signature (function_signature (identifier) @name)) @definition.method
+        (method_declaration signature: (method_signature (function_signature name: (identifier) @name))) @definition.method
         (enum_declaration name: (identifier) @name) @definition.type
     "#,
     import_query: r#"
