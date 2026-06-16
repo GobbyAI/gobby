@@ -1,0 +1,299 @@
+from collections.abc import Sequence
+from pathlib import Path
+
+from gobby.storage.hub.protocol import HubDatabase, TaskLifecycleMutation
+from gobby.storage.tasks._lifecycle import (
+    close_task as _close_task,
+)
+from gobby.storage.tasks._lifecycle import (
+    link_commit as _link_commit,
+)
+from gobby.storage.tasks._lifecycle import (
+    reopen_task as _reopen_task,
+)
+from gobby.storage.tasks._models import UNSET, MaybeUnset, Task
+from gobby.storage.tasks._transitions import (
+    approve_review as _approve_review,
+)
+from gobby.storage.tasks._transitions import (
+    claim_task as _claim_task,
+)
+from gobby.storage.tasks._transitions import (
+    de_escalate_task as _de_escalate_task,
+)
+from gobby.storage.tasks._transitions import (
+    escalate_task as _escalate_task,
+)
+from gobby.storage.tasks._transitions import (
+    reconcile_task_state as _reconcile_task_state,
+)
+from gobby.storage.tasks._transitions import (
+    record_plan_enhancement as _record_plan_enhancement,
+)
+from gobby.storage.tasks._transitions import (
+    reject_review as _reject_review,
+)
+from gobby.storage.tasks._transitions import (
+    release_task_claim as _release_task_claim,
+)
+from gobby.storage.tasks._transitions import (
+    submit_for_review as _submit_for_review,
+)
+
+
+class TaskTransitionsMixin:
+    db: HubDatabase
+
+    def _notify_listeners(self) -> None:
+        raise NotImplementedError
+
+    def get_task(self, task_id: str, project_id: str | None = None) -> Task:
+        raise NotImplementedError
+
+    def reconcile_task_state(
+        self,
+        task_id: str,
+        *,
+        title: MaybeUnset[str | None] = UNSET,
+        description: MaybeUnset[str | None] = UNSET,
+        priority: MaybeUnset[int | None] = UNSET,
+    ) -> Task:
+        """Apply externally-sourced task metadata.
+
+        This is an explicit internal reconciliation path for sync/adaptor code
+        that should not use the generic metadata update surface.
+        """
+        task = _reconcile_task_state(
+            self.db,
+            task_id=task_id,
+            title=title,
+            description=description,
+            priority=priority,
+        )
+        self._notify_listeners()
+        return task
+
+    def claim_task(self, task_id: str, session_id: str, force: bool = False) -> Task:
+        """Claim a task for a session, preserving non-open lifecycle states."""
+        task = _claim_task(self.db, task_id=task_id, session_id=session_id, force=force)
+        self._notify_listeners()
+        return task
+
+    def release_task_claim(
+        self,
+        task_id: str,
+        *,
+        description: MaybeUnset[str | None] = UNSET,
+        validation_fail_count: MaybeUnset[int | None] = UNSET,
+        dispatch_failure_count: MaybeUnset[int | None] = UNSET,
+        escalated_at: MaybeUnset[str | None] = UNSET,
+        escalation_reason: MaybeUnset[str | None] = UNSET,
+    ) -> Task:
+        """Clear ownership while optionally changing recovery metadata."""
+        task = _release_task_claim(
+            self.db,
+            task_id=task_id,
+            description=description,
+            validation_fail_count=validation_fail_count,
+            dispatch_failure_count=dispatch_failure_count,
+            escalated_at=escalated_at,
+            escalation_reason=escalation_reason,
+        )
+        self._notify_listeners()
+        return task
+
+    def close_task(
+        self,
+        task_id: str,
+        reason: str | None = None,
+        force: bool = False,
+        closed_in_session_id: str | None = None,
+        closed_commit_sha: str | None = None,
+        validation_override_reason: str | None = None,
+    ) -> Task:
+        """Close a task."""
+        _close_task(
+            self.db,
+            task_id=task_id,
+            reason=reason,
+            force=force,
+            closed_in_session_id=closed_in_session_id,
+            closed_commit_sha=closed_commit_sha,
+            validation_override_reason=validation_override_reason,
+        )
+        self._notify_listeners()
+        return self.get_task(task_id)
+
+    def close_task_with_commit(
+        self,
+        task_id: str,
+        commit_sha: str,
+        *,
+        reason: str | None = None,
+        force: bool = False,
+        closed_in_session_id: str | None = None,
+        validation_override_reason: str | None = None,
+        cwd: str | Path | None = None,
+    ) -> Task:
+        """Link a commit and close the task in one transaction."""
+        with self.db.transaction_immediate(TaskLifecycleMutation(task_id=task_id)):
+            _link_commit(self.db, task_id, commit_sha, cwd)
+            _close_task(
+                self.db,
+                task_id=task_id,
+                reason=reason,
+                force=force,
+                closed_in_session_id=closed_in_session_id,
+                closed_commit_sha=commit_sha,
+                validation_override_reason=validation_override_reason,
+            )
+        self._notify_listeners()
+        return self.get_task(task_id)
+
+    def reopen_task(
+        self,
+        task_id: str,
+        reason: str | None = None,
+    ) -> Task:
+        """Reopen a task to the ready state.
+
+        Works from any non-ready state. Clears ownership, closed fields,
+        and resets validation_fail_count.
+
+        Args:
+            task_id: The task ID to reopen
+            reason: Optional reason for reopening
+
+        Raises:
+            ValueError: If task not found or already ready
+        """
+        _reopen_task(self.db, task_id=task_id, reason=reason)
+        self._notify_listeners()
+        return self.get_task(task_id)
+
+    def escalate_task(
+        self,
+        task_id: str,
+        reason: str,
+        *,
+        validation_override_reason: str | None = None,
+    ) -> Task:
+        """Escalate a task for human intervention and release ownership.
+
+        Optionally persists a validation override reason in the same write
+        so callers don't need a follow-up update_task call.
+        """
+        task = _escalate_task(
+            self.db,
+            task_id=task_id,
+            reason=reason,
+            validation_override_reason=validation_override_reason,
+        )
+        self._notify_listeners()
+        return task
+
+    def de_escalate_task(
+        self,
+        task_id: str,
+        reason: str,
+        reset_validation: bool = False,
+        reset_stage_attempts: bool = False,
+        restore_stage_from_history: bool = False,
+    ) -> Task:
+        """Clear escalation state without mutating the task's current stage."""
+        task = _de_escalate_task(
+            self.db,
+            task_id=task_id,
+            reason=reason,
+            reset_validation=reset_validation,
+            reset_stage_attempts=reset_stage_attempts,
+            restore_stage_from_history=restore_stage_from_history,
+        )
+        self._notify_listeners()
+        return task
+
+    def submit_for_review(
+        self,
+        task_id: str,
+        stage_name: str | None = None,
+        review_notes: str | None = None,
+        *,
+        by_session_id: str | None = None,
+    ) -> Task:
+        """Submit a stage for review and release ownership."""
+        task = _submit_for_review(
+            self.db,
+            task_id=task_id,
+            stage_name=stage_name,
+            review_notes=review_notes,
+            by_session_id=by_session_id,
+        )
+        self._notify_listeners()
+        return task
+
+    def approve_review(
+        self,
+        task_id: str,
+        stage_name: str | None = None,
+        approval_notes: str | None = None,
+        *,
+        by_session_id: str | None = None,
+    ) -> Task:
+        """Approve review on a stage and release ownership."""
+        task = _approve_review(
+            self.db,
+            task_id=task_id,
+            stage_name=stage_name,
+            approval_notes=approval_notes,
+            by_session_id=by_session_id,
+        )
+        self._notify_listeners()
+        return task
+
+    def reject_review(
+        self,
+        task_id: str,
+        stage_name: str | None = None,
+        rejection_notes: str | None = None,
+        round_number: int | None = None,
+        *,
+        by_session_id: str | None = None,
+    ) -> Task:
+        """Reject review on a stage and return it to ready."""
+        task = _reject_review(
+            self.db,
+            task_id=task_id,
+            stage_name=stage_name,
+            rejection_notes=rejection_notes,
+            round_number=round_number,
+            by_session_id=by_session_id,
+        )
+        self._notify_listeners()
+        return task
+
+    def record_plan_enhancement(
+        self,
+        task_id: str,
+        *,
+        round_number: int,
+        converged: bool,
+        suggestions: Sequence[str] | None = None,
+        signoff_summary: str | None = None,
+        by_session_id: str | None = None,
+    ) -> Task:
+        """Record an enhancement round and route the plan back to the planner.
+
+        Suggestions return the planning stage to ready without consuming the
+        adversary review budget; convergence leaves it in needs_review.
+        """
+        task = _record_plan_enhancement(
+            self.db,
+            task_id,
+            round_number=round_number,
+            converged=converged,
+            suggestions=suggestions,
+            signoff_summary=signoff_summary,
+            by_session_id=by_session_id,
+        )
+        self._notify_listeners()
+        return task
