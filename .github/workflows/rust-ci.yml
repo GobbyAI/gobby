@@ -114,6 +114,106 @@ jobs:
       - name: Build workspace (without embeddings)
         run: cargo build --workspace --no-default-features
 
+  gcode-graph-standalone:
+    name: gcode graph_standalone
+    runs-on: ubuntu-latest
+    env:
+      GCODE_GRAPH_STANDALONE_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby
+      GCODE_GRAPH_STANDALONE_FALKOR_HOST: 127.0.0.1
+      GCODE_GRAPH_STANDALONE_FALKOR_PORT: "16379"
+      GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD: gobbyfalkor
+    services:
+      falkordb:
+        image: falkordb/falkordb:latest
+        env:
+          REDIS_ARGS: "--requirepass gobbyfalkor"
+          GOBBY_FALKORDB_PASSWORD: gobbyfalkor
+        ports:
+          - 16379:6379
+        options: >-
+          --health-cmd "redis-cli -a gobbyfalkor PING | grep -q PONG"
+          --health-interval 5s
+          --health-timeout 3s
+          --health-retries 20
+    steps:
+      - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
+        with:
+          persist-credentials: false
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@29eef336d9b2848a0b548edc03f92a220660cdb8
+        with:
+          toolchain: stable
+
+      - name: Install cargo-nextest
+        uses: taiki-e/install-action@f5b277aa8941a90c16bc1cd6ab9363e0502b7d31
+        with:
+          tool: nextest
+
+      - name: Cache cargo registry & build
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-gcode-graph-cargo-${{ hashFiles('Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build PostgreSQL pg_search image
+        run: |
+          docker build \
+            --build-arg PG_SEARCH_VERSION=0.23.4 \
+            --build-arg PG_SEARCH_SHA256=6b042d61d156ca5fdcb1c417e291d90bffe3026848890be30bf6e578146b4676 \
+            -t gobby-postgres-ci:18-pgsearch \
+            crates/gcore/assets/postgres-pgsearch
+
+      - name: Start PostgreSQL pg_search service
+        run: |
+          docker run --detach \
+            --name gobby-postgres-ci \
+            --publish 15432:5432 \
+            --env POSTGRES_DB=gobby \
+            --env POSTGRES_USER=gobby \
+            --env POSTGRES_PASSWORD=gobby_dev \
+            --health-cmd "pg_isready -U gobby -d gobby && psql -U gobby -d gobby -tAc \"SELECT 1 FROM pg_extension WHERE extname='pg_search'\" | grep -q 1" \
+            --health-interval 5s \
+            --health-timeout 3s \
+            --health-retries 20 \
+            gobby-postgres-ci:18-pgsearch \
+            postgres \
+            -c shared_preload_libraries=pg_search,pgaudit \
+            -c pgaudit.log=write
+
+      - name: Wait for PostgreSQL pg_search
+        run: |
+          for _ in {1..60}; do
+            health_status="$(docker inspect --format '{{.State.Health.Status}}' gobby-postgres-ci)"
+            if [ "$health_status" = "healthy" ]; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker inspect gobby-postgres-ci
+          docker logs gobby-postgres-ci
+          exit 1
+
+      - name: Set up standalone gcode schema
+        env:
+          GOBBY_HOME: ${{ runner.temp }}/gcode-graph-home
+        run: |
+          cargo run -p gobby-code --no-default-features -- setup \
+            --standalone \
+            --database-url "$GCODE_GRAPH_STANDALONE_DATABASE_URL" \
+            --no-services \
+            --falkordb-host "$GCODE_GRAPH_STANDALONE_FALKOR_HOST" \
+            --falkordb-port "$GCODE_GRAPH_STANDALONE_FALKOR_PORT" \
+            --falkordb-password "$GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD" \
+            --quiet
+
+      - name: Test graph_standalone (gcode, no embeddings)
+        run: cargo nextest run --profile ci -p gobby-code --no-default-features --test graph_standalone
+
   coverage:
     name: Coverage (report only)
     runs-on: ubuntu-latest

@@ -230,7 +230,7 @@ fn ci_workflow_pins_taiki_install_actions_by_sha() {
                 "taiki-e/install-action@{TAIKI_INSTALL_ACTION_SHA}"
             ))
             .count(),
-        3
+        4
     );
     assert!(workflow.contains("tool: nextest"));
     assert!(workflow.contains("tool: cargo-llvm-cov"));
@@ -244,10 +244,10 @@ fn ci_workflow_pins_core_actions_by_sha() {
         workflow
             .matches(&format!("actions/checkout@{ACTIONS_CHECKOUT_SHA}"))
             .count(),
-        2
+        3
     );
     assert_eq!(workflow.matches("actions/checkout@v4").count(), 0);
-    assert_eq!(workflow.matches("persist-credentials: false").count(), 2);
+    assert_eq!(workflow.matches("persist-credentials: false").count(), 3);
 
     assert_eq!(
         workflow
@@ -255,16 +255,16 @@ fn ci_workflow_pins_core_actions_by_sha() {
                 "dtolnay/rust-toolchain@{DTOLNAY_RUST_TOOLCHAIN_SHA}"
             ))
             .count(),
-        2
+        3
     );
     assert_eq!(workflow.matches("dtolnay/rust-toolchain@stable").count(), 0);
-    assert_eq!(workflow.matches("toolchain: stable").count(), 2);
+    assert_eq!(workflow.matches("toolchain: stable").count(), 3);
 
     assert_eq!(
         workflow
             .matches(&format!("actions/cache@{ACTIONS_CACHE_SHA}"))
             .count(),
-        2
+        3
     );
     assert_eq!(workflow.matches("actions/cache@v4").count(), 0);
 
@@ -277,6 +277,32 @@ fn ci_workflow_pins_core_actions_by_sha() {
         1
     );
     assert_eq!(workflow.matches("actions/upload-artifact@v4").count(), 0);
+}
+
+#[test]
+fn ci_workflow_runs_gcode_graph_standalone_with_backends() {
+    let workflow = include_str!("../../../.github/workflows/ci.yml");
+
+    assert!(workflow.contains("gcode-graph-standalone:"));
+    assert!(workflow.contains("image: falkordb/falkordb:latest"));
+    assert!(workflow.contains("REDIS_ARGS: \"--requirepass gobbyfalkor\""));
+    assert!(workflow.contains(
+        "GCODE_GRAPH_STANDALONE_DATABASE_URL: postgresql://gobby:gobby_dev@127.0.0.1:15432/gobby"
+    ));
+    assert!(workflow.contains("GCODE_GRAPH_STANDALONE_FALKOR_HOST: 127.0.0.1"));
+    assert!(workflow.contains("GCODE_GRAPH_STANDALONE_FALKOR_PORT: \"16379\""));
+    assert!(workflow.contains("GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD: gobbyfalkor"));
+    assert!(workflow.contains("docker build \\"));
+    assert!(workflow.contains("--build-arg PG_SEARCH_VERSION=0.23.4 \\"));
+    assert!(workflow.contains(
+        "--build-arg PG_SEARCH_SHA256=6b042d61d156ca5fdcb1c417e291d90bffe3026848890be30bf6e578146b4676 \\"
+    ));
+    assert!(workflow.contains("docker run --detach \\"));
+    assert!(workflow.contains("SELECT 1 FROM pg_extension WHERE extname='pg_search'"));
+    assert!(workflow.contains("cargo run -p gobby-code --no-default-features -- setup \\"));
+    assert!(workflow.contains(
+        "cargo nextest run --profile ci -p gobby-code --no-default-features --test graph_standalone"
+    ));
 }
 
 #[test]
