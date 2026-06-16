@@ -1,7 +1,6 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-use super::context::project_id_default_services;
 use super::context::project_name_suffixes;
 use super::context::resolve_project_id;
 use super::services::{
@@ -517,20 +516,16 @@ fn generated_identity_writes_only_for_non_isolated_roots() {
 
 #[test]
 fn project_id_only_context_rejects_empty_id_before_runtime_resolution() {
-    let err = match Context::resolve_for_project_id("  ", true) {
+    let err = match Context::resolve_for_project_id_with_services(
+        "  ",
+        true,
+        ServiceConfigSelection::falkordb_only(),
+    ) {
         Ok(_) => panic!("empty project id should fail before DB resolution"),
         Err(err) => err,
     };
 
     assert!(err.to_string().contains("--project-id must not be empty"));
-}
-
-#[test]
-fn project_id_default_context_stays_falkordb_only() {
-    assert_eq!(
-        project_id_default_services(),
-        ServiceConfigSelection::falkordb_only()
-    );
 }
 
 #[test]

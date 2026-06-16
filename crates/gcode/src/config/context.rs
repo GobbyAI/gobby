@@ -228,10 +228,6 @@ pub struct ProjectIdentity {
     pub index_scope: ProjectIndexScope,
 }
 
-pub(super) const fn project_id_default_services() -> ServiceConfigSelection {
-    ServiceConfigSelection::falkordb_only()
-}
-
 impl Context {
     /// Resolve context from CLI args and filesystem state.
     pub fn resolve(project_override: Option<&str>, quiet: bool) -> anyhow::Result<Self> {
@@ -303,16 +299,6 @@ impl Context {
             daemon_url,
             index_scope,
         })
-    }
-
-    /// Resolve FalkorDB service config for a caller-supplied project id without touching cwd identity.
-    ///
-    /// This is for daemon-style calls that already know the target project id and must not
-    /// discover a project root from cwd. The returned context therefore has an empty
-    /// `project_root` and `None` for services that are not needed by project-id-only graph
-    /// operations.
-    pub fn resolve_for_project_id(project_id: &str, quiet: bool) -> anyhow::Result<Self> {
-        Self::resolve_for_project_id_with_services(project_id, quiet, project_id_default_services())
     }
 
     /// Resolve selected service configs for a caller-supplied project id without touching cwd identity.

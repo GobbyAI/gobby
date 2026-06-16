@@ -195,7 +195,11 @@ where
                     project_id: Some(project_id),
                 },
         } => {
-            let ctx = config::Context::resolve_for_project_id(project_id, cli.quiet)?;
+            let ctx = config::Context::resolve_for_project_id_with_services(
+                project_id,
+                cli.quiet,
+                config::ServiceConfigSelection::falkordb_only(),
+            )?;
             commands::graph::clear(&ctx, format)?;
             Ok(true)
         }
