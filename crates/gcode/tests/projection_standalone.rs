@@ -81,8 +81,9 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
     fs::write(
         gobby_home.join("gcore.yaml"),
         format!(
-            "{api_base}: {embedding_url}/v1\n{model}: embed-small\n{dim}: 3\n",
+            "{api_base}: {embedding_url}/v1\n{api_key}: test-key\n{model}: embed-small\n{dim}: 3\n",
             api_base = embedding_keys::AI_API_BASE,
+            api_key = embedding_keys::AI_API_KEY,
             model = embedding_keys::AI_MODEL,
             dim = embedding_keys::AI_DIM,
         ),
@@ -90,6 +91,12 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
     .expect("write standalone config");
 
     let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    if config_store_has_embedding_overrides(&mut conn) {
+        eprintln!(
+            "skipping projection_standalone smoke; config_store AI embedding keys override the mock gcore.yaml"
+        );
+        return;
+    }
     let _cleanup = ProjectCleanup::new(&env.database_url, TEST_PROJECT_ID);
     seed_project(&mut conn);
 
@@ -261,6 +268,22 @@ fn assert_success(output: Output, label: &str) -> Value {
             String::from_utf8_lossy(&output.stdout)
         )
     })
+}
+
+fn config_store_has_embedding_overrides(conn: &mut Client) -> bool {
+    conn.query_opt(
+        "SELECT 1 FROM config_store
+         WHERE key = $1 OR key = $2 OR key = $3 OR key = $4
+         LIMIT 1",
+        &[
+            &embedding_keys::AI_API_BASE,
+            &embedding_keys::AI_API_KEY,
+            &embedding_keys::AI_MODEL,
+            &embedding_keys::AI_DIM,
+        ],
+    )
+    .map(|row| row.is_some())
+    .unwrap_or(false)
 }
 
 fn seed_project(conn: &mut Client) {
