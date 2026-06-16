@@ -1622,7 +1622,7 @@
     },
     {
       "name": "prune",
-      "summary": "Remove stale project records and reconcile current-project projections.",
+      "summary": "Remove stale project records and reconcile projections across indexed projects.",
       "daemon_consumed": false,
       "positionals": [],
       "flags": [

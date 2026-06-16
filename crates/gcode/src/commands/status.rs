@@ -315,6 +315,57 @@ struct StaleProject<'a> {
     reason: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ProjectionCleanupScope {
+    AllIndexedProjects,
+    ResolvedProjectOverride,
+}
+
+#[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
+struct ProjectionPruneTotals {
+    graph_projects_cleaned: usize,
+    graph_projects_skipped: usize,
+    graph_stale_files_deleted: usize,
+    graph_nodes_deleted: usize,
+    vector_projects_cleaned: usize,
+    vector_projects_skipped: usize,
+    vector_orphan_files_deleted: usize,
+    vectors_deleted: usize,
+}
+
+impl ProjectionPruneTotals {
+    fn record_graph_cleanup(&mut self, cleanup: crate::graph::code_graph::GraphOrphanCleanup) {
+        self.graph_projects_cleaned += 1;
+        self.graph_stale_files_deleted += cleanup.stale_files_deleted;
+        self.graph_nodes_deleted += cleanup.graph_nodes_deleted;
+    }
+
+    fn record_vector_cleanup(&mut self, cleanup: code_symbols::VectorOrphanCleanup) {
+        self.vector_projects_cleaned += 1;
+        self.vector_orphan_files_deleted += cleanup.orphan_files_deleted;
+        self.vectors_deleted += cleanup.vectors_deleted;
+    }
+
+    fn add(&mut self, other: ProjectionPruneTotals) {
+        self.graph_projects_cleaned += other.graph_projects_cleaned;
+        self.graph_projects_skipped += other.graph_projects_skipped;
+        self.graph_stale_files_deleted += other.graph_stale_files_deleted;
+        self.graph_nodes_deleted += other.graph_nodes_deleted;
+        self.vector_projects_cleaned += other.vector_projects_cleaned;
+        self.vector_projects_skipped += other.vector_projects_skipped;
+        self.vector_orphan_files_deleted += other.vector_orphan_files_deleted;
+        self.vectors_deleted += other.vectors_deleted;
+    }
+}
+
+fn projection_cleanup_scope(project_override: Option<&str>) -> ProjectionCleanupScope {
+    if project_override.is_some() {
+        ProjectionCleanupScope::ResolvedProjectOverride
+    } else {
+        ProjectionCleanupScope::AllIndexedProjects
+    }
+}
+
 fn stale_projects(projects: &[IndexedProject]) -> Vec<StaleProject<'_>> {
     let mut stale = Vec::new();
     let mut stale_ids = HashSet::new();
@@ -377,6 +428,18 @@ pub fn prune(force: bool, project_override: Option<&str>, quiet: bool) -> anyhow
         return Ok(());
     }
 
+    match projection_cleanup_scope(project_override) {
+        ProjectionCleanupScope::AllIndexedProjects => prune_all_project_projections(quiet),
+        ProjectionCleanupScope::ResolvedProjectOverride => {
+            prune_resolved_project_projections(project_override, quiet)
+        }
+    }
+}
+
+fn prune_resolved_project_projections(
+    project_override: Option<&str>,
+    quiet: bool,
+) -> anyhow::Result<()> {
     match Context::resolve_with_services(
         project_override,
         quiet,
@@ -430,30 +493,115 @@ fn prune_stale_projects(force: bool) -> anyhow::Result<Option<usize>> {
     Ok(Some(stale.len()))
 }
 
-fn prune_current_project_projections(ctx: &Context) -> anyhow::Result<()> {
-    match prune_graph_orphans(ctx) {
-        Ok(Some(cleanup)) => eprintln!(
-            "Pruned graph projection: {} stale file(s), {} file-scoped node(s).",
-            cleanup.stale_files_deleted, cleanup.graph_nodes_deleted
-        ),
-        Ok(None) => {
-            eprintln!("Skipped graph projection orphan cleanup: FalkorDB is not configured.")
+fn prune_all_project_projections(quiet: bool) -> anyhow::Result<()> {
+    let projects = collect_projects()?;
+    if projects.is_empty() {
+        eprintln!("No indexed projects remain for projection cleanup.");
+        return Ok(());
+    }
+
+    let mut totals = ProjectionPruneTotals::default();
+    for project in &projects {
+        let label = display_name(project);
+        match Context::resolve_for_project_id_with_services(
+            &project.id,
+            quiet,
+            config::ServiceConfigSelection::projection_cleanup(),
+        ) {
+            Ok(ctx) => totals.add(prune_project_orphan_projections(&ctx, Some(&label))),
+            Err(error) => {
+                eprintln!("Warning: projection orphan cleanup failed for {label}: {error}")
+            }
         }
-        Err(error) => eprintln!("Warning: graph projection orphan cleanup failed: {error}"),
+    }
+
+    print_all_project_projection_totals(totals);
+    Ok(())
+}
+
+fn prune_current_project_projections(ctx: &Context) -> anyhow::Result<()> {
+    let totals = prune_project_orphan_projections(ctx, None);
+    print_current_project_projection_totals(totals);
+    Ok(())
+}
+
+fn prune_project_orphan_projections(
+    ctx: &Context,
+    project_label: Option<&str>,
+) -> ProjectionPruneTotals {
+    let mut totals = ProjectionPruneTotals::default();
+
+    match prune_graph_orphans(ctx) {
+        Ok(Some(cleanup)) => totals.record_graph_cleanup(cleanup),
+        Ok(None) => totals.graph_projects_skipped += 1,
+        Err(error) => warn_projection_cleanup_failure("graph", project_label, error),
     }
 
     match prune_vector_orphans(ctx) {
-        Ok(Some(cleanup)) => eprintln!(
-            "Pruned vector projection: {} stale file(s), {} vector point(s).",
-            cleanup.orphan_files_deleted, cleanup.vectors_deleted
-        ),
-        Ok(None) => {
-            eprintln!("Skipped vector projection orphan cleanup: Qdrant is not configured.")
-        }
-        Err(error) => eprintln!("Warning: vector projection orphan cleanup failed: {error}"),
+        Ok(Some(cleanup)) => totals.record_vector_cleanup(cleanup),
+        Ok(None) => totals.vector_projects_skipped += 1,
+        Err(error) => warn_projection_cleanup_failure("vector", project_label, error),
     }
 
-    Ok(())
+    totals
+}
+
+fn print_current_project_projection_totals(totals: ProjectionPruneTotals) {
+    if totals.graph_projects_cleaned > 0 {
+        eprintln!(
+            "Pruned graph projection: {} stale file(s), {} file-scoped node(s).",
+            totals.graph_stale_files_deleted, totals.graph_nodes_deleted
+        );
+    } else if totals.graph_projects_skipped > 0 {
+        eprintln!("Skipped graph projection orphan cleanup: FalkorDB is not configured.");
+    }
+
+    if totals.vector_projects_cleaned > 0 {
+        eprintln!(
+            "Pruned vector projection: {} stale file(s), {} vector point(s).",
+            totals.vector_orphan_files_deleted, totals.vectors_deleted
+        );
+    } else if totals.vector_projects_skipped > 0 {
+        eprintln!("Skipped vector projection orphan cleanup: Qdrant is not configured.");
+    }
+}
+
+fn print_all_project_projection_totals(totals: ProjectionPruneTotals) {
+    if totals.graph_projects_cleaned > 0 {
+        eprintln!(
+            "Pruned graph projections for {} project(s): {} stale file(s), {} file-scoped node(s).",
+            totals.graph_projects_cleaned,
+            totals.graph_stale_files_deleted,
+            totals.graph_nodes_deleted
+        );
+    } else if totals.graph_projects_skipped > 0 {
+        eprintln!(
+            "Skipped graph projection orphan cleanup for {} project(s): FalkorDB is not configured.",
+            totals.graph_projects_skipped
+        );
+    }
+
+    if totals.vector_projects_cleaned > 0 {
+        eprintln!(
+            "Pruned vector projections for {} project(s): {} stale file(s), {} vector point(s).",
+            totals.vector_projects_cleaned,
+            totals.vector_orphan_files_deleted,
+            totals.vectors_deleted
+        );
+    } else if totals.vector_projects_skipped > 0 {
+        eprintln!(
+            "Skipped vector projection orphan cleanup for {} project(s): Qdrant is not configured.",
+            totals.vector_projects_skipped
+        );
+    }
+}
+
+fn warn_projection_cleanup_failure(store: &str, project_label: Option<&str>, error: anyhow::Error) {
+    if let Some(project_label) = project_label {
+        eprintln!("Warning: {store} projection orphan cleanup failed for {project_label}: {error}");
+    } else {
+        eprintln!("Warning: {store} projection orphan cleanup failed: {error}");
+    }
 }
 
 fn prune_graph_orphans(
@@ -558,6 +706,22 @@ mod tests {
             .to_string(),
         )
         .expect("write project.json");
+    }
+
+    #[test]
+    fn prune_without_project_uses_all_indexed_projection_scope() {
+        assert_eq!(
+            projection_cleanup_scope(None),
+            ProjectionCleanupScope::AllIndexedProjects
+        );
+    }
+
+    #[test]
+    fn prune_with_project_uses_single_resolved_projection_scope() {
+        assert_eq!(
+            projection_cleanup_scope(Some("/tmp/project")),
+            ProjectionCleanupScope::ResolvedProjectOverride
+        );
     }
 
     #[test]

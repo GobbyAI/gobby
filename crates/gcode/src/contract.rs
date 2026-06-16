@@ -471,7 +471,7 @@ pub fn contract() -> CliContract {
                 json_output_keys: vec![],
                 ..CommandContract::new(
                     "prune",
-                    "Remove stale project records and reconcile current-project projections.",
+                    "Remove stale project records and reconcile projections across indexed projects.",
                 )
             },
         ],

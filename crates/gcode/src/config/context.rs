@@ -228,6 +228,10 @@ pub struct ProjectIdentity {
     pub index_scope: ProjectIndexScope,
 }
 
+pub(super) const fn project_id_default_services() -> ServiceConfigSelection {
+    ServiceConfigSelection::falkordb_only()
+}
+
 impl Context {
     /// Resolve context from CLI args and filesystem state.
     pub fn resolve(project_override: Option<&str>, quiet: bool) -> anyhow::Result<Self> {
@@ -301,20 +305,48 @@ impl Context {
         })
     }
 
-    /// Resolve service config for a caller-supplied project id without touching cwd identity.
+    /// Resolve FalkorDB service config for a caller-supplied project id without touching cwd identity.
     ///
     /// This is for daemon-style calls that already know the target project id and must not
     /// discover a project root from cwd. The returned context therefore has an empty
-    /// `project_root`, default code-vector settings, and `None` for services that are not
-    /// needed by project-id-only graph operations.
+    /// `project_root` and `None` for services that are not needed by project-id-only graph
+    /// operations.
     pub fn resolve_for_project_id(project_id: &str, quiet: bool) -> anyhow::Result<Self> {
+        Self::resolve_for_project_id_with_services(project_id, quiet, project_id_default_services())
+    }
+
+    /// Resolve selected service configs for a caller-supplied project id without touching cwd identity.
+    pub fn resolve_for_project_id_with_services(
+        project_id: &str,
+        quiet: bool,
+        services: ServiceConfigSelection,
+    ) -> anyhow::Result<Self> {
         let project_id = normalize_project_id(project_id)?;
         let database_url = db::resolve_database_url()?;
 
         let standalone_config = read_standalone_config_optional();
         let mut conn = db::connect_readonly(&database_url)?;
-        let falkordb = resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)?;
-        let indexing = resolve_indexing_settings(&mut conn, standalone_config)?;
+        let falkordb = if services.falkordb {
+            resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)?
+        } else {
+            None
+        };
+        let qdrant = if services.qdrant {
+            resolve_qdrant_config(&mut conn, standalone_config.clone(), quiet)?
+        } else {
+            None
+        };
+        let embedding = if services.embedding {
+            resolve_embedding_config(&mut conn, standalone_config.clone(), quiet)?
+        } else {
+            None
+        };
+        let indexing = resolve_indexing_settings(&mut conn, standalone_config.clone())?;
+        let code_vectors = if services.code_vectors {
+            resolve_code_vector_settings(&mut conn, standalone_config)?
+        } else {
+            CodeVectorSettings::default()
+        };
 
         let daemon_url = Some(gobby_core::daemon_url::daemon_url());
 
@@ -324,9 +356,9 @@ impl Context {
             project_id,
             quiet,
             falkordb,
-            qdrant: None,
-            embedding: None,
-            code_vectors: CodeVectorSettings::default(),
+            qdrant,
+            embedding,
+            code_vectors,
             indexing,
             daemon_url,
             index_scope: ProjectIndexScope::Single,
