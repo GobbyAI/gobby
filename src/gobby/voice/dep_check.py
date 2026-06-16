@@ -6,6 +6,8 @@ import importlib
 import logging
 from typing import TYPE_CHECKING
 
+from gobby.voice._warnings import suppress_perth_pkg_resources_warning
+
 if TYPE_CHECKING:
     from gobby.config.voice import VoiceConfig
 
@@ -28,7 +30,8 @@ def _check_imports(deps: list[tuple[str, str]]) -> list[str]:
     missing = []
     for pip_name, import_name in deps:
         try:
-            importlib.import_module(import_name)
+            with suppress_perth_pkg_resources_warning():
+                importlib.import_module(import_name)
         except ImportError:
             missing.append(pip_name)
     return missing

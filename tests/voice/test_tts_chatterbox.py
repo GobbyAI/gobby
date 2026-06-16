@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import sys
+import warnings
 from pathlib import Path
 from types import ModuleType, SimpleNamespace
 from typing import Any
@@ -106,6 +107,27 @@ class TestChatterboxTurboProvider:
             status.reason == "Chatterbox runtime import failed: "
             "Could not load this library: libtorchaudio.so"
         )
+
+    def test_runtime_import_suppresses_perth_pkg_resources_warning(
+        self, voice_config: VoiceConfig
+    ) -> None:
+        from gobby.voice.tts_chatterbox import _runtime_import_error
+
+        def import_with_warning(name: str) -> ModuleType:
+            warnings.warn(
+                "pkg_resources is deprecated as an API. upstream", UserWarning, stacklevel=2
+            )
+            return ModuleType(name)
+
+        with (
+            patch("gobby.voice.tts_chatterbox._module_is_available", return_value=True),
+            patch("gobby.voice.tts_chatterbox.importlib.import_module", import_with_warning),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            assert _runtime_import_error() is None
+
+        assert caught == []
 
     @pytest.mark.asyncio
     async def test_synthesize_stream_yields_pcm(self, voice_config: VoiceConfig) -> None:
@@ -628,6 +650,24 @@ class TestDepCheck:
             assert await ensure_tts_deps(config) is False
 
         assert "missing required TTS package(s): chatterbox-tts; run uv sync" in caplog.text
+
+    def test_dep_check_suppresses_perth_pkg_resources_warning(self) -> None:
+        from gobby.voice.dep_check import _check_imports
+
+        def import_with_warning(name: str) -> ModuleType:
+            warnings.warn(
+                "pkg_resources is deprecated as an API. upstream", UserWarning, stacklevel=2
+            )
+            return ModuleType(name)
+
+        with (
+            patch("gobby.voice.dep_check.importlib.import_module", import_with_warning),
+            warnings.catch_warnings(record=True) as caught,
+        ):
+            warnings.simplefilter("always")
+            assert _check_imports([("chatterbox-tts", "chatterbox")]) == []
+
+        assert caught == []
 
 
 class TestVoiceConfigTTSDefaults:

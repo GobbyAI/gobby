@@ -14,6 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from gobby.config.voice import VoiceConfig
+from gobby.voice._warnings import suppress_perth_pkg_resources_warning
 from gobby.voice.tts import BaseTTSProvider, TTSProviderCapabilities, _module_is_available
 
 logger = logging.getLogger(__name__)
@@ -80,7 +81,8 @@ def _runtime_import_error() -> str | None:
         return "daemon environment is missing required package chatterbox-tts; run uv sync"
 
     try:
-        importlib.import_module("chatterbox.tts_turbo")
+        with suppress_perth_pkg_resources_warning():
+            importlib.import_module("chatterbox.tts_turbo")
     except Exception as exc:
         message = str(exc).strip()
         if message:
@@ -100,7 +102,9 @@ def _prepare_turbo_conditionals(
     import librosa
     import numpy as np
     import torch
-    from chatterbox import tts_turbo as chatterbox_turbo
+
+    with suppress_perth_pkg_resources_warning():
+        from chatterbox import tts_turbo as chatterbox_turbo
 
     s3gen_sr = getattr(chatterbox_turbo, "S3GEN_SR", getattr(model, "sr", 24000))
     s3_sr = getattr(chatterbox_turbo, "S3_SR", 16000)
@@ -313,7 +317,8 @@ class ChatterboxTurboProvider(BaseTTSProvider):
                 logger.info(f"Loading Chatterbox Turbo model (device={device})")
 
                 def _load() -> Any:
-                    from chatterbox.tts_turbo import ChatterboxTurboTTS
+                    with suppress_perth_pkg_resources_warning():
+                        from chatterbox.tts_turbo import ChatterboxTurboTTS
 
                     return ChatterboxTurboTTS.from_pretrained(device=device)
 
