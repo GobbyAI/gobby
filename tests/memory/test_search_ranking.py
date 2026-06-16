@@ -6,6 +6,8 @@ from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
+
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot, SearchService
 from gobby.storage.memories import Memory
@@ -52,18 +54,75 @@ class _VectorStore:
         return self._results[:limit]
 
 
+class _FilteringStorage:
+    """Storage that mirrors active-only hydration: hidden IDs are silently dropped.
+
+    ``get_memories`` returns rows only for ``active_ids`` (as production's
+    ``visibility="active"`` default does), and ``get_memory`` raises ``ValueError`` for
+    hidden IDs so ``_build_results``' per-ID fallback skips them.
+    """
+
+    def __init__(self, active_ids: list[str]) -> None:
+        self._active = set(active_ids)
+
+    def _memory(self, memory_id: str) -> Memory:
+        if memory_id not in self._active:
+            raise ValueError(memory_id)
+        now = datetime.now(UTC).isoformat()
+        return Memory(
+            id=memory_id,
+            memory_type="fact",
+            content=memory_id,
+            created_at=now,
+            updated_at=now,
+            source_type="agent",
+            tags=[],
+        )
+
+    def get_memories(self, memory_ids: list[str], project_id: str | None = None) -> list[Memory]:
+        return [self._memory(mid) for mid in memory_ids if mid in self._active]
+
+    def get_memory(self, memory_id: str, project_id: str | None = None) -> Memory:
+        return self._memory(memory_id)
+
+    def update_access_stats(self, memory_id: str, accessed_at: str) -> None:
+        return None
+
+
+class _CountingVectorStore:
+    """VectorStore that records how many over-fetch rounds backfill triggered."""
+
+    def __init__(self, results: list[tuple[str, float]]) -> None:
+        self._results = results
+        self.calls: list[int] = []
+
+    async def search(
+        self,
+        query_embedding: list[float],
+        limit: int = 10,
+        filters: dict[str, str] | None = None,
+    ) -> list[tuple[str, float]]:
+        self.calls.append(limit)
+        return self._results[:limit]
+
+
 def _service(
     memory_ids: list[str],
     *,
     vector_results: list[tuple[str, float]] | None = None,
+    vector_store: Any = None,
+    storage: Any = None,
     keyword_search: Callable[[str, int, str | None], list[tuple[str, float]]] | None = None,
     search_debug_sink: Callable[[SearchDebugSnapshot], None] | None = None,
     falkordb_graph_search: bool = False,
 ) -> SearchService:
+    async def _embed(text: str, is_query: bool = False) -> list[float]:
+        return [1.0, 0.0]
+
     return SearchService(
-        storage=_Storage(memory_ids),  # type: ignore[arg-type]
-        vector_store=_VectorStore(vector_results or []),  # type: ignore[arg-type]
-        embed_fn=lambda text, is_query=False: [1.0, 0.0],
+        storage=storage or _Storage(memory_ids),  # type: ignore[arg-type]
+        vector_store=vector_store or _VectorStore(vector_results or []),  # type: ignore[arg-type]
+        embed_fn=_embed,
         kg_service=object() if falkordb_graph_search else None,  # type: ignore[arg-type]
         keyword_search=keyword_search or (lambda query, limit, project_id: []),
         config=MemoryConfig(),
@@ -320,3 +379,54 @@ def test_debug_sink_failure_does_not_change_results() -> None:
         rrf_applied=False,
     )
     assert sink_called is True
+
+
+@pytest.mark.asyncio
+async def test_search_backfills_until_limit_active_results() -> None:
+    """Soft-hidden IDs eat the first over-fetch page; backfill recovers active results.
+
+    The vector store ranks four hidden rows ahead of four active ones. The first round
+    (``limit * 2`` candidates) hydrates to nothing, so backfill grows the candidate pool
+    until ``limit`` active rows survive hydration (#17162).
+    """
+    hidden = ["h1", "h2", "h3", "h4"]
+    active = ["a1", "a2", "a3", "a4"]
+    ranked = hidden + active
+    vector_store = _CountingVectorStore(
+        [(mid, 0.95 - index * 0.05) for index, mid in enumerate(ranked)]
+    )
+    service = _service([], vector_store=vector_store, storage=_FilteringStorage(active))
+
+    results = await service.search("query", limit=2)
+
+    assert [memory.id for memory in results] == ["a1", "a2"]
+    # Round 0 over-fetched 4 (all hidden), round 1 grew to 8 and filled the limit.
+    assert vector_store.calls == [4, 8]
+
+
+@pytest.mark.asyncio
+async def test_search_stops_backfill_when_sources_exhausted() -> None:
+    """Backfill halts (no infinite loop) once a source returns fewer than requested."""
+    vector_store = _CountingVectorStore([("h1", 0.9), ("a1", 0.8)])
+    service = _service([], vector_store=vector_store, storage=_FilteringStorage(["a1"]))
+
+    results = await service.search("query", limit=5)
+
+    assert [memory.id for memory in results] == ["a1"]
+    # First page already returned fewer than the 10 requested -> exhausted, no retry.
+    assert vector_store.calls == [10]
+
+
+@pytest.mark.asyncio
+async def test_search_no_backfill_when_first_page_fills() -> None:
+    """The common path (no hidden rows) fetches a single page and never backfills."""
+    active = ["a1", "a2", "a3", "a4"]
+    vector_store = _CountingVectorStore(
+        [(mid, 0.95 - index * 0.05) for index, mid in enumerate(active)]
+    )
+    service = _service([], vector_store=vector_store, storage=_FilteringStorage(active))
+
+    results = await service.search("query", limit=2)
+
+    assert [memory.id for memory in results] == ["a1", "a2"]
+    assert vector_store.calls == [4]

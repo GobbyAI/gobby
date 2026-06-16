@@ -20,6 +20,7 @@ from gobby.memory.services.knowledge_graph import (
     Relationship,
 )
 from gobby.memory.services.knowledge_graph.extraction import ENTITY_EXTRACTION_SYSTEM_PROMPT
+from gobby.memory.services.knowledge_graph.reader import KnowledgeGraphReader
 
 pytestmark = pytest.mark.unit
 
@@ -1183,3 +1184,126 @@ class TestRemoveMemoryFromGraph:
         mock_falkor.query.side_effect = FalkorConnectionError("connection refused")
         await service.remove_memory_from_graph("mem-1")
         assert mock_falkor.query.await_count == 1
+
+
+class _FakeFalkorGraph:
+    """Falkor stub returning a fixed entity graph plus entity->memory backing rows."""
+
+    def __init__(
+        self,
+        graph: dict[str, object],
+        backing_rows: list[dict[str, object]],
+    ) -> None:
+        self._graph = graph
+        self._backing_rows = backing_rows
+        self.query_calls: list[tuple[str, dict[str, object] | None]] = []
+
+    async def get_entity_graph(
+        self, limit: int = 500, project_id: str | None = None
+    ) -> dict[str, object]:
+        return self._graph
+
+    async def get_entity_neighbors(
+        self, entity_key: str, project_id: str | None = None
+    ) -> dict[str, object]:
+        return self._graph
+
+    async def query(
+        self, cypher: str, params: dict[str, object] | None = None
+    ) -> list[dict[str, object]]:
+        self.query_calls.append((cypher, params))
+        return self._backing_rows
+
+
+class TestEntityGraphActiveFiltering:
+    """Entity-graph reads hide artifacts backed only by soft-hidden memories (#17162)."""
+
+    @pytest.mark.asyncio
+    async def test_get_entity_graph_drops_hidden_only_entities_and_relationships(
+        self,
+    ) -> None:
+        graph = {
+            "entities": [
+                {"entity_key": "e-active", "name": "Active"},
+                {"entity_key": "e-mixed", "name": "Mixed"},
+                {"entity_key": "e-hidden", "name": "Hidden"},
+            ],
+            "relationships": [
+                {"source_key": "e-active", "target_key": "e-mixed", "type": "RELATED"},
+                {"source_key": "e-active", "target_key": "e-hidden", "type": "RELATED"},
+            ],
+        }
+        backing_rows = [
+            {"entity_key": "e-active", "memory_ids": ["m1"]},
+            {"entity_key": "e-mixed", "memory_ids": ["m2", "m3"]},
+            {"entity_key": "e-hidden", "memory_ids": ["m4"]},
+        ]
+        active_ids = {"m1", "m3"}
+
+        async def _filter(memory_ids: object, project_id: str | None) -> set[str]:
+            return {mid for mid in memory_ids if mid in active_ids}  # type: ignore[union-attr]
+
+        falkor = _FakeFalkorGraph(graph, backing_rows)
+        reader = KnowledgeGraphReader(
+            falkor,  # type: ignore[arg-type]
+            embed_fn=None,
+            embedding_dim=768,
+            active_memory_filter=_filter,
+        )
+
+        result = await reader.get_entity_graph(limit=100)
+
+        assert result is not None
+        visible = {e["entity_key"] for e in result["entities"]}
+        # e-mixed survives (backed by active m3); e-hidden drops (only m4, hidden).
+        assert visible == {"e-active", "e-mixed"}
+        # The relationship into the dropped entity drops with it.
+        assert result["relationships"] == [
+            {"source_key": "e-active", "target_key": "e-mixed", "type": "RELATED"}
+        ]
+
+    @pytest.mark.asyncio
+    async def test_get_entity_graph_fails_open_when_backing_lookup_errors(self) -> None:
+        graph = {"entities": [{"entity_key": "e1", "name": "E"}], "relationships": []}
+
+        async def _filter(memory_ids: object, project_id: str | None) -> set[str]:
+            return set()
+
+        class _ErrFalkor:
+            async def get_entity_graph(
+                self, limit: int = 500, project_id: str | None = None
+            ) -> dict[str, object]:
+                return graph
+
+            async def query(
+                self, cypher: str, params: dict[str, object] | None = None
+            ) -> list[dict[str, object]]:
+                raise RuntimeError("graph backing query failed")
+
+        reader = KnowledgeGraphReader(
+            _ErrFalkor(),  # type: ignore[arg-type]
+            embed_fn=None,
+            embedding_dim=768,
+            active_memory_filter=_filter,
+        )
+
+        # A transient backing-lookup fault returns the raw graph rather than blanking it.
+        assert await reader.get_entity_graph(limit=100) == graph
+
+    @pytest.mark.asyncio
+    async def test_get_entity_graph_without_filter_returns_raw(self) -> None:
+        graph = {"entities": [{"entity_key": "e1", "name": "E"}], "relationships": []}
+
+        class _Falkor:
+            async def get_entity_graph(
+                self, limit: int = 500, project_id: str | None = None
+            ) -> dict[str, object]:
+                return graph
+
+        reader = KnowledgeGraphReader(
+            _Falkor(),  # type: ignore[arg-type]
+            embed_fn=None,
+            embedding_dim=768,
+        )
+
+        assert await reader.get_entity_graph(limit=100) == graph

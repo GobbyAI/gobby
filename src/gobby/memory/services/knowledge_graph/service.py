@@ -35,6 +35,8 @@ if TYPE_CHECKING:
     from gobby.memory.vectorstore import VectorStore
     from gobby.prompts.loader import PromptLoader
 
+    from .reader import ActiveMemoryFilter
+
 logger = logging.getLogger(__name__)
 
 
@@ -67,6 +69,7 @@ class KnowledgeGraphService:
         cluster_expansion_per_entity: int = 3,
         cluster_min_cluster_size: int = 5,
         cluster_min_samples: int | None = 2,
+        active_memory_filter: ActiveMemoryFilter | None = None,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn
@@ -95,6 +98,7 @@ class KnowledgeGraphService:
             edge_half_life_days=edge_half_life_days,
             cluster_recall_expansion=cluster_recall_expansion,
             cluster_expansion_per_entity=cluster_expansion_per_entity,
+            active_memory_filter=active_memory_filter,
         )
         self._code_linker = KnowledgeGraphCodeLinker(
             falkor_client,

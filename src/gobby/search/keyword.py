@@ -50,6 +50,11 @@ class _TableConfig:
     aliases: tuple[str, ...] = ()
     postgres_columns: tuple[str, ...] = ()
     filters: Mapping[str, str] | None = None
+    # Unconditional SQL predicate (no parameters) appended to every search's WHERE.
+    # The shared ``filters`` mapping only expresses column equality, so an ``IS NULL``
+    # visibility gate cannot be expressed there. Memory keyword search uses this to keep
+    # soft-hidden rows (``deleted_at IS NOT NULL``) out of recall.
+    active_clause: str | None = None
 
 
 _TABLE_CONFIGS: dict[str, _TableConfig] = {
@@ -70,6 +75,7 @@ _TABLE_CONFIGS: dict[str, _TableConfig] = {
         aliases=("memories_fts",),
         postgres_columns=("content", "tags_text"),
         filters={"project_id": "project_id"},
+        active_clause="deleted_at IS NULL",
     ),
     "skills": _TableConfig(
         table="skills",
@@ -146,6 +152,8 @@ class BM25SearchBackend:
             where.extend(
                 _filter_clauses(self._hub, params, self._config.table, self._config, filters)
             )
+        if self._config.active_clause:
+            where.append(self._config.active_clause)
 
         limit_placeholder = _add_param(self._hub, params, limit)
         sql = f"""

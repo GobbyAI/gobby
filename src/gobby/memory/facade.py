@@ -254,6 +254,18 @@ class MemoryManagerFacadeMethods:
         """Delegate to storage to stamp (and optionally soft-hide) a dreamed row."""
         return self.storage.mark_dreamed(memory_id, hidden_as=hidden_as, when=when)
 
+    async def purge_dream_hidden(self, action: str, older_than_days: int) -> dict[str, Any]:
+        """Hard-delete aged soft-hidden rows of one ``dream_action`` and reconcile stores.
+
+        Storage removes the physical rows and returns their IDs; each removed memory's
+        VectorStore vector and FalkorDB graph artifacts are then reconciled so the
+        secondary stores — which retain soft-hidden rows until purge — stay consistent.
+        """
+        purged_ids = self.storage.purge_dream_hidden(action, older_than_days)
+        for memory_id in purged_ids:
+            await self._lifecycle_service.purge_secondary_indices(memory_id)
+        return {"action": action, "purged": len(purged_ids), "memory_ids": purged_ids}
+
     def list_memories(
         self,
         project_id: str | None = None,

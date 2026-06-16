@@ -35,6 +35,17 @@ _GRAPH_SYNTHETIC_SIM_DISCOUNT = 0.9
 # so its synthetic confidence is the seed entity cosine attenuated by this factor.
 _GRAPH_TRAVERSAL_CONFIDENCE_FACTOR = 0.9
 
+# Backfill against soft-delete top-k poisoning (#17162). SQL hydration is the source of
+# truth for visibility: ranked candidates come from Qdrant/graph, which retain soft-hidden
+# rows until purge, so hidden IDs eat result slots after ``_build_results`` drops them.
+# We over-fetch ``limit * _OVERFETCH_FACTOR`` candidates, and if the active result count
+# falls short while a source still has more to give, re-fetch with a geometrically larger
+# candidate pool up to ``_MAX_BACKFILL_ROUNDS`` extra rounds. With no hidden rows the first
+# round already fills ``limit`` and no backfill runs, so the common path pays nothing.
+_OVERFETCH_FACTOR = 2
+_BACKFILL_GROWTH = 2
+_MAX_BACKFILL_ROUNDS = 3
+
 
 @dataclass(frozen=True)
 class SearchDebugHit:
@@ -67,6 +78,26 @@ class SearchDebugSnapshot:
     graph_score_map: dict[str, float] = field(default_factory=dict)
     returned_hits: list[SearchDebugHit] = field(default_factory=list)
     graph_synthetic_similarity_discount: float = _GRAPH_SYNTHETIC_SIM_DISCOUNT
+
+
+@dataclass
+class _Candidates:
+    """One round of merged ranked candidates feeding ``_build_results``.
+
+    ``exhausted`` is True when no contributing source returned a full page at the
+    requested candidate count, meaning a larger fetch cannot surface new IDs and
+    backfill should stop.
+    """
+
+    merged_ids: list[str]
+    ranking_score_map: dict[str, float]
+    qdrant_score_map: dict[str, float]
+    qdrant_ranked: list[str]
+    keyword_ranked: list[str]
+    rrf_applied: bool
+    graph_ranked: list[str] = field(default_factory=list)
+    graph_score_map: dict[str, float] | None = None
+    exhausted: bool = True
 
 
 class SearchService:
@@ -244,95 +275,116 @@ class SearchService:
     ) -> list[Memory]:
         graph_min_score = self._falkordb_graph_min_score
         rrf_k = self._falkordb_rrf_k
-
         vector_store = self._require_vector_store()
-        qdrant_coro = vector_store.search(
-            query_embedding,
-            limit=limit * 2,
-            filters=filters or None,
-        )
-        graph_coro = self._search_graph_scored(
-            query_embedding=query_embedding,
-            limit=limit * 2,
-            min_score=graph_min_score,
-            project_id=project_id,
-        )
-        keyword_coro = self._keyword_ranked(query, limit * 2, project_id)
 
-        qdrant_result, graph_result, keyword_result = await asyncio.gather(
-            qdrant_coro, graph_coro, keyword_coro, return_exceptions=True
-        )
-
-        if isinstance(qdrant_result, BaseException):
-            if isinstance(qdrant_result, asyncio.CancelledError):
-                raise qdrant_result
-            if is_recoverable_vector_store_error(qdrant_result):
-                self._log_vector_store_failure(
-                    "Qdrant search unavailable; falling back to non-vector results",
-                    qdrant_result,
-                )
-            else:
-                logger.warning(f"Qdrant search failed: {qdrant_result}")
-            qdrant_results: list[tuple[str, float]] = []
-        else:
-            qdrant_results = qdrant_result
-
-        if isinstance(graph_result, BaseException):
-            logger.warning(f"Graph search failed: {graph_result}")
-            graph_scored: list[tuple[str, float]] = []
-        else:
-            graph_scored = graph_result
-
-        graph_ranked = [memory_id for memory_id, _ in graph_scored]
-        graph_score_map = dict(graph_scored)
-
-        if isinstance(keyword_result, BaseException):
-            logger.debug(f"Keyword search failed: {keyword_result}")
-            keyword_ranked: list[str] = []
-        else:
-            keyword_ranked = keyword_result
-
-        qdrant_score_map = dict(qdrant_results)
-        qdrant_ranked = [mid for mid, _ in qdrant_results]
-
-        rrf_lists = [rl for rl in (qdrant_ranked, graph_ranked, keyword_ranked) if rl]
-        if len(rrf_lists) > 1:
-            ranking_score_map = self.rrf_scores(*rrf_lists, k=rrf_k)
-            merged_ids = sorted(
-                ranking_score_map,
-                key=lambda memory_id: ranking_score_map[memory_id],
-                reverse=True,
+        async def _collect(candidate_limit: int) -> _Candidates:
+            qdrant_coro = vector_store.search(
+                query_embedding,
+                limit=candidate_limit,
+                filters=filters or None,
             )
-            rrf_applied = True
-        elif rrf_lists:
-            merged_ids = rrf_lists[0]
-            rrf_applied = False
-            if qdrant_ranked:
-                ranking_score_map = qdrant_score_map.copy()
-            else:
-                ranking_score_map = self.rrf_scores(merged_ids, k=rrf_k)
-        else:
-            merged_ids = []
-            rrf_applied = False
-            ranking_score_map = {}
+            graph_coro = self._search_graph_scored(
+                query_embedding=query_embedding,
+                limit=candidate_limit,
+                min_score=graph_min_score,
+                project_id=project_id,
+            )
+            keyword_coro = self._keyword_ranked(query, candidate_limit, project_id)
+            qdrant_result, graph_result, keyword_result = await asyncio.gather(
+                qdrant_coro, graph_coro, keyword_coro, return_exceptions=True
+            )
 
-        results = self._build_results(
-            merged_ids=merged_ids,
-            ranking_score_map=ranking_score_map,
-            qdrant_score_map=qdrant_score_map,
-            qdrant_set=set(qdrant_ranked),
-            keyword_set=set(keyword_ranked),
-            graph_set=set(graph_ranked),
-            graph_score_map=graph_score_map,
-            rrf_applied=rrf_applied,
-            project_id=project_id,
-            memory_type=memory_type,
-            tags_all=tags_all,
-            tags_any=tags_any,
-            tags_none=tags_none,
-            half_life=half_life,
-            effective_min_score=effective_min_score,
-            limit=limit,
+            if isinstance(qdrant_result, BaseException):
+                if isinstance(qdrant_result, asyncio.CancelledError):
+                    raise qdrant_result
+                if is_recoverable_vector_store_error(qdrant_result):
+                    self._log_vector_store_failure(
+                        "Qdrant search unavailable; falling back to non-vector results",
+                        qdrant_result,
+                    )
+                else:
+                    logger.warning(f"Qdrant search failed: {qdrant_result}")
+                qdrant_results: list[tuple[str, float]] = []
+            else:
+                qdrant_results = qdrant_result
+
+            if isinstance(graph_result, BaseException):
+                logger.warning(f"Graph search failed: {graph_result}")
+                graph_scored: list[tuple[str, float]] = []
+            else:
+                graph_scored = graph_result
+
+            graph_ranked = [memory_id for memory_id, _ in graph_scored]
+            graph_score_map = dict(graph_scored)
+
+            if isinstance(keyword_result, BaseException):
+                logger.debug(f"Keyword search failed: {keyword_result}")
+                keyword_ranked: list[str] = []
+            else:
+                keyword_ranked = keyword_result
+
+            qdrant_score_map = dict(qdrant_results)
+            qdrant_ranked = [mid for mid, _ in qdrant_results]
+
+            rrf_lists = [rl for rl in (qdrant_ranked, graph_ranked, keyword_ranked) if rl]
+            if len(rrf_lists) > 1:
+                ranking_score_map = self.rrf_scores(*rrf_lists, k=rrf_k)
+                merged_ids = sorted(
+                    ranking_score_map,
+                    key=lambda memory_id: ranking_score_map[memory_id],
+                    reverse=True,
+                )
+                rrf_applied = True
+            elif rrf_lists:
+                merged_ids = rrf_lists[0]
+                rrf_applied = False
+                if qdrant_ranked:
+                    ranking_score_map = qdrant_score_map.copy()
+                else:
+                    ranking_score_map = self.rrf_scores(merged_ids, k=rrf_k)
+            else:
+                merged_ids = []
+                rrf_applied = False
+                ranking_score_map = {}
+
+            return _Candidates(
+                merged_ids=merged_ids,
+                ranking_score_map=ranking_score_map,
+                qdrant_score_map=qdrant_score_map,
+                qdrant_ranked=qdrant_ranked,
+                keyword_ranked=keyword_ranked,
+                rrf_applied=rrf_applied,
+                graph_ranked=graph_ranked,
+                graph_score_map=graph_score_map,
+                exhausted=(
+                    len(qdrant_results) < candidate_limit
+                    and len(graph_scored) < candidate_limit
+                    and len(keyword_ranked) < candidate_limit
+                ),
+            )
+
+        def _build(candidates: _Candidates) -> list[Memory]:
+            return self._build_results(
+                merged_ids=candidates.merged_ids,
+                ranking_score_map=candidates.ranking_score_map,
+                qdrant_score_map=candidates.qdrant_score_map,
+                qdrant_set=set(candidates.qdrant_ranked),
+                keyword_set=set(candidates.keyword_ranked),
+                graph_set=set(candidates.graph_ranked),
+                graph_score_map=candidates.graph_score_map,
+                rrf_applied=candidates.rrf_applied,
+                project_id=project_id,
+                memory_type=memory_type,
+                tags_all=tags_all,
+                tags_any=tags_any,
+                tags_none=tags_none,
+                half_life=half_life,
+                effective_min_score=effective_min_score,
+                limit=limit,
+            )
+
+        results, candidates = await self._collect_active_results(
+            limit=limit, collect=_collect, build=_build
         )
         self._emit_search_debug(
             query=query,
@@ -340,11 +392,11 @@ class SearchService:
             session_id=session_id,
             recall_request_id=recall_request_id,
             caller=caller,
-            merged_ids=merged_ids,
+            merged_ids=candidates.merged_ids,
             returned=results,
-            ranking_score_map=ranking_score_map,
-            rrf_applied=rrf_applied,
-            graph_score_map=graph_score_map,
+            ranking_score_map=candidates.ranking_score_map,
+            rrf_applied=candidates.rrf_applied,
+            graph_score_map=candidates.graph_score_map,
         )
         return results
 
@@ -367,79 +419,97 @@ class SearchService:
         caller: str = "memory.search",
     ) -> list[Memory]:
         rrf_k = self._rrf_k
-
         vector_store = self._require_vector_store()
-        qdrant_coro = vector_store.search(
-            query_embedding,
-            limit=limit * 2,
-            filters=filters or None,
-        )
-        keyword_coro = self._keyword_ranked(query, limit * 2, project_id)
 
-        qdrant_result, keyword_result = await asyncio.gather(
-            qdrant_coro, keyword_coro, return_exceptions=True
-        )
-
-        if isinstance(qdrant_result, BaseException):
-            if isinstance(qdrant_result, asyncio.CancelledError):
-                raise qdrant_result
-            if is_recoverable_vector_store_error(qdrant_result):
-                self._log_vector_store_failure(
-                    "Qdrant search unavailable; falling back to keyword results",
-                    qdrant_result,
-                )
-            else:
-                logger.warning(f"Qdrant search failed: {qdrant_result}")
-            qdrant_results: list[tuple[str, float]] = []
-        else:
-            qdrant_results = qdrant_result
-
-        if isinstance(keyword_result, BaseException):
-            logger.debug(f"Keyword search failed: {keyword_result}")
-            keyword_ranked: list[str] = []
-        else:
-            keyword_ranked = keyword_result
-
-        qdrant_ranked = [mid for mid, _ in qdrant_results]
-        qdrant_score_map = dict(qdrant_results)
-
-        if qdrant_ranked and keyword_ranked:
-            ranking_score_map = self.rrf_scores(qdrant_ranked, keyword_ranked, k=rrf_k)
-            merged_ids = sorted(
-                ranking_score_map,
-                key=lambda memory_id: ranking_score_map[memory_id],
-                reverse=True,
+        async def _collect(candidate_limit: int) -> _Candidates:
+            qdrant_coro = vector_store.search(
+                query_embedding,
+                limit=candidate_limit,
+                filters=filters or None,
             )
-            rrf_applied = True
-        elif qdrant_ranked:
-            merged_ids = qdrant_ranked
-            ranking_score_map = qdrant_score_map.copy()
-            rrf_applied = False
-        elif keyword_ranked:
-            merged_ids = keyword_ranked
-            ranking_score_map = self.rrf_scores(keyword_ranked, k=rrf_k)
-            rrf_applied = False
-        else:
-            merged_ids = []
-            ranking_score_map = {}
-            rrf_applied = False
+            keyword_coro = self._keyword_ranked(query, candidate_limit, project_id)
+            qdrant_result, keyword_result = await asyncio.gather(
+                qdrant_coro, keyword_coro, return_exceptions=True
+            )
 
-        results = self._build_results(
-            merged_ids=merged_ids,
-            ranking_score_map=ranking_score_map,
-            qdrant_score_map=qdrant_score_map,
-            qdrant_set=set(qdrant_ranked),
-            keyword_set=set(keyword_ranked),
-            graph_set=None,
-            rrf_applied=rrf_applied,
-            project_id=project_id,
-            memory_type=memory_type,
-            tags_all=tags_all,
-            tags_any=tags_any,
-            tags_none=tags_none,
-            half_life=half_life,
-            effective_min_score=effective_min_score,
-            limit=limit,
+            if isinstance(qdrant_result, BaseException):
+                if isinstance(qdrant_result, asyncio.CancelledError):
+                    raise qdrant_result
+                if is_recoverable_vector_store_error(qdrant_result):
+                    self._log_vector_store_failure(
+                        "Qdrant search unavailable; falling back to keyword results",
+                        qdrant_result,
+                    )
+                else:
+                    logger.warning(f"Qdrant search failed: {qdrant_result}")
+                qdrant_results: list[tuple[str, float]] = []
+            else:
+                qdrant_results = qdrant_result
+
+            if isinstance(keyword_result, BaseException):
+                logger.debug(f"Keyword search failed: {keyword_result}")
+                keyword_ranked: list[str] = []
+            else:
+                keyword_ranked = keyword_result
+
+            qdrant_ranked = [mid for mid, _ in qdrant_results]
+            qdrant_score_map = dict(qdrant_results)
+
+            if qdrant_ranked and keyword_ranked:
+                ranking_score_map = self.rrf_scores(qdrant_ranked, keyword_ranked, k=rrf_k)
+                merged_ids = sorted(
+                    ranking_score_map,
+                    key=lambda memory_id: ranking_score_map[memory_id],
+                    reverse=True,
+                )
+                rrf_applied = True
+            elif qdrant_ranked:
+                merged_ids = qdrant_ranked
+                ranking_score_map = qdrant_score_map.copy()
+                rrf_applied = False
+            elif keyword_ranked:
+                merged_ids = keyword_ranked
+                ranking_score_map = self.rrf_scores(keyword_ranked, k=rrf_k)
+                rrf_applied = False
+            else:
+                merged_ids = []
+                ranking_score_map = {}
+                rrf_applied = False
+
+            return _Candidates(
+                merged_ids=merged_ids,
+                ranking_score_map=ranking_score_map,
+                qdrant_score_map=qdrant_score_map,
+                qdrant_ranked=qdrant_ranked,
+                keyword_ranked=keyword_ranked,
+                rrf_applied=rrf_applied,
+                exhausted=(
+                    len(qdrant_results) < candidate_limit
+                    and len(keyword_ranked) < candidate_limit
+                ),
+            )
+
+        def _build(candidates: _Candidates) -> list[Memory]:
+            return self._build_results(
+                merged_ids=candidates.merged_ids,
+                ranking_score_map=candidates.ranking_score_map,
+                qdrant_score_map=candidates.qdrant_score_map,
+                qdrant_set=set(candidates.qdrant_ranked),
+                keyword_set=set(candidates.keyword_ranked),
+                graph_set=None,
+                rrf_applied=candidates.rrf_applied,
+                project_id=project_id,
+                memory_type=memory_type,
+                tags_all=tags_all,
+                tags_any=tags_any,
+                tags_none=tags_none,
+                half_life=half_life,
+                effective_min_score=effective_min_score,
+                limit=limit,
+            )
+
+        results, candidates = await self._collect_active_results(
+            limit=limit, collect=_collect, build=_build
         )
         self._emit_search_debug(
             query=query,
@@ -447,12 +517,43 @@ class SearchService:
             session_id=session_id,
             recall_request_id=recall_request_id,
             caller=caller,
-            merged_ids=merged_ids,
+            merged_ids=candidates.merged_ids,
             returned=results,
-            ranking_score_map=ranking_score_map,
-            rrf_applied=rrf_applied,
+            ranking_score_map=candidates.ranking_score_map,
+            rrf_applied=candidates.rrf_applied,
         )
         return results
+
+    async def _collect_active_results(
+        self,
+        *,
+        limit: int,
+        collect: Callable[[int], Awaitable[_Candidates]],
+        build: Callable[[_Candidates], list[Memory]],
+    ) -> tuple[list[Memory], _Candidates]:
+        """Over-fetch ranked candidates and backfill until ``limit`` active results.
+
+        ``collect(candidate_limit)`` fetches and merges ranked candidates from the
+        configured sources; ``build`` hydrates them active-only via ``_build_results``,
+        which drops soft-hidden rows. When the active result count falls short and a
+        source still has candidates to give (``not exhausted``), the pool grows
+        geometrically and we retry, bounded by ``_MAX_BACKFILL_ROUNDS``. With no hidden
+        rows the first round fills ``limit`` and no extra fetch runs.
+        """
+        candidate_limit = max(limit, 1) * _OVERFETCH_FACTOR
+        candidates = await collect(candidate_limit)
+        results = build(candidates)
+        rounds = 0
+        while (
+            len(results) < limit
+            and not candidates.exhausted
+            and rounds < _MAX_BACKFILL_ROUNDS
+        ):
+            rounds += 1
+            candidate_limit *= _BACKFILL_GROWTH
+            candidates = await collect(candidate_limit)
+            results = build(candidates)
+        return results, candidates
 
     def _emit_search_debug(
         self,

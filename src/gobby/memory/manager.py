@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Sequence
 from typing import TYPE_CHECKING, Any
 
 from gobby.config.persistence import MemoryConfig
@@ -232,6 +232,24 @@ class MemoryManager(MemoryManagerFacadeMethods):
             from gobby.prompts.loader import PromptLoader
 
             prompt_loader = PromptLoader(db=self.db)
+
+            async def _active_memory_filter(
+                memory_ids: Sequence[str], project_id: str | None
+            ) -> set[str]:
+                """Return the active (not soft-hidden) subset of ``memory_ids``.
+
+                The memory store is the visibility source of truth; the graph keeps
+                soft-hidden Memory nodes until purge, so entity-graph reads consult this
+                to drop entities/relationships backed only by hidden rows.
+                """
+                ids = list(memory_ids)
+                if not ids:
+                    return set()
+                active = await asyncio.to_thread(
+                    self.storage.get_memories, ids, project_id, visibility="active"
+                )
+                return {memory.id for memory in active}
+
             kg_service = KnowledgeGraphService(
                 falkor_client=self._falkor_client,
                 embed_fn=embed_fn,
@@ -250,6 +268,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 cluster_expansion_per_entity=self.config.cluster_expansion_per_entity,
                 cluster_min_cluster_size=self.config.cluster_min_cluster_size,
                 cluster_min_samples=self.config.cluster_min_samples,
+                active_memory_filter=_active_memory_filter,
             )
             logger.debug("KnowledgeGraphService initialized")
             return kg_service

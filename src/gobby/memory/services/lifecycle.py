@@ -233,6 +233,23 @@ class MemoryLifecycleService:
     ) -> None:
         if not deleted:
             return
+        await self.purge_secondary_indices(
+            memory_id,
+            project_id=existing_memory.project_id if existing_memory else None,
+        )
+
+    async def purge_secondary_indices(
+        self,
+        memory_id: str,
+        project_id: str | None = None,
+    ) -> None:
+        """Drop a removed memory's VectorStore vector and FalkorDB graph artifacts.
+
+        Used both when a memory is deleted and when the dream GC purge hard-removes an
+        aged soft-hidden row, reconciling the secondary stores that retained the row
+        until purge. Best-effort: secondary-store faults are logged, not raised, so a
+        single unreachable store cannot block reconciliation of the rest.
+        """
         if self._vector_store:
             try:
                 await self._vector_store.delete(memory_id)
@@ -241,10 +258,7 @@ class MemoryLifecycleService:
         kg_service = self._kg_service_provider()
         if kg_service:
             try:
-                await kg_service.remove_memory_from_graph(
-                    memory_id,
-                    project_id=existing_memory.project_id if existing_memory else None,
-                )
+                await kg_service.remove_memory_from_graph(memory_id, project_id=project_id)
             except Exception as e:
                 logger.warning(f"Graph delete failed for {memory_id}: {e}")
 

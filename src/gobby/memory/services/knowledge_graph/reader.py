@@ -13,9 +13,15 @@ from gobby.memory.scoring import temporal_decay
 from .clustering import EntityVector
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Awaitable, Callable, Sequence
 
     from gobby.memory.falkor_client import FalkorClient
+
+    # Given candidate memory IDs (and an optional project scope), return the subset that
+    # are currently active (not soft-hidden) in the memory store -- the source of truth
+    # for visibility. The graph retains soft-hidden Memory nodes until purge, so entity
+    # reads must consult this to drop entities/relationships backed only by hidden rows.
+    ActiveMemoryFilter = Callable[[Sequence[str], str | None], Awaitable[set[str]]]
 
 logger = logging.getLogger(__name__)
 
@@ -65,6 +71,7 @@ class KnowledgeGraphReader:
         edge_half_life_days: float = 30.0,
         cluster_recall_expansion: bool = False,
         cluster_expansion_per_entity: int = 3,
+        active_memory_filter: ActiveMemoryFilter | None = None,
     ) -> None:
         self._falkor = falkor_client
         self._embed_fn = embed_fn
@@ -73,6 +80,7 @@ class KnowledgeGraphReader:
         self._edge_half_life_days = edge_half_life_days
         self._cluster_recall_expansion = cluster_recall_expansion
         self._cluster_expansion_per_entity = max(cluster_expansion_per_entity, 0)
+        self._active_memory_filter = active_memory_filter
         self._vector_index_ensured = False
         self._traversal_timeout_count = 0
         self._traversal_disabled_until = 0.0
@@ -463,30 +471,117 @@ class KnowledgeGraphReader:
         limit: int = 500,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Get the entity graph for visualization."""
+        """Get the entity graph for visualization, hiding soft-deleted-only artifacts."""
         try:
-            return await self._falkor.get_entity_graph(limit=limit, project_id=project_id)
+            graph = await self._falkor.get_entity_graph(limit=limit, project_id=project_id)
         except FalkorConnectionError as e:
             logger.warning(f"FalkorDB unreachable: {e}")
             return None
         except Exception as e:
             logger.warning(f"FalkorDB query failed: {e}")
             return None
+        return await self._filter_graph_by_active_memories(graph, project_id)
 
     async def get_entity_neighbors(
         self,
         entity_key: str,
         project_id: str | None = None,
     ) -> dict[str, Any] | None:
-        """Get neighbors for a single entity."""
+        """Get neighbors for a single entity, hiding soft-deleted-only artifacts."""
         try:
-            return await self._falkor.get_entity_neighbors(entity_key, project_id=project_id)
+            graph = await self._falkor.get_entity_neighbors(entity_key, project_id=project_id)
         except FalkorConnectionError as e:
             logger.warning(f"FalkorDB unreachable: {e}")
             return None
         except Exception as e:
             logger.warning(f"FalkorDB query failed: {e}")
             return None
+        return await self._filter_graph_by_active_memories(graph, project_id)
+
+    async def _filter_graph_by_active_memories(
+        self,
+        graph: dict[str, Any] | None,
+        project_id: str | None,
+    ) -> dict[str, Any] | None:
+        """Drop entities/relationships not backed by at least one active memory.
+
+        The graph keeps soft-hidden ``Memory`` nodes until purge, so an entity-graph
+        read must consult the memory store (the visibility source of truth). An entity
+        mentioned by both hidden and active memories stays visible; an entity backed
+        only by hidden (or no longer existing) memories is dropped, and any relationship
+        touching a dropped entity drops with it. Without an injected store filter (e.g.
+        in tests) the raw graph is returned unchanged.
+        """
+        if graph is None or self._active_memory_filter is None:
+            return graph
+        entities = graph.get("entities") or []
+        relationships = graph.get("relationships") or []
+        if not entities:
+            return graph
+
+        entity_keys = [str(e["entity_key"]) for e in entities if e.get("entity_key")]
+        backing = await self._entity_backing_memories(entity_keys, project_id)
+        if backing is None:
+            # Backing lookup failed (e.g. FalkorDB transient error); fail open rather
+            # than blank the entire visualization on a non-visibility fault.
+            return graph
+        all_memory_ids = sorted({mid for ids in backing.values() for mid in ids})
+        active_ids = await self._active_memory_filter(all_memory_ids, project_id)
+
+        visible_keys = {
+            key
+            for key, memory_ids in backing.items()
+            if any(memory_id in active_ids for memory_id in memory_ids)
+        }
+        filtered_entities = [
+            e for e in entities if str(e.get("entity_key") or "") in visible_keys
+        ]
+        filtered_relationships = [
+            r
+            for r in relationships
+            if str(r.get("source_key") or "") in visible_keys
+            and str(r.get("target_key") or "") in visible_keys
+        ]
+        return {"entities": filtered_entities, "relationships": filtered_relationships}
+
+    async def _entity_backing_memories(
+        self,
+        entity_keys: list[str],
+        project_id: str | None,
+    ) -> dict[str, list[str]] | None:
+        """Map each entity key to the memory IDs that mention it via ``MENTIONED_IN``.
+
+        Returns ``None`` when the graph lookup fails so callers can fail open instead
+        of treating a transient error as "no entity has active backing".
+        """
+        if not entity_keys:
+            return {}
+        try:
+            rows = await self._falkor.query(
+                "UNWIND $entity_keys AS entity_key "
+                "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
+                "WHERE (e.project_id = $project_id "
+                "OR ($project_id IS NULL AND e.project_id IS NULL)) "
+                "AND (m.project_id = $project_id "
+                "OR ($project_id IS NULL AND m.project_id IS NULL)) "
+                "RETURN e.entity_key AS entity_key, "
+                "collect(DISTINCT m.memory_id) AS memory_ids",
+                {"entity_keys": entity_keys, "project_id": project_id},
+            )
+        except FalkorConnectionError as e:
+            logger.warning(f"FalkorDB unreachable resolving entity backing memories: {e}")
+            return None
+        except Exception as e:
+            logger.warning(f"Failed to resolve entity backing memories: {e}")
+            return None
+
+        backing: dict[str, list[str]] = {}
+        for row in rows:
+            key = row.get("entity_key")
+            if not key:
+                continue
+            backing[str(key)] = [str(mid) for mid in (row.get("memory_ids") or []) if mid]
+        return backing
 
     async def search_graph(self, query: str, limit: int = 10) -> list[dict[str, Any]]:
         """Search the knowledge graph, using vector search before substring fallback."""

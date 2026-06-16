@@ -357,6 +357,57 @@ class TestTaskSearchBackend:
             "pg_search keyword query parse failed" in record.message for record in caplog.records
         )
 
+    def test_memory_keyword_search_excludes_soft_deleted(self) -> None:
+        """Memory BM25 search appends an explicit ``deleted_at IS NULL`` active clause.
+
+        The shared ``filters`` mapping can only express column equality, so the
+        soft-delete visibility gate has to be carried by the table's ``active_clause``;
+        without it hidden rows leak into recall and underfill hydration (#17162).
+        """
+        from gobby.search.keyword import BM25SearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def __init__(self) -> None:
+                self.sql = ""
+                self.params: tuple[Any, ...] = ()
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                self.sql = sql
+                self.params = params
+                return [{"id": "mem-a", "score": 3.0}]
+
+        db = FakePostgresDB()
+        results = BM25SearchBackend(db, "memories").search(
+            "alpha", 5, filters={"project_id": "proj-1"}
+        )
+
+        assert [(hit.id, hit.score) for hit in results] == [("mem-a", 1.0)]
+        assert "deleted_at IS NULL" in db.sql
+        # The active clause carries no bound parameter: two search-column terms, the
+        # project_id filter, then the limit.
+        assert db.params == ("alpha", "alpha", "proj-1", 5)
+
+    def test_task_keyword_search_has_no_active_clause(self) -> None:
+        """Tables without a soft-delete column (tasks) get no ``deleted_at`` clause."""
+        from gobby.search.keyword import BM25SearchBackend
+
+        class FakePostgresDB:
+            dialect = "postgres"
+
+            def __init__(self) -> None:
+                self.sql = ""
+
+            def fetchall(self, sql: str, params: tuple[Any, ...]) -> list[dict[str, Any]]:
+                self.sql = sql
+                return [{"id": "task-a", "score": 1.0}]
+
+        db = FakePostgresDB()
+        BM25SearchBackend(db, "tasks").search("alpha", 5)
+
+        assert "deleted_at" not in db.sql
+
     def test_postgres_stage_state_parse_error_returns_empty_without_warning(
         self,
         caplog: pytest.LogCaptureFixture,
