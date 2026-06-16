@@ -61,6 +61,7 @@ tree-sitter-scala = "0.26"
 tree-sitter-bash = "0.25.1"
 tree-sitter-dart = "0.2"
 tree-sitter-elixir = "0.3"
+tree-sitter-lua = "0.5"
 # Tier 3: Data formats
 tree-sitter-json = "0.23"
 tree-sitter-yaml = "0.7"

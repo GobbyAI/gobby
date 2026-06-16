@@ -64,27 +64,47 @@ fn materialize_call(
 ) -> anyhow::Result<CallRelation> {
     let caller_symbol = resolution::enclosing_symbol(ctx.symbols, site.scope_byte);
     let caller_symbol_id = caller_symbol.map(|s| s.id.clone()).unwrap_or_default();
+    let lua_qualifier_path = if ctx.language == "lua"
+        && (site.qualifier_path.is_none() || site.qualifier_path.as_deref() == Some("require"))
+    {
+        lua_require_qualifier_before_name(source, site.name_byte)
+    } else {
+        None
+    };
+    let qualifier_path = lua_qualifier_path
+        .as_deref()
+        .or(site.qualifier_path.as_deref());
     let local_target = resolution::resolve_same_file_callee_for_language(
         ctx.language,
         ctx.symbols,
         caller_symbol,
         &site.callee_name,
-        site.qualifier_path.as_deref(),
+        qualifier_path,
         site.syntax,
     );
-    let root_alias = site
-        .qualifier_path
-        .as_deref()
+    let root_alias = qualifier_path
         .and_then(resolution::qualifier_root_alias)
         .map(ToOwned::to_owned);
-    let external_shadowed = shadowing::external_call_is_shadowed(
-        source,
-        caller_symbol,
-        site.scope_byte,
-        &site.callee_name,
-        root_alias.as_deref(),
-        site.syntax,
-    );
+    let lua_require_bound = ctx.language == "lua"
+        && match site.syntax {
+            CallSyntaxKind::Bare => ctx
+                .import_bindings
+                .local_bare
+                .contains_key(&site.callee_name),
+            CallSyntaxKind::Member => root_alias
+                .as_deref()
+                .is_some_and(|alias| ctx.import_bindings.local_member.contains_key(alias)),
+            CallSyntaxKind::Other => false,
+        };
+    let external_shadowed = !lua_require_bound
+        && shadowing::external_call_is_shadowed(
+            source,
+            caller_symbol,
+            site.scope_byte,
+            &site.callee_name,
+            root_alias.as_deref(),
+            site.syntax,
+        );
     let external_target = if external_shadowed {
         None
     } else {
@@ -94,7 +114,7 @@ fn materialize_call(
             ctx.symbols,
             &site.callee_name,
             root_alias.as_deref(),
-            site.qualifier_path.as_deref(),
+            qualifier_path,
             site.syntax == CallSyntaxKind::Bare,
         )
     };
@@ -104,7 +124,7 @@ fn materialize_call(
                 ctx.import_context,
                 ctx.rel_path,
                 &site.callee_name,
-                site.qualifier_path.as_deref(),
+                qualifier_path,
                 site.syntax == CallSyntaxKind::Member,
             )
         } else {
@@ -137,7 +157,7 @@ fn materialize_call(
             ctx.symbols,
             &site.callee_name,
             root_alias.as_deref(),
-            site.qualifier_path.as_deref(),
+            qualifier_path,
             site.syntax == CallSyntaxKind::Member,
         )
     } else {
@@ -173,7 +193,7 @@ fn materialize_call(
         import_resolution::resolve_php_local_member_callee(
             ctx.import_context,
             &site.callee_name,
-            site.qualifier_path.as_deref(),
+            qualifier_path,
             site.syntax == CallSyntaxKind::Member,
         )
     } else {
@@ -235,9 +255,31 @@ fn materialize_call(
             ctx.import_bindings,
             ctx.symbols,
             &site.callee_name,
-            site.qualifier_path.as_deref(),
+            qualifier_path,
             site.syntax == CallSyntaxKind::Bare,
             site.syntax == CallSyntaxKind::Member,
+        )
+    } else {
+        None
+    };
+    let lua_require_target = if ctx.language == "lua"
+        && local_target.is_none()
+        && external_target.is_none()
+        && local_qualified_target.is_none()
+        && local_member_target.is_none()
+        && csharp_member_target.is_none()
+        && ruby_member_target.is_none()
+        && php_member_target.is_none()
+        && swift_local_target.is_none()
+        && dart_local_target.is_none()
+        && elixir_local_target.is_none()
+        && !external_shadowed
+    {
+        import_resolution::resolve_lua_require_member_callee(
+            ctx.import_context,
+            &site.callee_name,
+            qualifier_path,
+            site.syntax == CallSyntaxKind::Member || qualifier_path.is_some(),
         )
     } else {
         None
@@ -252,6 +294,7 @@ fn materialize_call(
         && swift_local_target.is_none()
         && dart_local_target.is_none()
         && elixir_local_target.is_none()
+        && lua_require_target.is_none()
         && !external_shadowed
     {
         import_resolution::resolve_local_callee(
@@ -274,6 +317,7 @@ fn materialize_call(
         && swift_local_target.is_none()
         && dart_local_target.is_none()
         && elixir_local_target.is_none()
+        && lua_require_target.is_none()
         && local_import_target.is_none()
         && !external_shadowed
     {
@@ -296,6 +340,7 @@ fn materialize_call(
         && swift_local_target.is_none()
         && dart_local_target.is_none()
         && elixir_local_target.is_none()
+        && lua_require_target.is_none()
         && local_import_target.is_none()
         && shell_local_target.is_none()
         && !external_shadowed
@@ -333,6 +378,7 @@ fn materialize_call(
         .or(swift_local_target)
         .or(dart_local_target)
         .or(elixir_local_target)
+        .or(lua_require_target)
         .or(local_import_target)
         .or(shell_local_target)
     {
@@ -357,4 +403,25 @@ fn materialize_call(
         };
     }
     Ok(call)
+}
+
+fn lua_require_qualifier_before_name(source: &[u8], name_byte: usize) -> Option<String> {
+    let name_byte = name_byte.min(source.len());
+    let line_start = source[..name_byte]
+        .iter()
+        .rposition(|byte| *byte == b'\n')
+        .map(|idx| idx + 1)
+        .unwrap_or(0);
+    let prefix = std::str::from_utf8(&source[line_start..name_byte])
+        .ok()?
+        .trim_end();
+    if !prefix.ends_with(['.', ':']) {
+        return None;
+    }
+    let qualifier = prefix.trim_end_matches(['.', ':']).trim_end();
+    if qualifier.starts_with("require") {
+        Some(qualifier.to_string())
+    } else {
+        None
+    }
 }

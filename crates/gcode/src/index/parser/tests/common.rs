@@ -91,6 +91,10 @@ pub(super) fn parse_scala(source: &str, extra_files: &[(&str, &str)]) -> ParseRe
     parse_source("src/main/scala/Sample.scala", source, extra_files)
 }
 
+pub(super) fn parse_lua(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+    parse_source("lua/sample.lua", source, extra_files)
+}
+
 pub(super) fn parse_swift(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
     parse_source("Sources/App/main.swift", source, extra_files)
 }

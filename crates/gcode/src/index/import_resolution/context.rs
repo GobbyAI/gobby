@@ -57,6 +57,12 @@ pub struct ImportResolutionContext {
     /// `.scala`/`.sc` file in the package, then the post-write DB pass narrows to
     /// the real symbol.
     pub(super) scala_package_files: HashMap<String, Vec<String>>,
+    /// Maps a local Lua module name (`foo.bar`) to project-relative `.lua` files
+    /// that may satisfy `require("foo.bar")`. Common source roots (`lua/`,
+    /// `src/`) and `init.lua` package modules are normalized into the same key.
+    /// Member calls through a require alias resolve against these files, then
+    /// the post-write DB pass narrows to the real symbol.
+    pub(super) lua_module_files: HashMap<String, Vec<String>>,
     pub(super) php_local_symbols: HashSet<String>,
     /// Maps a locally-declared PHP symbol name to the project-relative files that
     /// declare it. Both the bare name (`Widget`, `helper`) and the
@@ -196,6 +202,13 @@ impl ImportResolutionContext {
     pub(super) fn scala_package_files(&self, package: &str) -> Vec<String> {
         self.scala_package_files
             .get(package)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn lua_module_files(&self, module: &str) -> Vec<String> {
+        self.lua_module_files
+            .get(module)
             .cloned()
             .unwrap_or_default()
     }
@@ -433,6 +446,7 @@ pub fn build_import_resolution_context_with_overrides(
         csharp_type_files: csharp_index.type_files,
         kotlin_package_files: build_kotlin_package_files(root_path, candidate_files),
         scala_package_files: build_scala_package_files(root_path, candidate_files),
+        lua_module_files: build_lua_module_files(root_path, candidate_files),
         php_local_symbols: php_symbol_files.keys().cloned().collect(),
         php_symbol_files,
         ruby_local_constant_roots: ruby_constant_files.keys().cloned().collect(),
@@ -985,6 +999,81 @@ pub(super) fn build_scala_package_files(
         files.dedup();
     }
     package_files
+}
+
+pub(super) fn build_lua_module_files(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> HashMap<String, Vec<String>> {
+    let mut module_files = candidate_files
+        .par_iter()
+        .filter_map(|path| {
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if ext != "lua" {
+                return None;
+            }
+            let rel = path.strip_prefix(root_path).unwrap_or(path);
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let without_ext = rel_str.strip_suffix(".lua")?;
+            let modules = lua_module_names_for_path(without_ext);
+            if modules.is_empty() {
+                None
+            } else {
+                Some((rel_str, modules))
+            }
+        })
+        .fold(
+            HashMap::<String, Vec<String>>::new,
+            |mut acc, (rel, modules)| {
+                for module in modules {
+                    acc.entry(module).or_default().push(rel.clone());
+                }
+                acc
+            },
+        )
+        .reduce(HashMap::<String, Vec<String>>::new, |mut acc, map| {
+            for (module, files) in map {
+                acc.entry(module).or_default().extend(files);
+            }
+            acc
+        });
+    for files in module_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    module_files
+}
+
+fn lua_module_names_for_path(without_ext: &str) -> HashSet<String> {
+    let mut modules = HashSet::new();
+    add_lua_module_names(&mut modules, without_ext);
+    for prefix in ["lua/", "src/"] {
+        if let Some(stripped) = without_ext.strip_prefix(prefix) {
+            add_lua_module_names(&mut modules, stripped);
+        }
+    }
+    modules
+}
+
+fn add_lua_module_names(modules: &mut HashSet<String>, without_ext: &str) {
+    let module = without_ext.trim_matches('/');
+    if module.is_empty() {
+        return;
+    }
+    if let Some(package) = module.strip_suffix("/init") {
+        insert_lua_module_name(modules, package);
+    }
+    insert_lua_module_name(modules, module);
+}
+
+fn insert_lua_module_name(modules: &mut HashSet<String>, module: &str) {
+    let module = module.replace('/', ".");
+    if !module.is_empty() {
+        modules.insert(module);
+    }
 }
 
 pub(super) fn build_php_symbol_files(

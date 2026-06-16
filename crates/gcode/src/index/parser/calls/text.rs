@@ -147,6 +147,7 @@ pub(super) fn should_ignore_call_name(language: &str, name: &str) -> bool {
                 | "while"
         ),
         "bash" => matches!(name, "source" | "."),
+        "lua" => name == "require",
         _ => false,
     }
 }

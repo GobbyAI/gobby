@@ -9,6 +9,7 @@ use super::predicates::rust_external_roots;
 
 mod go_rust;
 mod java_csharp;
+mod lua;
 mod php_kotlin;
 mod python_js;
 mod rest;
@@ -19,6 +20,8 @@ use go_rust::{parse_go_import_statement, parse_rust_import_statement};
 use java_csharp::{
     csharp_global_qualifier_parts, parse_csharp_import_statement, parse_java_import_statement,
 };
+use lua::parse_lua_import_statement;
+pub(crate) use lua::resolve_lua_require_member_callee;
 use php_kotlin::{
     parse_kotlin_import_statement, parse_php_import_statement, php_local_symbol_exists,
 };
@@ -50,6 +53,7 @@ pub(crate) fn parse_import_statement(
         "php" => parse_php_import_statement(text, rel_path, import_context, extracted),
         "kotlin" => parse_kotlin_import_statement(text, rel_path, import_context, extracted),
         "scala" => parse_scala_import_statement(text, rel_path, import_context, extracted),
+        "lua" => parse_lua_import_statement(text, rel_path, import_context, extracted),
         "swift" => parse_swift_import_statement(text, rel_path, import_context, extracted),
         "ruby" => parse_ruby_import_statement(text, rel_path, import_context, extracted),
         "dart" => parse_dart_import_statement(text, rel_path, import_context, extracted),

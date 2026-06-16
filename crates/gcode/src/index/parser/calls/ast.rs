@@ -72,7 +72,10 @@ pub(super) fn extract_ast_calls(
             member_qualifier_path(source, target, name_n)
         });
         let detected_syntax = call_syntax_kind(name_n, target);
-        let syntax = if detected_syntax == CallSyntaxKind::Bare && qualifier_path.is_some() {
+        let syntax = if qualifier_path.is_some()
+            && (detected_syntax == CallSyntaxKind::Bare
+                || (language == "lua" && detected_syntax == CallSyntaxKind::Other))
+        {
             CallSyntaxKind::Member
         } else {
             detected_syntax

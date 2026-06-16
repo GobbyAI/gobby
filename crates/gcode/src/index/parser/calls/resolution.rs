@@ -162,6 +162,12 @@ pub(super) fn member_qualifier_path(
         return None;
     }
     let is_absolute_namespace = prefix.starts_with('\\');
+    let full_qualifier = prefix
+        .trim_end_matches(|ch: char| ch == '.' || ch == ':' || ch == '\\' || ch.is_whitespace())
+        .trim();
+    if full_qualifier.starts_with("require") && full_qualifier.contains(['"', '\'']) {
+        return Some(full_qualifier.to_string());
+    }
 
     let mut chars = prefix
         .trim_end_matches(|ch: char| ch == '.' || ch == ':' || ch == '\\' || ch.is_whitespace())

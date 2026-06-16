@@ -282,7 +282,51 @@ const SCALA: LanguageSpec = LanguageSpec {
         (call_expression function: (generic_function function: (field_expression field: (identifier) @name))) @call
         (instance_expression (type_identifier) @name) @call
         (instance_expression (generic_type type: (type_identifier) @name)) @call
-    "#,
+"#,
+};
+
+const LUA: LanguageSpec = LanguageSpec {
+    extensions: &[".lua"],
+    symbol_query: r#"
+(function_declaration
+  name: [
+    (identifier) @name
+    (dot_index_expression field: (identifier) @name)
+  ]) @definition.function
+(function_declaration
+  name: (method_index_expression method: (identifier) @name)) @definition.method
+(assignment_statement
+  (variable_list
+    .
+    name: [
+      (identifier) @name
+      (dot_index_expression field: (identifier) @name)
+    ])
+  (expression_list
+    .
+    value: (function_definition))) @definition.function
+(table_constructor
+  (field
+    name: (identifier) @name
+    value: (function_definition))) @definition.function
+"#,
+    import_query: r#"
+(assignment_statement
+  (expression_list
+    (function_call name: (identifier) @_require (#eq? @_require "require")))) @import
+(assignment_statement
+  (expression_list
+    (dot_index_expression
+      table: (function_call name: (identifier) @_require (#eq? @_require "require"))))) @import
+"#,
+    call_query: r#"
+(function_call
+  name: [
+    (identifier) @name
+    (dot_index_expression field: (identifier) @name)
+    (method_index_expression method: (identifier) @name)
+  ]) @call
+"#,
 };
 
 const YAML: LanguageSpec = LanguageSpec {
@@ -356,6 +400,7 @@ const SPECS: &[(&str, &LanguageSpec)] = &[
     ("ruby", &RUBY),
     ("kotlin", &KOTLIN),
     ("scala", &SCALA),
+    ("lua", &LUA),
     ("swift", &SWIFT),
     ("bash", &BASH),
     ("yaml", &YAML),
@@ -415,6 +460,7 @@ pub fn get_ts_language(lang: &str) -> Option<Language> {
         "swift" => tree_sitter_swift::LANGUAGE,
         "kotlin" => tree_sitter_kotlin_ng::LANGUAGE,
         "scala" => tree_sitter_scala::LANGUAGE,
+        "lua" => tree_sitter_lua::LANGUAGE,
         "dart" => tree_sitter_dart::LANGUAGE,
         "elixir" => tree_sitter_elixir::LANGUAGE,
         "bash" => tree_sitter_bash::LANGUAGE,
@@ -474,6 +520,11 @@ mod tests {
     fn scala_extensions_detect() {
         assert_eq!(detect_language("src/main/scala/App.scala"), Some("scala"));
         assert_eq!(detect_language("scripts/build.sc"), Some("scala"));
+    }
+
+    #[test]
+    fn lua_extensions_detect() {
+        assert_eq!(detect_language("lua/app/init.lua"), Some("lua"));
     }
 
     #[test]
