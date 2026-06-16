@@ -63,6 +63,19 @@ pub struct ImportResolutionContext {
     /// Member calls through a require alias resolve against these files, then
     /// the post-write DB pass narrows to the real symbol.
     pub(super) lua_module_files: HashMap<String, Vec<String>>,
+    /// Maps Objective-C local import specifiers (`Widget.h`,
+    /// `Sources/App/Widget.h`) to project-relative `.h`/`.m`/`.mm` files. The
+    /// parser also resolves relative quoted imports directly from the caller's
+    /// path; this map covers project-style include paths and basename imports.
+    pub(super) objc_import_files: HashMap<String, Vec<String>>,
+    /// Maps project-relative Objective-C files to the class/protocol names they
+    /// declare. A `#import "Widget.h"` can then bind receiver type `Widget` to
+    /// that header's candidate file without guessing from the import basename.
+    pub(super) objc_file_types: HashMap<String, Vec<String>>,
+    /// Maps project-relative Objective-C files to C function names they declare
+    /// or define. A local `#import` seeds exact bare-call bindings from this
+    /// map, so unrelated imported headers do not become candidates.
+    pub(super) objc_file_functions: HashMap<String, Vec<String>>,
     pub(super) php_local_symbols: HashSet<String>,
     /// Maps a locally-declared PHP symbol name to the project-relative files that
     /// declare it. Both the bare name (`Widget`, `helper`) and the
@@ -213,6 +226,44 @@ impl ImportResolutionContext {
             .unwrap_or_default()
     }
 
+    pub(super) fn objc_import_candidate_files(
+        &self,
+        rel_path: &str,
+        import_path: &str,
+    ) -> Vec<String> {
+        let mut files = Vec::new();
+        if let Some(relative) = objc_relative_import_file(rel_path, import_path) {
+            files.push(relative);
+        }
+        if let Some(mapped) = self.objc_import_files.get(import_path) {
+            files.extend(mapped.iter().cloned());
+        }
+        if let Some(name) = Path::new(import_path)
+            .file_name()
+            .and_then(|name| name.to_str())
+            && let Some(mapped) = self.objc_import_files.get(name)
+        {
+            files.extend(mapped.iter().cloned());
+        }
+        files.sort();
+        files.dedup();
+        files
+    }
+
+    pub(super) fn objc_declared_types(&self, rel_path: &str) -> Vec<String> {
+        self.objc_file_types
+            .get(rel_path)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    pub(super) fn objc_declared_functions(&self, rel_path: &str) -> Vec<String> {
+        self.objc_file_functions
+            .get(rel_path)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     /// Project-relative files declaring the local PHP class/function named
     /// `name`. Accepts a bare name or a namespace-qualified name, with or without
     /// a leading `\`; matching is case-insensitive. Empty when no indexed local
@@ -324,6 +375,11 @@ pub(crate) struct ImportBindings {
     /// exposes sourced functions to later bare commands without per-name import
     /// syntax, so a bare call resolves its name against these files post-write.
     pub(crate) shell_source_files: Vec<String>,
+    /// Project-relative Objective-C headers/sources brought into scope by local
+    /// `#import`/`#include` directives. Bare C calls resolve against these files
+    /// post-write; Objective-C message sends use `local_member` by receiver
+    /// type when the imported file declares an `@interface`/`@protocol`.
+    pub(crate) objc_import_files: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -432,6 +488,7 @@ pub fn build_import_resolution_context_with_overrides(
     let ruby_constant_files = build_ruby_constant_files(root_path, candidate_files);
     let php_symbol_files = build_php_symbol_files(root_path, candidate_files);
     let swift_module_files = build_swift_module_files(root_path, candidate_files);
+    let objc_index = build_objc_indexes(root_path, candidate_files);
     ImportResolutionContext {
         python_modules: build_python_module_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
@@ -447,6 +504,9 @@ pub fn build_import_resolution_context_with_overrides(
         kotlin_package_files: build_kotlin_package_files(root_path, candidate_files),
         scala_package_files: build_scala_package_files(root_path, candidate_files),
         lua_module_files: build_lua_module_files(root_path, candidate_files),
+        objc_import_files: objc_index.import_files,
+        objc_file_types: objc_index.file_types,
+        objc_file_functions: objc_index.file_functions,
         php_local_symbols: php_symbol_files.keys().cloned().collect(),
         php_symbol_files,
         ruby_local_constant_roots: ruby_constant_files.keys().cloned().collect(),
@@ -1074,6 +1134,196 @@ fn insert_lua_module_name(modules: &mut HashSet<String>, module: &str) {
     if !module.is_empty() {
         modules.insert(module);
     }
+}
+
+pub(super) struct ObjcIndex {
+    pub(super) import_files: HashMap<String, Vec<String>>,
+    pub(super) file_types: HashMap<String, Vec<String>>,
+    pub(super) file_functions: HashMap<String, Vec<String>>,
+}
+
+pub(super) fn build_objc_indexes(root_path: &Path, candidate_files: &[PathBuf]) -> ObjcIndex {
+    let (mut import_files, mut file_types, mut file_functions) = candidate_files
+        .par_iter()
+        .filter_map(|path| {
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if !matches!(ext, "h" | "m" | "mm") {
+                return None;
+            }
+            let rel = path.strip_prefix(root_path).unwrap_or(path);
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let mut keys = vec![rel_str.clone()];
+            if let Some(file_name) = rel.file_name().and_then(|name| name.to_str()) {
+                keys.push(file_name.to_string());
+            }
+            if let Some(without_ext) = rel_str.strip_suffix(&format!(".{ext}")) {
+                keys.push(without_ext.to_string());
+            }
+
+            let mut types = Vec::new();
+            let mut functions = Vec::new();
+            if let Ok(file) = File::open(path) {
+                for line in BufReader::new(file).lines().map_while(Result::ok) {
+                    let line = line.trim_start();
+                    if let Some(name) = objc_declared_type_name(line) {
+                        types.push(name);
+                    }
+                    if let Some(name) = objc_declared_function_name(line) {
+                        functions.push(name);
+                    }
+                }
+            }
+            types.sort();
+            types.dedup();
+            functions.sort();
+            functions.dedup();
+            Some((rel_str, keys, types, functions))
+        })
+        .fold(
+            || {
+                (
+                    HashMap::<String, Vec<String>>::new(),
+                    HashMap::<String, Vec<String>>::new(),
+                    HashMap::<String, Vec<String>>::new(),
+                )
+            },
+            |mut acc, (rel, keys, types, functions)| {
+                for key in keys {
+                    acc.0.entry(key).or_default().push(rel.clone());
+                }
+                if !types.is_empty() {
+                    acc.1.insert(rel.clone(), types);
+                }
+                if !functions.is_empty() {
+                    acc.2.insert(rel, functions);
+                }
+                acc
+            },
+        )
+        .reduce(
+            || {
+                (
+                    HashMap::<String, Vec<String>>::new(),
+                    HashMap::<String, Vec<String>>::new(),
+                    HashMap::<String, Vec<String>>::new(),
+                )
+            },
+            |mut acc, map| {
+                for (key, files) in map.0 {
+                    acc.0.entry(key).or_default().extend(files);
+                }
+                acc.1.extend(map.1);
+                acc.2.extend(map.2);
+                acc
+            },
+        );
+
+    for files in import_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    for types in file_types.values_mut() {
+        types.sort();
+        types.dedup();
+    }
+    for functions in file_functions.values_mut() {
+        functions.sort();
+        functions.dedup();
+    }
+    ObjcIndex {
+        import_files,
+        file_types,
+        file_functions,
+    }
+}
+
+fn objc_declared_type_name(line: &str) -> Option<String> {
+    let rest = line
+        .strip_prefix("@interface ")
+        .or_else(|| line.strip_prefix("@implementation "))
+        .or_else(|| line.strip_prefix("@protocol "))?
+        .trim_start();
+    let name = rest
+        .split(|ch: char| ch.is_whitespace() || matches!(ch, ':' | '(' | '<' | ';'))
+        .next()
+        .unwrap_or_default();
+    (!name.is_empty() && is_objc_identifier(name)).then(|| name.to_string())
+}
+
+fn objc_declared_function_name(line: &str) -> Option<String> {
+    let code = line.split("//").next().unwrap_or(line).trim();
+    if code.is_empty()
+        || code.starts_with('@')
+        || code.starts_with('#')
+        || code.contains('=')
+        || code.contains("typedef")
+    {
+        return None;
+    }
+    let open = code.find('(')?;
+    let before = code[..open].trim_end();
+    let name = before
+        .rsplit(|ch: char| !ch.is_ascii_alphanumeric() && ch != '_')
+        .find(|part| !part.is_empty())?;
+    if !is_objc_identifier(name)
+        || matches!(
+            name,
+            "if" | "for" | "while" | "switch" | "return" | "sizeof"
+        )
+    {
+        return None;
+    }
+    Some(name.to_string())
+}
+
+fn objc_relative_import_file(rel_path: &str, import_path: &str) -> Option<String> {
+    if import_path.starts_with(['/', '~', '$'])
+        || import_path.contains('$')
+        || import_path.contains('`')
+        || import_path.contains("$(")
+    {
+        return None;
+    }
+    let import = Path::new(import_path);
+    if import.components().any(|component| {
+        matches!(
+            component,
+            std::path::Component::Prefix(_) | std::path::Component::RootDir
+        )
+    }) {
+        return None;
+    }
+    normalize_objc_project_path(&Path::new(rel_path).parent()?.join(import))
+}
+
+fn normalize_objc_project_path(path: &Path) -> Option<String> {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::Normal(part) => normalized.push(part),
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    return None;
+                }
+            }
+            std::path::Component::Prefix(_) | std::path::Component::RootDir => return None,
+        }
+    }
+
+    (!normalized.as_os_str().is_empty()).then(|| normalized.to_string_lossy().replace('\\', "/"))
+}
+
+fn is_objc_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first.is_ascii_alphabetic() || first == '_')
+        && chars.all(|ch| ch.is_ascii_alphanumeric() || ch == '_')
 }
 
 pub(super) fn build_php_symbol_files(

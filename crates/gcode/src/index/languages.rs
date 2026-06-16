@@ -185,7 +185,7 @@ const CSHARP: LanguageSpec = LanguageSpec {
 };
 
 const C_LANG: LanguageSpec = LanguageSpec {
-    extensions: &[".c", ".h"],
+    extensions: &[".c"],
     symbol_query: r#"
         (function_definition declarator: (function_declarator declarator: (identifier) @name)) @definition.function
         (struct_specifier name: (type_identifier) @name) @definition.type
@@ -214,6 +214,34 @@ const CPP: LanguageSpec = LanguageSpec {
     call_query: r#"
         (call_expression function: (identifier) @name) @call
         (call_expression function: (field_expression field: (field_identifier) @name)) @call
+    "#,
+};
+
+const OBJC: LanguageSpec = LanguageSpec {
+    // Headers are extension-ambiguous, but Objective-C's grammar inherits the C
+    // grammar and exposes @interface declarations that plain C cannot see.
+    // Obj-C++ `.mm` also uses this grammar so message sends are indexed.
+    extensions: &[".m", ".mm", ".h"],
+    symbol_query: r#"
+        (class_interface "@interface" . (identifier) @name) @definition.class
+        (class_implementation "@implementation" . (identifier) @name) @definition.class
+        (protocol_declaration "@protocol" . (identifier) @name) @definition.type
+        (method_declaration (identifier) @name) @definition.method
+        (method_declaration (method_identifier (identifier) @name)) @definition.method
+        (method_definition (identifier) @name) @definition.method
+        (method_definition (method_identifier (identifier) @name)) @definition.method
+        (function_definition declarator: (function_declarator declarator: (identifier) @name)) @definition.function
+        (declaration declarator: (function_declarator declarator: (identifier) @name)) @definition.function
+        (struct_specifier name: (type_identifier) @name) @definition.type
+        (enum_specifier name: (type_identifier) @name) @definition.type
+        (type_definition declarator: (type_identifier) @name) @definition.type
+    "#,
+    import_query: r#"
+        (preproc_include) @import
+    "#,
+    call_query: r#"
+        (call_expression function: (identifier) @name) @call
+        (message_expression receiver: (_) @receiver method: (identifier) @name) @call
     "#,
 };
 
@@ -394,6 +422,7 @@ const SPECS: &[(&str, &LanguageSpec)] = &[
     ("php", &PHP),
     ("dart", &DART),
     ("csharp", &CSHARP),
+    ("objc", &OBJC),
     ("c", &C_LANG),
     ("cpp", &CPP),
     ("elixir", &ELIXIR),
@@ -452,6 +481,7 @@ pub fn get_ts_language(lang: &str) -> Option<Language> {
         "go" => tree_sitter_go::LANGUAGE,
         "rust" => tree_sitter_rust::LANGUAGE,
         "java" => tree_sitter_java::LANGUAGE,
+        "objc" => tree_sitter_objc::LANGUAGE,
         "c" => tree_sitter_c::LANGUAGE,
         "cpp" => tree_sitter_cpp::LANGUAGE,
         "csharp" => tree_sitter_c_sharp::LANGUAGE,
@@ -525,6 +555,30 @@ mod tests {
     #[test]
     fn lua_extensions_detect() {
         assert_eq!(detect_language("lua/app/init.lua"), Some("lua"));
+    }
+
+    #[test]
+    fn objc_extensions_detect() {
+        assert_eq!(detect_language("Sources/App/Widget.m"), Some("objc"));
+        assert_eq!(detect_language("Sources/App/Widget.mm"), Some("objc"));
+        assert_eq!(detect_language("Sources/App/Widget.h"), Some("objc"));
+    }
+
+    #[test]
+    fn objcxx_paths_use_objc_grammar() {
+        let language = get_ts_language_for_path("objc", "Sources/App/Widget.mm").unwrap();
+        assert!(parses_without_error(
+            language,
+            r#"
+@interface Widget
+- (void)render;
+@end
+
+@implementation Widget
+- (void)render { helper(); }
+@end
+"#,
+        ));
     }
 
     #[test]

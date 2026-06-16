@@ -11,6 +11,7 @@ use super::ImportResolutionContext;
 
 mod ast;
 mod dart_textual;
+mod objc_ast;
 mod resolution;
 mod shadowing;
 mod text;
@@ -52,6 +53,9 @@ pub(super) fn extract_calls(
 ) -> anyhow::Result<Vec<CallRelation>> {
     if ctx.language == "dart" {
         return dart_textual::extract_textual_dart_calls(source, ctx, semantic_resolver);
+    }
+    if ctx.language == "objc" {
+        return objc_ast::extract_objc_calls(tree, source, spec, ctx, semantic_resolver);
     }
     ast::extract_ast_calls(tree, source, spec, ctx, semantic_resolver)
 }
@@ -330,6 +334,31 @@ fn materialize_call(
     } else {
         None
     };
+    let objc_local_target = if ctx.language == "objc"
+        && local_target.is_none()
+        && external_target.is_none()
+        && local_qualified_target.is_none()
+        && local_member_target.is_none()
+        && csharp_member_target.is_none()
+        && ruby_member_target.is_none()
+        && php_member_target.is_none()
+        && swift_local_target.is_none()
+        && dart_local_target.is_none()
+        && elixir_local_target.is_none()
+        && lua_require_target.is_none()
+        && local_import_target.is_none()
+        && shell_local_target.is_none()
+        && !external_shadowed
+    {
+        import_resolution::resolve_objc_local_callee(
+            ctx.import_bindings,
+            ctx.symbols,
+            &site.callee_name,
+            site.syntax == CallSyntaxKind::Bare,
+        )
+    } else {
+        None
+    };
     let semantic_target = if local_target.is_none()
         && external_target.is_none()
         && local_qualified_target.is_none()
@@ -343,6 +372,7 @@ fn materialize_call(
         && lua_require_target.is_none()
         && local_import_target.is_none()
         && shell_local_target.is_none()
+        && objc_local_target.is_none()
         && !external_shadowed
     {
         if let Some(resolver) = semantic_resolver {
@@ -381,6 +411,7 @@ fn materialize_call(
         .or(lua_require_target)
         .or(local_import_target)
         .or(shell_local_target)
+        .or(objc_local_target)
     {
         // Cross-file local import: record the original name plus the candidate
         // target files. The post-write pass resolves it against `code_symbols`
