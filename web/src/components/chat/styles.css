@@ -3,6 +3,8 @@
 @import './styles/message.css';
 @import './styles/input.css';
 @import './styles/activity-panel.css';
+@import './styles/mcp-tab.css';
+@import './styles/rules-tab.css';
 @import './styles/files-tab.css';
 @import './styles/pipelines-tab.css';
 @import './styles/cron-tab.css';
