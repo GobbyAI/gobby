@@ -43,27 +43,28 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
     }
     if !module.child_modules.is_empty() {
         doc.push_str("## Child Modules\n\n");
+        write_markdown_table_header(&mut doc, &["Module", "Summary"]);
         for child in &module.child_modules {
-            let _ = writeln!(
-                doc,
-                "- {} - {}",
-                module_wikilink(&child.module),
-                child.summary
+            write_markdown_table_row(
+                &mut doc,
+                [module_wikilink(&child.module), child.summary.clone()],
             );
         }
         doc.push('\n');
     }
     if !module.direct_files.is_empty() {
         doc.push_str("## Files\n\n");
+        write_markdown_table_header(&mut doc, &["File", "Summary"]);
         for file in &module.direct_files {
-            let _ = writeln!(doc, "- {} - {}", file_wikilink(&file.path), file.summary);
+            write_markdown_table_row(&mut doc, [file_wikilink(&file.path), file.summary.clone()]);
         }
         doc.push('\n');
     }
     if !module.component_ids.is_empty() {
         doc.push_str("## Components\n\n");
+        write_markdown_table_header(&mut doc, &["Component ID"]);
         for component_id in &module.component_ids {
-            let _ = writeln!(doc, "- {}", inline_code(component_id));
+            write_markdown_table_row(&mut doc, [inline_code(component_id)]);
         }
         doc.push('\n');
     }
@@ -90,30 +91,41 @@ pub(crate) fn render_file_doc(file: &FileDoc) -> String {
         doc.push_str("No indexed symbols.\n");
         return doc;
     }
+    write_markdown_table_header(
+        &mut doc,
+        &[
+            "Symbol",
+            "Kind",
+            "Signature",
+            "Component",
+            "Component ID",
+            "Lines",
+            "Purpose",
+        ],
+    );
     for symbol in &file.symbols {
-        let _ = writeln!(
-            doc,
-            "- {} ({}) component {} ({}) lines {}-{} {}",
-            inline_code(&symbol.symbol.qualified_name),
-            symbol.symbol.kind,
-            inline_code(&symbol.component_label),
-            inline_code(&symbol.component_id),
-            symbol.symbol.line_start,
-            symbol.symbol.line_end,
-            symbol.source_span.citation()
-        );
-        if let Some(signature) = symbol
+        let signature = symbol
             .symbol
             .signature
             .as_deref()
             .filter(|value| !value.is_empty())
-        {
-            let _ = writeln!(doc, "  - Signature: {}", inline_code(signature));
-        }
-        let _ = writeln!(
-            doc,
-            "  - Purpose: {}",
-            neutralize_symbol_purpose_links(&symbol.purpose)
+            .map(inline_code);
+        write_markdown_table_row(
+            &mut doc,
+            [
+                inline_code(&symbol.symbol.qualified_name),
+                symbol.symbol.kind.clone(),
+                signature.unwrap_or_default(),
+                inline_code(&symbol.component_label),
+                inline_code(&symbol.component_id),
+                format!(
+                    "{}-{} {}",
+                    symbol.symbol.line_start,
+                    symbol.symbol.line_end,
+                    symbol.source_span.citation()
+                ),
+                neutralize_symbol_purpose_links(&symbol.purpose),
+            ],
         );
     }
     doc.push('\n');

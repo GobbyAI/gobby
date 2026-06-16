@@ -32,8 +32,9 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
         .expect("physical parent module is documented");
     let rendered = render_module_doc(parent);
 
-    assert!(rendered.contains("[[code/files/src/commands/mod.rs|src/commands/mod.rs]]"));
-    assert!(rendered.contains("[[code/modules/src/commands/codewiki|src/commands/codewiki]]"));
+    assert!(rendered.contains("| File | Summary |\n| --- | --- |\n"));
+    assert!(rendered.contains("[[code/files/src/commands/mod.rs\\|src/commands/mod.rs]]"));
+    assert!(rendered.contains("[[code/modules/src/commands/codewiki\\|src/commands/codewiki]]"));
 }
 
 #[test]
@@ -69,6 +70,7 @@ fn module_components_only_render_direct_file_symbols() {
     let parent_rendered = render_module_doc(parent);
     let child_rendered = render_module_doc(child);
 
+    assert!(parent_rendered.contains("| Component ID |\n| --- |\n"));
     assert!(parent_rendered.contains("`direct-component`"));
     assert!(!parent_rendered.contains("child-component"));
     assert!(!parent_rendered.contains("leaf-component"));

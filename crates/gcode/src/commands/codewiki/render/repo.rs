@@ -1,5 +1,3 @@
-use std::fmt::Write as _;
-
 use super::super::*;
 use super::model_degraded_sources;
 use super::render_subsystem_dependency_mermaid;
@@ -144,24 +142,26 @@ pub(crate) fn render_repo_doc(
     }
     if !modules.is_empty() {
         doc.push_str("## Modules\n\n");
+        write_markdown_table_header(&mut doc, &["Module", "Summary"]);
         for module in modules {
             let summary = replace_citations_with_markers(&module.summary, source_spans);
-            let _ = writeln!(doc, "- {} - {}", module_wikilink(&module.module), summary);
+            write_markdown_table_row(&mut doc, [module_wikilink(&module.module), summary]);
         }
         doc.push('\n');
     }
     if !files.is_empty() {
         doc.push_str("## Files\n\n");
+        write_markdown_table_header(&mut doc, &["File", "Summary"]);
         for file in files {
             // Structural no-symbol filler is dropped from the front page so
             // it never reads as a wall of "has no indexed API symbols".
             match display_child_summary(&file.summary, &file.path) {
                 Some(summary) => {
                     let summary = replace_citations_with_markers(&summary, source_spans);
-                    let _ = writeln!(doc, "- {} - {}", file_wikilink(&file.path), summary);
+                    write_markdown_table_row(&mut doc, [file_wikilink(&file.path), summary]);
                 }
                 None => {
-                    let _ = writeln!(doc, "- {}", file_wikilink(&file.path));
+                    write_markdown_table_row(&mut doc, [file_wikilink(&file.path), String::new()]);
                 }
             }
         }

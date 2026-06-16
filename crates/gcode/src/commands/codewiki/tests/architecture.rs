@@ -73,9 +73,10 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
     assert!(rendered.contains("degraded_sources:"));
     assert!(rendered.contains("- model-unavailable"));
     assert!(rendered.contains("- graph-truncated"));
-    assert!(rendered.contains("[[code/modules/src/api|src/api]]"));
-    assert!(rendered.contains("[[code/modules/src/domain|src/domain]]"));
-    assert!(rendered.contains("[[code/modules/src/storage|src/storage]]"));
+    assert!(rendered.contains("| Subsystem | Responsibility | Child modules |"));
+    assert!(rendered.contains("[[code/modules/src/api\\|src/api]]"));
+    assert!(rendered.contains("[[code/modules/src/domain\\|src/domain]]"));
+    assert!(rendered.contains("[[code/modules/src/storage\\|src/storage]]"));
     assert!(rendered.contains("`src/api` contains 2 direct files and 0 child modules."));
     assert!(rendered.contains("- [src/api/handler.rs:1](src/api/handler.rs#L1)"));
     let body = rendered
@@ -86,7 +87,7 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
     assert!(!body.contains("src/api/router.rs:1"));
     for line in rendered
         .lines()
-        .filter(|line| line.starts_with("- [[code/modules/"))
+        .filter(|line| line.starts_with("| [[code/modules/"))
     {
         assert_eq!(inline_marker_count(line), 0);
     }
@@ -141,8 +142,9 @@ fn architecture_prompt_formats_component_labels_with_raw_ids() {
         .find(|prompt| prompt.contains("Subsystem: src/api"))
         .expect("src/api architecture prompt");
 
-    assert!(prompt.contains(&format!("- handle [function] ({handle_id})")));
-    assert!(prompt.contains(&format!("- route [function] ({route_id})")));
+    assert!(prompt.contains("| Component |\n| --- |\n"));
+    assert!(prompt.contains(&format!("| handle [function] ({handle_id}) |")));
+    assert!(prompt.contains(&format!("| route [function] ({route_id}) |")));
     assert!(!prompt.contains(&format!("- {handle_id}\n")));
     assert!(!prompt.contains(&format!("- {route_id}\n")));
 }
@@ -231,9 +233,9 @@ fn architecture_page_renders_layered_narrative_and_child_module_levels() {
         rendered.contains("m_src_api[\"src/api\"] --> m_src_domain[\"src/domain\"]"),
         "{rendered}"
     );
-    // One module level is enumerated below each subsystem.
+    // One module level is enumerated in the subsystem table.
     assert!(
-        rendered.contains("  - [[code/modules/src/storage/backend|src/storage/backend]]"),
+        rendered.contains("[[code/modules/src/storage/backend\\|src/storage/backend]]"),
         "{rendered}"
     );
 

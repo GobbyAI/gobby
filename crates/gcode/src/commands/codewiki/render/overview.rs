@@ -21,18 +21,26 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
     }
     if !architecture.subsystems.is_empty() {
         doc.push_str("## Subsystems\n\n");
+        write_markdown_table_header(&mut doc, &["Subsystem", "Responsibility", "Child modules"]);
         for subsystem in &architecture.subsystems {
-            let _ = writeln!(
-                doc,
-                "- {} - {}",
-                module_wikilink(&subsystem.module),
-                subsystem.responsibility
+            let child_modules = if subsystem.child_modules.is_empty() {
+                "None".to_string()
+            } else {
+                subsystem
+                    .child_modules
+                    .iter()
+                    .map(|child| module_wikilink(child))
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            };
+            write_markdown_table_row(
+                &mut doc,
+                [
+                    module_wikilink(&subsystem.module),
+                    subsystem.responsibility.clone(),
+                    child_modules,
+                ],
             );
-            // Enumerate one module level below each subsystem so the page
-            // shows the top one to two levels of the decomposition.
-            for child in &subsystem.child_modules {
-                let _ = writeln!(doc, "  - {}", module_wikilink(child));
-            }
         }
         doc.push('\n');
     }

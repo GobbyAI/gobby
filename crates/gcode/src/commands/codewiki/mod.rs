@@ -11,7 +11,7 @@ const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
 const MAX_MERMAID_HOPS: usize = 2;
 const MAX_MERMAID_EDGES: usize = 20;
 const MAX_EDGE_LIMIT: usize = 100_000;
-const CODEWIKI_RENDER_VERSION: u32 = 2;
+const CODEWIKI_RENDER_VERSION: u32 = 3;
 
 /// Default daemon feature profile for aggregate (module/repo/architecture)
 /// prose, which synthesizes 10k+-token grounded prompts; file and symbol
@@ -66,7 +66,8 @@ pub(crate) use progress::CodewikiProgress;
 pub(crate) use paths::{
     component_label, direct_child_modules, file_doc_path, file_wikilink, in_scope, inline_code,
     is_core_file, module_ancestors, module_depth, module_doc_path, module_for_file,
-    module_is_ancestor, module_wikilink, parent_module, plural,
+    module_is_ancestor, module_wikilink, parent_module, plural, write_markdown_table_header,
+    write_markdown_table_row,
 };
 // Rendered markdown and graph diagrams.
 pub(crate) use render::{

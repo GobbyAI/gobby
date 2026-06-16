@@ -13,6 +13,33 @@ pub(crate) fn inline_code(value: &str) -> String {
     }
 }
 
+pub(crate) fn write_markdown_table_header(doc: &mut String, headers: &[&str]) {
+    write_markdown_table_row(doc, headers.iter().copied());
+    write_markdown_table_row(doc, (0..headers.len()).map(|_| "---"));
+}
+
+pub(crate) fn write_markdown_table_row<I, S>(doc: &mut String, cells: I)
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<str>,
+{
+    doc.push('|');
+    for cell in cells {
+        doc.push(' ');
+        doc.push_str(&markdown_table_cell(cell.as_ref()));
+        doc.push_str(" |");
+    }
+    doc.push('\n');
+}
+
+fn markdown_table_cell(value: &str) -> String {
+    value
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ")
+        .replace('|', "\\|")
+}
+
 pub(crate) fn max_backtick_run(value: &str) -> usize {
     let mut max_run = 0usize;
     let mut current_run = 0usize;

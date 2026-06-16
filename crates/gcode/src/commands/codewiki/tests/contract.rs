@@ -31,9 +31,9 @@ fn generates_hierarchical_docs() {
     let file =
         std::fs::read_to_string(out_dir.path().join("code/files/src/lib.rs.md")).expect("file doc");
 
-    assert!(repo.contains("[[code/modules/src|src]]"));
+    assert!(repo.contains("[[code/modules/src\\|src]]"));
     assert!(repo.contains("Repository Overview"));
-    assert!(module.contains("[[code/files/src/lib.rs|src/lib.rs]]"));
+    assert!(module.contains("[[code/files/src/lib.rs\\|src/lib.rs]]"));
     assert!(file.contains("API Symbols"));
     assert!(file.contains("pub struct Client {"));
     assert!(file.contains("[[code/modules/src|src]]"));
@@ -82,8 +82,14 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
         .expect("frontmatter block");
     let frontmatter: serde_yaml::Value = serde_yaml::from_str(yaml).expect("parse frontmatter");
 
-    assert!(repo.contains("[[code/modules/src|src]]"));
+    assert!(repo.contains("[[code/modules/src\\|src]]"));
+    assert!(repo.contains("| Module | Summary |\n| --- | --- |\n"));
+    assert!(repo.contains("| [[code/modules/src\\|src]] |"));
     assert!(file.contains("[[code/modules/src|src]]"));
+    assert!(
+        file.contains("| Symbol | Kind | Signature | Component | Component ID | Lines | Purpose |")
+    );
+    assert!(file.contains("| `Client` | class | `pub struct Client {` | `Client [class]` |"));
     assert!(file.contains("<details>\n<summary>Relevant source files</summary>"));
     assert!(file.contains("- [src/lib.rs:1](src/lib.rs#L1)"));
     assert!(
@@ -221,8 +227,9 @@ fn file_doc_purpose_neutralizes_summary_link_tokens() {
     let docs = generate_hierarchical_docs(&input, None);
     let file = rendered_doc(&docs, "code/files/src/lib.rs.md");
 
+    assert!(file.contains("| `wiki_link` | function | `fn wiki_link()` |"));
     assert!(file.contains(
-        "  - Purpose: Quotes `[[relative_path|title]]` and `[exact](knowledge/topics/exact)`. [src/lib.rs:1]"
+        "Quotes `[[relative_path\\|title]]` and `[exact](knowledge/topics/exact)`. [src/lib.rs:1]"
     ));
 }
 

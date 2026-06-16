@@ -2,12 +2,14 @@ use std::fmt::Write as _;
 
 use crate::models::Symbol;
 
+use super::{write_markdown_table_header, write_markdown_table_row};
+
 pub const SYMBOL_SYSTEM: &str = "You write concise API reference notes. Return one sentence describing the symbol's purpose. Do not include markdown fences.";
 pub const FILE_SYSTEM: &str = "You write concise file-level code documentation. Return a short purpose summary grounded only in the supplied symbol summaries and source excerpt: what the file does and how its pieces work together. Do not include markdown fences.";
 pub const CONTENT_FILE_SYSTEM: &str = "You write concise documentation for non-code repository files. Return a short purpose summary describing what the file contains and what it is for, grounded only in the supplied leading content. Do not include markdown fences.";
-pub const MODULE_SYSTEM: &str = "You write module documentation briefs. Using only the supplied file summaries, child module summaries, and source excerpts, write two to three short paragraphs covering the module's responsibilities, its key flows, and how its files and submodules collaborate. Plain paragraphs only - no headings, no lists, no markdown fences. Cite supporting file:line spans that appear in the supplied input.";
-pub const REPO_SYSTEM: &str = "You write repository overview briefs. Using only the supplied module summaries, root-file summaries, and source excerpts, write two to three short paragraphs covering what the system is, how the major pieces fit together, and where a reader should start. Plain paragraphs only - no headings, no lists, no markdown fences. Cite supporting file:line spans that appear in the supplied input.";
-pub const ARCHITECTURE_SYSTEM: &str = "You write concise architecture documentation. Using only the supplied summaries and source excerpts, return one to two sentences naming the subsystem's responsibility and how it collaborates with the rest of the system. Do not include markdown fences.";
+pub const MODULE_SYSTEM: &str = "You write module documentation briefs. Using only the supplied file summaries, child module summaries, component table, and source excerpts, write one to two short paragraphs covering the module's responsibilities, key flows, and collaboration points. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
+pub const REPO_SYSTEM: &str = "You write repository overview briefs. Using only the supplied module summaries, root-file summaries, and source excerpts, write one to two short paragraphs covering what the system is, how the major pieces fit together, and where a reader should start. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
+pub const ARCHITECTURE_SYSTEM: &str = "You write concise architecture documentation. Using only the supplied summaries, component table, and source excerpts, return a short responsibility summary plus compact Markdown tables for enumerable facts such as public API symbols, CLI commands or flags, configuration keys, and environment variables. No markdown fences.";
 pub const ARCHITECTURE_NARRATIVE_SYSTEM: &str = "You write architecture overviews. Using only the supplied subsystem responsibilities and dependency edges, write two to three short paragraphs describing the system in layers: which subsystems sit at the foundation, which build on them, and how the layers interact. Plain paragraphs only - no headings, no lists, no markdown fences.";
 pub const CURATED_NAVIGATION_SYSTEM: &str = "You design a curated navigation layer for grounded code documentation. Return strict JSON only. Name user-facing concept modules, organize them into a hierarchy, and create short narrative tour pages. Use only supplied module and file identifiers, and link into reference pages instead of duplicating source detail.";
 
@@ -41,17 +43,28 @@ pub fn file_prompt(file: &str, symbols: &[SymbolSummary], sources: &[SourceExcer
     if symbols.is_empty() {
         prompt.push_str("- No indexed symbols.\n");
     } else {
+        write_markdown_table_header(
+            &mut prompt,
+            &[
+                "Symbol",
+                "Kind",
+                "Component",
+                "Component ID",
+                "Lines",
+                "Purpose",
+            ],
+        );
         for symbol in symbols {
-            let _ = writeln!(
-                prompt,
-                "- {} [{}] component {} ({}) lines {}-{}: {}",
-                symbol.name,
-                symbol.kind,
-                symbol.component_label,
-                symbol.component_id,
-                symbol.line_start,
-                symbol.line_end,
-                symbol.purpose
+            write_markdown_table_row(
+                &mut prompt,
+                [
+                    symbol.name.clone(),
+                    symbol.kind.clone(),
+                    symbol.component_label.clone(),
+                    symbol.component_id.clone(),
+                    format!("{}-{}", symbol.line_start, symbol.line_end),
+                    symbol.purpose.clone(),
+                ],
             );
         }
     }
@@ -93,35 +106,46 @@ pub fn repo_prompt(
     sources: &[SourceExcerpt],
 ) -> String {
     let mut prompt =
-        "Write a repository overview brief from module summaries, root-file summaries, and source excerpts.\n\nModules:\n"
+        "Write a repository overview brief from module summaries, root-file summaries, and source excerpts.\n\n"
             .to_string();
+    append_table_guidance(&mut prompt);
+    prompt.push_str("Modules:\n");
     if modules.is_empty() {
         prompt.push_str("- No modules.\n");
     } else {
-        for module in modules {
-            let _ = writeln!(
-                prompt,
-                "- {}: {}",
-                module.name,
-                summary_excerpt(&module.summary)
-            );
-        }
+        append_child_summary_table(&mut prompt, &["Module", "Summary"], modules);
     }
     prompt.push_str("\nRoot files:\n");
     if files.is_empty() {
         prompt.push_str("- No root files.\n");
     } else {
-        for file in files {
-            let _ = writeln!(
-                prompt,
-                "- {}: {}",
-                file.name,
-                summary_excerpt(&file.summary)
-            );
-        }
+        append_child_summary_table(&mut prompt, &["File", "Summary"], files);
     }
     append_source_excerpt_section(&mut prompt, sources);
     prompt
+}
+
+fn append_child_summary_table(prompt: &mut String, headers: &[&str], children: &[ChildSummary]) {
+    write_markdown_table_header(prompt, headers);
+    for child in children {
+        write_markdown_table_row(
+            prompt,
+            [child.name.clone(), summary_excerpt(&child.summary)],
+        );
+    }
+}
+
+fn append_component_table(prompt: &mut String, components: &[String]) {
+    write_markdown_table_header(prompt, &["Component"]);
+    for component in components {
+        write_markdown_table_row(prompt, [component.clone()]);
+    }
+}
+
+fn append_table_guidance(prompt: &mut String) {
+    prompt.push_str("Table guidance:\n");
+    prompt.push_str(ENUMERABLE_FACTS_GUIDANCE);
+    prompt.push_str("\n\n");
 }
 
 pub fn architecture_prompt(
@@ -184,7 +208,9 @@ fn build_entity_prompt(
     components: &[String],
     sources: &[SourceExcerpt],
 ) -> String {
-    let mut prompt = format!("{header}\n\n{entity_label}: {entity}\n\nFiles:\n");
+    let mut prompt = format!("{header}\n\n{entity_label}: {entity}\n\n");
+    append_table_guidance(&mut prompt);
+    prompt.push_str("Files:\n");
     append_child_summary_sections(&mut prompt, files, modules, components);
     append_source_excerpt_section(&mut prompt, sources);
     prompt
@@ -199,35 +225,19 @@ fn append_child_summary_sections(
     if files.is_empty() {
         prompt.push_str("- No direct files.\n");
     } else {
-        for file in files {
-            let _ = writeln!(
-                prompt,
-                "- {}: {}",
-                file.name,
-                summary_excerpt(&file.summary)
-            );
-        }
+        append_child_summary_table(prompt, &["File", "Summary"], files);
     }
     prompt.push_str("\nChild modules:\n");
     if modules.is_empty() {
         prompt.push_str("- No child modules.\n");
     } else {
-        for module in modules {
-            let _ = writeln!(
-                prompt,
-                "- {}: {}",
-                module.name,
-                summary_excerpt(&module.summary)
-            );
-        }
+        append_child_summary_table(prompt, &["Module", "Summary"], modules);
     }
     prompt.push_str("\nStable component IDs:\n");
     if components.is_empty() {
         prompt.push_str("- No indexed components.\n");
     } else {
-        for component in components {
-            let _ = writeln!(prompt, "- {component}");
-        }
+        append_component_table(prompt, components);
     }
 }
 
@@ -260,6 +270,7 @@ const CHILD_SUMMARY_EXCERPT_MAX_CHARS: usize = 2_000;
 /// even though they now carry real source content.
 pub(crate) const SOURCE_EXCERPT_MAX_CHARS: usize = 2_400;
 pub(crate) const MAX_PROMPT_SOURCE_EXCERPTS: usize = 4;
+const ENUMERABLE_FACTS_GUIDANCE: &str = "When the supplied input exposes enumerable facts (CLI commands/flags, configuration keys, environment variables, or public API symbols), prefer compact Markdown tables beside the narrative instead of burying those facts in prose.";
 
 /// First paragraph of a child summary, flattened to one line and hard-capped
 /// at [`CHILD_SUMMARY_EXCERPT_MAX_CHARS`], so each prompt list entry stays one
@@ -355,14 +366,14 @@ mod tests {
             architecture_prompt("src", &children, &children, &[], &[]),
             repo_prompt(&children, &children, &[]),
         ] {
-            for line in prompt.lines().filter(|line| line.starts_with("- src/")) {
+            for line in prompt.lines().filter(|line| line.starts_with("| src/")) {
                 assert!(
                     line.chars().count()
-                        <= CHILD_SUMMARY_EXCERPT_MAX_CHARS + "- src/module_0: …".chars().count(),
+                        <= CHILD_SUMMARY_EXCERPT_MAX_CHARS + "| src/module_0 |  |".chars().count(),
                     "child summary line stays bounded: {} chars",
                     line.chars().count()
                 );
-                assert!(line.ends_with('…'), "oversized excerpt is marked truncated");
+                assert!(line.contains('…'), "oversized excerpt is marked truncated");
             }
         }
     }
@@ -374,7 +385,7 @@ mod tests {
             summary: "Concise healthy summary.".to_string(),
         };
         let prompt = module_prompt("src", &[child], &[], &[], &[]);
-        assert!(prompt.contains("- src/lib.rs: Concise healthy summary.\n"));
+        assert!(prompt.contains("| src/lib.rs | Concise healthy summary. |\n"));
     }
 
     #[test]
@@ -384,7 +395,45 @@ mod tests {
             summary: "First line.\nSecond line of the same paragraph.".to_string(),
         };
         let prompt = module_prompt("src", &[child], &[], &[], &[]);
-        assert!(prompt.contains("- src/lib.rs: First line. Second line of the same paragraph.\n"));
+        assert!(
+            prompt.contains("| src/lib.rs | First line. Second line of the same paragraph. |\n")
+        );
+    }
+
+    #[test]
+    fn aggregate_prompts_request_tables_for_enumerable_facts() {
+        let child = ChildSummary {
+            name: "src/cli.rs".to_string(),
+            summary: "Defines commands and config keys.".to_string(),
+        };
+        let prompt = repo_prompt(&[child], &[], &[]);
+
+        assert!(MODULE_SYSTEM.contains("compact Markdown tables"));
+        assert!(REPO_SYSTEM.contains("CLI commands or flags"));
+        assert!(ARCHITECTURE_SYSTEM.contains("public API symbols"));
+        assert!(prompt.contains("Table guidance:\n"));
+        assert!(
+            prompt.contains("configuration keys, environment variables, or public API symbols")
+        );
+        assert!(prompt.contains("| Module | Summary |\n| --- | --- |\n"));
+    }
+
+    #[test]
+    fn file_prompt_lists_symbols_as_markdown_table() {
+        let symbol = SymbolSummary {
+            name: "run|cli".to_string(),
+            kind: "function".to_string(),
+            component_id: "component|id".to_string(),
+            component_label: "run [function]".to_string(),
+            line_start: 7,
+            line_end: 9,
+            purpose: "Handles command dispatch.".to_string(),
+        };
+
+        let prompt = file_prompt("src/cli.rs", &[symbol], &[]);
+
+        assert!(prompt.contains("| Symbol | Kind | Component | Component ID | Lines | Purpose |"));
+        assert!(prompt.contains("| run\\|cli | function | run [function] | component\\|id | 7-9 | Handles command dispatch. |"));
     }
 
     fn excerpt(path: &str, content: &str) -> SourceExcerpt {
