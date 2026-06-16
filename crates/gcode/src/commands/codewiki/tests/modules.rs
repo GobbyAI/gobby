@@ -90,9 +90,12 @@ fn bounded_import_mermaid_notes_partial_graphs() {
         CodewikiGraphEdge::import("c", "d"),
     ];
 
-    let diagram = render_module_dependency_mermaid("src/a", &files, &edges)
+    let diagram = render_module_dependency_mermaid("src/a", &files, &edges, false)
         .expect("dependency diagram renders");
 
+    assert!(diagram.contains(
+        "Simplified diagram: showing top 2 of 3 module dependency edge(s) within diagram bounds."
+    ));
     assert!(diagram.contains("%% Partial import graph: 1 edge(s) omitted by bounds"));
 }
 

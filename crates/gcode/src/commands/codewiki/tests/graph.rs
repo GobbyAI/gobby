@@ -221,7 +221,7 @@ fn mermaid_labels_escape_label_metacharacters() {
     ];
     let graph = vec![CodewikiGraphEdge::import("api", "domain")];
 
-    let diagram = render_module_dependency_mermaid("src/api[edge]", &files, &graph)
+    let diagram = render_module_dependency_mermaid("src/api[edge]", &files, &graph, false)
         .expect("dependency diagram");
 
     assert!(diagram.contains("src/api&#91;edge&#93;"));
@@ -560,6 +560,9 @@ fn truncated_graph_emits_degradation_marker_with_partial_diagram() {
         .expect("module doc still renders");
 
     assert!(module.contains("degraded: graph-truncated"));
+    assert!(module.contains(
+        "Simplified diagram: showing top 1 of 1 available module dependency edge(s); source graph was truncated."
+    ));
     assert!(module.contains("```mermaid"));
     assert!(module.contains("m_src_api[\"src/api\"] --> m_src_domain[\"src/domain\"]"));
 }

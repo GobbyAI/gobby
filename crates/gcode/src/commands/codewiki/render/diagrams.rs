@@ -6,6 +6,7 @@ pub(crate) fn render_module_dependency_mermaid(
     module: &str,
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
+    graph_truncated: bool,
 ) -> Option<String> {
     // Aggregate edge endpoints relative to this page (the page itself, one
     // of its direct children, or an external module truncated to the page's
@@ -43,7 +44,13 @@ pub(crate) fn render_module_dependency_mermaid(
     }
 
     let omitted_edges = all_edges.len().saturating_sub(bounded_edges.len());
-    let mut diagram = "```mermaid\ngraph LR\n".to_string();
+    let mut diagram = simplified_diagram_note(
+        "module dependency",
+        bounded_edges.len(),
+        all_edges.len(),
+        graph_truncated,
+    );
+    diagram.push_str("```mermaid\ngraph LR\n");
     write_partial_import_graph_comment(&mut diagram, omitted_edges);
     for (source, target) in bounded_edges {
         let _ = writeln!(
@@ -227,6 +234,7 @@ pub(crate) fn render_module_call_mermaid(
     module: &str,
     files: &[FileDoc],
     graph_edges: &[CodewikiGraphEdge],
+    graph_truncated: bool,
 ) -> Option<String> {
     let component_labels = files
         .iter()
@@ -289,7 +297,13 @@ pub(crate) fn render_module_call_mermaid(
         participants.insert(target.clone());
     }
 
-    let mut diagram = "```mermaid\nsequenceDiagram\n".to_string();
+    let mut diagram = simplified_diagram_note(
+        "symbol call",
+        bounded_edges.len(),
+        all_edges.len(),
+        graph_truncated,
+    );
+    diagram.push_str("```mermaid\nsequenceDiagram\n");
     for component in participants {
         let _ = writeln!(
             diagram,
@@ -313,6 +327,25 @@ pub(crate) fn render_module_call_mermaid(
     }
     diagram.push_str("```\n");
     Some(diagram)
+}
+
+fn simplified_diagram_note(
+    edge_kind: &str,
+    shown_edges: usize,
+    total_edges: usize,
+    graph_truncated: bool,
+) -> String {
+    if graph_truncated {
+        return format!(
+            "_Simplified diagram: showing top {shown_edges} of {total_edges} available {edge_kind} edge(s); source graph was truncated._\n\n"
+        );
+    }
+    if shown_edges < total_edges {
+        return format!(
+            "_Simplified diagram: showing top {shown_edges} of {total_edges} {edge_kind} edge(s) within diagram bounds._\n\n"
+        );
+    }
+    String::new()
 }
 
 pub(crate) fn bounded_module_dependency_edges(

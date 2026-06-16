@@ -96,8 +96,10 @@ pub(crate) fn build_module_docs_with_filter(
             .collect::<Vec<_>>();
         let component_ids = direct_component_ids_for_module(files, &module);
         let prompt_component_ids = prompt_component_ids_for_module(files, &module);
-        let dependency_diagram = render_module_dependency_mermaid(&module, files, graph_edges);
-        let call_diagram = render_module_call_mermaid(&module, files, graph_edges);
+        let graph_truncated = graph_availability == CodewikiGraphAvailability::Truncated;
+        let dependency_diagram =
+            render_module_dependency_mermaid(&module, files, graph_edges, graph_truncated);
+        let call_diagram = render_module_call_mermaid(&module, files, graph_edges, graph_truncated);
         let fallback = structural_module_summary(&module, &direct_files, &child_modules);
         let source_spans = collect_link_spans(&direct_files, &child_modules);
         // A module's provenance rolls up every file under it (child spans
