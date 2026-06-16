@@ -65,6 +65,25 @@ fn test_parse_imports_remains_top_level() {
 }
 
 #[test]
+fn test_parse_path_remains_top_level() {
+    let cli =
+        Cli::try_parse_from(["gcode", "path", "handleAuth", "DatabasePool"]).expect("path parses");
+
+    match cli.command {
+        Command::Path {
+            symbol_a,
+            symbol_b,
+            max_depth,
+        } => {
+            assert_eq!(symbol_a, "handleAuth");
+            assert_eq!(symbol_b, "DatabasePool");
+            assert_eq!(max_depth, DEFAULT_SYMBOL_PATH_MAX_DEPTH);
+        }
+        _ => panic!("expected top-level path command"),
+    }
+}
+
+#[test]
 fn test_parse_blast_radius_remains_top_level() {
     let cli =
         Cli::try_parse_from(["gcode", "blast-radius", "handleAuth"]).expect("blast-radius parses");

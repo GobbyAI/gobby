@@ -3,11 +3,13 @@ use super::lifecycle::{
     skipped_missing_indexed_file_payload, skipped_no_graph_facts_payload,
 };
 use super::payload::format_report_text;
-use super::reads::format_grouped_graph_results;
+use super::reads::{format_grouped_graph_results, format_symbol_path_text};
 use super::{imports, report};
 use crate::config::Context;
 use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput};
-use crate::models::{GraphResult, PagedResponse, ProjectionMetadata, ProjectionProvenance};
+use crate::models::{
+    GraphPathStep, GraphResult, PagedResponse, ProjectionMetadata, ProjectionProvenance,
+};
 use crate::output::Format;
 use serde_json::json;
 use std::cell::RefCell;
@@ -86,6 +88,43 @@ fn graph_text_groups_by_file_and_sorts_entries() {
     });
 
     assert_eq!(text, "src/a.rs\n3 alpha\n8 zeta\nsrc/b.rs\n9 beta");
+}
+
+#[test]
+fn graph_path_text_prints_ordered_chain_with_locations() {
+    let path = vec![
+        GraphPathStep {
+            position: 0,
+            id: "a".to_string(),
+            name: "alpha".to_string(),
+            file_path: "src/a.rs".to_string(),
+            line: 3,
+        },
+        GraphPathStep {
+            position: 1,
+            id: "b".to_string(),
+            name: "beta".to_string(),
+            file_path: "src/b.rs".to_string(),
+            line: 9,
+        },
+    ];
+
+    let text = format_symbol_path_text("alpha", "beta", &path, 8);
+
+    assert_eq!(
+        text,
+        "Shortest path from 'alpha' to 'beta' (1 hop(s)):\n1. alpha (src/a.rs:3)\n2. beta (src/b.rs:9)"
+    );
+}
+
+#[test]
+fn graph_path_text_reports_bounded_no_path() {
+    let text = format_symbol_path_text("alpha", "beta", &[], 8);
+
+    assert_eq!(
+        text,
+        "No path found from 'alpha' to 'beta' within 8 CALLS hop(s)."
+    );
 }
 
 #[test]

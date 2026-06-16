@@ -193,6 +193,40 @@ pub(super) fn find_callee_ids_batch_query(
     )
 }
 
+pub(crate) fn symbol_callee_edges_query(
+    project_id: &str,
+    symbol_ids: &[String],
+) -> (String, HashMap<String, String>) {
+    let ids = typed_query::id_list_literal(symbol_ids);
+    (
+        format!(
+            "MATCH (source:CodeSymbol {{project: $project}})-[:CALLS]->(target:CodeSymbol {{project: $project}}) \
+             WHERE source.id IN [{ids}] \
+             RETURN DISTINCT source.id AS source_id, target.id AS target_id \
+             ORDER BY source.id, target.id"
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
+pub(crate) fn symbol_path_steps_query(
+    project_id: &str,
+    symbol_ids: &[String],
+) -> (String, HashMap<String, String>) {
+    let ids = typed_query::id_list_literal(symbol_ids);
+    (
+        format!(
+            "MATCH (symbol:CodeSymbol {{project: $project}}) \
+             WHERE symbol.id IN [{ids}] \
+             RETURN symbol.id AS symbol_id, \
+                    coalesce(symbol.name, symbol.id) AS symbol_name, \
+                    coalesce(symbol.file_path, '') AS file_path, \
+                    coalesce(symbol.line_start, 0) AS line"
+        ),
+        typed_query::string_params(&[("project", project_id)]),
+    )
+}
+
 pub(crate) fn get_imports_query(
     project_id: &str,
     file_path: &str,

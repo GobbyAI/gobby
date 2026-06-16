@@ -88,6 +88,7 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
         | Command::Callers { .. }
         | Command::Usages { .. }
         | Command::Imports { .. }
+        | Command::Path { .. }
         | Command::BlastRadius { .. } => ServiceConfigSelection::falkordb_only(),
         Command::Vector {
             command: VectorCommand::CleanupOrphans,
@@ -555,6 +556,14 @@ fn run() -> anyhow::Result<()> {
         Command::Imports { file } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::graph::imports(&ctx, &file, format)
+        }
+        Command::Path {
+            symbol_a,
+            symbol_b,
+            max_depth,
+        } => {
+            ensure_project_fresh(&ctx, cli.no_freshness)?;
+            commands::graph::path(&ctx, &symbol_a, &symbol_b, max_depth, format)
         }
         Command::BlastRadius { target, depth } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;

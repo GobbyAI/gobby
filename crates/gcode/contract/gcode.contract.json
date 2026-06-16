@@ -1000,6 +1000,60 @@
       ]
     },
     {
+      "name": "path",
+      "summary": "Find the shortest CALLS path from one symbol query to another.",
+      "daemon_consumed": true,
+      "positionals": [
+        {
+          "name": "SYMBOL_A",
+          "required": true,
+          "repeatable": false
+        },
+        {
+          "name": "SYMBOL_B",
+          "required": true,
+          "repeatable": false
+        }
+      ],
+      "flags": [
+        {
+          "name": "--max-depth",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--format",
+          "takes_value": true,
+          "value_name": "json|text",
+          "allowed_values": [
+            "json",
+            "text"
+          ],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "project_id",
+        "found",
+        "from",
+        "to",
+        "max_depth",
+        "hops",
+        "path",
+        "position",
+        "id",
+        "display_name",
+        "name",
+        "file_path",
+        "line",
+        "hint"
+      ]
+    },
+    {
       "name": "blast-radius",
       "summary": "Show transitive impact analysis for a symbol query.",
       "daemon_consumed": false,

@@ -8,7 +8,7 @@ pub use lifecycle::{
     sync_file,
 };
 pub use payload::{file, graph_blast_radius, neighbors, overview, report};
-pub use reads::{blast_radius, callers, imports, usages};
+pub use reads::{blast_radius, callers, imports, path, usages};
 
 #[cfg(test)]
 mod tests;

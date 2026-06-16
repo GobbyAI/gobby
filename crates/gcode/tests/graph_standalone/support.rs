@@ -28,8 +28,12 @@ pub(super) const LUA_LOCAL_PROJECT_ID: &str = "graph-standalone-lua-local";
 pub(super) const OBJC_LOCAL_PROJECT_ID: &str = "graph-standalone-objc-local";
 pub(super) const TEST_FILE: &str = "src/lib.rs";
 pub(super) const CONTENT_ONLY_FILE: &str = "docs/content.txt";
+pub(super) const CROSS_CRATE_CALLER_FILE: &str = "crates/app/src/lib.rs";
+pub(super) const CROSS_CRATE_CALLEE_FILE: &str = "crates/core/src/lib.rs";
 pub(super) const CALLER_ID: &str = "graph-standalone-caller";
 pub(super) const CALLEE_ID: &str = "graph-standalone-callee";
+pub(super) const CROSS_CRATE_CALLER_ID: &str = "graph-standalone-cross-crate-caller";
+pub(super) const CROSS_CRATE_CALLEE_ID: &str = "graph-standalone-cross-crate-callee";
 
 pub(super) struct StandaloneEnv {
     pub(super) database_url: String,
@@ -50,6 +54,15 @@ impl StandaloneEnv {
 }
 
 pub(super) fn run_gcode(env: &StandaloneEnv, cwd: &std::path::Path, args: &[&str]) -> Output {
+    run_gcode_with_format(env, cwd, "json", args)
+}
+
+pub(super) fn run_gcode_with_format(
+    env: &StandaloneEnv,
+    cwd: &std::path::Path,
+    format: &str,
+    args: &[&str],
+) -> Output {
     let mut command = Command::new(env!("CARGO_BIN_EXE_gcode"));
     command
         .current_dir(cwd)
@@ -59,7 +72,7 @@ pub(super) fn run_gcode(env: &StandaloneEnv, cwd: &std::path::Path, args: &[&str
         .env("GOBBY_HOME", cwd.join(".no-daemon-home"))
         .arg("--no-freshness")
         .arg("--format")
-        .arg("json")
+        .arg(format)
         .args(args);
     if let Some(password) = &env.falkor_password {
         command.env("GOBBY_FALKORDB_PASSWORD", password);
@@ -154,7 +167,7 @@ pub(super) fn seed_project(conn: &mut Client) {
         "INSERT INTO code_indexed_projects
             (id, root_path, total_files, total_symbols, last_indexed_at, index_duration_ms)
          VALUES
-            ('graph-standalone-project', '/tmp/graph-standalone', 2, 2, NOW(), 0);
+            ('graph-standalone-project', '/tmp/graph-standalone', 4, 4, NOW(), 0);
 
          INSERT INTO code_indexed_files
             (id, project_id, file_path, language, content_hash, symbol_count, byte_size,
@@ -163,7 +176,13 @@ pub(super) fn seed_project(conn: &mut Client) {
             ('graph-standalone-file', 'graph-standalone-project', 'src/lib.rs', 'rust',
              'hash-1', 2, 54, false, true, NULL, NOW()),
             ('graph-standalone-content-file', 'graph-standalone-project', 'docs/content.txt', 'text',
-             'hash-content', 0, 35, false, true, NULL, NOW());
+             'hash-content', 0, 35, false, true, NULL, NOW()),
+            ('graph-standalone-cross-crate-caller-file', 'graph-standalone-project',
+             'crates/app/src/lib.rs', 'rust', 'hash-cross-caller', 1, 38, false, true, NULL,
+             NOW()),
+            ('graph-standalone-cross-crate-callee-file', 'graph-standalone-project',
+             'crates/core/src/lib.rs', 'rust', 'hash-cross-callee', 1, 24, false, true, NULL,
+             NOW());
 
          INSERT INTO code_content_chunks
             (id, project_id, file_path, chunk_index, line_start, line_end, content, language,
@@ -182,7 +201,13 @@ pub(super) fn seed_project(conn: &mut Client) {
              'hash-1', NULL, NOW(), NOW()),
             ('graph-standalone-callee', 'graph-standalone-project', 'src/lib.rs', 'callee',
              'crate::callee', 'function', 'rust', 29, 47, 2, 2, 'pub fn callee()', NULL, NULL,
-             'hash-1', NULL, NOW(), NOW());
+             'hash-1', NULL, NOW(), NOW()),
+            ('graph-standalone-cross-crate-caller', 'graph-standalone-project',
+             'crates/app/src/lib.rs', 'app_entry', 'app::app_entry', 'function', 'rust', 0, 38,
+             1, 3, 'pub fn app_entry()', NULL, NULL, 'hash-cross-caller', NULL, NOW(), NOW()),
+            ('graph-standalone-cross-crate-callee', 'graph-standalone-project',
+             'crates/core/src/lib.rs', 'core_leaf', 'core::core_leaf', 'function', 'rust', 0, 24,
+             1, 1, 'pub fn core_leaf()', NULL, NULL, 'hash-cross-callee', NULL, NOW(), NOW());
 
          INSERT INTO code_imports (project_id, source_file, target_module)
          VALUES ('graph-standalone-project', 'src/lib.rs', 'std');
@@ -190,9 +215,12 @@ pub(super) fn seed_project(conn: &mut Client) {
          INSERT INTO code_calls
             (project_id, caller_symbol_id, callee_symbol_id, callee_name, callee_target_kind,
              callee_external_module, file_path, line)
-         VALUES
+        VALUES
             ('graph-standalone-project', 'graph-standalone-caller', 'graph-standalone-callee',
-             'callee', 'symbol', '', 'src/lib.rs', 1);",
+             'callee', 'symbol', '', 'src/lib.rs', 1),
+            ('graph-standalone-project', 'graph-standalone-cross-crate-caller',
+             'graph-standalone-cross-crate-callee', 'core_leaf', 'symbol', '',
+             'crates/app/src/lib.rs', 2);",
     )
     .expect("seed graph rows");
 }

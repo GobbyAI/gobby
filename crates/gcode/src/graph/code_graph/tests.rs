@@ -148,6 +148,11 @@ fn graph_read_guard_stays_strict_but_public_reads_degrade_without_service() {
             .expect("blast degrades")
             .is_empty()
     );
+    assert!(
+        shortest_symbol_path(&ctx, "symbol-1", "symbol-2", DEFAULT_SYMBOL_PATH_MAX_DEPTH)
+            .expect("path degrades")
+            .is_empty()
+    );
 }
 
 #[test]
@@ -268,6 +273,50 @@ fn external_call_target_resolution_matches_id_name_or_module_member() {
     );
     assert_eq!(params.get("module").map(String::as_str), Some("'requests'"));
     assert_eq!(params.get("member").map(String::as_str), Some("'get'"));
+}
+
+#[test]
+fn symbol_path_queries_stay_project_scoped_and_symbol_only() {
+    let from_ids = vec!["source-1".to_string()];
+    let (edges_query, edge_params) = symbol_callee_edges_query("project-1", &from_ids);
+
+    assert!(
+        edges_query.contains(
+            "MATCH (source:CodeSymbol {project: $project})-[:CALLS]->(target:CodeSymbol {project: $project})"
+        ),
+        "{edges_query}"
+    );
+    assert!(
+        edges_query.contains("source.id IN ['source-1']"),
+        "{edges_query}"
+    );
+    assert!(
+        edges_query.contains("RETURN DISTINCT source.id AS source_id, target.id AS target_id"),
+        "{edges_query}"
+    );
+    assert_eq!(
+        edge_params.get("project").map(String::as_str),
+        Some("'project-1'")
+    );
+
+    let path_ids = vec!["source-1".to_string(), "target-1".to_string()];
+    let (steps_query, step_params) = symbol_path_steps_query("project-1", &path_ids);
+    assert!(
+        steps_query.contains("MATCH (symbol:CodeSymbol {project: $project})"),
+        "{steps_query}"
+    );
+    assert!(
+        steps_query.contains("symbol.id IN ['source-1', 'target-1']"),
+        "{steps_query}"
+    );
+    assert!(
+        steps_query.contains("coalesce(symbol.file_path, '') AS file_path"),
+        "{steps_query}"
+    );
+    assert_eq!(
+        step_params.get("project").map(String::as_str),
+        Some("'project-1'")
+    );
 }
 
 #[test]

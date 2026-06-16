@@ -1,17 +1,24 @@
+use std::collections::{HashMap, HashSet};
+
 use crate::config::Context;
 
 use crate::graph::typed_query;
-use crate::models::GraphResult;
+use crate::models::{GraphPathStep, GraphResult};
 
 use super::super::connection::with_optional_core_graph;
-use super::super::payload::row_string_owned;
+use super::super::payload::{row_string_owned, row_usize};
 use super::relationship_queries::{
     blast_radius_query, count_callers_query, count_usages_query, find_callee_ids_batch_query,
     find_callees_batch_query, find_caller_ids_batch_query, find_caller_ids_query,
     find_callers_batch_query, find_callers_query, find_usage_ids_query, find_usages_query,
-    get_imports_query, resolve_external_call_target_query,
+    get_imports_query, resolve_external_call_target_query, symbol_callee_edges_query,
+    symbol_path_steps_query,
 };
 use super::support::{MAX_GRAPH_LIMIT, count_from_rows, row_to_graph_result};
+use gobby_core::falkor::GraphClient;
+
+pub const DEFAULT_SYMBOL_PATH_MAX_DEPTH: usize = 8;
+pub const MAX_SYMBOL_PATH_DEPTH: usize = 16;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ResolvedExternalCallTarget {
@@ -215,6 +222,123 @@ pub fn resolve_external_call_target(
             Ok(select_external_call_target(candidates))
         },
     )
+}
+
+fn symbol_callee_edges(
+    client: &mut GraphClient,
+    project_id: &str,
+    symbol_ids: &[String],
+) -> anyhow::Result<Vec<(String, String)>> {
+    if symbol_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (query, params) = symbol_callee_edges_query(project_id, symbol_ids);
+    let rows = client.query(&query, Some(params))?;
+    Ok(rows
+        .iter()
+        .filter_map(|row| {
+            let source_id = row_string_owned(row, &["source_id"])?;
+            let target_id = row_string_owned(row, &["target_id"])?;
+            Some((source_id, target_id))
+        })
+        .collect())
+}
+
+fn reconstruct_symbol_path(
+    from_id: &str,
+    to_id: &str,
+    parents: &HashMap<String, String>,
+) -> Vec<String> {
+    let mut path = vec![to_id.to_string()];
+    let mut current = to_id.to_string();
+    while current != from_id {
+        let Some(parent) = parents.get(&current) else {
+            return Vec::new();
+        };
+        path.push(parent.clone());
+        current = parent.clone();
+    }
+    path.reverse();
+    path
+}
+
+fn symbol_path_steps(
+    client: &mut GraphClient,
+    project_id: &str,
+    symbol_ids: &[String],
+) -> anyhow::Result<Vec<GraphPathStep>> {
+    if symbol_ids.is_empty() {
+        return Ok(Vec::new());
+    }
+    let (query, params) = symbol_path_steps_query(project_id, symbol_ids);
+    let rows = client.query(&query, Some(params))?;
+    let mut steps_by_id = HashMap::new();
+    for row in rows {
+        let Some(id) = row_string_owned(&row, &["symbol_id", "id"]) else {
+            continue;
+        };
+        steps_by_id.insert(
+            id.clone(),
+            GraphPathStep {
+                position: 0,
+                name: row_string_owned(&row, &["symbol_name", "name"])
+                    .unwrap_or_else(|| id.clone()),
+                file_path: row_string_owned(&row, &["file_path", "file"]).unwrap_or_default(),
+                line: row_usize(&row, &["line"]).unwrap_or(0),
+                id,
+            },
+        );
+    }
+
+    let mut steps = Vec::with_capacity(symbol_ids.len());
+    for (position, symbol_id) in symbol_ids.iter().enumerate() {
+        let Some(mut step) = steps_by_id.remove(symbol_id) else {
+            return Ok(Vec::new());
+        };
+        step.position = position;
+        steps.push(step);
+    }
+    Ok(steps)
+}
+
+pub fn shortest_symbol_path(
+    ctx: &Context,
+    from_id: &str,
+    to_id: &str,
+    max_depth: usize,
+) -> anyhow::Result<Vec<GraphPathStep>> {
+    let max_depth = max_depth.clamp(1, MAX_SYMBOL_PATH_DEPTH);
+    with_optional_core_graph(ctx, Vec::new, |client| {
+        if from_id == to_id {
+            return symbol_path_steps(client, &ctx.project_id, &[from_id.to_string()]);
+        }
+
+        let mut visited = HashSet::from([from_id.to_string()]);
+        let mut parents = HashMap::new();
+        let mut frontier = vec![from_id.to_string()];
+
+        for _ in 0..max_depth {
+            let edges = symbol_callee_edges(client, &ctx.project_id, &frontier)?;
+            let mut next_frontier = Vec::new();
+            for (source_id, target_id) in edges {
+                if !visited.insert(target_id.clone()) {
+                    continue;
+                }
+                parents.insert(target_id.clone(), source_id);
+                if target_id == to_id {
+                    let symbol_ids = reconstruct_symbol_path(from_id, to_id, &parents);
+                    return symbol_path_steps(client, &ctx.project_id, &symbol_ids);
+                }
+                next_frontier.push(target_id);
+            }
+            if next_frontier.is_empty() {
+                break;
+            }
+            frontier = next_frontier;
+        }
+
+        Ok(Vec::new())
+    })
 }
 
 pub fn blast_radius(

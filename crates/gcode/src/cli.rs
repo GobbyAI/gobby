@@ -3,6 +3,8 @@ use gobby_code::output;
 use gobby_core::config::AiRouting;
 
 const DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT: usize = 5000;
+const DEFAULT_SYMBOL_PATH_MAX_DEPTH: usize =
+    gobby_code::graph::code_graph::DEFAULT_SYMBOL_PATH_MAX_DEPTH;
 const MAX_POSITIVE_USIZE_ARG: usize = 1_000_000_000;
 const MAX_GREP_MAX_COUNT: usize = 10_000;
 
@@ -363,6 +365,18 @@ pub(crate) enum Command {
     },
     /// Show import graph for a file [requires graph backend]
     Imports { file: String },
+    /// Shortest CALLS path from one symbol query to another [requires graph backend]
+    Path {
+        /// Source symbol query
+        #[arg(value_name = "SYMBOL_A")]
+        symbol_a: String,
+        /// Target symbol query
+        #[arg(value_name = "SYMBOL_B")]
+        symbol_b: String,
+        /// Maximum CALLS hops to search
+        #[arg(long, default_value_t = DEFAULT_SYMBOL_PATH_MAX_DEPTH, value_parser = positive_usize)]
+        max_depth: usize,
+    },
     /// Transitive impact analysis for a symbol query, resolved to a canonical symbol ID [requires graph backend]
     BlastRadius {
         /// Symbol query

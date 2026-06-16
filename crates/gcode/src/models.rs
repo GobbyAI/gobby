@@ -475,6 +475,15 @@ pub struct GraphResult {
     pub metadata: Option<ProjectionMetadata>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GraphPathStep {
+    pub position: usize,
+    pub id: String,
+    pub name: String,
+    pub file_path: String,
+    pub line: usize,
+}
+
 /// Result of parsing a single file.
 pub struct ParseResult {
     pub symbols: Vec<Symbol>,

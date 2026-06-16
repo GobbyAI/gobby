@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph;
-use crate::models::{GraphResult, PagedResponse};
+use crate::models::{GraphPathStep, GraphResult, PagedResponse};
 use crate::output::{self, Format};
 use crate::search::fts::{self, ResolvedGraphSymbol};
 use serde::Serialize;
@@ -115,6 +115,105 @@ where
         lines.extend(entries.into_iter().map(&format_line));
     }
     lines.join("\n")
+}
+
+#[derive(Serialize)]
+struct GraphPathEndpoint {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    id: Option<String>,
+    display_name: String,
+}
+
+#[derive(Serialize)]
+struct GraphPathResponse {
+    project_id: String,
+    found: bool,
+    from: GraphPathEndpoint,
+    to: GraphPathEndpoint,
+    max_depth: usize,
+    hops: Option<usize>,
+    path: Vec<GraphPathStep>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    hint: Option<String>,
+}
+
+fn path_endpoint(input: &str, resolved: Option<&ResolvedGraphSymbol>) -> GraphPathEndpoint {
+    GraphPathEndpoint {
+        id: resolved.map(|symbol| symbol.id.clone()),
+        display_name: resolved
+            .map(|symbol| symbol.display_name.clone())
+            .unwrap_or_else(|| input.to_string()),
+    }
+}
+
+pub(super) fn format_symbol_path_text(
+    from_display: &str,
+    to_display: &str,
+    path: &[GraphPathStep],
+    max_depth: usize,
+) -> String {
+    if path.is_empty() {
+        return format!(
+            "No path found from '{from_display}' to '{to_display}' within {max_depth} CALLS hop(s)."
+        );
+    }
+
+    let hops = path.len().saturating_sub(1);
+    let mut lines = vec![format!(
+        "Shortest path from '{from_display}' to '{to_display}' ({hops} hop(s)):"
+    )];
+    for step in path {
+        let file_path = if step.file_path.is_empty() {
+            "<unknown>"
+        } else {
+            &step.file_path
+        };
+        lines.push(format!(
+            "{}. {} ({}:{})",
+            step.position + 1,
+            step.name,
+            file_path,
+            step.line
+        ));
+    }
+    lines.join("\n")
+}
+
+fn print_symbol_path_response(
+    ctx: &Context,
+    from: GraphPathEndpoint,
+    to: GraphPathEndpoint,
+    max_depth: usize,
+    path: Vec<GraphPathStep>,
+    format: Format,
+) -> anyhow::Result<()> {
+    let found = !path.is_empty();
+    let response = GraphPathResponse {
+        project_id: ctx.project_id.clone(),
+        found,
+        hops: found.then_some(path.len().saturating_sub(1)),
+        from,
+        to,
+        max_depth,
+        path,
+        hint: hint_for(ctx),
+    };
+
+    match format {
+        Format::Json => output::print_json(&response),
+        Format::Text => {
+            output::print_text(&format_symbol_path_text(
+                &response.from.display_name,
+                &response.to.display_name,
+                &response.path,
+                max_depth,
+            ))?;
+            if !response.found {
+                print_graph_hint_text(ctx, None);
+            }
+            Ok(())
+        }
+    }
 }
 
 fn resolve_symbol_with_connection(
@@ -391,6 +490,29 @@ pub fn imports(ctx: &Context, file: &str, format: Format) -> anyhow::Result<()> 
             Ok(())
         }
     }
+}
+
+pub fn path(
+    ctx: &Context,
+    symbol_a: &str,
+    symbol_b: &str,
+    max_depth: usize,
+    format: Format,
+) -> anyhow::Result<()> {
+    let from = resolve_symbol(ctx, symbol_a)?;
+    let to = resolve_symbol(ctx, symbol_b)?;
+    let from_endpoint = path_endpoint(symbol_a, from.as_ref());
+    let to_endpoint = path_endpoint(symbol_b, to.as_ref());
+    let max_depth = max_depth.clamp(1, code_graph::MAX_SYMBOL_PATH_DEPTH);
+
+    let path = match (&from, &to) {
+        (Some(from), Some(to)) => {
+            code_graph::shortest_symbol_path(ctx, &from.id, &to.id, max_depth)?
+        }
+        _ => Vec::new(),
+    };
+
+    print_symbol_path_response(ctx, from_endpoint, to_endpoint, max_depth, path, format)
 }
 
 pub fn blast_radius(

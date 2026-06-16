@@ -261,6 +261,19 @@ pub fn contract() -> CliContract {
                 ..CommandContract::new("imports", "Show import graph for a file.")
             },
             CommandContract {
+                daemon_consumed: true,
+                positionals: vec![
+                    PositionalContract::required("SYMBOL_A"),
+                    PositionalContract::required("SYMBOL_B"),
+                ],
+                flags: vec![FlagContract::value("--max-depth", "N"), format_flag()],
+                json_output_keys: graph_path_keys(),
+                ..CommandContract::new(
+                    "path",
+                    "Find the shortest CALLS path from one symbol query to another.",
+                )
+            },
+            CommandContract {
                 positionals: vec![PositionalContract::required("SYMBOL")],
                 flags: vec![FlagContract::value("--depth", "N"), format_flag()],
                 json_output_keys: graph_read_keys(),
@@ -584,6 +597,25 @@ fn graph_read_keys() -> Vec<&'static str> {
         "relation",
         "distance",
         "metadata",
+        "hint",
+    ]
+}
+
+fn graph_path_keys() -> Vec<&'static str> {
+    vec![
+        "project_id",
+        "found",
+        "from",
+        "to",
+        "max_depth",
+        "hops",
+        "path",
+        "position",
+        "id",
+        "display_name",
+        "name",
+        "file_path",
+        "line",
         "hint",
     ]
 }
