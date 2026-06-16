@@ -95,16 +95,19 @@ pub(super) fn create_semantic_resolver_if_needed(
     candidates: &[std::path::PathBuf],
     require_cpp_semantics: bool,
 ) -> anyhow::Result<Option<Box<dyn SemanticCallResolver>>> {
-    let has_cpp_candidate = candidates.iter().any(|path| {
+    if !has_cpp_semantic_candidate(candidates) {
+        return Ok(None);
+    }
+    semantic::create_cpp_semantic_resolver(root_path, require_cpp_semantics)
+}
+
+fn has_cpp_semantic_candidate(candidates: &[std::path::PathBuf]) -> bool {
+    candidates.iter().any(|path| {
         matches!(
             languages::detect_language(&path.to_string_lossy()),
             Some("c" | "cpp")
         )
-    });
-    if !has_cpp_candidate {
-        return Ok(None);
-    }
-    semantic::create_cpp_semantic_resolver(root_path, require_cpp_semantics)
+    })
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -261,4 +264,40 @@ pub(super) fn write_content_only_file_facts(
         chunks_indexed,
         ..FileIndexCounts::default()
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use std::fs;
+
+    use tempfile::TempDir;
+
+    use super::*;
+
+    #[test]
+    fn c_header_candidates_enable_cpp_semantic_resolution() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let header = tempdir.path().join("widget.h");
+        fs::write(&header, "void widget_render(void);\n").expect("write header");
+
+        assert!(has_cpp_semantic_candidate(&[header]));
+    }
+
+    #[test]
+    fn cpp_header_candidates_enable_cpp_semantic_resolution() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let header = tempdir.path().join("widget.h");
+        fs::write(&header, "namespace app { class Widget {}; }\n").expect("write header");
+
+        assert!(has_cpp_semantic_candidate(&[header]));
+    }
+
+    #[test]
+    fn objc_header_candidates_do_not_enable_cpp_semantic_resolution() {
+        let tempdir = TempDir::new().expect("create tempdir");
+        let header = tempdir.path().join("widget.h");
+        fs::write(&header, "@interface Widget\n@end\n").expect("write header");
+
+        assert!(!has_cpp_semantic_candidate(&[header]));
+    }
 }

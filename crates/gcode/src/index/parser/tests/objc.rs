@@ -1,6 +1,6 @@
 use crate::models::{CallRelation, CallTargetKind};
 
-use super::common::{parse_objc, parse_objcxx};
+use super::common::{parse_objc, parse_objcxx, parse_source};
 
 macro_rules! assert_local_import {
     ($parsed:expr, $callee:expr, $file:expr) => {{
@@ -152,6 +152,66 @@ void run() {
         "missing Obj-C++ message call: {:?}",
         parsed.calls
     );
+}
+
+#[test]
+fn objc_header_uses_objc_grammar_for_symbols() {
+    let parsed = parse_source(
+        "Sources/App/Widget.h",
+        r#"
+@interface Widget
+- (void)render;
+@end
+"#,
+        &[],
+    );
+
+    assert!(
+        parsed
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "Widget" && symbol.kind == "class"),
+        "missing Objective-C header class symbol: {:?}",
+        parsed.symbols
+    );
+    assert!(
+        parsed
+            .symbols
+            .iter()
+            .any(|symbol| symbol.name == "render" && symbol.kind == "method"),
+        "missing Objective-C header method symbol: {:?}",
+        parsed.symbols
+    );
+}
+
+#[test]
+fn cpp_header_uses_cpp_grammar_for_symbols() {
+    let parsed = parse_source(
+        "include/Widget.h",
+        r#"
+namespace app {
+template <typename T>
+class Box {};
+
+class Widget {
+public:
+  void render();
+};
+}
+"#,
+        &[],
+    );
+
+    for name in ["Box", "Widget"] {
+        assert!(
+            parsed
+                .symbols
+                .iter()
+                .any(|symbol| symbol.name == name && symbol.kind == "class"),
+            "missing C++ header class symbol {name}: {:?}",
+            parsed.symbols
+        );
+    }
 }
 
 fn call_named<'a>(calls: &'a [CallRelation], name: &str) -> &'a CallRelation {

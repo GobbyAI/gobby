@@ -1,6 +1,8 @@
 //! Language registry with tree-sitter query definitions.
 //! Ports 16 language specs from src/gobby/code_index/languages.py.
 
+use std::path::Path;
+
 use tree_sitter::Language;
 
 /// Specification for a single language's tree-sitter queries.
@@ -185,7 +187,7 @@ const CSHARP: LanguageSpec = LanguageSpec {
 };
 
 const C_LANG: LanguageSpec = LanguageSpec {
-    extensions: &[".c"],
+    extensions: &[".c", ".h"],
     symbol_query: r#"
         (function_definition declarator: (function_declarator declarator: (identifier) @name)) @definition.function
         (struct_specifier name: (type_identifier) @name) @definition.type
@@ -218,10 +220,9 @@ const CPP: LanguageSpec = LanguageSpec {
 };
 
 const OBJC: LanguageSpec = LanguageSpec {
-    // Headers are extension-ambiguous, but Objective-C's grammar inherits the C
-    // grammar and exposes @interface declarations that plain C cannot see.
-    // Obj-C++ `.mm` also uses this grammar so message sends are indexed.
-    extensions: &[".m", ".mm", ".h"],
+    // Obj-C++ `.mm` uses this grammar so message sends are indexed.
+    // `.h` is extension-ambiguous and is routed by detect_header_language.
+    extensions: &[".m", ".mm"],
     symbol_query: r#"
         (class_interface "@interface" . (identifier) @name) @definition.class
         (class_implementation "@implementation" . (identifier) @name) @definition.class
@@ -447,10 +448,14 @@ const SPECS: &[(&str, &LanguageSpec)] = &[
 
 /// Detect language name from file extension.
 pub fn detect_language(file_path: &str) -> Option<&'static str> {
-    let path = std::path::Path::new(file_path);
+    let path = Path::new(file_path);
     let ext = path
         .extension()
         .map(|e| format!(".{}", e.to_string_lossy().to_lowercase()))?;
+
+    if ext == ".h" {
+        return Some(detect_header_language(path));
+    }
 
     for (name, spec) in SPECS {
         if spec.extensions.contains(&ext.as_str()) {
@@ -458,6 +463,121 @@ pub fn detect_language(file_path: &str) -> Option<&'static str> {
         }
     }
     None
+}
+
+fn detect_header_language(path: &Path) -> &'static str {
+    if objc_header_has_sibling_implementation(path) {
+        return "objc";
+    }
+
+    let Some(source) = std::fs::read(path)
+        .ok()
+        .map(|bytes| String::from_utf8_lossy(&bytes).into_owned())
+    else {
+        return "c";
+    };
+
+    if source_contains_objc_header_signal(&source) {
+        "objc"
+    } else if source_contains_cpp_header_signal(&source) {
+        "cpp"
+    } else {
+        "c"
+    }
+}
+
+fn objc_header_has_sibling_implementation(path: &Path) -> bool {
+    path.with_extension("m").is_file() || path.with_extension("mm").is_file()
+}
+
+fn source_contains_objc_header_signal(source: &str) -> bool {
+    source_contains_header_signal(source, |bytes, idx| {
+        objc_directive_at(bytes, idx, b"@interface")
+            || objc_directive_at(bytes, idx, b"@protocol")
+            || objc_directive_at(bytes, idx, b"@import")
+    })
+}
+
+fn source_contains_cpp_header_signal(source: &str) -> bool {
+    source_contains_header_signal(source, |bytes, idx| {
+        c_like_keyword_at(bytes, idx, b"class")
+            || c_like_keyword_at(bytes, idx, b"namespace")
+            || c_like_keyword_at(bytes, idx, b"template")
+    })
+}
+
+fn source_contains_header_signal<F>(source: &str, mut signal_at: F) -> bool
+where
+    F: FnMut(&[u8], usize) -> bool,
+{
+    let bytes = source.as_bytes();
+    let mut idx = 0;
+    while idx < bytes.len() {
+        match bytes[idx] {
+            b'/' if bytes.get(idx + 1) == Some(&b'/') => {
+                idx += 2;
+                while idx < bytes.len() && bytes[idx] != b'\n' {
+                    idx += 1;
+                }
+            }
+            b'/' if bytes.get(idx + 1) == Some(&b'*') => {
+                idx += 2;
+                while idx + 1 < bytes.len() && !(bytes[idx] == b'*' && bytes[idx + 1] == b'/') {
+                    idx += 1;
+                }
+                idx = (idx + 2).min(bytes.len());
+            }
+            b'"' | b'\'' => idx = skip_quoted(bytes, idx),
+            _ => {
+                if signal_at(bytes, idx) {
+                    return true;
+                }
+                idx += 1;
+            }
+        }
+    }
+    false
+}
+
+fn skip_quoted(bytes: &[u8], start: usize) -> usize {
+    let quote = bytes[start];
+    let mut idx = start + 1;
+    while idx < bytes.len() {
+        if bytes[idx] == b'\\' {
+            idx = (idx + 2).min(bytes.len());
+        } else if bytes[idx] == quote {
+            return idx + 1;
+        } else {
+            idx += 1;
+        }
+    }
+    bytes.len()
+}
+
+fn objc_directive_at(bytes: &[u8], idx: usize, directive: &[u8]) -> bool {
+    literal_at(bytes, idx, directive)
+        && bytes
+            .get(idx + directive.len())
+            .is_none_or(|byte| !is_ascii_identifier_byte(*byte))
+}
+
+fn c_like_keyword_at(bytes: &[u8], idx: usize, keyword: &[u8]) -> bool {
+    literal_at(bytes, idx, keyword)
+        && idx
+            .checked_sub(1)
+            .and_then(|previous| bytes.get(previous))
+            .is_none_or(|byte| !is_ascii_identifier_byte(*byte) && *byte != b'@')
+        && bytes
+            .get(idx + keyword.len())
+            .is_none_or(|byte| !is_ascii_identifier_byte(*byte))
+}
+
+fn literal_at(bytes: &[u8], idx: usize, literal: &[u8]) -> bool {
+    bytes.get(idx..idx + literal.len()) == Some(literal)
+}
+
+fn is_ascii_identifier_byte(byte: u8) -> bool {
+    byte.is_ascii_alphanumeric() || byte == b'_'
 }
 
 /// Get the language spec for a given language name.
@@ -570,7 +690,60 @@ mod tests {
     fn objc_extensions_detect() {
         assert_eq!(detect_language("Sources/App/Widget.m"), Some("objc"));
         assert_eq!(detect_language("Sources/App/Widget.mm"), Some("objc"));
-        assert_eq!(detect_language("Sources/App/Widget.h"), Some("objc"));
+    }
+
+    #[test]
+    fn c_header_detects_without_objc_or_cpp_signal() {
+        assert_eq!(detect_language("Sources/App/Widget.h"), Some("c"));
+    }
+
+    #[test]
+    fn objc_header_detects_declaration_signal() {
+        let tempdir = tempfile::TempDir::new().expect("create tempdir");
+        let header = tempdir.path().join("Widget.h");
+        std::fs::write(
+            &header,
+            r#"
+@interface Widget
+- (void)render;
+@end
+"#,
+        )
+        .expect("write header");
+
+        assert_eq!(detect_language(&header.to_string_lossy()), Some("objc"));
+    }
+
+    #[test]
+    fn objc_header_detects_sibling_implementation_signal() {
+        let tempdir = tempfile::TempDir::new().expect("create tempdir");
+        let header = tempdir.path().join("Widget.h");
+        std::fs::write(&header, "void WidgetRender(void);\n").expect("write header");
+        std::fs::write(
+            tempdir.path().join("Widget.m"),
+            "void WidgetRender(void) {}\n",
+        )
+        .expect("write implementation");
+
+        assert_eq!(detect_language(&header.to_string_lossy()), Some("objc"));
+    }
+
+    #[test]
+    fn cpp_header_detects_cpp_signal() {
+        let tempdir = tempfile::TempDir::new().expect("create tempdir");
+        let header = tempdir.path().join("Widget.h");
+        std::fs::write(
+            &header,
+            r#"
+namespace app {
+template <typename T>
+class Widget {};
+}
+"#,
+        )
+        .expect("write header");
+
+        assert_eq!(detect_language(&header.to_string_lossy()), Some("cpp"));
     }
 
     #[test]
