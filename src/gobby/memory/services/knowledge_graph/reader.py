@@ -533,9 +533,7 @@ class KnowledgeGraphReader:
             for key, memory_ids in backing.items()
             if any(memory_id in active_ids for memory_id in memory_ids)
         }
-        filtered_entities = [
-            e for e in entities if str(e.get("entity_key") or "") in visible_keys
-        ]
+        filtered_entities = [e for e in entities if str(e.get("entity_key") or "") in visible_keys]
         filtered_relationships = [
             r
             for r in relationships

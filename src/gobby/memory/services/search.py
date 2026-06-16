@@ -484,8 +484,7 @@ class SearchService:
                 keyword_ranked=keyword_ranked,
                 rrf_applied=rrf_applied,
                 exhausted=(
-                    len(qdrant_results) < candidate_limit
-                    and len(keyword_ranked) < candidate_limit
+                    len(qdrant_results) < candidate_limit and len(keyword_ranked) < candidate_limit
                 ),
             )
 
@@ -544,11 +543,7 @@ class SearchService:
         candidates = await collect(candidate_limit)
         results = build(candidates)
         rounds = 0
-        while (
-            len(results) < limit
-            and not candidates.exhausted
-            and rounds < _MAX_BACKFILL_ROUNDS
-        ):
+        while len(results) < limit and not candidates.exhausted and rounds < _MAX_BACKFILL_ROUNDS:
             rounds += 1
             candidate_limit *= _BACKFILL_GROWTH
             candidates = await collect(candidate_limit)

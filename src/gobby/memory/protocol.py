@@ -201,9 +201,7 @@ class MemoryRecord:
             "metadata": self.metadata,
             "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
             "dream_action": self.dream_action,
-            "last_dreamed_at": (
-                self.last_dreamed_at.isoformat() if self.last_dreamed_at else None
-            ),
+            "last_dreamed_at": (self.last_dreamed_at.isoformat() if self.last_dreamed_at else None),
         }
 
     @classmethod
