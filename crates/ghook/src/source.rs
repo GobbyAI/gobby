@@ -72,6 +72,11 @@ mod tests {
             "codex",
             "non-claude CLIs should keep their canonical source"
         );
+        assert_eq!(
+            detect_source(&CliConfig::for_dispatch("grok")),
+            "grok",
+            "GOBBY_SOURCE should remain a Claude-only compatibility override"
+        );
 
         set_source_env("GOBBY_SOURCE", "");
         assert_eq!(

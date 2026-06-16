@@ -1,5 +1,6 @@
 use crate::cli_config::CliConfig;
 use crate::json_value::is_python_truthy;
+use crate::planned_shutdown::is_stop_hook;
 use crate::{output, transport};
 use serde_json::Value;
 use std::process::ExitCode;
@@ -84,7 +85,7 @@ pub(crate) fn action_from_success_response(
     }
 
     if is_blocked(&result) {
-        if hook_type != "Stop" {
+        if !is_stop_hook(hook_type) {
             return Ok(HookAction {
                 exit_code: 0,
                 stdout_json: Some(serialized),
@@ -368,6 +369,42 @@ mod tests {
                 stderr_message: Some("Task still in_progress".to_string()),
             }
         );
+    }
+
+    #[test]
+    fn action_from_success_treats_lowercase_stop_block_as_exit_two() {
+        let action = action_from_success_response(
+            "grok",
+            "stop",
+            r#"{"decision":"block","reason":"Grok blocked stop"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(
+            action,
+            HookAction {
+                exit_code: 2,
+                stdout_json: None,
+                stderr_message: Some("Grok blocked stop".to_string()),
+            }
+        );
+    }
+
+    #[test]
+    fn action_from_success_keeps_non_stop_grok_block_as_json() {
+        let action = action_from_success_response(
+            "grok",
+            "pre_tool_use",
+            r#"{"decision":"block","reason":"policy"}"#,
+        )
+        .unwrap();
+
+        assert_eq!(action.exit_code, 0);
+        assert_eq!(
+            action.stdout_json.as_deref(),
+            Some(r#"{"decision":"block","reason":"policy"}"#)
+        );
+        assert_eq!(action.stderr_message, None);
     }
 
     #[test]

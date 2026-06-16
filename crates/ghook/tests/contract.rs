@@ -22,6 +22,7 @@ fn malformed_stdin_uses_cli_specific_json_error_contract() -> TestResult {
         ("gemini", "SessionStart", 1),
         ("qwen", "SessionStart", 1),
         ("droid", "SessionStart", 1),
+        ("grok", "session_start", 2),
     ] {
         let home = tempfile::tempdir()?;
         let gobby_home = tempfile::tempdir()?;
@@ -156,6 +157,69 @@ fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
     )?;
     assert_stderr_empty(&noncritical, "noncritical daemon-down")?;
 
+    let grok_critical = run_with_closed_daemon("grok", "session_start")?;
+    assert_eq!(grok_critical.status.code(), Some(2));
+    assert!(grok_critical.stdout.is_empty());
+    let grok_critical_stderr = String::from_utf8(grok_critical.stderr)?;
+    assert!(
+        grok_critical_stderr.contains("Daemon connection failed on critical hook 'session_start'")
+    );
+
+    let grok_noncritical = run_with_closed_daemon("grok", "pre_tool_use")?;
+    assert_eq!(grok_noncritical.status.code(), Some(1));
+    assert_json_stdout(
+        &grok_noncritical,
+        serde_json::json!({
+            "status": "error",
+            "message": "Daemon unreachable",
+        }),
+    )?;
+    assert_stderr_empty(&grok_noncritical, "grok noncritical daemon-down")?;
+
+    Ok(())
+}
+
+#[test]
+fn diagnose_json_reports_grok_snake_case_contract() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+
+    let critical = run_diagnose_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        "grok",
+        "session_start",
+        &daemon_url,
+    )?;
+    assert_eq!(critical.status.code(), Some(0));
+    assert_stderr_empty(&critical, "grok session_start diagnose")?;
+    let critical_json: Value = serde_json::from_slice(&critical.stdout)?;
+    assert_eq!(critical_json["schema_version"], 2);
+    assert_eq!(critical_json["cli"], "grok");
+    assert_eq!(critical_json["hook_type"], "session_start");
+    assert_eq!(critical_json["source"], "grok");
+    assert_eq!(critical_json["critical"], true);
+    assert_eq!(critical_json["terminal_context_enabled"], true);
+    assert_eq!(critical_json["cli_recognized"], true);
+
+    let noncritical = run_diagnose_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        "grok",
+        "pre_tool_use",
+        &daemon_url,
+    )?;
+    assert_eq!(noncritical.status.code(), Some(0));
+    assert_stderr_empty(&noncritical, "grok pre_tool_use diagnose")?;
+    let noncritical_json: Value = serde_json::from_slice(&noncritical.stdout)?;
+    assert_eq!(noncritical_json["cli"], "grok");
+    assert_eq!(noncritical_json["hook_type"], "pre_tool_use");
+    assert_eq!(noncritical_json["source"], "grok");
+    assert_eq!(noncritical_json["critical"], false);
+    assert_eq!(noncritical_json["terminal_context_enabled"], false);
+    assert_eq!(noncritical_json["cli_recognized"], true);
+
     Ok(())
 }
 
@@ -221,6 +285,33 @@ fn daemon_success_maps_deny_and_block_bodies() -> TestResult {
     let block_stderr = String::from_utf8(block_output.stderr)?;
     assert!(block_stderr.contains("stop now"));
     assert!(block_request.contains("\"hook_type\":\"Stop\""));
+
+    let grok_stop_body = r#"{"decision":"block","reason":"stop grok"}"#;
+    let grok_stop_response = http_ok_json(grok_stop_body);
+    let (grok_stop_url, grok_stop_daemon) = start_daemon(grok_stop_response)?;
+    let grok_stop_output = run_temp_ghook("grok", "stop", &grok_stop_url, VALID_STDIN, &[])?;
+    let grok_stop_request = join_daemon(grok_stop_daemon)?;
+
+    assert_eq!(grok_stop_output.status.code(), Some(2));
+    assert!(grok_stop_output.stdout.is_empty());
+    let grok_stop_stderr = String::from_utf8(grok_stop_output.stderr)?;
+    assert!(grok_stop_stderr.contains("stop grok"));
+    assert!(grok_stop_request.contains("\"hook_type\":\"stop\""));
+
+    let grok_pre_tool_body = r#"{"decision":"block","reason":"policy"}"#;
+    let grok_pre_tool_response = http_ok_json(grok_pre_tool_body);
+    let (grok_pre_tool_url, grok_pre_tool_daemon) = start_daemon(grok_pre_tool_response)?;
+    let grok_pre_tool_output =
+        run_temp_ghook("grok", "pre_tool_use", &grok_pre_tool_url, VALID_STDIN, &[])?;
+    let grok_pre_tool_request = join_daemon(grok_pre_tool_daemon)?;
+
+    assert_eq!(grok_pre_tool_output.status.code(), Some(0));
+    assert_json_stdout(
+        &grok_pre_tool_output,
+        serde_json::from_str(grok_pre_tool_body)?,
+    )?;
+    assert_stderr_empty(&grok_pre_tool_output, "grok pre_tool_use block")?;
+    assert!(grok_pre_tool_request.contains("\"hook_type\":\"pre_tool_use\""));
 
     Ok(())
 }
@@ -323,6 +414,31 @@ fn run_temp_ghook(
         stdin,
         extra_env,
     )
+}
+
+fn run_diagnose_with_dirs(
+    home: &Path,
+    gobby_home: &Path,
+    cli: &str,
+    hook_type: &str,
+    daemon_url: &str,
+) -> Result<Output, Box<dyn std::error::Error>> {
+    let output = Command::new(env!("CARGO_BIN_EXE_ghook"))
+        .arg("--diagnose")
+        .args(["--cli", cli, "--type", hook_type])
+        .env("HOME", home)
+        .env("GOBBY_HOME", gobby_home)
+        .env("GOBBY_DAEMON_URL", daemon_url)
+        .env_remove("GOBBY_HOOKS_DISABLED")
+        .env_remove("GOBBY_SHUTDOWN_HOOK_ALLOW_SECONDS")
+        .env_remove("GOBBY_SOURCE")
+        .env_remove("CLAUDE_CODE_ENTRYPOINT")
+        .env_remove("TMUX")
+        .env_remove("TMUX_PANE")
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()?;
+    Ok(output)
 }
 
 fn run_ghook_with_dirs(

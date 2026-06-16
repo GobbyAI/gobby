@@ -42,6 +42,13 @@ impl CliConfig {
                 critical_hooks: ["SessionStart", "Stop"].into_iter().collect(),
                 json_error_exit_code: 2,
             }),
+            "grok" => Some(Self {
+                source: "grok",
+                critical_hooks: ["session_start", "session_end", "pre_compact", "stop"]
+                    .into_iter()
+                    .collect(),
+                json_error_exit_code: 2,
+            }),
             "droid" => Some(Self {
                 source: "droid",
                 critical_hooks: HashSet::new(),
@@ -88,6 +95,18 @@ mod tests {
     }
 
     #[test]
+    fn grok_registry_uses_native_snake_case_hooks() {
+        let c = CliConfig::for_cli("grok").unwrap();
+        assert_eq!(c.source, "grok");
+        assert_eq!(c.json_error_exit_code, 2);
+        for hook in ["session_start", "session_end", "pre_compact", "stop"] {
+            assert!(c.is_critical_hook(hook), "{hook} should be critical");
+        }
+        assert!(!c.is_critical_hook("pre_tool_use"));
+        assert!(!c.is_critical_hook("Stop"));
+    }
+
+    #[test]
     fn droid_recognized_with_no_critical_hooks() {
         let c = CliConfig::for_cli("droid").unwrap();
         assert_eq!(c.source, "droid");
@@ -105,6 +124,7 @@ mod tests {
         assert!(CliConfig::for_cli("CLAUDE").is_some());
         assert!(CliConfig::for_cli("Codex").is_some());
         assert!(CliConfig::for_cli("Droid").is_some());
+        assert!(CliConfig::for_cli("GROK").is_some());
     }
 
     #[test]

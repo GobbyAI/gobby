@@ -160,6 +160,24 @@ mod tests {
         assert!(d.terminal_context_enabled);
     }
 
+    #[test]
+    fn grok_session_start_is_recognized_critical_with_terminal_context_enabled() {
+        let d = diagnose("grok", "session_start");
+        assert!(d.cli_recognized);
+        assert_eq!(d.source.as_deref(), Some("grok"));
+        assert!(d.critical);
+        assert!(d.terminal_context_enabled);
+    }
+
+    #[test]
+    fn grok_pre_tool_use_is_recognized_noncritical_without_terminal_context() {
+        let d = diagnose("grok", "pre_tool_use");
+        assert!(d.cli_recognized);
+        assert_eq!(d.source.as_deref(), Some("grok"));
+        assert!(!d.critical);
+        assert!(!d.terminal_context_enabled);
+    }
+
     fn compile_v2_schema() -> jsonschema::JSONSchema {
         let schema_bytes = include_bytes!("../schemas/diagnose-output.v2.schema.json");
         let schema: serde_json::Value = serde_json::from_slice(schema_bytes).unwrap();

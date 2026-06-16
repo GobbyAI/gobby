@@ -19,7 +19,7 @@ pub(crate) struct Args {
     #[arg(long)]
     pub(crate) version: bool,
 
-    /// Host CLI name (claude, codex, gemini, qwen, droid).
+    /// Host CLI name (claude, codex, gemini, qwen, droid, grok).
     #[arg(long)]
     pub(crate) cli: Option<String>,
 
