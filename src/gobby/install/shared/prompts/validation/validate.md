@@ -32,6 +32,15 @@ failing, or required evidence is absent. Do not return `valid` while describing 
 failed criterion, non-clean mypy/ruff/test result, missing verification, or errors
 that prevented a required gate from passing.
 
+Your `status` MUST be consistent with your `feedback`, in both directions. Just as you
+must not return `valid` while describing a failure, you must NOT return `invalid` (or
+`pending`) when your feedback affirms that every acceptance criterion is met and every
+required gate passed — if the implementation is clean and complete, the status is
+`valid`. Whenever you return `invalid` or `pending`, you MUST name the specific unmet
+criteria or failing/missing gates in `blocking_reasons`; an `invalid` verdict with an
+empty `blocking_reasons` list is not allowed. When you return `valid`, `blocking_reasons`
+MUST be an empty list.
+
 When a Changed File Manifest is present, treat it as authoritative for which
 files changed. Do not infer source, UI, test, docs, or config changes that are
 not listed there. If it says `Source/UI files changed: none`, do not require
@@ -52,5 +61,10 @@ File Context:
 {{ file_context }}
 {% endif %}
 IMPORTANT: Return ONLY a JSON object, nothing else. No explanation, no preamble.
-Format: {"status": "valid", "feedback": "..."}, {"status": "invalid", "feedback": "..."},
-or {"status": "pending", "feedback": "..."}
+The object has "status" (one of "valid", "invalid", "pending"), "feedback" (a short
+justification), and "blocking_reasons" (a list naming the specific unmet criteria or
+failing/missing gates — empty when status is "valid", non-empty when status is "invalid"
+or "pending").
+Format: {"status": "valid", "feedback": "...", "blocking_reasons": []},
+{"status": "invalid", "feedback": "...", "blocking_reasons": ["..."]},
+or {"status": "pending", "feedback": "...", "blocking_reasons": ["..."]}

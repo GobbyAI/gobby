@@ -16,7 +16,7 @@ import re
 import subprocess  # nosec B404 # subprocess needed for validation commands
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal
+from typing import Any, Literal
 
 from gobby.ai.text_generation import is_feature_generation_infrastructure_error
 from gobby.config.tasks import TaskValidationConfig
@@ -611,6 +611,30 @@ class ValidationResult:
     feedback: str | None = None
 
 
+def _is_unsupported_reject(result_data: dict[str, Any]) -> bool:
+    """Detect the inconsistent-verdict hallucination: an ``invalid`` status that
+    lists no blocking reasons.
+
+    The validation prompt requires a non-empty ``blocking_reasons`` list for any
+    non-``valid`` verdict, so an ``invalid`` that names none is internally
+    contradictory and not actionable (the model typically affirms success in
+    ``feedback`` yet stamps a reject). Only the unsupported ``invalid`` case is
+    targeted — reasoned rejects (non-empty ``blocking_reasons``) are never
+    second-guessed, keeping reconciliation symmetric and unbiased toward
+    ``valid``.
+    """
+    if str(result_data.get("status", "")).strip().lower() != "invalid":
+        return False
+    reasons = result_data.get("blocking_reasons")
+    if isinstance(reasons, list):
+        return not any(str(reason).strip() for reason in reasons)
+    if isinstance(reasons, str):
+        return not reasons.strip()
+    # Missing or null field: treat as "no reasons given" so the unsupported
+    # reject is re-validated rather than trusted.
+    return reasons is None
+
+
 class TaskValidator:
     """Validates task completion using LLM."""
 
@@ -795,6 +819,27 @@ class TaskValidator:
                 return ValidationResult(
                     status="pending", feedback="Validation failed: Empty response from LLM"
                 )
+
+            # Defense against inconsistent verdicts: an ``invalid`` that names no
+            # blocking reasons is the hallucination signature (the model affirms
+            # success in ``feedback`` yet stamps a reject). Such a verdict is not
+            # actionable, so re-validate exactly once with an independent sample.
+            # Reasoned rejects are never re-rolled, so this never biases toward
+            # ``valid``.
+            if _is_unsupported_reject(result_data):
+                logger.warning(
+                    "Task %s validation returned an unsupported 'invalid' verdict with no "
+                    "blocking reasons; re-validating once.",
+                    task_id,
+                )
+                reroll = await self.llm_service.call_json_feature(
+                    self.config,
+                    prompt,
+                    system_prompt=self.config.system_prompt,
+                    caller="tasks.validation",
+                )
+                if reroll:
+                    result_data = reroll
 
             return ValidationResult(
                 status=result_data.get("status", "pending"), feedback=result_data.get("feedback")

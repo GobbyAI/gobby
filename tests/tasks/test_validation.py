@@ -25,6 +25,7 @@ from gobby.tasks.validation import (
     VALIDATION_PROMPT_BUDGET_CHARS,
     TaskValidator,
     ValidationResult,
+    _is_unsupported_reject,
     extract_file_patterns_from_text,
     find_matching_files,
     get_commits_since,
@@ -227,6 +228,124 @@ class TestValidationInfrastructureFailure:
         )
 
         assert result.status == "pending"
+
+
+class TestInconsistentVerdictReconciliation:
+    """An ``invalid`` verdict with no blocking reasons is the model
+    self-contradiction signature (passing feedback + reject label). It is
+    re-validated once instead of being trusted; reasoned rejects are not."""
+
+    @pytest.fixture
+    def mock_llm(self):
+        llm = MagicMock(spec=LLMService)
+        llm.call_json_feature = AsyncMock()
+        return llm
+
+    @pytest.fixture
+    def config(self):
+        return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
+
+    @pytest.mark.parametrize(
+        ("result_data", "expected"),
+        [
+            ({"status": "invalid", "blocking_reasons": []}, True),
+            ({"status": "invalid"}, True),  # missing field treated as no reasons
+            ({"status": "invalid", "blocking_reasons": None}, True),
+            ({"status": "invalid", "blocking_reasons": ["   "]}, True),  # whitespace only
+            ({"status": "INVALID", "blocking_reasons": []}, True),  # case-insensitive
+            ({"status": "invalid", "blocking_reasons": ["missing 404 test"]}, False),
+            ({"status": "valid", "blocking_reasons": []}, False),
+            ({"status": "pending", "blocking_reasons": []}, False),  # only invalid targeted
+        ],
+    )
+    def test_is_unsupported_reject(self, result_data, expected) -> None:
+        assert _is_unsupported_reject(result_data) is expected
+
+    @pytest.mark.asyncio
+    async def test_unsupported_invalid_is_revalidated_once(self, config, mock_llm) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = [
+            {
+                "status": "invalid",
+                "feedback": "The implementation is correct and all checks pass.",
+                "blocking_reasons": [],
+            },
+            {
+                "status": "valid",
+                "feedback": "Implementation complete; all gates green.",
+                "blocking_reasons": [],
+            },
+        ]
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "valid"
+        assert mock_llm.call_json_feature.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_missing_blocking_reasons_invalid_is_revalidated(self, config, mock_llm) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = [
+            {"status": "invalid", "feedback": "Looks complete to me."},
+            {"status": "valid", "feedback": "Confirmed complete.", "blocking_reasons": []},
+        ]
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "valid"
+        assert mock_llm.call_json_feature.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_reasoned_invalid_is_not_revalidated(self, config, mock_llm) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {
+            "status": "invalid",
+            "feedback": "Missing a regression test for the 404 path.",
+            "blocking_reasons": ["No test covers the disabled-feature 404 branch."],
+        }
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "invalid"
+        assert mock_llm.call_json_feature.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_valid_verdict_is_not_revalidated(self, config, mock_llm) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {
+            "status": "valid",
+            "feedback": "All criteria satisfied.",
+            "blocking_reasons": [],
+        }
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "valid"
+        assert mock_llm.call_json_feature.call_count == 1
 
 
 class TestRunGitCommand:
