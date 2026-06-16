@@ -87,6 +87,10 @@ pub(super) fn parse_kotlin(source: &str, extra_files: &[(&str, &str)]) -> ParseR
     parse_source("src/main/kotlin/Sample.kt", source, extra_files)
 }
 
+pub(super) fn parse_scala(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
+    parse_source("src/main/scala/Sample.scala", source, extra_files)
+}
+
 pub(super) fn parse_swift(source: &str, extra_files: &[(&str, &str)]) -> ParseResult {
     parse_source("Sources/App/main.swift", source, extra_files)
 }

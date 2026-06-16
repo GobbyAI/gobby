@@ -12,6 +12,7 @@ mod java_csharp;
 mod php_kotlin;
 mod python_js;
 mod rest;
+mod scala;
 mod shell;
 
 use go_rust::{parse_go_import_statement, parse_rust_import_statement};
@@ -26,6 +27,7 @@ use rest::{
     parse_dart_import_statement, parse_elixir_import_statement, parse_ruby_import_statement,
     parse_swift_import_statement,
 };
+use scala::parse_scala_import_statement;
 use shell::parse_shell_import_statement;
 pub(crate) use shell::resolve_shell_local_callee;
 
@@ -47,6 +49,7 @@ pub(crate) fn parse_import_statement(
         "csharp" => parse_csharp_import_statement(text, rel_path, import_context, extracted),
         "php" => parse_php_import_statement(text, rel_path, import_context, extracted),
         "kotlin" => parse_kotlin_import_statement(text, rel_path, import_context, extracted),
+        "scala" => parse_scala_import_statement(text, rel_path, import_context, extracted),
         "swift" => parse_swift_import_statement(text, rel_path, import_context, extracted),
         "ruby" => parse_ruby_import_statement(text, rel_path, import_context, extracted),
         "dart" => parse_dart_import_statement(text, rel_path, import_context, extracted),

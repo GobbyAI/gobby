@@ -264,6 +264,27 @@ const KOTLIN: LanguageSpec = LanguageSpec {
     "#,
 };
 
+const SCALA: LanguageSpec = LanguageSpec {
+    extensions: &[".scala", ".sc"],
+    symbol_query: r#"
+        (class_definition name: [(identifier) (operator_identifier)] @name) @definition.class
+        (object_definition name: [(identifier) (operator_identifier)] @name) @definition.class
+        (trait_definition name: [(identifier) (operator_identifier)] @name) @definition.type
+        (function_definition name: [(identifier) (operator_identifier)] @name) @definition.function
+    "#,
+    import_query: r#"
+        (import_declaration) @import
+    "#,
+    call_query: r#"
+        (call_expression function: (identifier) @name) @call
+        (call_expression function: (field_expression field: (identifier) @name)) @call
+        (call_expression function: (generic_function function: (identifier) @name)) @call
+        (call_expression function: (generic_function function: (field_expression field: (identifier) @name))) @call
+        (instance_expression (type_identifier) @name) @call
+        (instance_expression (generic_type type: (type_identifier) @name)) @call
+    "#,
+};
+
 const YAML: LanguageSpec = LanguageSpec {
     extensions: &[".yaml", ".yml"],
     symbol_query: r#"
@@ -334,6 +355,7 @@ const SPECS: &[(&str, &LanguageSpec)] = &[
     ("elixir", &ELIXIR),
     ("ruby", &RUBY),
     ("kotlin", &KOTLIN),
+    ("scala", &SCALA),
     ("swift", &SWIFT),
     ("bash", &BASH),
     ("yaml", &YAML),
@@ -392,6 +414,7 @@ pub fn get_ts_language(lang: &str) -> Option<Language> {
         "php" => tree_sitter_php::LANGUAGE_PHP,
         "swift" => tree_sitter_swift::LANGUAGE,
         "kotlin" => tree_sitter_kotlin_ng::LANGUAGE,
+        "scala" => tree_sitter_scala::LANGUAGE,
         "dart" => tree_sitter_dart::LANGUAGE,
         "elixir" => tree_sitter_elixir::LANGUAGE,
         "bash" => tree_sitter_bash::LANGUAGE,
@@ -445,6 +468,12 @@ mod tests {
     fn bash_extensions_detect() {
         assert_eq!(detect_language("scripts/deploy.sh"), Some("bash"));
         assert_eq!(detect_language("scripts/env.bash"), Some("bash"));
+    }
+
+    #[test]
+    fn scala_extensions_detect() {
+        assert_eq!(detect_language("src/main/scala/App.scala"), Some("scala"));
+        assert_eq!(detect_language("scripts/build.sc"), Some("scala"));
     }
 
     #[test]

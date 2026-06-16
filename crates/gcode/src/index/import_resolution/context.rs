@@ -50,6 +50,13 @@ pub struct ImportResolutionContext {
     /// package scope, so a name can be in any file of its package. The post-write
     /// DB pass narrows to the real symbol.
     pub(super) kotlin_package_files: HashMap<String, Vec<String>>,
+    /// Maps a locally-declared Scala package (`com.example`) to the
+    /// project-relative files declaring it. Scala imports name a package member
+    /// (`import com.example.Widget`) or selector group
+    /// (`import com.example.{render, Widget}`); either resolves against every
+    /// `.scala`/`.sc` file in the package, then the post-write DB pass narrows to
+    /// the real symbol.
+    pub(super) scala_package_files: HashMap<String, Vec<String>>,
     pub(super) php_local_symbols: HashSet<String>,
     /// Maps a locally-declared PHP symbol name to the project-relative files that
     /// declare it. Both the bare name (`Widget`, `helper`) and the
@@ -178,6 +185,16 @@ impl ImportResolutionContext {
     /// `pkg.Type` is a type, not a declared package).
     pub(super) fn kotlin_package_files(&self, package: &str) -> Vec<String> {
         self.kotlin_package_files
+            .get(package)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Project-relative files declaring the local Scala `package`. Empty when no
+    /// indexed local file declares that package (external import or unknown
+    /// package).
+    pub(super) fn scala_package_files(&self, package: &str) -> Vec<String> {
+        self.scala_package_files
             .get(package)
             .cloned()
             .unwrap_or_default()
@@ -415,6 +432,7 @@ pub fn build_import_resolution_context_with_overrides(
         csharp_local_roots: csharp_index.local_roots,
         csharp_type_files: csharp_index.type_files,
         kotlin_package_files: build_kotlin_package_files(root_path, candidate_files),
+        scala_package_files: build_scala_package_files(root_path, candidate_files),
         php_local_symbols: php_symbol_files.keys().cloned().collect(),
         php_symbol_files,
         ruby_local_constant_roots: ruby_constant_files.keys().cloned().collect(),
@@ -875,6 +893,79 @@ pub(super) fn build_kotlin_package_files(
                 break;
             }
             Some((package, rel_str))
+        })
+        .fold(
+            HashMap::<String, Vec<String>>::new,
+            |mut acc, (package, rel)| {
+                acc.entry(package).or_default().push(rel);
+                acc
+            },
+        )
+        .reduce(HashMap::<String, Vec<String>>::new, |mut acc, map| {
+            for (package, files) in map {
+                acc.entry(package).or_default().extend(files);
+            }
+            acc
+        });
+    for files in package_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    package_files
+}
+
+/// Maps each locally-declared Scala package to the project-relative files that
+/// declare it, by reading leading `package` clauses in `.scala` and `.sc`
+/// files. Multiple leading package clauses are concatenated (`package a`
+/// followed by `package b` means `a.b`). Files with no package clauses belong
+/// to the root package.
+pub(super) fn build_scala_package_files(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> HashMap<String, Vec<String>> {
+    let mut package_files = candidate_files
+        .par_iter()
+        .filter_map(|path| {
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if ext != "scala" && ext != "sc" {
+                return None;
+            }
+            let file = File::open(path).ok()?;
+            let rel = path.strip_prefix(root_path).unwrap_or(path);
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let mut package_segments = Vec::new();
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                let line = line.trim();
+                if line.is_empty()
+                    || line.starts_with("//")
+                    || line.starts_with("/*")
+                    || line.starts_with('*')
+                {
+                    continue;
+                }
+                let Some(rest) = line.strip_prefix("package ") else {
+                    break;
+                };
+                let rest = rest.trim();
+                if rest.starts_with("object ") {
+                    break;
+                }
+                let segment = rest
+                    .trim_end_matches([';', '{'])
+                    .split_whitespace()
+                    .next()
+                    .unwrap_or_default()
+                    .trim_end_matches('{')
+                    .trim();
+                if segment.is_empty() {
+                    break;
+                }
+                package_segments.push(segment.to_string());
+            }
+            Some((package_segments.join("."), rel_str))
         })
         .fold(
             HashMap::<String, Vec<String>>::new,

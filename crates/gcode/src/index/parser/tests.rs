@@ -5,4 +5,5 @@ mod kotlin_swift;
 mod php_ruby_dart_elixir;
 mod python_javascript_typescript;
 mod resolution;
+mod scala;
 mod semantic;
