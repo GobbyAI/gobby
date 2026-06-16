@@ -14,6 +14,8 @@ mod local_csharp_kotlin_ruby;
 mod local_php_swift_dart_elixir;
 #[path = "graph_standalone/local_python_go_java.rs"]
 mod local_python_go_java;
+#[path = "graph_standalone/local_rust.rs"]
+mod local_rust;
 #[path = "graph_standalone/phantom_targets.rs"]
 mod phantom_targets;
 #[path = "graph_standalone/smoke.rs"]

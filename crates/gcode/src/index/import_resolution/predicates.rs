@@ -3,7 +3,7 @@ use std::sync::OnceLock;
 
 use super::context::{ImportResolutionContext, JS_BUILTIN_MODULES};
 
-const STANDARD_RUST_CRATES: &[&str] = &["std", "core", "alloc", "proc_macro", "test"];
+pub(super) const STANDARD_RUST_CRATES: &[&str] = &["std", "core", "alloc", "proc_macro", "test"];
 
 pub(super) fn is_external_python_module(
     module: &str,

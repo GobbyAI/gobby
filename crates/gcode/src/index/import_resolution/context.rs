@@ -153,7 +153,12 @@ impl ImportResolutionContext {
         rel_path: &str,
         path: &str,
     ) -> Option<LocalCallBinding> {
-        let target = rust_import_target(rel_path, self.rust_self_crate_name.as_deref(), path)?;
+        let target = rust_import_target(
+            rel_path,
+            self.rust_self_crate_name.as_deref(),
+            &self.rust_external_crates,
+            path,
+        )?;
         Some(LocalCallBinding {
             candidate_files: rust_candidate_files(&target.source_root, &target.module),
             callee_name: target.name,
@@ -171,6 +176,7 @@ impl ImportResolutionContext {
         let target = rust_qualified_call_target(
             rel_path,
             self.rust_self_crate_name.as_deref(),
+            &self.rust_external_crates,
             qualifier_path,
             name,
         )?;

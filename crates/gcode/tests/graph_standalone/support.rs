@@ -13,6 +13,7 @@ pub(super) const GO_LOCAL_PROJECT_ID: &str = "graph-standalone-go-local";
 pub(super) const CPP_LOCAL_PROJECT_ID: &str = "graph-standalone-cpp-local";
 pub(super) const CPP_DB_LOCAL_PROJECT_ID: &str = "graph-standalone-cpp-db-local";
 pub(super) const JAVA_LOCAL_PROJECT_ID: &str = "graph-standalone-java-local";
+pub(super) const RUST_LOCAL_PROJECT_ID: &str = "graph-standalone-rust-local";
 pub(super) const CSHARP_LOCAL_PROJECT_ID: &str = "graph-standalone-csharp-local";
 pub(super) const KOTLIN_LOCAL_PROJECT_ID: &str = "graph-standalone-kotlin-local";
 pub(super) const RUBY_LOCAL_PROJECT_ID: &str = "graph-standalone-ruby-local";

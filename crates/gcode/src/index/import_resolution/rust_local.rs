@@ -1,3 +1,6 @@
+use super::predicates::STANDARD_RUST_CRATES;
+use std::collections::HashSet;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct RustLocalTarget {
     pub(crate) source_root: String,
@@ -32,12 +35,18 @@ pub(crate) fn rust_candidate_files(source_root: &str, module: &str) -> Vec<Strin
 pub(crate) fn rust_import_target(
     rel_path: &str,
     self_crate_name: Option<&str>,
+    rust_external_crates: &HashSet<String>,
     path: &str,
 ) -> Option<RustLocalTarget> {
     let context = rust_module_context_for_rel_path(rel_path)?;
     let segments = rust_path_segments(path);
     let (name, module_segments) = segments.split_last()?;
-    let module = rust_module_for_segments(&context, self_crate_name, module_segments)?;
+    let module = rust_module_for_segments(
+        &context,
+        self_crate_name,
+        rust_external_crates,
+        module_segments,
+    )?;
     Some(RustLocalTarget {
         source_root: context.source_root,
         module,
@@ -48,12 +57,14 @@ pub(crate) fn rust_import_target(
 pub(crate) fn rust_qualified_call_target(
     rel_path: &str,
     self_crate_name: Option<&str>,
+    rust_external_crates: &HashSet<String>,
     qualifier_path: &str,
     callee_name: &str,
 ) -> Option<RustLocalTarget> {
     let context = rust_module_context_for_rel_path(rel_path)?;
     let segments = rust_path_segments(qualifier_path);
-    let module = rust_module_for_segments(&context, self_crate_name, &segments)?;
+    let module =
+        rust_module_for_segments(&context, self_crate_name, rust_external_crates, &segments)?;
     Some(RustLocalTarget {
         source_root: context.source_root,
         module,
@@ -84,6 +95,7 @@ fn rust_module_context_for_rel_path(rel_path: &str) -> Option<RustModuleContext>
 fn rust_module_for_segments(
     context: &RustModuleContext,
     self_crate_name: Option<&str>,
+    rust_external_crates: &HashSet<String>,
     segments: &[&str],
 ) -> Option<String> {
     let (first, rest) = segments.split_first()?;
@@ -92,10 +104,9 @@ fn rust_module_for_segments(
         "self" => Some(join_rust_module(&context.module, rest)),
         "super" => Some(rust_super_module(&context.module, rest)),
         root if Some(root) == self_crate_name => Some(rest.join("::")),
-        // Any other leading segment names an external crate (Rust 2018+: a bare
-        // `foo::bar` path is the crate `foo`, not a local module). Leave it for
-        // external resolution rather than inventing a local candidate file.
-        _ => None,
+        root if STANDARD_RUST_CRATES.contains(&root) => None,
+        root if rust_external_crates.contains(root) => None,
+        _ => Some(join_rust_module(&context.module, segments)),
     }
 }
 
@@ -150,21 +161,57 @@ mod tests {
     #[test]
     fn import_target_resolves_crate_self_super_and_self_crate_roots() {
         let rel = "src/index/context.rs";
-        let crate_target = rust_import_target(rel, Some("app"), "crate::service::helper").unwrap();
+        let external_crates = HashSet::new();
+        let crate_target =
+            rust_import_target(rel, Some("app"), &external_crates, "crate::service::helper")
+                .unwrap();
         assert_eq!(crate_target.module, "service");
         assert_eq!(crate_target.name, "helper");
 
-        let super_target = rust_import_target(rel, Some("app"), "super::sibling::run").unwrap();
+        let super_target =
+            rust_import_target(rel, Some("app"), &external_crates, "super::sibling::run").unwrap();
         assert_eq!(super_target.module, "index::sibling");
 
-        let self_crate_target = rust_import_target(rel, Some("app"), "app::service::run").unwrap();
+        let self_crate_target =
+            rust_import_target(rel, Some("app"), &external_crates, "app::service::run").unwrap();
         assert_eq!(self_crate_target.module, "service");
     }
 
     #[test]
     fn import_target_leaves_external_crate_paths_unresolved() {
+        let external_crates = HashSet::from(["serde_json".to_string()]);
         // External crate roots must not be invented as local candidate files.
-        assert!(rust_import_target("src/lib.rs", Some("app"), "serde_json::from_str").is_none());
-        assert!(rust_import_target("src/lib.rs", None, "std::fs::read").is_none());
+        assert!(
+            rust_import_target(
+                "src/lib.rs",
+                Some("app"),
+                &external_crates,
+                "serde_json::from_str",
+            )
+            .is_none()
+        );
+        assert!(rust_import_target("src/lib.rs", None, &HashSet::new(), "std::fs::read").is_none());
+    }
+
+    #[test]
+    fn import_target_resolves_bare_non_external_root_relative_to_current_module() {
+        let target =
+            rust_import_target("src/app/main.rs", Some("app"), &HashSet::new(), "foo::bar")
+                .unwrap();
+
+        assert_eq!(target.source_root, "src");
+        assert_eq!(target.module, "app::foo");
+        assert_eq!(target.name, "bar");
+    }
+
+    #[test]
+    fn qualified_call_resolves_bare_non_external_root_from_crate_root() {
+        let target =
+            rust_qualified_call_target("src/main.rs", Some("app"), &HashSet::new(), "foo", "bar")
+                .unwrap();
+
+        assert_eq!(target.source_root, "src");
+        assert_eq!(target.module, "foo");
+        assert_eq!(target.name, "bar");
     }
 }
