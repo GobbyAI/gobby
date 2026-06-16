@@ -324,11 +324,21 @@ class TestResolveContextWindow:
         result = resolve_context_window("claude-opus-4-6", model_usage, overrides=overrides)
         assert result == 500_000
 
-    def test_provider_prefix_handled(self) -> None:
-        """Provider-prefixed model names work via registry lookup."""
+    @pytest.mark.parametrize(
+        ("model", "expected"),
+        [
+            ("anthropic/claude-sonnet-4-6", 200_000),
+            ("claude/claude-sonnet-4-6", 200_000),
+            ("gemini/gemini-3.5-flash", 1_048_576),
+            ("codex/gpt-5.3-codex", 258_400),
+            ("grok/grok-composer-2.5-fast", 200_000),
+        ],
+    )
+    def test_provider_prefix_handled(self, model: str, expected: int) -> None:
+        """Provider-prefixed model names work via registry and static lookup."""
         with patch("gobby.llm.model_registry.lookup_context_window", side_effect=_mock_lookup):
-            result = resolve_context_window("anthropic/claude-sonnet-4-6", None)
-        assert result == 200_000
+            result = resolve_context_window(model, None)
+        assert result == expected
 
     def test_qwen_auth_suffix_stripped_for_registry_lookup(self) -> None:
         """Qwen auth suffixes are removed before registry fallback lookup."""

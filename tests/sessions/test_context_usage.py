@@ -16,8 +16,25 @@ from gobby.sessions.context_usage import (
 pytestmark = pytest.mark.unit
 
 
-def test_agy_uses_gemini_family_context_window_fallback() -> None:
-    assert context_window_for_source_model("agy", "gemini-2.5-pro") == 1_000_000
+@pytest.mark.parametrize(
+    ("model", "expected"),
+    [
+        ("gemini-3.5-flash", 1_048_576),
+        ("gemini/gemini-3.5-flash", 1_048_576),
+        ("Gemini 3.5 Flash (Medium)", 1_048_576),
+        ("Gemini 3.1 Pro (High)", 1_000_000),
+        ("claude-sonnet-4-6", 200_000),
+        ("Claude Sonnet 4.6 (Thinking)", 200_000),
+        ("Claude Opus 4.6 (Thinking)", 1_000_000),
+        ("GPT-OSS 120B (Medium)", 131_072),
+    ],
+)
+def test_agy_uses_model_family_context_windows(model: str, expected: int) -> None:
+    assert context_window_for_source_model("agy", model) == expected
+
+
+def test_agy_does_not_use_gemini_fallback_for_unknown_models() -> None:
+    assert context_window_for_source_model("agy", "unknown-claudeish-model") is None
 
 
 def test_grok_window_only_snapshot_uses_model_metadata() -> None:

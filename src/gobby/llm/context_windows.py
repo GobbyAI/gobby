@@ -36,9 +36,15 @@ PROVIDER_METADATA_CONTEXT_LENGTH_FIELDS = (
 )
 _QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 _KNOWN_PROVIDER_PREFIXES = (
+    "agy/",
     "anthropic/",
+    "claude/",
+    "codex/",
+    "droid/",
+    "gemini/",
     "openai/",
     "google/",
+    "grok/",
     "qwen/",
     "z-ai/",
     "moonshotai/",

@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import logging
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
-from gobby.llm.context_windows import resolve_context_window
+from gobby.llm.context_windows import normalize_model_lookup_id, resolve_context_window
 from gobby.storage.context_usage_snapshot import ContextUsageSnapshot, ContextUsageSource
 
 if TYPE_CHECKING:
@@ -18,6 +19,10 @@ _SOURCES: frozenset[str] = frozenset(
     {"claude", "codex", "gemini", "qwen", "droid", "agy", "grok", "web_chat"}
 )
 logger = logging.getLogger(__name__)
+_AGY_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
+_AGY_MODEL_ALIASES: dict[str, str] = {
+    "gemini-3.1-pro": "gemini-3.1-pro-preview",
+}
 
 
 def normalize_context_usage_source(source: str | None) -> ContextUsageSource | None:
@@ -82,8 +87,34 @@ def context_window_for_source_model(
 ) -> int | None:
     """Resolve context-window metadata for a provider/model pair."""
     snapshot_source = normalize_context_usage_source(source) if isinstance(source, str) else source
-    provider = "gemini" if snapshot_source == "agy" else snapshot_source
+    if snapshot_source == "agy":
+        return _context_window_for_agy_model(model)
+    provider = snapshot_source
     return resolve_context_window(model, provider=provider)
+
+
+def _context_window_for_agy_model(model: str | None) -> int | None:
+    """Resolve AGY windows by the model family currently exposed by `agy models`."""
+    lookup_model = _normalize_agy_model_lookup_id(model)
+    if lookup_model is None:
+        return None
+    if lookup_model.startswith("gemini-"):
+        return resolve_context_window(lookup_model, provider="gemini")
+    if lookup_model.startswith("claude-"):
+        return resolve_context_window(lookup_model, provider="claude")
+    if lookup_model.startswith("gpt-oss-"):
+        return 131_072
+    return None
+
+
+def _normalize_agy_model_lookup_id(model: str | None) -> str | None:
+    if not model:
+        return None
+    without_suffix = _AGY_LABEL_SUFFIX_RE.sub("", model.strip())
+    normalized = re.sub(r"[^a-z0-9.]+", "-", normalize_model_lookup_id(without_suffix)).strip("-")
+    if not normalized:
+        return None
+    return _AGY_MODEL_ALIASES.get(normalized, normalized)
 
 
 def effective_context_window_for_session(
