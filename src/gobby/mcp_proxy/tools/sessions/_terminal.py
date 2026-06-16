@@ -59,10 +59,66 @@ _CLI_COMPACT_COMMANDS: dict[str, str] = {
     "qwen": "/compress",
     "droid": "/compress",
 }
-_CODEX_INTERRUPT_KEY = "Escape"
+_DEFAULT_COMPACT_INTERRUPT_KEY = "Escape"
+_CLI_COMPACT_INTERRUPT_KEYS: dict[str, str] = {
+    "codex": "C-c",
+}
 _CODEX_INTERRUPT_SETTLE_SECONDS = 0.2
+_COMPACTION_REJECTION_SETTLE_SECONDS = 0.1
+_COMPACTION_REJECTION_CAPTURE_LINES = 30
+_COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
 _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS = 300.0
 _COMPACT_HANDOFF_FALLBACK_MAX_CHARS = 20_000
+
+
+def _compact_interrupt_key(source: str | None) -> str:
+    if source is None:
+        return _DEFAULT_COMPACT_INTERRUPT_KEY
+    return _CLI_COMPACT_INTERRUPT_KEYS.get(source, _DEFAULT_COMPACT_INTERRUPT_KEY)
+
+
+def _fresh_output_delta(before: str, after: str) -> str:
+    if not before:
+        return after
+    if after.startswith(before):
+        return after[len(before) :]
+
+    before_lines = before.splitlines()
+    after_lines = after.splitlines()
+    max_overlap = min(len(before_lines), len(after_lines))
+    for overlap in range(max_overlap, 0, -1):
+        if before_lines[-overlap:] == after_lines[:overlap]:
+            return "\n".join(after_lines[overlap:])
+    return ""
+
+
+async def _capture_pane_snapshot(tmux: TmuxSessionManager, target: str) -> str | None:
+    try:
+        output = await tmux.capture_pane(target, lines=_COMPACTION_REJECTION_CAPTURE_LINES)
+    except Exception:
+        logger.debug("Failed to capture tmux target %s for compaction rejection check", target)
+        return None
+    if isinstance(output, str):
+        return output
+    return None
+
+
+def _detect_compaction_rejection(
+    before: str | None,
+    after: str | None,
+    command: str,
+) -> dict[str, str] | None:
+    if before is None or after is None:
+        return None
+
+    rejection_message = f"'{command}' is disabled while a task is in progress"
+    if rejection_message not in _fresh_output_delta(before, after):
+        return None
+    return {
+        "error_code": _COMPACTION_REJECTION_ERROR_CODE,
+        "rejected_command": command,
+        "rejection_message": rejection_message,
+    }
 
 
 async def _send_tmux_keys(
@@ -123,11 +179,12 @@ async def _send_codex_compaction_command(
     settle_seconds: float | None = None,
 ) -> tuple[bool, str | None]:
     """Backward-compatible wrapper for tests around the terminal compaction flow."""
-    ok, reason, _continuation_pending = await _send_terminal_compaction_command(
+    ok, reason, _continuation_pending, _failure_detail = await _send_terminal_compaction_command(
         tmux,
         target,
         command,
         session_id,
+        cli_source="codex",
         mark_continuation_pending=lambda: False,
         clear_continuation_pending=lambda: False,
         settle_seconds=settle_seconds,
@@ -141,33 +198,51 @@ async def _send_terminal_compaction_command(
     command: str,
     session_id: str,
     *,
+    cli_source: str | None,
     mark_continuation_pending: Callable[[], bool],
     clear_continuation_pending: Callable[[], bool],
     settle_seconds: float | None = None,
-) -> tuple[bool, str | None, bool]:
+) -> tuple[bool, str | None, bool, dict[str, str] | None]:
     """Interrupt the active prompt, mark continuation pending, then compact."""
     ok, reason = await _send_tmux_keys(
         tmux,
         target,
-        _CODEX_INTERRUPT_KEY,
+        _compact_interrupt_key(cli_source),
         session_id,
         literal=False,
         action="sending compaction interrupt",
     )
     if not ok:
-        return False, reason, False
+        return False, reason, False, None
 
     delay = _CODEX_INTERRUPT_SETTLE_SECONDS if settle_seconds is None else settle_seconds
     if delay > 0:
         await asyncio.sleep(delay)
 
+    before_command = await _capture_pane_snapshot(tmux, target)
     continuation_pending = bool(mark_continuation_pending())
     ok, reason = await _send_compaction_command(tmux, target, command, session_id)
     if not ok:
         if continuation_pending:
             clear_continuation_pending()
-        return False, reason, False
-    return True, None, continuation_pending
+        return False, reason, False, None
+
+    rejection_delay = (
+        _COMPACTION_REJECTION_SETTLE_SECONDS if settle_seconds is None else settle_seconds
+    )
+    if rejection_delay > 0:
+        await asyncio.sleep(rejection_delay)
+
+    rejection = _detect_compaction_rejection(
+        before_command,
+        await _capture_pane_snapshot(tmux, target),
+        command,
+    )
+    if rejection is not None:
+        if continuation_pending:
+            clear_continuation_pending()
+        return False, rejection["rejection_message"], False, rejection
+    return True, None, continuation_pending, None
 
 
 def _resolve_tmux_target(
@@ -789,11 +864,12 @@ def register_terminal_tools(
             required_skills,
             summary_session_id=resolved_session_id,
         )
-        ok, reason, continuation_pending = await _send_terminal_compaction_command(
+        ok, reason, continuation_pending, failure_detail = await _send_terminal_compaction_command(
             tmux,
             target,
             command,
             resolved_session_id,
+            cli_source=source,
             mark_continuation_pending=lambda: mark_compact_self_continuation_pending(
                 db,
                 resolved_session_id,
@@ -807,10 +883,13 @@ def register_terminal_tools(
         )
 
         if not ok:
-            return {
+            failure_result = {
                 "compacted": False,
                 "reason": reason,
             }
+            if failure_detail is not None:
+                failure_result.update(failure_detail)
+            return failure_result
         if continuation_pending:
             schedule_compact_self_continuation_fallback(
                 db,

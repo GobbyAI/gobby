@@ -721,7 +721,7 @@ class TmuxSessionManager:
         rc, stdout, _stderr = await self._run(
             "capture-pane",
             "-t",
-            _exact_session_target(session_name),
+            _send_keys_target(session_name),
             "-p",  # print to stdout
             "-J",  # join wrapped lines
             f"-S-{max(lines, 0)}",  # tmux returns history plus the visible pane

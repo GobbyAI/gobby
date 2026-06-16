@@ -1660,6 +1660,31 @@ class TestTmuxSessionManagerExtended:
             mock_run.return_value = (0, "line 1\nline 2\n", "")
             result = await mgr.capture_pane("my-session", lines=2)
         assert result == "line 1\nline 2\n"
+        mock_run.assert_awaited_once_with(
+            "capture-pane",
+            "-t",
+            "=my-session:",
+            "-p",
+            "-J",
+            "-S-2",
+        )
+
+    @pytest.mark.asyncio
+    async def test_capture_pane_preserves_pane_target(self) -> None:
+        """capture_pane targets raw tmux pane IDs directly."""
+        mgr = TmuxSessionManager()
+        with patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run:
+            mock_run.return_value = (0, "line 1\nline 2\n", "")
+            result = await mgr.capture_pane("%12", lines=2)
+        assert result == "line 1\nline 2\n"
+        mock_run.assert_awaited_once_with(
+            "capture-pane",
+            "-t",
+            "%12",
+            "-p",
+            "-J",
+            "-S-2",
+        )
 
     @pytest.mark.asyncio
     async def test_capture_pane_limits_output_to_requested_lines(self) -> None:

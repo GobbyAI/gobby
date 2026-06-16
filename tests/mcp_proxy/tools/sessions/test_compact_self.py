@@ -205,7 +205,7 @@ class TestCompactSelfTerminalPath:
             "continuation_pending": True,
         }
         assert tmux.send_keys.await_args_list == [
-            call("%12", "Escape", literal=False),
+            call("%12", "C-c", literal=False),
             call("%12", "/compact\n", literal=True),
         ]
 
@@ -225,7 +225,7 @@ class TestCompactSelfTerminalPath:
         assert ok is False
         assert reason is not None
         assert "compaction interrupt" in reason
-        tmux.send_keys.assert_awaited_once_with("%12", "Escape", literal=False)
+        tmux.send_keys.assert_awaited_once_with("%12", "C-c", literal=False)
 
     def test_gemini_session_fires_slash_compress(self) -> None:
         session = _make_terminal_session("gemini")
@@ -374,6 +374,48 @@ class TestCompactSelfTerminalPath:
         mock_mark.assert_called_once()
         mock_clear.assert_called_once()
 
+    def test_terminal_session_clears_continuation_on_fresh_slash_rejection(self) -> None:
+        session = _make_terminal_session("codex")
+        registry, tmux = _register_compact_self(session)
+        old_output = "old refusal\n'/compact' is disabled while a task is in progress\n$ "
+        tmux.capture_pane = AsyncMock(
+            side_effect=[
+                old_output,
+                old_output + "/compact\n'/compact' is disabled while a task is in progress\n",
+            ]
+        )
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.mark_compact_self_continuation_pending",
+                return_value=True,
+            ) as mock_mark,
+            patch(
+                "gobby.mcp_proxy.tools.sessions._terminal.clear_compact_self_continuation_pending",
+                return_value=True,
+            ) as mock_clear,
+            patch("gobby.mcp_proxy.tools.sessions._terminal.asyncio.sleep", new=AsyncMock()),
+        ):
+            result = _call_compact_self(registry, tmux, session_id="s1")
+
+        assert result == {
+            "compacted": False,
+            "reason": "'/compact' is disabled while a task is in progress",
+            "error_code": "compaction_command_rejected",
+            "rejected_command": "/compact",
+            "rejection_message": "'/compact' is disabled while a task is in progress",
+        }
+        assert tmux.send_keys.await_args_list == [
+            call("%12", "C-c", literal=False),
+            call("%12", "/compact\n", literal=True),
+        ]
+        assert tmux.capture_pane.await_args_list == [
+            call("%12", lines=30),
+            call("%12", lines=30),
+        ]
+        mock_mark.assert_called_once()
+        mock_clear.assert_called_once()
+
     def test_terminal_session_reuses_fresh_cached_handoff_before_compacting(self) -> None:
         events: list[str] = []
         session = _make_terminal_session("codex")
@@ -440,7 +482,7 @@ class TestCompactSelfTerminalPath:
         assert "handoff_context_refreshed" not in result
         assert "handoff_context_fallback" not in result
         assert "handoff_context_background_refresh_scheduled" not in result
-        assert events == ["status:handoff_ready", "tmux:Escape", "tmux:/compact\n"]
+        assert events == ["status:handoff_ready", "tmux:C-c", "tmux:/compact\n"]
         mock_refresh.assert_not_called()
         assert handoff["context_type"] == "summary_markdown"
         assert handoff["context"] == "# Fresh Compact Handoff\n\nReady."
@@ -559,7 +601,7 @@ class TestCompactSelfTerminalPath:
         assert events == [
             "persist_summary_state",
             "status:handoff_ready",
-            "tmux:Escape",
+            "tmux:C-c",
             "tmux:/compact\n",
         ]
         assert persist_calls == [
@@ -681,7 +723,7 @@ class TestCompactSelfTerminalPath:
         assert events == [
             "persist_summary_state",
             "status:handoff_ready",
-            "tmux:Escape",
+            "tmux:C-c",
             "tmux:/compact\n",
         ]
         assert scheduled == [{"name": "compact-handoff-refresh-s1"}]
