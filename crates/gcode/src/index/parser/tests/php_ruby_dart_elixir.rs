@@ -69,6 +69,29 @@ macro_rules! assert_dart_local_import {
     }};
 }
 
+/// Asserts a `local_import` call exists for `$callee_name` whose carried
+/// candidate files include `$expected_file`. Matching on the expected file lets
+/// a test distinguish calls that share a callee name across modules. The
+/// post-write DB pass narrows these candidates to the real `code_symbols` id.
+macro_rules! assert_elixir_local_import {
+    ($parsed:expr, $callee_name:expr, $expected_file:expr) => {{
+        let callee_name: &str = $callee_name;
+        let found = $parsed.calls.iter().any(|call| {
+            call.callee_target_kind.as_str() == "local_import"
+                && call.callee_name == callee_name
+                && call
+                    .local_import_candidate_files()
+                    .iter()
+                    .any(|file| file == $expected_file)
+        });
+        assert!(
+            found,
+            "no local_import call for {callee_name} carried candidate file {}; calls: {:?}",
+            $expected_file, $parsed.calls
+        );
+    }};
+}
+
 #[test]
 fn classifies_external_php_namespace_and_fully_qualified_calls() {
     let parsed = parse_php(
@@ -689,7 +712,11 @@ end
 }
 
 #[test]
-fn leaves_elixir_local_module_collision_and_imported_calls_unresolved() {
+fn resolves_elixir_local_module_collision_calls_to_declaring_file() {
+    // A locally-declared `Jason` module shadows the same-named hex dependency, so
+    // both the fully-qualified `Jason.decode!` and the bare `decode!` (imported)
+    // bind to the local file rather than the external `Jason` dependency. The
+    // post-write DB pass narrows against the file's real symbols.
     let parsed = parse_elixir(
         r#"
 defmodule App.Sample do
@@ -713,12 +740,89 @@ end
         ],
     );
 
+    // Every call binds locally (`local_import`) rather than to the `Jason`
+    // dependency — so the local module wins the name collision. The bare and
+    // fully-qualified `decode!` calls both carry the local file as their
+    // candidate; the post-write DB pass narrows against its real symbols.
     assert!(
         parsed
             .calls
             .iter()
-            .all(|call| call.callee_target_kind.as_str() == "unresolved")
+            .all(|call| call.callee_target_kind.as_str() == "local_import"),
+        "local collision must bind locally, never to the external Jason dependency; got {:?}",
+        parsed.calls
     );
+    assert_elixir_local_import!(parsed, "decode!", "lib/jason.ex");
+}
+
+#[test]
+fn resolves_elixir_fully_qualified_and_aliased_local_calls() {
+    let parsed = parse_elixir(
+        r#"
+defmodule App.Sample do
+  alias App.Greeter
+
+  def run(name) do
+    App.Helper.format(name)
+    Greeter.greet(name)
+  end
+end
+"#,
+        &[
+            (
+                "lib/helper.ex",
+                r#"
+defmodule App.Helper do
+  def format(value) do
+    value
+  end
+end
+"#,
+            ),
+            (
+                "lib/greeter.ex",
+                r#"
+defmodule App.Greeter do
+  def greet(name) do
+    name
+  end
+end
+"#,
+            ),
+        ],
+    );
+
+    // Fully-qualified `App.Helper.format` resolves the module path directly.
+    assert_elixir_local_import!(parsed, "format", "lib/helper.ex");
+    // Aliased `Greeter.greet` resolves the local alias through `local_member`.
+    assert_elixir_local_import!(parsed, "greet", "lib/greeter.ex");
+}
+
+#[test]
+fn resolves_elixir_imported_local_bare_calls() {
+    let parsed = parse_elixir(
+        r#"
+defmodule App.Sample do
+  import App.Helper
+
+  def run(name) do
+    format(name)
+  end
+end
+"#,
+        &[(
+            "lib/helper.ex",
+            r#"
+defmodule App.Helper do
+  def format(value) do
+    value
+  end
+end
+"#,
+        )],
+    );
+
+    assert_elixir_local_import!(parsed, "format", "lib/helper.ex");
 }
 
 #[test]

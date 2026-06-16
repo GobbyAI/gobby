@@ -17,7 +17,7 @@ pub use context::{
 };
 pub(crate) use parser::{
     parse_import_statement, resolve_csharp_local_member_callee, resolve_dart_local_callee,
-    resolve_external_callee, resolve_local_callee, resolve_local_member_callee,
-    resolve_php_local_member_callee, resolve_ruby_local_member_callee,
+    resolve_elixir_local_callee, resolve_external_callee, resolve_local_callee,
+    resolve_local_member_callee, resolve_php_local_member_callee, resolve_ruby_local_member_callee,
     resolve_rust_local_qualified_callee, resolve_swift_local_callee, seed_import_bindings,
 };

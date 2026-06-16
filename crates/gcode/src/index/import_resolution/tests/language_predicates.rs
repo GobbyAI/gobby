@@ -190,6 +190,49 @@ fn swift_module_files_group_files_by_module_and_track_paths() {
 }
 
 #[test]
+fn elixir_module_files_map_full_module_names_to_declaring_files() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let helper = tempdir.path().join("lib/app/helper.ex");
+    let bundle = tempdir.path().join("lib/app/bundle.ex");
+    let script = tempdir.path().join("script.exs");
+    for path in [&helper, &bundle, &script] {
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+    }
+    // A module's file path need not match its name, and one file may declare
+    // several modules — both are exercised here.
+    fs::write(&helper, "defmodule App.Helper do\nend\n").expect("write helper");
+    fs::write(
+        &bundle,
+        "defmodule App.One do\nend\n\ndefmodule App.Two do\nend\n",
+    )
+    .expect("write bundle");
+    fs::write(&script, "defmodule App.Script do\nend\n").expect("write script");
+
+    let module_files = build_elixir_local_module_files(
+        tempdir.path(),
+        &[helper.clone(), bundle.clone(), script.clone()],
+    );
+
+    assert_eq!(
+        module_files.get("App.Helper").map(Vec::as_slice),
+        Some(["lib/app/helper.ex".to_string()].as_slice())
+    );
+    assert_eq!(
+        module_files.get("App.One").map(Vec::as_slice),
+        Some(["lib/app/bundle.ex".to_string()].as_slice())
+    );
+    assert_eq!(
+        module_files.get("App.Two").map(Vec::as_slice),
+        Some(["lib/app/bundle.ex".to_string()].as_slice())
+    );
+    // `.exs` scripts declare modules too.
+    assert_eq!(
+        module_files.get("App.Script").map(Vec::as_slice),
+        Some(["script.exs".to_string()].as_slice())
+    );
+}
+
+#[test]
 fn dart_local_import_target_resolves_self_package_and_relative_uris() {
     // `package:<self>/…` maps into the package's `lib/` source root.
     assert_eq!(

@@ -216,6 +216,30 @@ fn materialize_call(
     } else {
         None
     };
+    let elixir_local_target = if ctx.language == "elixir"
+        && local_target.is_none()
+        && external_target.is_none()
+        && local_qualified_target.is_none()
+        && local_member_target.is_none()
+        && csharp_member_target.is_none()
+        && ruby_member_target.is_none()
+        && php_member_target.is_none()
+        && swift_local_target.is_none()
+        && dart_local_target.is_none()
+        && !external_shadowed
+    {
+        import_resolution::resolve_elixir_local_callee(
+            ctx.import_context,
+            ctx.import_bindings,
+            ctx.symbols,
+            &site.callee_name,
+            site.qualifier_path.as_deref(),
+            site.syntax == CallSyntaxKind::Bare,
+            site.syntax == CallSyntaxKind::Member,
+        )
+    } else {
+        None
+    };
     let local_import_target = if local_target.is_none()
         && external_target.is_none()
         && local_qualified_target.is_none()
@@ -225,6 +249,7 @@ fn materialize_call(
         && php_member_target.is_none()
         && swift_local_target.is_none()
         && dart_local_target.is_none()
+        && elixir_local_target.is_none()
         && !external_shadowed
     {
         import_resolution::resolve_local_callee(
@@ -245,6 +270,7 @@ fn materialize_call(
         && php_member_target.is_none()
         && swift_local_target.is_none()
         && dart_local_target.is_none()
+        && elixir_local_target.is_none()
         && local_import_target.is_none()
         && !external_shadowed
     {
@@ -280,6 +306,7 @@ fn materialize_call(
         .or(php_member_target)
         .or(swift_local_target)
         .or(dart_local_target)
+        .or(elixir_local_target)
         .or(local_import_target)
     {
         // Cross-file local import: record the original name plus the candidate

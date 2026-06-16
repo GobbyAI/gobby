@@ -261,6 +261,7 @@ const RUBY_LOCAL_PROJECT_ID: &str = "graph-standalone-ruby-local";
 const PHP_LOCAL_PROJECT_ID: &str = "graph-standalone-php-local";
 const SWIFT_LOCAL_PROJECT_ID: &str = "graph-standalone-swift-local";
 const DART_LOCAL_PROJECT_ID: &str = "graph-standalone-dart-local";
+const ELIXIR_LOCAL_PROJECT_ID: &str = "graph-standalone-elixir-local";
 
 /// End-to-end check for the post-write local-import resolution (#790): indexing
 /// a two-file Python project must resolve the cross-file calls in `b.py` to the
@@ -1317,6 +1318,137 @@ fn index_resolves_cross_file_local_dart_calls() {
     assert_caller_present(&env, project.path(), "greet", "run", "after sync-file");
     assert_eq!(
         phantom_call_target_count(&mut graph, DART_LOCAL_PROJECT_ID),
+        0,
+        "sync-file must not introduce a phantom CALLS target"
+    );
+}
+
+/// Resolves cross-file local Elixir calls across the three module-reference
+/// shapes: an aliased call (`alias App.Greeter` → `Greeter.greet()`), a bare
+/// imported call (`import App.MathX` → `tally()`), and a fully-qualified call
+/// (`App.Format.shout()`). Each names a locally-declared module whose declaring
+/// file is the candidate set; the post-write pass narrows it to the real
+/// `code_symbols` id. No target may be a phantom CALLS node.
+#[test]
+fn index_resolves_cross_file_local_elixir_calls() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-file Elixir local-call resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("lib")).expect("create lib");
+    // Paren-less zero-arity `def`s so each function is indexed as a `method`
+    // symbol that the post-write pass can resolve against.
+    fs::write(
+        project.path().join("lib/greeter.ex"),
+        "defmodule App.Greeter do\n  def greet do\n    :hi\n  end\nend\n",
+    )
+    .expect("write greeter.ex");
+    fs::write(
+        project.path().join("lib/mathx.ex"),
+        "defmodule App.MathX do\n  def tally do\n    0\n  end\nend\n",
+    )
+    .expect("write mathx.ex");
+    fs::write(
+        project.path().join("lib/format.ex"),
+        "defmodule App.Format do\n  def shout do\n    :ok\n  end\nend\n",
+    )
+    .expect("write format.ex");
+    fs::write(
+        project.path().join("lib/sample.ex"),
+        "defmodule App.Sample do\n  alias App.Greeter\n  import App.MathX\n\n  def run do\n    Greeter.greet()\n    tally()\n    App.Format.shout()\n  end\nend\n",
+    )
+    .expect("write sample.ex");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": ELIXIR_LOCAL_PROJECT_ID,
+            "name": "graph-standalone-elixir-local",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, ELIXIR_LOCAL_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    let greeter_file = "lib/greeter.ex";
+    let mathx_file = "lib/mathx.ex";
+    let format_file = "lib/format.ex";
+    let sample_file = "lib/sample.ex";
+    let greet_id = required_symbol_id(&mut conn, ELIXIR_LOCAL_PROJECT_ID, greeter_file, "greet");
+    let tally_id = required_symbol_id(&mut conn, ELIXIR_LOCAL_PROJECT_ID, mathx_file, "tally");
+    let shout_id = required_symbol_id(&mut conn, ELIXIR_LOCAL_PROJECT_ID, format_file, "shout");
+
+    // Aliased, bare-imported, and fully-qualified calls each resolve to the
+    // canonical function in the referenced local module — all cross-file.
+    assert_eq!(
+        resolved_call_target(&mut conn, ELIXIR_LOCAL_PROJECT_ID, sample_file, "greet"),
+        Some(greet_id.clone()),
+        "aliased Elixir call did not resolve to the canonical function"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, ELIXIR_LOCAL_PROJECT_ID, sample_file, "tally"),
+        Some(tally_id.clone()),
+        "bare imported Elixir call did not resolve to the canonical function"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, ELIXIR_LOCAL_PROJECT_ID, sample_file, "shout"),
+        Some(shout_id.clone()),
+        "fully-qualified Elixir call did not resolve to the canonical function"
+    );
+    assert_eq!(
+        pending_local_import_count(&mut conn, ELIXIR_LOCAL_PROJECT_ID),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Projection path 1+2: rebuild from resolved PostgreSQL facts, then every
+    // cross-file caller must be reachable and each target a real DEFINES-linked
+    // node (no phantom CALLS target).
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_caller_present(&env, project.path(), "greet", "run", "after rebuild");
+    assert_caller_present(&env, project.path(), "tally", "run", "after rebuild");
+    assert_caller_present(&env, project.path(), "shout", "run", "after rebuild");
+
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, ELIXIR_LOCAL_PROJECT_ID),
+        0,
+        "no CALLS target may lack a DEFINES edge after rebuild"
+    );
+    for id in [&greet_id, &tally_id, &shout_id] {
+        assert!(
+            resolved_target_is_defined_and_called(&mut graph, ELIXIR_LOCAL_PROJECT_ID, id),
+            "the resolved Elixir function target must be a defined, called CodeSymbol"
+        );
+    }
+
+    let blast = json_command(&env, project.path(), &["blast-radius", "greet"]);
+    assert!(
+        blast.get("center").is_some(),
+        "blast-radius should report a center: {blast}"
+    );
+
+    // Projection path 3: sync-file must recreate the same canonical edges.
+    let sync = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", sample_file],
+    );
+    assert_success(sync, "graph sync-file sample.ex");
+    assert_caller_present(&env, project.path(), "greet", "run", "after sync-file");
+    assert_eq!(
+        phantom_call_target_count(&mut graph, ELIXIR_LOCAL_PROJECT_ID),
         0,
         "sync-file must not introduce a phantom CALLS target"
     );

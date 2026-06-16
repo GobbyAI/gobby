@@ -181,6 +181,32 @@ pub(crate) fn parse_elixir_import_statement(
         return;
     };
     if import_context.elixir_local_module_roots.contains(root) {
+        // Local module reference. Local modules shadow same-named dependencies,
+        // so this branch takes precedence over the external root map below. Bind
+        // the alias/import to the module's declaring file(s) for the post-write
+        // DB pass; `require` adds no call surface beyond the fully-qualified
+        // path, which resolves directly against `elixir_module_files`.
+        let candidate_files = import_context.elixir_module_files(target);
+        if candidate_files.is_empty() {
+            return;
+        }
+        match keyword {
+            "alias" => {
+                let alias = elixir_alias_as(&normalized)
+                    .unwrap_or_else(|| target.rsplit('.').next().unwrap_or(target).to_string());
+                extracted
+                    .bindings
+                    .local_member
+                    .insert(alias, candidate_files);
+            }
+            "import" => {
+                extracted
+                    .bindings
+                    .elixir_local_import_files
+                    .extend(candidate_files);
+            }
+            _ => {}
+        }
         return;
     }
     let Some(module) = import_context.elixir_external_root_module(root) else {

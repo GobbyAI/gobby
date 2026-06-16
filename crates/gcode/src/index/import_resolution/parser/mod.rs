@@ -371,6 +371,61 @@ pub(crate) fn resolve_dart_local_callee(
     })
 }
 
+/// Resolve an Elixir call against a locally-declared module's file(s).
+///
+/// Handles two shapes the shared channels do not:
+///
+/// * **Fully-qualified** `App.Foo.func()` — the qualifier is the module's
+///   fully-qualified name, looked up directly in `elixir_module_files`. (Aliased
+///   `Foo.func()` after `alias App.Foo` resolves through the shared
+///   `local_member` channel instead.)
+/// * **Bare** `func()` after a local `import App.Foo` — the candidate set comes
+///   from `elixir_local_import_files`; the bare call name is the target symbol
+///   name.
+///
+/// Returns `None` (leaving the call unresolved) when the module is not locally
+/// declared, no local import is in scope, or a same-file symbol already defines
+/// the bare name. The post-write DB pass narrows the candidate files to the real
+/// symbol, so an unmatched name degrades to unresolved rather than a phantom edge.
+pub(crate) fn resolve_elixir_local_callee(
+    import_context: &ImportResolutionContext,
+    import_bindings: &ImportBindings,
+    symbols: &[Symbol],
+    callee_name: &str,
+    qualifier_path: Option<&str>,
+    is_bare_call: bool,
+    is_member_call: bool,
+) -> Option<LocalCallBinding> {
+    if is_member_call {
+        let candidate_files = import_context.elixir_module_files(qualifier_path?);
+        if candidate_files.is_empty() {
+            return None;
+        }
+        return Some(LocalCallBinding {
+            candidate_files,
+            callee_name: callee_name.to_string(),
+        });
+    }
+    if !is_bare_call {
+        return None;
+    }
+    if import_bindings.elixir_local_import_files.is_empty() {
+        return None;
+    }
+    // A same-file top-level declaration is resolved by the same-file pass; never
+    // shadow it with a cross-file candidate set.
+    if symbols.iter().any(|symbol| symbol.name == callee_name) {
+        return None;
+    }
+    let mut candidate_files = import_bindings.elixir_local_import_files.clone();
+    candidate_files.sort();
+    candidate_files.dedup();
+    Some(LocalCallBinding {
+        candidate_files,
+        callee_name: callee_name.to_string(),
+    })
+}
+
 pub(crate) fn resolve_rust_local_qualified_callee(
     import_context: &ImportResolutionContext,
     rel_path: &str,

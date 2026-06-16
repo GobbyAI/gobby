@@ -9,7 +9,7 @@ use regex::Regex;
 
 use crate::models::ImportRelation;
 
-use super::helpers::{is_elixir_alias, is_ruby_constant_name};
+use super::helpers::{is_elixir_alias, is_elixir_alias_path, is_ruby_constant_name};
 use super::js_local::js_candidate_files;
 use super::predicates::{
     csharp_declared_types, elixir_dependency_roots, java_declared_types, php_declared_symbols,
@@ -80,6 +80,15 @@ pub struct ImportResolutionContext {
     pub(super) elixir_external_roots: HashMap<String, String>,
     pub(super) elixir_external_root_overrides: HashMap<String, String>,
     pub(super) elixir_local_module_roots: HashSet<String>,
+    /// Maps a locally-declared Elixir module's fully-qualified name (`App.Foo`)
+    /// to the project-relative `.ex`/`.exs` files that declare it (via
+    /// `defmodule`). A fully-qualified `App.Foo.func()` call resolves `App.Foo`
+    /// here, and a local `alias App.Foo` / `import App.Foo` seeds the alias and
+    /// bare channels from these files. Modules need not follow the
+    /// path-from-name convention, so the map is built by scanning `defmodule`
+    /// headers. The post-write DB pass narrows the candidates to the real
+    /// symbol.
+    pub(super) elixir_module_files: HashMap<String, Vec<String>>,
 }
 
 impl ImportResolutionContext {
@@ -222,6 +231,16 @@ impl ImportResolutionContext {
             .or_else(|| self.elixir_external_roots.get(root))
             .map(String::as_str)
     }
+
+    /// Project-relative files declaring the local Elixir module named `module`
+    /// (a fully-qualified `App.Foo`). Empty when no indexed local file declares
+    /// it (an external/dependency module, or an unknown name).
+    pub(super) fn elixir_module_files(&self, module: &str) -> Vec<String> {
+        self.elixir_module_files
+            .get(module)
+            .cloned()
+            .unwrap_or_default()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -264,6 +283,13 @@ pub(crate) struct ImportBindings {
     /// these files; the post-write DB pass narrows the set to a real id (or
     /// degrades to unresolved). Aliased local imports feed `local_member`.
     pub(crate) dart_local_import_files: Vec<String>,
+    /// Project-relative `.ex`/`.exs` files brought into bare scope by this
+    /// file's local `import App.Foo` directives. Elixir `import` exposes a
+    /// module's public functions to bare calls with no per-name binding, so a
+    /// bare call resolves its name against every one of these files; the
+    /// post-write DB pass narrows the set to a real id (or degrades to
+    /// unresolved). Local `alias App.Foo` feeds `local_member` instead.
+    pub(crate) elixir_local_import_files: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -397,6 +423,7 @@ pub fn build_import_resolution_context_with_overrides(
         elixir_external_roots: load_elixir_external_roots(root_path),
         elixir_external_root_overrides,
         elixir_local_module_roots: build_elixir_local_module_roots(candidate_files),
+        elixir_module_files: build_elixir_local_module_files(root_path, candidate_files),
     }
 }
 
@@ -1142,6 +1169,68 @@ pub(super) fn build_elixir_local_module_roots(candidate_files: &[PathBuf]) -> Ha
             all.extend(roots);
             all
         })
+}
+
+/// Maps each locally-declared Elixir module's fully-qualified name to the
+/// project-relative `.ex`/`.exs` files that declare it. Built by scanning
+/// `defmodule` headers because Elixir modules do not have to follow the
+/// path-from-name convention and a single file can declare several modules.
+pub(super) fn build_elixir_local_module_files(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> HashMap<String, Vec<String>> {
+    let mut module_files = candidate_files
+        .par_iter()
+        .filter_map(|path| {
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if !matches!(ext, "ex" | "exs") {
+                return None;
+            }
+            let file = File::open(path).ok()?;
+            let rel = path.strip_prefix(root_path).unwrap_or(path.as_path());
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            let mut modules: Vec<String> = Vec::new();
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                let line = line.trim_start();
+                let Some(rest) = line.strip_prefix("defmodule ") else {
+                    continue;
+                };
+                let module = rest
+                    .split(|ch: char| ch.is_whitespace() || matches!(ch, ',' | '(' | '['))
+                    .next()
+                    .unwrap_or_default();
+                if !module.is_empty() && is_elixir_alias_path(module) {
+                    modules.push(module.to_string());
+                }
+            }
+            if modules.is_empty() {
+                return None;
+            }
+            Some((rel_str, modules))
+        })
+        .fold(
+            HashMap::<String, Vec<String>>::new,
+            |mut acc, (rel, modules)| {
+                for module in modules {
+                    acc.entry(module).or_default().push(rel.clone());
+                }
+                acc
+            },
+        )
+        .reduce(HashMap::<String, Vec<String>>::new, |mut all, map| {
+            for (module, files) in map {
+                all.entry(module).or_default().extend(files);
+            }
+            all
+        });
+    for files in module_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    module_files
 }
 
 pub(super) fn load_elixir_external_roots(root_path: &Path) -> HashMap<String, String> {
