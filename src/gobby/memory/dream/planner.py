@@ -38,6 +38,7 @@ async def build_raw_plan(
     db: Any | None,
     project_id: str | None,
     skip_consolidation: bool,
+    truth_digest: str = "",
 ) -> dict[str, Any]:
     """Build raw planner JSON from LLM output plus deterministic duplicate actions.
 
@@ -77,6 +78,7 @@ async def build_raw_plan(
                     db=db,
                     project_id=project_id,
                     semaphore=semaphore,
+                    truth_digest=truth_digest,
                 )
                 for page in _chunk(llm_candidates, batch_size)
             )
@@ -100,6 +102,7 @@ async def _run_planner_page(
     db: Any | None,
     project_id: str | None,
     semaphore: asyncio.Semaphore,
+    truth_digest: str = "",
 ) -> tuple[list[dict[str, Any]], str | None]:
     """Plan one page of candidates, isolating expected planner failures.
 
@@ -110,11 +113,11 @@ async def _run_planner_page(
         try:
             response = await _call_llm_planner(
                 candidates=page,
-                duplicate_groups=[],
                 dream_config=dream_config,
                 llm_service=llm_service,
                 db=db,
                 project_id=project_id,
+                truth_digest=truth_digest,
             )
         except _EXPECTED_PLANNER_ERRORS as exc:
             logger.warning("Memory dream planner unavailable: %s", exc)
@@ -170,11 +173,11 @@ def _positive_int(value: Any, default: int) -> int:
 async def _call_llm_planner(
     *,
     candidates: list[DreamCandidate],
-    duplicate_groups: list[DuplicateGroup],
     dream_config: Any,
     llm_service: Any,
     db: Any | None,
     project_id: str | None,
+    truth_digest: str = "",
 ) -> dict[str, Any]:
     loader = PromptLoader(db=db, project_id=project_id)
     prompt = loader.render(
@@ -185,11 +188,7 @@ async def _call_llm_planner(
                 indent=2,
                 sort_keys=True,
             ),
-            "duplicate_groups": json.dumps(
-                [group.to_prompt_dict() for group in duplicate_groups],
-                indent=2,
-                sort_keys=True,
-            ),
+            "truth_digest": truth_digest or "(no current-truth digest available)",
             "min_action_confidence": getattr(
                 dream_config,
                 "min_action_confidence",

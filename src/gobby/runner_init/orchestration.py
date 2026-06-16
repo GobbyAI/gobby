@@ -303,6 +303,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
                     dream_config=runner.config.memory.dream,
                     llm_service=runner.llm_service,
                     project_id=runner.project_id,
+                    daemon_config=runner.config,
                 )
                 logger.debug("Memory dream cron handlers registered: %s", registered)
             except Exception as e:

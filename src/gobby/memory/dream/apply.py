@@ -1,10 +1,21 @@
-"""Apply and revert validated memory dream plans."""
+"""Apply and revert validated memory dream plans.
+
+The GC sweep verdicts are ``keep | delete | refresh | review``. ``review`` and
+``delete`` soft-hide the row via ``mark_dreamed`` (recoverable, snapshotted);
+``refresh`` rewrites content in place; ``keep`` only stamps the cooldown cursor.
+Every candidate on a page is stamped ``last_dreamed_at`` — including keeps and
+failed mutations — so the streaming sweep cursor always advances and the row
+drops out of the next page.
+
+Legacy ``merge``/``supersede`` handling is retained for old snapshots and
+hand-built action lists; the validator no longer emits them.
+"""
 
 from __future__ import annotations
 
 import asyncio
 import logging
-from typing import Any
+from typing import Any, Literal
 
 import psycopg
 
@@ -25,16 +36,16 @@ async def apply_dream_plan(
     candidates: list[DreamCandidate],
     dry_run: bool,
     reconcile_after_apply: bool,
+    when: str | None = None,
 ) -> dict[str, Any]:
-    """Apply validated actions once, with snapshots before every mutation."""
+    """Apply validated actions once, snapshotting before every mutation."""
     candidate_map = {candidate.id: candidate for candidate in candidates}
     summary = _empty_summary(dry_run)
+    stamp = when or _now()
     for action in actions:
         summary["actions"][action.action] = summary["actions"].get(action.action, 0) + 1
         if dry_run:
             summary["planned_actions"].append(_planned_action_preview(action, candidate_map))
-            continue
-        if action.action in {"keep", "review"}:
             continue
         try:
             mutations = await _apply_action(
@@ -43,6 +54,7 @@ async def apply_dream_plan(
                 run_id=run_id,
                 action=action,
                 candidate_map=candidate_map,
+                stamp=stamp,
             )
             summary["mutations"] += mutations
         except _EXPECTED_ACTION_ERRORS as exc:
@@ -54,6 +66,9 @@ async def apply_dream_plan(
                 }
             )
             logger.warning("Memory dream action failed: %s", exc)
+            # A failed mutation must not strand the candidate in the sweep window;
+            # advance its cooldown cursor so it is not re-dreamed immediately.
+            await _advance_cursor(memory_manager, action.memory_id, stamp)
         except Exception:
             logger.exception("Unexpected memory dream action failure")
             raise
@@ -166,19 +181,72 @@ async def _apply_action(
     run_id: str,
     action: DreamAction,
     candidate_map: dict[str, DreamCandidate],
+    stamp: str,
 ) -> int:
+    if action.action == "keep":
+        await _advance_cursor(memory_manager, action.memory_id, stamp)
+        return 0
+    if action.action == "review":
+        return await _soft_hide(
+            memory_manager, store, run_id, _required_memory_id(action), "review", stamp
+        )
     if action.action == "delete":
-        memory_id = _required_memory_id(action)
-        return await _delete(memory_manager, store, run_id, memory_id, "delete")
+        return await _soft_hide(
+            memory_manager, store, run_id, _required_memory_id(action), "delete", stamp
+        )
     if action.action == "refresh" and action.content:
         memory_id = _required_memory_id(action)
-        return await _refresh(memory_manager, store, run_id, memory_id, action)
+        return await _refresh(memory_manager, store, run_id, memory_id, action, stamp)
     if action.action == "merge":
         return await _merge(memory_manager, store, run_id, action)
     if action.action == "supersede":
         _required_memory_id(action)
         return await _supersede(memory_manager, store, run_id, action, candidate_map)
+    # Defensive: any other shape (e.g. refresh with no content) advances the cursor.
+    await _advance_cursor(memory_manager, action.memory_id, stamp)
     return 0
+
+
+async def _soft_hide(
+    memory_manager: MemoryDreamManagerProtocol,
+    store: MemoryDreamStore,
+    run_id: str,
+    memory_id: str,
+    action_name: Literal["review", "delete"],
+    stamp: str,
+) -> int:
+    """Snapshot the active row, then soft-hide it via ``mark_dreamed``."""
+    before = await asyncio.to_thread(store.get_memory_row, memory_id)
+    if before is None:
+        return 0
+    snapshot_id = await asyncio.to_thread(
+        store.insert_snapshot,
+        run_id=run_id,
+        memory_id=memory_id,
+        action=action_name,
+        before_data=before,
+    )
+    await asyncio.to_thread(
+        memory_manager.mark_dreamed, memory_id, hidden_as=action_name, when=stamp
+    )
+    after = await asyncio.to_thread(store.get_memory_row, memory_id)
+    await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
+    return 1
+
+
+async def _advance_cursor(
+    memory_manager: MemoryDreamManagerProtocol,
+    memory_id: str | None,
+    stamp: str,
+) -> None:
+    """Stamp ``last_dreamed_at`` for a kept candidate so the sweep cursor advances."""
+    if not memory_id:
+        return
+    try:
+        await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
+    except ValueError:
+        # Row vanished (e.g. concurrent delete); it drops out of the sweep naturally.
+        logger.debug("Memory dream cursor advance skipped missing memory_id=%s", memory_id)
 
 
 async def _delete(
@@ -221,6 +289,7 @@ async def _refresh(
     run_id: str,
     memory_id: str,
     action: DreamAction,
+    stamp: str,
 ) -> int:
     before = await asyncio.to_thread(store.get_memory_row, memory_id)
     if before is None:
@@ -237,6 +306,9 @@ async def _refresh(
         content=action.content,
         tags=action.tags,
     )
+    # update_memory bumps updated_at (intended for refresh); stamp the cooldown
+    # cursor too so the refreshed row drops out of the next sweep page.
+    await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
     after = await asyncio.to_thread(store.get_memory_row, memory_id)
     await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
     return 1

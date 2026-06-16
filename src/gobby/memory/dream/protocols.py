@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from typing import Any, Protocol
+from typing import Any, Literal, Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -11,6 +11,24 @@ class MemoryDreamManagerProtocol(Protocol):
     db: HubDatabase
 
     async def alist_memories(self, *, limit: int | None, offset: int) -> list[Any]: ...
+
+    def list_dream_candidates(
+        self,
+        *,
+        limit: int,
+        redream_cutoff: str,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        include_global: bool = True,
+    ) -> list[Any]: ...
+
+    def mark_dreamed(
+        self,
+        memory_id: str,
+        *,
+        hidden_as: Literal["review", "delete"] | None = None,
+        when: str | None = None,
+    ) -> bool: ...
 
     async def create_memory(
         self,

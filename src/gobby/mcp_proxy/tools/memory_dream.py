@@ -111,6 +111,7 @@ def register_memory_dream_tools(
             memory_manager=memory_manager,
             dream_config=dream_config,
             llm_service=llm_service,
+            daemon_config=config,
         )
         return service
 

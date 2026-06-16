@@ -1,4 +1,15 @@
-"""Dream plan validation."""
+"""Dream plan validation.
+
+The sweep verdicts are per-memory: ``keep | delete | refresh | review``. Only an
+explicit, valid ``review`` or ``delete`` hides a memory; ``refresh`` rewrites it
+in place; ``keep`` leaves it visible. Anything malformed, omitted, unknown, or
+below the confidence threshold degrades to a visible ``keep`` carrying the
+reason, so a planner failure can never silently hide a memory.
+
+Legacy ``merge``/``supersede`` verdicts are no longer emitted (cross-memory
+consolidation is out of scope for the GC sweep); if a planner still returns one
+it is treated as an unknown action and degraded to ``keep``.
+"""
 
 from __future__ import annotations
 
@@ -8,8 +19,10 @@ from typing import Any, cast
 
 from gobby.memory.dream.models import DreamAction, DreamActionName, DreamCandidate
 
-_VALID_ACTIONS = {"keep", "delete", "refresh", "merge", "supersede", "review"}
-_MUTATING_ACTIONS = {"delete", "refresh", "merge", "supersede"}
+_VALID_ACTIONS = {"keep", "delete", "refresh", "review"}
+# Verdicts that change a row and therefore must clear the confidence bar before
+# they apply. ``review`` and ``delete`` hide the memory; ``refresh`` rewrites it.
+_MUTATING_ACTIONS = {"delete", "refresh", "review"}
 
 
 def validate_dream_plan(
@@ -19,7 +32,7 @@ def validate_dream_plan(
     min_action_confidence: float,
     min_delete_confidence: float,
 ) -> list[DreamAction]:
-    """Validate raw planner output and turn unsafe items into review actions."""
+    """Validate raw planner output, degrading anything unsafe to visible keep."""
     candidate_ids = {candidate.id for candidate in candidates}
     touched: set[str] = set()
     actions: list[DreamAction] = []
@@ -29,40 +42,28 @@ def validate_dream_plan(
         if not isinstance(item, Mapping):
             continue
         action = _coerce_action_name(item)
-        refs = _referenced_candidate_ids(item, action)
+        refs = _referenced_candidate_ids(item)
         valid_refs = refs & candidate_ids
         invalid_refs = refs - candidate_ids
 
         if action not in _VALID_ACTIONS:
-            actions.extend(_review_each(valid_refs, "unknown action", item))
+            actions.extend(_keep_each(valid_refs, "unknown action", item))
             touched.update(valid_refs)
             continue
         if invalid_refs:
             if valid_refs:
-                actions.extend(_review_each(valid_refs, "unknown candidate id", item))
+                actions.extend(_keep_each(valid_refs, "unknown candidate id", item))
             else:
-                actions.append(
-                    DreamAction(
-                        action="review",
-                        reason="unknown candidate id",
-                        confidence=_confidence(item),
-                    )
-                )
+                actions.append(_keep_marker("unknown candidate id", _confidence(item)))
             touched.update(valid_refs)
             continue
         if not valid_refs:
-            actions.append(
-                DreamAction(
-                    action="review",
-                    reason="missing candidate id",
-                    confidence=_confidence(item),
-                )
-            )
+            actions.append(_keep_marker("missing candidate id", _confidence(item)))
             continue
         overlapping_refs = valid_refs & touched
         if overlapping_refs:
             actions.extend(
-                _review_each(overlapping_refs, "candidate had overlapping dream actions", item)
+                _keep_each(overlapping_refs, "candidate had overlapping dream actions", item)
             )
             valid_refs -= overlapping_refs
         if not valid_refs:
@@ -73,18 +74,17 @@ def validate_dream_plan(
             min_action_confidence=min_action_confidence,
             min_delete_confidence=min_delete_confidence,
         ):
-            actions.extend(_review_each(valid_refs, "confidence below mutation threshold", item))
+            actions.extend(_keep_each(valid_refs, "confidence below mutation threshold", item))
             touched.update(valid_refs)
             continue
 
-        validated = _validate_action(action, valid_refs, item)
-        actions.extend(validated)
+        actions.extend(_validate_action(action, valid_refs, item))
         touched.update(valid_refs)
 
     omitted = candidate_ids - touched
     actions.extend(
         DreamAction(
-            action="review",
+            action="keep",
             memory_id=memory_id,
             reason="candidate omitted from dream plan",
             confidence=0.0,
@@ -107,18 +107,11 @@ def _extract_raw_actions(raw_plan: Any) -> list[Any]:
 
 
 def _coerce_action_name(item: Mapping[str, Any]) -> str:
-    action = item.get("action", item.get("verdict", "review"))
+    action = item.get("action", item.get("verdict", "keep"))
     return str(action).strip().lower()
 
 
-def _referenced_candidate_ids(item: Mapping[str, Any], action: str) -> set[str]:
-    if action == "merge":
-        raw_ids = item.get("memory_ids", item.get("ids", []))
-        if isinstance(raw_ids, str):
-            return {raw_ids}
-        if isinstance(raw_ids, list):
-            return {str(value) for value in raw_ids if value}
-        return set()
+def _referenced_candidate_ids(item: Mapping[str, Any]) -> set[str]:
     memory_id = item.get("memory_id", item.get("id"))
     return {str(memory_id)} if memory_id else set()
 
@@ -149,34 +142,14 @@ def _validate_action(
 ) -> list[DreamAction]:
     confidence = _confidence(item)
     reason = str(item.get("reason", "") or "")
-    if action == "merge":
-        if len(refs) < 2:
-            return _review_each(refs, "merge requires at least two candidate ids", item)
-        content = _content(item)
-        if not content:
-            return _review_each(refs, "merge requires canonical content", item)
-        return [
-            DreamAction(
-                action="merge",
-                memory_ids=sorted(refs),
-                content=content,
-                reason=reason,
-                confidence=confidence,
-                tags=_tags(item),
-            )
-        ]
-
     memory_id = next(iter(refs))
     if action == "refresh" and not _content(item):
-        return _review_each(refs, "refresh requires replacement content", item)
-    if action == "supersede" and not (_content(item) or item.get("target_id")):
-        return _review_each(refs, "supersede requires content or target_id", item)
+        return _keep_each(refs, "refresh requires replacement content", item)
     return [
         DreamAction(
             action=cast(DreamActionName, action),
             memory_id=memory_id,
             content=_content(item),
-            target_id=str(item["target_id"]) if item.get("target_id") else None,
             memory_type=str(item["memory_type"]) if item.get("memory_type") else None,
             tags=_tags(item),
             reason=reason,
@@ -200,14 +173,14 @@ def _tags(item: Mapping[str, Any]) -> list[str] | None:
     return [str(tag) for tag in value if str(tag).strip()]
 
 
-def _review_each(
+def _keep_each(
     refs: set[str],
     reason: str,
     item: Mapping[str, Any],
 ) -> list[DreamAction]:
     return [
         DreamAction(
-            action="review",
+            action="keep",
             memory_id=memory_id,
             reason=reason,
             confidence=_confidence(item),
@@ -216,19 +189,24 @@ def _review_each(
     ]
 
 
+def _keep_marker(reason: str, confidence: float) -> DreamAction:
+    """Audit-only keep with no candidate id (planner referenced unknown ids)."""
+    return DreamAction(action="keep", reason=reason, confidence=confidence)
+
+
 def _dedupe_actions(actions: list[DreamAction]) -> list[DreamAction]:
     seen: set[str] = set()
     result: list[DreamAction] = []
     for action in actions:
         refs = action.affected_ids()
         if refs & seen:
-            if action.action == "review":
+            if action.action == "keep":
                 result.append(action)
                 continue
             for memory_id in sorted(refs - seen):
                 result.append(
                     DreamAction(
-                        action="review",
+                        action="keep",
                         memory_id=memory_id,
                         reason="candidate had overlapping dream actions",
                         confidence=0.0,

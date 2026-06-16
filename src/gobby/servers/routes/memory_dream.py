@@ -42,6 +42,7 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
             memory_manager=server.memory_manager,
             dream_config=dream_config,
             llm_service=getattr(server, "llm_service", None),
+            daemon_config=config,
         )
 
     @router.post("/dream")

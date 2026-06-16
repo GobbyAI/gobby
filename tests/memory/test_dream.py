@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,7 +11,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.memory.dream.apply import apply_dream_plan, revert_dream_run
-from gobby.memory.dream.candidates import discover_stale_candidates
+from gobby.memory.dream.candidates import list_sweep_candidates, memory_to_candidate
 from gobby.memory.dream.duplicates import find_duplicate_groups
 from gobby.memory.dream.models import (
     CONTENT_TRUNCATE_LIMIT,
@@ -21,8 +22,13 @@ from gobby.memory.dream.models import (
 )
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
-from gobby.memory.dream.service import MemoryDreamService, _decode_raw_plan_metadata
+from gobby.memory.dream.service import (
+    DreamRunOptions,
+    MemoryDreamService,
+    _decode_raw_plan_metadata,
+)
 from gobby.memory.dream.storage import MemoryDreamStore
+from gobby.memory.dream.truth_digest import build_current_truth_digest
 
 pytestmark = pytest.mark.unit
 
@@ -32,13 +38,15 @@ def _memory(
     *,
     days_old: int = 90,
     access_count: int = 0,
+    project_id: str | None = "proj-1",
+    last_dreamed_at: str | None = None,
 ) -> SimpleNamespace:
     when = (datetime.now(UTC) - timedelta(days=days_old)).isoformat()
     return SimpleNamespace(
         id=memory_id,
         content=f"Memory {memory_id}",
         memory_type="fact",
-        project_id="proj-1",
+        project_id=project_id,
         source_type="agent",
         source_session_id=None,
         tags=[],
@@ -46,6 +54,9 @@ def _memory(
         created_at=when,
         updated_at=when,
         last_accessed_at=datetime.now(UTC).isoformat(),
+        deleted_at=None,
+        dream_action=None,
+        last_dreamed_at=last_dreamed_at,
     )
 
 
@@ -75,98 +86,82 @@ def test_candidate_prompt_content_marks_truncation() -> None:
     assert len(prompt["content"]) == CONTENT_TRUNCATE_LIMIT
 
 
-@pytest.mark.asyncio
-async def test_stale_candidate_discovery_reviews_high_access_old_memory() -> None:
-    manager = MagicMock()
-    manager.alist_memories = AsyncMock(side_effect=[[_memory("old-hot", access_count=99)], []])
-    config = SimpleNamespace(
-        stale_age_days=30,
-        scan_limit=10,
-        max_scan_rows=100,
-        include_global_memories=True,
-        candidate_page_timeout_seconds=10.0,
-    )
+class _RecordingSweepSource:
+    """Minimal sweep source recording the scope it was queried with."""
 
-    result = await discover_stale_candidates(manager, config, project_id="proj-1")
+    def __init__(self, rows: list[Any]) -> None:
+        self.rows = rows
+        self.calls: list[dict[str, Any]] = []
 
-    assert [candidate.id for candidate in result] == ["old-hot"]
-    assert result[0].access_count == 99
-
-
-@pytest.mark.asyncio
-async def test_stale_candidate_discovery_times_out_page_fetch() -> None:
-    async def slow_list(*, limit: int | None, offset: int) -> list[Any]:
-        pending: asyncio.Future[list[Any]] = asyncio.Future()
-        return await pending
-
-    manager = MagicMock()
-    manager.alist_memories = slow_list
-    config = SimpleNamespace(
-        stale_age_days=30,
-        scan_limit=10,
-        max_scan_rows=100,
-        include_global_memories=True,
-        candidate_page_timeout_seconds=0.001,
-    )
-
-    with pytest.raises(TimeoutError, match="listing memory dream candidates at offset 0"):
-        await discover_stale_candidates(manager, config, project_id="proj-1")
+    def list_dream_candidates(
+        self,
+        *,
+        limit: int,
+        redream_cutoff: str,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        include_global: bool = True,
+    ) -> list[Any]:
+        self.calls.append(
+            {
+                "limit": limit,
+                "redream_cutoff": redream_cutoff,
+                "project_id": project_id,
+                "memory_type": memory_type,
+                "include_global": include_global,
+            }
+        )
+        return list(self.rows)
 
 
 @pytest.mark.asyncio
-async def test_stale_candidate_discovery_ties_by_created_at() -> None:
-    manager = MagicMock()
-    older = _memory("older")
-    newer = _memory("newer")
-    for memory in (older, newer):
-        memory.updated_at = "2025-01-01T00:00:00+00:00"
-    older.created_at = "2024-01-01T00:00:00+00:00"
-    newer.created_at = "2024-02-01T00:00:00+00:00"
-    manager.alist_memories = AsyncMock(side_effect=[[newer, older], []])
-    config = SimpleNamespace(
-        stale_age_days=30,
-        scan_limit=10,
-        max_scan_rows=100,
-        include_global_memories=True,
-        candidate_page_timeout_seconds=10.0,
-    )
+async def test_list_sweep_candidates_adapts_rows_and_forwards_scope() -> None:
+    source = _RecordingSweepSource([_memory("m1", last_dreamed_at="2026-01-01T00:00:00+00:00")])
 
-    result = await discover_stale_candidates(
-        manager,
-        config,
+    result = await list_sweep_candidates(
+        source,
+        limit=50,
+        redream_cutoff="2026-06-14T00:00:00+00:00",
         project_id="proj-1",
-        now=datetime(2026, 1, 1, tzinfo=UTC),
+        memory_type="fact",
+        include_global=False,
+        now=datetime(2026, 6, 15, tzinfo=UTC),
     )
 
-    assert [candidate.id for candidate in result] == ["older", "newer"]
+    assert [candidate.id for candidate in result] == ["m1"]
+    assert source.calls == [
+        {
+            "limit": 50,
+            "redream_cutoff": "2026-06-14T00:00:00+00:00",
+            "project_id": "proj-1",
+            "memory_type": "fact",
+            "include_global": False,
+        }
+    ]
+    assert "re-dream cooldown elapsed" in result[0].reasons
 
 
 @pytest.mark.asyncio
-async def test_stale_candidate_discovery_sorts_invalid_created_at_last() -> None:
-    manager = MagicMock()
-    valid = _memory("valid")
-    invalid = _memory("invalid")
-    for memory in (valid, invalid):
-        memory.updated_at = "2025-01-01T00:00:00+00:00"
-    valid.created_at = "2024-01-01T00:00:00+00:00"
-    invalid.created_at = "not-a-date"
-    manager.alist_memories = AsyncMock(side_effect=[[invalid, valid], []])
-    config = SimpleNamespace(
-        stale_age_days=30,
-        scan_limit=10,
-        max_scan_rows=100,
-        include_global_memories=True,
-        candidate_page_timeout_seconds=10.0,
+async def test_list_sweep_candidates_flags_never_dreamed_and_global() -> None:
+    source = _RecordingSweepSource([_memory("g1", project_id=None, last_dreamed_at=None)])
+
+    result = await list_sweep_candidates(
+        source,
+        limit=10,
+        redream_cutoff="2026-06-14T00:00:00+00:00",
     )
 
-    result = await discover_stale_candidates(
-        manager,
-        config,
-        project_id="proj-1",
-        now=datetime(2026, 1, 1, tzinfo=UTC),
-    )
+    assert result[0].project_id is None
+    assert result[0].reasons == ["never dreamed", "global memory"]
 
-    assert [candidate.id for candidate in result] == ["valid", "invalid"]
+
+def test_memory_to_candidate_computes_age_from_updated_at() -> None:
+    mem = _memory("aged", days_old=10)
+
+    candidate = memory_to_candidate(mem, datetime.now(UTC))
+
+    assert candidate.id == "aged"
+    assert candidate.age_days >= 9.0
 
 
 @pytest.mark.asyncio
@@ -227,9 +222,7 @@ async def test_build_raw_plan_batches_candidates_into_pages() -> None:
     page_sizes = sorted(len(call.kwargs["candidates"]) for call in planner.call_args_list)
     assert page_sizes == [1, 2, 2]
     seen = {
-        candidate.id
-        for call in planner.call_args_list
-        for candidate in call.kwargs["candidates"]
+        candidate.id for call in planner.call_args_list for candidate in call.kwargs["candidates"]
     }
     assert seen == {f"m{i}" for i in range(5)}
     assert plan["planner_errors"] == []
@@ -288,13 +281,10 @@ async def test_build_raw_plan_excludes_duplicate_members_and_merges_once() -> No
     assert planner.call_count == 1
     planned_ids = [candidate.id for candidate in planner.call_args.kwargs["candidates"]]
     assert planned_ids == ["m0"]  # duplicate members are not sent to the planner
-    assert planner.call_args.kwargs["duplicate_groups"] == []
     merge_actions = [action for action in plan["actions"] if action["action"] == "merge"]
     assert len(merge_actions) == 1
     assert merge_actions[0]["memory_ids"] == ["m1", "m2"]
-    keep_ids = [
-        action["memory_id"] for action in plan["actions"] if action["action"] == "keep"
-    ]
+    keep_ids = [action["memory_id"] for action in plan["actions"] if action["action"] == "keep"]
     assert keep_ids == ["m0"]
 
 
@@ -322,9 +312,7 @@ async def test_build_raw_plan_limits_planner_concurrency() -> None:
             build_raw_plan(
                 candidates=candidates,
                 duplicate_groups=[],
-                dream_config=SimpleNamespace(
-                    planner_batch_size=1, planner_max_concurrency=cap
-                ),
+                dream_config=SimpleNamespace(planner_batch_size=1, planner_max_concurrency=cap),
                 llm_service=MagicMock(),
                 db=None,
                 project_id="proj-1",
@@ -341,34 +329,7 @@ async def test_build_raw_plan_limits_planner_concurrency() -> None:
     assert plan["planner_errors"] == []
 
 
-@pytest.mark.asyncio
-async def test_stale_candidate_discovery_uses_defaults_for_bad_config(
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    manager = MagicMock()
-    old = _memory("old")
-    old.updated_at = "2025-01-01T00:00:00+00:00"
-    manager.alist_memories = AsyncMock(side_effect=[[old], []])
-    config = SimpleNamespace(
-        stale_age_days="bad",
-        scan_limit=False,
-        max_scan_rows=0,
-        include_global_memories="yes",
-        candidate_page_timeout_seconds="bad",
-    )
-
-    result = await discover_stale_candidates(
-        manager,
-        config,
-        project_id="proj-1",
-        now=datetime(2026, 1, 1, tzinfo=UTC),
-    )
-
-    assert [candidate.id for candidate in result] == ["old"]
-    assert "using default" in caplog.text
-
-
-def test_plan_validation_degrades_bad_or_omitted_actions_to_review() -> None:
+def test_plan_validation_degrades_bad_or_omitted_actions_to_keep() -> None:
     candidates = [_candidate("a"), _candidate("b"), _candidate("c"), _candidate("d")]
     raw_plan = {
         "actions": [
@@ -387,13 +348,19 @@ def test_plan_validation_degrades_bad_or_omitted_actions_to_review() -> None:
     )
 
     by_id = {action.memory_id: action for action in actions if action.memory_id}
-    assert by_id["a"].action == "review"
-    assert by_id["b"].action == "review"
-    assert by_id["c"].action == "review"
-    assert by_id["d"].action == "review"
+    # Low-confidence delete, content-less refresh, unknown action, and the
+    # omitted candidate all degrade to visible keep — never a hide.
+    assert by_id["a"].action == "keep"
+    assert by_id["a"].reason == "confidence below mutation threshold"
+    assert by_id["b"].action == "keep"
+    assert by_id["b"].reason == "refresh requires replacement content"
+    assert by_id["c"].action == "keep"
+    assert by_id["c"].reason == "unknown action"
+    assert by_id["d"].action == "keep"
+    assert by_id["d"].reason == "candidate omitted from dream plan"
 
 
-def test_plan_validation_splits_invalid_and_missing_id_review_reasons() -> None:
+def test_plan_validation_keeps_invalid_and_missing_id_with_reasons() -> None:
     actions = validate_dream_plan(
         {
             "actions": [
@@ -406,25 +373,23 @@ def test_plan_validation_splits_invalid_and_missing_id_review_reasons() -> None:
         min_delete_confidence=0.85,
     )
 
-    no_id_reasons = [action.reason for action in actions if action.memory_id is None]
-    assert no_id_reasons == ["unknown candidate id", "missing candidate id"]
+    no_id = [action for action in actions if action.memory_id is None]
+    assert [action.reason for action in no_id] == ["unknown candidate id", "missing candidate id"]
+    assert all(action.action == "keep" for action in no_id)
     assert any(
-        action.memory_id == "a" and action.reason == "candidate omitted from dream plan"
+        action.memory_id == "a"
+        and action.action == "keep"
+        and action.reason == "candidate omitted from dream plan"
         for action in actions
     )
 
 
-def test_plan_validation_reviews_overlaps_and_restricts_action_to_new_ids() -> None:
+def test_plan_validation_degrades_overlapping_actions_to_keep() -> None:
     actions = validate_dream_plan(
         {
             "actions": [
                 {"action": "delete", "memory_id": "a", "confidence": 1.0},
-                {
-                    "action": "merge",
-                    "memory_ids": ["a", "b"],
-                    "content": "merged",
-                    "confidence": 1.0,
-                },
+                {"action": "delete", "memory_id": "a", "confidence": 1.0},
             ]
         },
         [_candidate("a"), _candidate("b")],
@@ -435,14 +400,14 @@ def test_plan_validation_reviews_overlaps_and_restricts_action_to_new_ids() -> N
     assert any(action.memory_id == "a" and action.action == "delete" for action in actions)
     assert any(
         action.memory_id == "a"
-        and action.action == "review"
+        and action.action == "keep"
         and action.reason == "candidate had overlapping dream actions"
         for action in actions
     )
     assert any(
         action.memory_id == "b"
-        and action.action == "review"
-        and action.reason == "merge requires at least two candidate ids"
+        and action.action == "keep"
+        and action.reason == "candidate omitted from dream plan"
         for action in actions
     )
 
@@ -491,7 +456,7 @@ def test_duplicate_groups_ignore_non_string_content() -> None:
     assert find_duplicate_groups([candidate]) == []
 
 
-def test_malformed_plan_reviews_all_candidates() -> None:
+def test_malformed_plan_keeps_all_candidates() -> None:
     actions = validate_dream_plan(
         "not-json",
         [_candidate("a"), _candidate("b")],
@@ -499,16 +464,72 @@ def test_malformed_plan_reviews_all_candidates() -> None:
         min_delete_confidence=0.85,
     )
 
+    # A malformed plan must never hide a memory: every candidate degrades to keep.
     assert {action.memory_id for action in actions} == {"a", "b"}
-    assert {action.action for action in actions} == {"review"}
+    assert {action.action for action in actions} == {"keep"}
+    assert all(action.reason == "candidate omitted from dream plan" for action in actions)
 
 
 @pytest.mark.asyncio
-async def test_apply_and_revert_delete_refresh_merge_and_supersede() -> None:
+async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
     db = _FakeDreamDB()
     db.memories = {
-        "delete-me": _row("delete-me", "junk"),
+        "hide-me": _row("hide-me", "junk"),
+        "review-me": _row("review-me", "ambiguous"),
         "refresh-me": _row("refresh-me", "old"),
+        "keep-me": _row("keep-me", "durable"),
+    }
+    manager = _FakeMemoryManager(db)
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+    actions = [
+        DreamAction(action="delete", memory_id="hide-me", confidence=1),
+        DreamAction(action="review", memory_id="review-me", confidence=1),
+        DreamAction(action="refresh", memory_id="refresh-me", content="new", confidence=1),
+        DreamAction(action="keep", memory_id="keep-me", confidence=1),
+    ]
+
+    summary = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=actions,
+        candidates=[_candidate("keep-me")],
+        dry_run=False,
+        reconcile_after_apply=False,
+    )
+
+    # keep is not a mutation; delete/review/refresh each count once.
+    assert summary["mutations"] == 3
+    # delete and review soft-hide rather than physically removing the row.
+    assert db.memories["hide-me"]["deleted_at"] is not None
+    assert db.memories["hide-me"]["dream_action"] == "delete"
+    assert db.memories["review-me"]["deleted_at"] is not None
+    assert db.memories["review-me"]["dream_action"] == "review"
+    assert db.memories["refresh-me"]["content"] == "new"
+    assert db.memories["keep-me"]["deleted_at"] is None
+    # every candidate on the page is stamped, including the keep.
+    assert all(
+        db.memories[mid]["last_dreamed_at"] is not None
+        for mid in ("hide-me", "review-me", "refresh-me", "keep-me")
+    )
+    # keep is stamp-only — no snapshot for it.
+    assert {row["action"] for row in db.snapshots} == {"delete", "review", "refresh"}
+
+    result = await revert_dream_run(store=store, run_id=run_id)
+
+    assert result["success"] is True
+    # Revert restores the mutating snapshots (delete/review/refresh) to active.
+    assert db.memories["hide-me"]["deleted_at"] is None
+    assert db.memories["hide-me"]["dream_action"] is None
+    assert db.memories["review-me"]["deleted_at"] is None
+    assert db.memories["refresh-me"]["content"] == "old"
+
+
+@pytest.mark.asyncio
+async def test_apply_and_revert_legacy_merge_and_supersede() -> None:
+    db = _FakeDreamDB()
+    db.memories = {
         "merge-keep": _row("merge-keep", "dup"),
         "merge-drop": _row("merge-drop", "dup"),
         "supersede-me": _row("supersede-me", "old fact"),
@@ -517,8 +538,6 @@ async def test_apply_and_revert_delete_refresh_merge_and_supersede() -> None:
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
     actions = [
-        DreamAction(action="delete", memory_id="delete-me", confidence=1),
-        DreamAction(action="refresh", memory_id="refresh-me", content="new", confidence=1),
         DreamAction(
             action="merge",
             memory_ids=["merge-keep", "merge-drop"],
@@ -538,24 +557,18 @@ async def test_apply_and_revert_delete_refresh_merge_and_supersede() -> None:
         reconcile_after_apply=False,
     )
 
-    assert summary["mutations"] == 6
-    assert "delete-me" not in db.memories
-    assert db.memories["refresh-me"]["content"] == "new"
+    # merge: keeper update + duplicate delete; supersede: create + original delete.
+    assert summary["mutations"] == 4
+    assert db.memories["merge-keep"]["content"] == "merged"
     assert "merge-drop" not in db.memories
     created_id = next(mid for mid in db.memories if mid.startswith("created-"))
-    assert {row["action"] for row in db.snapshots} >= {
-        "delete",
-        "refresh",
-        "merge",
-        "supersede",
-    }
-    assert "supersede_create" not in {row["action"] for row in db.snapshots}
+    assert "supersede-me" not in db.memories
+    assert {row["action"] for row in db.snapshots} >= {"merge", "supersede"}
 
     result = await revert_dream_run(store=store, run_id=run_id)
 
     assert result["success"] is True
-    assert db.memories["delete-me"]["content"] == "junk"
-    assert db.memories["refresh-me"]["content"] == "old"
+    assert db.memories["merge-keep"]["content"] == "dup"
     assert db.memories["merge-drop"]["content"] == "dup"
     assert db.memories["supersede-me"]["content"] == "old fact"
     assert created_id not in db.memories
@@ -839,6 +852,9 @@ def _row(memory_id: str, content: str) -> dict[str, Any]:
         "graph_processed": True,
         "created_at": "2025-01-01T00:00:00+00:00",
         "updated_at": "2025-01-01T00:00:00+00:00",
+        "deleted_at": None,
+        "dream_action": None,
+        "last_dreamed_at": None,
     }
 
 
@@ -999,3 +1015,240 @@ class _FakeMemoryManager:
         memory_id = f"created-{len(self.db.memories)}"
         self.db.memories[memory_id] = _row(memory_id, kwargs["content"])
         return SimpleNamespace(id=memory_id)
+
+    def mark_dreamed(
+        self,
+        memory_id: str,
+        *,
+        hidden_as: str | None = None,
+        when: str | None = None,
+    ) -> bool:
+        row = self.db.memories.get(memory_id)
+        if row is None:
+            raise ValueError(f"Memory {memory_id} not found")
+        stamp = when or datetime.now(UTC).isoformat()
+        row["last_dreamed_at"] = stamp
+        if hidden_as is not None:
+            row["deleted_at"] = stamp
+            row["dream_action"] = hidden_as
+        return True
+
+
+class _FakeSweepManager:
+    """Stateful manager exercising the streaming sweep cooldown query in memory."""
+
+    def __init__(self, db: _FakeDreamDB) -> None:
+        self.db = db
+
+    def list_dream_candidates(
+        self,
+        *,
+        limit: int,
+        redream_cutoff: str,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        include_global: bool = True,
+    ) -> list[Any]:
+        matches: list[dict[str, Any]] = []
+        for row in self.db.memories.values():
+            if row.get("deleted_at") is not None:
+                continue
+            last_dreamed = row.get("last_dreamed_at")
+            if last_dreamed is not None and last_dreamed >= redream_cutoff:
+                continue
+            if project_id is not None:
+                row_project = row.get("project_id")
+                in_scope = row_project == project_id or (include_global and row_project is None)
+                if not in_scope:
+                    continue
+            if memory_type is not None and row.get("memory_type") != memory_type:
+                continue
+            matches.append(row)
+        matches.sort(key=lambda r: (r.get("last_dreamed_at") or "", r.get("updated_at") or ""))
+        return [SimpleNamespace(**row) for row in matches[:limit]]
+
+    def mark_dreamed(
+        self,
+        memory_id: str,
+        *,
+        hidden_as: str | None = None,
+        when: str | None = None,
+    ) -> bool:
+        row = self.db.memories.get(memory_id)
+        if row is None:
+            raise ValueError(f"Memory {memory_id} not found")
+        stamp = when or datetime.now(UTC).isoformat()
+        row["last_dreamed_at"] = stamp
+        if hidden_as is not None:
+            row["deleted_at"] = stamp
+            row["dream_action"] = hidden_as
+        return True
+
+    async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
+        return {}
+
+    async def update_memory(
+        self,
+        *,
+        memory_id: str,
+        content: str | None = None,
+        tags: list[str] | None = None,
+    ) -> Any:
+        if content is not None:
+            self.db.memories[memory_id]["content"] = content
+        return SimpleNamespace(id=memory_id)
+
+    async def delete_memory(self, memory_id: str) -> bool:
+        return self.db.memories.pop(memory_id, None) is not None
+
+
+def _sweep_config(*, page_size: int = 2, redream_after_hours: int = 20) -> SimpleNamespace:
+    return SimpleNamespace(
+        enabled=True,
+        min_action_confidence=0.7,
+        min_delete_confidence=0.85,
+        reconcile_after_apply=False,
+        reconcile_after_revert=False,
+        page_size=page_size,
+        redream_after_hours=redream_after_hours,
+        include_global_memories=True,
+    )
+
+
+@pytest.mark.asyncio
+async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m{i}": _row(f"m{i}", f"content {i}") for i in range(5)}
+    manager = _FakeSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=manager, dream_config=_sweep_config(page_size=2), llm_service=None
+    )
+
+    result = await service.run(DreamRunOptions())
+
+    assert result["success"] is True
+    summary = result["run"]["summary"]
+    assert summary["candidates_reviewed"] == 5
+    assert summary["pages"] == 3  # ceil(5 / 2)
+    assert summary["mutations"] == 0
+    assert summary["actions"].get("keep") == 5
+    assert all(row["last_dreamed_at"] is not None for row in db.memories.values())
+
+    rerun = await service.run(DreamRunOptions())
+
+    # Everything was just stamped inside the cooldown window, so the re-run is a no-op.
+    assert rerun["success"] is True
+    assert rerun["run"]["summary"]["candidates_reviewed"] == 0
+    assert rerun["run"]["summary"]["pages"] == 0
+
+
+@pytest.mark.asyncio
+async def test_streaming_sweep_soft_hides_obsolete_and_keeps_current() -> None:
+    db = _FakeDreamDB()
+    db.memories = {
+        "obsolete": _row("obsolete", "Graph backend is Neo4j"),
+        "current": _row("current", "Graph backend is FalkorDB"),
+    }
+    manager = _FakeSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=manager, dream_config=_sweep_config(page_size=10), llm_service=MagicMock()
+    )
+    canned = {
+        "actions": [
+            {"action": "delete", "memory_id": "obsolete", "confidence": 1.0, "reason": "retired"}
+        ],
+        "planner_errors": [],
+    }
+
+    with patch("gobby.memory.dream.service.build_raw_plan", AsyncMock(return_value=canned)):
+        result = await service.run(DreamRunOptions())
+
+    assert result["success"] is True
+    assert db.memories["obsolete"]["deleted_at"] is not None
+    assert db.memories["obsolete"]["dream_action"] == "delete"
+    assert db.memories["current"]["deleted_at"] is None
+    assert db.memories["current"]["last_dreamed_at"] is not None
+    summary = result["run"]["summary"]
+    assert summary["mutations"] == 1
+    assert summary["actions"].get("delete") == 1
+    assert summary["actions"].get("keep") == 1
+
+
+@pytest.mark.asyncio
+async def test_dry_run_previews_without_writing_or_stamping() -> None:
+    db = _FakeDreamDB()
+    db.memories = {
+        "obsolete": _row("obsolete", "Graph backend is Neo4j"),
+        "current": _row("current", "Graph backend is FalkorDB"),
+    }
+    manager = _FakeSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=manager, dream_config=_sweep_config(page_size=10), llm_service=MagicMock()
+    )
+    canned = {
+        "actions": [{"action": "delete", "memory_id": "obsolete", "confidence": 1.0}],
+        "planner_errors": [],
+    }
+
+    with patch("gobby.memory.dream.service.build_raw_plan", AsyncMock(return_value=canned)):
+        result = await service.run(DreamRunOptions(dry_run=True))
+
+    assert result["success"] is True
+    # Dry-run is a single bounded preview pass: no memory, snapshot, or stamp writes.
+    assert all(row["deleted_at"] is None for row in db.memories.values())
+    assert all(row["last_dreamed_at"] is None for row in db.memories.values())
+    summary = result["run"]["summary"]
+    assert summary["mutations"] == 0
+    assert summary["candidates_reviewed"] == 2
+    assert summary["pages"] == 1
+    assert summary.get("planned_actions")
+
+
+def test_build_current_truth_digest_includes_canonical_facts() -> None:
+    digest = build_current_truth_digest()
+
+    assert "FalkorDB" in digest
+    assert "PostgreSQL" in digest
+    assert "Neo4j" in digest  # names the retired backend the planner should flag
+
+
+def test_build_current_truth_digest_allowlists_config_and_redacts_secrets() -> None:
+    config = SimpleNamespace(
+        hub_backend="postgres",
+        daemon_port=60887,
+        bind_host="127.0.0.1",
+        database_url="postgresql://user:supersecret@host/db",
+    )
+
+    digest = build_current_truth_digest(config, max_chars=5000)
+
+    assert "postgres" in digest
+    assert "60887" in digest
+    assert "127.0.0.1" in digest
+    # database_url is not on the allowlist and must never reach the prompt.
+    assert "supersecret" not in digest
+    assert "database_url" not in digest
+
+
+def test_build_current_truth_digest_bounds_length() -> None:
+    digest = build_current_truth_digest(max_chars=80)
+
+    assert len(digest) <= 80
+
+
+def test_dream_prompt_declares_four_actions_and_truth_digest() -> None:
+    import gobby
+
+    prompt = (Path(gobby.__file__).parent / "install/shared/prompts/memory/dream.md").read_text(
+        encoding="utf-8"
+    )
+
+    assert "{{ truth_digest }}" in prompt
+    for action in ("keep", "delete", "refresh", "review"):
+        assert f"- `{action}`" in prompt
+    # merge/supersede are no longer offered as verdicts.
+    assert "- `merge`" not in prompt
+    assert "- `supersede`" not in prompt
+    # obsolete-fact guidance names the canonical infra migrations.
+    assert "Neo4j" in prompt
+    assert "SQLite" in prompt

@@ -353,6 +353,7 @@ class TestSearchMemories:
             query="test",
             project_id="proj-1",
             limit=5,
+            caller="http.memory.search",
         )
 
 

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 
 from gobby.memory.context import build_memory_context
 from gobby.memory.protocol import MemoryRecord
@@ -225,6 +225,34 @@ class MemoryManagerFacadeMethods:
         self, project_id: str | None = None, *, visibility: Visibility = "active"
     ) -> int:
         return self._repository.count_memories(project_id=project_id, visibility=visibility)
+
+    def list_dream_candidates(
+        self,
+        *,
+        limit: int,
+        redream_cutoff: str,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        include_global: bool = True,
+    ) -> list[Memory]:
+        """Delegate to storage for the nightly dream sweep candidate page."""
+        return self.storage.list_dream_candidates(
+            limit=limit,
+            redream_cutoff=redream_cutoff,
+            project_id=project_id,
+            memory_type=memory_type,
+            include_global=include_global,
+        )
+
+    def mark_dreamed(
+        self,
+        memory_id: str,
+        *,
+        hidden_as: Literal["review", "delete"] | None = None,
+        when: str | None = None,
+    ) -> bool:
+        """Delegate to storage to stamp (and optionally soft-hide) a dreamed row."""
+        return self.storage.mark_dreamed(memory_id, hidden_as=hidden_as, when=when)
 
     def list_memories(
         self,
