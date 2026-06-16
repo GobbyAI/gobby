@@ -402,7 +402,9 @@ async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str,
 
 def _summary_source_text(value: str | None) -> str:
     """Normalize optional markdown fields for summary context decisions."""
-    return value.strip() if isinstance(value, str) and value.strip() else ""
+    if not isinstance(value, str) or not value.strip():
+        return ""
+    return strip_injected_context(value).strip()
 
 
 def _digest_markdown_for_summary(session: Any) -> str:

@@ -64,6 +64,7 @@ class CloneIsolationHandler(IsolationHandler):
         # Track partial state for cleanup on failure
         self._created_clone_path: str | None = None
         self._created_clone_id: str | None = None
+        self._partial_clones: dict[int, dict[str, str | None]] = {}
 
     async def prepare_environment(self, config: SpawnConfig) -> IsolationContext:
         """
@@ -75,6 +76,9 @@ class CloneIsolationHandler(IsolationHandler):
         - Return IsolationContext with clone info
         """
         # Reset partial state
+        state_key = id(config)
+        partial_state: dict[str, str | None] = {"path": None, "id": None}
+        self._partial_clones[state_key] = partial_state
         self._created_clone_path = None
         self._created_clone_id = None
 
@@ -157,6 +161,7 @@ class CloneIsolationHandler(IsolationHandler):
 
         # Track for cleanup — clone exists on disk now
         self._created_clone_path = clone_path
+        partial_state["path"] = clone_path
 
         # Record in storage
         clone = await asyncio.to_thread(
@@ -170,6 +175,7 @@ class CloneIsolationHandler(IsolationHandler):
 
         # Track storage record for cleanup
         self._created_clone_id = clone.id
+        partial_state["id"] = clone.id
 
         base_commit_sha: str | None = None
         if config.task_id is not None:
@@ -189,6 +195,7 @@ class CloneIsolationHandler(IsolationHandler):
         )
 
         # Success — clear partial state
+        self._partial_clones.pop(state_key, None)
         self._created_clone_path = None
         self._created_clone_id = None
 
@@ -205,24 +212,29 @@ class CloneIsolationHandler(IsolationHandler):
 
     async def cleanup_environment(self, config: SpawnConfig) -> None:
         """Clean up partially created clone on prepare failure."""
+        partial_state = self._partial_clones.pop(id(config), None)
+        clone_path = (
+            partial_state.get("path") if partial_state is not None else self._created_clone_path
+        )
+        clone_id = partial_state.get("id") if partial_state is not None else self._created_clone_id
 
-        if self._created_clone_path:
+        if clone_path:
             try:
                 await asyncio.to_thread(
                     self._clone_manager.delete_clone,
-                    clone_path=self._created_clone_path,
+                    clone_path=clone_path,
                     force=True,
                 )
-                logger.info(f"Cleaned up partial clone: {self._created_clone_path}")
+                logger.info(f"Cleaned up partial clone: {clone_path}")
             except Exception as e:
-                logger.warning(f"Failed to clean up clone {self._created_clone_path}: {e}")
+                logger.warning(f"Failed to clean up clone {clone_path}: {e}")
 
-        if self._created_clone_id:
+        if clone_id:
             try:
-                self._clone_storage.delete(self._created_clone_id)
-                logger.info(f"Cleaned up clone storage record: {self._created_clone_id}")
+                await asyncio.to_thread(self._clone_storage.delete, clone_id)
+                logger.info(f"Cleaned up clone storage record: {clone_id}")
             except Exception as e:
-                logger.warning(f"Failed to clean up clone record {self._created_clone_id}: {e}")
+                logger.warning(f"Failed to clean up clone record {clone_id}: {e}")
 
         self._created_clone_path = None
         self._created_clone_id = None

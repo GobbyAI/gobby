@@ -10,7 +10,7 @@ from gobby.cli.memory.common import _get_daemon_client
 
 _START_REQUEST_TIMEOUT_SECONDS = 15.0
 _WAIT_POLL_INTERVAL_SECONDS = 2.0
-_TERMINAL_STATUSES = frozenset({"completed", "failed", "reverted"})
+_TERMINAL_STATUSES = frozenset({"completed", "failed", "reverted", "interrupted"})
 
 
 @click.group("dream", invoke_without_command=True)

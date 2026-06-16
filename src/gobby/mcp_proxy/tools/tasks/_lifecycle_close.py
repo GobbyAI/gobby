@@ -167,12 +167,27 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 return {"error": f"Cannot resolve session '{session_id}': {e}"}
 
         # Resolve target-task edit attribution for commit checks below.
+        edit_session_id = get_claimed_session_id(task) or resolved_session_id
         session_vars: dict[str, Any] = {}
-        if resolved_session_id:
+        if edit_session_id and not skip_leaf_checks:
             try:
-                session_vars = ctx.session_var_manager.get_variables(resolved_session_id)
+                session_vars = ctx.session_var_manager.get_variables(edit_session_id)
             except (KeyError, ValueError, TypeError) as e:
-                logger.debug(f"Best-effort session variable lookup failed: {e}")
+                logger.warning(
+                    "close_task failed to load owner session variables for task %s "
+                    "from session %s: %s",
+                    resolved_id,
+                    edit_session_id,
+                    e,
+                )
+                return {
+                    "success": False,
+                    "error": "session_variable_lookup_failed",
+                    "message": (
+                        "close_task could not verify task edit attribution from the "
+                        "owning session, so it cannot safely enforce commit requirements."
+                    ),
+                }
         from gobby.workflows.task_claim_state import target_task_has_edits
 
         target_task_had_edits = target_task_has_edits(session_vars, resolved_id)
@@ -406,29 +421,30 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         # This is done here because Claude Code's post-tool-use hook doesn't include
         # the tool result, so the detection_helpers can't verify close succeeded
         remaining_task_edit_state: dict[str, Any] | None = None
-        if resolved_session_id:
+        if edit_session_id:
             try:
                 from gobby.workflows.task_claim_state import remove_claimed_task
 
-                merge_dict = remove_claimed_task(session_vars, resolved_id)
+                fresh_session_vars = ctx.session_var_manager.get_variables(edit_session_id)
+                merge_dict = remove_claimed_task(fresh_session_vars, resolved_id)
                 remaining_task_edit_state = merge_dict.get("task_edited_files")
-                ctx.session_var_manager.merge_variables(resolved_session_id, merge_dict)
+                ctx.session_var_manager.merge_variables(edit_session_id, merge_dict)
                 logger.debug(
-                    f"Removed task {resolved_id} from claimed_tasks for session {resolved_session_id}",
+                    f"Removed task {resolved_id} from claimed_tasks for session {edit_session_id}",
                 )
             except Exception as e:
                 logger.warning(
-                    f"Failed to update claimed_tasks for session {resolved_session_id}: {e}",
+                    f"Failed to update claimed_tasks for session {edit_session_id}: {e}",
                 )
 
         # Reset had_edits after the last task-scoped edit set is accounted for.
         if (
-            resolved_session_id
+            edit_session_id
             and (bool(task.commits) or bool(commit_sha))
             and not remaining_task_edit_state
         ):
             try:
-                ctx.session_manager.clear_had_edits(resolved_session_id)
+                ctx.session_manager.clear_had_edits(edit_session_id)
             except Exception as e:
                 logger.debug(f"Best-effort had_edits reset failed: {e}")
 

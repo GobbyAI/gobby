@@ -36,7 +36,7 @@ from ._code_index import (
     prepare_spawn_code_index,
     without_code_index_skill,
 )
-from ._failure_cleanup import cleanup_created_isolation, cleanup_failed_spawn
+from ._failure_cleanup import cleanup_created_isolation, cleanup_failed_spawn, start_run_or_cleanup
 from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
 from ._idempotency import non_actionable_task_spawn_response
 from ._provider_resolution import defaulted_provider, provider_prefixed_model
@@ -756,7 +756,6 @@ async def spawn_agent_impl(
         spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
     )
     runtime_persisted = False
-    start_skipped = False
     if tmux_spawn and tmux_session_name:
         alive = await _check_tmux_session_alive(
             tmux_session_name,
@@ -780,10 +779,16 @@ async def spawn_agent_impl(
                 clone_id=isolation_ctx.clone_id,
             )
             runtime_persisted = True
-            try:
-                start_skipped = runner.run_storage.start(run_id) is None
-            except Exception as e:
-                logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
+            start_error = await start_run_or_cleanup(
+                runner,
+                run_id,
+                handler,
+                spawn_config,
+                cleanup_isolation=cleanup_isolation_on_failure,
+                child_session_id=spawn_result.child_session_id,
+            )
+            if start_error is not None:
+                return start_error
 
     # 12. Update DB and handle post-spawn setup based on spawn result
     if spawn_result.success and spawn_result.child_session_id is not None:
@@ -798,17 +803,16 @@ async def spawn_agent_impl(
             )
 
         if not tmux_spawn:
-            try:
-                start_skipped = runner.run_storage.start(run_id) is None
-            except Exception as e:
-                logger.warning(f"Failed to mark agent run {run_id} as running: {e}")
-        if start_skipped:
-            return {
-                "success": False,
-                "error": "Agent run was no longer pending after spawn",
-                "run_id": run_id,
-                "child_session_id": spawn_result.child_session_id,
-            }
+            start_error = await start_run_or_cleanup(
+                runner,
+                run_id,
+                handler,
+                spawn_config,
+                cleanup_isolation=cleanup_isolation_on_failure,
+                child_session_id=spawn_result.child_session_id,
+            )
+            if start_error is not None:
+                return start_error
 
         # Fire agent_started event for WebSocket broadcasting
         try:

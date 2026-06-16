@@ -191,6 +191,7 @@ class MemoryDreamService:
             "failed",
             "reverted",
             "revert_failed",
+            "interrupted",
         }:
             return run
         return self.store.update_run(
@@ -244,6 +245,14 @@ class MemoryDreamService:
             )
             return {"success": True, "run_id": run_id, "run": run}
         except asyncio.CancelledError:
+            completed_ts = datetime.now(UTC).isoformat()
+            await asyncio.to_thread(
+                self.store.update_run,
+                run_id,
+                status="failed",
+                completed_at=completed_ts,
+                error="Dream run cancelled",
+            )
             raise
         except Exception as exc:  # noqa: BLE001 - failure must be persisted on the run
             completed_ts = datetime.now(UTC).isoformat()

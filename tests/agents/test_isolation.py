@@ -365,9 +365,12 @@ class TestGenerateBranchName:
             parent_session_id="sess",
         )
 
-        with patch("time.time", return_value=1706297600):
+        with (
+            patch("time.time", return_value=1706297600),
+            patch("uuid.uuid4", return_value=SimpleNamespace(hex="abcdef123456")),
+        ):
             branch = generate_branch_name(config)
-            assert branch == "agent/1706297600"
+            assert branch == "agent/1706297600-abcdef12"
 
     def test_fallback_default_prefix(self) -> None:
         """Test default prefix 'agent/' when no prefix specified."""
@@ -385,9 +388,31 @@ class TestGenerateBranchName:
             parent_session_id="sess",
         )
 
-        with patch("time.time", return_value=1706297600):
+        with (
+            patch("time.time", return_value=1706297600),
+            patch("uuid.uuid4", return_value=SimpleNamespace(hex="abcdef123456")),
+        ):
             branch = generate_branch_name(config)
-            assert branch == "agent/1706297600"
+            assert branch == "agent/1706297600-abcdef12"
+
+    def test_branch_name_sanitizes_invalid_git_ref_chars(self) -> None:
+        config = SpawnConfig(
+            prompt="Test",
+            task_id=None,
+            task_title=None,
+            task_seq_num=None,
+            branch_name=" bad..branch @{name}.lock/",
+            branch_prefix=None,
+            base_branch="main",
+            project_id="proj",
+            project_path="/path",
+            provider="claude",
+            parent_session_id="sess",
+        )
+
+        branch = generate_branch_name(config)
+
+        assert branch == "bad-branch--name"
 
 
 class TestNoneIsolationHandler:

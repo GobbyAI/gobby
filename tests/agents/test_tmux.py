@@ -936,6 +936,14 @@ class TestTmuxPTYBridge:
             await bridge.attach("sess", "test-id")
 
     @pytest.mark.asyncio
+    async def test_attach_duplicate_pending_raises(self) -> None:
+        bridge = TmuxPTYBridge()
+        bridge._pending_bridges.add("test-id")
+
+        with pytest.raises(RuntimeError, match="already exists"):
+            await bridge.attach("sess", "test-id")
+
+    @pytest.mark.asyncio
     async def test_resize_missing_is_noop(self) -> None:
         bridge = TmuxPTYBridge()
         assert await bridge.resize("nonexistent", 50, 200) is None

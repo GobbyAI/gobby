@@ -37,6 +37,52 @@ async def cleanup_failed_spawn(
     _delete_child_session(runner, run_storage, run_id, child_session_id)
 
 
+async def start_run_or_cleanup(
+    runner: Any,
+    run_id: str,
+    handler: Any,
+    spawn_config: Any,
+    *,
+    cleanup_isolation: bool,
+    child_session_id: str | None,
+) -> dict[str, Any] | None:
+    try:
+        start_skipped = runner.run_storage.start(run_id) is None
+    except Exception as exc:
+        error = f"Failed to mark agent run {run_id} as running: {exc}"
+        logging.getLogger(__name__).warning(error)
+        await cleanup_failed_spawn(
+            runner,
+            run_id,
+            error,
+            handler,
+            spawn_config,
+            cleanup_isolation=cleanup_isolation,
+            child_session_id=child_session_id,
+        )
+        return {"success": False, "error": error, "run_id": run_id}
+
+    if not start_skipped:
+        return None
+
+    error = "Agent run was no longer pending after spawn"
+    await cleanup_failed_spawn(
+        runner,
+        run_id,
+        error,
+        handler,
+        spawn_config,
+        cleanup_isolation=cleanup_isolation,
+        child_session_id=child_session_id,
+    )
+    return {
+        "success": False,
+        "error": error,
+        "run_id": run_id,
+        "child_session_id": child_session_id,
+    }
+
+
 def _fail_run(
     run_storage: Any,
     run_id: str,

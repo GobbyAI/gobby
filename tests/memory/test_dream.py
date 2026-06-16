@@ -27,7 +27,7 @@ from gobby.memory.dream.service import (
     MemoryDreamService,
     _decode_raw_plan_metadata,
 )
-from gobby.memory.dream.storage import MemoryDreamStore
+from gobby.memory.dream.storage import INTERRUPTED_RESTART_ERROR, MemoryDreamStore
 from gobby.memory.dream.truth_digest import build_current_truth_digest
 
 pytestmark = pytest.mark.unit
@@ -941,6 +941,24 @@ def test_memory_dream_service_record_run_failure_is_idempotent() -> None:
     assert repeated["error"] == "boom"
 
 
+@pytest.mark.asyncio
+async def test_memory_dream_service_persists_failed_status_on_cancellation() -> None:
+    db = _FakeDreamDB()
+    manager = _FakeMemoryManager(db)
+    service = MemoryDreamService(memory_manager=manager, dream_config=SimpleNamespace())
+    run_id = service.store.create_run(project_id=None, dry_run=False, options={})
+    service._stream_sweep = AsyncMock(side_effect=asyncio.CancelledError())
+
+    with pytest.raises(asyncio.CancelledError):
+        await service.execute_run(run_id, DreamRunOptions())
+
+    run = service.store.get_run(run_id)
+    assert run is not None
+    assert run["status"] == "failed"
+    assert run["error"] == "Dream run cancelled"
+    assert run["completed_at"] is not None
+
+
 def test_decode_raw_plan_metadata_handles_strings_safely() -> None:
     assert _decode_raw_plan_metadata('{"planner_errors": ["missing llm"]}') == {
         "planner_errors": ["missing llm"]
@@ -1071,6 +1089,12 @@ class _FakeDreamDB:
 
     def fetchall(self, sql: str, params: tuple[Any, ...] = ()) -> list[dict[str, Any]]:
         normalized = " ".join(sql.split())
+        if "FROM memory_dream_runs" in normalized:
+            return [
+                {"id": run["id"]}
+                for run in self.runs.values()
+                if run.get("status") in {"started", "running"}
+            ]
         if "FROM memory_dream_snapshots" not in normalized:
             return []
         run_id = str(params[0])
@@ -1088,6 +1112,51 @@ def test_update_run_rejects_unknown_fields() -> None:
 
     with pytest.raises(ValueError, match="unknown_column"):
         store.update_run(run_id, unknown_column="bad")
+
+
+def test_mark_interrupted_runs_reconciles_non_terminal_runs() -> None:
+    db = _FakeDreamDB()
+    store = MemoryDreamStore(db)
+    running = store.create_run(project_id="proj-1", dry_run=False, options={})
+    started = store.create_run(project_id="proj-1", dry_run=False, options={})
+    db.runs[started]["status"] = "started"
+    completed = store.create_run(project_id="proj-1", dry_run=False, options={})
+    store.update_run(completed, status="completed")
+
+    interrupted = store.mark_interrupted_runs()
+
+    assert set(interrupted) == {running, started}
+    assert db.runs[running]["status"] == "interrupted"
+    assert db.runs[started]["status"] == "interrupted"
+    assert db.runs[running]["error"] == INTERRUPTED_RESTART_ERROR
+    assert db.runs[running]["completed_at"] is not None
+    # A run that already reached a terminal state is left untouched.
+    assert db.runs[completed]["status"] == "completed"
+
+
+def test_mark_interrupted_runs_is_noop_without_orphans() -> None:
+    db = _FakeDreamDB()
+    store = MemoryDreamStore(db)
+    completed = store.create_run(project_id="proj-1", dry_run=False, options={})
+    store.update_run(completed, status="completed")
+
+    assert store.mark_interrupted_runs() == []
+    assert db.runs[completed]["status"] == "completed"
+
+
+def test_reconcile_interrupted_dream_runs_uses_manager_db() -> None:
+    from types import SimpleNamespace
+
+    from gobby.memory.dream.cron import reconcile_interrupted_dream_runs
+
+    db = _FakeDreamDB()
+    store = MemoryDreamStore(db)
+    running = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    result = reconcile_interrupted_dream_runs(SimpleNamespace(db=db))
+
+    assert result == [running]
+    assert db.runs[running]["status"] == "interrupted"
 
 
 def test_restore_memory_row_rejects_incomplete_snapshot() -> None:

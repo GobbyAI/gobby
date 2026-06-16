@@ -585,7 +585,7 @@ def register_review_stage_tools(registry: InternalToolRegistry, ctx: RegistryCon
             return {"error": f"Failed to record plan enhancement for task {task_id}"}
 
         has_suggestions = bool([s for s in (suggestions or []) if s and s.strip()])
-        new_state = "ready" if has_suggestions else "needs_review"
+        new_state = "ready" if has_suggestions and not converged else "needs_review"
 
         _clear_prior_claim_session_variables(
             ctx,

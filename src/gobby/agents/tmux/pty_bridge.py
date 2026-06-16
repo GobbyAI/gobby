@@ -45,6 +45,7 @@ class TmuxPTYBridge:
 
     def __init__(self) -> None:
         self._bridges: dict[str, BridgeInfo] = {}  # streaming_id -> BridgeInfo
+        self._pending_bridges: set[str] = set()
         self._lock = asyncio.Lock()
 
     async def attach(
@@ -71,62 +72,69 @@ class TmuxPTYBridge:
             RuntimeError: If attach fails.
         """
         async with self._lock:
-            if streaming_id in self._bridges:
+            if streaming_id in self._bridges or streaming_id in self._pending_bridges:
                 raise RuntimeError(f"Bridge {streaming_id} already exists")
-
-        if config is None:
-            from gobby.agents.tmux import get_configured_tmux_config
-
-            config = get_configured_tmux_config()
-        cfg = config
-
-        master_fd, slave_fd = os.openpty()
-
-        # Set initial terminal size
-        fcntl.ioctl(
-            slave_fd,
-            termios.TIOCSWINSZ,
-            struct.pack("HHHH", rows, cols, 0, 0),
-        )
-
-        cmd = self._build_attach_cmd(session_name, cfg)
-        try:
-            proc = await asyncio.create_subprocess_exec(
-                *cmd,
-                stdin=slave_fd,
-                stdout=slave_fd,
-                stderr=slave_fd,
-            )
-        except Exception:
-            os.close(master_fd)
-            os.close(slave_fd)
-            raise
-
-        os.close(slave_fd)
+            self._pending_bridges.add(streaming_id)
 
         try:
-            bridge = BridgeInfo(
-                master_fd=master_fd,
-                proc=proc,
-                session_name=session_name,
-                socket_name=cfg.socket_name,
+            if config is None:
+                from gobby.agents.tmux import get_configured_tmux_config
+
+                config = get_configured_tmux_config()
+            cfg = config
+
+            master_fd, slave_fd = os.openpty()
+
+            # Set initial terminal size
+            fcntl.ioctl(
+                slave_fd,
+                termios.TIOCSWINSZ,
+                struct.pack("HHHH", rows, cols, 0, 0),
             )
 
-            async with self._lock:
-                self._bridges[streaming_id] = bridge
-        except Exception:
+            cmd = self._build_attach_cmd(session_name, cfg)
             try:
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd,
+                    stdin=slave_fd,
+                    stdout=slave_fd,
+                    stderr=slave_fd,
+                )
+            except Exception:
                 os.close(master_fd)
-            except OSError:
-                pass
+                os.close(slave_fd)
+                raise
+
+            os.close(slave_fd)
+
             try:
-                proc.terminate()
-                await asyncio.wait_for(proc.wait(), timeout=2.0)
-            except (TimeoutError, ProcessLookupError):
+                bridge = BridgeInfo(
+                    master_fd=master_fd,
+                    proc=proc,
+                    session_name=session_name,
+                    socket_name=cfg.socket_name,
+                )
+
+                async with self._lock:
+                    self._bridges[streaming_id] = bridge
+                    self._pending_bridges.discard(streaming_id)
+            except Exception:
                 try:
-                    proc.kill()
-                except ProcessLookupError:
+                    os.close(master_fd)
+                except OSError:
                     pass
+                try:
+                    proc.terminate()
+                    await asyncio.wait_for(proc.wait(), timeout=2.0)
+                except (TimeoutError, ProcessLookupError):
+                    try:
+                        proc.kill()
+                    except ProcessLookupError:
+                        pass
+                raise
+        except Exception:
+            async with self._lock:
+                self._pending_bridges.discard(streaming_id)
             raise
 
         logger.info(

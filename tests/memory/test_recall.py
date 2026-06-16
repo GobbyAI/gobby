@@ -362,6 +362,65 @@ async def test_runner_synthesizes_large_prompt_query_before_search(
 
 
 @pytest.mark.asyncio
+async def test_runner_shares_timeout_between_query_synthesis_and_selection(
+    temp_db: HubDatabase,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    class SlowQueryLLM(FakeLLMService):
+        async def call_json_feature(
+            self,
+            feature_config: Any,
+            prompt: str,
+            system_prompt: str | None = None,
+            *,
+            caller: str | None = None,
+        ) -> Any:
+            self.calls.append(
+                {
+                    "feature_config": feature_config,
+                    "prompt": prompt,
+                    "system_prompt": system_prompt,
+                    "caller": caller,
+                }
+            )
+            if caller == "memory.recall.query":
+                return {"query": "delayed query"}
+            return {"memory_ids": ["mem-1"]}
+
+    times = [100.0, 100.1, 100.2, 100.3, 100.4, 101.1, 101.2, 101.3]
+
+    def fake_monotonic() -> float:
+        if times:
+            return times.pop(0)
+        return 101.3
+
+    monkeypatch.setattr("gobby.memory.recall.time.monotonic", fake_monotonic)
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
+    config = MemoryRecallConfig(
+        profile=FeatureProfile.HIGH,
+        candidates=["claude/sonnet"],
+        query_synthesis_threshold=1,
+        timeout=1,
+    )
+    llm = SlowQueryLLM()
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=FakeMemoryManager([_memory("mem-1")]),  # type: ignore[arg-type]
+        llm_service=llm,
+        config=config,
+    )
+
+    payload = await runner.run(
+        _event(prompt="recall this memory please " * 20),
+        SESSION_ID,
+        _variables(),
+    )
+
+    assert payload is None
+    assert [call["caller"] for call in llm.calls] == ["memory.recall.query"]
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "query_response",
     [

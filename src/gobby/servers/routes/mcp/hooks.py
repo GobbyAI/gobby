@@ -19,7 +19,8 @@ from gobby.adapters.claude_contract import get_claude_contract
 from gobby.adapters.degradation import AdapterDegradationKind, record_adapter_degradation
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
-    is_envelope_processed,
+    claim_envelope_processing,
+    envelope_terminal_response,
     mark_envelope_processed,
 )
 from gobby.servers.tool_approvals import (
@@ -502,7 +503,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
         def mark_processed_and_return(response: dict[str, Any]) -> dict[str, Any]:
             if envelope_id:
                 try:
-                    mark_envelope_processed(envelope_id)
+                    mark_envelope_processed(envelope_id, response=response)
                 except Exception as exc:
                     logger.warning(
                         "Failed to mark hook envelope %s processed: %s",
@@ -538,10 +539,6 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             # Project context is set by ProjectContextMiddleware from
             # X-Gobby-Project-Id / X-Gobby-Session-Id headers.
-
-            if envelope_id and is_envelope_processed(envelope_id):
-                logger.info("Skipping already-processed hook envelope %s", envelope_id)
-                return {"continue": True, "decision": "approve", "reason": "duplicate envelope"}
 
             # Get HookManager from app.state
             if not hasattr(request.app.state, "hook_manager"):
@@ -586,6 +583,18 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         "Supported: claude, gemini, grok, qwen, codex, droid"
                     ),
                 )
+
+            if envelope_id and not claim_envelope_processing(envelope_id):
+                stored_response = envelope_terminal_response(envelope_id)
+                if stored_response is not None:
+                    logger.info("Replaying processed hook envelope %s result", envelope_id)
+                    return stored_response
+                logger.warning("Hook envelope %s is already being processed", envelope_id)
+                return {
+                    "continue": False,
+                    "decision": "block",
+                    "reason": "duplicate envelope already processing",
+                }
 
             # Execute hook via adapter
             try:

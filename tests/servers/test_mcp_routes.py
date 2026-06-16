@@ -1421,6 +1421,39 @@ class TestAddMCPServer:
         assert data["success"] is True
         assert "new-server" in data["message"]
 
+    def test_add_server_rejects_string_enabled(self, session_storage: SessionManager) -> None:
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        mcp_manager = FakeMCPManager()
+        mcp_manager.add_server = AsyncMock()
+        server.mcp_manager = mcp_manager
+
+        with (
+            TestClient(server.app) as client,
+            patch(
+                "gobby.utils.project_context.get_project_context",
+                return_value={"id": "test-project", "name": "test"},
+            ),
+        ):
+            response = client.post(
+                "/api/mcp/servers",
+                json={
+                    "name": "new-server",
+                    "transport": "http",
+                    "url": "http://example.com",
+                    "enabled": "false",
+                },
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["success"] is False
+        assert data["error"] == "enabled must be a boolean"
+        mcp_manager.add_server.assert_not_called()
+
     def test_add_server_with_all_options(self, session_storage: SessionManager) -> None:
         """Test adding server with all configuration options."""
         server = create_http_server(

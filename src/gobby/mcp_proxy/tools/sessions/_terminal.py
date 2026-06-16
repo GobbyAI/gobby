@@ -361,28 +361,6 @@ def _compact_handoff_refresh_timeout_seconds() -> float:
         return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
 
 
-def _summary_digest_metadata_matches(session: Any) -> bool:
-    from gobby.sessions.summary_refresh import coerce_digest_turn_count, digest_turn_count
-    from gobby.sessions.summary_validity import is_summary_markdown_valid
-
-    if not is_summary_markdown_valid(getattr(session, "summary_markdown", None)):
-        return False
-
-    digest_markdown = getattr(session, "digest_markdown", None)
-    if not isinstance(digest_markdown, str) or not digest_markdown.strip():
-        return False
-
-    source_hash = getattr(session, "summary_source_context_hash", None)
-    if not isinstance(source_hash, str) or not source_hash.strip():
-        return False
-
-    current_count = digest_turn_count(digest_markdown)
-    if current_count <= 0:
-        return False
-    previous_count = coerce_digest_turn_count(getattr(session, "summary_digest_turn_count", None))
-    return previous_count == current_count
-
-
 def _compact_handoff_digest_fallback_markdown(session: Any, *, reason: str) -> str | None:
     """Build a bounded digest handoff fallback."""
     digest_markdown = getattr(session, "digest_markdown", None)
@@ -610,7 +588,16 @@ async def _refresh_compact_handoff_context(
     session_summary_config: Any | None,
 ) -> dict[str, Any]:
     """Prepare summary_markdown quickly before compact_self sends /compact."""
-    if _summary_digest_metadata_matches(session):
+    from gobby.mcp_proxy.tools.sessions._summary_metadata import (
+        compact_summary_metadata_matches,
+    )
+
+    if await compact_summary_metadata_matches(
+        session=session,
+        session_manager=session_manager,
+        db=db,
+        session_summary_config=session_summary_config,
+    ):
         return _mark_compact_handoff_ready(
             session_id,
             session,

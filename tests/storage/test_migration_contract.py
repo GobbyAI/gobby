@@ -210,6 +210,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "288_build_profile_plan_enhancement_rounds.sql",
         "289_memory_dream_soft_delete.sql",
         "290_memory_dream_promote_action.sql",
+        "291_memory_dream_interrupted.sql",
     ]
 
 
@@ -517,6 +518,9 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
     ).read_text(encoding="utf-8")
     baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
     runtime_storage = (SRC_ROOT / "memory" / "dream" / "storage.py").read_text(encoding="utf-8")
+    interrupted_migration = (
+        SRC_ROOT / "storage" / "migrations" / "291_memory_dream_interrupted.sql"
+    ).read_text(encoding="utf-8")
 
     _assert_memory_dream_project_scope("memory dream creation migration", creation_migration)
     _assert_memory_dream_snapshot_run_index("memory dream creation migration", creation_migration)
@@ -536,6 +540,21 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
         "memory dream promote migration",
         promote_migration,
         ("memory_dream_snapshots_action_check", *MEMORY_DREAM_PROMOTE_ACTION_INVARIANTS),
+    )
+    _assert_contains_all(
+        "memory dream interrupted migration",
+        interrupted_migration,
+        (
+            "memory_dream_runs_status_check",
+            "'interrupted'",
+            "WHERE status IN ('started', 'running')",
+        ),
+    )
+    _assert_contains_all("memory dream baseline interrupted status", baseline, ("'interrupted'",))
+    _assert_contains_all(
+        "memory dream runtime storage interrupted status",
+        runtime_storage,
+        ("'interrupted'",),
     )
     _assert_memory_dream_project_scope("memory dream baseline", baseline)
     _assert_memory_dream_snapshot_run_index("memory dream baseline", baseline)

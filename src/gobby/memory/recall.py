@@ -196,7 +196,8 @@ class MemoryRecallRunner:
         prompt = decision.prompt
         recall_request_id = str(uuid4())
 
-        query = await self._query_for_prompt(prompt, decision, session_id, event)
+        deadline = time.monotonic() + self.config.timeout
+        query = await self._query_for_prompt(prompt, decision, session_id, event, deadline)
         retrieval_start = time.monotonic()
         candidates = await self._search_candidates(
             query.text,
@@ -229,7 +230,7 @@ class MemoryRecallRunner:
 
         selector_start = time.monotonic()
         selected_ids = await self._select_candidate_ids(
-            query.text, candidate_dicts, decision, event
+            query.text, candidate_dicts, decision, event, deadline
         )
         selector_latency_ms = _elapsed_ms(selector_start)
         self._log_recall_diagnostic(
@@ -307,15 +308,24 @@ class MemoryRecallRunner:
         decision: MemoryRecallPromptDecision,
         session_id: str,
         event: HookEvent,
+        deadline: float,
     ) -> MemoryRecallQuery:
         if len(prompt) <= self.config.query_synthesis_threshold:
             return MemoryRecallQuery(text=prompt, kind="original", latency_ms=0.0)
 
         start = time.monotonic()
+        timeout = max(0.0, deadline - start)
+        if timeout <= 0:
+            return MemoryRecallQuery(
+                text=_fallback_query(prompt, self.config.query_max_chars),
+                kind="fallback_keywords",
+                latency_ms=0.0,
+                timeout_reason="query_synthesis_timeout",
+            )
         try:
             response = await asyncio.wait_for(
                 self._call_query_synthesis_feature(prompt),
-                timeout=self.config.timeout,
+                timeout=timeout,
             )
             query = _parse_synthesized_query(response, self.config.query_max_chars)
             return MemoryRecallQuery(text=query, kind="synthesized", latency_ms=_elapsed_ms(start))
@@ -405,16 +415,27 @@ class MemoryRecallRunner:
         candidates: list[dict[str, Any]],
         decision: MemoryRecallPromptDecision,
         event: HookEvent,
+        deadline: float,
     ) -> list[str]:
         if self.llm_service is None:
             self.logger.debug("Memory recall skipped: LLM service unavailable")
             return []
 
         recall_prompt = self._render_prompt(prompt, candidates)
+        timeout = max(0.0, deadline - time.monotonic())
+        if timeout <= 0:
+            self._log_recall_diagnostic(
+                "Memory recall LLM call timed out",
+                decision=decision,
+                session_id=str(event.metadata.get("_platform_session_id") or ""),
+                reason="selection_timeout",
+                event=event,
+            )
+            return []
         try:
             response = await asyncio.wait_for(
                 self._call_selection_feature(recall_prompt),
-                timeout=self.config.timeout,
+                timeout=timeout,
             )
         except TimeoutError:
             self._log_recall_diagnostic(

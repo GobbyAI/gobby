@@ -9,6 +9,7 @@ from typing import Any, Protocol
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
 from gobby.memory.dream.service import run_memory_dream
+from gobby.memory.dream.storage import MemoryDreamStore
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import PERSONAL_PROJECT_ID
@@ -26,6 +27,18 @@ class CronRegistrationProtocol(Protocol):
     def register_handler(self, name: str, handler: CronHandler) -> None:
         """Register a cron handler by name."""
         ...
+
+
+def reconcile_interrupted_dream_runs(memory_manager: MemoryDreamManagerProtocol) -> list[str]:
+    """Mark dream runs orphaned by a daemon restart as 'interrupted'.
+
+    Runs once during synchronous startup (init_orchestration) before the daemon
+    serves requests, so any non-terminal run is necessarily orphaned. Mirrors the
+    agent-run restart reconciliation; not gated on whether dreaming is enabled so
+    that orphans are cleaned up even after the feature is turned off. Returns the
+    reconciled run IDs.
+    """
+    return MemoryDreamStore(memory_manager.db).mark_interrupted_runs()
 
 
 def register_memory_dream_cron(

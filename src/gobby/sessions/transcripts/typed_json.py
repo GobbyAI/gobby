@@ -8,7 +8,7 @@ import logging
 from collections.abc import Iterable, Iterator
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, ClassVar, cast
+from typing import Any, ClassVar
 
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
@@ -53,14 +53,18 @@ class _ThoughtParts:
     description: str
 
 
-def _extract_thought_parts(thoughts: list[dict[str, Any]]) -> list[_ThoughtParts]:
+def _extract_thought_parts(thoughts: list[Any]) -> list[_ThoughtParts]:
     """Split native-session thoughts into visible headings and thinking descriptions."""
     result: list[_ThoughtParts] = []
     for thought in thoughts:
+        if not isinstance(thought, dict):
+            continue
         subject = str(thought.get("subject", "")).strip()
         desc = str(thought.get("description", "")).strip()
         if desc:
-            desc = desc.lstrip("\\n").lstrip("\n").strip()
+            if desc.startswith("\\n"):
+                desc = desc[2:]
+            desc = desc.lstrip("\n").strip()
         if subject or desc:
             result.append(_ThoughtParts(subject=subject, description=desc))
     return result
@@ -274,9 +278,18 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
                     if "text" in part:
                         text_parts.append(str(part["text"]))
                     if "functionCall" in part and isinstance(part["functionCall"], dict):
+                        function_call = part["functionCall"]
                         content_type = "tool_use"
-                        tool_name = part["functionCall"].get("name")
-                        tool_input = part["functionCall"].get("args")
+                        raw_tool_name = function_call.get("name")
+                        tool_name = str(raw_tool_name) if raw_tool_name else None
+                        raw_tool_input = function_call.get("args")
+                        tool_input = raw_tool_input if isinstance(raw_tool_input, dict) else None
+                        tool_use_id = self._next_tool_use_id(
+                            function_call.get("id") or part.get("id"),
+                            index=index,
+                            tool_name=tool_name,
+                        )
+                        self._last_tool_use_id = tool_use_id
             content = " ".join(text_parts)
         else:
             content = str(content or "")
@@ -315,11 +328,17 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
 
     def parse_session_json(self, data: dict[str, Any]) -> list[ParsedMessage]:
         """Parse a native JSON session file."""
+        if not isinstance(data, dict):
+            return []
         messages = data.get("messages", [])
+        if not isinstance(messages, list):
+            return []
         parsed: list[ParsedMessage] = []
         index = 0
 
         for msg in messages:
+            if not isinstance(msg, dict):
+                continue
             result = self._parse_session_message(msg, index)
             if result:
                 parsed.extend(result)
@@ -379,7 +398,7 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
         thoughts = msg.get("thoughts")
         if isinstance(thoughts, list) and thoughts:
             segments: list[str] = []
-            for tp in _extract_thought_parts(cast(list[dict[str, Any]], thoughts)):
+            for tp in _extract_thought_parts(thoughts):
                 if tp.subject and tp.description:
                     segments.append(f"**{tp.subject}**\n\n{tp.description}")
                 elif tp.subject:
@@ -424,9 +443,15 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
             idx += 1
 
         tool_calls = msg.get("toolCalls", [])
+        if not isinstance(tool_calls, list):
+            tool_calls = []
         for tc in tool_calls:
-            tool_name = tc.get("name", "unknown")
-            tool_args = tc.get("args")
+            if not isinstance(tc, dict):
+                continue
+            raw_tool_name = tc.get("name", "unknown")
+            tool_name = str(raw_tool_name) if raw_tool_name else "unknown"
+            raw_tool_args = tc.get("args")
+            tool_args = raw_tool_args if isinstance(raw_tool_args, dict) else None
             tc_id = self._next_tool_use_id(
                 tc.get("id"),
                 index=idx,
@@ -452,14 +477,17 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
             idx += 1
 
             result_value = tc.get("result")
+            func_response_found = False
             func_response = None
             if isinstance(result_value, list) and result_value:
                 first = result_value[0]
-                if isinstance(first, dict):
+                if isinstance(first, dict) and "functionResponse" in first:
+                    func_response_found = True
                     func_response = first.get("functionResponse")
-            elif isinstance(result_value, dict):
+            elif isinstance(result_value, dict) and "functionResponse" in result_value:
+                func_response_found = True
                 func_response = result_value.get("functionResponse")
-            if func_response:
+            if func_response_found:
                 output = str(func_response)[:500]
                 results.append(
                     ParsedMessage(

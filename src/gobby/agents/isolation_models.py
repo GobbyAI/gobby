@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import re
 import time
+import uuid
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Any, Literal
@@ -18,6 +20,21 @@ class IsolationContext:
     clone_id: str | None = None
     isolation_type: Literal["none", "worktree", "clone"] = "none"
     extra: dict[str, Any] = field(default_factory=dict)
+
+
+_INVALID_GIT_REF_CHARS = re.compile(r"[\000-\037\177 ~^:?*\[\\{}]+")
+
+
+def _sanitize_branch_name(value: str) -> str:
+    ref = value.strip().replace("@{", "-")
+    ref = _INVALID_GIT_REF_CHARS.sub("-", ref)
+    while ".." in ref:
+        ref = ref.replace("..", "-")
+    ref = re.sub(r"/+", "/", ref)
+    ref = ref.strip("./-")
+    while ref.endswith(".lock"):
+        ref = ref[: -len(".lock")].rstrip("./-")
+    return ref or f"agent/{int(time.time())}-{uuid.uuid4().hex[:8]}"
 
 
 @dataclass
@@ -47,20 +64,22 @@ def generate_branch_name(config: SpawnConfig) -> str:
     3. {branch_prefix}{timestamp} as fallback (default prefix: "agent/")
     """
     if config.branch_name:
-        return config.branch_name
+        return _sanitize_branch_name(config.branch_name)
 
     if config.task_seq_num and config.task_title:
         # Generate slug from task title
         slug = config.task_title.lower().replace(" ", "-")
         # Keep only alphanumeric and hyphens
         slug = "".join(c for c in slug if c.isalnum() or c == "-")
+        slug = "-".join(part for part in slug.split("-") if part)
         # Truncate to 40 chars
         slug = slug[:40]
-        return f"task-{config.task_seq_num}-{slug}"
+        suffix = f"-{slug}" if slug else ""
+        return _sanitize_branch_name(f"task-{config.task_seq_num}{suffix}")
 
     # Fallback to prefix + timestamp
     prefix = config.branch_prefix or "agent/"
-    return f"{prefix}{int(time.time())}"
+    return _sanitize_branch_name(f"{prefix}{int(time.time())}-{uuid.uuid4().hex[:8]}")
 
 
 class IsolationHandler(ABC):

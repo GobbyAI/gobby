@@ -48,6 +48,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         # Track partial state for cleanup on failure
         self._created_worktree_path: str | None = None
         self._created_worktree_id: str | None = None
+        self._partial_worktrees: dict[int, dict[str, str | None]] = {}
 
     async def prepare_environment(self, config: SpawnConfig) -> IsolationContext:
         """
@@ -56,6 +57,9 @@ class WorktreeIsolationHandler(IsolationHandler):
         Prepare or reuse a git worktree and return isolation metadata.
         """
         # Reset partial state
+        state_key = id(config)
+        partial_state: dict[str, str | None] = {"path": None, "id": None}
+        self._partial_worktrees[state_key] = partial_state
         self._created_worktree_path = None
         self._created_worktree_id = None
 
@@ -145,6 +149,7 @@ class WorktreeIsolationHandler(IsolationHandler):
 
         # Track for cleanup — worktree exists on disk now
         self._created_worktree_path = worktree_path
+        partial_state["path"] = worktree_path
 
         # Record in storage
         worktree = await asyncio.to_thread(
@@ -158,6 +163,7 @@ class WorktreeIsolationHandler(IsolationHandler):
 
         # Track storage record for cleanup
         self._created_worktree_id = worktree.id
+        partial_state["id"] = worktree.id
 
         created_base_commit_sha: str | None = None
         if config.task_id is not None:
@@ -183,6 +189,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         )
 
         # Success — clear partial state
+        self._partial_worktrees.pop(state_key, None)
         self._created_worktree_path = None
         self._created_worktree_id = None
 
@@ -199,26 +206,31 @@ class WorktreeIsolationHandler(IsolationHandler):
 
     async def cleanup_environment(self, config: SpawnConfig) -> None:
         """Clean up partially created worktree on prepare failure."""
+        partial_state = self._partial_worktrees.pop(id(config), None)
+        worktree_path = (
+            partial_state.get("path") if partial_state is not None else self._created_worktree_path
+        )
+        worktree_id = (
+            partial_state.get("id") if partial_state is not None else self._created_worktree_id
+        )
 
-        if self._created_worktree_path:
+        if worktree_path:
             try:
                 await asyncio.to_thread(
                     self._git_manager.delete_worktree,
-                    worktree_path=self._created_worktree_path,
+                    worktree_path=worktree_path,
                     force=True,
                 )
-                logger.info(f"Cleaned up partial worktree: {self._created_worktree_path}")
+                logger.info(f"Cleaned up partial worktree: {worktree_path}")
             except Exception as e:
-                logger.warning(f"Failed to clean up worktree {self._created_worktree_path}: {e}")
+                logger.warning(f"Failed to clean up worktree {worktree_path}: {e}")
 
-        if self._created_worktree_id:
+        if worktree_id:
             try:
-                self._worktree_storage.delete(self._created_worktree_id)
-                logger.info(f"Cleaned up worktree storage record: {self._created_worktree_id}")
+                await asyncio.to_thread(self._worktree_storage.delete, worktree_id)
+                logger.info(f"Cleaned up worktree storage record: {worktree_id}")
             except Exception as e:
-                logger.warning(
-                    f"Failed to clean up worktree record {self._created_worktree_id}: {e}"
-                )
+                logger.warning(f"Failed to clean up worktree record {worktree_id}: {e}")
 
         self._created_worktree_path = None
         self._created_worktree_id = None

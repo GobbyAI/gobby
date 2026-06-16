@@ -54,6 +54,9 @@ _RUN_UPDATE_SET_CLAUSES = {
     "updated_at": "updated_at = %s",
 }
 
+# Error recorded on runs reconciled to 'interrupted' after a daemon restart.
+INTERRUPTED_RESTART_ERROR = "Interrupted: daemon restarted while the dream run was in progress"
+
 
 class MemoryDreamStore:
     """Store memory dream runs and exact mutation snapshots."""
@@ -73,7 +76,7 @@ class MemoryDreamStore:
                     CHECK (
                         status IN (
                             'started', 'running', 'completed', 'failed', 'reverted',
-                            'revert_failed'
+                            'revert_failed', 'interrupted'
                         )
                     ),
                 dry_run BOOLEAN NOT NULL DEFAULT FALSE,
@@ -228,6 +231,32 @@ class MemoryDreamStore:
         for key in ("options", "plan", "summary"):
             result[key] = _decode(result.get(key))
         return result
+
+    def mark_interrupted_runs(self, *, error: str = INTERRUPTED_RESTART_ERROR) -> list[str]:
+        """Reconcile runs orphaned in a non-terminal state to 'interrupted'.
+
+        A dream run executes as an in-process asyncio background task with no
+        external liveness handle, so a daemon restart cancels it without
+        persisting a terminal status, leaving the row at 'running'/'started'.
+        The caller must invoke this once during synchronous startup, before the
+        HTTP server accepts requests or any new run is scheduled, so every
+        non-terminal row is necessarily orphaned and no live run is clobbered.
+
+        Returns the reconciled run IDs.
+        """
+        rows = self.db.fetchall(
+            "SELECT id FROM memory_dream_runs WHERE status IN ('started', 'running')"
+        )
+        run_ids = [str(row["id"]) for row in rows]
+        completed_at = _now()
+        for run_id in run_ids:
+            self.update_run(
+                run_id,
+                status="interrupted",
+                completed_at=completed_at,
+                error=error,
+            )
+        return run_ids
 
     def get_memory_row(self, memory_id: str) -> dict[str, Any] | None:
         row = self.db.fetchone(

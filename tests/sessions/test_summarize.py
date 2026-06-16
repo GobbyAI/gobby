@@ -17,6 +17,7 @@ from gobby.sessions.summarize import (
     _build_summary_prompt_context,
     _digest_markdown_for_summary,
     _generate_full_summary,
+    _source_hash_payload,
     generate_session_summaries,
 )
 from gobby.storage.executor import DatabaseExecutor
@@ -160,6 +161,28 @@ def test_digest_markdown_for_summary_strips_injected_context() -> None:
     assert "/Users/josh/Projects/gobby" not in result
     assert "User: keep" in result
     assert "Assistant: latest" in result
+
+
+def test_source_hash_payload_strips_injected_context_from_latest_turns() -> None:
+    injected = (
+        "<!-- gobby:injected-context:begin -->\n"
+        "hidden runtime context\n"
+        "<!-- gobby:injected-context:end -->"
+    )
+    session = _make_session(
+        last_turn_markdown=f"Visible turn\n{injected}",
+        last_assistant_content=f"{injected}\nVisible assistant",
+    )
+
+    payload = _source_hash_payload(
+        session=session,
+        digest_markdown="### Turn 1\nDigest.",
+        summary_context={},
+        prompt_template="Summary",
+    )
+
+    assert payload["last_turn_markdown"] == "Visible turn"
+    assert payload["last_assistant_content"] == "Visible assistant"
 
 
 @pytest.mark.asyncio

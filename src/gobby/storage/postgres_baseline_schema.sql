@@ -814,7 +814,7 @@ CREATE TABLE memory_dream_runs (
     project_id TEXT REFERENCES projects(id) ON DELETE CASCADE,
     status TEXT NOT NULL DEFAULT 'started'
         CONSTRAINT memory_dream_runs_status_check
-        CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed')),
+        CHECK (status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed', 'interrupted')),
     dry_run BOOLEAN NOT NULL DEFAULT FALSE,
     options JSONB NOT NULL DEFAULT '{}'::jsonb,
     plan JSONB,

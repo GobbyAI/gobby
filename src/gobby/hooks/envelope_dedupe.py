@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Final
+from typing import Any, Final
+from uuid import uuid4
 
 from gobby.cli.utils import get_gobby_home
 
@@ -26,33 +29,122 @@ def envelope_id_from_inbox_path(path: Path) -> str | None:
 
 
 def is_envelope_processed(envelope_id: str, *, processed_dir: Path | None = None) -> bool:
-    """Return whether an envelope ID has already been handled by the daemon."""
+    """Return whether an envelope ID has a terminal processed marker."""
     if not envelope_id:
         return False
-    return _processed_marker_path(envelope_id, processed_dir=processed_dir).exists()
+    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    if record is None:
+        return False
+    status = record.get("status")
+    if not isinstance(status, str):
+        return status is None
+    return status == "processed"
 
 
-def mark_envelope_processed(envelope_id: str, *, processed_dir: Path | None = None) -> None:
-    """Persist a processed marker for an envelope ID."""
+def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = None) -> bool:
+    """Atomically claim first processing rights for an envelope ID."""
+    if not envelope_id:
+        return False
+
+    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
+    marker.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with marker.open("x", encoding="utf-8") as fh:
+            fh.write(
+                json.dumps(
+                    {
+                        "envelope_id": envelope_id,
+                        "claimed_at": datetime.now(UTC).isoformat(),
+                        "status": "processing",
+                    },
+                    sort_keys=True,
+                )
+                + "\n"
+            )
+    except FileExistsError:
+        return False
+    return True
+
+
+def read_envelope_marker(
+    envelope_id: str,
+    *,
+    processed_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Return the persisted envelope marker, if present and well-formed."""
+    if not envelope_id:
+        return None
+    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
+    try:
+        raw = marker.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        return None
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def envelope_terminal_response(
+    envelope_id: str,
+    *,
+    processed_dir: Path | None = None,
+) -> dict[str, Any] | None:
+    """Return a stored terminal hook response for a processed envelope."""
+    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    if record is None:
+        return None
+    status = record.get("status")
+    if isinstance(status, str):
+        if status != "processed":
+            return None
+    elif status is not None:
+        return None
+    response = record.get("response")
+    return response if isinstance(response, dict) else None
+
+
+def mark_envelope_processed(
+    envelope_id: str,
+    *,
+    response: Mapping[str, Any] | None = None,
+    processed_dir: Path | None = None,
+) -> None:
+    """Persist a terminal processed marker for an envelope ID."""
     if not envelope_id:
         return
 
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
-    if marker.exists():
-        return
-
     marker.parent.mkdir(parents=True, exist_ok=True)
-    marker.write_text(
-        json.dumps(
-            {
-                "envelope_id": envelope_id,
-                "processed_at": datetime.now(UTC).isoformat(),
-            },
-            sort_keys=True,
-        )
-        + "\n",
+    existing = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    if (
+        response is None
+        and existing is not None
+        and existing.get("status", "processed") == "processed"
+        and isinstance(existing.get("response"), dict)
+    ):
+        return
+    record: dict[str, Any] = {
+        "envelope_id": envelope_id,
+        "processed_at": datetime.now(UTC).isoformat(),
+        "status": "processed",
+    }
+    if response is not None:
+        record["response"] = dict(response)
+
+    temp_path = marker.with_name(f"{marker.name}.{uuid4().hex}.tmp")
+    temp_path.write_text(
+        json.dumps(record, sort_keys=True) + "\n",
         encoding="utf-8",
     )
+    try:
+        os.replace(temp_path, marker)
+    finally:
+        try:
+            temp_path.unlink()
+        except FileNotFoundError:
+            pass
 
 
 def _processed_marker_path(envelope_id: str, *, processed_dir: Path | None = None) -> Path:

@@ -159,7 +159,7 @@ async def test_record_converged_leaves_needs_review(stage_ops_registry, mock_tas
                 "task_id": "#42",
                 "round_number": 1,
                 "converged": True,
-                "suggestions": [],
+                "suggestions": ["Final wording is acceptable"],
             },
         )
 

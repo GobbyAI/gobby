@@ -101,6 +101,13 @@ def _optional_string(value: Any) -> str | None:
     return value
 
 
+def _bool_field(body: Mapping[str, Any], name: str, default: bool) -> bool:
+    value = body.get(name, default)
+    if not isinstance(value, bool):
+        raise ValueError(f"{name} must be a boolean")
+    return value
+
+
 def _build_mcp_server_config(
     body: Mapping[str, Any],
     *,
@@ -122,9 +129,9 @@ def _build_mcp_server_config(
         args=_string_list(body.get("args")),
         env=_string_dict(body.get("env")),
         headers=_string_dict(body.get("headers")),
-        enabled=bool(body.get("enabled", True)),
+        enabled=_bool_field(body, "enabled", True),
         description=_optional_string(body.get("description")),
-        requires_oauth=bool(body.get("requires_oauth", False)),
+        requires_oauth=_bool_field(body, "requires_oauth", False),
         oauth_provider=_optional_string(body.get("oauth_provider")),
         connect_timeout=float(connect_timeout),
     )

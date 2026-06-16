@@ -6,7 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from gobby.hooks.envelope_dedupe import ENVELOPE_ID_HEADER, is_envelope_processed
+from gobby.hooks.envelope_dedupe import (
+    ENVELOPE_ID_HEADER,
+    envelope_terminal_response,
+    is_envelope_processed,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from tests.servers.conftest import create_http_server
@@ -107,11 +111,61 @@ def test_envelope_id_marks_processed_and_skips_duplicate(
     assert first_response.status_code == 200
     assert is_envelope_processed("n-0000000000001-abcd", processed_dir=processed_dir)
     assert second_response.status_code == 200
-    assert second_response.json() == {
-        "continue": True,
-        "decision": "approve",
-        "reason": "duplicate envelope",
+    assert second_response.json() == first_response.json()
+    adapter.handle_native.assert_called_once()
+
+
+def test_envelope_id_replays_terminal_denial(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    session_manager = SessionManager(temp_db)
+    server = create_http_server(
+        port=60887,
+        test_mode=True,
+        session_manager=session_manager,
+    )
+    server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
+
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": True,
+        "hook_type": "PreToolUse",
+        "source": "claude",
+        "input_data": {},
     }
+    terminal_response = {"continue": False, "decision": "block", "reason": "commit required"}
+
+    with (
+        TestClient(server.app) as client,
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
+    ):
+        adapter = MagicMock()
+        adapter.handle_native.return_value = terminal_response
+        adapter_cls.return_value = adapter
+
+        first_response = client.post(
+            "/api/hooks/execute",
+            json=envelope,
+            headers={ENVELOPE_ID_HEADER: "n-0000000000002-abcd"},
+        )
+        second_response = client.post(
+            "/api/hooks/execute",
+            json=envelope,
+            headers={ENVELOPE_ID_HEADER: "n-0000000000002-abcd"},
+        )
+
+    processed_dir = tmp_path / "gobby-home" / "hooks" / "inbox" / "processed"
+    assert first_response.json() == terminal_response
+    assert second_response.json() == terminal_response
+    assert (
+        envelope_terminal_response("n-0000000000002-abcd", processed_dir=processed_dir)
+        == terminal_response
+    )
     adapter.handle_native.assert_called_once()
 
 

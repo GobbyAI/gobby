@@ -1,6 +1,6 @@
 """Focused coverage tests for task MCP tools."""
 
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
 import pytest
 
@@ -714,6 +714,140 @@ class TestCloseTaskTool:
                 },
             )
             mock_session_manager.clear_had_edits.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_close_task_fails_closed_when_owner_variables_cannot_load(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        task_uuid = "550e8400-e29b-41d4-a716-446655440000"
+
+        with (
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+        ):
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "closer-session"
+            mock_session_manager.get.return_value = None
+            MockSessionManager.return_value = mock_session_manager
+
+            mock_sv_manager = MagicMock()
+            mock_sv_manager.get_variables.side_effect = KeyError("vars unavailable")
+            MockSVManager.return_value = mock_sv_manager
+
+            mock_proj_instance = MagicMock()
+            mock_proj_instance.get.return_value = None
+            MockProjManager.return_value = mock_proj_instance
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            mock_task = MagicMock()
+            mock_task.id = task_uuid
+            mock_task.claimed_by_session_id = "owner-session"
+            mock_task.commits = []
+            mock_task.project_id = "proj-1"
+            mock_task.validation_criteria = None
+            mock_task.requires_user_review = False
+            mock_task_manager.get_task.return_value = mock_task
+            mock_task_manager.list_tasks.return_value = []
+
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": task_uuid,
+                    "changes_summary": "test changes",
+                },
+            )
+
+        assert result["success"] is False
+        assert result["error"] == "session_variable_lookup_failed"
+        mock_sv_manager.get_variables.assert_called_once_with("owner-session")
+        mock_task_manager.close_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_close_task_uses_owner_variables_and_refetches_before_merge(
+        self, mock_task_manager, mock_sync_manager
+    ):
+        task_uuid = "550e8400-e29b-41d4-a716-446655440000"
+        concurrent_uuid = "550e8400-e29b-41d4-a716-446655440099"
+
+        with (
+            patch(
+                "gobby.mcp_proxy.tools.tasks._context.SessionTaskManager"
+            ) as MockSessionTaskManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionManager") as MockSessionManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.SessionVariableManager") as MockSVManager,
+            patch("gobby.mcp_proxy.tools.tasks._context.LocalProjectManager") as MockProjManager,
+            patch("gobby.utils.git.run_git_command", return_value="abc123"),
+            patch(
+                "gobby.utils.git.normalize_commit_sha",
+                side_effect=lambda sha, cwd=None: sha,
+            ),
+        ):
+            MockSessionTaskManager.return_value = MagicMock()
+
+            mock_session_manager = MagicMock()
+            mock_session_manager.resolve_session_reference.return_value = "closer-session"
+            mock_session_manager.get.return_value = None
+            MockSessionManager.return_value = mock_session_manager
+
+            initial_owner_vars = {
+                "task_claimed": True,
+                "claimed_tasks": {task_uuid: "#42"},
+                "active_task_id": task_uuid,
+                "task_edited_files": {task_uuid: ["src/owned.py"]},
+            }
+            fresh_owner_vars = {
+                "task_claimed": True,
+                "claimed_tasks": {task_uuid: "#42", concurrent_uuid: "#99"},
+                "active_task_id": task_uuid,
+                "task_edited_files": {
+                    task_uuid: ["src/owned.py"],
+                    concurrent_uuid: ["src/concurrent.py"],
+                },
+            }
+            mock_sv_manager = MagicMock()
+            mock_sv_manager.get_variables.side_effect = [initial_owner_vars, fresh_owner_vars]
+            MockSVManager.return_value = mock_sv_manager
+
+            mock_proj_instance = MagicMock()
+            mock_proj_instance.get.return_value = None
+            MockProjManager.return_value = mock_proj_instance
+
+            registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            mock_task = MagicMock()
+            mock_task.id = task_uuid
+            mock_task.claimed_by_session_id = "owner-session"
+            mock_task.commits = ["abc123"]
+            mock_task.project_id = "proj-1"
+            mock_task.validation_criteria = None
+            mock_task.requires_user_review = False
+            mock_task.to_brief.return_value = {"id": task_uuid, "status": "closed"}
+            mock_task_manager.get_task.return_value = mock_task
+            mock_task_manager.close_task.return_value = mock_task
+            mock_task_manager.list_tasks.return_value = []
+
+            result = await registry.call(
+                "close_task",
+                {
+                    "task_id": task_uuid,
+                    "changes_summary": "test changes",
+                },
+            )
+
+        assert "error" not in result
+        assert mock_sv_manager.get_variables.call_args_list == [
+            call("owner-session"),
+            call("owner-session"),
+        ]
+        mock_sv_manager.merge_variables.assert_called_once_with(
+            "owner-session",
+            {
+                "task_claimed": True,
+                "claimed_tasks": {concurrent_uuid: "#99"},
+                "active_task_id": concurrent_uuid,
+                "task_edited_files": {concurrent_uuid: ["src/concurrent.py"]},
+            },
+        )
 
 
 # =============================================================================

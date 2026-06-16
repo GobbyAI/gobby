@@ -177,7 +177,7 @@ class TestCompactSelfTerminalPath:
             rule_name="auto-compact-after-task-close",
         )
 
-        assert result == {
+        expected = {
             "compacted": True,
             "command": "/compact",
             "cli": "claude",
@@ -185,6 +185,10 @@ class TestCompactSelfTerminalPath:
             "interrupted": True,
             "continuation_pending": True,
         }
+        assert {key: result[key] for key in expected} == expected
+        assert result["handoff_context_refreshed"] is True
+        assert result["handoff_context_fallback"] is True
+        assert result["handoff_context_background_refresh_scheduled"] is True
         assert tmux.send_keys.await_args_list == [
             call("%12", "Escape", literal=False),
             call("%12", "/compact\n", literal=True),
@@ -196,7 +200,7 @@ class TestCompactSelfTerminalPath:
 
         result = _call_compact_self(registry, tmux, session_id="s1")
 
-        assert result == {
+        expected = {
             "compacted": True,
             "command": "/compact",
             "cli": "codex",
@@ -204,6 +208,10 @@ class TestCompactSelfTerminalPath:
             "interrupted": True,
             "continuation_pending": True,
         }
+        assert {key: result[key] for key in expected} == expected
+        assert result["handoff_context_refreshed"] is True
+        assert result["handoff_context_fallback"] is True
+        assert result["handoff_context_background_refresh_scheduled"] is True
         assert tmux.send_keys.await_args_list == [
             call("%12", "C-c", literal=False),
             call("%12", "/compact\n", literal=True),
@@ -473,6 +481,10 @@ class TestCompactSelfTerminalPath:
                 "gobby.sessions.summarize.generate_session_summaries",
                 new_callable=AsyncMock,
             ) as mock_refresh,
+            patch(
+                "gobby.mcp_proxy.tools.sessions._summary_metadata.compact_summary_metadata_matches",
+                new=AsyncMock(return_value=True),
+            ) as mock_metadata_matches,
             session_context_for_test("s1"),
         ):
             result = asyncio.run(compact_self())
@@ -484,6 +496,7 @@ class TestCompactSelfTerminalPath:
         assert "handoff_context_background_refresh_scheduled" not in result
         assert events == ["status:handoff_ready", "tmux:C-c", "tmux:/compact\n"]
         mock_refresh.assert_not_called()
+        mock_metadata_matches.assert_awaited_once()
         assert handoff["context_type"] == "summary_markdown"
         assert handoff["context"] == "# Fresh Compact Handoff\n\nReady."
 
@@ -588,6 +601,10 @@ class TestCompactSelfTerminalPath:
                 "gobby.sessions.summarize.generate_session_summaries",
                 new_callable=AsyncMock,
             ) as mock_refresh,
+            patch(
+                "gobby.mcp_proxy.tools.sessions._summary_metadata.compact_summary_metadata_matches",
+                new=AsyncMock(return_value=False),
+            ) as mock_metadata_matches,
             session_context_for_test("s1"),
         ):
             result = asyncio.run(compact_self())
@@ -617,6 +634,7 @@ class TestCompactSelfTerminalPath:
         ]
         assert scheduled == [{"name": "compact-handoff-refresh-s1"}]
         mock_refresh.assert_not_called()
+        mock_metadata_matches.assert_awaited_once()
         assert "Latest coordinator state for #15156." in handoff["context"]
         assert "stale pre-compaction" not in handoff["context"]
 
