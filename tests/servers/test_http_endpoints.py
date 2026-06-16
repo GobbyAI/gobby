@@ -484,6 +484,53 @@ class TestHooksEndpoints:
             assert response.status_code == 200
             assert response.json()["continue"] is True
 
+    def test_execute_hook_noops_grok_payload_routed_as_claude(
+        self,
+        session_storage: SessionManager,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """Grok/ACP payloads misrouted as Claude should not create Claude sessions."""
+        caplog.set_level("WARNING", logger="gobby.servers.routes.mcp.hooks")
+        services = ServiceContainer(
+            config=None,
+            database=session_storage.db,
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+        )
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+        )
+
+        mock_hook_manager = MagicMock()
+        server.app.state.hook_manager = mock_hook_manager
+
+        with patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as MockAdapter:
+            client = TestClient(server.app)
+            response = client.post(
+                "/api/hooks/execute",
+                json=_hook_envelope(
+                    hook_type="session_start",
+                    source="claude",
+                    input_data={
+                        "hookEventName": "session_start",
+                        "sessionId": "grok-hook-session",
+                        "cwd": "/tmp/project",
+                    },
+                ),
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "continue": True,
+            "decision": "approve",
+            "reason": "provider mismatch: ACP/Grok payload routed as Claude",
+        }
+        MockAdapter.assert_not_called()
+        mock_hook_manager.handle.assert_not_called()
+        assert any("routed as Claude" in record.message for record in caplog.records)
+
     def test_execute_hook_graceful_error_on_adapter_exception(
         self, session_storage: SessionManager
     ) -> None:

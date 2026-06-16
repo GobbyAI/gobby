@@ -338,9 +338,7 @@ async def test_search_with_memory_project_scope_filter_includes_globals(
         MEM_1, _make_embedding(1.0), {"content": "universal fact", "project_id": None}
     )
     # Global via absent project_id key (legacy/optional path)
-    await vector_store.upsert(
-        MEM_2, _make_embedding(1.1), {"content": "another universal fact"}
-    )
+    await vector_store.upsert(MEM_2, _make_embedding(1.1), {"content": "another universal fact"})
     # Project-scoped (should be excluded for proj-A scope)
     await vector_store.upsert(
         MEM_3, _make_embedding(1.2), {"content": "proj-B specific", "project_id": "proj-B"}
@@ -349,9 +347,7 @@ async def test_search_with_memory_project_scope_filter_includes_globals(
     scope_filter = memory_project_scope_filter("proj-A")
     assert scope_filter is not None
 
-    results = await vector_store.search(
-        _make_embedding(1.0), limit=10, filters=scope_filter
-    )
+    results = await vector_store.search(_make_embedding(1.0), limit=10, filters=scope_filter)
     result_ids = [rid for rid, _score in results]
 
     assert MEM_1 in result_ids, "explicit project_id=None global must be returned"

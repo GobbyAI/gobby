@@ -61,9 +61,7 @@ async def test_infra_failure_records_backoff_and_skips_while_active(
     validator = _StubValidator([TaskValidationResult(status="error", feedback="infra down")])
 
     # First attempt: infra failure → records backoff, retryable result.
-    first = await validate_leaf_task_with_llm(
-        task, validator, "context", None, ctx, task.id, None
-    )
+    first = await validate_leaf_task_with_llm(task, validator, "context", None, ctx, task.id, None)
     assert first.can_close is False
     assert first.error_type == "validation_infrastructure_unavailable"
     assert validator.calls == 1
@@ -72,9 +70,7 @@ async def test_infra_failure_records_backoff_and_skips_while_active(
     assert state is not None and state.consecutive_failures == 1
 
     # Second attempt while the backoff window is active: validation is skipped entirely.
-    second = await validate_leaf_task_with_llm(
-        task, validator, "context", None, ctx, task.id, None
-    )
+    second = await validate_leaf_task_with_llm(task, validator, "context", None, ctx, task.id, None)
     assert second.can_close is False
     assert second.error_type == "validation_infrastructure_unavailable"
     assert validator.calls == 1  # LLM not called again
@@ -105,9 +101,7 @@ async def test_real_verdict_after_window_clears_backoff(
 
     # Advance past the backoff window; round 2 produces a real verdict and resets backoff.
     _Clock.current = _Clock.current + timedelta(hours=2)
-    final = await validate_leaf_task_with_llm(
-        task, validator, "context", None, ctx, task.id, None
-    )
+    final = await validate_leaf_task_with_llm(task, validator, "context", None, ctx, task.id, None)
     assert final.can_close is True
     assert validator.calls == 2
     assert TaskValidationBackoffStore(temp_db).get(task.id) is None

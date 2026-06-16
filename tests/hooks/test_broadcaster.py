@@ -7,7 +7,7 @@ import pytest
 
 from gobby.config.app import DaemonConfig
 from gobby.hooks.broadcaster import HookEventBroadcaster
-from gobby.hooks.events import HookEvent, HookResponse
+from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_types import (
     HookType,
     SessionStartInput,
@@ -229,6 +229,105 @@ async def test_broadcast_event_unified(
     mock_websocket_server.broadcast.assert_called_once()
     call_args = mock_websocket_server.broadcast.call_args[0][0]
     assert call_args["event_type"] == "session-start"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("event_type", "event_data", "expected_event_type"),
+    [
+        (
+            HookEventType.SESSION_START,
+            {"sessionId": "grok-session", "source": "startup"},
+            "session-start",
+        ),
+        (
+            HookEventType.BEFORE_TOOL,
+            {"sessionId": "grok-session", "tool_name": "run_terminal_command"},
+            "pre-tool-use",
+        ),
+        (
+            HookEventType.NOTIFICATION,
+            {
+                "sessionId": "grok-session",
+                "notification_type": "system",
+                "message": "ready",
+            },
+            "notification",
+        ),
+        (
+            HookEventType.BEFORE_AGENT,
+            {"sessionId": "grok-session", "prompt": "hello"},
+            "user-prompt-submit",
+        ),
+    ],
+)
+async def test_broadcast_event_backfills_external_id_from_grok_session_id(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    event_type: HookEventType,
+    event_data: dict[str, Any],
+    expected_event_type: str,
+) -> None:
+    """Grok/ACP events without external_id should still broadcast with session identity."""
+    from datetime import UTC, datetime
+
+    if expected_event_type not in default_config.hook_extensions.websocket.broadcast_events:
+        default_config.hook_extensions.websocket.broadcast_events.append(expected_event_type)
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = HookEvent(
+        event_type=event_type,
+        session_id="",
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        data=event_data,
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["event_type"] == expected_event_type
+    assert call_args["session_id"] == "grok-session"
+    assert call_args["data"]["external_id"] == "grok-session"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("metadata", "expected_external_id"),
+    [
+        (
+            {"_external_id": "metadata-external", "_platform_session_id": "platform"},
+            "metadata-external",
+        ),
+        ({"_platform_session_id": "platform"}, "platform"),
+    ],
+)
+async def test_broadcast_event_backfills_external_id_from_metadata(
+    mock_websocket_server: MagicMock,
+    default_config: DaemonConfig,
+    metadata: dict[str, str],
+    expected_external_id: str,
+) -> None:
+    """Metadata fallbacks should populate external_id when payload/session lack it."""
+    from datetime import UTC, datetime
+
+    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
+    event = HookEvent(
+        event_type=HookEventType.SESSION_START,
+        session_id="",
+        source=SessionSource.GROK,
+        timestamp=datetime.now(UTC),
+        data={"source": "startup"},
+        metadata=metadata,
+    )
+
+    await broadcaster.broadcast_event(event)
+
+    mock_websocket_server.broadcast.assert_called_once()
+    call_args = mock_websocket_server.broadcast.call_args[0][0]
+    assert call_args["session_id"] == expected_external_id
+    assert call_args["data"]["external_id"] == expected_external_id
 
 
 @pytest.mark.asyncio

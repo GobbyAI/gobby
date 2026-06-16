@@ -118,6 +118,22 @@ class HookEventBroadcaster:
         return isinstance(value, str) and bool(value.strip())
 
     @classmethod
+    def _normalize_external_id(cls, raw_input: dict[str, Any], event: HookEvent) -> None:
+        """Backfill external_id from provider-specific session identifiers."""
+        candidates = (
+            raw_input.get("external_id"),
+            event.session_id,
+            raw_input.get("sessionId"),
+            raw_input.get("session_id"),
+            event.metadata.get("_external_id"),
+            event.metadata.get("_platform_session_id"),
+        )
+        for candidate in candidates:
+            if cls._is_non_empty_string(candidate):
+                raw_input["external_id"] = candidate
+                return
+
+    @classmethod
     def _normalize_post_tool_use_failure_input(cls, raw_input: dict[str, Any]) -> None:
         """Backfill the required top-level error field for failure broadcasts."""
         existing_error = raw_input.get("error")
@@ -223,9 +239,7 @@ class HookEventBroadcaster:
 
             # Prepare input data
             raw_input = event.data.copy()
-            # Map 'session_id' -> 'external_id' if needed
-            if "external_id" not in raw_input and event.session_id:
-                raw_input["external_id"] = event.session_id
+            self._normalize_external_id(raw_input, event)
 
             # Special handling for Subagent events: ensure subagent_id is present
             if enum_hook_type in (HookType.SUBAGENT_START, HookType.SUBAGENT_STOP):

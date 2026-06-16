@@ -116,6 +116,9 @@ def _echo_install_details(
     if config_path:
         click.echo(f"Configuration: {config_path}")
 
+    for message in result.get("messages", []):
+        click.echo(message)
+
 
 def _echo_uninstall_details(
     result: dict[str, Any],

@@ -9,6 +9,10 @@ from pathlib import Path
 from shutil import copy2
 from typing import Any
 
+import tomlkit
+from tomlkit.items import Table
+from tomlkit.toml_document import TOMLDocument
+
 from gobby.cli.utils import get_install_dir
 
 from .hook_commands import build_hook_command
@@ -39,6 +43,10 @@ def install_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:
         "commands_installed": [],
         "mcp_configured": False,
         "mcp_already_configured": False,
+        "grok_claude_hooks_disabled": False,
+        "grok_claude_hooks_already_disabled": False,
+        "grok_config_backup_path": None,
+        "messages": [],
         "error": None,
     }
 
@@ -52,6 +60,7 @@ def install_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:
     grok_home = Path.home() / ".grok"
     grok_hooks_dir = grok_home / "hooks"
     gobby_hook_file = grok_hooks_dir / "gobby.json"
+    grok_config_file = grok_home / "config.toml"
 
     install_global_hooks()
     grok_hooks_dir.mkdir(parents=True, exist_ok=True)
@@ -60,6 +69,27 @@ def install_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:
     shared = install_shared_content(content_path, project_path)
     result["agents_installed"] = shared.get("agents", [])
     result["plugins_installed"] = shared.get("plugins", [])
+
+    compat_result = _disable_claude_hook_compat(grok_config_file)
+    if not compat_result["success"]:
+        result["error"] = compat_result["error"]
+        return result
+    result["grok_config_path"] = compat_result["config_path"]
+    result["grok_config_backup_path"] = compat_result["backup_path"]
+    result["grok_claude_hooks_disabled"] = compat_result["disabled"]
+    result["grok_claude_hooks_already_disabled"] = compat_result["already_disabled"]
+    if compat_result["backup_path"]:
+        result["messages"].append(f"Backed up Grok config: {compat_result['backup_path']}")
+    if compat_result["disabled"]:
+        result["messages"].append(
+            "Disabled Grok Claude-hook compatibility in ~/.grok/config.toml; "
+            "native Grok hooks remain in ~/.grok/hooks/gobby.json."
+        )
+    else:
+        result["messages"].append(
+            "Grok Claude-hook compatibility is already disabled in ~/.grok/config.toml; "
+            "native Grok hooks remain in ~/.grok/hooks/gobby.json."
+        )
 
     if gobby_hook_file.exists():
         backup_file = grok_hooks_dir / f"gobby.json.{int(time.time())}.backup"
@@ -77,6 +107,79 @@ def install_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:
     result["config_path"] = str(gobby_hook_file)
     result["success"] = True
     return result
+
+
+def _disable_claude_hook_compat(config_path: Path) -> dict[str, Any]:
+    """Disable Grok's Claude hook compatibility while preserving TOML formatting."""
+    result: dict[str, Any] = {
+        "success": False,
+        "disabled": False,
+        "already_disabled": False,
+        "config_path": str(config_path),
+        "backup_path": None,
+        "error": None,
+    }
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    existing_text = ""
+    config: TOMLDocument
+    if config_path.exists():
+        try:
+            existing_text = config_path.read_text(encoding="utf-8")
+            config = tomlkit.parse(existing_text)
+        except tomlkit.exceptions.ParseError as exc:
+            result["error"] = f"Failed to parse TOML {config_path}: {exc}"
+            return result
+        except OSError as exc:
+            result["error"] = f"Failed to read {config_path}: {exc}"
+            return result
+    else:
+        config = tomlkit.document()
+
+    try:
+        compat = _toml_table(config, "compat")
+        claude = _toml_table(compat, "claude")
+    except ValueError as exc:
+        result["error"] = str(exc)
+        return result
+
+    if claude.get("hooks") is False:
+        result["success"] = True
+        result["already_disabled"] = True
+        return result
+
+    if config_path.exists():
+        timestamp = int(time.time())
+        backup_path = config_path.parent / f"{config_path.name}.{timestamp}.backup"
+        try:
+            backup_path.write_text(existing_text, encoding="utf-8")
+            result["backup_path"] = str(backup_path)
+        except OSError as exc:
+            result["error"] = f"Failed to create backup: {exc}"
+            return result
+
+    claude["hooks"] = False
+
+    try:
+        config_path.write_text(tomlkit.dumps(config), encoding="utf-8")
+    except OSError as exc:
+        result["error"] = f"Failed to write {config_path}: {exc}"
+        return result
+
+    result["success"] = True
+    result["disabled"] = True
+    return result
+
+
+def _toml_table(parent: TOMLDocument | Table, key: str) -> Table:
+    value = parent.get(key)
+    if isinstance(value, Table):
+        return value
+    if value is not None:
+        raise ValueError(f"Cannot configure [compat.claude]: {key!r} is not a TOML table")
+    table = tomlkit.table()
+    parent[key] = table
+    return table
 
 
 def uninstall_grok(project_path: Path, mode: str = "global") -> dict[str, Any]:

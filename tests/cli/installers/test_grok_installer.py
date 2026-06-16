@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import pytest
+import tomlkit
 
 pytestmark = pytest.mark.unit
 
@@ -28,7 +29,11 @@ def _write_grok_template(install_dir: Path) -> None:
     )
 
 
-def test_install_grok_writes_native_hook_file(temp_dir: Path) -> None:
+def test_install_grok_writes_native_hook_file(
+    temp_dir: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from gobby.cli._install_prompts import _echo_install_details
     from gobby.cli.installers.grok import install_grok
 
     install_dir = temp_dir / "install"
@@ -66,6 +71,99 @@ def test_install_grok_writes_native_hook_file(temp_dir: Path) -> None:
         == "/Users/test/.gobby/bin/ghook --gobby-owned --cli=grok --type=pre_tool_use"
     )
     assert config["hooks"]["Stop"][0]["hooks"][0]["command"].endswith("--cli=grok --type=stop")
+
+    grok_config_file = temp_dir / ".grok" / "config.toml"
+    grok_config = tomlkit.parse(grok_config_file.read_text(encoding="utf-8"))
+    assert grok_config["compat"]["claude"]["hooks"] is False
+    assert result["grok_claude_hooks_disabled"] is True
+    assert result["grok_config_backup_path"] is None
+    assert not list(grok_config_file.parent.glob("config.toml.*.backup"))
+
+    _echo_install_details(result)
+    output = capsys.readouterr().out
+    assert "Disabled Grok Claude-hook compatibility in ~/.grok/config.toml" in output
+    assert "native Grok hooks remain in ~/.grok/hooks/gobby.json" in output
+
+
+def test_install_grok_disables_existing_claude_hook_compat_and_backs_up(
+    temp_dir: Path,
+) -> None:
+    from gobby.cli.installers.grok import install_grok
+
+    install_dir = temp_dir / "install"
+    _write_grok_template(install_dir)
+    project_dir = temp_dir / "project"
+    project_dir.mkdir()
+
+    grok_config_file = temp_dir / ".grok" / "config.toml"
+    grok_config_file.parent.mkdir(parents=True)
+    original_config = '[ui]\nyolo = true\n\n[compat.claude]\nhooks = true\nrules = "keep"\n'
+    grok_config_file.write_text(original_config, encoding="utf-8")
+
+    with (
+        patch.object(Path, "home", return_value=temp_dir),
+        patch("gobby.cli.installers.grok.get_install_dir", return_value=install_dir),
+        patch("gobby.cli.installers.grok.install_global_hooks"),
+        patch(
+            "gobby.cli.installers.grok.install_shared_content",
+            return_value={"agents": [], "plugins": []},
+        ),
+        patch(
+            "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
+            return_value="/Users/test/.gobby/bin/ghook",
+        ),
+        patch("gobby.cli.installers.grok.time.time", return_value=1234567890),
+    ):
+        result = install_grok(project_dir)
+
+    backup_file = temp_dir / ".grok" / "config.toml.1234567890.backup"
+    assert result["success"] is True
+    assert result["grok_config_backup_path"] == str(backup_file)
+    assert backup_file.read_text(encoding="utf-8") == original_config
+
+    grok_config = tomlkit.parse(grok_config_file.read_text(encoding="utf-8"))
+    assert grok_config["ui"]["yolo"] is True
+    assert grok_config["compat"]["claude"]["hooks"] is False
+    assert grok_config["compat"]["claude"]["rules"] == "keep"
+    assert any(message.startswith("Backed up Grok config: ") for message in result["messages"])
+
+
+def test_install_grok_leaves_already_disabled_claude_hook_compat_unmodified(
+    temp_dir: Path,
+) -> None:
+    from gobby.cli.installers.grok import install_grok
+
+    install_dir = temp_dir / "install"
+    _write_grok_template(install_dir)
+    project_dir = temp_dir / "project"
+    project_dir.mkdir()
+
+    grok_config_file = temp_dir / ".grok" / "config.toml"
+    grok_config_file.parent.mkdir(parents=True)
+    original_config = '[models]\ndefault = "grok-build"\n\n[compat.claude]\nhooks = false\n'
+    grok_config_file.write_text(original_config, encoding="utf-8")
+
+    with (
+        patch.object(Path, "home", return_value=temp_dir),
+        patch("gobby.cli.installers.grok.get_install_dir", return_value=install_dir),
+        patch("gobby.cli.installers.grok.install_global_hooks"),
+        patch(
+            "gobby.cli.installers.grok.install_shared_content",
+            return_value={"agents": [], "plugins": []},
+        ),
+        patch(
+            "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
+            return_value="/Users/test/.gobby/bin/ghook",
+        ),
+        patch("gobby.cli.installers.grok.time.time", return_value=1234567890),
+    ):
+        result = install_grok(project_dir)
+
+    assert result["success"] is True
+    assert result["grok_claude_hooks_already_disabled"] is True
+    assert result["grok_config_backup_path"] is None
+    assert grok_config_file.read_text(encoding="utf-8") == original_config
+    assert not list(grok_config_file.parent.glob("config.toml.*.backup"))
 
 
 def test_uninstall_grok_removes_gobby_hook_file(temp_dir: Path) -> None:
