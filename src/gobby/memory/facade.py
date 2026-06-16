@@ -11,7 +11,7 @@ from gobby.memory.services.maintenance import export_markdown as _export_markdow
 from gobby.memory.services.maintenance import get_stats as _get_stats
 from gobby.memory.services.repository import DEFAULT_LIST_LIMIT, MemoryRepository
 from gobby.memory.services.search import DEFAULT_SEARCH_LIMIT, SearchService
-from gobby.storage.memories import Memory
+from gobby.storage.memories import Memory, Visibility
 
 if TYPE_CHECKING:
     from gobby.memory.services.crossref import CrossrefService
@@ -221,8 +221,10 @@ class MemoryManagerFacadeMethods:
     async def reconcile_stores(self, dry_run: bool = False) -> dict[str, Any]:
         return await self._indexing_service.reconcile_stores(dry_run=dry_run)
 
-    def count_memories(self, project_id: str | None = None) -> int:
-        return self._repository.count_memories(project_id=project_id)
+    def count_memories(
+        self, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> int:
+        return self._repository.count_memories(project_id=project_id, visibility=visibility)
 
     def list_memories(
         self,
@@ -233,9 +235,18 @@ class MemoryManagerFacadeMethods:
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> list[Memory]:
         return self._repository.list_memories(
-            project_id, memory_type, limit, offset, tags_all, tags_any, tags_none
+            project_id,
+            memory_type,
+            limit,
+            offset,
+            tags_all,
+            tags_any,
+            tags_none,
+            visibility=visibility,
         )
 
     async def alist_memories(
@@ -246,6 +257,7 @@ class MemoryManagerFacadeMethods:
         limit: int | None = DEFAULT_LIST_LIMIT,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        visibility: Visibility = "active",
     ) -> list[Memory]:
         return await self._repository.alist_memories(
             project_id=project_id,
@@ -253,23 +265,38 @@ class MemoryManagerFacadeMethods:
             limit=limit,
             offset=offset,
             tags_all=tags_all,
+            visibility=visibility,
         )
 
-    def content_exists(self, content: str, project_id: str | None = None) -> bool:
-        return self._repository.content_exists(content, project_id)
+    def content_exists(
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> bool:
+        return self._repository.content_exists(content, project_id, visibility=visibility)
 
-    async def acontent_exists(self, content: str, project_id: str | None = None) -> bool:
-        return await self._repository.acontent_exists(content, project_id)
+    async def acontent_exists(
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> bool:
+        return await self._repository.acontent_exists(content, project_id, visibility=visibility)
 
-    def get_memory(self, memory_id: str, project_id: str | None = None) -> Memory | None:
-        return self._repository.get_memory(memory_id, project_id=project_id)
+    def get_memory(
+        self,
+        memory_id: str,
+        project_id: str | None = None,
+        *,
+        visibility: Visibility = "active",
+    ) -> Memory | None:
+        return self._repository.get_memory(memory_id, project_id=project_id, visibility=visibility)
 
     async def aget_memory(
         self,
         memory_id: str,
         project_id: str | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> Memory | None:
-        return await self._repository.aget_memory(memory_id, project_id=project_id)
+        return await self._repository.aget_memory(
+            memory_id, project_id=project_id, visibility=visibility
+        )
 
     def find_by_prefix(
         self,

@@ -21,7 +21,7 @@ from gobby.memory.protocol import (
     MemoryQuery,
     MemoryRecord,
 )
-from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.memories import LocalMemoryManager, Visibility
 
 
 class StorageAdapter:
@@ -77,9 +77,13 @@ class StorageAdapter:
         )
         return self._to_record(memory, user_id=user_id, metadata=metadata)
 
-    async def get(self, memory_id: str) -> MemoryRecord | None:
+    async def get(
+        self, memory_id: str, *, visibility: Visibility = "active"
+    ) -> MemoryRecord | None:
         try:
-            memory = await self._run_storage(self._storage.get_memory, memory_id)
+            memory = await self._run_storage(
+                self._storage.get_memory, memory_id, visibility=visibility
+            )
             return self._to_record(memory)
         except ValueError:
             return None
@@ -112,6 +116,7 @@ class StorageAdapter:
             tags_all=query.tags_all,
             tags_any=query.tags_any,
             tags_none=query.tags_none,
+            visibility=query.visibility,
         )
         if query.memory_type is not None:
             memories = [m for m in memories if m.memory_type == query.memory_type]
@@ -125,6 +130,8 @@ class StorageAdapter:
         limit: int = 50,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> list[MemoryRecord]:
         memories = await self._run_storage(
             self._storage.list_memories,
@@ -133,19 +140,26 @@ class StorageAdapter:
             limit=limit,
             offset=offset,
             tags_all=tags_all,
+            visibility=visibility,
         )
         return [self._to_record(m) for m in memories]
 
-    async def content_exists(self, content: str, project_id: str | None = None) -> bool:
+    async def content_exists(
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> bool:
         return cast(
             bool,
-            await self._run_storage(self._storage.content_exists, content, project_id),
+            await self._run_storage(
+                self._storage.content_exists, content, project_id, visibility=visibility
+            ),
         )
 
     async def get_memory_by_content(
-        self, content: str, project_id: str | None = None
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
     ) -> MemoryRecord | None:
-        memory = await self._run_storage(self._storage.get_memory_by_content, content, project_id)
+        memory = await self._run_storage(
+            self._storage.get_memory_by_content, content, project_id, visibility=visibility
+        )
         if memory:
             return self._to_record(memory)
         return None
@@ -163,6 +177,10 @@ class StorageAdapter:
         last_accessed = (
             datetime.fromisoformat(memory.last_accessed_at) if memory.last_accessed_at else None
         )
+        deleted_at = datetime.fromisoformat(memory.deleted_at) if memory.deleted_at else None
+        last_dreamed_at = (
+            datetime.fromisoformat(memory.last_dreamed_at) if memory.last_dreamed_at else None
+        )
 
         return MemoryRecord(
             id=memory.id,
@@ -178,4 +196,7 @@ class StorageAdapter:
             access_count=memory.access_count,
             last_accessed_at=last_accessed,
             metadata=metadata or {},
+            deleted_at=deleted_at,
+            dream_action=memory.dream_action,
+            last_dreamed_at=last_dreamed_at,
         )

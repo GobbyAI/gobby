@@ -26,7 +26,10 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
-from typing import Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+
+if TYPE_CHECKING:
+    from gobby.storage.memories import Visibility
 
 __all__ = [
     "MemoryCapability",
@@ -126,6 +129,7 @@ class MemoryQuery:
     tags_any: list[str] | None = None
     tags_none: list[str] | None = None
     search_mode: str = "auto"
+    visibility: Visibility = "active"
 
 
 @dataclass
@@ -173,6 +177,9 @@ class MemoryRecord:
     access_count: int = 0
     last_accessed_at: datetime | None = None
     metadata: dict[str, Any] = field(default_factory=dict)
+    deleted_at: datetime | None = None
+    dream_action: str | None = None
+    last_dreamed_at: datetime | None = None
 
     def to_dict(self) -> dict[str, Any]:
         """Convert record to dictionary for serialization."""
@@ -192,6 +199,11 @@ class MemoryRecord:
                 self.last_accessed_at.isoformat() if self.last_accessed_at else None
             ),
             "metadata": self.metadata,
+            "deleted_at": self.deleted_at.isoformat() if self.deleted_at else None,
+            "dream_action": self.dream_action,
+            "last_dreamed_at": (
+                self.last_dreamed_at.isoformat() if self.last_dreamed_at else None
+            ),
         }
 
     @classmethod
@@ -212,6 +224,14 @@ class MemoryRecord:
         if isinstance(last_accessed_at, str):
             last_accessed_at = datetime.fromisoformat(last_accessed_at)
 
+        deleted_at = data.get("deleted_at")
+        if isinstance(deleted_at, str):
+            deleted_at = datetime.fromisoformat(deleted_at)
+
+        last_dreamed_at = data.get("last_dreamed_at")
+        if isinstance(last_dreamed_at, str):
+            last_dreamed_at = datetime.fromisoformat(last_dreamed_at)
+
         return cls(
             id=data["id"],
             content=data["content"],
@@ -226,6 +246,9 @@ class MemoryRecord:
             access_count=data.get("access_count", 0),
             last_accessed_at=last_accessed_at,
             metadata=data.get("metadata", {}),
+            deleted_at=deleted_at,
+            dream_action=data.get("dream_action"),
+            last_dreamed_at=last_dreamed_at,
         )
 
 
@@ -290,7 +313,9 @@ class MemoryBackendProtocol(Protocol):
         """
         ...
 
-    async def get(self, memory_id: str) -> MemoryRecord | None:
+    async def get(
+        self, memory_id: str, *, visibility: Visibility = "active"
+    ) -> MemoryRecord | None:
         """Retrieve a memory by ID.
 
         Args:
@@ -352,6 +377,8 @@ class MemoryBackendProtocol(Protocol):
         limit: int = 50,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> list[MemoryRecord]:
         """List memories with optional filtering.
 
@@ -367,7 +394,9 @@ class MemoryBackendProtocol(Protocol):
         """
         ...
 
-    async def content_exists(self, content: str, project_id: str | None = None) -> bool:
+    async def content_exists(
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> bool:
         """Check if a memory with identical content already exists.
 
         Args:
@@ -380,7 +409,7 @@ class MemoryBackendProtocol(Protocol):
         ...
 
     async def get_memory_by_content(
-        self, content: str, project_id: str | None = None
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
     ) -> MemoryRecord | None:
         """Get a memory by its exact content.
 

@@ -914,6 +914,9 @@ class _FakeDreamDB:
                 "graph_processed",
                 "created_at",
                 "updated_at",
+                "deleted_at",
+                "dream_action",
+                "last_dreamed_at",
             )
             self.memories[str(params[0])] = dict(zip(columns, params, strict=True))
         return _Cursor()

@@ -12,9 +12,35 @@ from gobby.storage.sql_dialect import newer_than_now_expr
 # Stable namespace for deterministic memory UUIDs (uuid5)
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")
 
-__all__ = ["Memory", "MemoryCrossRef", "LocalMemoryManager"]
+__all__ = [
+    "Memory",
+    "MemoryCrossRef",
+    "LocalMemoryManager",
+    "Visibility",
+    "visibility_predicate",
+]
 
 logger = logging.getLogger(__name__)
+
+Visibility = Literal["active", "hidden", "all"]
+"""Three-state memory visibility filter: visible rows, dream-hidden rows, or both."""
+
+
+def visibility_predicate(visibility: Visibility, *, column: str = "deleted_at") -> str:
+    """Return a bare SQL predicate enforcing the visibility filter.
+
+    ``"active"`` -> visible rows only, ``"hidden"`` -> dream-hidden rows only,
+    ``"all"`` -> no filter (empty string). Raises ``ValueError`` on an unknown
+    value so bad input fails loudly at the storage boundary rather than silently
+    leaking hidden rows.
+    """
+    if visibility == "active":
+        return f"{column} IS NULL"
+    if visibility == "hidden":
+        return f"{column} IS NOT NULL"
+    if visibility == "all":
+        return ""
+    raise ValueError(f"Invalid visibility: {visibility!r}")
 
 
 @dataclass
@@ -57,6 +83,9 @@ class Memory:
     access_count: int = 0
     last_accessed_at: str | None = None
     tags: list[str] | None = None
+    deleted_at: str | None = None  # NULL = visible; non-NULL = dream-hidden (recoverable)
+    dream_action: Literal["review", "delete"] | None = None  # why dream hid the row
+    last_dreamed_at: str | None = None  # cooldown cursor for the nightly active sweep
     similarity: float | None = None  # Set at search time, not persisted
     search_via: str | None = None  # Set at search time, not persisted
     ranking_score: float | None = None  # Hybrid retrieval rank, not persisted
@@ -87,6 +116,9 @@ class Memory:
             access_count=row["access_count"],
             last_accessed_at=row["last_accessed_at"],
             tags=tags,
+            deleted_at=row.get("deleted_at"),
+            dream_action=row.get("dream_action"),
+            last_dreamed_at=row.get("last_dreamed_at"),
         )
 
     def to_dict(self) -> dict[str, Any]:
@@ -102,6 +134,9 @@ class Memory:
             "access_count": self.access_count,
             "last_accessed_at": self.last_accessed_at,
             "tags": self.tags,
+            "deleted_at": self.deleted_at,
+            "dream_action": self.dream_action,
+            "last_dreamed_at": self.last_dreamed_at,
         }
         if self.similarity is not None:
             data["similarity"] = self.similarity
@@ -201,7 +236,13 @@ class LocalMemoryManager:
         self._notify_listeners()
         return self.get_memory(memory_id)
 
-    def get_memory(self, memory_id: str, project_id: str | None = None) -> Memory:
+    def get_memory(
+        self,
+        memory_id: str,
+        project_id: str | None = None,
+        *,
+        visibility: Visibility = "active",
+    ) -> Memory:
         """Get a memory by ID, optionally scoped to a project.
 
         When project_id is provided, only returns the memory if it belongs to
@@ -215,13 +256,18 @@ class LocalMemoryManager:
         Raises:
             ValueError: If memory not found or not accessible in the given project
         """
+        vis = visibility_predicate(visibility)
+        vis_clause = f" AND {vis}" if vis else ""
         if project_id:
             row = self.db.fetchone(
-                "SELECT * FROM memories WHERE id = %s AND (project_id = %s OR project_id IS NULL)",
+                "SELECT * FROM memories WHERE id = %s "
+                f"AND (project_id = %s OR project_id IS NULL){vis_clause}",
                 (memory_id, project_id),
             )
         else:
-            row = self.db.fetchone("SELECT * FROM memories WHERE id = %s", (memory_id,))
+            row = self.db.fetchone(
+                f"SELECT * FROM memories WHERE id = %s{vis_clause}", (memory_id,)
+            )
         if not row:
             raise ValueError(f"Memory {memory_id} not found")
         return Memory.from_row(row)
@@ -230,21 +276,25 @@ class LocalMemoryManager:
         self,
         memory_ids: list[str],
         project_id: str | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> list[Memory]:
         """Return multiple memories, preserving the requested order."""
         if not memory_ids:
             return []
 
         placeholders = ", ".join("%s" for _ in memory_ids)
+        vis = visibility_predicate(visibility)
+        vis_clause = f" AND {vis}" if vis else ""
         if project_id:
             rows = self.db.fetchall(
                 f"SELECT * FROM memories WHERE id IN ({placeholders}) "
-                "AND (project_id = %s OR project_id IS NULL)",
+                f"AND (project_id = %s OR project_id IS NULL){vis_clause}",
                 (*memory_ids, project_id),
             )
         else:
             rows = self.db.fetchall(
-                f"SELECT * FROM memories WHERE id IN ({placeholders})",
+                f"SELECT * FROM memories WHERE id IN ({placeholders}){vis_clause}",
                 tuple(memory_ids),
             )
 
@@ -258,7 +308,9 @@ class LocalMemoryManager:
         row = self.db.fetchone("SELECT 1 FROM memories WHERE id = %s", (memory_id,))
         return row is not None
 
-    def content_exists(self, content: str, project_id: str | None = None) -> bool:
+    def content_exists(
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> bool:
         """Check if a memory with identical content already exists.
 
         Uses global deduplication - checks if any memory has the same content,
@@ -276,13 +328,17 @@ class LocalMemoryManager:
         # This fixes the duplicate issue where same content + different project_id
         # would create different memory IDs
         normalized_content = content.strip()
+        vis = visibility_predicate(visibility)
+        vis_clause = f" AND {vis}" if vis else ""
         row = self.db.fetchone(
-            "SELECT 1 FROM memories WHERE content = %s LIMIT 1",
+            f"SELECT 1 FROM memories WHERE content = %s{vis_clause} LIMIT 1",
             (normalized_content,),
         )
         return row is not None
 
-    def get_memory_by_content(self, content: str, project_id: str | None = None) -> Memory | None:
+    def get_memory_by_content(
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> Memory | None:
         """Get a memory by its exact content.
 
         Uses global lookup - finds any memory with matching content regardless
@@ -297,8 +353,10 @@ class LocalMemoryManager:
         """
         # Global lookup: find by content directly, ignoring project_id
         normalized_content = content.strip()
+        vis = visibility_predicate(visibility)
+        vis_clause = f" AND {vis}" if vis else ""
         row = self.db.fetchone(
-            "SELECT * FROM memories WHERE content = %s LIMIT 1",
+            f"SELECT * FROM memories WHERE content = %s{vis_clause} LIMIT 1",
             (normalized_content,),
         )
         if row:
@@ -416,20 +474,25 @@ class LocalMemoryManager:
         )
         return [Memory.from_row(row) for row in rows]
 
-    def count_memories(self, project_id: str | None = None) -> int:
+    def count_memories(
+        self, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> int:
         """Return the total number of memories using COUNT(*).
 
         When project_id is provided, includes both project-specific memories
         and global memories (project_id IS NULL) since global memories are
         accessible from any project context.
         """
+        clauses: list[str] = []
+        params: list[Any] = []
         if project_id:
-            row = self.db.fetchone(
-                "SELECT COUNT(*) AS cnt FROM memories WHERE project_id = %s OR project_id IS NULL",
-                (project_id,),
-            )
-        else:
-            row = self.db.fetchone("SELECT COUNT(*) AS cnt FROM memories")
+            clauses.append("(project_id = %s OR project_id IS NULL)")
+            params.append(project_id)
+        vis = visibility_predicate(visibility)
+        if vis:
+            clauses.append(vis)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        row = self.db.fetchone(f"SELECT COUNT(*) AS cnt FROM memories{where}", tuple(params))
         return row["cnt"] if row else 0
 
     def list_memories(
@@ -441,6 +504,8 @@ class LocalMemoryManager:
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> list[Memory]:
         """
         List memories with optional filtering.
@@ -467,6 +532,10 @@ class LocalMemoryManager:
         if memory_type:
             query += " AND memory_type = %s"
             params.append(memory_type)
+
+        vis = visibility_predicate(visibility)
+        if vis:
+            query += f" AND {vis}"
 
         # Fetch more results to allow for tag filtering
         fetch_limit = limit * 3 if (tags_all or tags_any or tags_none) else limit
@@ -509,6 +578,8 @@ class LocalMemoryManager:
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> list[Memory]:
         """
         Search memories by content with optional tag filtering.
@@ -532,6 +603,10 @@ class LocalMemoryManager:
         if project_id:
             sql += " AND (project_id = %s OR project_id IS NULL)"
             params.append(project_id)
+
+        vis = visibility_predicate(visibility)
+        if vis:
+            sql += f" AND {vis}"
 
         # Fetch more results than needed to allow for tag filtering
         fetch_limit = limit * 3 if (tags_all or tags_any or tags_none) else limit

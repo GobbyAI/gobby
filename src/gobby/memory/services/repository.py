@@ -6,7 +6,7 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Literal, cast
 
 from gobby.memory.protocol import MemoryBackendProtocol, MemoryRecord
-from gobby.storage.memories import LocalMemoryManager, Memory
+from gobby.storage.memories import LocalMemoryManager, Memory, Visibility
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -56,11 +56,18 @@ class MemoryRepository:
                 record.last_accessed_at.isoformat() if record.last_accessed_at else None
             ),
             tags=record.tags or [],
+            deleted_at=record.deleted_at.isoformat() if record.deleted_at else None,
+            dream_action=cast(Literal["review", "delete"] | None, record.dream_action),
+            last_dreamed_at=(
+                record.last_dreamed_at.isoformat() if record.last_dreamed_at else None
+            ),
         )
 
-    def count_memories(self, project_id: str | None = None) -> int:
+    def count_memories(
+        self, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> int:
         """Return the total number of memories using COUNT(*)."""
-        return self.storage.count_memories(project_id=project_id)
+        return self.storage.count_memories(project_id=project_id, visibility=visibility)
 
     def list_memories(
         self,
@@ -71,6 +78,7 @@ class MemoryRepository:
         tags_all: list[str] | None = None,
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
+        visibility: Visibility = "active",
     ) -> list[Memory]:
         """List memories with optional filtering."""
         return self.storage.list_memories(
@@ -81,6 +89,7 @@ class MemoryRepository:
             tags_all=tags_all,
             tags_any=tags_any,
             tags_none=tags_none,
+            visibility=visibility,
         )
 
     async def alist_memories(
@@ -91,6 +100,7 @@ class MemoryRepository:
         limit: int | None = DEFAULT_LIST_LIMIT,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        visibility: Visibility = "active",
     ) -> list[Memory]:
         """List memories via backend."""
         resolved_limit = DEFAULT_LIST_LIMIT if limit is None else limit
@@ -100,21 +110,32 @@ class MemoryRepository:
             limit=resolved_limit,
             offset=offset,
             tags_all=tags_all,
+            visibility=visibility,
         )
         return [self.record_to_memory(record) for record in records]
 
-    def content_exists(self, content: str, project_id: str | None = None) -> bool:
+    def content_exists(
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> bool:
         """Check if a memory with identical content already exists."""
-        return self.storage.content_exists(content, project_id)
+        return self.storage.content_exists(content, project_id, visibility=visibility)
 
-    async def acontent_exists(self, content: str, project_id: str | None = None) -> bool:
+    async def acontent_exists(
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> bool:
         """Check if a memory with identical content already exists via backend."""
-        return await self.backend.content_exists(content, project_id)
+        return await self.backend.content_exists(content, project_id, visibility=visibility)
 
-    def get_memory(self, memory_id: str, project_id: str | None = None) -> Memory | None:
+    def get_memory(
+        self,
+        memory_id: str,
+        project_id: str | None = None,
+        *,
+        visibility: Visibility = "active",
+    ) -> Memory | None:
         """Get a specific memory by ID, optionally scoped to a project."""
         try:
-            return self.storage.get_memory(memory_id, project_id=project_id)
+            return self.storage.get_memory(memory_id, project_id=project_id, visibility=visibility)
         except ValueError:
             return None
 
@@ -122,9 +143,11 @@ class MemoryRepository:
         self,
         memory_id: str,
         project_id: str | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> Memory | None:
         """Get a specific memory by ID via backend."""
-        record = await self.backend.get(memory_id)
+        record = await self.backend.get(memory_id, visibility=visibility)
         if record is None:
             return None
         if project_id and record.project_id and record.project_id != project_id:

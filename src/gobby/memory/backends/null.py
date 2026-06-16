@@ -10,10 +10,13 @@ but doesn't persist any data. Useful for:
 from __future__ import annotations
 
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
 from gobby.memory.protocol import MemoryCapability, MemoryQuery, MemoryRecord
+
+if TYPE_CHECKING:
+    from gobby.storage.memories import Visibility
 
 
 class NullBackend:
@@ -60,7 +63,9 @@ class NullBackend:
             metadata=metadata or {},
         )
 
-    async def get(self, memory_id: str) -> MemoryRecord | None:
+    async def get(
+        self, memory_id: str, *, visibility: Visibility = "active"
+    ) -> MemoryRecord | None:
         """Get a memory by ID (always returns None - no persistence)."""
         return None
 
@@ -96,16 +101,20 @@ class NullBackend:
         limit: int = 50,
         offset: int = 0,
         tags_all: list[str] | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> list[MemoryRecord]:
         """List memories (always returns empty list)."""
         return []
 
-    async def content_exists(self, content: str, project_id: str | None = None) -> bool:
+    async def content_exists(
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
+    ) -> bool:
         """Check if content exists (always returns False)."""
         return False
 
     async def get_memory_by_content(
-        self, content: str, project_id: str | None = None
+        self, content: str, project_id: str | None = None, *, visibility: Visibility = "active"
     ) -> MemoryRecord | None:
         """Get memory by content (always returns None)."""
         return None

@@ -9,6 +9,9 @@ from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
 
+# Columns added by migration 289 (dream soft-delete). Snapshots taken before
+# 289 lack them, so restore_memory_row defaults them to NULL instead of failing.
+_DREAM_SOFT_DELETE_COLUMNS = ("deleted_at", "dream_action", "last_dreamed_at")
 _MEMORY_COLUMNS = (
     "id",
     "project_id",
@@ -22,6 +25,7 @@ _MEMORY_COLUMNS = (
     "graph_processed",
     "created_at",
     "updated_at",
+    *_DREAM_SOFT_DELETE_COLUMNS,
 )
 _MEMORY_COLUMN_LIST = ", ".join(_MEMORY_COLUMNS)
 _MEMORY_PLACEHOLDERS = ", ".join(["%s"] * len(_MEMORY_COLUMNS))
@@ -286,12 +290,17 @@ class MemoryDreamStore:
         return snapshots
 
     def restore_memory_row(self, data: dict[str, Any]) -> None:
-        missing = [column for column in _MEMORY_COLUMNS if column not in data]
+        missing = [
+            column
+            for column in _MEMORY_COLUMNS
+            if column not in data and column not in _DREAM_SOFT_DELETE_COLUMNS
+        ]
         if missing:
             raise ValueError(
                 f"Cannot restore memory row with missing columns: {', '.join(missing)}"
             )
-        values = {column: data[column] for column in _MEMORY_COLUMNS}
+        # data.get() defaults the dream soft-delete columns to NULL on pre-289 snapshots.
+        values = {column: data.get(column) for column in _MEMORY_COLUMNS}
         values["tags"] = _json(values.get("tags") or [])
         self.db.execute(
             RESTORE_MEMORY_SQL,

@@ -452,3 +452,103 @@ def test_list_memories_combined_filters(memory_manager, db) -> None:
     results = memory_manager.list_memories(project_id="proj-combo", memory_type="fact")
     assert len(results) == 2
     assert all(r.memory_type == "fact" for r in results)
+
+
+# --- Dream soft-delete visibility (migration 289) -------------------------
+
+
+def _hide(db, memory_id: str, action: str = "review") -> None:
+    """Soft-hide a memory the way dream's mark_dreamed will (direct SQL)."""
+    db.execute(
+        "UPDATE memories SET deleted_at = NOW(), dream_action = %s WHERE id = %s",
+        (action, memory_id),
+    )
+
+
+def test_memory_roundtrips_dream_soft_delete_fields(memory_manager, db) -> None:
+    created = memory_manager.create_memory(content="round-trip me")
+    _hide(db, created.id, "delete")
+
+    hidden = memory_manager.get_memory(created.id, visibility="all")
+    assert hidden.deleted_at is not None
+    assert hidden.dream_action == "delete"
+
+    data = hidden.to_dict()
+    assert data["dream_action"] == "delete"
+    assert "deleted_at" in data
+    assert "last_dreamed_at" in data
+
+
+def test_get_memory_visibility_filters(memory_manager, db) -> None:
+    created = memory_manager.create_memory(content="hide visibility get")
+    _hide(db, created.id)
+
+    # active (default) hides it
+    with pytest.raises(ValueError, match="not found"):
+        memory_manager.get_memory(created.id)
+    # hidden / all surface it
+    assert memory_manager.get_memory(created.id, visibility="hidden").id == created.id
+    assert memory_manager.get_memory(created.id, visibility="all").id == created.id
+
+
+def test_get_memories_visibility(memory_manager, db) -> None:
+    visible = memory_manager.create_memory(content="batch visible")
+    hidden = memory_manager.create_memory(content="batch hidden")
+    _hide(db, hidden.id)
+
+    active = memory_manager.get_memories([visible.id, hidden.id])
+    assert {m.id for m in active} == {visible.id}
+    both = memory_manager.get_memories([visible.id, hidden.id], visibility="all")
+    assert {m.id for m in both} == {visible.id, hidden.id}
+
+
+def test_list_count_search_visibility(memory_manager, db) -> None:
+    visible = memory_manager.create_memory(content="visible alpha")
+    hidden = memory_manager.create_memory(content="hidden alpha")
+    _hide(db, hidden.id)
+
+    active_ids = {m.id for m in memory_manager.list_memories()}
+    assert visible.id in active_ids
+    assert hidden.id not in active_ids
+    assert {m.id for m in memory_manager.list_memories(visibility="hidden")} == {hidden.id}
+    assert {visible.id, hidden.id} <= {m.id for m in memory_manager.list_memories(visibility="all")}
+
+    assert memory_manager.count_memories(visibility="active") == 1
+    assert memory_manager.count_memories(visibility="hidden") == 1
+    assert memory_manager.count_memories(visibility="all") == 2
+
+    assert {m.id for m in memory_manager.search_memories(query_text="alpha")} == {visible.id}
+    all_search = memory_manager.search_memories(query_text="alpha", visibility="all")
+    assert {m.id for m in all_search} == {visible.id, hidden.id}
+
+
+def test_visibility_predicate_rejects_unknown() -> None:
+    from gobby.storage.memories import visibility_predicate
+
+    assert visibility_predicate("active") == "deleted_at IS NULL"
+    assert visibility_predicate("hidden") == "deleted_at IS NOT NULL"
+    assert visibility_predicate("all") == ""
+    with pytest.raises(ValueError, match="Invalid visibility"):
+        visibility_predicate("bogus")  # type: ignore[arg-type]
+
+
+def test_restore_memory_row_tolerates_pre_289_snapshot(memory_manager, db) -> None:
+    from gobby.memory.dream.storage import MemoryDreamStore
+
+    store = MemoryDreamStore(db)
+    created = memory_manager.create_memory(content="legacy snapshot")
+    snapshot = store.get_memory_row(created.id)
+    assert snapshot is not None
+
+    # Simulate a snapshot captured before migration 289 added the columns.
+    for column in ("deleted_at", "dream_action", "last_dreamed_at"):
+        snapshot.pop(column, None)
+    db.execute("DELETE FROM memories WHERE id = %s", (created.id,))
+
+    store.restore_memory_row(snapshot)  # must not raise on the missing columns
+
+    restored = memory_manager.get_memory(created.id)
+    assert restored.content == "legacy snapshot"
+    assert restored.deleted_at is None
+    assert restored.dream_action is None
+    assert restored.last_dreamed_at is None

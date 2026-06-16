@@ -739,7 +739,14 @@ CREATE TABLE memories (
 tags JSONB,
 graph_processed BOOLEAN DEFAULT TRUE,
 created_at TIMESTAMPTZ NOT NULL,
-updated_at TIMESTAMPTZ NOT NULL
+updated_at TIMESTAMPTZ NOT NULL,
+deleted_at TIMESTAMPTZ,
+dream_action TEXT,
+last_dreamed_at TIMESTAMPTZ,
+CONSTRAINT memories_dream_action_check
+    CHECK (dream_action IS NULL OR dream_action IN ('review', 'delete')),
+CONSTRAINT memories_dream_action_requires_deleted
+    CHECK (dream_action IS NULL OR deleted_at IS NOT NULL)
 );
 
 CREATE INDEX idx_memories_project ON memories(project_id);
@@ -749,6 +756,10 @@ CREATE INDEX idx_memories_type ON memories(memory_type);
 CREATE INDEX idx_memories_graph_pending ON memories(graph_processed) WHERE graph_processed IS FALSE;
 
 CREATE INDEX idx_memories_source_session ON memories(source_session_id);
+
+CREATE INDEX idx_memories_dream_candidates ON memories (last_dreamed_at, updated_at) WHERE deleted_at IS NULL;
+
+CREATE INDEX idx_memories_dream_purge ON memories (dream_action, deleted_at) WHERE deleted_at IS NOT NULL;
 
 ALTER TABLE memories
 ADD CONSTRAINT tags_is_array
