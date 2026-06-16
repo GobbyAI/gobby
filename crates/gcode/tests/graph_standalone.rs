@@ -259,6 +259,7 @@ const CSHARP_LOCAL_PROJECT_ID: &str = "graph-standalone-csharp-local";
 const KOTLIN_LOCAL_PROJECT_ID: &str = "graph-standalone-kotlin-local";
 const RUBY_LOCAL_PROJECT_ID: &str = "graph-standalone-ruby-local";
 const PHP_LOCAL_PROJECT_ID: &str = "graph-standalone-php-local";
+const SWIFT_LOCAL_PROJECT_ID: &str = "graph-standalone-swift-local";
 
 /// End-to-end check for the post-write local-import resolution (#790): indexing
 /// a two-file Python project must resolve the cross-file calls in `b.py` to the
@@ -1076,6 +1077,127 @@ fn index_resolves_cross_file_local_php_calls() {
     assert_caller_present(&env, project.path(), "build", "run", "after sync-file");
     assert_eq!(
         phantom_call_target_count(&mut graph, PHP_LOCAL_PROJECT_ID),
+        0,
+        "sync-file must not introduce a phantom CALLS target"
+    );
+}
+
+/// End-to-end check for cross-file local call resolution in Swift (#798). Swift
+/// has whole-module scope — files in a module call each other with no `import` —
+/// so resolution narrows a bare callee name against every file sharing the
+/// caller's module and is arbitrated by the post-write DB pass (#790). This
+/// exercises both shapes the task calls out: a free-function call (`greet()`)
+/// and a type initializer (`Widget()`, whose target struct is kind `type`),
+/// across the index, rebuild, and sync-file paths. No target may be a phantom
+/// CALLS node.
+#[test]
+fn index_resolves_cross_file_local_swift_calls() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-file Swift local-call resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("Sources/App")).expect("create Sources/App");
+    fs::write(
+        project.path().join("Sources/App/Greeter.swift"),
+        "func greet() -> String {\n    return \"hi\"\n}\n",
+    )
+    .expect("write Greeter.swift");
+    fs::write(
+        project.path().join("Sources/App/Widget.swift"),
+        "struct Widget {}\n",
+    )
+    .expect("write Widget.swift");
+    fs::write(
+        project.path().join("Sources/App/main.swift"),
+        "func run() {\n    _ = greet()\n    _ = Widget()\n}\n",
+    )
+    .expect("write main.swift");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": SWIFT_LOCAL_PROJECT_ID,
+            "name": "graph-standalone-swift-local",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, SWIFT_LOCAL_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    let greeter_file = "Sources/App/Greeter.swift";
+    let widget_file = "Sources/App/Widget.swift";
+    let main_file = "Sources/App/main.swift";
+    let greet_id = required_symbol_id(&mut conn, SWIFT_LOCAL_PROJECT_ID, greeter_file, "greet");
+    let widget_id = required_symbol_id(&mut conn, SWIFT_LOCAL_PROJECT_ID, widget_file, "Widget");
+
+    // The free-function call resolves to the function symbol in its sibling
+    // module file, and the initializer call resolves to the struct (kind `type`)
+    // — both with no `import`, on whole-module scope alone.
+    assert_eq!(
+        resolved_call_target(&mut conn, SWIFT_LOCAL_PROJECT_ID, main_file, "greet"),
+        Some(greet_id.clone()),
+        "Swift free-function call did not resolve to the canonical function"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, SWIFT_LOCAL_PROJECT_ID, main_file, "Widget"),
+        Some(widget_id.clone()),
+        "Swift type initializer did not resolve to the canonical struct"
+    );
+    assert_eq!(
+        pending_local_import_count(&mut conn, SWIFT_LOCAL_PROJECT_ID),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Projection path 1+2: rebuild from resolved PostgreSQL facts, then every
+    // cross-file caller must be reachable and each target must be a real
+    // DEFINES-linked node (no phantom CALLS target).
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_caller_present(&env, project.path(), "greet", "run", "after rebuild");
+    assert_caller_present(&env, project.path(), "Widget", "run", "after rebuild");
+
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, SWIFT_LOCAL_PROJECT_ID),
+        0,
+        "no CALLS target may lack a DEFINES edge after rebuild"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, SWIFT_LOCAL_PROJECT_ID, &greet_id),
+        "the resolved Swift function target must be a defined, called CodeSymbol"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, SWIFT_LOCAL_PROJECT_ID, &widget_id),
+        "the resolved Swift struct target must be a defined, called CodeSymbol"
+    );
+
+    let blast = json_command(&env, project.path(), &["blast-radius", "greet"]);
+    assert!(
+        blast.get("center").is_some(),
+        "blast-radius should report a center: {blast}"
+    );
+
+    // Projection path 3: sync-file must recreate the same canonical edges.
+    let sync = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", main_file],
+    );
+    assert_success(sync, "graph sync-file main.swift");
+    assert_caller_present(&env, project.path(), "greet", "run", "after sync-file");
+    assert_eq!(
+        phantom_call_target_count(&mut graph, SWIFT_LOCAL_PROJECT_ID),
         0,
         "sync-file must not introduce a phantom CALLS target"
     );

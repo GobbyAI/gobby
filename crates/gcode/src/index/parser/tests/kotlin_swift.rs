@@ -23,6 +23,29 @@ macro_rules! assert_kotlin_local_import {
     }};
 }
 
+/// Asserts a `local_import` call for `$callee_name` exists and its candidate
+/// files (every file in the caller's Swift module) include `$expected_file`.
+/// The post-write DB pass narrows these candidates to the canonical symbol id.
+macro_rules! assert_swift_local_import {
+    ($parsed:expr, $callee_name:expr, $expected_file:expr) => {{
+        let callee_name: &str = $callee_name;
+        let call = $parsed
+            .calls
+            .iter()
+            .find(|call| {
+                call.callee_target_kind.as_str() == "local_import"
+                    && call.callee_name == callee_name
+            })
+            .unwrap_or_else(|| panic!("missing local_import call for {callee_name}"));
+        let candidates = call.local_import_candidate_files();
+        assert!(
+            candidates.iter().any(|file| file == $expected_file),
+            "candidate files {candidates:?} did not contain {}",
+            $expected_file
+        );
+    }};
+}
+
 #[test]
 fn extracts_kotlin_symbols_imports_and_calls_without_external_classification() {
     let parsed = parse_kotlin(
@@ -222,7 +245,7 @@ func run() {
 }
 
 #[test]
-fn leaves_swift_unqualified_and_member_calls_unresolved() {
+fn leaves_swift_member_calls_unresolved_and_routes_bare_calls_through_the_db() {
     let parsed = parse_swift(
         r#"
 import Foundation
@@ -235,11 +258,40 @@ func run(date: Date) {
         &[],
     );
 
-    assert_eq!(parsed.calls.len(), 2);
-    assert!(
-        parsed
-            .calls
-            .iter()
-            .all(|call| call.callee_target_kind.as_str() == "unresolved")
+    // A member call on a value has a dynamic receiver — it stays unresolved, so
+    // no false edge is produced.
+    let member = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "formatted")
+        .expect("member call");
+    assert_eq!(member.callee_target_kind.as_str(), "unresolved");
+
+    // A bare call carries the caller's own module files as candidates and is
+    // deferred to the post-write DB pass, which degrades it to unresolved when
+    // (as here) no module file declares the name — never a phantom edge.
+    assert_swift_local_import!(&parsed, "Date", "Sources/App/main.swift");
+}
+
+#[test]
+fn resolves_local_swift_module_function_and_type_initializer_calls() {
+    let parsed = parse_swift(
+        r#"
+func run() {
+    greet()
+    Widget()
+}
+"#,
+        &[
+            ("Sources/App/Greeter.swift", "func greet() {}\n"),
+            ("Sources/App/Widget.swift", "struct Widget {}\n"),
+        ],
     );
+
+    // Swift has whole-module scope: a bare free-function call and a bare type
+    // initializer call both resolve against every file sharing the caller's
+    // module, with no `import` statement. The post-write DB pass narrows each
+    // candidate set to the canonical function/type symbol id.
+    assert_swift_local_import!(&parsed, "greet", "Sources/App/Greeter.swift");
+    assert_swift_local_import!(&parsed, "Widget", "Sources/App/Widget.swift");
 }

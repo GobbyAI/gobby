@@ -69,6 +69,12 @@ pub struct ImportResolutionContext {
     pub(super) ruby_constant_files: HashMap<String, Vec<String>>,
     pub(super) ruby_require_root_overrides: HashMap<String, String>,
     pub(super) swift_local_modules: HashSet<String>,
+    /// Maps a local Swift module name to the project-relative `.swift` files that
+    /// belong to it. Swift has whole-module scope: files in a module call each
+    /// other with no `import`, so an unqualified call resolves against every file
+    /// sharing the caller's module. The post-write DB pass narrows the callee
+    /// name to the real symbol. The keys are exactly `swift_local_modules`.
+    pub(super) swift_module_files: HashMap<String, Vec<String>>,
     pub(super) dart_external_packages: HashSet<String>,
     pub(super) dart_self_package_name: Option<String>,
     pub(super) elixir_external_roots: HashMap<String, String>,
@@ -177,6 +183,23 @@ impl ImportResolutionContext {
             .get(&name.trim_start_matches('\\').to_ascii_lowercase())
             .cloned()
             .unwrap_or_default()
+    }
+
+    /// Project-relative `.swift` files that share a Swift module with `rel_path`
+    /// (including `rel_path` itself). Swift's whole-module scope means an
+    /// unqualified call may target any file in the caller's module; the
+    /// post-write DB pass narrows the callee name to a single symbol. Empty when
+    /// the file belongs to no discovered module.
+    pub(super) fn swift_module_candidate_files(&self, rel_path: &str) -> Vec<String> {
+        let mut files = swift_modules_for_rel(Path::new(rel_path))
+            .iter()
+            .filter_map(|module| self.swift_module_files.get(module))
+            .flatten()
+            .cloned()
+            .collect::<Vec<_>>();
+        files.sort();
+        files.dedup();
+        files
     }
 
     pub(super) fn ruby_require_root(&self, required: &str) -> Option<&str> {
@@ -341,6 +364,7 @@ pub fn build_import_resolution_context_with_overrides(
     let csharp_index = build_csharp_index(root_path, candidate_files);
     let ruby_constant_files = build_ruby_constant_files(root_path, candidate_files);
     let php_symbol_files = build_php_symbol_files(root_path, candidate_files);
+    let swift_module_files = build_swift_module_files(root_path, candidate_files);
     ImportResolutionContext {
         python_modules: build_python_module_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
@@ -359,7 +383,8 @@ pub fn build_import_resolution_context_with_overrides(
         ruby_local_constant_roots: ruby_constant_files.keys().cloned().collect(),
         ruby_constant_files,
         ruby_require_root_overrides,
-        swift_local_modules: build_swift_local_modules(root_path, candidate_files),
+        swift_local_modules: swift_module_files.keys().cloned().collect(),
+        swift_module_files,
         dart_external_packages: load_dart_external_packages(root_path),
         dart_self_package_name: load_dart_self_package_name(root_path),
         elixir_external_roots: load_elixir_external_roots(root_path),
@@ -967,47 +992,82 @@ pub(super) fn build_ruby_constant_files(
     constant_files
 }
 
-pub(super) fn build_swift_local_modules(
+/// Swift module name(s) a project-relative file belongs to. A file under
+/// `Sources/<Module>/` or `Tests/<Module>/` belongs to `<Module>`; any other
+/// file is attributed to its immediate parent directory. Swift has whole-module
+/// scope, so these names group the files that can call each other without an
+/// `import`.
+fn swift_modules_for_rel(rel: &Path) -> HashSet<String> {
+    let mut modules = HashSet::new();
+    let components = rel
+        .components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>();
+    for window in components.windows(2) {
+        if matches!(window[0], "Sources" | "Tests") && !window[1].is_empty() {
+            modules.insert(window[1].to_string());
+        }
+    }
+    if let Some(parent) = rel
+        .parent()
+        .and_then(Path::file_name)
+        .and_then(|name| name.to_str())
+        && !parent.is_empty()
+        && parent != "Sources"
+        && parent != "Tests"
+    {
+        modules.insert(parent.to_string());
+    }
+    modules
+}
+
+/// Maps a local Swift module name to the project-relative `.swift` files that
+/// belong to it (pure path logic, no file reads). Swift has whole-module scope:
+/// files in a module call each other with no `import`, so cross-file call
+/// resolution narrows a bare callee name against every file sharing the
+/// caller's module. The keys are exactly the locally-defined module names.
+pub(super) fn build_swift_module_files(
     root_path: &Path,
     candidate_files: &[PathBuf],
-) -> HashSet<String> {
-    candidate_files
+) -> HashMap<String, Vec<String>> {
+    let mut module_files = candidate_files
         .par_iter()
-        .map(|path| {
-            let mut modules = HashSet::new();
+        .filter_map(|path| {
             let ext = path
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .unwrap_or_default();
             if ext != "swift" {
-                return modules;
+                return None;
             }
             let rel = path.strip_prefix(root_path).unwrap_or(path.as_path());
-            let components = rel
-                .components()
-                .filter_map(|component| component.as_os_str().to_str())
-                .collect::<Vec<_>>();
-            for window in components.windows(2) {
-                if matches!(window[0], "Sources" | "Tests") && !window[1].is_empty() {
-                    modules.insert(window[1].to_string());
+            let modules = swift_modules_for_rel(rel);
+            if modules.is_empty() {
+                return None;
+            }
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            Some((rel_str, modules))
+        })
+        .fold(
+            HashMap::<String, Vec<String>>::new,
+            |mut acc, (rel, modules)| {
+                for module in modules {
+                    acc.entry(module).or_default().push(rel.clone());
                 }
+                acc
+            },
+        )
+        .reduce(HashMap::<String, Vec<String>>::new, |mut all, map| {
+            for (module, files) in map {
+                all.entry(module).or_default().extend(files);
             }
-            if let Some(parent) = rel
-                .parent()
-                .and_then(Path::file_name)
-                .and_then(|name| name.to_str())
-                && !parent.is_empty()
-                && parent != "Sources"
-                && parent != "Tests"
-            {
-                modules.insert(parent.to_string());
-            }
-            modules
-        })
-        .reduce(HashSet::new, |mut all, modules| {
-            all.extend(modules);
             all
-        })
+        });
+    for files in module_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    module_files
 }
 
 pub(super) fn load_dart_external_packages(root_path: &Path) -> HashSet<String> {

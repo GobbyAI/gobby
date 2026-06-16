@@ -177,6 +177,25 @@ fn materialize_call(
     } else {
         None
     };
+    let swift_local_target = if ctx.language == "swift"
+        && local_target.is_none()
+        && external_target.is_none()
+        && local_qualified_target.is_none()
+        && local_member_target.is_none()
+        && csharp_member_target.is_none()
+        && ruby_member_target.is_none()
+        && php_member_target.is_none()
+        && !external_shadowed
+    {
+        import_resolution::resolve_swift_local_callee(
+            ctx.import_context,
+            ctx.rel_path,
+            &site.callee_name,
+            site.syntax == CallSyntaxKind::Bare,
+        )
+    } else {
+        None
+    };
     let local_import_target = if local_target.is_none()
         && external_target.is_none()
         && local_qualified_target.is_none()
@@ -184,6 +203,7 @@ fn materialize_call(
         && csharp_member_target.is_none()
         && ruby_member_target.is_none()
         && php_member_target.is_none()
+        && swift_local_target.is_none()
         && !external_shadowed
     {
         import_resolution::resolve_local_callee(
@@ -202,6 +222,7 @@ fn materialize_call(
         && csharp_member_target.is_none()
         && ruby_member_target.is_none()
         && php_member_target.is_none()
+        && swift_local_target.is_none()
         && local_import_target.is_none()
         && !external_shadowed
     {
@@ -235,6 +256,7 @@ fn materialize_call(
         .or(csharp_member_target)
         .or(ruby_member_target)
         .or(php_member_target)
+        .or(swift_local_target)
         .or(local_import_target)
     {
         // Cross-file local import: record the original name plus the candidate

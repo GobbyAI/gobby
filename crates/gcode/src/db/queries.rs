@@ -312,7 +312,21 @@ pub fn resolve_local_callee_symbol_id(
         .filter(|(_, kind, _)| kind == "method")
         .map(|(id, _, _)| id)
         .collect();
-    Ok(unique_id(&methods))
+    if !methods.is_empty() {
+        return Ok(unique_id(&methods));
+    }
+
+    // A top-level type (struct/enum/protocol/interface/...) is a valid
+    // construction/initializer target. Checked last — only when no function,
+    // class, or method matched — so it never overrides existing resolution for
+    // any language; it just lets languages whose constructible types are kind
+    // `type` (e.g. Swift structs/enums) resolve their initializer calls.
+    let types: Vec<&String> = candidates
+        .iter()
+        .filter(|(_, kind, parent)| parent.is_none() && kind == "type")
+        .map(|(id, _, _)| id)
+        .collect();
+    Ok(unique_id(&types))
 }
 
 fn unique_id(ids: &[&String]) -> Option<String> {

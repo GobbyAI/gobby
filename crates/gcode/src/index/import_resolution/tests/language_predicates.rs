@@ -154,3 +154,37 @@ fn php_symbol_files_normalize_declared_names_to_lowercase_and_track_files() {
         Some(["Mailer.php".to_string()].as_slice())
     );
 }
+
+#[test]
+fn swift_module_files_group_files_by_module_and_track_paths() {
+    let tempdir = TempDir::new().expect("tempdir");
+    let widget = tempdir.path().join("Sources/AppCore/Widget.swift");
+    let main = tempdir.path().join("Sources/AppCore/main.swift");
+    let other = tempdir.path().join("Sources/Helpers/Util.swift");
+    for path in [&widget, &main, &other] {
+        fs::create_dir_all(path.parent().expect("parent")).expect("mkdir");
+        fs::write(path, "// swift\n").expect("write swift file");
+    }
+
+    let module_files = build_swift_module_files(
+        tempdir.path(),
+        &[widget.clone(), main.clone(), other.clone()],
+    );
+
+    // Files under `Sources/<Module>/` are grouped by `<Module>`, sorted and
+    // deduped, with no cross-module bleed.
+    assert_eq!(
+        module_files.get("AppCore").map(Vec::as_slice),
+        Some(
+            [
+                "Sources/AppCore/Widget.swift".to_string(),
+                "Sources/AppCore/main.swift".to_string(),
+            ]
+            .as_slice()
+        )
+    );
+    assert_eq!(
+        module_files.get("Helpers").map(Vec::as_slice),
+        Some(["Sources/Helpers/Util.swift".to_string()].as_slice())
+    );
+}

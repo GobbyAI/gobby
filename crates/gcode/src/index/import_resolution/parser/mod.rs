@@ -310,6 +310,34 @@ pub(crate) fn resolve_php_local_member_callee(
     })
 }
 
+/// Resolves a *bare* Swift call against the caller's own module. Swift has
+/// whole-module scope: files in a module call each other with no `import`
+/// statement, so there is nothing import-bound to seed candidates from. Instead
+/// the candidate files are every `.swift` file sharing a module with the caller
+/// (`rel_path`), and the post-write DB pass narrows the bare `callee_name` to a
+/// single function/type/method id (or degrades to unresolved on ambiguity).
+/// Only fires for bare calls — member calls (`obj.method()`, `Type.member()`)
+/// stay unresolved, so a dynamic or qualified receiver can never produce a false
+/// edge.
+pub(crate) fn resolve_swift_local_callee(
+    import_context: &ImportResolutionContext,
+    rel_path: &str,
+    callee_name: &str,
+    is_bare_call: bool,
+) -> Option<LocalCallBinding> {
+    if !is_bare_call {
+        return None;
+    }
+    let candidate_files = import_context.swift_module_candidate_files(rel_path);
+    if candidate_files.is_empty() {
+        return None;
+    }
+    Some(LocalCallBinding {
+        candidate_files,
+        callee_name: callee_name.to_string(),
+    })
+}
+
 pub(crate) fn resolve_rust_local_qualified_callee(
     import_context: &ImportResolutionContext,
     rel_path: &str,
