@@ -285,7 +285,7 @@ export function ActivityPanel({
 
   // Mobile close / desktop "Show Chat" — both delegate to the same toggle.
   const handleToggleChat = () => {
-    dirtyGuardValue.guardedRun(() => {
+    void dirtyGuardValue.guardedRun(() => {
       setShowMobileTabMenu(false);
       onToggleChat();
     });
@@ -294,7 +294,7 @@ export function ActivityPanel({
   // it brings the chat back (-> split).
   const chatHidden = mode === "panel";
   const handleTabSelect = (tab: ActivityTab) => {
-    dirtyGuardValue.guardedRun(() => {
+    void dirtyGuardValue.guardedRun(() => {
       onTabChange(tab);
       setShowMobileTabMenu(false);
     });

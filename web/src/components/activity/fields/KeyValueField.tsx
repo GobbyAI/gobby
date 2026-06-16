@@ -23,10 +23,7 @@ export function KeyValueField({
 
   function updateKey(index: number, nextKey: string) {
     const isDuplicate =
-      nextKey !== "" &&
-      entries.some(
-        (entry, entryIndex) => entryIndex !== index && entry[0] === nextKey,
-      );
+      entries.some((entry, entryIndex) => entryIndex !== index && entry[0] === nextKey);
     if (isDuplicate) {
       console.warn(
         `KeyValueField: ignored rename to duplicate key "${nextKey}" to avoid overwriting an existing entry`,

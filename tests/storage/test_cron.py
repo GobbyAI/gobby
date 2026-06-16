@@ -300,3 +300,48 @@ def test_system_row_constants_and_sentinel_exist() -> None:
         "timezone",
     }
     assert repr(UNSET) == "UNSET"
+
+
+def test_delete_removed_automation_jobs_deletes_only_system_duplicates(
+    cron_storage: CronJobStorage,
+) -> None:
+    system_one = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "old.dispatcher"},
+        interval_seconds=60,
+        is_system=True,
+    )
+    system_two = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "duplicate.dispatcher"},
+        interval_seconds=60,
+        is_system=True,
+    )
+    operator = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "operator.dispatcher"},
+        interval_seconds=60,
+        is_system=False,
+    )
+    cron_storage.create_run(system_one.id)
+    cron_storage.create_run(system_two.id)
+    cron_storage.create_run(operator.id)
+
+    deleted = cron_storage.delete_removed_automation_jobs()
+
+    assert deleted == 2
+    assert cron_storage.get_job(system_one.id) is None
+    assert cron_storage.get_job(system_two.id) is None
+    assert cron_storage.get_job(operator.id) is not None
+    assert cron_storage.list_runs(system_one.id) == []
+    assert cron_storage.list_runs(system_two.id) == []
+    assert len(cron_storage.list_runs(operator.id)) == 1

@@ -151,7 +151,7 @@ export function useActivityPanel(isMobile: boolean) {
   const autoOpenedRef = useRef(false)
 
   const toggleFromChat = useCallback(() => {
-    dirtyGuard.guardedRun(() => {
+    void dirtyGuard.guardedRun(() => {
       autoOpenedRef.current = false
       setViewOverride(null)
       if (isMobile) {
@@ -163,7 +163,7 @@ export function useActivityPanel(isMobile: boolean) {
   }, [dirtyGuard, isMobile])
 
   const toggleFromPanel = useCallback(() => {
-    dirtyGuard.guardedRun(() => {
+    void dirtyGuard.guardedRun(() => {
       autoOpenedRef.current = false
       setViewOverride(null)
       if (isMobile) {
@@ -176,7 +176,7 @@ export function useActivityPanel(isMobile: boolean) {
 
   const showTab = useCallback(
     (tab: ActivityTab) => {
-      dirtyGuard.guardedRun(() => {
+      void dirtyGuard.guardedRun(() => {
         setViewOverride(null)
         setActiveTab(tab)
         if (isMobile) {
@@ -202,7 +202,7 @@ export function useActivityPanel(isMobile: boolean) {
   )
 
   const closeIfAutoOpened = useCallback(() => {
-    dirtyGuard.guardedRun(() => {
+    void dirtyGuard.guardedRun(() => {
       setViewOverride(null)
       if (!autoOpenedRef.current) return
       autoOpenedRef.current = false
@@ -217,7 +217,7 @@ export function useActivityPanel(isMobile: boolean) {
   // Used by mobile-only action handlers (plan approve, session swap) to return
   // to the chat after acting. No-op on desktop, where the chosen layout stays.
   const dismissOnMobile = useCallback(() => {
-    dirtyGuard.guardedRun(() => {
+    void dirtyGuard.guardedRun(() => {
       if (isMobile) {
         setMobileView('chat')
       }
@@ -225,7 +225,7 @@ export function useActivityPanel(isMobile: boolean) {
   }, [dirtyGuard, isMobile])
 
   const handleTabChange = useCallback((tab: ActivityTab) => {
-    dirtyGuard.guardedRun(() => {
+    void dirtyGuard.guardedRun(() => {
       autoOpenedRef.current = false
       setViewOverride(null)
       setActiveTab(tab)

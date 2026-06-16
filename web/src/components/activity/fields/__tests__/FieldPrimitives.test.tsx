@@ -141,6 +141,30 @@ describe("draft field primitives (#17014)", () => {
     expect(onChange).toHaveBeenCalledWith({});
   });
 
+  it("rejects duplicate empty keys instead of overwriting an existing row", () => {
+    const onChange = vi.fn();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    render(
+      <KeyValueField
+        label="Environment"
+        value={{ "": "draft", API_KEY: "old" }}
+        onChange={onChange}
+        ariaLabel="Environment"
+      />,
+    );
+
+    const group = screen.getByRole("group", { name: "Environment" });
+    fireEvent.change(within(group).getByLabelText("Key 2"), {
+      target: { value: "" },
+    });
+
+    expect(onChange).not.toHaveBeenCalled();
+    expect(warn).toHaveBeenCalledWith(
+      'KeyValueField: ignored rename to duplicate key "" to avoid overwriting an existing entry',
+    );
+  });
+
   it("renders a numeric input that emits parsed numbers and null when cleared", () => {
     const onChange = vi.fn();
 

@@ -126,10 +126,15 @@ export function validateIntegrationDraft(draft: IntegrationDraft): string | null
   if (!draft.name.trim()) return "Name is required";
   const fields = CHANNEL_TYPE_FIELDS[draft.channel_type];
   for (const field of fields) {
+    const source = field.secret ? draft.secrets : draft.config;
+    const rawValue = source[field.key]?.trim();
+    if (!field.secret && field.type === "number" && rawValue) {
+      const numeric = Number(rawValue);
+      if (!Number.isFinite(numeric)) return `${field.label} must be a finite number`;
+    }
     if (!field.required) continue;
     if (draft.mode === "edit" && field.secret) continue;
-    const source = field.secret ? draft.secrets : draft.config;
-    if (!source[field.key]?.trim()) return `${field.label} is required`;
+    if (!rawValue) return `${field.label} is required`;
   }
   return null;
 }

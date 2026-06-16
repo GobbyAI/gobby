@@ -96,15 +96,9 @@ export function normalizeMemoryTags(tags: string[] | null): string[] {
   return Array.isArray(tags) ? tags : [];
 }
 
-// Grace windows (days) before a soft-hidden memory is hard-purged. Mirrors the
-// MemoryDreamConfig defaults (purge_review_after_days / purge_delete_after_days);
-// the backend measures the grace window from `deleted_at`.
-export const DREAM_PURGE_GRACE_DAYS: Record<"review" | "delete", number> = {
-  review: 90,
-  delete: 30,
-};
-
 export type DreamFlag = "review" | "delete";
+
+export type DreamPurgeGraceDays = Partial<Record<DreamFlag, number>>;
 
 // Normalized dream action for a hidden memory, or null if the memory is active
 // (or carries an unrecognized action).
@@ -126,14 +120,45 @@ const MS_PER_DAY = 24 * 60 * 60 * 1000;
 
 // Human-readable countdown to hard purge for a hidden memory, or null when the
 // memory is active or its `deleted_at` timestamp is unparseable.
-export function purgeCountdownLabel(memory: GobbyMemory, now = Date.now()): string | null {
+export function purgeCountdownLabel(
+  memory: GobbyMemory,
+  graceDays: DreamPurgeGraceDays | null,
+  now = Date.now(),
+): string | null {
   const flag = memoryDreamFlag(memory);
   if (!flag || !memory.deleted_at) return null;
+  const grace = graceDays?.[flag];
+  if (!Number.isFinite(grace)) return null;
   const hiddenAt = new Date(memory.deleted_at).getTime();
   if (!Number.isFinite(hiddenAt)) return null;
   const elapsedDays = (now - hiddenAt) / MS_PER_DAY;
-  const remaining = Math.ceil(DREAM_PURGE_GRACE_DAYS[flag] - elapsedDays);
+  const remaining = Math.ceil(Number(grace) - elapsedDays);
   if (remaining <= 0) return "Purges on next sweep";
   if (remaining === 1) return "Purges in 1 day";
   return `Purges in ${remaining} days`;
+}
+
+function positiveNumber(value: unknown): number | null {
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) return null;
+  return value;
+}
+
+export function extractDreamPurgeGraceDays(values: unknown): DreamPurgeGraceDays | null {
+  if (!values || typeof values !== "object" || Array.isArray(values)) return null;
+  const memory = (values as { memory?: unknown }).memory;
+  if (!memory || typeof memory !== "object" || Array.isArray(memory)) return null;
+  const dream = (memory as { dream?: unknown }).dream;
+  if (!dream || typeof dream !== "object" || Array.isArray(dream)) return null;
+
+  const review = positiveNumber(
+    (dream as { purge_review_after_days?: unknown }).purge_review_after_days,
+  );
+  const deleteGrace = positiveNumber(
+    (dream as { purge_delete_after_days?: unknown }).purge_delete_after_days,
+  );
+  if (review === null && deleteGrace === null) return null;
+  return {
+    ...(review !== null ? { review } : {}),
+    ...(deleteGrace !== null ? { delete: deleteGrace } : {}),
+  };
 }

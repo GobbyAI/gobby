@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import Any, Literal, NamedTuple, cast
 
 import click
-import httpx
 from croniter import croniter
 
 from gobby.cli.utils import resolve_project_ref
@@ -190,8 +189,6 @@ def run_job(ctx: click.Context, job_id: str, json_format: bool) -> None:
             f"/api/cron/jobs/{job_id}/run",
             method="POST",
         )
-    except httpx.HTTPError as exc:
-        raise click.ClickException(f"Daemon unavailable: {exc}") from exc
     except Exception as exc:
         raise click.ClickException(f"Daemon unavailable: {exc}") from exc
 

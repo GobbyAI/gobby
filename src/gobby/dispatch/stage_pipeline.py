@@ -249,7 +249,13 @@ def create_stage_pipeline_execution(
     session_id = getattr(services, "triggering_session_id", None)
     try:
         definition_json = cast(Any, pipeline).model_dump_json()
-    except Exception:
+    except Exception as exc:
+        logger.warning(
+            "Failed to serialize pipeline definition for %s: %s",
+            action.pipeline_name,
+            exc,
+            exc_info=True,
+        )
         definition_json = json.dumps(
             {"name": action.pipeline_name, "error": "serialization failed"}
         )

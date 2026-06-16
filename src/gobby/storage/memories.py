@@ -611,7 +611,11 @@ class LocalMemoryManager:
         return [Memory.from_row(row) for row in rows]
 
     def count_memories(
-        self, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> int:
         """Return the total number of memories using COUNT(*).
 
@@ -624,6 +628,9 @@ class LocalMemoryManager:
         if project_id:
             clauses.append("(project_id = %s OR project_id IS NULL)")
             params.append(project_id)
+        if memory_type:
+            clauses.append("memory_type = %s")
+            params.append(memory_type)
         vis = visibility_predicate(visibility)
         if vis:
             clauses.append(vis)

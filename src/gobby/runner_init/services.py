@@ -192,7 +192,11 @@ def _init_mcp_stack(runner: GobbyRunner) -> None:
     runner.mcp_proxy = MCPClientManager(
         mcp_db_manager=runner.mcp_db_manager,
         metrics_manager=runner.metrics_manager,
-        stdio_errlog_path=runner.config.telemetry.log_file_mcp_client,
+        stdio_errlog_path=getattr(
+            getattr(runner.config, "telemetry", None),
+            "log_file_mcp_client",
+            None,
+        ),
     )
 
 

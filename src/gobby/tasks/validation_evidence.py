@@ -129,18 +129,12 @@ def build_diff_validation_evidence(
 
 def build_summary_validation_evidence(summary: str, *, max_chars: int) -> str:
     """Render non-diff agent prose with an explicit shortening notice."""
-    summary = summary.strip()
-    if len(summary) <= max_chars:
-        return summary
-    return _shorten_text(summary, max_chars, label="agent changes summary")
+    return _strip_and_shorten(summary, max_chars=max_chars, label="agent changes summary")
 
 
 def build_file_context_evidence(file_context: str, *, max_chars: int) -> str:
     """Render file context with an explicit shortening notice."""
-    file_context = file_context.strip()
-    if len(file_context) <= max_chars:
-        return file_context
-    return _shorten_text(file_context, max_chars, label="file context")
+    return _strip_and_shorten(file_context, max_chars=max_chars, label="file context")
 
 
 def categorize_changed_path(path: str) -> str:
@@ -363,6 +357,13 @@ def _shorten_text(text: str, max_chars: int, *, label: str) -> str:
     marker = f"\n... [{label} shortened due to length; omitted {len(text) - max_chars} chars] ...\n"
     keep_chars = max(0, max_chars - len(marker))
     return text[:keep_chars].rstrip() + marker
+
+
+def _strip_and_shorten(text: str, *, max_chars: int, label: str) -> str:
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return stripped
+    return _shorten_text(stripped, max_chars, label=label)
 
 
 def _priority_key(path: str, priority_files: Sequence[str] | None) -> tuple[int, str]:

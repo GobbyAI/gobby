@@ -307,6 +307,8 @@ class SearchService:
                 qdrant_results = qdrant_result
 
             if isinstance(graph_result, BaseException):
+                if isinstance(graph_result, asyncio.CancelledError):
+                    raise graph_result
                 logger.warning(f"Graph search failed: {graph_result}")
                 graph_scored: list[tuple[str, float]] = []
             else:
@@ -316,6 +318,8 @@ class SearchService:
             graph_score_map = dict(graph_scored)
 
             if isinstance(keyword_result, BaseException):
+                if isinstance(keyword_result, asyncio.CancelledError):
+                    raise keyword_result
                 logger.debug(f"Keyword search failed: {keyword_result}")
                 keyword_ranked: list[str] = []
             else:
@@ -445,6 +449,8 @@ class SearchService:
                 qdrant_results = qdrant_result
 
             if isinstance(keyword_result, BaseException):
+                if isinstance(keyword_result, asyncio.CancelledError):
+                    raise keyword_result
                 logger.debug(f"Keyword search failed: {keyword_result}")
                 keyword_ranked: list[str] = []
             else:

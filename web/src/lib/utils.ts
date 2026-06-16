@@ -11,6 +11,7 @@ export function escapeHtml(value: string): string {
     .replace(/</g, '&lt;')
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;')
 }
 
 // Resolves a CSS custom property to a concrete RGB color string at runtime.

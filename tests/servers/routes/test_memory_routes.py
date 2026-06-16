@@ -53,6 +53,7 @@ def mock_server():
     server.memory_manager.search_memories = AsyncMock(return_value=[])
     server.memory_manager.update_memory = AsyncMock(return_value=_make_memory())
     server.memory_manager.delete_memory = AsyncMock(return_value=True)
+    server.memory_manager.count_memories.return_value = 0
     return server
 
 
@@ -189,6 +190,11 @@ class TestListMemories:
             offset=0,
             visibility="active",
         )
+        mock_server.memory_manager.count_memories.assert_called_once_with(
+            project_id="proj-1",
+            memory_type="fact",
+            visibility="active",
+        )
 
     def test_list_empty(self, client, mock_server) -> None:
         """GET /memories returns empty list when no memories."""
@@ -211,7 +217,9 @@ class TestListMemories:
             visibility="active",
         )
         mock_server.memory_manager.count_memories.assert_called_once_with(
-            project_id=None, visibility="active"
+            project_id=None,
+            memory_type=None,
+            visibility="active",
         )
 
     @pytest.mark.parametrize("visibility", ["active", "hidden", "all"])
@@ -224,7 +232,9 @@ class TestListMemories:
         assert response.json()["total_memories"] == 7
         assert mock_server.memory_manager.list_memories.call_args.kwargs["visibility"] == visibility
         mock_server.memory_manager.count_memories.assert_called_once_with(
-            project_id=None, visibility=visibility
+            project_id=None,
+            memory_type=None,
+            visibility=visibility,
         )
 
     def test_list_rejects_invalid_visibility(self, client, mock_server) -> None:

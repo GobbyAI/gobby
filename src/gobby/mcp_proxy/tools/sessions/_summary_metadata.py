@@ -1,17 +1,30 @@
 from __future__ import annotations
 
+import json
 import logging
-from typing import Any
+
+from gobby.sessions.summarize import SessionManagerProtocol, SessionSummaryConfigProtocol
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.session_models import Session
 
 logger = logging.getLogger(__name__)
+
+_SUMMARY_METADATA_RECOMPUTE_ERRORS = (
+    AttributeError,
+    KeyError,
+    OSError,
+    TypeError,
+    ValueError,
+    json.JSONDecodeError,
+)
 
 
 async def compact_summary_metadata_matches(
     *,
-    session: Any,
-    session_manager: Any,
-    db: Any | None,
-    session_summary_config: Any | None,
+    session: Session,
+    session_manager: SessionManagerProtocol,
+    db: HubDatabase | None,
+    session_summary_config: SessionSummaryConfigProtocol | None,
 ) -> bool:
     """Return whether cached summary metadata matches current compact source context."""
     from gobby.sessions.analyzer import TranscriptAnalyzer
@@ -72,7 +85,7 @@ async def compact_summary_metadata_matches(
                 prompt_template=prompt_template,
             )
         )
-    except Exception as exc:
+    except _SUMMARY_METADATA_RECOMPUTE_ERRORS as exc:
         logger.debug("Unable to recompute compact summary metadata: %s", exc, exc_info=True)
         return False
 

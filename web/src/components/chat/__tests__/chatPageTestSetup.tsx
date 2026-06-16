@@ -26,7 +26,9 @@ export const commandPalettePropsSpy = vi.fn();
 
 const noopDirtyGuard: DirtyGuardContextValue = {
   registerDirtyGuard: () => () => {},
-  guardedRun: (action) => action(),
+  guardedRun: async (action) => {
+    await action();
+  },
 };
 
 export const messageListMockFactory = () => ({

@@ -18,6 +18,7 @@ import {
   memoryScopeLabel,
   normalizeMemoryTags,
   purgeCountdownLabel,
+  type DreamPurgeGraceDays,
 } from "./MemoryTabData";
 
 interface MemoryDetailPanelProps {
@@ -25,6 +26,7 @@ interface MemoryDetailPanelProps {
   onSave: (draft: MemoryDraft) => Promise<boolean>;
   onConfirmLeaveChange: (handler: (next: () => void) => void) => void;
   onRestore?: (memory: GobbyMemory) => Promise<void> | void;
+  purgeGraceDays?: DreamPurgeGraceDays | null;
   actions?: ReactNode;
 }
 
@@ -49,6 +51,7 @@ export function MemoryDetailPanel({
   onSave,
   onConfirmLeaveChange,
   onRestore,
+  purgeGraceDays = null,
   actions,
 }: MemoryDetailPanelProps) {
   const sourceDraft = useMemo(() => draftFromMemory(memory), [memory]);
@@ -74,7 +77,7 @@ export function MemoryDetailPanel({
   const hidden = isHiddenMemory(memory);
   const isDeleteFlag = memoryDreamFlag(memory) === "delete";
   const flagLabel = dreamFlagLabel(memory);
-  const purgeLabel = purgeCountdownLabel(memory);
+  const purgeLabel = purgeCountdownLabel(memory, purgeGraceDays);
 
   return (
     <div className="flex h-full flex-col overflow-hidden">
@@ -111,7 +114,9 @@ export function MemoryDetailPanel({
               disabled={restoring}
               onClick={() => {
                 setRestoring(true);
-                void Promise.resolve(onRestore(memory)).finally(() => setRestoring(false));
+                void Promise.resolve()
+                  .then(() => onRestore(memory))
+                  .finally(() => setRestoring(false));
               }}
             >
               {restoring ? "Restoring…" : "Restore"}

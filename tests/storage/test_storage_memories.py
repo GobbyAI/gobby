@@ -533,6 +533,15 @@ def test_list_count_search_visibility(memory_manager, db) -> None:
     assert {m.id for m in all_search} == {visible.id, hidden.id}
 
 
+def test_count_memories_filters_by_memory_type(memory_manager) -> None:
+    memory_manager.create_memory(content="fact row", memory_type="fact")
+    memory_manager.create_memory(content="preference row", memory_type="preference")
+
+    assert memory_manager.count_memories(memory_type="fact") == 1
+    assert memory_manager.count_memories(memory_type="preference") == 1
+    assert memory_manager.count_memories(memory_type="pattern") == 0
+
+
 def test_visibility_predicate_rejects_unknown() -> None:
     from gobby.storage.memories import visibility_predicate
 

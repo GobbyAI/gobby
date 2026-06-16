@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Callable
 from datetime import UTC, datetime
 from typing import Any
@@ -235,7 +236,93 @@ def test_build_results_graph_only_hit_never_outranks_higher_similarity_semantic(
     )
 
     assert [mem.id for mem in results] == ["top-semantic", "graph-only", "low-semantic"]
+    assert results[0].search_via == "semantic"
+    assert results[0].ranking_mode == "rrf"
+    assert results[1].search_via == "graph"
     assert results[1].ranking_mode == "graph_synthetic"
+
+
+@pytest.mark.asyncio
+async def test_search_with_graph_propagates_graph_cancellation() -> None:
+    service = _service(
+        ["semantic"],
+        vector_results=[("semantic", 0.9)],
+        falkordb_graph_search=True,
+    )
+
+    async def cancelled_graph(**_kwargs: Any) -> list[tuple[str, float]]:
+        raise asyncio.CancelledError()
+
+    service._search_graph_scored = cancelled_graph  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await service._search_with_graph(
+            query="semantic",
+            query_embedding=[1.0, 0.0],
+            limit=1,
+            filters=None,
+            project_id=None,
+            memory_type=None,
+            tags_all=None,
+            tags_any=None,
+            tags_none=None,
+            half_life=0.0,
+            effective_min_score=0.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_search_with_graph_propagates_keyword_cancellation() -> None:
+    service = _service(
+        ["semantic"],
+        vector_results=[("semantic", 0.9)],
+        falkordb_graph_search=True,
+    )
+
+    async def cancelled_keyword(_query: str, _limit: int, _project_id: str | None) -> list[str]:
+        raise asyncio.CancelledError()
+
+    service._keyword_ranked = cancelled_keyword  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await service._search_with_graph(
+            query="semantic",
+            query_embedding=[1.0, 0.0],
+            limit=1,
+            filters=None,
+            project_id=None,
+            memory_type=None,
+            tags_all=None,
+            tags_any=None,
+            tags_none=None,
+            half_life=0.0,
+            effective_min_score=0.0,
+        )
+
+
+@pytest.mark.asyncio
+async def test_qdrant_keyword_search_propagates_keyword_cancellation() -> None:
+    service = _service(["semantic"], vector_results=[("semantic", 0.9)])
+
+    async def cancelled_keyword(_query: str, _limit: int, _project_id: str | None) -> list[str]:
+        raise asyncio.CancelledError()
+
+    service._keyword_ranked = cancelled_keyword  # type: ignore[method-assign]
+
+    with pytest.raises(asyncio.CancelledError):
+        await service._search_qdrant_keyword(
+            query="semantic",
+            query_embedding=[1.0, 0.0],
+            limit=1,
+            filters=None,
+            project_id=None,
+            memory_type=None,
+            tags_all=None,
+            tags_any=None,
+            tags_none=None,
+            half_life=0.0,
+            effective_min_score=0.0,
+        )
 
 
 def test_build_results_preserves_semantic_primary_order_without_rrf() -> None:

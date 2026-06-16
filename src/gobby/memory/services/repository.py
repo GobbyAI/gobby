@@ -64,10 +64,18 @@ class MemoryRepository:
         )
 
     def count_memories(
-        self, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> int:
         """Return the total number of memories using COUNT(*)."""
-        return self.storage.count_memories(project_id=project_id, visibility=visibility)
+        return self.storage.count_memories(
+            project_id=project_id,
+            memory_type=memory_type,
+            visibility=visibility,
+        )
 
     def list_memories(
         self,

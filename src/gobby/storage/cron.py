@@ -554,16 +554,32 @@ class CronJobStorage:
 
     def delete_removed_automation_jobs(self) -> int:
         """Delete stale bundled automation cron rows that no longer have executors."""
-        deleted = 0
-        for name in REMOVED_AUTOMATION_JOB_NAMES:
-            job = self.get_job_by_name(name)
-            if job is None:
-                continue
-            with self.db.transaction() as conn:
-                conn.execute("DELETE FROM cron_runs WHERE cron_job_id = %s", (job.id,))
-                cursor = conn.execute("DELETE FROM cron_jobs WHERE id = %s", (job.id,))
-            deleted += cursor.rowcount
-        return deleted
+        names = tuple(REMOVED_AUTOMATION_JOB_NAMES)
+        if not names:
+            return 0
+        placeholders = ", ".join(["%s"] * len(names))
+        with self.db.transaction() as conn:
+            conn.execute(
+                f"""
+                DELETE FROM cron_runs
+                 WHERE cron_job_id IN (
+                    SELECT id
+                      FROM cron_jobs
+                     WHERE is_system = TRUE
+                       AND name IN ({placeholders})
+                 )
+                """,  # nosec B608 - placeholders are generated from constant cardinality.
+                names,
+            )
+            cursor = conn.execute(
+                f"""
+                DELETE FROM cron_jobs
+                 WHERE is_system = TRUE
+                   AND name IN ({placeholders})
+                """,  # nosec B608 - placeholders are generated from constant cardinality.
+                names,
+            )
+        return cursor.rowcount
 
     def toggle_job(self, job_id: str) -> CronJob | None:
         """Toggle a cron job's enabled state."""

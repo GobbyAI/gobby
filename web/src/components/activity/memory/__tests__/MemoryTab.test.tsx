@@ -66,6 +66,18 @@ function setupFetch(initialMemories: MemoryRecord[]) {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = init?.method ?? "GET";
 
+    if (url.endsWith("/api/config/values") && method === "GET") {
+      return jsonResponse({
+        values: {
+          memory: {
+            dream: {
+              purge_review_after_days: 90,
+              purge_delete_after_days: 30,
+            },
+          },
+        },
+      });
+    }
     if (url.includes("/api/memories/stats")) {
       return jsonResponse({
         total_count: memories.length,
@@ -98,7 +110,15 @@ function setupFetch(initialMemories: MemoryRecord[]) {
       return jsonResponse(memories[index]);
     }
     if (url.includes("/restore") && method === "POST") {
-      return jsonResponse({ ok: true });
+      const memoryId = url.split("/").slice(-2, -1)[0];
+      const index = memories.findIndex((memory) => memory.id === memoryId);
+      if (index === -1) return jsonResponse({ error: "not found" }, 404);
+      memories = memories.map((memory, memoryIndex) =>
+        memoryIndex === index
+          ? { ...memory, deleted_at: null, dream_action: null }
+          : memory,
+      );
+      return jsonResponse(memories[index]);
     }
     return jsonResponse({ error: "no mock route matched" }, 404);
   });

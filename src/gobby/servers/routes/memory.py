@@ -236,7 +236,9 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
                 visibility=visibility,
             )
             total = server.memory_manager.count_memories(
-                project_id=project_id, visibility=visibility
+                project_id=project_id,
+                memory_type=memory_type,
+                visibility=visibility,
             )
             return {"memories": [m.to_dict() for m in memories], "total_memories": total}
         except Exception as e:

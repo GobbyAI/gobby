@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import type { GobbyMemory } from "../../../../hooks/useMemory";
 import {
   dreamFlagLabel,
+  extractDreamPurgeGraceDays,
   filterMemories,
   filtersFromMemoryHook,
   isHiddenMemory,
@@ -13,6 +14,7 @@ import {
 } from "../MemoryTabData";
 
 const NOW = new Date("2026-06-15T00:00:00Z").getTime();
+const GRACE_DAYS = { review: 90, delete: 30 };
 
 function makeMemory(overrides: Partial<GobbyMemory> = {}): GobbyMemory {
   return {
@@ -139,7 +141,7 @@ describe("filtersFromMemoryHook", () => {
 
 describe("purgeCountdownLabel", () => {
   it("returns null for active memories", () => {
-    expect(purgeCountdownLabel(makeMemory(), NOW)).toBeNull();
+    expect(purgeCountdownLabel(makeMemory(), GRACE_DAYS, NOW)).toBeNull();
   });
 
   it("counts down from deleted_at using the per-action grace window", () => {
@@ -148,6 +150,7 @@ describe("purgeCountdownLabel", () => {
     expect(
       purgeCountdownLabel(
         makeMemory({ deleted_at: fiveDaysAgo, dream_action: "delete" }),
+        GRACE_DAYS,
         NOW,
       ),
     ).toBe("Purges in 25 days");
@@ -155,6 +158,7 @@ describe("purgeCountdownLabel", () => {
     expect(
       purgeCountdownLabel(
         makeMemory({ deleted_at: fiveDaysAgo, dream_action: "review" }),
+        GRACE_DAYS,
         NOW,
       ),
     ).toBe("Purges in 85 days");
@@ -163,7 +167,47 @@ describe("purgeCountdownLabel", () => {
   it("reports imminent purge once the grace window has elapsed", () => {
     const longAgo = new Date(NOW - 40 * 24 * 60 * 60 * 1000).toISOString();
     expect(
-      purgeCountdownLabel(makeMemory({ deleted_at: longAgo, dream_action: "delete" }), NOW),
+      purgeCountdownLabel(
+        makeMemory({ deleted_at: longAgo, dream_action: "delete" }),
+        GRACE_DAYS,
+        NOW,
+      ),
     ).toBe("Purges on next sweep");
+  });
+
+  it("returns null until backend grace days are available", () => {
+    const fiveDaysAgo = new Date(NOW - 5 * 24 * 60 * 60 * 1000).toISOString();
+
+    expect(
+      purgeCountdownLabel(
+        makeMemory({ deleted_at: fiveDaysAgo, dream_action: "delete" }),
+        null,
+        NOW,
+      ),
+    ).toBeNull();
+  });
+});
+
+describe("extractDreamPurgeGraceDays", () => {
+  it("reads purge grace windows from nested backend config values", () => {
+    expect(
+      extractDreamPurgeGraceDays({
+        memory: {
+          dream: {
+            purge_review_after_days: 91,
+            purge_delete_after_days: 31,
+          },
+        },
+      }),
+    ).toEqual({ review: 91, delete: 31 });
+  });
+
+  it("returns null for malformed config values", () => {
+    expect(extractDreamPurgeGraceDays({ memory: { dream: {} } })).toBeNull();
+    expect(
+      extractDreamPurgeGraceDays({
+        memory: { dream: { purge_review_after_days: Number.POSITIVE_INFINITY } },
+      }),
+    ).toBeNull();
   });
 });

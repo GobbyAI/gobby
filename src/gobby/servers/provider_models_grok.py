@@ -13,7 +13,7 @@ GROK_STATIC_MODEL_CATALOG: list[dict[str, Any]] = [
     {
         "value": "grok-composer-2.5-fast",
         "label": "Grok Composer 2.5 Fast",
-        "description": "Cursor's latest coding model",
+        "description": "xAI coding model adopted by Cursor",
         "context_length": 200_000,
         "context_length_source": "static_default",
         "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
@@ -22,7 +22,7 @@ GROK_STATIC_MODEL_CATALOG: list[dict[str, Any]] = [
     {
         "value": "grok-build",
         "label": "Grok Build",
-        "description": "xAI's latest coding model",
+        "description": "xAI coding model",
         "context_length": 512_000,
         "context_length_source": "static_default",
         "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},

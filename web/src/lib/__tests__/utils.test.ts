@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cn } from '../utils'
+import { cn, escapeHtml } from '../utils'
 
 describe('cn', () => {
   it('returns empty string with no args', () => {
@@ -46,5 +46,11 @@ describe('cn', () => {
     const result = cn('base', undefined, null, 'extra')
     expect(result).toContain('base')
     expect(result).toContain('extra')
+  })
+})
+
+describe('escapeHtml', () => {
+  it('escapes single quotes along with other HTML-sensitive characters', () => {
+    expect(escapeHtml(`'"<>&`)).toBe('&#39;&quot;&lt;&gt;&amp;')
   })
 })

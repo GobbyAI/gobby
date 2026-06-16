@@ -15,9 +15,14 @@ def _decode_variables_payload(variables: Any) -> dict[str, Any]:
     if isinstance(variables, dict):
         return variables
     if isinstance(variables, str | bytes | bytearray) and variables:
-        loaded = json.loads(variables)
+        try:
+            loaded = json.loads(variables)
+        except (json.JSONDecodeError, TypeError, ValueError) as exc:
+            logger.warning("Failed to decode workflow variables payload: %s", exc)
+            return {}
         if isinstance(loaded, dict):
             return loaded
+        logger.warning("Ignoring non-object workflow variables payload: %s", type(loaded).__name__)
     return {}
 
 

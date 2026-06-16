@@ -136,6 +136,7 @@ async def _run_sweep(manager: LocalMemoryManager) -> dict[str, Any]:
         )
 
 
+@pytest.mark.asyncio
 async def test_dream_gc_soft_delete_lifecycle(
     async_daemon_client: httpx.AsyncClient,
     postgres_db: HubDatabase,

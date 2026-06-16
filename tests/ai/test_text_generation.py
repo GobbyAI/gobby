@@ -2893,6 +2893,33 @@ def test_candidate_timeout_selection_by_adapter_style() -> None:
         )
         == 12.0
     )
+    assert (
+        service._candidate_timeout_for_binding(
+            fast_override_request,
+            _binding(AIAdapterStyle.CLI),
+        )
+        == 150.0
+    )
+
+    both_override_request = TextGenerationRequest(
+        prompt="prompt",
+        candidate_timeout_seconds=12.0,
+        cli_candidate_timeout_seconds=180.0,
+    )
+    assert (
+        service._candidate_timeout_for_binding(
+            both_override_request,
+            _binding(AIAdapterStyle.LOCAL),
+        )
+        == 12.0
+    )
+    assert (
+        service._candidate_timeout_for_binding(
+            both_override_request,
+            _binding(AIAdapterStyle.CLI),
+        )
+        == 180.0
+    )
 
 
 @pytest.mark.asyncio

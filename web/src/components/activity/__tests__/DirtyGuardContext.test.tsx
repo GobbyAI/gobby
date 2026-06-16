@@ -48,7 +48,7 @@ function DirtyGuardHarness({ startWithPane = true }: { startWithPane?: boolean }
   return (
     <DirtyGuardProvider value={dirtyGuard}>
       <div data-testid="active-tab">{tab}</div>
-      <button type="button" onClick={() => dirtyGuard.guardedRun(() => setTab("tasks"))}>
+      <button type="button" onClick={() => void dirtyGuard.guardedRun(() => setTab("tasks"))}>
         Tasks
       </button>
       <button type="button" onClick={() => setShowPane(false)}>
@@ -162,5 +162,21 @@ describe("DirtyGuardContext (#17018)", () => {
 
     await waitFor(() => expect(confirmLeave).toHaveBeenCalledTimes(1));
     expect(result.current.effectiveMode).toBe("panel");
+  });
+
+  it("returns a rejected promise when dirty confirmation fails", async () => {
+    const error = new Error("confirm failed");
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { result } = renderHook(() => useDirtyGuardController());
+
+    act(() => {
+      result.current.registerDirtyGuard({
+        isDirty: () => true,
+        confirmLeave: vi.fn().mockRejectedValue(error),
+      });
+    });
+
+    await expect(result.current.guardedRun(vi.fn())).rejects.toThrow("confirm failed");
+    expect(consoleError).toHaveBeenCalledWith("Dirty-guard confirmation failed", error);
   });
 });

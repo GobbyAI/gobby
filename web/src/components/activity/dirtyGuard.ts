@@ -13,12 +13,14 @@ export interface DirtyGuard {
 
 export interface DirtyGuardContextValue {
   registerDirtyGuard: (guard: DirtyGuard) => () => void;
-  guardedRun: (action: () => void) => void;
+  guardedRun: (action: () => Promise<void> | void) => Promise<void>;
 }
 
 export const noopDirtyGuard: DirtyGuardContextValue = {
   registerDirtyGuard: () => () => {},
-  guardedRun: (action) => action(),
+  guardedRun: async (action) => {
+    await action();
+  },
 };
 
 export const DirtyGuardContext =
@@ -38,27 +40,23 @@ export function useDirtyGuardController(): DirtyGuardContextValue {
     };
   }, []);
 
-  const guardedRun = useCallback((action: () => void) => {
+  const guardedRun = useCallback(async (action: () => Promise<void> | void) => {
     const dirtyGuards = Array.from(guardsRef.current).filter((guard) =>
       guard.isDirty(),
     );
-    if (dirtyGuards.length === 0) {
-      action();
-      return;
-    }
-
-    void (async () => {
-      try {
+    try {
+      if (dirtyGuards.length > 0) {
         for (const guard of dirtyGuards) {
           if (!(await guard.confirmLeave())) {
             return;
           }
         }
-        action();
-      } catch (error) {
-        console.error("Dirty-guard confirmation failed", error);
       }
-    })();
+      await action();
+    } catch (error) {
+      console.error("Dirty-guard confirmation failed", error);
+      throw error;
+    }
   }, []);
 
   return useMemo(

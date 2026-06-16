@@ -16,10 +16,12 @@ import {
 } from "./memory/MemoryTabActions";
 import {
   filterMemories,
+  extractDreamPurgeGraceDays,
   filtersFromMemoryHook,
   memoryTypeCount,
   MEMORY_TYPE_OPTIONS,
   MEMORY_VISIBILITY_OPTIONS,
+  type DreamPurgeGraceDays,
 } from "./memory/MemoryTabData";
 import { MemoryDetailPanel } from "./memory/MemoryDetailPanel";
 import { MemoryGraphView } from "./memory/MemoryGraphView";
@@ -62,6 +64,7 @@ export const MemoryTab = memo(function MemoryTab({
   const [error, setError] = useState<string | null>(null);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [viewMode, setViewMode] = useState<MemoryViewMode>("detail");
+  const [purgeGraceDays, setPurgeGraceDays] = useState<DreamPurgeGraceDays | null>(null);
   const confirmLeaveRef = useRef<(next: () => void) => void>((next) => next());
 
   const tabFilters = useMemo(
@@ -90,6 +93,23 @@ export const MemoryTab = memo(function MemoryTab({
       setSelectedId(filteredMemories[0].id);
     }
   }, [filteredMemories, selectedId]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    async function fetchPurgeConfig() {
+      try {
+        const response = await fetch("/api/config/values", { signal: controller.signal });
+        if (!response.ok) return;
+        const payload = await response.json();
+        setPurgeGraceDays(extractDreamPurgeGraceDays(payload.values));
+      } catch (configError) {
+        if (configError instanceof DOMException && configError.name === "AbortError") return;
+        console.warn("Failed to load memory dream purge config", configError);
+      }
+    }
+    void fetchPurgeConfig();
+    return () => controller.abort();
+  }, []);
 
   const patchFilters = useCallback(
     (patch: Partial<typeof filters>) => {
@@ -390,6 +410,7 @@ export const MemoryTab = memo(function MemoryTab({
               memory={selectedMemory}
               onSave={handleSave}
               onRestore={(memory) => handleRestore(memory)}
+              purgeGraceDays={purgeGraceDays}
               actions={detailActions}
               onConfirmLeaveChange={(handler) => {
                 confirmLeaveRef.current = handler;

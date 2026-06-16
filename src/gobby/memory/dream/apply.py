@@ -281,7 +281,14 @@ async def _promote(
         return 1
     except Exception:
         if db_mutated:
-            await _restore_promote_row(memory_manager, store, before)
+            try:
+                await _restore_promote_row(memory_manager, store, before)
+            except Exception as rollback_exc:
+                logger.warning(
+                    "Memory dream promote rollback restore failed: %s",
+                    rollback_exc,
+                    exc_info=True,
+                )
         raise
 
 

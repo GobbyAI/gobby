@@ -213,10 +213,16 @@ class CloneIsolationHandler(IsolationHandler):
     async def cleanup_environment(self, config: SpawnConfig) -> None:
         """Clean up partially created clone on prepare failure."""
         partial_state = self._partial_clones.pop(id(config), None)
-        clone_path = (
-            partial_state.get("path") if partial_state is not None else self._created_clone_path
-        )
-        clone_id = partial_state.get("id") if partial_state is not None else self._created_clone_id
+        if partial_state is None:
+            logger.warning(
+                "Skipping clone cleanup for %s: no partial clone state recorded",
+                config.task_id or config.project_id,
+            )
+            self._created_clone_path = None
+            self._created_clone_id = None
+            return
+        clone_path = partial_state.get("path")
+        clone_id = partial_state.get("id")
 
         if clone_path:
             try:

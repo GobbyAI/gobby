@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -222,9 +223,17 @@ class MemoryManagerFacadeMethods:
         return await self._indexing_service.reconcile_stores(dry_run=dry_run)
 
     def count_memories(
-        self, project_id: str | None = None, *, visibility: Visibility = "active"
+        self,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        *,
+        visibility: Visibility = "active",
     ) -> int:
-        return self._repository.count_memories(project_id=project_id, visibility=visibility)
+        return self._repository.count_memories(
+            project_id=project_id,
+            memory_type=memory_type,
+            visibility=visibility,
+        )
 
     def list_dream_candidates(
         self,
@@ -262,8 +271,12 @@ class MemoryManagerFacadeMethods:
         secondary stores — which retain soft-hidden rows until purge — stay consistent.
         """
         purged_ids = self.storage.purge_dream_hidden(action, older_than_days)
-        for memory_id in purged_ids:
-            await self._lifecycle_service.purge_secondary_indices(memory_id)
+        await asyncio.gather(
+            *(
+                self._lifecycle_service.purge_secondary_indices(memory_id)
+                for memory_id in purged_ids
+            )
+        )
         return {"action": action, "purged": len(purged_ids), "memory_ids": purged_ids}
 
     def restore_memory(self, memory_id: str, *, when: str | None = None) -> bool:

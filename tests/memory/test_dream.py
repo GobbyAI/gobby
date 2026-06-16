@@ -642,6 +642,33 @@ async def test_failed_promote_rolls_back_scope_and_resyncs_secondary_scope() -> 
 
 
 @pytest.mark.asyncio
+async def test_failed_promote_logs_rollback_failure_without_masking_original(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    db = _FakeDreamDB()
+    db.memories = {"promote-me": _row("promote-me", "universal")}
+    manager = _FakeMemoryManager(db)
+    manager.mark_dreamed = MagicMock(side_effect=OSError("stamp failed"))
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    with patch.object(store, "restore_memory_row", side_effect=RuntimeError("rollback failed")):
+        summary = await apply_dream_plan(
+            memory_manager=manager,
+            store=store,
+            run_id=run_id,
+            actions=[DreamAction(action="promote", memory_id="promote-me", confidence=0.9)],
+            candidates=[_candidate("promote-me")],
+            dry_run=False,
+            reconcile_after_apply=False,
+        )
+
+    assert summary["errors"] == 1
+    assert summary["error_details"][0]["error"] == "stamp failed"
+    assert "Memory dream promote rollback restore failed: rollback failed" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_apply_and_revert_legacy_merge_and_supersede() -> None:
     db = _FakeDreamDB()
     db.memories = {

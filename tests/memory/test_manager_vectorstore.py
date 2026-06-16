@@ -6,6 +6,7 @@ update_memory correctly interact with local storage and VectorStore.
 
 from __future__ import annotations
 
+import asyncio
 from datetime import UTC, datetime, timedelta
 from unittest.mock import AsyncMock
 
@@ -285,6 +286,44 @@ async def test_purge_dream_hidden_reconciles_qdrant_and_graph(manager, mock_vect
     # The fresh soft-hidden row survives purge (still recoverable).
     assert manager.get_memory(fresh.id, visibility="hidden") is not None
     assert manager.get_memory(aged.id, visibility="all") is None
+
+
+@pytest.mark.asyncio
+async def test_purge_dream_hidden_reconciles_secondary_indices_concurrently(manager):
+    """Purged memory IDs reconcile secondary stores concurrently."""
+    old_stamp = (datetime.now(UTC) - timedelta(days=400)).isoformat()
+    first = await manager.create_memory(content="obsolete fact one")
+    second = await manager.create_memory(content="obsolete fact two")
+    manager.mark_dreamed(first.id, hidden_as="delete", when=old_stamp)
+    manager.mark_dreamed(second.id, hidden_as="delete", when=old_stamp)
+
+    release = asyncio.Event()
+    running = 0
+    max_running = 0
+    calls: list[str] = []
+
+    async def purge_secondary_indices(memory_id: str) -> None:
+        nonlocal running, max_running
+        running += 1
+        max_running = max(max_running, running)
+        if running == 2:
+            release.set()
+        await release.wait()
+        calls.append(memory_id)
+        running -= 1
+
+    manager._lifecycle_service.purge_secondary_indices = AsyncMock(
+        side_effect=purge_secondary_indices
+    )
+
+    result = await asyncio.wait_for(
+        manager.purge_dream_hidden("delete", older_than_days=30),
+        timeout=1,
+    )
+
+    assert result["purged"] == 2
+    assert set(calls) == {first.id, second.id}
+    assert max_running == 2
 
 
 @pytest.mark.asyncio

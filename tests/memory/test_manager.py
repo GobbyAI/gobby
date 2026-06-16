@@ -1030,6 +1030,16 @@ class TestCountMemories:
         await memory_manager.create_memory(content="Count 2")
         assert memory_manager.count_memories() == 2
 
+    @pytest.mark.asyncio
+    async def test_count_filters_by_memory_type(self, memory_manager) -> None:
+        """count_memories filters totals by memory_type."""
+        await memory_manager.create_memory(content="Count fact", memory_type="fact")
+        await memory_manager.create_memory(content="Count preference", memory_type="preference")
+
+        assert memory_manager.count_memories(memory_type="fact") == 1
+        assert memory_manager.count_memories(memory_type="preference") == 1
+        assert memory_manager.count_memories(memory_type="pattern") == 0
+
 
 # =============================================================================
 # Test: reindex_embeddings
