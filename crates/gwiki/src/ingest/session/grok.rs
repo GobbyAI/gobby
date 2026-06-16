@@ -2,8 +2,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    ParsedSession, ParsedSessionMessage, SessionArchiveEnvelope, SessionTranscriptAdapter,
-    json_string_field, non_empty_optional, non_empty_string, pretty_json,
+    ParsedSession, ParsedSessionMessage, ParsedSessionMetadata, SessionArchiveEnvelope,
+    SessionTranscriptAdapter, json_string_field, non_empty_optional, non_empty_string, pretty_json,
 };
 use crate::WikiError;
 
@@ -33,6 +33,7 @@ impl SessionTranscriptAdapter for GrokSessionAdapter {
 
     fn parse(&self, envelopes: &[SessionArchiveEnvelope]) -> Result<ParsedSession, WikiError> {
         let mut started_at = None;
+        let mut metadata = ParsedSessionMetadata::default();
         let mut messages = Vec::new();
 
         for envelope in envelopes
@@ -49,6 +50,7 @@ impl SessionTranscriptAdapter for GrokSessionAdapter {
             started_at = started_at.or_else(|| {
                 non_empty_optional(record.timestamp.clone()).or_else(|| envelope.timestamp.clone())
             });
+            metadata.set_model_once(record.model_id.as_deref());
 
             match record.record_type.as_str() {
                 "user" | "assistant" => {
@@ -96,6 +98,7 @@ impl SessionTranscriptAdapter for GrokSessionAdapter {
             title: "Grok session".to_string(),
             session_type: "grok-cli".to_string(),
             started_at,
+            metadata,
             messages,
         })
     }
@@ -106,6 +109,7 @@ struct GrokRecord {
     #[serde(rename = "type")]
     record_type: String,
     timestamp: Option<String>,
+    model_id: Option<String>,
     content: Option<Value>,
     data: Option<Value>,
     message: Option<String>,
@@ -130,6 +134,7 @@ fn parsed_grok_chat_message(
         timestamp: non_empty_optional(record.timestamp.clone())
             .or_else(|| fallback_timestamp.map(str::to_string)),
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -143,6 +148,7 @@ fn parsed_grok_stream_text(
         timestamp: non_empty_optional(record.timestamp.clone())
             .or_else(|| fallback_timestamp.map(str::to_string)),
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -158,6 +164,7 @@ fn parsed_grok_tool_calls(
         .map(|tool_call| {
             let name =
                 non_empty_optional(tool_call.name.clone()).unwrap_or_else(|| "tool".to_string());
+            let tool_name = name.clone();
             let mut content = format!("Tool call: {name}");
             append_call_id(&mut content, tool_call.id.as_deref());
             if let Some(arguments) = tool_call
@@ -174,6 +181,7 @@ fn parsed_grok_tool_calls(
                 timestamp: non_empty_optional(record.timestamp.clone())
                     .or_else(|| fallback_timestamp.map(str::to_string)),
                 content,
+                tool_names: vec![tool_name],
             }
         })
         .collect()
@@ -199,6 +207,7 @@ fn parsed_grok_tool_result(
         timestamp: non_empty_optional(record.timestamp.clone())
             .or_else(|| fallback_timestamp.map(str::to_string)),
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -218,6 +227,7 @@ fn parsed_grok_error(
         timestamp: non_empty_optional(record.timestamp.clone())
             .or_else(|| fallback_timestamp.map(str::to_string)),
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -232,6 +242,7 @@ fn push_or_append_message(
     {
         previous.content.push_str(&message.content);
         previous.timestamp = previous.timestamp.clone().or(message.timestamp);
+        previous.tool_names.extend(message.tool_names);
         return;
     }
 

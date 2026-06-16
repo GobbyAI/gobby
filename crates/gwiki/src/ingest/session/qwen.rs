@@ -2,8 +2,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    ParsedSession, ParsedSessionMessage, SessionArchiveEnvelope, SessionTranscriptAdapter,
-    json_string_field, non_empty_optional, non_empty_string, pretty_json,
+    ParsedSession, ParsedSessionMessage, ParsedSessionMetadata, SessionArchiveEnvelope,
+    SessionTranscriptAdapter, json_string_field, non_empty_optional, non_empty_string, pretty_json,
 };
 use crate::WikiError;
 
@@ -25,6 +25,7 @@ impl SessionTranscriptAdapter for QwenSessionAdapter {
 
     fn parse(&self, envelopes: &[SessionArchiveEnvelope]) -> Result<ParsedSession, WikiError> {
         let mut started_at = None;
+        let mut metadata = ParsedSessionMetadata::default();
         let mut messages = Vec::new();
 
         for envelope in envelopes
@@ -42,6 +43,8 @@ impl SessionTranscriptAdapter for QwenSessionAdapter {
                 .record_type
                 .as_deref()
                 .unwrap_or(&envelope.envelope_type);
+            metadata.set_model_once(record.model.as_deref());
+            metadata.set_git_branch_once(record.git_branch.as_deref());
 
             match record_type {
                 "assistant" | "tool_result" | "user" => {
@@ -68,6 +71,7 @@ impl SessionTranscriptAdapter for QwenSessionAdapter {
             title: "Qwen session".to_string(),
             session_type: "qwen-code".to_string(),
             started_at,
+            metadata,
             messages,
         })
     }
@@ -78,6 +82,9 @@ struct QwenRecord {
     #[serde(default, rename = "type")]
     record_type: Option<String>,
     timestamp: Option<String>,
+    model: Option<String>,
+    #[serde(rename = "gitBranch")]
+    git_branch: Option<String>,
     message: Option<QwenMessage>,
 }
 
@@ -125,6 +132,7 @@ fn parsed_qwen_message(
 ) -> Option<ParsedSessionMessage> {
     let message = record.message.as_ref()?;
     let content = render_qwen_parts(&message.parts)?;
+    let tool_names = qwen_tool_names(&message.parts);
     let timestamp = non_empty_optional(record.timestamp.clone())
         .or_else(|| fallback_timestamp.map(str::to_string));
 
@@ -132,6 +140,7 @@ fn parsed_qwen_message(
         role: qwen_message_role(record_type, message),
         timestamp,
         content,
+        tool_names,
     })
 }
 
@@ -216,6 +225,14 @@ fn render_qwen_function_response(function_response: &Value) -> Option<String> {
         rendered.push_str(&render_jsonish_or_text(response));
     }
     Some(rendered)
+}
+
+fn qwen_tool_names(parts: &[Value]) -> Vec<String> {
+    parts
+        .iter()
+        .filter_map(|part| part.get("functionCall"))
+        .filter_map(|function_call| json_string_field(function_call, "name"))
+        .collect()
 }
 
 fn render_jsonish_or_text(value: &Value) -> String {

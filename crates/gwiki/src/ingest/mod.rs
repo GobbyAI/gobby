@@ -16,6 +16,8 @@ pub mod wayback;
 use std::io::Write;
 use std::path::{Path, PathBuf};
 
+use serde::Serialize;
+
 use crate::WikiError;
 use crate::indexer;
 use crate::sources::SourceRecord;
@@ -147,6 +149,8 @@ pub(crate) fn markdown_metadata(fields: &[(&str, String)]) -> String {
 pub(crate) enum MetadataValue {
     String(String),
     Number(String),
+    Bool(bool),
+    Json(String),
 }
 
 impl MetadataValue {
@@ -156,6 +160,14 @@ impl MetadataValue {
 
     pub(crate) fn number(value: impl ToString) -> Self {
         Self::Number(value.to_string())
+    }
+
+    pub(crate) fn bool(value: bool) -> Self {
+        Self::Bool(value)
+    }
+
+    pub(crate) fn json(value: impl Serialize) -> Self {
+        Self::Json(serde_json::to_string(&value).unwrap_or_else(|_| "null".to_string()))
     }
 }
 
@@ -175,6 +187,8 @@ fn yaml_metadata_value(key: &str, value: &MetadataValue) -> String {
     match value {
         MetadataValue::String(value) => yaml_metadata_scalar(key, value),
         MetadataValue::Number(value) => yaml_numeric_scalar(value),
+        MetadataValue::Bool(value) => value.to_string(),
+        MetadataValue::Json(value) => yaml_json_value(value),
     }
 }
 
@@ -198,6 +212,15 @@ fn yaml_safe_single_line_scalar(value: &str) -> String {
 fn yaml_numeric_scalar(value: &str) -> String {
     let value = single_line(value);
     if yaml_numeric_scalar_is_safe(&value) {
+        value
+    } else {
+        quote_yaml_string(&value)
+    }
+}
+
+fn yaml_json_value(value: &str) -> String {
+    let value = single_line(value);
+    if serde_json::from_str::<serde_json::Value>(&value).is_ok() {
         value
     } else {
         quote_yaml_string(&value)
@@ -484,6 +507,7 @@ fn sanitize_extension(extension: &str) -> String {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::BTreeMap;
     use std::path::{Path, PathBuf};
 
     use super::{
@@ -586,16 +610,21 @@ mod tests {
     }
 
     #[test]
-    fn markdown_metadata_allows_explicit_numeric_values() {
+    fn markdown_metadata_allows_explicit_typed_values() {
+        let counts = BTreeMap::from([("Read".to_string(), 2_u64), ("Write".to_string(), 1)]);
         let metadata = markdown_metadata_values(&[
             ("file_size_bytes", MetadataValue::number(42)),
             ("duration_seconds", MetadataValue::number(13)),
             ("unsafe_number", MetadataValue::Number("NaN".to_string())),
+            ("is_subagent", MetadataValue::bool(true)),
+            ("tool_counts", MetadataValue::json(&counts)),
         ]);
 
         assert!(metadata.contains("file_size_bytes: 42\n"));
         assert!(metadata.contains("duration_seconds: 13\n"));
         assert!(metadata.contains("unsafe_number: \"NaN\"\n"));
+        assert!(metadata.contains("is_subagent: true\n"));
+        assert!(metadata.contains("tool_counts: {\"Read\":2,\"Write\":1}\n"));
     }
 
     #[test]

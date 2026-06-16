@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -7,18 +8,21 @@ mod codex;
 mod droid;
 mod gemini;
 mod grok;
+mod metadata;
 mod qwen;
 
 use codex::CODEX_SESSION_ADAPTER;
 use droid::DROID_SESSION_ADAPTER;
 use gemini::GEMINI_SESSION_ADAPTER;
 use grok::GROK_SESSION_ADAPTER;
+pub(crate) use metadata::ParsedSessionMetadata;
+use metadata::session_metadata_fields;
 use qwen::QWEN_SESSION_ADAPTER;
 
 use crate::WikiError;
 use crate::ingest::{
-    IngestResult, markdown_metadata, markdown_title, single_line, text_from_utf8_lossy,
-    write_raw_markdown,
+    IngestResult, MetadataValue, markdown_metadata_values, markdown_title, single_line,
+    text_from_utf8_lossy, write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef, SourceKind, SourceManifest};
 
@@ -36,6 +40,7 @@ pub(crate) struct ParsedSession {
     pub title: String,
     pub session_type: String,
     pub started_at: Option<String>,
+    pub metadata: ParsedSessionMetadata,
     pub messages: Vec<ParsedSessionMessage>,
 }
 
@@ -44,6 +49,7 @@ pub(crate) struct ParsedSessionMessage {
     pub role: String,
     pub timestamp: Option<String>,
     pub content: String,
+    pub tool_names: Vec<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -251,6 +257,7 @@ impl SessionTranscriptAdapter for CommonSessionAdapter {
             title: title.unwrap_or_else(|| "Session transcript".to_string()),
             session_type: session_type.unwrap_or_else(|| "session".to_string()),
             started_at,
+            metadata: ParsedSessionMetadata::default(),
             messages,
         })
     }
@@ -282,6 +289,7 @@ fn parsed_common_message(
         timestamp: non_empty_optional(message.timestamp)
             .or_else(|| fallback_timestamp.map(str::to_string)),
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -294,6 +302,7 @@ fn parsed_common_payload_message(
         role: non_empty_optional(payload.role.clone()).unwrap_or_else(|| "speaker".to_string()),
         timestamp: fallback_timestamp.map(str::to_string),
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -318,6 +327,8 @@ impl SessionTranscriptAdapter for ClaudeCodeAdapter {
     fn parse(&self, envelopes: &[SessionArchiveEnvelope]) -> Result<ParsedSession, WikiError> {
         let mut title = None;
         let mut started_at = None;
+        let mut metadata = ParsedSessionMetadata::default();
+        let mut token_usage_message_ids = BTreeSet::new();
         let mut messages = Vec::new();
 
         for envelope in envelopes
@@ -341,6 +352,22 @@ impl SessionTranscriptAdapter for ClaudeCodeAdapter {
             started_at = started_at.or_else(|| {
                 non_empty_optional(record.timestamp.clone()).or_else(|| envelope.timestamp.clone())
             });
+            metadata.set_git_branch_once(record.git_branch.as_deref());
+            if record.is_sidechain.unwrap_or(false) {
+                metadata.mark_subagent();
+            }
+            if let Some(message) = &record.message {
+                metadata.set_model_once(message.model.as_deref());
+                if let Some(usage) = &message.usage {
+                    if let Some(id) = message.id.as_deref().and_then(non_empty_string) {
+                        if token_usage_message_ids.insert(id) {
+                            metadata.add_token_usage(usage);
+                        }
+                    } else {
+                        metadata.add_token_usage(usage);
+                    }
+                }
+            }
 
             if let Some(message) =
                 parsed_claude_code_message(&record, envelope.timestamp.as_deref())
@@ -361,6 +388,7 @@ impl SessionTranscriptAdapter for ClaudeCodeAdapter {
             title: title.unwrap_or_else(|| "Claude Code session".to_string()),
             session_type: "claude-code".to_string(),
             started_at,
+            metadata,
             messages,
         })
     }
@@ -377,12 +405,16 @@ struct ClaudeCodeRecord {
     tool_use_result: Option<Value>,
     ai_title: Option<String>,
     last_prompt: Option<String>,
+    git_branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
 struct ClaudeCodeMessage {
+    id: Option<String>,
+    model: Option<String>,
     role: Option<String>,
     content: Option<Value>,
+    usage: Option<Value>,
 }
 
 fn parsed_claude_code_message(
@@ -391,6 +423,7 @@ fn parsed_claude_code_message(
 ) -> Option<ParsedSessionMessage> {
     let message = record.message.as_ref()?;
     let content = message.content.as_ref()?;
+    let tool_names = claude_code_tool_names(content);
     let content = render_claude_code_content(content, record.tool_use_result.as_ref())?;
     let timestamp = non_empty_optional(record.timestamp.clone())
         .or_else(|| fallback_timestamp.map(str::to_string));
@@ -399,6 +432,7 @@ fn parsed_claude_code_message(
         role: claude_code_message_role(record, message),
         timestamp,
         content,
+        tool_names,
     })
 }
 
@@ -426,6 +460,33 @@ fn record_has_tool_result(record: &ClaudeCodeRecord) -> bool {
             .as_ref()
             .and_then(|message| message.content.as_ref())
             .is_some_and(|content| content_has_block_type(content, "tool_result"))
+}
+
+fn claude_code_tool_names(content: &Value) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_claude_code_tool_names(content, &mut names);
+    names
+}
+
+fn collect_claude_code_tool_names(value: &Value, names: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_claude_code_tool_names(item, names);
+            }
+        }
+        Value::Object(_) => {
+            if value
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|content_type| content_type == "tool_use")
+                && let Some(name) = json_string_field(value, "name")
+            {
+                names.push(name);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn render_claude_code_content(content: &Value, tool_use_result: Option<&Value>) -> Option<String> {
@@ -546,17 +607,36 @@ fn render_session_markdown(
     source_hash: &str,
 ) -> String {
     let mut fields = vec![
-        ("source_kind", SourceKind::Session.to_string()),
-        ("source_location", snapshot.location.clone()),
-        ("fetched_at", snapshot.fetched_at.clone()),
-        ("source_hash", source_hash.to_string()),
-        ("session_type", parsed.session_type.clone()),
+        (
+            "source_kind",
+            MetadataValue::string(SourceKind::Session.to_string()),
+        ),
+        (
+            "source_location",
+            MetadataValue::string(snapshot.location.clone()),
+        ),
+        (
+            "fetched_at",
+            MetadataValue::string(snapshot.fetched_at.clone()),
+        ),
+        (
+            "source_hash",
+            MetadataValue::string(source_hash.to_string()),
+        ),
+        (
+            "session_type",
+            MetadataValue::string(parsed.session_type.clone()),
+        ),
     ];
     if let Some(started_at) = &parsed.started_at {
-        fields.push(("session_started_at", started_at.clone()));
+        fields.push((
+            "session_started_at",
+            MetadataValue::string(started_at.clone()),
+        ));
     }
+    fields.extend(session_metadata_fields(parsed));
 
-    let mut markdown = markdown_metadata(&fields);
+    let mut markdown = markdown_metadata_values(&fields);
     markdown.push_str("# ");
     markdown.push_str(title);
     markdown.push_str("\n\n");
@@ -607,6 +687,59 @@ fn json_string_field(value: &Value, field: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn render_session_markdown_emits_deterministic_session_frontmatter() {
+        let snapshot = SessionFileSnapshot {
+            location: "/tmp/session.jsonl".to_string(),
+            file_name: "session.jsonl".to_string(),
+            fetched_at: "2026-06-16T20:00:00Z".to_string(),
+            path: PathBuf::from("/tmp/session.jsonl"),
+            bytes: Vec::new(),
+        };
+        let parsed = ParsedSession {
+            title: "Fixture session".to_string(),
+            session_type: "claude-code".to_string(),
+            started_at: Some("2026-06-16T20:00:00Z".to_string()),
+            metadata: ParsedSessionMetadata {
+                model: Some("claude-opus-4-8".to_string()),
+                token_totals: std::collections::BTreeMap::from([
+                    ("input_tokens".to_string(), 10),
+                    ("output_tokens".to_string(), 5),
+                ]),
+                git_branch: Some("dev".to_string()),
+                is_subagent: true,
+            },
+            messages: vec![
+                ParsedSessionMessage {
+                    role: "assistant".to_string(),
+                    timestamp: Some("2026-06-16T20:00:00Z".to_string()),
+                    content: "I will inspect.".to_string(),
+                    tool_names: vec!["Read".to_string(), "Bash".to_string()],
+                },
+                ParsedSessionMessage {
+                    role: "assistant".to_string(),
+                    timestamp: Some("2026-06-16T21:01:01Z".to_string()),
+                    content: "Done.".to_string(),
+                    tool_names: vec!["Read".to_string()],
+                },
+            ],
+        };
+
+        let markdown = render_session_markdown(&snapshot, &parsed, &parsed.title, "hash");
+
+        assert!(markdown.contains("model: claude-opus-4-8\n"));
+        assert!(markdown.contains("tool_counts: {\"Bash\":1,\"Read\":2}\n"));
+        assert!(markdown.contains("token_totals: {\"input_tokens\":10,\"output_tokens\":5}\n"));
+        assert!(markdown.contains("duration_seconds: 3661\n"));
+        assert!(
+            markdown.contains(
+                "hour_buckets: {\"2026-06-16T20:00:00Z\":1,\"2026-06-16T21:00:00Z\":1}\n"
+            )
+        );
+        assert!(markdown.contains("is_subagent: true\n"));
+        assert!(markdown.contains("gitBranch: dev\n"));
+    }
 
     #[test]
     fn common_session_adapter_accepts_fixture_payload_messages() {
@@ -683,8 +816,15 @@ mod tests {
                 payload: serde_json::json!({
                     "type": "assistant",
                     "timestamp": "2026-06-16T20:00:02Z",
+                    "gitBranch": "dev",
                     "message": {
+                        "id": "msg_1",
+                        "model": "claude-opus-4-8",
                         "role": "assistant",
+                        "usage": {
+                            "input_tokens": 10,
+                            "output_tokens": 5
+                        },
                         "content": [
                             {"type": "thinking", "thinking": "internal"},
                             {"type": "text", "text": "I will inspect it."},
@@ -735,10 +875,16 @@ mod tests {
         assert_eq!(parsed.title, "Claude Fixture");
         assert_eq!(parsed.session_type, "claude-code");
         assert_eq!(parsed.started_at.as_deref(), Some("2026-06-16T20:00:00Z"));
+        assert_eq!(parsed.metadata.model.as_deref(), Some("claude-opus-4-8"));
+        assert_eq!(parsed.metadata.git_branch.as_deref(), Some("dev"));
+        assert!(parsed.metadata.is_subagent);
+        assert_eq!(parsed.metadata.token_totals.get("input_tokens"), Some(&10));
+        assert_eq!(parsed.metadata.token_totals.get("output_tokens"), Some(&5));
         assert_eq!(parsed.messages.len(), 4);
         assert_eq!(parsed.messages[0].role, "user");
         assert_eq!(parsed.messages[0].content, "Inspect this repo.");
         assert_eq!(parsed.messages[1].role, "assistant");
+        assert_eq!(parsed.messages[1].tool_names, vec!["Read"]);
         assert!(parsed.messages[1].content.contains("I will inspect it."));
         assert!(parsed.messages[1].content.contains("Tool use: Read"));
         assert!(!parsed.messages[1].content.contains("internal"));
@@ -778,5 +924,38 @@ mod tests {
                 .any(|message| message.role.starts_with("tool result")),
             "expected real archive to include at least one tool result"
         );
+        assert!(parsed.metadata.model.is_some(), "expected model metadata");
+        assert!(
+            parsed.metadata.git_branch.is_some(),
+            "expected gitBranch metadata"
+        );
+        assert!(
+            !parsed.metadata.token_totals.is_empty(),
+            "expected token totals metadata"
+        );
+        assert!(
+            parsed
+                .messages
+                .iter()
+                .any(|message| !message.tool_names.is_empty()),
+            "expected tool name metadata"
+        );
+
+        let snapshot = SessionFileSnapshot {
+            location: path.clone(),
+            file_name: "claude-code-real.jsonl".to_string(),
+            fetched_at: "2026-06-16T00:00:00Z".to_string(),
+            path: PathBuf::from(&path),
+            bytes,
+        };
+        let markdown = render_session_markdown(&snapshot, &parsed, &parsed.title, "fixture-hash");
+
+        assert!(markdown.contains("model: "));
+        assert!(markdown.contains("tool_counts: {"));
+        assert!(markdown.contains("token_totals: {"));
+        assert!(markdown.contains("duration_seconds: "));
+        assert!(markdown.contains("hour_buckets: {"));
+        assert!(markdown.contains("is_subagent: false\n"));
+        assert!(markdown.contains("gitBranch: "));
     }
 }

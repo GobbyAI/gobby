@@ -2,8 +2,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    ParsedSession, ParsedSessionMessage, SessionArchiveEnvelope, SessionTranscriptAdapter,
-    json_string_field, non_empty_optional, non_empty_string, pretty_json,
+    ParsedSession, ParsedSessionMessage, ParsedSessionMetadata, SessionArchiveEnvelope,
+    SessionTranscriptAdapter, json_string_field, non_empty_optional, non_empty_string, pretty_json,
 };
 use crate::WikiError;
 
@@ -22,6 +22,7 @@ impl SessionTranscriptAdapter for CodexSessionAdapter {
     fn parse(&self, envelopes: &[SessionArchiveEnvelope]) -> Result<ParsedSession, WikiError> {
         let mut started_at = None;
         let mut session_type = None;
+        let mut metadata = ParsedSessionMetadata::default();
         let mut messages = Vec::new();
 
         for envelope in envelopes
@@ -45,8 +46,26 @@ impl SessionTranscriptAdapter for CodexSessionAdapter {
                             .and_then(non_empty_string)
                             .filter(|originator| originator.contains("codex"))
                     });
+                    metadata.set_model_once(meta.model.as_deref());
+                    metadata.set_git_branch_once(
+                        meta.git.as_ref().and_then(|git| git.branch.as_deref()),
+                    );
+                }
+                "turn_context" => {
+                    metadata
+                        .set_model_once(json_string_field(&envelope.payload, "model").as_deref());
+                    metadata.set_git_branch_once(
+                        envelope
+                            .payload
+                            .pointer("/git/branch")
+                            .and_then(Value::as_str),
+                    );
                 }
                 "event_msg" => {
+                    if let Some(token_totals) = envelope.payload.pointer("/info/total_token_usage")
+                    {
+                        metadata.set_token_totals(token_totals);
+                    }
                     if let Some(message) = parsed_codex_event_message(envelope)? {
                         messages.push(message);
                     }
@@ -71,6 +90,7 @@ impl SessionTranscriptAdapter for CodexSessionAdapter {
             title: "Codex session".to_string(),
             session_type: session_type.unwrap_or_else(|| "codex-tui".to_string()),
             started_at,
+            metadata,
             messages,
         })
     }
@@ -80,6 +100,13 @@ impl SessionTranscriptAdapter for CodexSessionAdapter {
 struct CodexSessionMeta {
     timestamp: Option<String>,
     originator: Option<String>,
+    model: Option<String>,
+    git: Option<CodexGitMetadata>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct CodexGitMetadata {
+    branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -123,6 +150,7 @@ fn parsed_codex_event_message(
             role: "user".to_string(),
             timestamp: envelope.timestamp.clone(),
             content,
+            tool_names: Vec::new(),
         }),
     )
 }
@@ -171,6 +199,7 @@ fn parsed_codex_response_message(
         role,
         timestamp,
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -179,6 +208,7 @@ fn parsed_codex_function_call(
     timestamp: Option<String>,
 ) -> Option<ParsedSessionMessage> {
     let name = non_empty_optional(item.name).unwrap_or_else(|| "tool".to_string());
+    let tool_name = name.clone();
     let mut content = format!("Function call: {name}");
     append_call_id(&mut content, item.call_id.as_deref());
     if let Some(arguments) = item.arguments.as_ref().filter(|value| !value.is_null()) {
@@ -191,6 +221,7 @@ fn parsed_codex_function_call(
         role: "tool call".to_string(),
         timestamp,
         content,
+        tool_names: vec![tool_name],
     })
 }
 
@@ -206,6 +237,7 @@ fn parsed_codex_function_output(
         role: "tool result".to_string(),
         timestamp,
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -221,6 +253,7 @@ fn parsed_codex_tool_search_call(
         role: "tool call".to_string(),
         timestamp,
         content,
+        tool_names: vec!["tool_search".to_string()],
     })
 }
 
@@ -236,6 +269,7 @@ fn parsed_codex_tool_search_output(
         role: "tool result".to_string(),
         timestamp,
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -306,9 +340,12 @@ fn pretty_jsonish(value: &Value) -> String {
 
 #[cfg(test)]
 mod tests {
-    use std::path::Path;
+    use std::path::{Path, PathBuf};
 
-    use super::super::{default_session_adapters, parse_session_archive, read_session_archive};
+    use super::super::{
+        SessionFileSnapshot, default_session_adapters, parse_session_archive, read_session_archive,
+        render_session_markdown,
+    };
     use super::*;
 
     #[test]
@@ -319,7 +356,15 @@ mod tests {
                 timestamp: Some("2026-06-16T20:00:00Z".to_string()),
                 payload: serde_json::json!({
                     "originator": "codex-tui",
-                    "timestamp": "2026-06-16T20:00:00Z"
+                    "timestamp": "2026-06-16T20:00:00Z",
+                    "git": {"branch": "dev"}
+                }),
+            },
+            SessionArchiveEnvelope {
+                envelope_type: "turn_context".to_string(),
+                timestamp: Some("2026-06-16T20:00:00Z".to_string()),
+                payload: serde_json::json!({
+                    "model": "gpt-5.5"
                 }),
             },
             SessionArchiveEnvelope {
@@ -327,7 +372,14 @@ mod tests {
                 timestamp: Some("2026-06-16T20:00:01Z".to_string()),
                 payload: serde_json::json!({
                     "type": "user_message",
-                    "message": "Explain the code path."
+                    "message": "Explain the code path.",
+                    "info": {
+                        "total_token_usage": {
+                            "input_tokens": 100,
+                            "output_tokens": 7,
+                            "total_tokens": 107
+                        }
+                    }
                 }),
             },
             SessionArchiveEnvelope {
@@ -385,12 +437,18 @@ mod tests {
         assert_eq!(parsed.title, "Codex session");
         assert_eq!(parsed.session_type, "codex-tui");
         assert_eq!(parsed.started_at.as_deref(), Some("2026-06-16T20:00:00Z"));
+        assert_eq!(parsed.metadata.model.as_deref(), Some("gpt-5.5"));
+        assert_eq!(parsed.metadata.git_branch.as_deref(), Some("dev"));
+        assert_eq!(parsed.metadata.token_totals.get("input_tokens"), Some(&100));
+        assert_eq!(parsed.metadata.token_totals.get("output_tokens"), Some(&7));
+        assert_eq!(parsed.metadata.token_totals.get("total_tokens"), Some(&107));
         assert_eq!(parsed.messages.len(), 6);
         assert_eq!(parsed.messages[0].role, "user");
         assert_eq!(parsed.messages[0].content, "Explain the code path.");
         assert_eq!(parsed.messages[1].role, "assistant (commentary)");
         assert_eq!(parsed.messages[1].content, "I will trace it.");
         assert_eq!(parsed.messages[2].role, "tool call");
+        assert_eq!(parsed.messages[2].tool_names, vec!["exec_command"]);
         assert!(
             parsed.messages[2]
                 .content
@@ -404,6 +462,7 @@ mod tests {
                 .content
                 .contains("Tool search call: call_2")
         );
+        assert_eq!(parsed.messages[4].tool_names, vec!["tool_search"]);
         assert!(
             parsed.messages[5]
                 .content
@@ -446,5 +505,38 @@ mod tests {
                 .any(|message| message.role == "tool result"),
             "expected at least one parsed tool result"
         );
+        assert!(parsed.metadata.model.is_some(), "expected model metadata");
+        assert!(
+            parsed.metadata.git_branch.is_some(),
+            "expected gitBranch metadata"
+        );
+        assert!(
+            !parsed.metadata.token_totals.is_empty(),
+            "expected token totals metadata"
+        );
+        assert!(
+            parsed
+                .messages
+                .iter()
+                .any(|message| !message.tool_names.is_empty()),
+            "expected tool name metadata"
+        );
+
+        let snapshot = SessionFileSnapshot {
+            location: path.clone(),
+            file_name: "codex-real.jsonl".to_string(),
+            fetched_at: "2026-06-16T00:00:00Z".to_string(),
+            path: PathBuf::from(&path),
+            bytes,
+        };
+        let markdown = render_session_markdown(&snapshot, &parsed, &parsed.title, "fixture-hash");
+
+        assert!(markdown.contains("model: "));
+        assert!(markdown.contains("tool_counts: {"));
+        assert!(markdown.contains("token_totals: {"));
+        assert!(markdown.contains("duration_seconds: "));
+        assert!(markdown.contains("hour_buckets: {"));
+        assert!(markdown.contains("is_subagent: false\n"));
+        assert!(markdown.contains("gitBranch: "));
     }
 }

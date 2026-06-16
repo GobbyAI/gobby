@@ -2,8 +2,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    ParsedSession, ParsedSessionMessage, SessionArchiveEnvelope, SessionTranscriptAdapter,
-    json_string_field, non_empty_optional, non_empty_string, pretty_json,
+    ParsedSession, ParsedSessionMessage, ParsedSessionMetadata, SessionArchiveEnvelope,
+    SessionTranscriptAdapter, json_string_field, non_empty_optional, non_empty_string, pretty_json,
 };
 use crate::WikiError;
 
@@ -21,6 +21,7 @@ impl SessionTranscriptAdapter for GeminiSessionAdapter {
 
     fn parse(&self, envelopes: &[SessionArchiveEnvelope]) -> Result<ParsedSession, WikiError> {
         let mut started_at = None;
+        let mut metadata = ParsedSessionMetadata::default();
         let mut messages = Vec::new();
 
         for envelope in envelopes
@@ -37,6 +38,7 @@ impl SessionTranscriptAdapter for GeminiSessionAdapter {
             started_at = started_at.or_else(|| {
                 non_empty_optional(record.timestamp.clone()).or_else(|| envelope.timestamp.clone())
             });
+            metadata.set_model_once(record.model.as_deref());
 
             match record.record_type.as_str() {
                 "message" => {
@@ -75,6 +77,7 @@ impl SessionTranscriptAdapter for GeminiSessionAdapter {
             title: "Gemini CLI session".to_string(),
             session_type: "gemini-cli".to_string(),
             started_at,
+            metadata,
             messages,
         })
     }
@@ -85,6 +88,7 @@ struct GeminiRecord {
     #[serde(rename = "type")]
     record_type: String,
     timestamp: Option<String>,
+    model: Option<String>,
     role: Option<String>,
     content: Option<Value>,
     delta: Option<bool>,
@@ -110,6 +114,7 @@ fn parsed_gemini_message(
         role,
         timestamp,
         content,
+        tool_names: Vec::new(),
     })
 }
 
@@ -118,6 +123,7 @@ fn parsed_gemini_tool_call(
     fallback_timestamp: Option<&str>,
 ) -> Option<ParsedSessionMessage> {
     let name = non_empty_optional(record.name.clone()).unwrap_or_else(|| "tool".to_string());
+    let tool_name = name.clone();
     let mut content = format!("Tool call: {name}");
     append_call_id(&mut content, record.call_id.as_deref());
     if let Some(arguments) = record
@@ -136,6 +142,7 @@ fn parsed_gemini_tool_call(
         timestamp: non_empty_optional(record.timestamp.clone())
             .or_else(|| fallback_timestamp.map(str::to_string)),
         content,
+        tool_names: vec![tool_name],
     })
 }
 
@@ -163,6 +170,7 @@ fn parsed_gemini_tool_result(
         timestamp: non_empty_optional(record.timestamp.clone())
             .or_else(|| fallback_timestamp.map(str::to_string)),
         content,
+        tool_names: Vec::new(),
     })
 }
 

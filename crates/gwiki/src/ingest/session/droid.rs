@@ -2,8 +2,8 @@ use serde::Deserialize;
 use serde_json::Value;
 
 use super::{
-    ParsedSession, ParsedSessionMessage, SessionArchiveEnvelope, SessionTranscriptAdapter,
-    json_string_field, non_empty_optional, non_empty_string, pretty_json,
+    ParsedSession, ParsedSessionMessage, ParsedSessionMetadata, SessionArchiveEnvelope,
+    SessionTranscriptAdapter, json_string_field, non_empty_optional, non_empty_string, pretty_json,
 };
 use crate::WikiError;
 
@@ -71,6 +71,7 @@ impl SessionTranscriptAdapter for DroidSessionAdapter {
             title: title.unwrap_or_else(|| "Droid session".to_string()),
             session_type: "droid-cli".to_string(),
             started_at,
+            metadata: ParsedSessionMetadata::default(),
             messages,
         })
     }
@@ -121,7 +122,9 @@ fn parsed_droid_message(
     }
 
     let message = record.message.as_ref()?;
-    let content = render_droid_content(message.content.as_ref()?)?;
+    let content_value = message.content.as_ref()?;
+    let tool_names = droid_tool_names(content_value);
+    let content = render_droid_content(content_value)?;
     let timestamp = non_empty_optional(record.timestamp.clone())
         .or_else(|| fallback_timestamp.map(str::to_string));
 
@@ -129,6 +132,7 @@ fn parsed_droid_message(
         role: droid_message_role(message),
         timestamp,
         content,
+        tool_names,
     })
 }
 
@@ -210,6 +214,33 @@ fn render_droid_tool_use(block: &Value) -> Option<String> {
         rendered.push_str("\n```");
     }
     Some(rendered)
+}
+
+fn droid_tool_names(content: &Value) -> Vec<String> {
+    let mut names = Vec::new();
+    collect_droid_tool_names(content, &mut names);
+    names
+}
+
+fn collect_droid_tool_names(value: &Value, names: &mut Vec<String>) {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                collect_droid_tool_names(item, names);
+            }
+        }
+        Value::Object(_) => {
+            if value
+                .get("type")
+                .and_then(Value::as_str)
+                .is_some_and(|content_type| content_type == "tool_use")
+                && let Some(name) = json_string_field(value, "name")
+            {
+                names.push(name);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn render_droid_tool_result(block: &Value) -> Option<String> {
