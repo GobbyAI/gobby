@@ -119,10 +119,42 @@ describe('CronTab', () => {
         error: null,
         agent_run_id: null,
         pipeline_execution_id: null,
+        child: null,
         created_at: '2026-05-01T12:00:00Z',
       },
     ]
     render(<CronTab projectId="p" />)
     expect(screen.getByText(/success/i)).toBeInTheDocument()
+  })
+
+  it('shows dispatched child status in the runs list', () => {
+    const job = makeJob({ id: 'sel', name: 'selected-job' })
+    cronMock.jobs = [job]
+    cronMock.selectedJob = job
+    cronMock.runs = [
+      {
+        id: 'r1',
+        cron_job_id: 'sel',
+        triggered_at: '2026-05-01T12:00:00Z',
+        started_at: '2026-05-01T12:00:01Z',
+        completed_at: '2026-05-01T12:00:02Z',
+        status: 'dispatched',
+        output: 'Pipeline dispatched',
+        error: null,
+        agent_run_id: null,
+        pipeline_execution_id: 'pipe-1',
+        child: {
+          type: 'pipeline_execution',
+          id: 'pipe-1',
+          status: 'waiting_approval',
+          terminal: false,
+          missing: false,
+        },
+        created_at: '2026-05-01T12:00:00Z',
+      },
+    ]
+    render(<CronTab projectId="p" />)
+    expect(screen.getByText('dispatched')).toBeInTheDocument()
+    expect(screen.getByText('pipeline waiting approval')).toBeInTheDocument()
   })
 })

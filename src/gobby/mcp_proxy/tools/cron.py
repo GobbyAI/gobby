@@ -294,6 +294,12 @@ def create_cron_registry(
                 except CronRunRejected as exc:
                     return {"success": False, "error_code": exc.code, "error": str(exc)}
                 if not run:
+                    if cron_storage.get_job(job_id):
+                        return {
+                            "success": False,
+                            "error_code": "cron_job_already_running",
+                            "error": f"Cron job already has an active run: {job_id}",
+                        }
                     return {
                         "success": False,
                         "error_code": "cron_job_not_found",

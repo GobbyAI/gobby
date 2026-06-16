@@ -5,11 +5,12 @@ and Linear via the official Linear MCP server.
 """
 
 import logging
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from gobby.integrations.linear_graphql import LinearGraphQLError
+from gobby.storage.cron_models import CronJob
 from gobby.sync import linear as linear_module
 from gobby.sync.linear import LinearSyncService
 
@@ -28,6 +29,19 @@ def _set_task_state(task: MagicMock, state: str) -> None:
     task.escalated_at = None
     task.is_escalated = False
     task.current_stage = {"state": state}
+
+
+def _cron_job() -> CronJob:
+    return CronJob(
+        id="cj-linear",
+        project_id="test-project-id",
+        name="Linear Sync",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "linear.sync"},
+        created_at="2026-02-10T00:00:00+00:00",
+        updated_at="2026-02-10T00:00:00+00:00",
+    )
 
 
 @pytest.fixture
@@ -71,6 +85,53 @@ def sync_service(mock_mcp_manager, mock_task_manager):
         linear_team_id="team-123",
         project_manager=project_manager,
     )
+
+
+@pytest.mark.asyncio
+async def test_linear_sync_handler_raises_on_partial_errors(
+    mock_mcp_manager,
+    mock_task_manager,
+) -> None:
+    """Nonzero pull/push error counts fail the cron handler."""
+    service = MagicMock()
+    service.is_available.return_value = True
+    service.sync_all = AsyncMock(
+        return_value={
+            "pull": {"updated": 0, "skipped": 0, "errors": 1},
+            "push": {"pushed": 0, "errors": 2},
+        }
+    )
+    handler = linear_module.create_linear_sync_handler(
+        mock_mcp_manager,
+        mock_task_manager,
+        project_id="test-project-id",
+        team_id="team-123",
+    )
+
+    with patch.object(linear_module, "LinearSyncService", return_value=service):
+        with pytest.raises(RuntimeError, match="pull_errors=1, push_errors=2"):
+            await handler(_cron_job())
+
+
+@pytest.mark.asyncio
+async def test_linear_sync_handler_reraises_sync_exceptions(
+    mock_mcp_manager,
+    mock_task_manager,
+) -> None:
+    """sync_all exceptions propagate so cron backoff engages."""
+    service = MagicMock()
+    service.is_available.return_value = True
+    service.sync_all = AsyncMock(side_effect=RuntimeError("linear unavailable"))
+    handler = linear_module.create_linear_sync_handler(
+        mock_mcp_manager,
+        mock_task_manager,
+        project_id="test-project-id",
+        team_id="team-123",
+    )
+
+    with patch.object(linear_module, "LinearSyncService", return_value=service):
+        with pytest.raises(RuntimeError, match="linear unavailable"):
+            await handler(_cron_job())
 
 
 class TestLinearSyncServiceInit:

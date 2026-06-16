@@ -10,6 +10,9 @@ from typing import Any, Literal
 
 logger = logging.getLogger(__name__)
 
+CronRunStatus = Literal["pending", "running", "completed", "failed", "skipped", "dispatched"]
+CronRunChildType = Literal["agent_run", "pipeline_execution"]
+
 
 @dataclass
 class CronJob:
@@ -112,6 +115,27 @@ class CronJob:
 
 
 @dataclass
+class CronRunChild:
+    """Child work launched by a cron run."""
+
+    type: CronRunChildType
+    id: str
+    status: str | None
+    terminal: bool
+    missing: bool = False
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert child projection to dictionary."""
+        return {
+            "type": self.type,
+            "id": self.id,
+            "status": self.status,
+            "terminal": self.terminal,
+            "missing": self.missing,
+        }
+
+
+@dataclass
 class CronRun:
     """A single execution of a cron job."""
 
@@ -121,11 +145,12 @@ class CronRun:
     created_at: str
     started_at: str | None = None
     completed_at: str | None = None
-    status: Literal["pending", "running", "completed", "failed", "skipped"] = "pending"
+    status: CronRunStatus = "pending"
     output: str | None = None
     error: str | None = None
     agent_run_id: str | None = None
     pipeline_execution_id: str | None = None
+    child: CronRunChild | None = None
 
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> CronRun:
@@ -160,6 +185,7 @@ class CronRun:
             "error": self.error,
             "agent_run_id": self.agent_run_id,
             "pipeline_execution_id": self.pipeline_execution_id,
+            "child": self.child.to_dict() if self.child else None,
             "created_at": self.created_at,
         }
 
@@ -174,4 +200,5 @@ class CronRun:
             "error": self.error,
             "agent_run_id": self.agent_run_id,
             "pipeline_execution_id": self.pipeline_execution_id,
+            "child": self.child.to_dict() if self.child else None,
         }

@@ -378,6 +378,7 @@ def test_create_run(cron_storage: CronJobStorage) -> None:
         cron_expr="0 * * * *",
     )
     run = cron_storage.create_run(job.id)
+    assert run is not None
     assert run.id.startswith("cr-")
     assert run.cron_job_id == job.id
     assert run.status == "pending"
@@ -394,6 +395,7 @@ def test_update_run(cron_storage: CronJobStorage) -> None:
         cron_expr="0 * * * *",
     )
     run = cron_storage.create_run(job.id)
+    assert run is not None
     now = datetime.now(UTC).isoformat()
     updated = cron_storage.update_run(
         run.id,
@@ -417,8 +419,11 @@ def test_list_runs(cron_storage: CronJobStorage) -> None:
         action_config={"command": "echo"},
         cron_expr="0 * * * *",
     )
-    cron_storage.create_run(job.id)
-    cron_storage.create_run(job.id)
+    first = cron_storage.create_run(job.id)
+    assert first is not None
+    cron_storage.update_run(first.id, status="completed")
+    second = cron_storage.create_run(job.id)
+    assert second is not None
     runs = cron_storage.list_runs(job.id)
     assert len(runs) == 2
 
@@ -434,9 +439,33 @@ def test_count_running(cron_storage: CronJobStorage) -> None:
         cron_expr="0 * * * *",
     )
     run = cron_storage.create_run(job.id)
-    assert cron_storage.count_running() == 0
+    assert run is not None
+    assert cron_storage.count_running() == 1
     cron_storage.update_run(run.id, status="running")
     assert cron_storage.count_running() == 1
+
+
+def test_create_run_returns_none_when_job_already_active(
+    cron_storage: CronJobStorage,
+) -> None:
+    """create_run atomically rejects a second pending/running row for one job."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Atomic Active Guard",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+
+    first = cron_storage.create_run(job.id)
+    second = cron_storage.create_run(job.id)
+    assert first is not None
+    assert second is None
+
+    cron_storage.update_run(first.id, status="completed")
+    third = cron_storage.create_run(job.id)
+    assert third is not None
 
 
 def test_fail_running_runs_marks_only_active_rows_failed(
@@ -451,10 +480,12 @@ def test_fail_running_runs_marks_only_active_rows_failed(
         action_config={"command": "echo"},
         cron_expr="0 * * * *",
     )
-    running = cron_storage.create_run(job.id)
     completed = cron_storage.create_run(job.id)
-    cron_storage.update_run(running.id, status="running")
+    assert completed is not None
     cron_storage.update_run(completed.id, status="completed")
+    running = cron_storage.create_run(job.id)
+    assert running is not None
+    cron_storage.update_run(running.id, status="running")
 
     failed = cron_storage.fail_running_runs("scheduler restarted")
 
@@ -482,7 +513,17 @@ def test_fail_pending_runs_marks_only_pending_rows_failed(
         cron_expr="0 * * * *",
     )
     pending = cron_storage.create_run(job.id)
-    running = cron_storage.create_run(job.id)
+    assert pending is not None
+    running_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Other Running",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    running = cron_storage.create_run(running_job.id)
+    assert running is not None
     cron_storage.update_run(running.id, status="running")
 
     failed = cron_storage.fail_pending_runs("scheduler restarted")
@@ -518,10 +559,170 @@ def test_has_running_run_is_scoped_to_job(cron_storage: CronJobStorage) -> None:
     )
 
     run = cron_storage.create_run(active_job.id)
+    assert run is not None
     cron_storage.update_run(run.id, status="running")
 
     assert cron_storage.has_running_run(active_job.id) is True
     assert cron_storage.has_running_run(idle_job.id) is False
+
+
+def test_list_runs_hydrates_pipeline_child(cron_storage: CronJobStorage) -> None:
+    """Cron run history includes child status projection."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Pipeline Child",
+        schedule_type="cron",
+        action_type="pipeline",
+        action_config={"pipeline_name": "approval"},
+        cron_expr="0 * * * *",
+    )
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+    cron_storage.db.execute(
+        """
+        INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
+        VALUES (%s, %s, %s, %s)
+        """,
+        ("pe-child", "approval", PROJECT_ID, "waiting_approval"),
+    )
+    cron_storage.update_run(
+        run.id,
+        status="dispatched",
+        pipeline_execution_id="pe-child",
+        completed_at=datetime.now(UTC).isoformat(),
+    )
+
+    runs = cron_storage.list_runs(job.id)
+
+    assert runs[0].child is not None
+    assert runs[0].child.to_dict() == {
+        "type": "pipeline_execution",
+        "id": "pe-child",
+        "status": "waiting_approval",
+        "terminal": False,
+        "missing": False,
+    }
+
+
+def test_get_run_marks_missing_child(cron_storage: CronJobStorage) -> None:
+    """Missing linked child rows are explicit in projection."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Missing Child",
+        schedule_type="cron",
+        action_type="agent_spawn",
+        action_config={"prompt": "hello"},
+        cron_expr="0 * * * *",
+    )
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+    cron_storage.update_run(
+        run.id,
+        status="dispatched",
+        agent_run_id="ar-missing",
+        completed_at=datetime.now(UTC).isoformat(),
+    )
+
+    refreshed = cron_storage.get_run(run.id)
+
+    assert refreshed is not None
+    assert refreshed.child is not None
+    assert refreshed.child.to_dict() == {
+        "type": "agent_run",
+        "id": "ar-missing",
+        "status": None,
+        "terminal": False,
+        "missing": True,
+    }
+
+
+def test_active_children_for_job_uses_application_statuses(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Active child lookup only reports active dispatched children."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Active Pipeline Child",
+        schedule_type="cron",
+        action_type="pipeline",
+        action_config={"pipeline_name": "approval"},
+        cron_expr="0 * * * *",
+    )
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+    cron_storage.db.execute(
+        """
+        INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
+        VALUES (%s, %s, %s, %s)
+        """,
+        ("pe-active", "approval", PROJECT_ID, "interrupted"),
+    )
+    cron_storage.update_run(
+        run.id,
+        status="dispatched",
+        pipeline_execution_id="pe-active",
+        completed_at=datetime.now(UTC).isoformat(),
+    )
+
+    assert cron_storage.active_children_for_job(job.id, "pipeline") == [
+        {
+            "type": "pipeline_execution",
+            "id": "pe-active",
+            "status": "interrupted",
+            "terminal": False,
+            "missing": False,
+        }
+    ]
+
+
+def test_reconcile_interrupted_runs_preserves_active_children(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Startup reconciliation dispatches linked active children and fails stale rows."""
+    pipeline_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Recon Pipeline",
+        schedule_type="cron",
+        action_type="pipeline",
+        action_config={"pipeline_name": "approval"},
+        cron_expr="0 * * * *",
+    )
+    pipeline_run = cron_storage.create_run(pipeline_job.id)
+    assert pipeline_run is not None
+    cron_storage.db.execute(
+        """
+        INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
+        VALUES (%s, %s, %s, %s)
+        """,
+        ("pe-recon", "approval", PROJECT_ID, "running"),
+    )
+    cron_storage.update_run(
+        pipeline_run.id,
+        status="running",
+        pipeline_execution_id="pe-recon",
+    )
+    stale_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Recon Stale",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    stale_run = cron_storage.create_run(stale_job.id)
+    assert stale_run is not None
+
+    result = cron_storage.reconcile_interrupted_runs()
+
+    assert result == {"dispatched": 1, "failed": 1}
+    refreshed_pipeline = cron_storage.get_run(pipeline_run.id)
+    refreshed_stale = cron_storage.get_run(stale_run.id)
+    assert refreshed_pipeline is not None
+    assert refreshed_pipeline.status == "dispatched"
+    assert refreshed_pipeline.child is not None
+    assert refreshed_pipeline.child.status == "running"
+    assert refreshed_stale is not None
+    assert refreshed_stale.status == "failed"
 
 
 def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:

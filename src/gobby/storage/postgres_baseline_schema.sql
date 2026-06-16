@@ -1095,6 +1095,12 @@ CREATE INDEX idx_cron_runs_triggered ON cron_runs(triggered_at);
 
 CREATE INDEX idx_cron_runs_status ON cron_runs(status);
 
+CREATE INDEX idx_cron_runs_agent_run ON cron_runs(agent_run_id) WHERE agent_run_id IS NOT NULL;
+
+CREATE INDEX idx_cron_runs_pipeline_execution ON cron_runs(pipeline_execution_id) WHERE pipeline_execution_id IS NOT NULL;
+
+CREATE UNIQUE INDEX idx_cron_runs_one_active_per_job ON cron_runs(cron_job_id) WHERE status IN ('pending', 'running');
+
 CREATE TABLE project_github_triage_configs (
     project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     enabled BOOLEAN NOT NULL DEFAULT FALSE CHECK (enabled IN (FALSE, TRUE)),

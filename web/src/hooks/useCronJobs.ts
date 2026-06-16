@@ -37,7 +37,16 @@ export interface CronRun {
   error: string | null
   agent_run_id: string | null
   pipeline_execution_id: string | null
+  child: CronRunChild | null
   created_at: string
+}
+
+export interface CronRunChild {
+  type: 'agent_run' | 'pipeline_execution'
+  id: string
+  status: string | null
+  terminal: boolean
+  missing: boolean
 }
 
 export interface CronJobFilters {

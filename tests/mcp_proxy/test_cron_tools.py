@@ -10,7 +10,7 @@ from gobby.mcp_proxy.tools.cron import create_cron_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.scheduler.scheduler import CronRunRejected
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronJob, CronRun
+from gobby.storage.cron_models import CronJob, CronRun, CronRunChild
 
 pytestmark = pytest.mark.unit
 
@@ -198,6 +198,7 @@ class TestListCronRuns:
         result = tool(job_id="cj-abc123")
         assert result["success"] is True
         assert result["count"] == 1
+        assert result["runs"][0]["child"] is None
 
     def test_list_runs_with_limit(self, registry, mock_storage) -> None:
         mock_storage.list_runs.return_value = []
@@ -206,6 +207,29 @@ class TestListCronRuns:
         mock_storage.list_runs.assert_called_once_with("cj-abc123", limit=5)
         assert mock_storage.list_runs.call_count == 1
         assert mock_storage.list_runs.call_args is not None
+
+    def test_list_runs_includes_child(self, registry, mock_storage) -> None:
+        mock_storage.list_runs.return_value = [
+            _make_run(
+                status="dispatched",
+                pipeline_execution_id="pe-child",
+                child=CronRunChild(
+                    type="pipeline_execution",
+                    id="pe-child",
+                    status="waiting_approval",
+                    terminal=False,
+                ),
+            )
+        ]
+        tool = registry.get_tool("list_cron_runs")
+        result = tool(job_id="cj-abc123")
+        assert result["runs"][0]["child"] == {
+            "type": "pipeline_execution",
+            "id": "pe-child",
+            "status": "waiting_approval",
+            "terminal": False,
+            "missing": False,
+        }
 
 
 class TestRunCronJobNow:
@@ -218,12 +242,22 @@ class TestRunCronJobNow:
         assert result["run"]["id"] == "cr-run123"
 
     @pytest.mark.asyncio
-    async def test_run_now_not_found(self, registry, mock_scheduler) -> None:
+    async def test_run_now_not_found(self, registry, mock_scheduler, mock_storage) -> None:
         mock_scheduler.run_now.return_value = None
+        mock_storage.get_job.return_value = None
         tool = registry.get_tool("run_cron_job")
         result = await tool(job_id="cj-nonexistent")
         assert result["success"] is False
         assert result["error_code"] == "cron_job_not_found"
+
+    @pytest.mark.asyncio
+    async def test_run_now_active_collision(self, registry, mock_scheduler, mock_storage) -> None:
+        mock_scheduler.run_now.return_value = None
+        mock_storage.get_job.return_value = _make_job()
+        tool = registry.get_tool("run_cron_job")
+        result = await tool(job_id="cj-abc123")
+        assert result["success"] is False
+        assert result["error_code"] == "cron_job_already_running"
 
     @pytest.mark.asyncio
     @pytest.mark.parametrize(

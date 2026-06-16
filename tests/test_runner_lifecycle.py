@@ -1343,6 +1343,56 @@ class TestPipelineEventBroadcasting:
         assert kwargs == {"db": mock_pipeline_executor.db}
 
 
+class TestCronEventBroadcasting:
+    """Tests for setup_cron_event_broadcasting function."""
+
+    @pytest.mark.asyncio
+    async def test_dispatched_run_broadcasts_child_payload(self) -> None:
+        from gobby.runner_broadcasting import setup_cron_event_broadcasting
+        from gobby.storage.cron_models import CronJob, CronRun, CronRunChild
+
+        mock_ws_server = AsyncMock()
+        mock_scheduler = MagicMock()
+        setup_cron_event_broadcasting(mock_ws_server, mock_scheduler)
+        job = CronJob(
+            id="cj-1",
+            project_id="project-1",
+            name="Pipeline Cron",
+            schedule_type="cron",
+            action_type="pipeline",
+            action_config={},
+            created_at="2026-02-10T00:00:00+00:00",
+            updated_at="2026-02-10T00:00:00+00:00",
+        )
+        run = CronRun(
+            id="cr-1",
+            cron_job_id="cj-1",
+            triggered_at="2026-02-10T00:00:00+00:00",
+            created_at="2026-02-10T00:00:00+00:00",
+            status="dispatched",
+            pipeline_execution_id="pe-1",
+            child=CronRunChild(
+                type="pipeline_execution",
+                id="pe-1",
+                status="waiting_approval",
+                terminal=False,
+            ),
+        )
+
+        await mock_scheduler.on_run_complete(job, run)
+
+        mock_ws_server.broadcast_cron_event.assert_awaited_once()
+        kwargs = mock_ws_server.broadcast_cron_event.await_args.kwargs
+        assert kwargs["event"] == "run_dispatched"
+        assert kwargs["run"]["child"] == {
+            "type": "pipeline_execution",
+            "id": "pe-1",
+            "status": "waiting_approval",
+            "terminal": False,
+            "missing": False,
+        }
+
+
 class TestMetricsCleanupLoop:
     """Tests for metrics_cleanup_loop function."""
 
@@ -2048,7 +2098,7 @@ class TestAgentRestartRecoveryHelpers:
 
         assert recovered == 1
         assert runner.completion_registry.register.call_count == 1
-        runner.agent_runner.run_storage.list_active.assert_called_once_with(limit=500)
+        runner.agent_runner.run_storage.list_active.assert_called_once_with(limit=500, offset=0)
         runner.completion_registry.register.assert_called_once_with(
             "run-1",
             subscribers=["sess-1"],

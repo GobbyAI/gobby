@@ -22,13 +22,35 @@
   border-bottom: none;
 }
 
-.cron-tab-run__time {
+.cron-tab-run__body {
   flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.cron-tab-run__time {
   min-width: 0;
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.cron-tab-run__child {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  color: var(--text-muted);
+  font-size: var(--text-xs);
+  white-space: nowrap;
+}
+
+.cron-tab-run__child span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .cron-tab-run__status {

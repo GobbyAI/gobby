@@ -286,13 +286,20 @@ def setup_cron_event_broadcasting(
     async def on_run_complete(job: CronJob, run: CronRun) -> None:
         """Broadcast cron run completion via WebSocket."""
         if websocket_server:
-            event = "run_completed" if run.status == "completed" else "run_failed"
+            event_by_status = {
+                "completed": "run_completed",
+                "failed": "run_failed",
+                "skipped": "run_skipped",
+                "dispatched": "run_dispatched",
+            }
+            event = event_by_status.get(run.status, "run_failed")
             await websocket_server.broadcast_cron_event(
                 event=event,
                 job_id=job.id,
                 run_id=run.id,
                 job_name=job.name,
                 status=run.status,
+                run=run.to_dict(),
             )
 
     cron_scheduler.on_run_complete = on_run_complete

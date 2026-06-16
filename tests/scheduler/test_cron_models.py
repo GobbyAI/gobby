@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from gobby.storage.cron_models import CronJob, CronRun
+from gobby.storage.cron_models import CronJob, CronRun, CronRunChild
 
 pytestmark = pytest.mark.unit
 
@@ -197,6 +197,7 @@ def test_cron_run_creation() -> None:
     assert run.status == "pending"
     assert run.output is None
     assert run.error is None
+    assert run.child is None
 
 
 def test_cron_run_from_row() -> None:
@@ -238,3 +239,31 @@ def test_cron_run_to_dict() -> None:
     assert d["error"] == "Timeout"
     assert "cron_job_id" in d
     assert "triggered_at" in d
+    assert d["child"] is None
+
+
+def test_cron_run_to_dict_includes_child() -> None:
+    """CronRun.to_dict() serializes hydrated child data."""
+    run = CronRun(
+        id="cr-child",
+        cron_job_id="cj-child",
+        triggered_at="2026-02-10T12:00:00+00:00",
+        created_at="2026-02-10T12:00:00+00:00",
+        status="dispatched",
+        agent_run_id="ar-child",
+        child=CronRunChild(
+            type="agent_run",
+            id="ar-child",
+            status="running",
+            terminal=False,
+            missing=False,
+        ),
+    )
+
+    assert run.to_dict()["child"] == {
+        "type": "agent_run",
+        "id": "ar-child",
+        "status": "running",
+        "terminal": False,
+        "missing": False,
+    }

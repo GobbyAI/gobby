@@ -215,6 +215,15 @@ def create_cron_router(server: "HTTPServer") -> APIRouter:
                         detail={"code": exc.code, "message": str(exc)},
                     ) from exc
                 if not run:
+                    storage = _get_storage()
+                    if storage.get_job(job_id):
+                        raise HTTPException(
+                            status_code=409,
+                            detail={
+                                "code": "cron_job_already_running",
+                                "message": f"Cron job already has an active run: {job_id}",
+                            },
+                        )
                     raise HTTPException(status_code=404, detail=f"Cron job not found: {job_id}")
                 return {"status": "success", "run": run.to_dict()}
 

@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronJob, CronRun
+from gobby.storage.cron_models import CronJob, CronRun, CronRunStatus
 
 if TYPE_CHECKING:
     from gobby.workflows.pipeline_executor import PipelineExecutor
@@ -19,6 +21,19 @@ logger = logging.getLogger(__name__)
 # Type for registered cron handlers: async callables that receive a CronJob and return output.
 CronHandler = Callable[[CronJob], Awaitable[object]]
 DEFAULT_DISPATCHER_HEARTBEAT_TICKS = 3
+OVERLAP_POLICIES = frozenset({"skip_if_active", "allow"})
+FAILURE_RESULT_STATUSES = frozenset({"failed", "failure", "error", "cancelled", "canceled"})
+
+
+@dataclass(frozen=True)
+class ActionOutcome:
+    """Normalized cron action result."""
+
+    status: CronRunStatus
+    output: str | None = None
+    error: str | None = None
+    pipeline_execution_id: str | None = None
+    agent_run_id: str | None = None
 
 
 class CronExecutor:
@@ -36,6 +51,7 @@ class CronExecutor:
         self.pipeline_executor = pipeline_executor
         self.services = services
         self._handlers: dict[str, CronHandler] = {}
+        self._background_tasks: set[asyncio.Task[None]] = set()
 
     def register_handler(self, name: str, handler: CronHandler) -> None:
         """Register a named handler for the 'handler' action type.
@@ -63,45 +79,115 @@ class CronExecutor:
         now = datetime.now(UTC).isoformat()
         self.storage.update_run(run.id, status="running", started_at=now)
 
+        outcome: ActionOutcome
         try:
-            output: object
+            raw_output: object
             if job.action_type == "agent_spawn":
-                output = await self._execute_agent_spawn(job)
+                raw_output = await self._execute_agent_spawn(job)
             elif job.action_type == "pipeline":
-                output = await self._execute_pipeline(job, run)
+                raw_output = await self._execute_pipeline(job, run)
             elif job.action_type == "shell":
-                output = await self._execute_shell(job)
+                raw_output = await self._execute_shell(job)
             elif job.action_type == "handler":
-                output = await self._execute_handler(job)
+                raw_output = await self._execute_handler(job)
             elif job.action_type == "dispatcher":
-                output = await self._execute_dispatcher(job)
+                raw_output = await self._execute_dispatcher(job)
             else:
                 raise ValueError(f"Unknown action_type: {job.action_type}")
 
-            output_text = "" if output is None else str(output)
-            completed_at = datetime.now(UTC).isoformat()
-            updated = self.storage.update_run(
-                run.id,
-                status="completed",
-                completed_at=completed_at,
-                output=output_text[:10000] if len(output_text) > 10000 else output_text,
-                error=None,
-            )
-            return updated or run
-
+            outcome = self._coerce_action_result(raw_output)
         except Exception as e:
             logger.exception(f"Cron job {job.id} ({job.name}) failed")
-            completed_at = datetime.now(UTC).isoformat()
-            updated = self.storage.update_run(
-                run.id,
-                status="failed",
-                completed_at=completed_at,
-                error=str(e)[:5000],
-            )
-            return updated or run
+            outcome = ActionOutcome(status="failed", error=str(e))
 
-    async def _execute_agent_spawn(self, job: CronJob) -> str:
+        completed_at = datetime.now(UTC).isoformat()
+        updated = self.storage.update_run(
+            run.id,
+            status=outcome.status,
+            completed_at=completed_at,
+            output=self._truncate(outcome.output, 10000),
+            error=self._truncate(outcome.error, 5000),
+            agent_run_id=outcome.agent_run_id,
+            pipeline_execution_id=outcome.pipeline_execution_id,
+        )
+        return updated or run
+
+    def _coerce_action_result(self, result: object) -> ActionOutcome:
+        if isinstance(result, ActionOutcome):
+            return result
+        if isinstance(result, Mapping):
+            return self._coerce_mapping_result(result, self._serialize_mapping(result))
+        if isinstance(result, str):
+            parsed = self._parse_json_object(result)
+            if parsed is not None:
+                return self._coerce_mapping_result(parsed, result)
+            return ActionOutcome(status="completed", output=result)
+        if result is None:
+            return ActionOutcome(status="completed", output="")
+        return ActionOutcome(status="completed", output=str(result))
+
+    def _coerce_mapping_result(self, result: Mapping[str, Any], output: str) -> ActionOutcome:
+        status = str(result.get("status", "")).lower()
+        failed = (
+            result.get("success") is False
+            or result.get("ok") is False
+            or status in FAILURE_RESULT_STATUSES
+        )
+        if failed:
+            error = result.get("error") or result.get("message") or output
+            return ActionOutcome(status="failed", output=output, error=str(error))
+        return ActionOutcome(status="completed", output=output)
+
+    def _parse_json_object(self, value: str) -> dict[str, Any] | None:
+        stripped = value.strip()
+        if not stripped.startswith("{"):
+            return None
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+
+    def _serialize_mapping(self, value: Mapping[str, Any]) -> str:
+        try:
+            return json.dumps(dict(value), sort_keys=True)
+        except TypeError:
+            return str(value)
+
+    def _truncate(self, value: str | None, limit: int) -> str | None:
+        if value is None or len(value) <= limit:
+            return value
+        return value[:limit]
+
+    def _overlap_policy(self, job: CronJob) -> Literal["skip_if_active", "allow"]:
+        policy = job.action_config.get("overlap_policy", "skip_if_active")
+        if not isinstance(policy, str) or policy not in OVERLAP_POLICIES:
+            raise ValueError(
+                "Invalid overlap_policy for cron job "
+                f"{job.id}: {policy!r}; expected 'skip_if_active' or 'allow'"
+            )
+        if policy == "allow":
+            return "allow"
+        return "skip_if_active"
+
+    def _active_child_skip_outcome(self, job: CronJob) -> ActionOutcome | None:
+        if self._overlap_policy(job) == "allow":
+            return None
+        active_children = self.storage.active_children_for_job(job.id, job.action_type)
+        if not active_children:
+            return None
+        child = active_children[0]
+        return ActionOutcome(
+            status="skipped",
+            output=(f"Skipped: active child {child['type']} {child['id']} is {child['status']}"),
+        )
+
+    async def _execute_agent_spawn(self, job: CronJob) -> ActionOutcome:
         """Execute an agent_spawn action."""
+        skipped = self._active_child_skip_outcome(job)
+        if skipped is not None:
+            return skipped
+
         from gobby.agents.readiness import spawn_readiness_blocker
 
         readiness_reason = spawn_readiness_blocker(self.services)
@@ -110,7 +196,10 @@ class CronExecutor:
                 "Cron agent spawn skipped",
                 extra={"readiness_reason": readiness_reason},
             )
-            return f"Agent spawn skipped: {readiness_reason}"
+            return ActionOutcome(
+                status="skipped",
+                output=f"Agent spawn skipped: {readiness_reason}",
+            )
         if not self.agent_runner:
             raise RuntimeError("agent_runner not configured for cron executor")
 
@@ -155,12 +244,27 @@ class CronExecutor:
             db=self.storage.db,
         )
 
-        if result.get("success"):
-            return f"Agent spawned: run_id={result.get('run_id')}"
-        return f"Agent spawn failed: {result.get('error', 'unknown')}"
+        if result.get("success") is True:
+            run_id = result.get("run_id")
+            if isinstance(run_id, str) and run_id:
+                return ActionOutcome(
+                    status="dispatched",
+                    output=f"Agent dispatched: run_id={run_id}",
+                    agent_run_id=run_id,
+                )
+            return ActionOutcome(
+                status="failed",
+                error="Agent spawn succeeded without a structured run_id",
+            )
+        error = result.get("error", "unknown")
+        return ActionOutcome(status="failed", error=f"Agent spawn failed: {error}")
 
-    async def _execute_pipeline(self, job: CronJob, run: CronRun) -> str:
+    async def _execute_pipeline(self, job: CronJob, run: CronRun) -> ActionOutcome:
         """Execute a pipeline action."""
+        skipped = self._active_child_skip_outcome(job)
+        if skipped is not None:
+            return skipped
+
         if not self.pipeline_executor:
             raise RuntimeError("pipeline_executor not configured for cron executor")
 
@@ -189,7 +293,7 @@ class CronExecutor:
         if sm:
             try:
                 cron_session = sm.register(
-                    external_id=f"cron-{job.id}-{pipeline_name}",
+                    external_id=f"cron-{job.id}-{run.id}-{pipeline_name}",
                     machine_id="cron",
                     source="cron",
                     project_id=job.project_id,
@@ -203,8 +307,6 @@ class CronExecutor:
 
         # Set project context so MCP tools can resolve task refs like #9916
         # Must include project_path — spawn_agent_impl requires it.
-        from gobby.utils.project_context import reset_project_context, set_project_context
-
         project_ctx: dict[str, Any] | None = None
         if job.project_id:
             project_ctx = {"id": job.project_id}
@@ -221,27 +323,106 @@ class CronExecutor:
                     f"Failed to resolve repo_path for project {job.project_id}", exc_info=True
                 )
 
-        token = set_project_context(project_ctx)
+        execution_manager = getattr(self.pipeline_executor, "execution_manager", None)
+        if execution_manager is None:
+            raise RuntimeError("pipeline_executor has no execution_manager configured")
+
         try:
-            execution = await self.pipeline_executor.execute(
+            definition_snapshot = pipeline.model_dump_json()
+        except Exception:
+            definition_snapshot = json.dumps(
+                {"name": pipeline.name, "error": "serialization failed"}
+            )
+
+        execution = execution_manager.create_execution(
+            pipeline_name=pipeline.name,
+            inputs_json=json.dumps(inputs),
+            session_id=session_id,
+            definition_json=definition_snapshot,
+        )
+
+        task = asyncio.create_task(
+            self._run_pipeline_background(
                 pipeline=pipeline,
                 inputs=inputs,
                 project_id=job.project_id,
+                execution_id=execution.id,
+                pipeline_name=pipeline.name,
                 session_id=session_id,
-            )
+                project_ctx=project_ctx,
+            ),
+            name=f"cron-pipeline-{pipeline.name}-{execution.id[:8]}",
+        )
+        self._track_background_task(task)
+
+        return ActionOutcome(
+            status="dispatched",
+            output=f"Pipeline dispatched: execution_id={execution.id}",
+            pipeline_execution_id=execution.id,
+        )
+
+    async def _run_pipeline_background(
+        self,
+        *,
+        pipeline: Any,
+        inputs: dict[str, Any],
+        project_id: str,
+        execution_id: str,
+        pipeline_name: str,
+        session_id: str | None,
+        project_ctx: dict[str, Any] | None,
+    ) -> None:
+        """Run a pre-created pipeline execution in the background."""
+        from gobby.utils.project_context import reset_project_context, set_project_context
+        from gobby.workflows.pipeline_state import ApprovalRequired, ExecutionStatus, StepStatus
+
+        if not self.pipeline_executor:
+            return
+
+        token = set_project_context(project_ctx)
+        try:
+            try:
+                await self.pipeline_executor.execute(
+                    pipeline=pipeline,
+                    inputs=inputs,
+                    project_id=project_id,
+                    execution_id=execution_id,
+                    session_id=session_id,
+                )
+            except ApprovalRequired:
+                pass
+            except Exception as e:
+                logger.error(f"Background pipeline '{pipeline_name}' failed: {e}", exc_info=True)
+                try:
+                    steps = self.pipeline_executor.execution_manager.get_steps_for_execution(
+                        execution_id
+                    )
+                    for step in steps:
+                        if step.status == StepStatus.RUNNING:
+                            self.pipeline_executor.execution_manager.update_step_execution(
+                                step_execution_id=step.id,
+                                status=StepStatus.FAILED,
+                                error=str(e),
+                            )
+                    self.pipeline_executor.execution_manager.update_execution_status(
+                        execution_id=execution_id,
+                        status=ExecutionStatus.FAILED,
+                        outputs_json=json.dumps({"error": str(e)}),
+                    )
+                except Exception:
+                    logger.error("Failed to mark background pipeline as failed", exc_info=True)
         finally:
             reset_project_context(token)
 
-        # Link the pipeline execution back to the cron run
-        try:
-            self.storage.update_run(run.id, pipeline_execution_id=execution.id)
-        except Exception:
-            logger.warning(
-                f"Failed to link pipeline execution {execution.id} to cron run {run.id}",
-                exc_info=True,
-            )
+    def _track_background_task(self, task: asyncio.Task[None]) -> None:
+        self._background_tasks.add(task)
 
-        return f"Pipeline completed with status: {execution.status}"
+        def _on_done(done: asyncio.Task[None]) -> None:
+            self._background_tasks.discard(done)
+            if not done.cancelled() and done.exception():
+                logger.error(f"Cron background task failed: {done.exception()}")
+
+        task.add_done_callback(_on_done)
 
     async def _execute_shell(self, job: CronJob) -> str:
         """Execute a shell command action."""

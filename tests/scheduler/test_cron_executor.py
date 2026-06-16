@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -122,7 +123,8 @@ async def test_execute_agent_spawn_with_mock_runner(
     ) as mock_spawn:
         result = await executor.execute(job, run)
 
-    assert result.status == "completed"
+    assert result.status == "dispatched"
+    assert result.agent_run_id == "run-abc123"
     assert "run_id=run-abc123" in (result.output or "")
     mock_spawn.assert_called_once()
 
@@ -144,9 +146,51 @@ async def test_execute_agent_spawn_skips_when_daemon_not_ready(
     ) as mock_spawn:
         result = await executor.execute(job, run)
 
-    assert result.status == "completed"
+    assert result.status == "skipped"
     assert result.output == "Agent spawn skipped: daemon_startup_not_ready"
     mock_spawn.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_execute_agent_spawn_failure_records_failed_run(
+    cron_storage: CronJobStorage,
+) -> None:
+    """agent_spawn success=false becomes a failed cron run."""
+    mock_runner = MagicMock()
+    executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner)
+    job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
+    run = cron_storage.create_run(job.id)
+
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        new_callable=AsyncMock,
+        return_value={"success": False, "error": "tmux unavailable"},
+    ):
+        result = await executor.execute(job, run)
+
+    assert result.status == "failed"
+    assert result.error == "Agent spawn failed: tmux unavailable"
+
+
+@pytest.mark.asyncio
+async def test_execute_agent_spawn_success_without_run_id_fails(
+    cron_storage: CronJobStorage,
+) -> None:
+    """agent_spawn success requires a structured run_id."""
+    mock_runner = MagicMock()
+    executor = CronExecutor(storage=cron_storage, agent_runner=mock_runner)
+    job = _make_job(cron_storage, "agent_spawn", {"prompt": "say hello"})
+    run = cron_storage.create_run(job.id)
+
+    with patch(
+        "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
+        new_callable=AsyncMock,
+        return_value={"success": True},
+    ):
+        result = await executor.execute(job, run)
+
+    assert result.status == "failed"
+    assert "structured run_id" in (result.error or "")
 
 
 @pytest.mark.asyncio
@@ -173,6 +217,7 @@ async def test_execute_pipeline_recreates_missing_system_session(
     """Pipeline cron runs repair the root system session before creating cron sessions."""
     pipeline = MagicMock()
     pipeline.name = "cron-test-pipeline"
+    pipeline.model_dump_json.return_value = '{"name":"cron-test-pipeline"}'
 
     pipeline_executor = MagicMock()
     pipeline_executor.loader = MagicMock()
@@ -181,8 +226,9 @@ async def test_execute_pipeline_recreates_missing_system_session(
 
     execution = MagicMock()
     execution.id = "pe-cron-123"
-    execution.status = "completed"
-    pipeline_executor.execute = AsyncMock(return_value=execution)
+    pipeline_executor.execution_manager = MagicMock()
+    pipeline_executor.execution_manager.create_execution.return_value = execution
+    pipeline_executor.execute = AsyncMock(return_value=None)
 
     executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
 
@@ -197,8 +243,11 @@ async def test_execute_pipeline_recreates_missing_system_session(
     run = cron_storage.create_run(job.id)
 
     result = await executor.execute(job, run)
+    if executor._background_tasks:
+        await asyncio.gather(*list(executor._background_tasks), return_exceptions=True)
 
-    assert result.status == "completed"
+    assert result.status == "dispatched"
+    assert result.pipeline_execution_id == "pe-cron-123"
     repaired = temp_db.fetchone("SELECT id FROM sessions WHERE id = %s", (SYSTEM_SESSION_ID,))
     assert repaired is not None
 
@@ -210,6 +259,105 @@ async def test_execute_pipeline_recreates_missing_system_session(
     assert cron_session is not None
     assert cron_session["source"] == "cron"
     assert cron_session["parent_session_id"] == SYSTEM_SESSION_ID
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_default_overlap_skips_active_child(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Pipeline cron skips when a previous dispatched child is still active."""
+    job = _make_job(cron_storage, "pipeline", {"pipeline_name": "approval"})
+    previous = cron_storage.create_run(job.id)
+    assert previous is not None
+    cron_storage.db.execute(
+        """
+        INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
+        VALUES (%s, %s, %s, %s)
+        """,
+        ("pe-active-overlap", "approval", PROJECT_ID, "waiting_approval"),
+    )
+    cron_storage.update_run(
+        previous.id,
+        status="dispatched",
+        pipeline_execution_id="pe-active-overlap",
+        completed_at="2026-02-10T00:00:00+00:00",
+    )
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+    executor = CronExecutor(storage=cron_storage)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "skipped"
+    assert "active child pipeline_execution pe-active-overlap" in (result.output or "")
+
+
+@pytest.mark.asyncio
+async def test_execute_pipeline_overlap_allow_launches_another_child(
+    cron_storage: CronJobStorage,
+) -> None:
+    """overlap_policy=allow bypasses active child overlap checks."""
+    pipeline = MagicMock()
+    pipeline.name = "approval"
+    pipeline.model_dump_json.return_value = '{"name":"approval"}'
+    pipeline_executor = MagicMock()
+    pipeline_executor.loader = MagicMock()
+    pipeline_executor.loader.load_pipeline = AsyncMock(return_value=pipeline)
+    pipeline_executor.session_manager = None
+    execution = MagicMock()
+    execution.id = "pe-new-overlap"
+    pipeline_executor.execution_manager = MagicMock()
+    pipeline_executor.execution_manager.create_execution.return_value = execution
+    pipeline_executor.execute = AsyncMock(return_value=None)
+    executor = CronExecutor(storage=cron_storage, pipeline_executor=pipeline_executor)
+    job = _make_job(
+        cron_storage,
+        "pipeline",
+        {"pipeline_name": "approval", "overlap_policy": "allow"},
+    )
+    previous = cron_storage.create_run(job.id)
+    assert previous is not None
+    cron_storage.db.execute(
+        """
+        INSERT INTO pipeline_executions (id, pipeline_name, project_id, status)
+        VALUES (%s, %s, %s, %s)
+        """,
+        ("pe-existing-overlap", "approval", PROJECT_ID, "running"),
+    )
+    cron_storage.update_run(
+        previous.id,
+        status="dispatched",
+        pipeline_execution_id="pe-existing-overlap",
+        completed_at="2026-02-10T00:00:00+00:00",
+    )
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+
+    result = await executor.execute(job, run)
+    if executor._background_tasks:
+        await asyncio.gather(*list(executor._background_tasks), return_exceptions=True)
+
+    assert result.status == "dispatched"
+    assert result.pipeline_execution_id == "pe-new-overlap"
+
+
+@pytest.mark.asyncio
+async def test_execute_agent_spawn_invalid_overlap_policy_fails(
+    cron_storage: CronJobStorage,
+) -> None:
+    """Invalid overlap policy is recorded as a failed cron run."""
+    executor = CronExecutor(storage=cron_storage, agent_runner=MagicMock())
+    job = _make_job(
+        cron_storage,
+        "agent_spawn",
+        {"prompt": "hello", "overlap_policy": "sometimes"},
+    )
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "failed"
+    assert "Invalid overlap_policy" in (result.error or "")
 
 
 @pytest.mark.asyncio
@@ -326,6 +474,44 @@ async def test_execute_handler_error_propagates(
     assert "handler exploded" in (result.error or "")
 
 
+@pytest.mark.asyncio
+async def test_execute_handler_mapping_failure_result_records_failed_run(
+    cron_storage: CronJobStorage, executor: CronExecutor
+) -> None:
+    """Handler success=false mapping results fail the cron run."""
+
+    async def failing_handler(job: CronJob) -> dict[str, object]:
+        return {"success": False, "error": "handler reported failure"}
+
+    executor.register_handler("mapping_failure", failing_handler)
+    job = _make_job(cron_storage, "handler", {"handler": "mapping_failure"})
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "failed"
+    assert result.error == "handler reported failure"
+
+
+@pytest.mark.asyncio
+async def test_execute_handler_json_failure_result_records_failed_run(
+    cron_storage: CronJobStorage, executor: CronExecutor
+) -> None:
+    """Handler JSON object strings with ok=false fail the cron run."""
+
+    async def failing_handler(job: CronJob) -> str:
+        return '{"ok": false, "error": "json failure"}'
+
+    executor.register_handler("json_failure", failing_handler)
+    job = _make_job(cron_storage, "handler", {"handler": "json_failure"})
+    run = cron_storage.create_run(job.id)
+
+    result = await executor.execute(job, run)
+
+    assert result.status == "failed"
+    assert result.error == "json failure"
+
+
 # --- agent_definition resolution tests ---
 
 
@@ -363,7 +549,7 @@ async def test_execute_agent_spawn_with_agent_definition(
     ):
         result = await executor.execute(job, run)
 
-    assert result.status == "completed"
+    assert result.status == "dispatched"
     call_kwargs = mock_spawn.call_args
     # Check preamble was prepended to prompt
     prompt = call_kwargs.kwargs.get("prompt", "")
@@ -402,7 +588,7 @@ async def test_execute_agent_spawn_agent_definition_not_found(
     ):
         result = await executor.execute(job, run)
 
-    assert result.status == "completed"
+    assert result.status == "dispatched"
     # Prompt should be unchanged (no preamble)
     call_kwargs = mock_spawn.call_args
     assert call_kwargs.kwargs.get("prompt") == "Do stuff"

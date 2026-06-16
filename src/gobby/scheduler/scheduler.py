@@ -12,7 +12,7 @@ from typing import Literal
 from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
 from gobby.shutdown_intent import ShutdownIntent, read_active_shutdown_intent
-from gobby.storage.cron import CronJobStorage, compute_next_run
+from gobby.storage.cron import CronJobStorage, compute_next_run, is_removed_automation_job
 from gobby.storage.cron_models import CronJob, CronRun
 from gobby.utils.project_context import (
     reset_project_context,
@@ -24,9 +24,6 @@ from gobby.utils.session_context import reset_session_context, set_session_conte
 logger = logging.getLogger(__name__)
 PLANNED_RESTART_MARKER_MIN_AGE_SECONDS = 120.0
 PLANNED_RESTART_MARKER_BUFFER_SECONDS = 120.0
-CRON_PENDING_STARTUP_ERROR = "Cron run was still marked pending when the scheduler started"
-CRON_RUNNING_STARTUP_ERROR = "Cron run was still marked running when the scheduler started"
-
 CronRunRejectionCode = Literal["cron_job_already_running", "cron_max_concurrent_jobs"]
 
 
@@ -69,8 +66,7 @@ class CronScheduler:
             logger.info("Cron scheduler disabled by config")
             return
 
-        self._fail_orphaned_pending_runs_on_startup()
-        self._fail_orphaned_running_runs_on_startup()
+        self._reconcile_interrupted_runs_on_startup()
         self._running = True
         self._check_task = asyncio.create_task(
             self._check_loop(),
@@ -85,15 +81,14 @@ class CronScheduler:
             f"max_concurrent={self.config.max_concurrent_jobs})"
         )
 
-    def _fail_orphaned_running_runs_on_startup(self) -> None:
-        failed = self.storage.fail_running_runs(CRON_RUNNING_STARTUP_ERROR)
-        if failed:
-            logger.info("Marked %s orphaned cron run(s) failed at scheduler startup", failed)
-
-    def _fail_orphaned_pending_runs_on_startup(self) -> None:
-        failed = self.storage.fail_pending_runs(CRON_PENDING_STARTUP_ERROR)
-        if failed:
-            logger.info("Marked %s pending cron run(s) failed at scheduler startup", failed)
+    def _reconcile_interrupted_runs_on_startup(self) -> None:
+        result = self.storage.reconcile_interrupted_runs()
+        if result["dispatched"] or result["failed"]:
+            logger.info(
+                "Reconciled cron runs at scheduler startup: dispatched=%s failed=%s",
+                result["dispatched"],
+                result["failed"],
+            )
 
     async def stop(self) -> None:
         """Stop the scheduler loops gracefully."""
@@ -161,12 +156,9 @@ class CronScheduler:
             if dispatched >= available_slots:
                 break
             try:
-                if self.storage.has_running_run(job.id):
-                    logger.debug(
-                        "Skipping cron job %s (%s): previous run still active",
-                        job.id,
-                        job.name,
-                    )
+                if is_removed_automation_job(job):
+                    if self.storage.delete_job(job.id):
+                        logger.info("Deleted removed automation cron job %s (%s)", job.id, job.name)
                     continue
 
                 # Check backoff for consecutive failures
@@ -186,6 +178,13 @@ class CronScheduler:
 
                 # Create run and advance next_run_at immediately to prevent re-dispatch
                 run = self.storage.create_run(job.id)
+                if run is None:
+                    logger.debug(
+                        "Skipping cron job %s (%s): previous run still active",
+                        job.id,
+                        job.name,
+                    )
+                    continue
                 next_run = compute_next_run(job)
                 self._update_job_bookkeeping(
                     job,
@@ -223,25 +222,25 @@ class CronScheduler:
 
                 # Update job status
                 now = datetime.now(UTC).isoformat()
-                if result.status == "completed":
-                    # Reset failure counter (next_run_at already set before dispatch)
-                    self._update_job_bookkeeping(
-                        job,
-                        last_run_at=now,
-                        last_status="completed",
-                        consecutive_failures=0,
-                    )
-                else:
+                if result.status == "failed":
                     # Increment failure counter (next_run_at already set before dispatch)
                     failures = job.consecutive_failures + 1
                     self._update_job_bookkeeping(
                         job,
                         last_run_at=now,
-                        last_status="failed",
+                        last_status=result.status,
                         consecutive_failures=failures,
                     )
                     logger.warning(
                         f"Cron job {job.id} ({job.name}) failed ({failures} consecutive failures)"
+                    )
+                else:
+                    # Reset failure counter (next_run_at already set before dispatch)
+                    self._update_job_bookkeeping(
+                        job,
+                        last_run_at=now,
+                        last_status=result.status,
+                        consecutive_failures=0,
                     )
 
             except Exception as e:
@@ -302,12 +301,6 @@ class CronScheduler:
         if not job:
             return None
 
-        if self.storage.has_running_run(job.id):
-            raise CronRunRejected(
-                "cron_job_already_running",
-                f"Cron job already has a running run: {job.id}",
-            )
-
         running_count = self.storage.count_running()
         if running_count >= self.config.max_concurrent_jobs:
             raise CronRunRejected(
@@ -317,6 +310,8 @@ class CronScheduler:
             )
 
         run = self.storage.create_run(job.id)
+        if run is None:
+            return None
         logger.info(f"Manual trigger: cron job {job.id} ({job.name}), run {run.id}")
 
         # Execute in background

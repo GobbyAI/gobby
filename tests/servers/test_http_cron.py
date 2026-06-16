@@ -10,7 +10,7 @@ from gobby.app_context import ServiceContainer
 from gobby.scheduler.scheduler import CronRunRejected
 from gobby.servers.http import HTTPServer
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronJob, CronRun
+from gobby.storage.cron_models import CronJob, CronRun, CronRunChild
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
@@ -215,10 +215,18 @@ class TestCronRunNow:
         assert resp.status_code == 200
         assert resp.json()["run"]["id"] == "cr-run123"
 
-    def test_run_now_not_found(self, client, cron_scheduler) -> None:
+    def test_run_now_not_found(self, client, cron_scheduler, cron_storage) -> None:
         cron_scheduler.run_now.return_value = None
+        cron_storage.get_job.return_value = None
         resp = client.post("/api/cron/jobs/cj-nonexistent/run")
         assert resp.status_code == 404
+
+    def test_run_now_active_collision(self, client, cron_scheduler, cron_storage) -> None:
+        cron_scheduler.run_now.return_value = None
+        cron_storage.get_job.return_value = _make_job()
+        resp = client.post("/api/cron/jobs/cj-abc123/run")
+        assert resp.status_code == 409
+        assert resp.json()["detail"]["code"] == "cron_job_already_running"
 
     @pytest.mark.parametrize(
         ("error", "status_code"),
@@ -273,6 +281,31 @@ class TestCronListRuns:
         resp = client.get("/api/cron/jobs/cj-abc123/runs")
         assert resp.status_code == 200
         assert resp.json()["count"] == 1
+        assert resp.json()["runs"][0]["child"] is None
+
+    def test_list_runs_includes_child(self, client, cron_storage) -> None:
+        cron_storage.get_job.return_value = _make_job()
+        cron_storage.list_runs.return_value = [
+            _make_run(
+                status="dispatched",
+                pipeline_execution_id="pe-child",
+                child=CronRunChild(
+                    type="pipeline_execution",
+                    id="pe-child",
+                    status="waiting_approval",
+                    terminal=False,
+                ),
+            )
+        ]
+        resp = client.get("/api/cron/jobs/cj-abc123/runs")
+        assert resp.status_code == 200
+        assert resp.json()["runs"][0]["child"] == {
+            "type": "pipeline_execution",
+            "id": "pe-child",
+            "status": "waiting_approval",
+            "terminal": False,
+            "missing": False,
+        }
 
     def test_list_runs_empty(self, client, cron_storage) -> None:
         cron_storage.list_runs.return_value = []
@@ -287,6 +320,7 @@ class TestCronGetRun:
         resp = client.get("/api/cron/runs/cr-run123")
         assert resp.status_code == 200
         assert resp.json()["run"]["status"] == "completed"
+        assert resp.json()["run"]["child"] is None
 
     def test_get_run_not_found(self, client, cron_storage) -> None:
         cron_storage.get_run.return_value = None

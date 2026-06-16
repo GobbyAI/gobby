@@ -212,6 +212,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "290_memory_dream_promote_action.sql",
         "291_memory_dream_interrupted.sql",
         "292_python_hygiene_constraints.sql",
+        "293_cron_durable_dispatch.sql",
     ]
 
 

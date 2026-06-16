@@ -145,7 +145,7 @@ async def test_start_fails_orphan_running_runs_before_first_tick(
     refreshed_run = cron_storage.get_run(stale_run.id)
     assert refreshed_run is not None
     assert refreshed_run.status == "failed"
-    assert refreshed_run.error == "Cron run was still marked running when the scheduler started"
+    assert refreshed_run.error == "Cron run was still active when the scheduler started"
     mock_executor.execute.assert_called_once()
     assert mock_executor.execute.await_args.args[0].id == job.id
 
@@ -179,7 +179,7 @@ async def test_start_fails_orphan_pending_runs(
     refreshed_run = cron_storage.get_run(stale_run.id)
     assert refreshed_run is not None
     assert refreshed_run.status == "failed"
-    assert refreshed_run.error == "Cron run was still marked pending when the scheduler started"
+    assert refreshed_run.error == "Cron run was still active when the scheduler started"
     mock_executor.execute.assert_not_called()
 
 
@@ -516,7 +516,7 @@ async def test_run_now_reaches_terminal_state(
 
 
 @pytest.mark.asyncio
-async def test_run_now_rejects_when_job_already_running(
+async def test_run_now_returns_none_when_job_already_running(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
     config: CronConfig,
@@ -532,12 +532,12 @@ async def test_run_now_rejects_when_job_already_running(
         cron_expr="0 * * * *",
     )
     active_run = cron_storage.create_run(job.id)
+    assert active_run is not None
     cron_storage.update_run(active_run.id, status="running")
 
-    with pytest.raises(CronRunRejected) as exc_info:
-        await scheduler.run_now(job.id)
+    result = await scheduler.run_now(job.id)
 
-    assert exc_info.value.code == "cron_job_already_running"
+    assert result is None
     assert len(cron_storage.list_runs(job.id, limit=10)) == 1
     mock_executor.execute.assert_not_called()
 
@@ -674,6 +674,66 @@ async def test_execute_and_update_success(
     assert updated_job is not None
     assert updated_job.consecutive_failures == 0
     assert updated_job.last_status == "completed"
+
+
+@pytest.mark.asyncio
+async def test_execute_and_update_dispatched_resets_failure_counter(
+    cron_storage: CronJobStorage,
+    config: CronConfig,
+) -> None:
+    """Dispatched cron runs are terminal non-failures for job bookkeeping."""
+    executor = CronExecutor(storage=cron_storage)
+    scheduler = CronScheduler(storage=cron_storage, executor=executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Dispatched",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    cron_storage.update_job(job.id, consecutive_failures=2)
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+    cron_storage.update_run(run.id, status="dispatched")
+    executor.execute = AsyncMock(return_value=cron_storage.get_run(run.id))
+
+    await scheduler._execute_and_update(job, run)
+
+    updated_job = cron_storage.get_job(job.id)
+    assert updated_job is not None
+    assert updated_job.consecutive_failures == 0
+    assert updated_job.last_status == "dispatched"
+
+
+@pytest.mark.asyncio
+async def test_execute_and_update_skipped_resets_failure_counter(
+    cron_storage: CronJobStorage,
+    config: CronConfig,
+) -> None:
+    """Skipped cron runs do not increment backoff."""
+    executor = CronExecutor(storage=cron_storage)
+    scheduler = CronScheduler(storage=cron_storage, executor=executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Skipped",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    cron_storage.update_job(job.id, consecutive_failures=2)
+    run = cron_storage.create_run(job.id)
+    assert run is not None
+    cron_storage.update_run(run.id, status="skipped")
+    executor.execute = AsyncMock(return_value=cron_storage.get_run(run.id))
+
+    await scheduler._execute_and_update(job, run)
+
+    updated_job = cron_storage.get_job(job.id)
+    assert updated_job is not None
+    assert updated_job.consecutive_failures == 0
+    assert updated_job.last_status == "skipped"
 
 
 @pytest.mark.asyncio

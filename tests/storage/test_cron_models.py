@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from gobby.storage.cron_models import CronRun
+from gobby.storage.cron_models import CronRun, CronRunChild
 
 pytestmark = pytest.mark.unit
 
@@ -56,6 +56,7 @@ class TestCronRunToBrief:
         assert brief["error"] == "Connection timeout"
         assert brief["agent_run_id"] == "ar-abc"
         assert brief["pipeline_execution_id"] == "pe-xyz"
+        assert brief["child"] is None
 
     def test_to_brief_excludes_output_and_timestamps(self) -> None:
         """to_brief omits output (can be large), triggered_at, and created_at."""
@@ -71,3 +72,32 @@ class TestCronRunToBrief:
         assert "output" not in brief
         assert "triggered_at" not in brief
         assert "created_at" not in brief
+
+    def test_to_brief_includes_child_projection(self) -> None:
+        """to_brief includes hydrated child state when present."""
+        run = CronRun(
+            id="run-child",
+            cron_job_id="job-child",
+            triggered_at="2026-01-22T00:00:00+00:00",
+            created_at="2026-01-22T00:00:00+00:00",
+            status="dispatched",
+            pipeline_execution_id="pe-child",
+            child=CronRunChild(
+                type="pipeline_execution",
+                id="pe-child",
+                status="waiting_approval",
+                terminal=False,
+                missing=False,
+            ),
+        )
+
+        brief = run.to_brief()
+
+        assert brief["status"] == "dispatched"
+        assert brief["child"] == {
+            "type": "pipeline_execution",
+            "id": "pe-child",
+            "status": "waiting_approval",
+            "terminal": False,
+            "missing": False,
+        }

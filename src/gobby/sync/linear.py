@@ -958,13 +958,20 @@ def create_linear_sync_handler(
             result = await service.sync_all(team_id=team_id)
             pull = result["pull"]
             push = result["push"]
+            pull_errors = int(pull.get("errors", 0))
+            push_errors = int(push.get("errors", 0))
+            if pull_errors or push_errors:
+                raise RuntimeError(
+                    "Linear sync completed with errors: "
+                    f"pull_errors={pull_errors}, push_errors={push_errors}"
+                )
             return (
                 f"Linear sync complete: "
-                f"pulled {pull['updated']} (skipped {pull['skipped']}, errors {pull['errors']}), "
-                f"pushed {push['pushed']} (errors {push['errors']})"
+                f"pulled {pull['updated']} (skipped {pull['skipped']}, errors {pull_errors}), "
+                f"pushed {push['pushed']} (errors {push_errors})"
             )
         except Exception as e:
             logger.error(f"Linear sync cron failed: {e}", exc_info=True)
-            return f"Linear sync failed: {e}"
+            raise
 
     return linear_sync_handler

@@ -3,7 +3,7 @@ import { ResizeHandle } from '../chat/artifacts/ResizeHandle'
 import { SegmentedControl } from '../ui/SegmentedControl'
 import { formatDateTime } from '../shared/executions/executionFormatters'
 import { useCronJobs } from '../../hooks/useCronJobs'
-import type { CronJob, CronRun } from '../../hooks/useCronJobs'
+import type { CronJob, CronRun, CronRunChild } from '../../hooks/useCronJobs'
 import { cronRunStatusKind } from './cronRunStatus'
 import { ActivityPanelEmpty, CronEmptyIcon } from './ActivityPanelEmpty'
 import { ActivityRowStatusDot } from './ActivityRowStatusDot'
@@ -192,10 +192,13 @@ export const CronTab = memo(function CronTab({ projectId }: CronTabProps) {
                 {runs.map((run) => (
                   <li key={run.id} className="cron-tab-run">
                     <RunStatusGlyph status={run.status} />
-                    <span className="cron-tab-run__time">
-                      {formatDateTime(run.triggered_at)}
+                    <span className="cron-tab-run__body">
+                      <span className="cron-tab-run__time">
+                        {formatDateTime(run.triggered_at)}
+                      </span>
+                      {run.child && <RunChildStatus child={run.child} />}
                     </span>
-                    <span className="cron-tab-run__status">{run.status}</span>
+                    <span className="cron-tab-run__status">{formatRunStatus(run.status)}</span>
                   </li>
                 ))}
               </ul>
@@ -225,7 +228,52 @@ function RunStatusGlyph({ status }: { status: string }) {
   if (kind === 'running') {
     return <ActivityRowStatusDot kind="info" pulse label="Running" />
   }
+  if (kind === 'dispatched') {
+    return <ActivityRowStatusDot kind="info" label="Dispatched" />
+  }
+  if (kind === 'skipped') {
+    return <ActivityRowStatusDot kind="warning" label="Skipped" />
+  }
   return <ActivityRowStatusDot kind="disabled" label={status} />
+}
+
+function RunChildStatus({ child }: { child: CronRunChild }) {
+  const status = child.missing ? 'missing' : (child.status ?? 'unknown')
+  return (
+    <span className="cron-tab-run__child">
+      <ActivityRowStatusDot
+        kind={childStatusKind(child)}
+        pulse={!child.terminal && !child.missing}
+        label={formatChildLabel(child)}
+      />
+      <span>{formatChildType(child.type)} {formatRunStatus(status)}</span>
+    </span>
+  )
+}
+
+function childStatusKind(child: CronRunChild) {
+  if (child.missing) return 'warning'
+  if (child.terminal) {
+    const statusKind = cronRunStatusKind(child.status ?? '')
+    if (statusKind === 'success') return 'success'
+    if (statusKind === 'failure') return 'error'
+    if (statusKind === 'skipped') return 'warning'
+    return 'disabled'
+  }
+  return 'info'
+}
+
+function formatChildLabel(child: CronRunChild): string {
+  const status = child.missing ? 'missing' : (child.status ?? 'unknown')
+  return `${formatChildType(child.type)} ${formatRunStatus(status)}`
+}
+
+function formatChildType(type: CronRunChild['type']): string {
+  return type === 'pipeline_execution' ? 'pipeline' : 'agent'
+}
+
+function formatRunStatus(status: string): string {
+  return status.replace(/_/g, ' ')
 }
 
 function formatNextFiring(job: CronJob, now: number): string {
