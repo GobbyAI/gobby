@@ -257,6 +257,7 @@ const GO_LOCAL_PROJECT_ID: &str = "graph-standalone-go-local";
 const JAVA_LOCAL_PROJECT_ID: &str = "graph-standalone-java-local";
 const CSHARP_LOCAL_PROJECT_ID: &str = "graph-standalone-csharp-local";
 const KOTLIN_LOCAL_PROJECT_ID: &str = "graph-standalone-kotlin-local";
+const RUBY_LOCAL_PROJECT_ID: &str = "graph-standalone-ruby-local";
 
 /// End-to-end check for the post-write local-import resolution (#790): indexing
 /// a two-file Python project must resolve the cross-file calls in `b.py` to the
@@ -831,6 +832,119 @@ fn index_resolves_cross_file_local_kotlin_calls() {
     assert_caller_present(&env, project.path(), "render", "run", "after sync-file");
     assert_eq!(
         phantom_call_target_count(&mut graph, KOTLIN_LOCAL_PROJECT_ID),
+        0,
+        "sync-file must not introduce a phantom CALLS target"
+    );
+}
+
+/// #795: a Ruby cross-file call onto a constant declared in another local file
+/// must resolve to the canonical symbol so `callers`/`blast-radius` include the
+/// caller. Ruby `require` loads files without importing names, so resolution is
+/// constant-driven: a member call `Widget.build` resolves against the files that
+/// declare `class Widget`, and the constructor `Widget.new` resolves to the
+/// class itself. Both targets must become real `code_symbols` ids (no phantom),
+/// across every projection path.
+#[test]
+fn index_resolves_cross_file_local_ruby_calls() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-file Ruby local-call resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("lib")).expect("create lib");
+    fs::write(
+        project.path().join("lib/widget.rb"),
+        "class Widget\n  def self.build(kind)\n  end\nend\n",
+    )
+    .expect("write widget.rb");
+    fs::write(
+        project.path().join("lib/runner.rb"),
+        "require_relative \"widget\"\n\ndef run\n  Widget.build(\"box\")\n  Widget.new\nend\n",
+    )
+    .expect("write runner.rb");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": RUBY_LOCAL_PROJECT_ID,
+            "name": "graph-standalone-ruby-local",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, RUBY_LOCAL_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    let widget_file = "lib/widget.rb";
+    let runner_file = "lib/runner.rb";
+    let build_id = required_symbol_id(&mut conn, RUBY_LOCAL_PROJECT_ID, widget_file, "build");
+    let widget_id = required_symbol_id(&mut conn, RUBY_LOCAL_PROJECT_ID, widget_file, "Widget");
+
+    // The class-method call resolves to the method symbol; the `.new`
+    // constructor resolves to the class symbol (carried under the constant name).
+    assert_eq!(
+        resolved_call_target(&mut conn, RUBY_LOCAL_PROJECT_ID, runner_file, "build"),
+        Some(build_id.clone()),
+        "Ruby constant member call did not resolve to the canonical method"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, RUBY_LOCAL_PROJECT_ID, runner_file, "Widget"),
+        Some(widget_id.clone()),
+        "Ruby `.new` constructor call did not resolve to the canonical class"
+    );
+    assert_eq!(
+        pending_local_import_count(&mut conn, RUBY_LOCAL_PROJECT_ID),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Projection path 1+2: rebuild from resolved PostgreSQL facts, then both
+    // cross-file callers must be reachable and each target must be a real
+    // DEFINES-linked node (no phantom CALLS target).
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_caller_present(&env, project.path(), "build", "run", "after rebuild");
+    assert_caller_present(&env, project.path(), "Widget", "run", "after rebuild");
+
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, RUBY_LOCAL_PROJECT_ID),
+        0,
+        "no CALLS target may lack a DEFINES edge after rebuild"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, RUBY_LOCAL_PROJECT_ID, &build_id),
+        "the resolved Ruby member-call method target must be a defined, called CodeSymbol"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, RUBY_LOCAL_PROJECT_ID, &widget_id),
+        "the resolved Ruby constructor class target must be a defined, called CodeSymbol"
+    );
+
+    let blast = json_command(&env, project.path(), &["blast-radius", "build"]);
+    assert!(
+        blast.get("center").is_some(),
+        "blast-radius should report a center: {blast}"
+    );
+
+    // Projection path 3: sync-file must recreate the same canonical edges.
+    let sync = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", runner_file],
+    );
+    assert_success(sync, "graph sync-file runner.rb");
+    assert_caller_present(&env, project.path(), "build", "run", "after sync-file");
+    assert_eq!(
+        phantom_call_target_count(&mut graph, RUBY_LOCAL_PROJECT_ID),
         0,
         "sync-file must not introduce a phantom CALLS target"
     );

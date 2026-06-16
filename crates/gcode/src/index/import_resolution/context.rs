@@ -52,6 +52,13 @@ pub struct ImportResolutionContext {
     pub(super) kotlin_package_files: HashMap<String, Vec<String>>,
     pub(super) php_local_symbols: HashSet<String>,
     pub(super) ruby_local_constant_roots: HashSet<String>,
+    /// Maps a locally-declared Ruby constant root (`Widget`, the first `::`
+    /// segment of a `class`/`module` name) to the project-relative files that
+    /// declare it. A member call `Widget.build`/`Widget.new` resolves against
+    /// these files; the post-write DB pass narrows to the real symbol. Ruby
+    /// `require` does not import names, so resolution is constant-driven rather
+    /// than import-driven.
+    pub(super) ruby_constant_files: HashMap<String, Vec<String>>,
     pub(super) ruby_require_root_overrides: HashMap<String, String>,
     pub(super) swift_local_modules: HashSet<String>,
     pub(super) dart_external_packages: HashSet<String>,
@@ -158,6 +165,13 @@ impl ImportResolutionContext {
             .get(required)
             .map(String::as_str)
             .or_else(|| ruby_require_root(required))
+    }
+
+    pub(super) fn ruby_constant_files(&self, root: &str) -> Vec<String> {
+        self.ruby_constant_files
+            .get(root)
+            .cloned()
+            .unwrap_or_default()
     }
 
     pub(super) fn elixir_external_root_module(&self, root: &str) -> Option<&str> {
@@ -306,6 +320,7 @@ pub fn build_import_resolution_context_with_overrides(
 ) -> ImportResolutionContext {
     let java_index = build_java_class_index(root_path, candidate_files);
     let csharp_index = build_csharp_index(root_path, candidate_files);
+    let ruby_constant_files = build_ruby_constant_files(root_path, candidate_files);
     ImportResolutionContext {
         python_modules: build_python_module_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
@@ -320,7 +335,8 @@ pub fn build_import_resolution_context_with_overrides(
         csharp_type_files: csharp_index.type_files,
         kotlin_package_files: build_kotlin_package_files(root_path, candidate_files),
         php_local_symbols: build_php_local_symbol_index(candidate_files),
-        ruby_local_constant_roots: build_ruby_local_constant_roots(candidate_files),
+        ruby_local_constant_roots: ruby_constant_files.keys().cloned().collect(),
+        ruby_constant_files,
         ruby_require_root_overrides,
         swift_local_modules: build_swift_local_modules(root_path, candidate_files),
         dart_external_packages: load_dart_external_packages(root_path),
@@ -837,21 +853,27 @@ pub(super) fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashS
         })
 }
 
-pub(super) fn build_ruby_local_constant_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
-    candidate_files
+pub(super) fn build_ruby_constant_files(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> HashMap<String, Vec<String>> {
+    let mut constant_files = candidate_files
         .par_iter()
-        .map(|path| {
-            let mut roots = HashSet::new();
+        .filter_map(|path| {
             let ext = path
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .unwrap_or_default();
             if !matches!(ext, "rb" | "rake" | "gemspec") {
-                return roots;
+                return None;
             }
-            let Ok(file) = File::open(path) else {
-                return roots;
-            };
+            let file = File::open(path).ok()?;
+            let rel = path.strip_prefix(root_path).unwrap_or(path);
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            // A Ruby file can declare several top-level constants, and a
+            // `class`/`module` line can appear anywhere, so scan every line
+            // rather than stopping at the first declaration.
+            let mut roots = HashSet::new();
             for line in BufReader::new(file).lines().map_while(Result::ok) {
                 let line = line.trim_start();
                 let Some(rest) = line
@@ -871,12 +893,32 @@ pub(super) fn build_ruby_local_constant_roots(candidate_files: &[PathBuf]) -> Ha
                     roots.insert(root.to_string());
                 }
             }
-            roots
+            if roots.is_empty() {
+                None
+            } else {
+                Some((rel_str, roots))
+            }
         })
-        .reduce(HashSet::new, |mut all, roots| {
-            all.extend(roots);
+        .fold(
+            HashMap::<String, Vec<String>>::new,
+            |mut acc, (rel, roots)| {
+                for root in roots {
+                    acc.entry(root).or_default().push(rel.clone());
+                }
+                acc
+            },
+        )
+        .reduce(HashMap::<String, Vec<String>>::new, |mut all, map| {
+            for (root, files) in map {
+                all.entry(root).or_default().extend(files);
+            }
             all
-        })
+        });
+    for files in constant_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    constant_files
 }
 
 pub(super) fn build_swift_local_modules(

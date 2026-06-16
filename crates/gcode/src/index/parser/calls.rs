@@ -141,11 +141,30 @@ fn materialize_call(
     } else {
         None
     };
+    let ruby_member_target = if ctx.language == "ruby"
+        && local_target.is_none()
+        && external_target.is_none()
+        && local_qualified_target.is_none()
+        && local_member_target.is_none()
+        && csharp_member_target.is_none()
+        && !external_shadowed
+    {
+        import_resolution::resolve_ruby_local_member_callee(
+            ctx.import_context,
+            ctx.symbols,
+            &site.callee_name,
+            root_alias.as_deref(),
+            site.syntax == CallSyntaxKind::Member,
+        )
+    } else {
+        None
+    };
     let local_import_target = if local_target.is_none()
         && external_target.is_none()
         && local_qualified_target.is_none()
         && local_member_target.is_none()
         && csharp_member_target.is_none()
+        && ruby_member_target.is_none()
         && !external_shadowed
     {
         import_resolution::resolve_local_callee(
@@ -162,6 +181,7 @@ fn materialize_call(
         && local_qualified_target.is_none()
         && local_member_target.is_none()
         && csharp_member_target.is_none()
+        && ruby_member_target.is_none()
         && local_import_target.is_none()
         && !external_shadowed
     {
@@ -193,6 +213,7 @@ fn materialize_call(
     } else if let Some(local_binding) = local_qualified_target
         .or(local_member_target)
         .or(csharp_member_target)
+        .or(ruby_member_target)
         .or(local_import_target)
     {
         // Cross-file local import: record the original name plus the candidate

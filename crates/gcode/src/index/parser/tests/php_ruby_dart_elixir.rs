@@ -1,5 +1,28 @@
 use super::common::{parse_dart, parse_elixir, parse_php, parse_ruby};
 
+/// Asserts a `local_import` call exists for `$callee_name` whose carried
+/// candidate files include `$expected_file`. The post-write DB pass narrows
+/// these candidates to the real `code_symbols` id.
+macro_rules! assert_ruby_local_import {
+    ($parsed:expr, $callee_name:expr, $expected_file:expr) => {{
+        let callee_name: &str = $callee_name;
+        let call = $parsed
+            .calls
+            .iter()
+            .find(|call| {
+                call.callee_target_kind.as_str() == "local_import"
+                    && call.callee_name == callee_name
+            })
+            .unwrap_or_else(|| panic!("missing local_import call for {callee_name}"));
+        let candidates = call.local_import_candidate_files();
+        assert!(
+            candidates.iter().any(|file| file == $expected_file),
+            "candidate files {candidates:?} did not contain {}",
+            $expected_file
+        );
+    }};
+}
+
 #[test]
 fn classifies_external_php_namespace_and_fully_qualified_calls() {
     let parsed = parse_php(
@@ -179,7 +202,40 @@ end
 }
 
 #[test]
-fn leaves_ruby_local_constant_collision_and_receivers_unresolved() {
+fn resolves_local_ruby_constant_member_and_constructor_calls() {
+    let parsed = parse_ruby(
+        r#"
+require_relative "widget"
+
+def run
+  Widget.build("box")
+  Widget.new
+end
+"#,
+        &[(
+            "lib/widget.rb",
+            r#"
+class Widget
+  def self.build(kind)
+  end
+
+  def render
+  end
+end
+"#,
+        )],
+    );
+
+    // A class-member call resolves against the file declaring the constant; the
+    // member name is the resolution target.
+    assert_ruby_local_import!(parsed, "build", "lib/widget.rb");
+    // `Widget.new` constructs the class, so it resolves to the class symbol
+    // (carried under the constant name) rather than a nonexistent `new` method.
+    assert_ruby_local_import!(parsed, "Widget", "lib/widget.rb");
+}
+
+#[test]
+fn classifies_local_ruby_constant_member_and_leaves_receivers_unresolved() {
     let parsed = parse_ruby(
         r#"
 require "json"
@@ -199,12 +255,35 @@ end
         )],
     );
 
+    // A locally-declared constant shadows the bundled gem, so `JSON.parse`
+    // becomes a local-import candidate (the post-write pass leaves it unresolved
+    // because the local `module JSON` declares no `parse`) rather than external.
+    assert_ruby_local_import!(parsed, "parse", "lib/json.rb");
     assert!(
         parsed
             .calls
             .iter()
-            .all(|call| call.callee_target_kind.as_str() == "unresolved")
+            .all(|call| call.callee_target_kind.as_str() != "external"),
+        "the local JSON constant must suppress the external gem binding"
     );
+
+    // A lowercase receiver is a local variable, and `send` is dynamic dispatch —
+    // neither names a constant, so both stay unresolved. Exactly one of the two
+    // `parse` calls (the `JSON.parse` one) becomes a local import; the
+    // `client.parse` receiver call does not.
+    let unresolved_parse = parsed
+        .calls
+        .iter()
+        .filter(|call| call.callee_name == "parse")
+        .filter(|call| call.callee_target_kind.as_str() == "unresolved")
+        .count();
+    assert_eq!(unresolved_parse, 1, "client.parse must stay unresolved");
+    let send_call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "send")
+        .expect("send call");
+    assert_eq!(send_call.callee_target_kind.as_str(), "unresolved");
 }
 
 #[test]

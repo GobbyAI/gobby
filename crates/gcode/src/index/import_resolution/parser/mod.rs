@@ -238,6 +238,46 @@ pub(crate) fn resolve_local_member_callee(
     })
 }
 
+/// Resolves a Ruby member call (`Widget.build`, `Widget.new`) against the files
+/// that locally declare the receiver constant. Ruby `require`/`require_relative`
+/// loads files without importing names, so the receiver constant — not an import
+/// binding — drives resolution: `ruby_constant_files` maps a constant root to its
+/// declaring files. `Widget.new` constructs the class, so it resolves to the
+/// class symbol (named for the constant) rather than a nonexistent `new` method;
+/// every other member resolves to the named method. The post-write DB pass
+/// narrows the candidate files to the real `code_symbols` id (or degrades to
+/// unresolved), so a wrong-constant collision can never produce a false edge.
+pub(crate) fn resolve_ruby_local_member_callee(
+    import_context: &ImportResolutionContext,
+    symbols: &[Symbol],
+    callee_name: &str,
+    root_alias: Option<&str>,
+    is_member_call: bool,
+) -> Option<LocalCallBinding> {
+    if !is_member_call {
+        return None;
+    }
+    let root_alias = root_alias?;
+    // A same-file constant shadows the cross-file one; let same-file resolution
+    // (or unresolved) own it, mirroring the other member resolvers.
+    if symbols.iter().any(|symbol| symbol.name == root_alias) {
+        return None;
+    }
+    let candidate_files = import_context.ruby_constant_files(root_alias);
+    if candidate_files.is_empty() {
+        return None;
+    }
+    let target_name = if callee_name == "new" {
+        root_alias.to_string()
+    } else {
+        callee_name.to_string()
+    };
+    Some(LocalCallBinding {
+        candidate_files,
+        callee_name: target_name,
+    })
+}
+
 pub(crate) fn resolve_rust_local_qualified_callee(
     import_context: &ImportResolutionContext,
     rel_path: &str,
