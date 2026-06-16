@@ -301,6 +301,21 @@ const SWIFT: LanguageSpec = LanguageSpec {
     "#,
 };
 
+const BASH: LanguageSpec = LanguageSpec {
+    extensions: &[".sh", ".bash"],
+    symbol_query: r#"
+        (function_definition name: (word) @name) @definition.function
+    "#,
+    import_query: r#"
+        (command
+            name: (command_name) @_cmd
+            (#any-of? @_cmd "source" ".")) @import
+    "#,
+    call_query: r#"
+        (command name: (command_name) @name) @call
+    "#,
+};
+
 // ── Registry ───────────────────────────────────────────────────────────
 
 /// All supported languages and their specs.
@@ -320,6 +335,7 @@ const SPECS: &[(&str, &LanguageSpec)] = &[
     ("ruby", &RUBY),
     ("kotlin", &KOTLIN),
     ("swift", &SWIFT),
+    ("bash", &BASH),
     ("yaml", &YAML),
     ("json", &JSON_LANG),
 ];
@@ -378,6 +394,7 @@ pub fn get_ts_language(lang: &str) -> Option<Language> {
         "kotlin" => tree_sitter_kotlin_ng::LANGUAGE,
         "dart" => tree_sitter_dart::LANGUAGE,
         "elixir" => tree_sitter_elixir::LANGUAGE,
+        "bash" => tree_sitter_bash::LANGUAGE,
         "json" => tree_sitter_json::LANGUAGE,
         "yaml" => tree_sitter_yaml::LANGUAGE,
         _ => return None,
@@ -422,6 +439,12 @@ mod tests {
     fn typescript_extensions_still_detect() {
         assert_eq!(detect_language("src/app.ts"), Some("typescript"));
         assert_eq!(detect_language("src/app.tsx"), Some("typescript"));
+    }
+
+    #[test]
+    fn bash_extensions_detect() {
+        assert_eq!(detect_language("scripts/deploy.sh"), Some("bash"));
+        assert_eq!(detect_language("scripts/env.bash"), Some("bash"));
     }
 
     #[test]

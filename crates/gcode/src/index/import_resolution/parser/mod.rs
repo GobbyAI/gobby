@@ -12,6 +12,7 @@ mod java_csharp;
 mod php_kotlin;
 mod python_js;
 mod rest;
+mod shell;
 
 use go_rust::{parse_go_import_statement, parse_rust_import_statement};
 use java_csharp::{
@@ -25,6 +26,8 @@ use rest::{
     parse_dart_import_statement, parse_elixir_import_statement, parse_ruby_import_statement,
     parse_swift_import_statement,
 };
+use shell::parse_shell_import_statement;
+pub(crate) use shell::resolve_shell_local_callee;
 
 pub(crate) fn parse_import_statement(
     language: &str,
@@ -48,6 +51,7 @@ pub(crate) fn parse_import_statement(
         "ruby" => parse_ruby_import_statement(text, rel_path, import_context, extracted),
         "dart" => parse_dart_import_statement(text, rel_path, import_context, extracted),
         "elixir" => parse_elixir_import_statement(text, rel_path, import_context, extracted),
+        "bash" => parse_shell_import_statement(text, rel_path, extracted),
         _ => push_unparsed_import(rel_path, text, extracted)?,
     }
     Ok(())

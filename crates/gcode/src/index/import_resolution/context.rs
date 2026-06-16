@@ -290,6 +290,10 @@ pub(crate) struct ImportBindings {
     /// post-write DB pass narrows the set to a real id (or degrades to
     /// unresolved). Local `alias App.Foo` feeds `local_member` instead.
     pub(crate) elixir_local_import_files: Vec<String>,
+    /// Project-relative shell files brought into scope by `source`/`.`. Bash
+    /// exposes sourced functions to later bare commands without per-name import
+    /// syntax, so a bare call resolves its name against these files post-write.
+    pub(crate) shell_source_files: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

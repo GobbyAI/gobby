@@ -1,3 +1,4 @@
+mod bash;
 mod common;
 mod go_rust_java_csharp;
 mod kotlin_swift;
