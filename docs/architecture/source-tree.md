@@ -9,7 +9,7 @@ exhaustive per-file listings drift too quickly to maintain. Use
 
 ## Repository Root
 
-```
+```text
 gobby/                                  # Project root
 ├── pyproject.toml                      # Project configuration, dependencies, build settings
 ├── README.md                           # Project overview with architecture diagram
@@ -31,7 +31,7 @@ gobby/                                  # Project root
 
 ## src/gobby/ — Top-Level Modules
 
-```
+```text
 src/gobby/
 ├── __init__.py                         # Package init with version export
 ├── runner.py                           # Daemon process entry point (GobbyRunner)
@@ -53,7 +53,7 @@ src/gobby/
 
 ## src/gobby/ — Packages
 
-```
+```text
 src/gobby/
 ├── adapters/                           # CLI-specific hook adapters: claude_code.py,
 │                                       #   gemini.py, droid.py, grok.py, qwen.py,
@@ -180,7 +180,7 @@ src/gobby/
 
 ## Tests
 
-```
+```text
 tests/                                  # Mirrors src/gobby/ by directory
 ├── conftest.py                         # Pytest fixtures (incl. postgres_db)
 ├── fixtures/                           # Shared fixtures (postgres.py, ...)
@@ -192,7 +192,7 @@ tests/                                  # Mirrors src/gobby/ by directory
 
 ## Docs
 
-```
+```text
 docs/
 ├── architecture/                       # Architecture docs (this directory)
 ├── guides/                             # User and developer guides
@@ -225,7 +225,7 @@ Counts as of 2026-06-11; expect drift. Regenerate with the commands shown.
 
 ## Module Dependencies
 
-```
+```text
 cli/
 ├── config/
 ├── runner.py

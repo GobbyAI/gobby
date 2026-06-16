@@ -31,7 +31,7 @@ uv run ruff format src/
 uv run mypy src/
 
 # Tests with coverage (80% minimum is enforced in CI and pre-push, not by bare pytest)
-uv run pytest --cov=gobby --cov-report=term-missing --cov-fail-under=80
+GOBBY_TEST_PROTECT=1 uv run pytest --cov=gobby --cov-report=term-missing --cov-fail-under=80
 ```
 
 ### Configuration Reference
@@ -193,7 +193,7 @@ self._cache_lock = threading.Lock()          # Private attribute
 - **snake_case** for all module file names
 - Descriptive names reflecting primary responsibility
 
-```
+```text
 daemon_client.py
 hook_manager.py
 task_dependencies.py
@@ -631,7 +631,7 @@ def test_full_session_lifecycle():
 
 Organize code into distinct layers with clear responsibilities:
 
-```
+```text
 src/gobby/
 ├── cli/              # CLI entry points (Click commands)
 ├── config/           # Configuration management (Pydantic models)
@@ -660,7 +660,7 @@ Each module should have a single, clear purpose:
 
 Dependencies should flow inward:
 
-```
+```text
 CLI -> Services -> Storage
          |
          v

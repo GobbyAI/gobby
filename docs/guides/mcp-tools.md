@@ -108,7 +108,7 @@ Add a new MCP server to the current project.
 | :--- | :--- | :--- | :--- |
 | `name` | string | Yes | Unique server name |
 | `transport` | string | Yes | `http`, `stdio`, `websocket`, or `sse` (accepted by validation; no transport implementation yet) |
-| `url` | string | For http/ws | Server URL |
+| `url` | string | For http/ws/sse | Server URL |
 | `headers` | object | No | Custom HTTP headers |
 | `command` | string | For stdio | Command to run |
 | `args` | array | No | Command arguments |
@@ -310,7 +310,7 @@ call_tool("gobby-tasks", "close_task", {
 
 ## Task Operations (`gobby-tasks-ops`)
 
-40 tools for expansion runs, sparse dispatch artifacts, stage transitions,
+45 tools for expansion runs, sparse dispatch artifacts, stage transitions,
 PR/merge delivery state, GitHub issues, and the shared `build_task` entry
 point.
 
@@ -394,6 +394,10 @@ point.
 | Tool | Description |
 | :--- | :--- |
 | `build_task` | Start lifecycle automation for a plan, epic, or leaf. The MCP entry to the same shared service used by CLI `gobby build` and HTTP `POST /api/build`. |
+| `build_stop` | Stop project-wide dispatcher ticks or task-scoped automation. |
+| `build_resume` | Resume project-wide dispatcher ticks or task-scoped automation. |
+| `build_clean` | Delete failed build artifacts for a task ref. |
+| `build_restart` | Stop, clean, and resume task-scoped build automation. |
 
 The read-only build observability tools (`get_build_status`,
 `explain_dispatch`, `list_build_history`) live on `gobby-tasks`, not here.
