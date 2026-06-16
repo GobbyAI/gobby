@@ -791,9 +791,23 @@ def _reset_restart_stage_manifests_from_options(
         )
         if not specs:
             continue
-        with db.transaction() as conn:
-            conn.execute("DELETE FROM task_stage_states WHERE task_id = %s", (task.id,))
-            task_manager.stage_states.initialize_manifest(task.id, specs, by_session_id=None)
+        rows = task_manager.stage_states.list_for_task(task.id)
+        current_names = [row.stage_name for row in rows]
+        expected_existing_shape = [
+            (row.stage_name, row.position, row.max_work_attempts, row.max_review_rounds)
+            for row in rows
+        ]
+        replaced = task_manager.stage_states.replace_manifest(
+            task.id,
+            specs,
+            expected_existing_shape=expected_existing_shape,
+            from_state="manifest:" + ",".join(current_names),
+            reason="build_restart",
+            by_session_id=None,
+            by_actor="build",
+        )
+        if replaced is None:
+            raise RuntimeError(f"stage manifest changed while restarting task #{task.seq_num}")
         reset += 1
     if input_kind == "plan_file":
         _seed_restart_plan_file_stage_state(task_manager, root.id, opts)

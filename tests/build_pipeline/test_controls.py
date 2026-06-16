@@ -376,10 +376,13 @@ async def test_clean_force_deletes_clone_and_clears_artifact_pair(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],
     tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     from gobby.build.controls import build_clean_target
     from gobby.storage.tasks import TaskArtifactManager
 
+    clones_root = tmp_path / ".gobby" / "clones"
+    monkeypatch.setattr("gobby.clones.git.CLONES_ROOT", clones_root)
     _set_project_repo(temp_db, sample_project["id"], tmp_path)
     task_manager = LocalTaskManager(temp_db)
     task = task_manager.create_task(
@@ -389,8 +392,8 @@ async def test_clean_force_deletes_clone_and_clears_artifact_pair(
         task_type="task",
     )
     task_manager.update_task(task.id, allow_automation=False)
-    clone_path = tmp_path / "clone"
-    clone_path.mkdir()
+    clone_path = clones_root / "task-1-failed"
+    clone_path.mkdir(parents=True)
     clone = LocalCloneManager(temp_db).create(
         project_id=sample_project["id"],
         branch_name="task-1-failed",
