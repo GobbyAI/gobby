@@ -2,7 +2,9 @@ use std::path::Path;
 
 use crate::index::import_resolution::{self, ImportBindings};
 use crate::index::languages;
-use crate::index::semantic::{SemanticCallRequest, SemanticCallResolver};
+use crate::index::semantic::{
+    SemanticCallRequest, SemanticCallResolver, SemanticCallTarget, SemanticTargetKind,
+};
 use crate::models::{CallRelation, Symbol};
 
 use super::ImportResolutionContext;
@@ -317,8 +319,17 @@ fn materialize_call(
     } else if let Some(external_target) = external_target {
         call = call.with_external_target(external_target.callee_name, external_target.module);
     } else if let Some(semantic_target) = semantic_target {
-        call =
-            call.with_external_target(semantic_target.callee_name, semantic_target.external_module);
+        // A C/C++ semantic resolution is either an external dependency module or
+        // a cross-file local definition. The local case rides the same
+        // candidate-file → post-write DB resolution path as import bindings, so
+        // `callers`/`blast-radius` see the canonical symbol instead of nothing.
+        let SemanticCallTarget { callee_name, kind } = semantic_target;
+        call = match kind {
+            SemanticTargetKind::External(module) => call.with_external_target(callee_name, module),
+            SemanticTargetKind::LocalCandidate(candidate_file) => {
+                call.with_local_import_target(callee_name, vec![candidate_file])
+            }
+        };
     }
     Ok(call)
 }

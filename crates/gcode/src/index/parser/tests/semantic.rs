@@ -3,7 +3,9 @@ use std::path::PathBuf;
 
 use tempfile::TempDir;
 
-use crate::index::semantic::{SemanticCallRequest, SemanticCallResolver};
+use crate::index::semantic::{
+    SemanticCallRequest, SemanticCallResolver, SemanticCallTarget, SemanticTargetKind,
+};
 
 use super::super::{build_import_resolution_context, parse_file_with_semantic};
 use super::common::discover_supported_files;
@@ -68,9 +70,9 @@ void run() {
     let candidates = discover_supported_files(root);
     let context = build_import_resolution_context(root, &candidates);
     let mut resolver = FakeSemanticResolver {
-        target: Some(crate::index::semantic::SemanticCallTarget {
+        target: Some(SemanticCallTarget {
             callee_name: "printf".to_string(),
-            external_module: "/usr/include/stdio.h".to_string(),
+            kind: SemanticTargetKind::External("/usr/include/stdio.h".to_string()),
         }),
         expected_language: "cpp",
         expected_callee: "printf",
@@ -97,6 +99,60 @@ void run() {
 }
 
 #[test]
+fn semantic_resolver_can_classify_cpp_calls_as_local_import() {
+    let tempdir = TempDir::new().expect("create tempdir");
+    let root = tempdir.path();
+    let path = root.join("src/main.cpp");
+    fs::create_dir_all(path.parent().expect("parent")).expect("create parent dirs");
+    fs::write(
+        &path,
+        r#"
+void run() {
+    helper();
+}
+"#,
+    )
+    .expect("write source");
+    let candidates = discover_supported_files(root);
+    let context = build_import_resolution_context(root, &candidates);
+    // clangd resolved `helper` to a definition INSIDE the project root. The
+    // resolver hands back the project-relative candidate file; materialization
+    // must route it through the local-import candidate path (not external) so
+    // the post-write DB pass can narrow it to a canonical symbol id.
+    let mut resolver = FakeSemanticResolver {
+        target: Some(SemanticCallTarget {
+            callee_name: "helper".to_string(),
+            kind: SemanticTargetKind::LocalCandidate("src/util.cpp".to_string()),
+        }),
+        expected_language: "cpp",
+        expected_callee: "helper",
+        requests: Vec::new(),
+        error: None,
+    };
+    let parsed = parse_file_with_semantic(
+        &path,
+        "proj",
+        root,
+        &[] as &[&str],
+        &context,
+        Some(&mut resolver),
+    )
+    .expect("parse result")
+    .expect("parse file");
+
+    let call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "helper")
+        .expect("helper call");
+    assert_eq!(call.callee_target_kind.as_str(), "local_import");
+    assert_eq!(
+        call.local_import_candidate_files(),
+        vec!["src/util.cpp".to_string()]
+    );
+}
+
+#[test]
 fn semantic_resolver_can_classify_textual_dart_calls_as_external() {
     let tempdir = TempDir::new().expect("create tempdir");
     let root = tempdir.path();
@@ -114,9 +170,9 @@ void run() {
     let candidates = discover_supported_files(root);
     let context = build_import_resolution_context(root, &candidates);
     let mut resolver = FakeSemanticResolver {
-        target: Some(crate::index::semantic::SemanticCallTarget {
+        target: Some(SemanticCallTarget {
             callee_name: "Tooltip".to_string(),
-            external_module: "package:flutter/material.dart".to_string(),
+            kind: SemanticTargetKind::External("package:flutter/material.dart".to_string()),
         }),
         expected_language: "dart",
         expected_callee: "Tooltip",

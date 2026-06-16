@@ -25,7 +25,21 @@ pub(crate) struct SemanticCallRequest<'a> {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct SemanticCallTarget {
     pub(crate) callee_name: String,
-    pub(crate) external_module: String,
+    pub(crate) kind: SemanticTargetKind,
+}
+
+/// Where clangd's `textDocument/definition` resolved a C/C++ call's definition.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum SemanticTargetKind {
+    /// Definition lives OUTSIDE the project root — a dependency. The string is
+    /// the absolute declaration path, recorded as the call's external module.
+    External(String),
+    /// Definition lives in a project-relative file INSIDE the root — a
+    /// cross-file local call. The string is that project-relative file; the
+    /// post-write DB pass (`index::indexer::local_imports`) narrows it to a real
+    /// `code_symbols` id (or degrades to unresolved), exactly like the
+    /// import-binding local-call path.
+    LocalCandidate(String),
 }
 
 pub(crate) trait SemanticCallResolver {
@@ -100,12 +114,17 @@ pub(crate) fn classify_definition(
         return None;
     }
     let declaration_path = &locations[0].path;
-    if path_is_inside_root(declaration_path, root_path) {
-        return None;
-    }
+    let kind = match local_candidate_file(declaration_path, root_path) {
+        // Definition inside the project root: a cross-file local call. Carry the
+        // project-relative file so the post-write DB pass can resolve it to a
+        // canonical symbol id.
+        Some(candidate_file) => SemanticTargetKind::LocalCandidate(candidate_file),
+        // Definition outside the root: an external dependency module.
+        None => SemanticTargetKind::External(declaration_path.to_string_lossy().to_string()),
+    };
     Some(SemanticCallTarget {
         callee_name: callee_name.to_string(),
-        external_module: declaration_path.to_string_lossy().to_string(),
+        kind,
     })
 }
 
@@ -197,12 +216,23 @@ fn macro_definition_name(line: &str) -> Option<&str> {
     }
 }
 
-fn path_is_inside_root(path: &Path, root_path: &Path) -> bool {
-    let canonical_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let canonical_root = root_path
-        .canonicalize()
-        .unwrap_or_else(|_| root_path.to_path_buf());
-    canonical_path.starts_with(canonical_root)
+/// Computes the project-relative path for a definition that lives inside
+/// `root_path`, matching exactly how the indexer derives `code_symbols.file_path`
+/// (canonicalize file + root, strip prefix, lossy string — see
+/// `parser::parse_file`) so the post-write DB pass can match the candidate
+/// against the stored symbol row. Returns `None` when the definition is outside
+/// the root, cannot be canonicalized, or resolves to the root itself — all of
+/// which the caller treats as "not a local definition".
+fn local_candidate_file(path: &Path, root_path: &Path) -> Option<String> {
+    let canonical_path = path.canonicalize().ok()?;
+    let canonical_root = root_path.canonicalize().ok()?;
+    let relative = canonical_path.strip_prefix(&canonical_root).ok()?;
+    let candidate = relative.to_string_lossy().to_string();
+    if candidate.is_empty() {
+        None
+    } else {
+        Some(candidate)
+    }
 }
 
 fn resolve_clangd_command() -> Option<String> {
@@ -691,28 +721,43 @@ mod tests {
         .expect("external target");
 
         assert_eq!(target.callee_name, "vendor_call");
-        assert!(target.external_module.ends_with("vendor.h"));
+        let SemanticTargetKind::External(module) = target.kind else {
+            panic!("expected external target");
+        };
+        assert!(module.ends_with("vendor.h"));
     }
 
     #[test]
-    fn leaves_local_empty_multiple_and_macro_definitions_unresolved() {
+    fn classifies_single_definition_inside_project_as_local_candidate() {
         let tempdir = TempDir::new().expect("tempdir");
         let local = tempdir.path().join("local.h");
         fs::write(&local, "void local_call();").expect("local header");
+
+        let target = classify_definition(
+            tempdir.path(),
+            b"void run() { local_call(); }",
+            "local_call",
+            &[DefinitionLocation { path: local }],
+        )
+        .expect("local candidate target");
+
+        // The project-relative path matches how the indexer stores
+        // `code_symbols.file_path`, so the post-write DB pass can narrow it.
+        assert_eq!(target.callee_name, "local_call");
+        assert_eq!(
+            target.kind,
+            SemanticTargetKind::LocalCandidate("local.h".to_string())
+        );
+    }
+
+    #[test]
+    fn leaves_empty_multiple_and_macro_definitions_unresolved() {
+        let tempdir = TempDir::new().expect("tempdir");
         let external = TempDir::new()
             .expect("external tempdir")
             .path()
             .join("vendor.h");
 
-        assert!(
-            classify_definition(
-                tempdir.path(),
-                b"void run() { local_call(); }",
-                "local_call",
-                &[DefinitionLocation { path: local }]
-            )
-            .is_none()
-        );
         assert!(classify_definition(tempdir.path(), b"", "missing", &[]).is_none());
         assert!(
             classify_definition(
