@@ -72,6 +72,52 @@ async def _run_db(
     return await run_db(func, *args, **kwargs)
 
 
+async def _handle_indexed_file_not_found(
+    *,
+    storage: CodeIndexStorage,
+    config: CodeIndexConfig,
+    project_id: str,
+    root: Path,
+    error: GcodeIndexedFileNotFoundError,
+    sync_kind: str,
+    synced_field: str,
+    clear_graph: Callable[[str], Awaitable[dict[str, Any]]] | None,
+    run_db: Callable[..., Awaitable[Any]] | None,
+) -> bool:
+    refreshed = await _run_db(run_db, storage.get_file, project_id, error.file_path)
+    if refreshed is None:
+        logger.info(
+            "Sync worker: indexed file %s disappeared from project %s during "
+            "%s sync; leaving %s=false",
+            error.file_path,
+            project_id,
+            sync_kind,
+            synced_field,
+        )
+        return False
+    if not await asyncio.to_thread(root.is_dir):
+        await purge_missing_project(
+            project=_MissingProject(id=project_id, root_path=str(root)),
+            storage=storage,
+            config=config,
+            clear_graph=clear_graph,
+            run_db=run_db,
+        )
+        return False
+    if not await asyncio.to_thread((root / refreshed.file_path).exists):
+        return False
+    logger.warning(
+        "Sync worker: indexed file %s missing in gcode project %s during "
+        "%s sync; leaving %s=false for retry: %s",
+        refreshed.file_path,
+        error.project_id,
+        sync_kind,
+        synced_field,
+        error,
+    )
+    return True
+
+
 async def sync_worker_loop(
     storage: CodeIndexStorage,
     context: CodeIndexContext,
@@ -218,6 +264,19 @@ async def _sync_file(
                     "vector",
                 )
                 did_work = True
+            except GcodeIndexedFileNotFoundError as e:
+                if not await _handle_indexed_file_not_found(
+                    storage=storage,
+                    config=config,
+                    project_id=project_id,
+                    root=root,
+                    error=e,
+                    sync_kind="vector",
+                    synced_field="vectors_synced",
+                    clear_graph=clear_graph,
+                    run_db=run_db,
+                ):
+                    return False
             except Exception as e:
                 logger.error(
                     "Sync worker: vector sync failed for %s: %s",
@@ -260,33 +319,18 @@ async def _sync_file(
                         )
                         did_work = True
             except GcodeIndexedFileNotFoundError as e:
-                refreshed = await _run_db(run_db, storage.get_file, project_id, e.file_path)
-                if refreshed is None:
-                    logger.info(
-                        "Sync worker: indexed file %s disappeared from project %s during "
-                        "graph sync; leaving graph_synced=false",
-                        e.file_path,
-                        project_id,
-                    )
+                if not await _handle_indexed_file_not_found(
+                    storage=storage,
+                    config=config,
+                    project_id=project_id,
+                    root=root,
+                    error=e,
+                    sync_kind="graph",
+                    synced_field="graph_synced",
+                    clear_graph=clear_graph,
+                    run_db=run_db,
+                ):
                     return False
-                if not await asyncio.to_thread(root.is_dir):
-                    await purge_missing_project(
-                        project=_MissingProject(id=project_id, root_path=str(root)),
-                        storage=storage,
-                        config=config,
-                        clear_graph=clear_graph,
-                        run_db=run_db,
-                    )
-                    return False
-                if not await asyncio.to_thread((root / refreshed.file_path).exists):
-                    return False
-                logger.warning(
-                    "Sync worker: indexed file %s missing in gcode project %s during "
-                    "graph sync; leaving graph_synced=false for retry: %s",
-                    refreshed.file_path,
-                    e.project_id,
-                    e,
-                )
             except GcodeProjectNotFoundError as e:
                 if not await asyncio.to_thread(root.is_dir):
                     await purge_missing_project(

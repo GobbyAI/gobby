@@ -70,9 +70,19 @@ class IndexedFileNotFoundGcodeGateway:
         self.remove_root = remove_root
         self.remove_source = remove_source
         self.synced_files: list[tuple[Path, str]] = []
+        self.vector_synced_files: list[tuple[Path, str]] = []
 
     async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
         self.synced_files.append((project_root, file_path))
+        if self.remove_root:
+            shutil.rmtree(project_root)
+        if self.remove_source:
+            (project_root / file_path).unlink()
+        stderr = f"indexed file `{file_path}` was not found for project proj-1"
+        raise GcodeIndexedFileNotFoundError(["gcode"], 2, stderr, file_path, "proj-1")
+
+    async def vector_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+        self.vector_synced_files.append((project_root, file_path))
         if self.remove_root:
             shutil.rmtree(project_root)
         if self.remove_source:
@@ -623,6 +633,100 @@ async def test_sync_file_delegates_vector_sync_to_gcode_gateway(
     assert synced_file.vectors_synced is True
     assert synced_file.vector_sync_attempted_at is not None
     assert code_storage.list_projection_cleanup_pending() == []
+
+
+@pytest.mark.asyncio
+async def test_sync_file_leaves_vectors_unsynced_when_indexed_row_disappears(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """A row removed during vector sync is stale work, not an ERROR."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=False, graph_synced=True)
+    storage = MagicMock()
+    storage.get_file.side_effect = [pending_file, None]
+    gcode_gateway = IndexedFileNotFoundGcodeGateway()
+
+    with caplog.at_level(logging.INFO, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=storage,
+            gcode_gateway=gcode_gateway,
+            config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+            project_id="proj-1",
+            root=tmp_path,
+            file=pending_file,
+        )
+
+    assert did_sync is False
+    assert gcode_gateway.vector_synced_files == [(tmp_path, pending_file.file_path)]
+    assert "indexed file src/app.py disappeared from project proj-1" in caplog.text
+    assert not any(record.levelno >= logging.WARNING for record in caplog.records)
+    storage.mark_vectors_synced.assert_not_called()
+    storage.clear_projection_cleanup_pending.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sync_file_skips_when_source_disappears_during_vector_sync(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """A source file removed during vector sync reuses the normal missing-source skip."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=False, graph_synced=True)
+    storage = MagicMock()
+    storage.get_file.side_effect = [pending_file, pending_file]
+    gcode_gateway = IndexedFileNotFoundGcodeGateway(remove_source=True)
+
+    with caplog.at_level(logging.ERROR, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=storage,
+            gcode_gateway=gcode_gateway,
+            config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+            project_id="proj-1",
+            root=tmp_path,
+            file=pending_file,
+        )
+
+    assert did_sync is False
+    assert not (tmp_path / pending_file.file_path).exists()
+    assert not caplog.records
+    storage.mark_vectors_synced.assert_not_called()
+    storage.clear_projection_cleanup_pending.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_sync_file_warns_and_retries_when_vector_indexed_row_still_exists(
+    caplog: pytest.LogCaptureFixture,
+    tmp_path: Path,
+) -> None:
+    """A stale gcode vector file miss with a live row remains pending for retry."""
+    _write_source(tmp_path)
+    pending_file = _indexed_file(vectors_synced=False, graph_synced=True)
+    storage = MagicMock()
+    storage.get_file.side_effect = [pending_file, pending_file]
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=storage,
+            gcode_gateway=IndexedFileNotFoundGcodeGateway(),
+            config=CodeIndexConfig(embedding_enabled=True, graph_enabled=False),
+            project_id="proj-1",
+            root=tmp_path,
+            file=pending_file,
+        )
+
+    assert did_sync is False
+    assert any(
+        record.levelno == logging.WARNING
+        and "indexed file src/app.py missing in gcode project proj-1" in record.getMessage()
+        and "vector sync; leaving vectors_synced=false" in record.getMessage()
+        and record.exc_info is None
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+    storage.mark_vectors_synced.assert_not_called()
+    storage.mark_vector_sync_attempted.assert_called_once_with(pending_file.id)
+    storage.clear_projection_cleanup_pending.assert_not_called()
 
 
 @pytest.mark.asyncio
