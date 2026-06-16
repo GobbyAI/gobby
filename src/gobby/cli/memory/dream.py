@@ -23,6 +23,13 @@ _TERMINAL_STATUSES = frozenset({"completed", "failed", "reverted"})
 )
 @click.option("--memory-type", "memory_type", help="Limit the scan to a memory type")
 @click.option(
+    "--full/--no-full",
+    "full_sweep",
+    default=False,
+    show_default=True,
+    help="Ignore the redream cooldown and sweep every active in-scope memory once",
+)
+@click.option(
     "--timeout",
     type=click.FloatRange(min=0.0),
     default=900.0,
@@ -36,6 +43,7 @@ def memory_dream(
     wait: bool,
     skip_consolidation: bool,
     memory_type: str | None,
+    full_sweep: bool,
     timeout: float,
 ) -> None:
     """Review and improve stale memories."""
@@ -46,6 +54,7 @@ def memory_dream(
         "dry_run": dry_run,
         "skip_consolidation": skip_consolidation,
         "memory_type": memory_type,
+        "full_sweep": full_sweep,
     }
     data = _request(
         ctx,

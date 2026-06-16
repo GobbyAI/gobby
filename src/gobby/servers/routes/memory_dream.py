@@ -24,6 +24,7 @@ class MemoryDreamRequest(BaseModel):
     skip_consolidation: bool = False
     memory_type: str | None = None
     project_id: str | None = None
+    full_sweep: bool = False
 
 
 def create_memory_dream_router(server: HTTPServer) -> APIRouter:
@@ -53,6 +54,7 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
             skip_consolidation=request.skip_consolidation,
             memory_type=request.memory_type,
             project_id=request.project_id,
+            full_sweep=request.full_sweep,
         )
         if request.wait:
             result = await service.run(options)

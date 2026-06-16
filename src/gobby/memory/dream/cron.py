@@ -57,6 +57,10 @@ def register_memory_dream_cron(
             llm_service=llm_service,
             daemon_config=daemon_config,
             project_id=project_id,
+            # The scheduled run is the authoritative nightly full sweep: ignore
+            # the rolling cooldown so coverage is deterministic regardless of
+            # off-schedule (manual/dev) dream runs earlier in the day.
+            full_sweep=True,
         )
         if not isinstance(result, dict):
             raise RuntimeError("memory dream returned non-object result")

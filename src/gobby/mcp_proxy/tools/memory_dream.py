@@ -124,6 +124,7 @@ def register_memory_dream_tools(
         wait: bool = True,
         skip_consolidation: bool = False,
         memory_type: str | None = None,
+        full_sweep: bool = False,
     ) -> dict[str, Any]:
         service = _service()
         options = DreamRunOptions(
@@ -131,6 +132,7 @@ def register_memory_dream_tools(
             skip_consolidation=skip_consolidation,
             memory_type=memory_type,
             project_id=get_project_id(),
+            full_sweep=full_sweep,
         )
         if wait:
             return await service.run(options)

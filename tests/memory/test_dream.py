@@ -1380,3 +1380,60 @@ def test_dream_prompt_declares_actions_and_truth_digest() -> None:
     # obsolete-fact guidance names the canonical infra migrations.
     assert "Neo4j" in prompt
     assert "SQLite" in prompt
+
+
+@pytest.mark.asyncio
+async def test_full_sweep_ignores_cooldown_and_reviews_all() -> None:
+    db = _FakeDreamDB()
+    db.memories = {f"m{i}": _row(f"m{i}", f"content {i}") for i in range(5)}
+    manager = _FakeSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=manager, dream_config=_sweep_config(page_size=2), llm_service=None
+    )
+
+    first = await service.run(DreamRunOptions())
+    assert first["run"]["summary"]["candidates_reviewed"] == 5
+
+    # A default rerun is a no-op: everything was just stamped inside the cooldown.
+    cooldown_rerun = await service.run(DreamRunOptions())
+    assert cooldown_rerun["run"]["summary"]["candidates_reviewed"] == 0
+
+    # full_sweep bypasses the cooldown and reviews the whole corpus again, draining
+    # to completion (the page loop still terminates via per-page stamping).
+    full = await service.run(DreamRunOptions(full_sweep=True))
+    assert full["success"] is True
+    assert full["run"]["summary"]["candidates_reviewed"] == 5
+    assert full["run"]["summary"]["pages"] == 3  # ceil(5 / 2)
+    assert all(row["last_dreamed_at"] is not None for row in db.memories.values())
+
+
+@pytest.mark.asyncio
+async def test_full_sweep_cutoff_is_run_start_not_cooldown_window() -> None:
+    db = _FakeDreamDB()
+    db.memories = {"m0": _row("m0", "content 0")}
+
+    class _RecordingSweepManager(_FakeSweepManager):
+        def __init__(self, db: _FakeDreamDB) -> None:
+            super().__init__(db)
+            self.cutoffs: list[str] = []
+
+        def list_dream_candidates(self, *, redream_cutoff: str, **kwargs: Any) -> list[Any]:
+            self.cutoffs.append(redream_cutoff)
+            return super().list_dream_candidates(redream_cutoff=redream_cutoff, **kwargs)
+
+    manager = _RecordingSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=manager,
+        dream_config=_sweep_config(page_size=2, redream_after_hours=20),
+        llm_service=None,
+    )
+
+    await service.run(DreamRunOptions())  # cooldown path: cutoff = run_start - 20h
+    normal_cutoff = datetime.fromisoformat(manager.cutoffs[0])
+    await service.run(DreamRunOptions(full_sweep=True))  # full path: cutoff = run_start
+    full_cutoff = datetime.fromisoformat(manager.cutoffs[-1])
+
+    # full_sweep anchors the cutoff at run start; the cooldown path subtracts 20h.
+    # The full run also fires slightly later, so the gap is ~20h (assert >= 19h to
+    # absorb wall-clock jitter between the two runs).
+    assert full_cutoff - normal_cutoff >= timedelta(hours=19)

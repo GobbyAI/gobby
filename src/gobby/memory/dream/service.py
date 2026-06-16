@@ -44,6 +44,11 @@ class DreamRunOptions:
     skip_consolidation: bool = False
     memory_type: str | None = None
     project_id: str | None = None
+    # When True, ignore the rolling redream cooldown and sweep every active
+    # in-scope memory once (cutoff = run_start). The scheduled nightly run sets
+    # this so its coverage is deterministic regardless of off-schedule stamping;
+    # manual/ad-hoc runs leave it False to stay cooldown-throttled.
+    full_sweep: bool = False
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +56,7 @@ class DreamRunOptions:
             "skip_consolidation": self.skip_consolidation,
             "memory_type": self.memory_type,
             "project_id": self.project_id,
+            "full_sweep": self.full_sweep,
         }
 
 
@@ -206,7 +212,15 @@ class MemoryDreamService:
                 DEFAULT_REDREAM_AFTER_HOURS,
             )
             include_global = bool(getattr(self.dream_config, "include_global_memories", True))
-            redream_cutoff = (run_started - timedelta(hours=redream_hours)).isoformat()
+            # full_sweep pins the cutoff to run_start so the cooldown excludes
+            # only rows stamped during this run; the page loop still drains via
+            # per-page stamping. Cannot be expressed as redream_after_hours=0 —
+            # _positive_int coerces values < 1 back to the default.
+            redream_cutoff = (
+                run_started.isoformat()
+                if options.full_sweep
+                else (run_started - timedelta(hours=redream_hours)).isoformat()
+            )
             digest = build_current_truth_digest(self._daemon_config)
 
             if options.dry_run:
@@ -410,6 +424,7 @@ async def run_memory_dream(
     skip_consolidation: bool = False,
     memory_type: str | None = None,
     project_id: str | None = None,
+    full_sweep: bool = False,
 ) -> dict[str, Any]:
     service = MemoryDreamService(
         memory_manager=memory_manager,
@@ -423,6 +438,7 @@ async def run_memory_dream(
             skip_consolidation=skip_consolidation,
             memory_type=memory_type,
             project_id=project_id,
+            full_sweep=full_sweep,
         )
     )
 
