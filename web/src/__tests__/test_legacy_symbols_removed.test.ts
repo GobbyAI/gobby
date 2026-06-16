@@ -21,19 +21,19 @@ function sourceFiles(dir: string): string[] {
     const path = join(dir, entry)
     if (path === selfPath) return []
     if (statSync(path).isDirectory()) return sourceFiles(path)
-    if (!path.endsWith('.ts') && !path.endsWith('.tsx')) return []
+    if (!/\.(ts|tsx)$/.test(path)) return []
     return [path]
   })
 }
 
-function legacyMatches() {
+function legacyMatches(): string[] {
   return sourceFiles(sourceRoot).flatMap(file => {
     const source = readFileSync(file, 'utf8')
-    return legacyPattern.exec(source) ? [relative(process.cwd(), file)] : []
+    return legacyPattern.test(source) ? [relative(process.cwd(), file)] : []
   })
 }
 
-function legacySkillsSubtreeFiles() {
+function legacySkillsSubtreeFiles(): string[] {
   return sourceFiles(sourceRoot).filter(file =>
     relative(process.cwd(), file).startsWith(`${retiredSkillsPath}/`),
   )
@@ -43,7 +43,7 @@ describe('Legacy task-state symbols are removed from web source', () => {
   it('test_no_task_bucket_imports', () => {
     const offenders = legacyMatches().filter(file => {
       const source = readFileSync(join(process.cwd(), file), 'utf8')
-      return taskGroupPattern.exec(source)
+      return taskGroupPattern.test(source)
     })
 
     expect(offenders).toEqual([])
@@ -52,7 +52,7 @@ describe('Legacy task-state symbols are removed from web source', () => {
   it('test_no_task_bucket_imports_in_web_src', () => {
     const offenders = legacyMatches().filter(file => {
       const source = readFileSync(join(process.cwd(), file), 'utf8')
-      return taskGroupPattern.exec(source)
+      return taskGroupPattern.test(source)
     })
 
     expect(offenders).toEqual([])
@@ -61,7 +61,7 @@ describe('Legacy task-state symbols are removed from web source', () => {
   it('test_no_legacy_stage_reads_in_web_src', () => {
     const offenders = legacyMatches().filter(file => {
       const source = readFileSync(join(process.cwd(), file), 'utf8')
-      return stageFieldPattern.exec(source)
+      return stageFieldPattern.test(source)
     })
 
     expect(offenders).toEqual([])

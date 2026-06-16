@@ -645,7 +645,9 @@ class TestSpawnAgentTaskResolution:
     """Tests for task_id resolution formats."""
 
     @pytest.mark.asyncio
-    async def test_task_id_supports_hash_n_format(self, mock_runner, agent_body, db) -> None:
+    async def test_task_id_supports_hash_n_format(
+        self, mock_runner, agent_body, db: HubDatabase
+    ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
         mock_task_manager = MagicMock()

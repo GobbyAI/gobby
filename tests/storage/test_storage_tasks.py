@@ -751,6 +751,7 @@ class TestLocalTaskManager:
         reloaded = task_manager.get_task(task.id)
         assert reloaded is not None
         assert reloaded.validation_status == "error"
+        assert reloaded.validation_feedback == "generation unavailable"
 
     def test_clear_parent_task(self, task_manager, project_id) -> None:
         parent = task_manager.create_task(project_id, "P")

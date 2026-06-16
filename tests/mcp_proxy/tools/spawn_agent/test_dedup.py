@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.agents.isolation import IsolationContext
+from gobby.storage.hub.protocol import HubDatabase
 from gobby.workflows.definitions import AgentDefinitionBody
 
 pytestmark = pytest.mark.unit
@@ -160,7 +161,9 @@ class TestSpawnAgentDedup:
         mock_execute.assert_not_awaited()
 
     @pytest.mark.asyncio
-    async def test_merge_worker_spawn_ignores_parent_merge_orchestrator_run(self, db) -> None:
+    async def test_merge_worker_spawn_ignores_parent_merge_orchestrator_run(
+        self, db: HubDatabase
+    ) -> None:
         """A merge orchestrator may spawn a same-task merge worker without hitting itself."""
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 

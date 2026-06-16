@@ -33,6 +33,8 @@ from gobby.memory.services.knowledge_graph.writer import (
 from gobby.search import similarity as similarity_mod
 from gobby.search.backends import embedding as embedding_mod
 
+pytestmark = pytest.mark.unit
+
 Responder = Any
 
 

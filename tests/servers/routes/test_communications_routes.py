@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 from typing import cast
-from unittest.mock import AsyncMock
+from unittest.mock import ANY, AsyncMock
 
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -28,8 +28,18 @@ def test_receive_webhook_returns_discord_interaction_ping_ack() -> None:
     app = FastAPI()
     app.include_router(create_communications_router(cast(HTTPServer, server)))
 
-    response = TestClient(app).post("/api/comms/webhooks/discord", json={"type": 1})
+    body = b'{"type":1}'
+    response = TestClient(app).post(
+        "/api/comms/webhooks/discord",
+        content=body,
+        headers={"content-type": "application/json"},
+    )
 
     assert response.status_code == 200
     assert response.json() == {"type": 1}
-    comms_manager.handle_inbound.assert_awaited_once()
+    comms_manager.handle_inbound.assert_awaited_once_with(
+        "discord",
+        {"type": 1},
+        ANY,
+        raw_body=body,
+    )

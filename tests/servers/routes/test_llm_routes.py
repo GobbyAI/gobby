@@ -102,7 +102,7 @@ def test_llm_status_returns_registry_snapshot(client: TestClient) -> None:
         providers = {
             binding["provider"] for binding in data["capabilities"][capability]["bindings"]
         }
-        assert "local" not in providers
+        assert "local:lm-studio" in providers
 
 
 def test_create_llm_router_does_not_run_vision_temp_cleanup(

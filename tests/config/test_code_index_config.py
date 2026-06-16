@@ -7,6 +7,8 @@ from pydantic import ValidationError
 
 from gobby.config.code_index import CodeIndexConfig
 
+pytestmark = pytest.mark.unit
+
 
 def test_code_index_config_drops_deprecated_vector_batch_size() -> None:
     config = CodeIndexConfig.model_validate(

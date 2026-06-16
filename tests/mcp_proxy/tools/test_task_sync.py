@@ -5,9 +5,8 @@ Sync tools (sync_tasks, get_sync_status, sync_import, sync_export) have been
 removed from MCP — they are CLI-only operations.
 """
 
-import ast
-import inspect
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -813,58 +812,70 @@ def mock_sync_registry():
 
 
 def test_task_sync_git_helper_calls_follow_repo_path_resolution() -> None:
-    """Commit/diff helpers must resolve project_path before Git helper cwd use."""
-    import gobby.mcp_proxy.tools.task_sync as task_sync
+    """Commit/diff helpers must reject bad repo paths before Git helper work."""
+    from gobby.mcp_proxy.tools.task_repo_paths import RepoPathValidationError
+    from gobby.mcp_proxy.tools.task_sync import create_commit_registry
 
-    source = inspect.getsource(task_sync.create_commit_registry)
-    tree = ast.parse(source)
-    function_lines = _nested_function_line_numbers(tree)
+    class RejectingTaskManager:
+        def __init__(self) -> None:
+            self.task = SimpleNamespace(
+                id="task-1",
+                project_id="project-1",
+                parent_task_id=None,
+            )
+            self.get_task_calls: list[str] = []
+            self.link_commit_called = False
+            self.unlink_commit_called = False
 
-    assert (
-        function_lines["link_commit"]["_get_task_and_repo_path"]
-        < function_lines["link_commit"]["task_manager.link_commit"]
+        def get_task(self, task_id: str) -> SimpleNamespace:
+            self.get_task_calls.append(task_id)
+            return self.task
+
+        def link_commit(self, task_id: str, commit_sha: str, cwd: str | None = None) -> object:
+            self.link_commit_called = True
+            raise AssertionError("link_commit should not run after repo path rejection")
+
+        def unlink_commit(self, task_id: str, commit_sha: str, cwd: str | None = None) -> object:
+            self.unlink_commit_called = True
+            raise AssertionError("unlink_commit should not run after repo path rejection")
+
+    task_manager = RejectingTaskManager()
+    auto_link_called = False
+    get_task_diff_called = False
+
+    def auto_link_commits_fn(**kwargs: object) -> object:
+        nonlocal auto_link_called
+        auto_link_called = True
+        raise AssertionError("auto_link_commits_fn should not run after repo path rejection")
+
+    def get_task_diff_fn(**kwargs: object) -> object:
+        nonlocal get_task_diff_called
+        get_task_diff_called = True
+        raise AssertionError("get_task_diff_fn should not run after repo path rejection")
+
+    registry = create_commit_registry(
+        task_manager=task_manager,
+        sync_manager=object(),
+        project_manager=object(),
+        auto_link_commits_fn=auto_link_commits_fn,
+        get_task_diff_fn=get_task_diff_fn,
     )
-    assert (
-        function_lines["unlink_commit"]["_get_task_and_repo_path"]
-        < function_lines["unlink_commit"]["task_manager.unlink_commit"]
-    )
-    assert (
-        function_lines["auto_link_commits"]["_get_task_and_repo_path"]
-        < function_lines["auto_link_commits"]["auto_link_commits_fn"]
-    )
-    assert (
-        function_lines["get_task_diff_tool"]["_get_task_and_repo_path"]
-        < function_lines["get_task_diff_tool"]["get_task_diff_fn"]
-    )
 
+    with patch(
+        "gobby.mcp_proxy.tools.task_sync.resolve_task_repo_path",
+        side_effect=RepoPathValidationError("repo path blocked"),
+    ):
+        results = [
+            registry.get_tool("link_commit")(task_id="task-1", commit_sha="abc123"),
+            registry.get_tool("unlink_commit")(task_id="task-1", commit_sha="abc123"),
+            registry.get_tool("auto_link_commits")(task_id="task-1"),
+            registry.get_tool("get_task_diff")(task_id="task-1"),
+        ]
 
-def _nested_function_line_numbers(tree: ast.Module) -> dict[str, dict[str, int]]:
-    line_numbers: dict[str, dict[str, int]] = {}
-    for node in ast.walk(tree):
-        if isinstance(node, ast.FunctionDef):
-            line_numbers[node.name] = _call_line_numbers(node)
-    return line_numbers
-
-
-def _call_line_numbers(function: ast.FunctionDef) -> dict[str, int]:
-    lines: dict[str, int] = {}
-    for node in ast.walk(function):
-        if not isinstance(node, ast.Call):
-            continue
-        call_name = _call_name(node)
-        if call_name and call_name not in lines:
-            lines[call_name] = node.lineno
-    return lines
-
-
-def _call_name(call: ast.Call) -> str | None:
-    if isinstance(call.func, ast.Name):
-        return call.func.id
-    if isinstance(call.func, ast.Attribute):
-        value = call.func.value
-        if isinstance(value, ast.Name):
-            return f"{value.id}.{call.func.attr}"
-        if isinstance(value, ast.Attribute) and isinstance(value.value, ast.Name):
-            return f"{value.value.id}.{value.attr}.{call.func.attr}"
-        return call.func.attr
-    return None
+    assert results == [{"error": "repo path blocked"}] * 4
+    assert len(task_manager.get_task_calls) >= len(results)
+    assert set(task_manager.get_task_calls) == {"task-1"}
+    assert task_manager.link_commit_called is False
+    assert task_manager.unlink_commit_called is False
+    assert auto_link_called is False
+    assert get_task_diff_called is False

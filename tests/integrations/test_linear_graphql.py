@@ -8,6 +8,8 @@ import pytest
 from gobby.integrations import linear_graphql
 from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
 
+pytestmark = pytest.mark.unit
+
 
 @pytest.mark.asyncio
 async def test_execute_retry_error_uses_attempt_constant() -> None:

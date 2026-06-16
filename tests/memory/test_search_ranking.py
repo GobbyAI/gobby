@@ -12,6 +12,8 @@ from gobby.config.persistence import MemoryConfig
 from gobby.memory.services.search import SearchDebugHit, SearchDebugSnapshot, SearchService
 from gobby.storage.memories import Memory
 
+pytestmark = pytest.mark.unit
+
 
 class _Storage:
     def __init__(self, memory_ids: list[str]) -> None:
