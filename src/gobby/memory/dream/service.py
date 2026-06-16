@@ -290,6 +290,7 @@ class MemoryDreamService:
                 candidates,
                 min_action_confidence=self.dream_config.min_action_confidence,
                 min_delete_confidence=self.dream_config.min_delete_confidence,
+                min_rescope_confidence=self.dream_config.min_rescope_confidence,
             )
             page_summary = await apply_dream_plan(
                 memory_manager=self.memory_manager,
@@ -341,6 +342,7 @@ class MemoryDreamService:
             candidates,
             min_action_confidence=self.dream_config.min_action_confidence,
             min_delete_confidence=self.dream_config.min_delete_confidence,
+            min_rescope_confidence=self.dream_config.min_rescope_confidence,
         )
         summary = await apply_dream_plan(
             memory_manager=self.memory_manager,

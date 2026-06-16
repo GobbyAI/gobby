@@ -98,7 +98,12 @@ class MemoryDreamStore:
                 memory_id TEXT NOT NULL,
                 action TEXT NOT NULL
                     CONSTRAINT memory_dream_snapshots_action_check
-                    CHECK (action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')),
+                    CHECK (
+                        action IN (
+                            'keep', 'delete', 'refresh', 'merge', 'supersede', 'review',
+                            'promote'
+                        )
+                    ),
                 before_data JSONB,
                 after_data JSONB,
                 applied BOOLEAN NOT NULL DEFAULT FALSE,
@@ -147,7 +152,25 @@ class MemoryDreamStore:
                         ADD CONSTRAINT memory_dream_snapshots_action_check
                         CHECK (
                             action IN (
-                                'keep', 'delete', 'refresh', 'merge', 'supersede', 'review'
+                                'keep', 'delete', 'refresh', 'merge', 'supersede', 'review',
+                                'promote'
+                            )
+                        );
+                ELSIF EXISTS (
+                    SELECT 1
+                      FROM pg_constraint
+                     WHERE conname = 'memory_dream_snapshots_action_check'
+                       AND conrelid = 'memory_dream_snapshots'::regclass
+                       AND pg_get_constraintdef(oid) NOT LIKE '%promote%'
+                ) THEN
+                    ALTER TABLE memory_dream_snapshots
+                        DROP CONSTRAINT memory_dream_snapshots_action_check;
+                    ALTER TABLE memory_dream_snapshots
+                        ADD CONSTRAINT memory_dream_snapshots_action_check
+                        CHECK (
+                            action IN (
+                                'keep', 'delete', 'refresh', 'merge', 'supersede', 'review',
+                                'promote'
                             )
                         );
                 END IF;

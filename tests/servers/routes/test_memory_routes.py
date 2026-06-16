@@ -222,10 +222,7 @@ class TestListMemories:
         response = client.get("/api/memories", params={"visibility": visibility})
         assert response.status_code == 200
         assert response.json()["total_memories"] == 7
-        assert (
-            mock_server.memory_manager.list_memories.call_args.kwargs["visibility"]
-            == visibility
-        )
+        assert mock_server.memory_manager.list_memories.call_args.kwargs["visibility"] == visibility
         mock_server.memory_manager.count_memories.assert_called_once_with(
             project_id=None, visibility=visibility
         )
@@ -370,9 +367,7 @@ class TestRestoreMemory:
 
     def test_restore_not_found(self, client, mock_server) -> None:
         """A missing memory raises ValueError in storage and surfaces as 404."""
-        mock_server.memory_manager.restore_memory.side_effect = ValueError(
-            "Memory nope not found"
-        )
+        mock_server.memory_manager.restore_memory.side_effect = ValueError("Memory nope not found")
         response = client.post("/api/memories/nope/restore")
         assert response.status_code == 404
         mock_server.memory_manager.get_memory.assert_not_called()
@@ -382,6 +377,47 @@ class TestRestoreMemory:
         mock_server.memory_manager.restore_memory.side_effect = RuntimeError("DB error")
         response = client.post("/api/memories/mm-1/restore")
         assert response.status_code == 500
+
+
+class TestPromoteMemory:
+    """Test POST /memories/{id}/promote endpoint."""
+
+    def test_promote_returns_global_memory(self, client, mock_server) -> None:
+        """POST /memories/{id}/promote moves a row to global scope and returns it."""
+        promoted = _make_memory(id="mm-promoted", project_id=None)
+        mock_server.memory_manager.rescope_memory = AsyncMock(return_value=promoted)
+
+        response = client.post("/api/memories/mm-promoted/promote")
+
+        assert response.status_code == 200
+        assert response.json()["id"] == "mm-promoted"
+        assert response.json()["project_id"] is None
+        mock_server.memory_manager.rescope_memory.assert_awaited_once_with(
+            "mm-promoted",
+            None,
+        )
+
+    def test_promote_rejects_non_global_target(self, client, mock_server) -> None:
+        """Only promote-to-global is exposed."""
+        mock_server.memory_manager.rescope_memory = AsyncMock()
+
+        response = client.post(
+            "/api/memories/mm-promoted/promote",
+            json={"target_project_id": "other-project"},
+        )
+
+        assert response.status_code == 422
+        mock_server.memory_manager.rescope_memory.assert_not_called()
+
+    def test_promote_not_found(self, client, mock_server) -> None:
+        """A missing memory raises ValueError in storage and surfaces as 404."""
+        mock_server.memory_manager.rescope_memory = AsyncMock(
+            side_effect=ValueError("Memory nope not found")
+        )
+
+        response = client.post("/api/memories/nope/promote")
+
+        assert response.status_code == 404
 
 
 # =============================================================================

@@ -76,6 +76,15 @@ class MemoryUpdateRequest(BaseModel):
     tags: list[str] | None = Field(default=None, description="New tags")
 
 
+class MemoryPromoteRequest(BaseModel):
+    """Request body for promoting a memory to global scope."""
+
+    target_project_id: str | None = Field(
+        default=None,
+        description="Reserved for future rescope support; only null/global is accepted.",
+    )
+
+
 # =============================================================================
 # Router
 # =============================================================================
@@ -570,6 +579,27 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         if memory is None:
             raise HTTPException(status_code=404, detail="Memory not found")
         return memory.to_dict()
+
+    @router.post("/{memory_id}/promote")
+    async def promote_memory(
+        memory_id: str,
+        request_data: MemoryPromoteRequest | None = None,
+    ) -> Any:
+        """Promote a project memory to global scope."""
+        request_data = request_data or MemoryPromoteRequest()
+        if request_data.target_project_id is not None:
+            raise HTTPException(
+                status_code=422,
+                detail="Only promote-to-global is supported.",
+            )
+        try:
+            memory = await server.memory_manager.rescope_memory(memory_id, None)
+            return memory.to_dict()
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except Exception as e:
+            logger.error(f"Failed to promote memory {memory_id}: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.delete("/{memory_id}")
     async def delete_memory(memory_id: str) -> dict[str, Any]:

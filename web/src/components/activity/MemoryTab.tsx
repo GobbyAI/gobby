@@ -49,6 +49,7 @@ export const MemoryTab = memo(function MemoryTab({
     updateMemory,
     deleteMemory,
     restoreMemory,
+    promoteMemoryToGlobal,
     refreshMemories,
     fetchKnowledgeGraph,
     fetchEntityNeighbors,
@@ -172,12 +173,45 @@ export const MemoryTab = memo(function MemoryTab({
     [restoreMemory],
   );
 
+  const handlePromoteToGlobal = useCallback(
+    async (memory: GobbyMemory) => {
+      if (memory.project_id === null) return;
+      setBusyId(memory.id);
+      setError(null);
+      try {
+        const promoted = await promoteMemoryToGlobal(memory.id);
+        if (promoted) {
+          setSelectedId(promoted.id);
+        } else {
+          setError("Failed to promote memory");
+        }
+      } catch (promoteError) {
+        setError(promoteError instanceof Error ? promoteError.message : "Failed to promote memory");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [promoteMemoryToGlobal],
+  );
+
   const hasDetail = Boolean(selectedMemory);
 
-  const detailActions = isMobile ? (
-    <span className="text-xs text-muted-foreground">Graph opens on desktop only.</span>
-  ) : (
-    <DetailActionButton label="Graph" onClick={handleOpenGraph} />
+  const detailActions = (
+    <>
+      {selectedMemory && selectedMemory.project_id !== null && (
+        <DetailActionButton
+          label={busyId === selectedMemory.id ? "Promoting..." : "Promote to global"}
+          variant="secondary"
+          disabled={busyId === selectedMemory.id}
+          onClick={() => void handlePromoteToGlobal(selectedMemory)}
+        />
+      )}
+      {isMobile ? (
+        <span className="text-xs text-muted-foreground">Graph opens on desktop only.</span>
+      ) : (
+        <DetailActionButton label="Graph" onClick={handleOpenGraph} />
+      )}
+    </>
   );
 
   if (viewMode === "graph") {

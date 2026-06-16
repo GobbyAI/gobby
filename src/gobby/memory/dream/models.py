@@ -9,7 +9,7 @@ from typing import Any, Literal
 CONTENT_TRUNCATE_LIMIT = 1600
 CONTENT_TRUNCATION_MARKER = "\n... [truncated]"
 
-DreamActionName = Literal["keep", "delete", "refresh", "merge", "supersede", "review"]
+DreamActionName = Literal["keep", "delete", "refresh", "merge", "supersede", "review", "promote"]
 
 
 @dataclass(frozen=True)

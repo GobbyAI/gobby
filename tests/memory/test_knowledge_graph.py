@@ -1102,6 +1102,8 @@ class TestMemoryNodeProjectIdScoping:
         cypher = mem_queries[0].args[0]
         params = mem_queries[0].args[1]
         assert "m.project_id = $project_id" in cypher
+        assert "OR m.project_id IS NULL" in cypher
+        assert "OR e.project_id IS NULL" in cypher
         assert params["project_id"] == "proj-A"
 
     @pytest.mark.asyncio
@@ -1129,12 +1131,16 @@ class TestMemoryNodeProjectIdScoping:
         neighbor_params = neighbor_call.args[1]
         assert "start.project_id = $project_id" in neighbor_cypher
         assert "neighbor.project_id = $project_id" in neighbor_cypher
+        assert "OR start.project_id IS NULL" in neighbor_cypher
+        assert "OR neighbor.project_id IS NULL" in neighbor_cypher
         assert neighbor_params["project_id"] == "proj-A"
 
         memory_call = mock_falkor.query.call_args_list[1]
         memory_cypher = memory_call.args[0]
         memory_params = memory_call.args[1]
         assert "m.project_id = $project_id" in memory_cypher
+        assert "OR m.project_id IS NULL" in memory_cypher
+        assert "OR e.project_id IS NULL" in memory_cypher
         assert memory_params["project_id"] == "proj-A"
 
 

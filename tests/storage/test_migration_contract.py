@@ -12,11 +12,25 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "gobby"
 MIGRATIONS_SOURCE = SRC_ROOT / "storage" / "migrations.py"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
-MEMORY_DREAM_STATUS_INVARIANT = (
-    "status IN ('started', 'running', 'completed', 'failed', 'reverted', 'revert_failed')"
+MEMORY_DREAM_STATUS_INVARIANTS = (
+    "'started'",
+    "'running'",
+    "'completed'",
+    "'failed'",
+    "'reverted'",
+    "'revert_failed'",
 )
-MEMORY_DREAM_ACTION_INVARIANT = (
+MEMORY_DREAM_LEGACY_ACTION_INVARIANT = (
     "action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')"
+)
+MEMORY_DREAM_PROMOTE_ACTION_INVARIANTS = (
+    "'keep'",
+    "'delete'",
+    "'refresh'",
+    "'merge'",
+    "'supersede'",
+    "'review'",
+    "'promote'",
 )
 MEMORY_DREAM_PROJECT_FK = "project_id TEXT REFERENCES projects(id) ON DELETE CASCADE"
 MEMORY_DREAM_PROJECT_COMMENT = (
@@ -115,15 +129,20 @@ def _assert_memory_dream_snapshot_run_index(label: str, content: str) -> None:
     _assert_absent_all(label, content, (MEMORY_DREAM_LEGACY_SNAPSHOT_RUN_INDEX,))
 
 
-def _assert_memory_dream_constraints(label: str, content: str) -> None:
+def _assert_memory_dream_constraints(
+    label: str, content: str, *, promote_supported: bool = False
+) -> None:
+    action_invariants: tuple[str, ...] = MEMORY_DREAM_PROMOTE_ACTION_INVARIANTS
+    if not promote_supported:
+        action_invariants = (MEMORY_DREAM_LEGACY_ACTION_INVARIANT,)
     _assert_contains_all(
         label,
         content,
         (
             "memory_dream_runs_status_check",
-            MEMORY_DREAM_STATUS_INVARIANT,
+            *MEMORY_DREAM_STATUS_INVARIANTS,
             "memory_dream_snapshots_action_check",
-            MEMORY_DREAM_ACTION_INVARIANT,
+            *action_invariants,
         ),
     )
 
@@ -189,6 +208,8 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
         "286_code_index_prune_dirty_projects.sql",
         "287_plan_enhancement_artifacts.sql",
         "288_build_profile_plan_enhancement_rounds.sql",
+        "289_memory_dream_soft_delete.sql",
+        "290_memory_dream_promote_action.sql",
     ]
 
 
@@ -491,6 +512,9 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
     migration = (
         SRC_ROOT / "storage" / "migrations" / "276_memory_dream_constraints.sql"
     ).read_text(encoding="utf-8")
+    promote_migration = (
+        SRC_ROOT / "storage" / "migrations" / "290_memory_dream_promote_action.sql"
+    ).read_text(encoding="utf-8")
     baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
     runtime_storage = (SRC_ROOT / "memory" / "dream" / "storage.py").read_text(encoding="utf-8")
 
@@ -508,9 +532,17 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
         ),
     )
     _assert_memory_dream_constraints("memory dream constraint migration", migration)
+    _assert_contains_all(
+        "memory dream promote migration",
+        promote_migration,
+        ("memory_dream_snapshots_action_check", *MEMORY_DREAM_PROMOTE_ACTION_INVARIANTS),
+    )
     _assert_memory_dream_project_scope("memory dream baseline", baseline)
     _assert_memory_dream_snapshot_run_index("memory dream baseline", baseline)
-    _assert_memory_dream_constraints("memory dream baseline", baseline)
+    _assert_memory_dream_constraints("memory dream baseline", baseline, promote_supported=True)
+    _assert_memory_dream_constraints(
+        "memory dream runtime storage", runtime_storage, promote_supported=True
+    )
     _assert_absent_all(
         "memory dream runtime storage",
         runtime_storage,

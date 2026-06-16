@@ -265,6 +265,37 @@ class TestFixNullProjectIds:
         assert graph_row["graph_processed"] in (False, 0)
 
 
+class TestRescopeMemory:
+    """Tests for changing memory scope and syncing secondary stores."""
+
+    @pytest.mark.asyncio
+    async def test_rescope_memory_updates_vector_payload_and_marks_graph_pending(
+        self,
+        mock_db,
+        memory_config,
+    ):
+        vector_store = MagicMock()
+        vector_store.set_payload = AsyncMock()
+        manager = MemoryManager(db=mock_db, config=memory_config, vector_store=vector_store)
+        updated = Memory(
+            id="mem-1",
+            memory_type="fact",
+            content="Universal",
+            created_at="2026-01-01T00:00:00+00:00",
+            updated_at="2026-01-01T00:00:00+00:00",
+            project_id=None,
+        )
+        manager.storage = MagicMock(spec=LocalMemoryManager)
+        manager.storage.rescope_memory.return_value = updated
+
+        result = await manager.rescope_memory("mem-1", None)
+
+        assert result is updated
+        manager.storage.rescope_memory.assert_called_once_with("mem-1", None)
+        vector_store.set_payload.assert_awaited_once_with("mem-1", {"project_id": None})
+        manager.storage.mark_pending_graph.assert_called_once_with("mem-1")
+
+
 # =============================================================================
 # Test: search_memories (Memory Retrieval)
 # =============================================================================
@@ -758,6 +789,7 @@ class TestLifecycleService:
             embed_fn=mock_embed,
         )
         manager._dedup_service = None
+        db.execute("INSERT INTO projects (id, name) VALUES (%s, %s)", ("proj-1", "Project 1"))
 
         memory = await manager._lifecycle_service.create_memory(
             content="Lifecycle service memory",

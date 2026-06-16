@@ -49,6 +49,16 @@ def test_update_memory(memory_manager) -> None:
     assert updated.updated_at >= created.updated_at
 
 
+def test_rescope_memory_to_global_does_not_bump_updated_at(memory_manager, db) -> None:
+    db.execute("INSERT INTO projects (id, name) VALUES ('p1', 'Project 1')")
+    created = memory_manager.create_memory(content="Universal", project_id="p1")
+
+    promoted = memory_manager.rescope_memory(created.id, None)
+
+    assert promoted.project_id is None
+    assert promoted.updated_at == created.updated_at
+
+
 def test_delete_memory(memory_manager) -> None:
     created = memory_manager.create_memory(content="To delete")
     assert memory_manager.delete_memory(created.id)

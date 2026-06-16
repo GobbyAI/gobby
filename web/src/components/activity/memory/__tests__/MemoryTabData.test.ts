@@ -7,6 +7,7 @@ import {
   filtersFromMemoryHook,
   isHiddenMemory,
   memoryDreamFlag,
+  memoryScopeLabel,
   purgeCountdownLabel,
   type MemoryTabFilters,
 } from "../MemoryTabData";
@@ -73,6 +74,13 @@ describe("isHiddenMemory / memoryDreamFlag", () => {
     ).toBe("Flagged for deletion");
     // Hidden but unknown/missing action still gets a generic label.
     expect(dreamFlagLabel(makeMemory({ deleted_at: "x", dream_action: null }))).toBe("Flagged");
+  });
+});
+
+describe("memoryScopeLabel", () => {
+  it("labels global and project-scoped rows", () => {
+    expect(memoryScopeLabel(makeMemory({ project_id: null }))).toBe("Global");
+    expect(memoryScopeLabel(makeMemory({ project_id: "proj-1" }))).toBe("Project");
   });
 });
 

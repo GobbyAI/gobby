@@ -60,7 +60,8 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
-function setupFetch(memories: MemoryRecord[]) {
+function setupFetch(initialMemories: MemoryRecord[]) {
+  let memories = [...initialMemories];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
     const method = init?.method ?? "GET";
@@ -86,6 +87,15 @@ function setupFetch(memories: MemoryRecord[]) {
     }
     if (url.endsWith("/api/memories/mem-recent") && method === "DELETE") {
       return jsonResponse({ ok: true });
+    }
+    if (url.endsWith("/promote") && method === "POST") {
+      const memoryId = url.split("/").slice(-2, -1)[0];
+      const index = memories.findIndex((memory) => memory.id === memoryId);
+      if (index === -1) return jsonResponse({ error: "not found" }, 404);
+      memories = memories.map((memory, memoryIndex) =>
+        memoryIndex === index ? { ...memory, project_id: null } : memory,
+      );
+      return jsonResponse(memories[index]);
     }
     if (url.includes("/restore") && method === "POST") {
       return jsonResponse({ ok: true });
@@ -191,6 +201,41 @@ describe("Memory activity tab", () => {
     const menu = screen.getByRole("menu", { name: "Actions for Persist panel width override" });
     expect(within(menu).getByRole("menuitem", { name: "Copy content" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  });
+
+  it("shows memory scope and promotes a project memory to global", async () => {
+    const fetchMock = setupFetch([
+      makeMemory({
+        id: "mem-recent",
+        content: "Universal review checklist",
+        project_id: "project-1",
+      }),
+    ]);
+    const user = userEvent.setup();
+
+    render(<MemoryTab projectId="project-1" />);
+
+    expect(
+      await screen.findByRole("button", { name: "Select Universal review checklist" }),
+    ).toBeInTheDocument();
+    expect(screen.getAllByText("Project").length).toBeGreaterThan(0);
+    expect(screen.getByText("Current project")).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Promote to global" }));
+
+    await waitFor(() => {
+      const promoted = fetchMock.mock.calls.some(
+        ([reqUrl, init]) =>
+          String(reqUrl).includes("/api/memories/mem-recent/promote") &&
+          (init?.method ?? "GET") === "POST",
+      );
+      expect(promoted).toBe(true);
+    });
+    await waitFor(() => {
+      expect(screen.queryByRole("button", { name: "Promote to global" })).not.toBeInTheDocument();
+    });
+    expect(screen.getAllByText("Global").length).toBeGreaterThan(0);
+    expect(screen.getByText("Available across projects")).toBeInTheDocument();
   });
 
   it("filters by visibility, badges hidden rows, and restores them", async () => {

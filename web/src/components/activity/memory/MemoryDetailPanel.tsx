@@ -15,6 +15,7 @@ import {
   isHiddenMemory,
   MEMORY_TYPE_OPTIONS,
   memoryDreamFlag,
+  memoryScopeLabel,
   normalizeMemoryTags,
   purgeCountdownLabel,
 } from "./MemoryTabData";
@@ -141,6 +142,20 @@ export function MemoryDetailPanel({
           onChange={(value) => detailDraft.setField("tags", value)}
         />
         <dl className="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 rounded-md border border-border bg-[var(--bg-secondary)] p-3 text-xs">
+          <dt className="text-muted-foreground">Scope</dt>
+          <dd className="flex min-w-0 items-center gap-2 text-foreground">
+            <span
+              className={cn(
+                "activity-chip",
+                memory.project_id === null && "activity-chip--accent",
+              )}
+            >
+              {memoryScopeLabel(memory)}
+            </span>
+            <span className="truncate">
+              {memory.project_id === null ? "Available across projects" : "Current project"}
+            </span>
+          </dd>
           <dt className="text-muted-foreground">Created</dt>
           <dd className="text-foreground">{new Date(memory.created_at).toLocaleString()}</dd>
           <dt className="text-muted-foreground">Updated</dt>

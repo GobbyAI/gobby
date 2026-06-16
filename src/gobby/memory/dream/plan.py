@@ -1,10 +1,11 @@
 """Dream plan validation.
 
-The sweep verdicts are per-memory: ``keep | delete | refresh | review``. Only an
-explicit, valid ``review`` or ``delete`` hides a memory; ``refresh`` rewrites it
-in place; ``keep`` leaves it visible. Anything malformed, omitted, unknown, or
-below the confidence threshold degrades to a visible ``keep`` carrying the
-reason, so a planner failure can never silently hide a memory.
+The sweep verdicts are per-memory: ``keep | delete | refresh | review | promote``.
+Only an explicit, valid ``review`` or ``delete`` hides a memory; ``refresh``
+rewrites it in place; ``promote`` moves a repo-scoped universal memory to global
+scope; ``keep`` leaves it visible. Anything malformed, omitted, unknown, or below
+the confidence threshold degrades to a visible ``keep`` carrying the reason, so a
+planner failure can never silently hide or rescope a memory.
 
 Legacy ``merge``/``supersede`` verdicts are no longer emitted (cross-memory
 consolidation is out of scope for the GC sweep); if a planner still returns one
@@ -19,10 +20,11 @@ from typing import Any, cast
 
 from gobby.memory.dream.models import DreamAction, DreamActionName, DreamCandidate
 
-_VALID_ACTIONS = {"keep", "delete", "refresh", "review"}
+_VALID_ACTIONS = {"keep", "delete", "refresh", "review", "promote"}
 # Verdicts that change a row and therefore must clear the confidence bar before
-# they apply. ``review`` and ``delete`` hide the memory; ``refresh`` rewrites it.
-_MUTATING_ACTIONS = {"delete", "refresh", "review"}
+# they apply. ``review`` and ``delete`` hide the memory; ``refresh`` rewrites it;
+# ``promote`` changes scope.
+_MUTATING_ACTIONS = {"delete", "refresh", "review", "promote"}
 
 
 def validate_dream_plan(
@@ -31,6 +33,7 @@ def validate_dream_plan(
     *,
     min_action_confidence: float,
     min_delete_confidence: float,
+    min_rescope_confidence: float,
 ) -> list[DreamAction]:
     """Validate raw planner output, degrading anything unsafe to visible keep."""
     candidate_ids = {candidate.id for candidate in candidates}
@@ -73,6 +76,7 @@ def validate_dream_plan(
             _confidence(item),
             min_action_confidence=min_action_confidence,
             min_delete_confidence=min_delete_confidence,
+            min_rescope_confidence=min_rescope_confidence,
         ):
             actions.extend(_keep_each(valid_refs, "confidence below mutation threshold", item))
             touched.update(valid_refs)
@@ -130,8 +134,14 @@ def _confidence_ok(
     *,
     min_action_confidence: float,
     min_delete_confidence: float,
+    min_rescope_confidence: float,
 ) -> bool:
-    threshold = min_delete_confidence if action == "delete" else min_action_confidence
+    if action == "delete":
+        threshold = min_delete_confidence
+    elif action == "promote":
+        threshold = min_rescope_confidence
+    else:
+        threshold = min_action_confidence
     return confidence >= threshold
 
 

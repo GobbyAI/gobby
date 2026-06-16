@@ -345,6 +345,7 @@ def test_plan_validation_degrades_bad_or_omitted_actions_to_keep() -> None:
         candidates,
         min_action_confidence=0.7,
         min_delete_confidence=0.85,
+        min_rescope_confidence=0.85,
     )
 
     by_id = {action.memory_id: action for action in actions if action.memory_id}
@@ -371,6 +372,7 @@ def test_plan_validation_keeps_invalid_and_missing_id_with_reasons() -> None:
         [_candidate("a")],
         min_action_confidence=0.7,
         min_delete_confidence=0.85,
+        min_rescope_confidence=0.85,
     )
 
     no_id = [action for action in actions if action.memory_id is None]
@@ -395,6 +397,7 @@ def test_plan_validation_degrades_overlapping_actions_to_keep() -> None:
         [_candidate("a"), _candidate("b")],
         min_action_confidence=0.7,
         min_delete_confidence=0.85,
+        min_rescope_confidence=0.85,
     )
 
     assert any(action.memory_id == "a" and action.action == "delete" for action in actions)
@@ -410,6 +413,26 @@ def test_plan_validation_degrades_overlapping_actions_to_keep() -> None:
         and action.reason == "candidate omitted from dream plan"
         for action in actions
     )
+
+
+def test_plan_validation_promote_uses_rescope_threshold() -> None:
+    actions = validate_dream_plan(
+        {
+            "actions": [
+                {"action": "promote", "memory_id": "low", "confidence": 0.84},
+                {"action": "promote", "memory_id": "high", "confidence": 0.9},
+            ]
+        },
+        [_candidate("low"), _candidate("high")],
+        min_action_confidence=0.7,
+        min_delete_confidence=0.85,
+        min_rescope_confidence=0.85,
+    )
+
+    by_id = {action.memory_id: action for action in actions if action.memory_id}
+    assert by_id["low"].action == "keep"
+    assert by_id["low"].reason == "confidence below mutation threshold"
+    assert by_id["high"].action == "promote"
 
 
 def test_duplicate_groups_choose_canonical_without_quadratic_index_lookup() -> None:
@@ -462,6 +485,7 @@ def test_malformed_plan_keeps_all_candidates() -> None:
         [_candidate("a"), _candidate("b")],
         min_action_confidence=0.7,
         min_delete_confidence=0.85,
+        min_rescope_confidence=0.85,
     )
 
     # A malformed plan must never hide a memory: every candidate degrades to keep.
@@ -524,6 +548,93 @@ async def test_apply_and_revert_soft_hide_refresh_and_keep() -> None:
     assert db.memories["hide-me"]["dream_action"] is None
     assert db.memories["review-me"]["deleted_at"] is None
     assert db.memories["refresh-me"]["content"] == "old"
+
+
+@pytest.mark.asyncio
+async def test_apply_and_revert_promote_rescopes_without_updated_at_bump() -> None:
+    db = _FakeDreamDB()
+    db.memories = {"promote-me": _row("promote-me", "universal")}
+    before_updated_at = db.memories["promote-me"]["updated_at"]
+    manager = _FakeMemoryManager(db)
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    summary = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[DreamAction(action="promote", memory_id="promote-me", confidence=0.9)],
+        candidates=[_candidate("promote-me")],
+        dry_run=False,
+        reconcile_after_apply=False,
+        when="2026-01-01T00:00:00+00:00",
+    )
+
+    assert summary["mutations"] == 1
+    assert db.memories["promote-me"]["project_id"] is None
+    assert db.memories["promote-me"]["updated_at"] == before_updated_at
+    assert db.memories["promote-me"]["last_dreamed_at"] == "2026-01-01T00:00:00+00:00"
+    assert {row["action"] for row in db.snapshots} == {"promote"}
+    manager.sync_memory_scope_indices.assert_any_await("promote-me", None)
+
+    result = await revert_dream_run(store=store, run_id=run_id, memory_manager=manager)
+
+    assert result["success"] is True
+    assert db.memories["promote-me"]["project_id"] == "proj-1"
+    assert db.memories["promote-me"]["updated_at"] == before_updated_at
+    manager.sync_memory_scope_indices.assert_any_await("promote-me", "proj-1")
+
+
+@pytest.mark.asyncio
+async def test_promote_already_global_stamps_cooldown_without_snapshot() -> None:
+    db = _FakeDreamDB()
+    db.memories = {"global": _row("global", "universal")}
+    db.memories["global"]["project_id"] = None
+    manager = _FakeMemoryManager(db)
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    summary = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[DreamAction(action="promote", memory_id="global", confidence=0.9)],
+        candidates=[_candidate("global")],
+        dry_run=False,
+        reconcile_after_apply=False,
+        when="2026-01-01T00:00:00+00:00",
+    )
+
+    assert summary["mutations"] == 0
+    assert db.memories["global"]["last_dreamed_at"] == "2026-01-01T00:00:00+00:00"
+    assert store.list_snapshots(run_id) == []
+    manager.rescope_memory.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_failed_promote_rolls_back_scope_and_resyncs_secondary_scope() -> None:
+    db = _FakeDreamDB()
+    db.memories = {"promote-me": _row("promote-me", "universal")}
+    manager = _FakeMemoryManager(db)
+    manager.mark_dreamed = MagicMock(side_effect=OSError("stamp failed"))
+    store = MemoryDreamStore(db)
+    run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
+
+    summary = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[DreamAction(action="promote", memory_id="promote-me", confidence=0.9)],
+        candidates=[_candidate("promote-me")],
+        dry_run=False,
+        reconcile_after_apply=False,
+    )
+
+    assert summary["errors"] == 1
+    assert summary["mutations"] == 0
+    assert db.memories["promote-me"]["project_id"] == "proj-1"
+    manager.sync_memory_scope_indices.assert_any_await("promote-me", None)
+    manager.sync_memory_scope_indices.assert_any_await("promote-me", "proj-1")
 
 
 @pytest.mark.asyncio
@@ -994,6 +1105,8 @@ class _FakeMemoryManager:
         self.delete_memory = AsyncMock(side_effect=self._delete)
         self.update_memory = AsyncMock(side_effect=self._update)
         self.create_memory = AsyncMock(side_effect=self._create)
+        self.rescope_memory = AsyncMock(side_effect=self._rescope)
+        self.sync_memory_scope_indices = AsyncMock(return_value=[])
 
     async def _delete(self, memory_id: str) -> bool:
         return self.db.memories.pop(memory_id, None) is not None
@@ -1015,6 +1128,19 @@ class _FakeMemoryManager:
         memory_id = f"created-{len(self.db.memories)}"
         self.db.memories[memory_id] = _row(memory_id, kwargs["content"])
         return SimpleNamespace(id=memory_id)
+
+    async def _rescope(self, memory_id: str, new_project_id: str | None) -> Any:
+        row = self.db.memories.get(memory_id)
+        if row is None:
+            raise ValueError(f"Memory {memory_id} not found")
+        row["project_id"] = new_project_id
+        await self.sync_memory_scope_indices(memory_id, new_project_id)
+        return SimpleNamespace(
+            id=memory_id,
+            project_id=new_project_id,
+            updated_at=row["updated_at"],
+            content=row["content"],
+        )
 
     def mark_dreamed(
         self,
@@ -1107,6 +1233,7 @@ def _sweep_config(*, page_size: int = 2, redream_after_hours: int = 20) -> Simpl
         enabled=True,
         min_action_confidence=0.7,
         min_delete_confidence=0.85,
+        min_rescope_confidence=0.85,
         reconcile_after_apply=False,
         reconcile_after_revert=False,
         page_size=page_size,
@@ -1236,7 +1363,7 @@ def test_build_current_truth_digest_bounds_length() -> None:
     assert len(digest) <= 80
 
 
-def test_dream_prompt_declares_four_actions_and_truth_digest() -> None:
+def test_dream_prompt_declares_actions_and_truth_digest() -> None:
     import gobby
 
     prompt = (Path(gobby.__file__).parent / "install/shared/prompts/memory/dream.md").read_text(
@@ -1244,7 +1371,8 @@ def test_dream_prompt_declares_four_actions_and_truth_digest() -> None:
     )
 
     assert "{{ truth_digest }}" in prompt
-    for action in ("keep", "delete", "refresh", "review"):
+    assert "{{ min_rescope_confidence }}" in prompt
+    for action in ("keep", "delete", "refresh", "review", "promote"):
         assert f"- `{action}`" in prompt
     # merge/supersede are no longer offered as verdicts.
     assert "- `merge`" not in prompt

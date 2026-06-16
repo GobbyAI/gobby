@@ -1,11 +1,12 @@
 """Apply and revert validated memory dream plans.
 
-The GC sweep verdicts are ``keep | delete | refresh | review``. ``review`` and
-``delete`` soft-hide the row via ``mark_dreamed`` (recoverable, snapshotted);
-``refresh`` rewrites content in place; ``keep`` only stamps the cooldown cursor.
-Every candidate on a page is stamped ``last_dreamed_at`` — including keeps and
-failed mutations — so the streaming sweep cursor always advances and the row
-drops out of the next page.
+The GC sweep verdicts are ``keep | delete | refresh | review | promote``.
+``review`` and ``delete`` soft-hide the row via ``mark_dreamed`` (recoverable,
+snapshotted); ``refresh`` rewrites content in place; ``promote`` moves a
+repo-scoped universal memory to global scope; ``keep`` only stamps the cooldown
+cursor. Every candidate on a page is stamped ``last_dreamed_at`` — including
+keeps and failed mutations — so the streaming sweep cursor always advances and
+the row drops out of the next page.
 
 Legacy ``merge``/``supersede`` handling is retained for old snapshots and
 hand-built action lists; the validator no longer emits them.
@@ -95,6 +96,7 @@ async def revert_dream_run(
 
     restored = 0
     deleted = 0
+    secondary_failures: list[dict[str, str]] = []
     failures: list[dict[str, Any]] = []
     snapshots = await asyncio.to_thread(store.list_snapshots, run_id)
     for snapshot in snapshots:
@@ -117,6 +119,13 @@ async def revert_dream_run(
                 continue
             if isinstance(before, dict):
                 await asyncio.to_thread(store.restore_memory_row, before)
+                if snapshot.get("action") == "promote" and memory_manager is not None:
+                    secondary_failures.extend(
+                        await memory_manager.sync_memory_scope_indices(
+                            memory_id,
+                            before.get("project_id"),
+                        )
+                    )
                 restored += 1
         except Exception as exc:
             failures.append(
@@ -133,6 +142,7 @@ async def revert_dream_run(
         summary = {
             "restored": restored,
             "deleted_created_memories": deleted,
+            "secondary_sync_failures": secondary_failures,
             "errors": len(failures),
             "error_details": failures,
         }
@@ -169,6 +179,8 @@ async def revert_dream_run(
         "restored": restored,
         "deleted_created_memories": deleted,
     }
+    if secondary_failures:
+        result["secondary_sync_failures"] = secondary_failures
     if reconcile_after_revert and memory_manager is not None and (restored or deleted):
         await _reconcile(memory_manager, result)
     return result
@@ -197,6 +209,9 @@ async def _apply_action(
     if action.action == "refresh" and action.content:
         memory_id = _required_memory_id(action)
         return await _refresh(memory_manager, store, run_id, memory_id, action, stamp)
+    if action.action == "promote":
+        memory_id = _required_memory_id(action)
+        return await _promote(memory_manager, store, run_id, memory_id, stamp)
     if action.action == "merge":
         return await _merge(memory_manager, store, run_id, action)
     if action.action == "supersede":
@@ -234,6 +249,42 @@ async def _soft_hide(
     return 1
 
 
+async def _promote(
+    memory_manager: MemoryDreamManagerProtocol,
+    store: MemoryDreamStore,
+    run_id: str,
+    memory_id: str,
+    stamp: str,
+) -> int:
+    """Snapshot and promote a repo-scoped memory to global scope."""
+    before = await asyncio.to_thread(store.get_memory_row, memory_id)
+    if before is None:
+        return 0
+    if before.get("project_id") is None:
+        await _advance_cursor(memory_manager, memory_id, stamp)
+        return 0
+
+    snapshot_id = await asyncio.to_thread(
+        store.insert_snapshot,
+        run_id=run_id,
+        memory_id=memory_id,
+        action="promote",
+        before_data=before,
+    )
+    db_mutated = False
+    try:
+        await memory_manager.rescope_memory(memory_id, None)
+        db_mutated = True
+        await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
+        after = await asyncio.to_thread(store.get_memory_row, memory_id)
+        await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
+        return 1
+    except Exception:
+        if db_mutated:
+            await _restore_promote_row(memory_manager, store, before)
+        raise
+
+
 async def _advance_cursor(
     memory_manager: MemoryDreamManagerProtocol,
     memory_id: str | None,
@@ -244,9 +295,9 @@ async def _advance_cursor(
         return
     try:
         await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
-    except ValueError:
+    except _EXPECTED_ACTION_ERRORS as exc:
         # Row vanished (e.g. concurrent delete); it drops out of the sweep naturally.
-        logger.debug("Memory dream cursor advance skipped missing memory_id=%s", memory_id)
+        logger.debug("Memory dream cursor advance skipped memory_id=%s: %s", memory_id, exc)
 
 
 async def _delete(
@@ -479,6 +530,16 @@ async def _restore_rows_for_failed_action(
             await asyncio.to_thread(store.restore_memory_row, row)
         except Exception as exc:
             logger.warning("Memory dream action rollback restore failed: %s", exc)
+
+
+async def _restore_promote_row(
+    memory_manager: MemoryDreamManagerProtocol,
+    store: MemoryDreamStore,
+    row: dict[str, Any],
+) -> None:
+    await asyncio.to_thread(store.restore_memory_row, row)
+    memory_id = str(row["id"])
+    await memory_manager.sync_memory_scope_indices(memory_id, row.get("project_id"))
 
 
 def _now() -> str:

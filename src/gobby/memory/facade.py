@@ -365,6 +365,16 @@ class MemoryManagerFacadeMethods:
     ) -> Memory:
         return await self._lifecycle_service.update_memory(memory_id, content, tags)
 
+    async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory:
+        return await self._lifecycle_service.rescope_memory(memory_id, new_project_id)
+
+    async def sync_memory_scope_indices(
+        self,
+        memory_id: str,
+        project_id: str | None,
+    ) -> list[dict[str, str]]:
+        return await self._lifecycle_service.sync_memory_scope_indices(memory_id, project_id)
+
     async def fix_null_project_ids_from_sessions(
         self,
         *,

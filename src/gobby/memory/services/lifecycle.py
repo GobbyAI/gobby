@@ -262,6 +262,32 @@ class MemoryLifecycleService:
             except Exception as e:
                 logger.warning(f"Graph delete failed for {memory_id}: {e}")
 
+    async def sync_memory_scope_indices(
+        self,
+        memory_id: str,
+        project_id: str | None,
+    ) -> list[dict[str, str]]:
+        """Best-effort secondary sync after a primary-store scope change."""
+        failures: list[dict[str, str]] = []
+        if self._vector_store:
+            try:
+                await self._vector_store.set_payload(memory_id, {"project_id": project_id})
+            except Exception as exc:
+                logger.warning("VectorStore scope sync failed for %s: %s", memory_id, exc)
+                failures.append({"memory_id": memory_id, "index": "embedding", "error": str(exc)})
+        try:
+            self.storage.mark_pending_graph(memory_id)
+        except Exception as exc:
+            logger.warning("Graph scope sync failed for %s: %s", memory_id, exc)
+            failures.append({"memory_id": memory_id, "index": "knowledge_graph", "error": str(exc)})
+        return failures
+
+    async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory:
+        """Update a memory's scope, then best-effort sync secondary stores."""
+        result = self.storage.rescope_memory(memory_id, new_project_id)
+        await self.sync_memory_scope_indices(memory_id, result.project_id)
+        return result
+
     async def update_memory(
         self,
         memory_id: str,

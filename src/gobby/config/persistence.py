@@ -320,6 +320,10 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         default=0.85,
         description="Minimum confidence required for delete actions",
     )
+    min_rescope_confidence: float = Field(
+        default=0.85,
+        description="Minimum confidence required for scope-changing dream actions",
+    )
     include_global_memories: bool = Field(
         default=True,
         description="Include global memories when a project-scoped dream runs",
@@ -365,7 +369,7 @@ class MemoryDreamConfig(FeatureDefaultConfig):
             raise ValueError("value must be greater than 0")
         return v
 
-    @field_validator("min_action_confidence", "min_delete_confidence")
+    @field_validator("min_action_confidence", "min_delete_confidence", "min_rescope_confidence")
     @classmethod
     def validate_confidence(cls, v: float) -> float:
         """Validate confidence thresholds."""

@@ -324,7 +324,11 @@ def _filter_clauses(
         if value is None or filter_name not in columns:
             continue
         placeholder_token = _add_param(hub, params, value)
-        clauses.append(f"{alias}.{columns[filter_name]} = {placeholder_token}")
+        column = columns[filter_name]
+        if config.table == "memories" and filter_name == "project_id":
+            clauses.append(f"({alias}.{column} = {placeholder_token} OR {alias}.{column} IS NULL)")
+        else:
+            clauses.append(f"{alias}.{column} = {placeholder_token}")
     return clauses
 
 

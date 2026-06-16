@@ -20,7 +20,10 @@ from qdrant_client.models import (
     FieldCondition,
     Filter,
     FilterSelector,
+    IsEmptyCondition,
+    IsNullCondition,
     MatchValue,
+    PayloadField,
     PointIdsList,
     PointStruct,
     VectorParams,
@@ -63,6 +66,21 @@ def is_recoverable_vector_store_error(error: BaseException) -> bool:
 
 
 VECTORSTORE_WARNING_INTERVAL_SECONDS = 60.0
+
+
+def memory_project_scope_filter(project_id: str | None) -> Filter | None:
+    """Return Qdrant scope filter for project recall, including global memories."""
+    if not project_id:
+        return None
+    field = PayloadField(key="project_id")
+    return Filter(
+        should=[
+            FieldCondition(key="project_id", match=MatchValue(value=project_id)),
+            FieldCondition(key="project_id", match=MatchValue(value="")),
+            IsNullCondition(is_null=field),
+            IsEmptyCondition(is_empty=field),
+        ]
+    )
 
 
 def log_rate_limited_warning(
@@ -324,7 +342,7 @@ class VectorStore:
         self,
         query_embedding: list[float],
         limit: int = 10,
-        filters: dict[str, str] | None = None,
+        filters: dict[str, str] | Filter | None = None,
         collection_name: str | None = None,
     ) -> list[tuple[str, float]]:
         """Search for similar vectors.
@@ -341,11 +359,14 @@ class VectorStore:
         client = await self._ensure_initialized()
 
         query_filter = None
-        if filters:
-            conditions = [
-                FieldCondition(key=k, match=MatchValue(value=v)) for k, v in filters.items()
-            ]
-            query_filter = Filter(must=conditions)
+        if filters is not None:
+            if isinstance(filters, Filter):
+                query_filter = filters
+            else:
+                conditions = [
+                    FieldCondition(key=k, match=MatchValue(value=v)) for k, v in filters.items()
+                ]
+                query_filter = Filter(must=conditions)
 
         try:
             results = await asyncio.to_thread(

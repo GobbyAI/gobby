@@ -834,7 +834,11 @@ CREATE TABLE memory_dream_snapshots (
     memory_id TEXT NOT NULL,
     action TEXT NOT NULL
         CONSTRAINT memory_dream_snapshots_action_check
-        CHECK (action IN ('keep', 'delete', 'refresh', 'merge', 'supersede', 'review')),
+        CHECK (
+            action IN (
+                'keep', 'delete', 'refresh', 'merge', 'supersede', 'review', 'promote'
+            )
+        ),
     before_data JSONB,
     after_data JSONB,
     applied BOOLEAN NOT NULL DEFAULT FALSE,

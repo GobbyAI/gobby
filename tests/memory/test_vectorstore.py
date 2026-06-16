@@ -18,6 +18,7 @@ from gobby.memory.vectorstore import (
     VectorStore,
     VectorStoreUnavailableError,
     is_recoverable_vector_store_error,
+    memory_project_scope_filter,
 )
 
 pytestmark = pytest.mark.unit
@@ -285,6 +286,39 @@ async def test_search_with_project_id_filter(vector_store: VectorStore) -> None:
     )
     assert len(results) == 1
     assert results[0][0] == MEM_2
+
+
+def test_memory_project_scope_filter_includes_global_and_legacy_empty_payloads() -> None:
+    scope_filter = memory_project_scope_filter("proj-A")
+
+    assert scope_filter is not None
+    dumped = scope_filter.model_dump(mode="python")
+    assert dumped["should"] == [
+        {
+            "key": "project_id",
+            "match": {"value": "proj-A"},
+            "range": None,
+            "geo_bounding_box": None,
+            "geo_radius": None,
+            "geo_polygon": None,
+            "values_count": None,
+            "is_empty": None,
+            "is_null": None,
+        },
+        {
+            "key": "project_id",
+            "match": {"value": ""},
+            "range": None,
+            "geo_bounding_box": None,
+            "geo_radius": None,
+            "geo_polygon": None,
+            "values_count": None,
+            "is_empty": None,
+            "is_null": None,
+        },
+        {"is_null": {"key": "project_id"}},
+        {"is_empty": {"key": "project_id"}},
+    ]
 
 
 @pytest.mark.asyncio

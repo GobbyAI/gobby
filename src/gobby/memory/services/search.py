@@ -10,7 +10,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.memory.scoring import temporal_decay
-from gobby.memory.vectorstore import is_recoverable_vector_store_error
+from gobby.memory.vectorstore import is_recoverable_vector_store_error, memory_project_scope_filter
 from gobby.storage.memories import LocalMemoryManager, Memory
 
 if TYPE_CHECKING:
@@ -197,9 +197,7 @@ class SearchService:
             half_life = getattr(self._config, "temporal_decay_half_life_days", 30.0)
             effective_min_score = min_score if min_score is not None else 0.0
 
-            filters: dict[str, Any] = {}
-            if project_id:
-                filters["project_id"] = project_id
+            filters = memory_project_scope_filter(project_id)
 
             use_graph = self._kg_service is not None and self._falkordb_graph_search
 
@@ -261,7 +259,7 @@ class SearchService:
         query: str,
         query_embedding: list[float],
         limit: int,
-        filters: dict[str, Any],
+        filters: Any,
         project_id: str | None,
         memory_type: str | None,
         tags_all: list[str] | None,
@@ -406,7 +404,7 @@ class SearchService:
         query: str,
         query_embedding: list[float],
         limit: int,
-        filters: dict[str, Any],
+        filters: Any,
         project_id: str | None,
         memory_type: str | None,
         tags_all: list[str] | None,

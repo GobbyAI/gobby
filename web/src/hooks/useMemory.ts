@@ -10,6 +10,14 @@ function normalizeImportance(value: unknown): number {
   return typeof value === 'number' ? value : 0.5
 }
 
+function normalizeMemory(record: Record<string, unknown>): GobbyMemory {
+  return {
+    ...record,
+    importance: normalizeImportance(record.importance),
+    tags: normalizeTags(record.tags),
+  } as GobbyMemory
+}
+
 export interface MemoryCrossRef {
   source_id: string
   target_id: string
@@ -140,11 +148,9 @@ export function useMemory(projectId?: string | null) {
       const response = await fetch(`${baseUrl}/api/memories?${params}`)
       if (response.ok) {
         const data = await response.json()
-        const items = (data.memories || []).map((m: Record<string, unknown>) => ({
-          ...m,
-          importance: normalizeImportance(m.importance),
-          tags: normalizeTags(m.tags),
-        })) as GobbyMemory[]
+        const items = (data.memories || []).map((m: Record<string, unknown>) =>
+          normalizeMemory(m),
+        )
         setMemories(items)
       }
     } catch (e) {
@@ -165,7 +171,7 @@ export function useMemory(projectId?: string | null) {
           body: JSON.stringify(params),
         })
         if (response.ok) {
-          const memory = await response.json()
+          const memory = normalizeMemory(await response.json())
           // Refresh list after creation
           await fetchMemories()
           return memory
@@ -189,7 +195,7 @@ export function useMemory(projectId?: string | null) {
           body: JSON.stringify(params),
         })
         if (response.ok) {
-          const memory = await response.json()
+          const memory = normalizeMemory(await response.json())
           await fetchMemories()
           return memory
         }
@@ -246,6 +252,26 @@ export function useMemory(projectId?: string | null) {
       }
       await fetchMemories()
       return false
+    },
+    [fetchMemories]
+  )
+
+  const promoteMemoryToGlobal = useCallback(
+    async (memoryId: string): Promise<GobbyMemory | null> => {
+      try {
+        const baseUrl = getBaseUrl()
+        const response = await fetch(`${baseUrl}/api/memories/${memoryId}/promote`, {
+          method: 'POST',
+        })
+        if (response.ok) {
+          const memory = normalizeMemory(await response.json())
+          await fetchMemories()
+          return memory
+        }
+      } catch (e) {
+        console.error('Failed to promote memory:', e)
+      }
+      return null
     },
     [fetchMemories]
   )
@@ -359,11 +385,9 @@ export function useMemory(projectId?: string | null) {
       if (response.ok) {
         const data = await response.json()
         return {
-          memories: (data.memories || []).map((m: Record<string, unknown>) => ({
-            ...m,
-            importance: normalizeImportance(m.importance),
-            tags: normalizeTags(m.tags),
-          })) as GobbyMemory[],
+          memories: (data.memories || []).map((m: Record<string, unknown>) =>
+            normalizeMemory(m),
+          ),
           crossrefs: data.crossrefs || [],
         }
       }
@@ -384,6 +408,7 @@ export function useMemory(projectId?: string | null) {
     updateMemory,
     deleteMemory,
     restoreMemory,
+    promoteMemoryToGlobal,
     searchMemories,
     refreshMemories,
     fetchGraphData,

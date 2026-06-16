@@ -164,22 +164,23 @@ class TestVectorSearch:
     async def test_vector_search_filters_project_after_overfetch(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        """Project filtering happens after overfetch so one wrong-project hit does not starve results."""
+        """Project filtering keeps exact-project and global hits after overfetch."""
         client = _client(monkeypatch)
         client.query.return_value = [
             {"entity_key": "other", "project_id": "proj-2", "score": 0.99},
+            {"entity_key": "global", "project_id": None, "score": 0.97},
             {"entity_key": "wanted-1", "project_id": "proj-1", "score": 0.95},
             {"entity_key": "wanted-2", "project_id": "proj-1", "score": 0.91},
         ]
 
         results = await client.vector_search(
             query_embedding=[0.1, 0.2, 0.3],
-            limit=1,
+            limit=2,
             min_score=0.5,
             project_id="proj-1",
         )
 
-        assert [row["entity_key"] for row in results] == ["wanted-1"]
+        assert [row["entity_key"] for row in results] == ["global", "wanted-1"]
 
     async def test_vector_search_returns_empty_for_non_positive_limit(
         self, monkeypatch: pytest.MonkeyPatch

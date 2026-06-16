@@ -135,6 +135,7 @@ class TestMemoryDreamConfig:
         assert config.purge_delete_after_days == 30
         assert config.purge_review_after_days == 90
         assert config.run_retention_days == 30
+        assert config.min_rescope_confidence == 0.85
 
     @pytest.mark.parametrize(
         "field",

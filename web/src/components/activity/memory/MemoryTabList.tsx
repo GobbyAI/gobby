@@ -2,7 +2,13 @@ import type { GobbyMemory } from "../../../hooks/useMemory";
 import { cn } from "../../../lib/utils";
 import { formatRelativeTime } from "../../../utils/formatTime";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
-import { dreamFlagLabel, isHiddenMemory, memoryDreamFlag, memoryTypeLabel } from "./MemoryTabData";
+import {
+  dreamFlagLabel,
+  isHiddenMemory,
+  memoryDreamFlag,
+  memoryScopeLabel,
+  memoryTypeLabel,
+} from "./MemoryTabData";
 
 interface MemoryTabListProps {
   memories: GobbyMemory[];
@@ -160,6 +166,14 @@ export function MemoryTabList({
             >
               <span className="activity-chip">
                 {memoryTypeLabel(memory.memory_type)}
+              </span>
+              <span
+                className={cn(
+                  "activity-chip",
+                  memory.project_id === null && "activity-chip--accent",
+                )}
+              >
+                {memoryScopeLabel(memory)}
               </span>
               {hidden && <DreamFlagBadge memory={memory} />}
               <span className="activity-row-title">{previewContent(memory.content)}</span>

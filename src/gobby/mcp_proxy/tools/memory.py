@@ -394,6 +394,41 @@ def create_memory_registry(
             return {"success": False, "error": str(e)}
 
     @registry.tool(
+        name="promote_memory_to_global",
+        description="Promote a project-scoped memory to global memory scope.",
+    )
+    async def promote_memory_to_global(
+        memory_id: str,
+        target_project_id: str | None = None,
+    ) -> dict[str, Any]:
+        """
+        Promote a memory to global scope.
+
+        Args:
+            memory_id: The ID of the memory to promote
+            target_project_id: Reserved for future rescope support; must be null
+        """
+        if target_project_id is not None:
+            return {
+                "success": False,
+                "error": "Only promote-to-global is supported.",
+            }
+        try:
+            memory = await memory_manager.rescope_memory(memory_id, None)
+            return {
+                "success": True,
+                "memory": {
+                    "id": memory.id,
+                    "project_id": memory.project_id,
+                    "updated_at": memory.updated_at,
+                },
+            }
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
         name="list_memories",
         description="List all memories with optional filtering. Supports tag-based filtering.",
     )

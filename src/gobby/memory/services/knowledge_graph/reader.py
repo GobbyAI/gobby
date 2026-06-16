@@ -138,9 +138,9 @@ class KnowledgeGraphReader:
                         "UNWIND $entity_keys AS entity_key "
                         "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
                         "WHERE (e.project_id = $project_id "
-                        "OR ($project_id IS NULL AND e.project_id IS NULL)) "
+                        "OR e.project_id IS NULL) "
                         "AND (m.project_id = $project_id "
-                        "OR ($project_id IS NULL AND m.project_id IS NULL)) "
+                        "OR m.project_id IS NULL) "
                         "RETURN entity_key, m.memory_id AS memory_id "
                         "ORDER BY m.updated_at DESC LIMIT $memory_link_limit",
                         {
@@ -264,9 +264,9 @@ class KnowledgeGraphReader:
                 rows = await self._falkor.query(
                     "MATCH (start:_Entity {entity_key: $entity_key})-[r]-(neighbor:_Entity) "
                     "WHERE (start.project_id = $project_id "
-                    "OR ($project_id IS NULL AND start.project_id IS NULL)) "
+                    "OR start.project_id IS NULL) "
                     "AND (neighbor.project_id = $project_id "
-                    "OR ($project_id IS NULL AND neighbor.project_id IS NULL)) "
+                    "OR neighbor.project_id IS NULL) "
                     "AND NOT (type(r) IN $excluded_relationship_types) "
                     "RETURN neighbor.entity_key AS related_entity_key, "
                     "coalesce(r.weight, 1.0) AS edge_weight, r.updated_at AS updated_at "
@@ -321,7 +321,7 @@ class KnowledgeGraphReader:
         rows = await self._falkor.query(
             "MATCH (e:_Entity) "
             "WHERE (e.project_id = $project_id "
-            "OR ($project_id IS NULL AND e.project_id IS NULL)) "
+            "OR e.project_id IS NULL) "
             "RETURN e.entity_key AS entity_key, e.name AS name, e.embedding AS embedding "
             "ORDER BY e.entity_key",
             {"project_id": project_id},
@@ -361,11 +361,11 @@ class KnowledgeGraphReader:
                 "UNWIND $source_keys AS source_key "
                 "MATCH (source:_Entity {entity_key: source_key}) "
                 "WHERE (source.project_id = $project_id "
-                "OR ($project_id IS NULL AND source.project_id IS NULL)) "
+                "OR source.project_id IS NULL) "
                 "AND source.cluster_id IS NOT NULL AND source.cluster_id >= 0 "
                 "MATCH (candidate:_Entity {cluster_id: source.cluster_id}) "
                 "WHERE (candidate.project_id = $project_id "
-                "OR ($project_id IS NULL AND candidate.project_id IS NULL)) "
+                "OR candidate.project_id IS NULL) "
                 "AND candidate.cluster_id IS NOT NULL AND candidate.cluster_id >= 0 "
                 "AND NOT (candidate.entity_key IN $excluded_keys) "
                 "RETURN DISTINCT candidate.entity_key AS entity_key, "
@@ -442,9 +442,9 @@ class KnowledgeGraphReader:
                 "MATCH (e:_Entity {entity_key: entity_key})"
                 "-[:MENTIONED_IN]->(m:Memory) "
                 "WHERE (e.project_id = $project_id "
-                "OR ($project_id IS NULL AND e.project_id IS NULL)) "
+                "OR e.project_id IS NULL) "
                 "AND (m.project_id = $project_id "
-                "OR ($project_id IS NULL AND m.project_id IS NULL)) "
+                "OR m.project_id IS NULL) "
                 "RETURN DISTINCT m.memory_id AS memory_id, m.updated_at AS updated_at "
                 "ORDER BY updated_at DESC LIMIT $limit",
                 {"entity_keys": memory_entity_keys, "limit": limit, "project_id": project_id},
@@ -559,9 +559,9 @@ class KnowledgeGraphReader:
                 "UNWIND $entity_keys AS entity_key "
                 "MATCH (e:_Entity {entity_key: entity_key})-[:MENTIONED_IN]->(m:Memory) "
                 "WHERE (e.project_id = $project_id "
-                "OR ($project_id IS NULL AND e.project_id IS NULL)) "
+                "OR e.project_id IS NULL) "
                 "AND (m.project_id = $project_id "
-                "OR ($project_id IS NULL AND m.project_id IS NULL)) "
+                "OR m.project_id IS NULL) "
                 "RETURN e.entity_key AS entity_key, "
                 "collect(DISTINCT m.memory_id) AS memory_ids",
                 {"entity_keys": entity_keys, "project_id": project_id},

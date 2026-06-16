@@ -385,6 +385,7 @@ class TestTaskSearchBackend:
 
         assert [(hit.id, hit.score) for hit in results] == [("mem-a", 1.0)]
         assert "deleted_at IS NULL" in db.sql
+        assert "(memories.project_id = %s OR memories.project_id IS NULL)" in db.sql
         # The active clause carries no bound parameter: two search-column terms, the
         # project_id filter, then the limit.
         assert db.params == ("alpha", "alpha", "proj-1", 5)

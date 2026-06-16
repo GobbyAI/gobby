@@ -79,6 +79,7 @@ def mock_memory_manager():
     manager.get_memory = MagicMock(return_value=MockMemory())
     manager.get_related = AsyncMock(return_value=[MockMemory()])
     manager.update_memory = AsyncMock(return_value=MockMemory())
+    manager.rescope_memory = AsyncMock(return_value=MockMemory(project_id=None))
     manager.get_stats = MagicMock(return_value={"total": 10, "by_type": {"fact": 5}})
     manager.db = MagicMock()
     manager.content_exists = MagicMock(return_value=False)
@@ -549,6 +550,49 @@ class TestRestoreMemory:
         assert "Restore error" in result["error"]
 
 
+class TestPromoteMemoryToGlobal:
+    """Tests for promote_memory_to_global tool."""
+
+    @pytest.mark.asyncio
+    async def test_promote_memory_to_global_success(
+        self,
+        memory_registry,
+        mock_memory_manager,
+    ):
+        promoted = MockMemory(id="mem-123", project_id=None)
+        mock_memory_manager.rescope_memory.return_value = promoted
+
+        result = await memory_registry.call(
+            "promote_memory_to_global",
+            {"memory_id": "mem-123"},
+        )
+
+        assert result == {
+            "success": True,
+            "memory": {
+                "id": "mem-123",
+                "project_id": None,
+                "updated_at": promoted.updated_at,
+            },
+        }
+        mock_memory_manager.rescope_memory.assert_awaited_once_with("mem-123", None)
+
+    @pytest.mark.asyncio
+    async def test_promote_memory_to_global_rejects_non_global_target(
+        self,
+        memory_registry,
+        mock_memory_manager,
+    ):
+        result = await memory_registry.call(
+            "promote_memory_to_global",
+            {"memory_id": "mem-123", "target_project_id": "proj-2"},
+        )
+
+        assert result["success"] is False
+        assert "Only promote-to-global" in result["error"]
+        mock_memory_manager.rescope_memory.assert_not_awaited()
+
+
 class TestListMemories:
     """Tests for list_memories tool."""
 
@@ -824,6 +868,7 @@ class TestRegistryCreation:
             "search_memories",
             "delete_memory",
             "restore_memory",
+            "promote_memory_to_global",
             "list_memories",
             "get_memory",
             "get_related_memories",
