@@ -274,20 +274,27 @@ fn collapse_rust_impl_symbols(symbols: &mut Vec<Symbol>) {
         .map(|symbol| {
             (
                 (symbol.file_path.clone(), symbol.name.clone()),
-                (symbol.id.clone(), symbol.name.clone()),
+                symbol.id.clone(),
             )
         })
         .collect::<HashMap<_, _>>();
 
+    // impl symbol id -> (implemented type name, canonical type id in the same file).
+    // The type name always comes from the impl block, so methods keep their
+    // `Type::method` qualified name even when the type is defined in another file
+    // (cross-file impl); only the parent link is dropped in that case.
     let impl_parent_map = symbols
         .iter()
         .filter(|symbol| is_rust_impl_symbol(symbol))
         .map(|symbol| {
             (
                 symbol.id.clone(),
-                canonical_types
-                    .get(&(symbol.file_path.clone(), symbol.name.clone()))
-                    .cloned(),
+                (
+                    symbol.name.clone(),
+                    canonical_types
+                        .get(&(symbol.file_path.clone(), symbol.name.clone()))
+                        .cloned(),
+                ),
             )
         })
         .collect::<HashMap<_, _>>();
@@ -300,16 +307,11 @@ fn collapse_rust_impl_symbols(symbols: &mut Vec<Symbol>) {
         let Some(parent_id) = symbol.parent_symbol_id.as_deref() else {
             continue;
         };
-        let Some(canonical_parent) = impl_parent_map.get(parent_id) else {
+        let Some((type_name, canonical_id)) = impl_parent_map.get(parent_id) else {
             continue;
         };
-        if let Some((canonical_id, canonical_name)) = canonical_parent {
-            symbol.parent_symbol_id = Some(canonical_id.clone());
-            symbol.qualified_name = format!("{canonical_name}::{}", symbol.name);
-        } else {
-            symbol.parent_symbol_id = None;
-            symbol.qualified_name = symbol.name.clone();
-        }
+        symbol.qualified_name = format!("{type_name}::{}", symbol.name);
+        symbol.parent_symbol_id = canonical_id.clone();
     }
 
     symbols.retain(|symbol| !is_rust_impl_symbol(symbol));

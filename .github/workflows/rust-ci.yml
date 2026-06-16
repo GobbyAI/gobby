@@ -202,7 +202,7 @@ jobs:
         env:
           GOBBY_HOME: ${{ runner.temp }}/gcode-graph-home
         run: |
-          cargo run -p gobby-code --no-default-features -- setup \
+          cargo run -p gobby-code -- setup \
             --standalone \
             --database-url "$GCODE_GRAPH_STANDALONE_DATABASE_URL" \
             --no-services \
@@ -211,8 +211,8 @@ jobs:
             --falkordb-password "$GCODE_GRAPH_STANDALONE_FALKOR_PASSWORD" \
             --quiet
 
-      - name: Test graph_standalone (gcode, no embeddings)
-        run: cargo nextest run --profile ci -p gobby-code --no-default-features --test graph_standalone
+      - name: Test graph_standalone (gcode)
+        run: cargo nextest run --profile ci -p gobby-code --test graph_standalone
 
   coverage:
     name: Coverage (report only)

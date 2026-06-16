@@ -448,6 +448,44 @@ name = "app"
 }
 
 #[test]
+fn rust_impl_without_local_type_keeps_qualified_method_names() {
+    // Cross-file impl: the `impl Widget` block is parsed in a file that does not
+    // define `Widget` (the type lives in another module/file). The block must still
+    // collapse so no duplicate `Widget` type symbol survives to break unique-or-skip
+    // resolution, and its methods keep the `Widget::` qualifier even though the parent
+    // link cannot be resolved at single-file parse time.
+    let parsed = parse_rust(
+        r#"
+impl Widget {
+    fn render(&self) {}
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+
+    assert!(
+        parsed.symbols.iter().all(|symbol| {
+            !(symbol.name == "Widget" && (symbol.kind == "class" || symbol.kind == "type"))
+        }),
+        "orphan impl block must not leave a Widget type symbol: {:?}",
+        parsed.symbols
+    );
+
+    let render = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "render" && symbol.kind == "method")
+        .expect("missing render method");
+    assert_eq!(render.qualified_name, "Widget::render");
+    assert_eq!(render.parent_symbol_id, None);
+}
+
+#[test]
 fn classifies_rust_workspace_member_dependencies() {
     let parsed = parse_rust(
         r#"

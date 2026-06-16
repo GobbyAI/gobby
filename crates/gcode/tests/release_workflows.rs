@@ -299,10 +299,10 @@ fn ci_workflow_runs_gcode_graph_standalone_with_backends() {
     ));
     assert!(workflow.contains("docker run --detach \\"));
     assert!(workflow.contains("SELECT 1 FROM pg_extension WHERE extname='pg_search'"));
-    assert!(workflow.contains("cargo run -p gobby-code --no-default-features -- setup \\"));
-    assert!(workflow.contains(
-        "cargo nextest run --profile ci -p gobby-code --no-default-features --test graph_standalone"
-    ));
+    assert!(workflow.contains("cargo run -p gobby-code -- setup \\"));
+    assert!(
+        workflow.contains("cargo nextest run --profile ci -p gobby-code --test graph_standalone")
+    );
 }
 
 #[test]
