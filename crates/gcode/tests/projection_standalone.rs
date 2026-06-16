@@ -1,15 +1,12 @@
 mod common;
 
+use common::http::spawn_http_responses;
 use common::{ProjectCleanup, cleanup_project};
 use gobby_core::config::embedding_keys;
 use postgres::{Client, NoTls};
 use serde_json::{Value, json};
 use std::fs;
-use std::io::{Read, Write};
-use std::net::{TcpListener, TcpStream};
 use std::process::{Command, Output};
-use std::thread;
-use std::time::{Duration, Instant};
 
 const TEST_PROJECT_ID: &str = "projection-standalone-project";
 const TEST_FILE: &str = "src/lib.rs";
@@ -170,8 +167,14 @@ fn graph_and_vector_lifecycle_commands_run_without_daemon() {
     assert_eq!(vector_cleanup["orphan_files_deleted"], 1);
     assert_eq!(vector_cleanup["vectors_deleted"], 1);
 
-    let embedding_requests = embedding_handle.join().expect("embedding requests");
-    let qdrant_requests = qdrant_handle.join().expect("qdrant requests");
+    let embedding_requests = embedding_handle
+        .join()
+        .expect("embedding requests")
+        .expect("embedding server");
+    let qdrant_requests = qdrant_handle
+        .join()
+        .expect("qdrant requests")
+        .expect("qdrant server");
     assert_eq!(embedding_requests.len(), 4);
     assert!(qdrant_requests.iter().any(|request| {
         request.contains("PUT /collections/code_symbols_projection-standalone-project HTTP/1.1")
@@ -298,103 +301,4 @@ fn seed_project(conn: &mut Client) {
              'callee', 'symbol', '', 'src/lib.rs', 1);",
     )
     .expect("seed projection rows");
-}
-
-fn spawn_http_responses(responses: Vec<(u16, Value)>) -> (String, thread::JoinHandle<Vec<String>>) {
-    let listener = TcpListener::bind("127.0.0.1:0").expect("bind test server");
-    listener
-        .set_nonblocking(true)
-        .expect("set test server nonblocking");
-    let addr = listener.local_addr().expect("local addr");
-    let handle = thread::spawn(move || {
-        let mut requests = Vec::new();
-        for (status, body) in responses {
-            let mut stream =
-                accept_with_timeout(&listener, Duration::from_secs(5)).expect("accept request");
-            requests.push(read_http_request(&mut stream));
-
-            let body = body.to_string();
-            write!(
-                stream,
-                "HTTP/1.1 {status} OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
-                body.len()
-            )
-            .expect("write response");
-        }
-        requests
-    });
-
-    (format!("http://{addr}"), handle)
-}
-
-fn accept_with_timeout(listener: &TcpListener, timeout: Duration) -> std::io::Result<TcpStream> {
-    let deadline = Instant::now() + timeout;
-    loop {
-        match listener.accept() {
-            Ok((stream, _)) => return Ok(stream),
-            Err(err) if err.kind() == std::io::ErrorKind::WouldBlock => {
-                if Instant::now() >= deadline {
-                    return Err(std::io::Error::new(
-                        std::io::ErrorKind::TimedOut,
-                        "timed out waiting for test HTTP request",
-                    ));
-                }
-                thread::sleep(Duration::from_millis(10));
-            }
-            Err(err) => return Err(err),
-        }
-    }
-}
-
-fn read_http_request(stream: &mut TcpStream) -> String {
-    stream
-        .set_read_timeout(Some(Duration::from_secs(2)))
-        .expect("set read timeout");
-    // Stop at Content-Length when present; otherwise the read timeout ends
-    // keep-alive or bodyless test requests without hanging the server thread.
-    let mut request = Vec::new();
-    let mut buffer = [0; 4096];
-    let mut expected_len = None;
-
-    loop {
-        let n = match stream.read(&mut buffer) {
-            Ok(n) => n,
-            Err(err)
-                if matches!(
-                    err.kind(),
-                    std::io::ErrorKind::WouldBlock | std::io::ErrorKind::TimedOut
-                ) =>
-            {
-                break;
-            }
-            Err(err) => panic!("read request: {err}"),
-        };
-        if n == 0 {
-            break;
-        }
-        request.extend_from_slice(&buffer[..n]);
-
-        if expected_len.is_none()
-            && let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n")
-        {
-            let headers = String::from_utf8_lossy(&request[..header_end]);
-            let content_len = headers
-                .lines()
-                .find_map(|line| {
-                    line.to_ascii_lowercase()
-                        .strip_prefix("content-length: ")
-                        .and_then(|value| value.parse::<usize>().ok())
-                })
-                .unwrap_or(0);
-            expected_len = Some(header_end + 4 + content_len);
-        }
-
-        if let Some(expected_len) = expected_len
-            && request.len() >= expected_len
-        {
-            break;
-        }
-    }
-
-    String::from_utf8_lossy(&request).into_owned()
 }

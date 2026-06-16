@@ -25,7 +25,10 @@ fn discovers_ast_and_content_only_text_files() {
     // discover_files omits api_key.txt via the security module
     // (SECRET_SUBSTRINGS matches "api_key"), image.bin via binary
     // detection, and target/* via the explicit excludes vector.
-    assert_eq!(rels(root, ast), vec!["src/lib.rs", "src/module.mjs"]);
+    assert_eq!(
+        rels(root, ast),
+        vec!["scripts/setup.sh", "src/lib.rs", "src/module.mjs"]
+    );
     assert_eq!(
         rels(root, content_only),
         vec![
@@ -36,7 +39,6 @@ fn discovers_ast_and_content_only_text_files() {
             "docs/guide.rst",
             "docs/reference.markdown",
             "notes.txt",
-            "scripts/setup.sh",
             "skills/gcode/SKILL.md"
         ]
     );

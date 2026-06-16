@@ -1,4 +1,8 @@
+#![allow(dead_code)]
+
 use postgres::Client;
+
+pub mod http;
 
 pub struct ProjectCleanup {
     database_url: String,
