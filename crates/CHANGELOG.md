@@ -153,6 +153,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   resolution, and a positional `compile` TOPIC no longer hijacks scope
   selection.
 
+## [0.6.0] — ghook
+
+### Added
+
+#### ghook
+
+- **Grok Build support** — `--cli=grok` now maps to source `grok`, preserves
+  Grok's snake_case hook names, treats `session_start`, `session_end`,
+  `pre_compact`, and `stop` as critical hooks, and hard-blocks Grok `stop`
+  responses with exit code 2.
+
 ## [0.5.0] — ghook
 
 ### Added
