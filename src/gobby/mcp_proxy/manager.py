@@ -72,6 +72,7 @@ class MCPClientManager:
         connection_timeout: float = 30.0,
         max_connection_retries: int = 3,
         metrics_manager: Any | None = None,
+        stdio_errlog_path: str | None = None,
     ):
         self._connections: dict[str, BaseTransportConnection] = {}
         self._configs: dict[str, MCPServerConfig] = {}
@@ -91,6 +92,7 @@ class MCPClientManager:
         self.preconnect_servers = set(preconnect_servers or [])
         self.connection_timeout = connection_timeout
         self.max_connection_retries = max_connection_retries
+        self.stdio_errlog_path = stdio_errlog_path
         self._lazy_connector = LazyServerConnector(
             retry_config=RetryConfig(max_retries=max_connection_retries),
         )
@@ -181,10 +183,22 @@ class MCPClientManager:
         return secrets.resolve_secrets_in_config(self, config, logger)
 
     async def _connect_server(self, config: MCPServerConfig) -> ClientSession | None:
+        def create_connection(
+            resolved_config: MCPServerConfig,
+            auth_token: str | None,
+            token_refresh_callback: Callable[[], Coroutine[Any, Any, str]] | None,
+        ) -> BaseTransportConnection:
+            return create_transport_connection(
+                resolved_config,
+                auth_token,
+                token_refresh_callback,
+                stdio_errlog_path=self.stdio_errlog_path,
+            )
+
         return await connections.connect_server(
             self,
             config,
-            create_transport_connection,
+            create_connection,
         )
 
     async def disconnect_all(self) -> None:

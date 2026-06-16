@@ -4,8 +4,10 @@ import asyncio
 import logging
 import os
 import re
+import sys
 from collections.abc import Callable, Coroutine
-from typing import TYPE_CHECKING, Any
+from pathlib import Path
+from typing import TYPE_CHECKING, Any, TextIO
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -89,13 +91,31 @@ class StdioTransportConnection(BaseTransportConnection):
         config: "MCPServerConfig",
         auth_token: str | None = None,
         token_refresh_callback: Callable[[], Coroutine[Any, Any, str]] | None = None,
+        stdio_errlog_path: str | None = None,
     ) -> None:
         """Initialize stdio transport connection."""
         super().__init__(config, auth_token, token_refresh_callback)
+        self._stdio_errlog_path = stdio_errlog_path
+        self._stdio_errlog_handle: TextIO | None = None
         self._session_context: ClientSession | None = None
         # Explicitly initialize transport context (inherited from base class, but
         # ensures the attribute exists with proper type annotation for this transport)
         self._transport_context: Any | None = None
+
+    def _open_stdio_errlog(self) -> TextIO:
+        if self._stdio_errlog_path is None:
+            return sys.stderr
+
+        errlog_path = Path(self._stdio_errlog_path).expanduser()
+        errlog_path.parent.mkdir(parents=True, exist_ok=True)
+        self._stdio_errlog_handle = errlog_path.open("a", encoding="utf-8")
+        return self._stdio_errlog_handle
+
+    def _close_stdio_errlog(self) -> None:
+        errlog_handle = self._stdio_errlog_handle
+        self._stdio_errlog_handle = None
+        if errlog_handle is not None:
+            errlog_handle.close()
 
     async def connect(self) -> Any:
         """Connect via stdio transport."""
@@ -125,7 +145,8 @@ class StdioTransportConnection(BaseTransportConnection):
             )
 
             # Create stdio client context
-            self._transport_context = stdio_client(params)
+            errlog = self._open_stdio_errlog()
+            self._transport_context = stdio_client(params, errlog=errlog)
 
             # Enter the transport context to get streams
             read_stream, write_stream = await self._transport_context.__aenter__()
@@ -172,6 +193,7 @@ class StdioTransportConnection(BaseTransportConnection):
             self._session = None
             self._session_context = None
             self._transport_context = None
+            self._close_stdio_errlog()
             self._state = ConnectionState.FAILED
 
             # Re-raise wrapped in MCPError (don't double-wrap)
@@ -211,4 +233,5 @@ class StdioTransportConnection(BaseTransportConnection):
                 logger.warning(f"Error closing transport for {self.config.name}: {e}")
             self._transport_context = None
 
+        self._close_stdio_errlog()
         self._state = ConnectionState.DISCONNECTED

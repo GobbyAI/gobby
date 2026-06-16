@@ -8,6 +8,8 @@ expansion helpers are tested against real os.environ.
 from __future__ import annotations
 
 import os
+import sys
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -304,6 +306,65 @@ class TestStdioConnectSuccess:
     @pytest.mark.asyncio
     @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
     @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
+    async def test_connect_uses_configured_errlog_path(
+        self,
+        mock_stdio_client: MagicMock,
+        mock_client_session_cls: MagicMock,
+        config: MCPServerConfig,
+        tmp_path: Path,
+    ) -> None:
+        errlog_path = tmp_path / "mcp-client.log"
+        connection = StdioTransportConnection(config, stdio_errlog_path=str(errlog_path))
+
+        mock_transport_ctx = AsyncMock()
+        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_stdio_client.return_value = mock_transport_ctx
+
+        mock_session = _mock_session()
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session_cls.return_value = mock_session_ctx
+
+        await connection.connect()
+
+        errlog = mock_stdio_client.call_args.kwargs["errlog"]
+        assert errlog.name == str(errlog_path)
+        assert errlog.closed is False
+
+        await connection.disconnect()
+
+        assert errlog.closed is True
+        assert connection._stdio_errlog_handle is None
+
+    @pytest.mark.asyncio
+    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
+    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
+    async def test_connect_uses_sys_stderr_without_errlog_path(
+        self,
+        mock_stdio_client: MagicMock,
+        mock_client_session_cls: MagicMock,
+        conn: StdioTransportConnection,
+    ) -> None:
+        mock_transport_ctx = AsyncMock()
+        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_stdio_client.return_value = mock_transport_ctx
+
+        mock_session = _mock_session()
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_client_session_cls.return_value = mock_session_ctx
+
+        result = await conn.connect()
+
+        assert result is mock_session
+        assert mock_stdio_client.call_args.kwargs["errlog"] is sys.stderr
+        assert conn.state == ConnectionState.CONNECTED
+        assert conn._stdio_errlog_handle is None
+        mock_client_session_cls.assert_called_once()
+
+    @pytest.mark.asyncio
+    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
+    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
     async def test_connect_creates_stdio_server_parameters(
         self,
         mock_stdio_client: MagicMock,
@@ -405,6 +466,30 @@ class TestStdioConnectTransportFailure:
         assert conn.state == ConnectionState.FAILED
         assert conn._session is None
         assert conn._transport_context is None
+
+    @pytest.mark.asyncio
+    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
+    async def test_transport_aenter_failure_closes_errlog(
+        self,
+        mock_stdio_client: MagicMock,
+        config: MCPServerConfig,
+        tmp_path: Path,
+    ) -> None:
+        connection = StdioTransportConnection(
+            config,
+            stdio_errlog_path=str(tmp_path / "mcp-client.log"),
+        )
+
+        mock_transport_ctx = AsyncMock()
+        mock_transport_ctx.__aenter__ = AsyncMock(side_effect=RuntimeError("boom"))
+        mock_stdio_client.return_value = mock_transport_ctx
+
+        with pytest.raises(MCPError, match="Stdio connection failed: boom"):
+            await connection.connect()
+
+        errlog = mock_stdio_client.call_args.kwargs["errlog"]
+        assert errlog.closed is True
+        assert connection._stdio_errlog_handle is None
 
 
 # ===========================================================================

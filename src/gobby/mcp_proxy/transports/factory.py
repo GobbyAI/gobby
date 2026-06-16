@@ -14,6 +14,7 @@ def create_transport_connection(
     config: MCPServerConfig,
     auth_token: str | None = None,
     token_refresh_callback: Callable[[], Coroutine[Any, Any, str]] | None = None,
+    stdio_errlog_path: str | None = None,
 ) -> BaseTransportConnection:
     """
     Factory function to create appropriate transport connection.
@@ -22,6 +23,7 @@ def create_transport_connection(
         config: Server configuration
         auth_token: Optional auth token
         token_refresh_callback: Optional token refresh callback
+        stdio_errlog_path: Optional stderr log path for stdio child processes
 
     Returns:
         Transport-specific connection instance
@@ -39,6 +41,14 @@ def create_transport_connection(
     if not transport_class:
         raise ValueError(
             f"Unsupported transport: {config.transport}. Supported: {list(transport_map.keys())}"
+        )
+
+    if transport_class is StdioTransportConnection:
+        return StdioTransportConnection(
+            config,
+            auth_token,
+            token_refresh_callback,
+            stdio_errlog_path=stdio_errlog_path,
         )
 
     return transport_class(config, auth_token, token_refresh_callback)

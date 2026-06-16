@@ -1,7 +1,7 @@
 """Tests for the MCP Client Manager."""
 
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -240,10 +240,11 @@ class TestCreateTransportConnection:
             url="http://localhost:8080/mcp",
         )
 
-        connection = _create_transport_connection(config)
+        connection = _create_transport_connection(config, stdio_errlog_path="/tmp/mcp-client.log")
 
         assert connection.config == config
         assert connection.state == ConnectionState.DISCONNECTED
+        assert not hasattr(connection, "_stdio_errlog_path")
 
     def test_create_stdio_connection(self) -> None:
         """Test creating stdio transport connection."""
@@ -255,10 +256,11 @@ class TestCreateTransportConnection:
             args=["-y", "@test/server"],
         )
 
-        connection = _create_transport_connection(config)
+        connection = _create_transport_connection(config, stdio_errlog_path="/tmp/mcp-client.log")
 
         assert connection.config == config
         assert connection.state == ConnectionState.DISCONNECTED
+        assert connection._stdio_errlog_path == "/tmp/mcp-client.log"
 
     def test_create_websocket_connection(self) -> None:
         """Test creating WebSocket transport connection."""
@@ -269,10 +271,11 @@ class TestCreateTransportConnection:
             url="ws://localhost:8080/mcp",
         )
 
-        connection = _create_transport_connection(config)
+        connection = _create_transport_connection(config, stdio_errlog_path="/tmp/mcp-client.log")
 
         assert connection.config == config
         assert connection.state == ConnectionState.DISCONNECTED
+        assert not hasattr(connection, "_stdio_errlog_path")
 
     def test_create_unsupported_transport_raises(self) -> None:
         """Test unsupported transport raises error."""
@@ -341,6 +344,15 @@ class TestMCPClientManagerInit:
         assert manager.project_path == "/path/to/project"
         assert manager.project_id == "project-uuid"
 
+    def test_init_stores_stdio_errlog_path(self) -> None:
+        """Test initialization with stdio stderr log path."""
+        manager = MCPClientManager(
+            server_configs=[],
+            stdio_errlog_path="/tmp/mcp-client.log",
+        )
+
+        assert manager.stdio_errlog_path == "/tmp/mcp-client.log"
+
 
 class TestMCPClientManagerConnections:
     """Tests for MCPClientManager connection operations."""
@@ -375,6 +387,40 @@ class TestMCPClientManagerConnections:
         await manager.connect_all()
 
         assert len(manager.connections) == 0
+
+    @pytest.mark.asyncio
+    async def test_connect_server_passes_stdio_errlog_path_to_factory(self) -> None:
+        """Test stdio stderr log path is passed to the transport factory."""
+        config = MCPServerConfig(
+            name="stdio-server",
+            project_id="test-project-uuid",
+            transport="stdio",
+            command="node",
+        )
+        manager = MCPClientManager(
+            server_configs=[config],
+            stdio_errlog_path="/tmp/mcp-client.log",
+        )
+        session = MagicMock()
+        connection = MagicMock()
+        connection.connect = AsyncMock(return_value=session)
+
+        with patch(
+            "gobby.mcp_proxy.manager.create_transport_connection",
+            return_value=connection,
+        ) as mock_factory:
+            result = await manager._connect_server(config)
+
+        assert result is session
+        assert manager.connections["stdio-server"] is connection
+        assert manager.health["stdio-server"].state == ConnectionState.CONNECTED
+        connection.connect.assert_awaited_once()
+        mock_factory.assert_called_once_with(
+            config,
+            None,
+            None,
+            stdio_errlog_path="/tmp/mcp-client.log",
+        )
 
     @pytest.mark.asyncio
     async def test_disconnect_all_empty(self):
