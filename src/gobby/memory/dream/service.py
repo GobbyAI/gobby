@@ -24,7 +24,7 @@ from gobby.memory.dream.candidates import list_sweep_candidates
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
-from gobby.memory.dream.storage import MemoryDreamStore
+from gobby.memory.dream.storage import INTERRUPTED_CANCELLED_ERROR, MemoryDreamStore
 from gobby.memory.dream.truth_digest import build_current_truth_digest
 
 logger = logging.getLogger(__name__)
@@ -245,13 +245,18 @@ class MemoryDreamService:
             )
             return {"success": True, "run_id": run_id, "run": run}
         except asyncio.CancelledError:
+            # Mark the run interrupted (not failed) so a cancellation — daemon
+            # shutdown, timeout — is distinct from a genuine failure and agrees
+            # with the startup reconciliation of hard-crash orphans. Best effort:
+            # if the executor cannot run during loop teardown, startup
+            # reconciliation still recovers the row on next boot.
             completed_ts = datetime.now(UTC).isoformat()
             await asyncio.to_thread(
                 self.store.update_run,
                 run_id,
-                status="failed",
+                status="interrupted",
                 completed_at=completed_ts,
-                error="Dream run cancelled",
+                error=INTERRUPTED_CANCELLED_ERROR,
             )
             raise
         except Exception as exc:  # noqa: BLE001 - failure must be persisted on the run

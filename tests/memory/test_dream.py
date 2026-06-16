@@ -27,7 +27,11 @@ from gobby.memory.dream.service import (
     MemoryDreamService,
     _decode_raw_plan_metadata,
 )
-from gobby.memory.dream.storage import INTERRUPTED_RESTART_ERROR, MemoryDreamStore
+from gobby.memory.dream.storage import (
+    INTERRUPTED_CANCELLED_ERROR,
+    INTERRUPTED_RESTART_ERROR,
+    MemoryDreamStore,
+)
 from gobby.memory.dream.truth_digest import build_current_truth_digest
 
 pytestmark = pytest.mark.unit
@@ -942,7 +946,7 @@ def test_memory_dream_service_record_run_failure_is_idempotent() -> None:
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_service_persists_failed_status_on_cancellation() -> None:
+async def test_memory_dream_service_persists_interrupted_status_on_cancellation() -> None:
     db = _FakeDreamDB()
     manager = _FakeMemoryManager(db)
     service = MemoryDreamService(memory_manager=manager, dream_config=SimpleNamespace())
@@ -954,8 +958,8 @@ async def test_memory_dream_service_persists_failed_status_on_cancellation() -> 
 
     run = service.store.get_run(run_id)
     assert run is not None
-    assert run["status"] == "failed"
-    assert run["error"] == "Dream run cancelled"
+    assert run["status"] == "interrupted"
+    assert run["error"] == INTERRUPTED_CANCELLED_ERROR
     assert run["completed_at"] is not None
 
 

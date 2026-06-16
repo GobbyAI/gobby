@@ -56,6 +56,8 @@ _RUN_UPDATE_SET_CLAUSES = {
 
 # Error recorded on runs reconciled to 'interrupted' after a daemon restart.
 INTERRUPTED_RESTART_ERROR = "Interrupted: daemon restarted while the dream run was in progress"
+# Error recorded when an in-flight run is cancelled (shutdown/timeout) before completing.
+INTERRUPTED_CANCELLED_ERROR = "Interrupted: dream run cancelled before completion"
 
 
 class MemoryDreamStore:
