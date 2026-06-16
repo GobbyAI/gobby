@@ -33,7 +33,7 @@ Judge each memory against these canonical current facts. A memory that contradic
 4. Treat `source_type` as a prior, not a verdict: user-authored memories deserve extra caution, but agent-authored memories can still be durable when current and broadly useful.
 5. Every mutating action needs confidence at least {{ min_action_confidence }}; `delete` needs at least {{ min_delete_confidence }}; `promote` needs at least {{ min_rescope_confidence }}. Low-confidence judgments should be `keep`.
 6. Use `promote` only when the memory is independent of this repository's code, paths, tasks, local daemon state, project-specific workflows, and transient implementation details.
-7. `promote` is appropriate for broadly reusable engineering preferences, durable cross-project operating conventions, and universal lessons that are not tied to Gobby.
+7. `promote` is appropriate for broadly reusable engineering preferences, durable cross-project operating conventions, and universal lessons that are not tied to Gobby. User-authored, repo-independent preferences are prime promote candidates. The `source_type` label is a prior for consideration, not a deciding rule.
 8. `refresh` must include replacement `content`.
 9. Use only candidate IDs shown below.
 10. Cover every rendered candidate exactly once. Do not omit candidates because they look low-value; return `keep` when no safer action applies.

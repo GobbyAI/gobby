@@ -322,6 +322,44 @@ def test_memory_project_scope_filter_includes_global_and_legacy_empty_payloads()
 
 
 @pytest.mark.asyncio
+async def test_search_with_memory_project_scope_filter_includes_globals(
+    vector_store: VectorStore,
+) -> None:
+    """Behavioral test for global memory inclusion via memory_project_scope_filter.
+
+    Upserts globals (explicit project_id=None and absent key) + a proj-B memory,
+    then searches with scope filter for "proj-A". Verifies globals are returned
+    (null-inclusion) and cross-project (proj-B) is excluded. This hardens the
+    Qdrant path that was previously only covered structurally (model_dump) or
+    via MagicMock (see #17167).
+    """
+    # Global via explicit None
+    await vector_store.upsert(
+        MEM_1, _make_embedding(1.0), {"content": "universal fact", "project_id": None}
+    )
+    # Global via absent project_id key (legacy/optional path)
+    await vector_store.upsert(
+        MEM_2, _make_embedding(1.1), {"content": "another universal fact"}
+    )
+    # Project-scoped (should be excluded for proj-A scope)
+    await vector_store.upsert(
+        MEM_3, _make_embedding(1.2), {"content": "proj-B specific", "project_id": "proj-B"}
+    )
+
+    scope_filter = memory_project_scope_filter("proj-A")
+    assert scope_filter is not None
+
+    results = await vector_store.search(
+        _make_embedding(1.0), limit=10, filters=scope_filter
+    )
+    result_ids = [rid for rid, _score in results]
+
+    assert MEM_1 in result_ids, "explicit project_id=None global must be returned"
+    assert MEM_2 in result_ids, "absent project_id key global must be returned"
+    assert MEM_3 not in result_ids, "other project's memory must be excluded (no leak)"
+
+
+@pytest.mark.asyncio
 async def test_search_empty_collection(vector_store: VectorStore) -> None:
     """search() on empty collection should return empty list."""
     results = await vector_store.search(_make_embedding(1.0), limit=5)

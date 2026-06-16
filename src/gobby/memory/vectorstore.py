@@ -76,6 +76,8 @@ def memory_project_scope_filter(project_id: str | None) -> Filter | None:
     return Filter(
         should=[
             FieldCondition(key="project_id", match=MatchValue(value=project_id)),
+            # MatchValue("") kept to defensively match legacy empty-string payloads
+            # (project_ids are never ""); cheaper/safer than a blanket migration.
             FieldCondition(key="project_id", match=MatchValue(value="")),
             IsNullCondition(is_null=field),
             IsEmptyCondition(is_empty=field),
