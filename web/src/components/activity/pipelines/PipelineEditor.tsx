@@ -1,4 +1,4 @@
-import { useState, useCallback, useMemo, forwardRef, useImperativeHandle, useId } from 'react'
+import { useState, useCallback, useMemo, useRef, useEffect, forwardRef, useImperativeHandle, useId } from 'react'
 import type { WorkflowDetail } from '../../../hooks/useWorkflows'
 import { useConfirmDialog } from '../../../hooks/useConfirmDialog'
 import { cn } from '../../../lib/utils'
@@ -73,11 +73,14 @@ const STEP_COUNT_CLS =
 
 const EMPTY_CLS = 'p-6 text-center text-[length:var(--text-md)] text-[var(--text-secondary)]'
 
+const SAVE_ERROR_CLS =
+  'mx-3 mb-1 rounded-md bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)] px-3 py-2 text-[length:var(--text-sm)] text-[var(--color-error)]'
+
 const STEP_CLS =
   'mb-2 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-secondary)]'
 
 const STEP_HEADER_CLS =
-  'flex cursor-pointer items-center gap-2 px-3 py-2.5 transition-colors duration-100 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
+  'flex w-full cursor-pointer items-center gap-2 border-0 bg-transparent px-3 py-2.5 text-left transition-colors duration-100 hover:bg-[var(--bg-tertiary)] pointer-coarse:min-h-11'
 
 const TYPE_BADGE_CLS =
   'inline-block flex-shrink-0 rounded-[10px] px-2 py-0.5 text-[length:var(--text-2xs)] font-medium'
@@ -246,6 +249,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
   const [saving, setSaving] = useState(false)
   const [isDirty, setDirty] = useState(false)
   const [loadedPipelineId, setLoadedPipelineId] = useState(pipeline.id)
+  const [saveError, setSaveError] = useState<string | null>(null)
 
   // Reset editor state when a different pipeline is loaded into this instance.
   // Adjusting state during render (rather than in an effect) is the codebase
@@ -335,24 +339,29 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
     const ids = steps.map((s) => s.id)
     const dupes = ids.filter((id, i) => ids.indexOf(id) !== i)
     if (dupes.length > 0) {
-      window.alert(`Duplicate step IDs: ${dupes.join(', ')}`)
+      setSaveError(`Duplicate step IDs: ${dupes.join(', ')}`)
       return
     }
 
+    setSaveError(null)
     setSaving(true)
     try {
       const def: Record<string, unknown> = { ...initDef }
       def.name = name.trim() || pipeline.name
       def.description = description.trim() || undefined
       def.steps = steps
-      await updateWorkflow(pipeline.id, {
+      const saved = await updateWorkflow(pipeline.id, {
         name: name.trim() || pipeline.name,
         description: description.trim() || undefined,
         definition_json: JSON.stringify(def),
       })
+      if (!saved) {
+        setSaveError('Could not save the pipeline. Please try again.')
+        return
+      }
       setDirty(false)
     } catch (e) {
-      window.alert(`Save failed: ${e instanceof Error ? e.message : String(e)}`)
+      setSaveError(`Save failed: ${e instanceof Error ? e.message : String(e)}`)
     } finally {
       setSaving(false)
     }
@@ -397,6 +406,12 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
         </div>
       )}
 
+      {saveError && (
+        <div className={SAVE_ERROR_CLS} role="alert">
+          {saveError}
+        </div>
+      )}
+
       <label className={META_CLS}>
         <span className={LABEL_CLS}>Description</span>
         <textarea
@@ -424,8 +439,10 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
 
           return (
             <div className={STEP_CLS} key={step.id}>
-              <div
+              <button
+                type="button"
                 className={STEP_HEADER_CLS}
+                aria-expanded={isExpanded}
                 onClick={() => setExpandedId(isExpanded ? null : step.id)}
               >
                 <span
@@ -437,7 +454,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
                 <span className={STEP_ID_CLS}>{step.id}</span>
                 <span className={STEP_PREVIEW_CLS}>{getStepPreview(step)}</span>
                 <span className={STEP_CHEVRON_CLS}>{isExpanded ? '▾' : '▸'}</span>
-              </div>
+              </button>
 
               {isExpanded && (
                 <div className={STEP_BODY_CLS}>
@@ -861,12 +878,33 @@ function KeyValueEditor({
 
 function AddStepButton({ onAdd }: { onAdd: (type: StepType) => void }) {
   const [open, setOpen] = useState(false)
+  const containerRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (!open) return
+    function handlePointerDown(event: MouseEvent) {
+      if (containerRef.current && !containerRef.current.contains(event.target as Node)) {
+        setOpen(false)
+      }
+    }
+    function handleKeyDown(event: KeyboardEvent) {
+      if (event.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', handlePointerDown)
+    document.addEventListener('keydown', handleKeyDown)
+    return () => {
+      document.removeEventListener('mousedown', handlePointerDown)
+      document.removeEventListener('keydown', handleKeyDown)
+    }
+  }, [open])
 
   return (
-    <div className={ADD_CLS}>
+    <div className={ADD_CLS} ref={containerRef}>
       <button
         type="button"
         className={ADD_BTN_CLS}
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen(!open)}
       >
         + Add Step

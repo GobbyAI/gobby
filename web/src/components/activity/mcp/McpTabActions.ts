@@ -30,7 +30,9 @@ interface EditMcpServerSave {
 
 export type SaveMcpServerDraftOptions = CreateMcpServerSave | EditMcpServerSave;
 
-function recordOrEmpty(value: Record<string, string> | null | undefined) {
+function recordOrEmpty(
+  value: Record<string, string> | null | undefined,
+): Record<string, string> {
   return value ? { ...value } : {};
 }
 

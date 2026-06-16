@@ -36,6 +36,7 @@ export function PipelinesDefsList({
       {definitions.map((definition) => {
         const selected = definition.id === selectedId;
         const busy = definition.id === busyId;
+        const steps = stepCount(definition);
         const menuItems: QuickMenuItem[] = [
           { label: "Run", disabled: busy || !definition.enabled, onSelect: () => onRun(definition) },
           {
@@ -79,7 +80,7 @@ export function PipelinesDefsList({
                 {definition.enabled ? "On" : "Off"}
               </span>
               <span className="activity-chip">
-                {stepCount(definition)} step{stepCount(definition) !== 1 ? "s" : ""}
+                {steps} step{steps !== 1 ? "s" : ""}
               </span>
             </button>
             <div className="px-1">

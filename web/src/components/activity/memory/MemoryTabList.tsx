@@ -20,8 +20,12 @@ interface MemoryTabListProps {
   onRestore: (memory: GobbyMemory) => void;
 }
 
+const PREVIEW_LENGTH = 140;
+
 function previewContent(content: string): string {
-  return content.length > 140 ? `${content.slice(0, 140)}...` : content;
+  return content.length > PREVIEW_LENGTH
+    ? `${content.slice(0, PREVIEW_LENGTH)}...`
+    : content;
 }
 
 function EyeOffGlyph() {
@@ -151,7 +155,11 @@ export function MemoryTabList({
           <div
             key={memory.id}
             role="listitem"
-            aria-label={hidden ? `${memory.content} memory, ${dreamFlagLabel(memory)}` : `${memory.content} memory`}
+            aria-label={
+              hidden
+                ? `${previewContent(memory.content)} memory, ${dreamFlagLabel(memory)}`
+                : `${previewContent(memory.content)} memory`
+            }
             className={cn(
               "activity-list-row",
               selected && "activity-list-row--selected",
@@ -161,7 +169,7 @@ export function MemoryTabList({
             <button
               type="button"
               className="activity-list-row__body"
-              aria-label={`Select ${memory.content}`}
+              aria-label={`Select ${previewContent(memory.content)}`}
               onClick={() => onSelect(memory)}
             >
               <span className="activity-chip">
@@ -184,8 +192,8 @@ export function MemoryTabList({
             <div className="flex items-center px-1">
               <QuickMenu
                 items={menuItems}
-                menuLabel={`Actions for ${memory.content}`}
-                triggerLabel={`Open actions for ${memory.content}`}
+                menuLabel={`Actions for ${previewContent(memory.content)}`}
+                triggerLabel={`Open actions for ${previewContent(memory.content)}`}
                 disabled={busy}
               />
             </div>

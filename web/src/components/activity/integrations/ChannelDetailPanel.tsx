@@ -315,26 +315,17 @@ export function ChannelDetailPanel({
             <div className="grid gap-3">
               {fields.map((field) => {
                 if (field.secret) {
-                  if (mode === "edit") {
-                    const current = channel?.config_json[field.key];
-                    return (
-                      <div key={field.key} className="flex min-h-11 items-center justify-between gap-3 rounded-md border border-border bg-[var(--bg-secondary)] px-3 py-2">
-                        <span className="text-xs font-medium text-muted-foreground">
-                          {field.label}
-                        </span>
-                        <span className="text-sm text-foreground">
-                          {configValue(current) || "Configured"}
-                        </span>
-                      </div>
-                    );
-                  }
                   return (
                     <SecretField
                       key={field.key}
                       label={field.label}
                       name={field.key}
                       value={draft.secrets[field.key] ?? ""}
-                      placeholder={field.placeholder}
+                      placeholder={
+                        mode === "edit"
+                          ? "Leave blank to keep the current secret"
+                          : field.placeholder
+                      }
                       onChange={(value) => setSecretField(field.key, value)}
                     />
                   );

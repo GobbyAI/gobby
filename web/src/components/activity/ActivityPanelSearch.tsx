@@ -20,7 +20,11 @@ function ActivityPanelSearchImpl({
       type="search"
       className="activity-panel-search pointer-coarse:min-h-11"
       value={value}
-      name={inputLabel.toLowerCase().replace(/\s+/g, "-")}
+      name={inputLabel
+        .trim()
+        .toLowerCase()
+        .replace(/[^a-z0-9_-]+/g, "-")
+        .replace(/^-+|-+$/g, "")}
       onChange={(event: ChangeEvent<HTMLInputElement>) =>
         onChange(event.target.value)
       }

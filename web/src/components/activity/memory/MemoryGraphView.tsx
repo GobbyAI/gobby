@@ -37,7 +37,7 @@ class MemoryGraphErrorBoundary extends Component<
 > {
   state = { hasError: false };
 
-  static getDerivedStateFromError() {
+  static getDerivedStateFromError(): { hasError: boolean } {
     return { hasError: true };
   }
 

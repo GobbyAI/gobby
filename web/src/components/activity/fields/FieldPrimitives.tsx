@@ -266,7 +266,7 @@ export function TagsField({
         {value.map((tag) => (
           <span
             key={tag}
-            className="inline-flex min-h-8 items-center gap-1 rounded-md bg-muted px-2 text-xs text-foreground"
+            className="inline-flex min-h-11 items-center gap-1 rounded-md bg-muted pl-2.5 pr-1 text-xs text-foreground"
           >
             {tag}
             <button
