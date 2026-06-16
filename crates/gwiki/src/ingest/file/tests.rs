@@ -364,6 +364,48 @@ fn jsonl_session_archive_routes_to_session_orchestrator() {
     assert_eq!(manifest.entries[0].kind, SourceKind::Session);
 }
 
+#[test]
+fn raw_claude_jsonl_session_routes_to_session_orchestrator() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("claude.jsonl");
+    std::fs::write(
+        &file_path,
+        r#"{"type":"ai-title","timestamp":"2026-06-16T20:00:00Z","sessionId":"session-1","aiTitle":"Claude Import"}
+{"type":"user","timestamp":"2026-06-16T20:00:01Z","sessionId":"session-1","message":{"role":"user","content":"Inspect the trace."}}
+{"type":"assistant","timestamp":"2026-06-16T20:00:02Z","sessionId":"session-1","message":{"role":"assistant","content":[{"type":"text","text":"The trace has one call."},{"type":"tool_use","name":"Read","input":{"file_path":"trace.log"}}]}}
+{"type":"user","timestamp":"2026-06-16T20:00:03Z","sessionId":"session-1","toolUseResult":{"file":"trace.log"},"message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"toolu_1","content":"call trace","is_error":false}]}}"#,
+    )
+    .expect("write Claude session jsonl");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+
+    let result = ingest_path(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-06-16T20:04:00Z",
+    )
+    .expect("ingest raw Claude session archive");
+
+    assert_eq!(result.record.kind, SourceKind::Session);
+    assert!(result.asset_path.is_none());
+    let raw_markdown =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("session markdown");
+    assert!(raw_markdown.contains("session_type: claude-code"));
+    assert!(raw_markdown.contains("# Claude Import"));
+    assert!(raw_markdown.contains("### user"));
+    assert!(raw_markdown.contains("Inspect the trace."));
+    assert!(raw_markdown.contains("### assistant"));
+    assert!(raw_markdown.contains("Tool use: Read"));
+    assert!(raw_markdown.contains("### tool result"));
+    assert!(raw_markdown.contains("call trace"));
+}
+
 #[cfg(feature = "documents")]
 #[test]
 fn dispatches_office_html_to_document() {
