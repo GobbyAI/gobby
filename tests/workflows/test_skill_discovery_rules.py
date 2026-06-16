@@ -590,8 +590,11 @@ class TestRequireRustSkillCondition:
         "'clippy.toml', "
         "'.clippy.toml'"
         ") "
-        "or event.data.get('canonical_file_path', '').endswith(("
+        "or event.data.get('canonical_file_path', '') in ("
         "'.cargo/config', '.cargo/config.toml'"
+        ") "
+        "or event.data.get('canonical_file_path', '').endswith(("
+        "'/.cargo/config', '/.cargo/config.toml'"
         "))"
         ")"
     )
@@ -645,6 +648,10 @@ class TestRequireRustSkillCondition:
         assert self._eval("/project/.cargo/config") is True
         assert self._eval(".cargo/config.toml") is True
         assert self._eval(".cargo/config") is True
+
+    def test_skips_similar_cargo_suffix_without_path_boundary(self) -> None:
+        assert self._eval("/project/foo.cargo/config") is False
+        assert self._eval("/project/foo.cargo/config.toml") is False
 
     def test_skips_non_rust_file(self) -> None:
         assert self._eval("/project/config.yaml") is False

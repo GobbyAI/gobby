@@ -206,13 +206,24 @@ def _match_local_generation_endpoint(
     base_url: str,
     endpoints: dict[str, LocalGenerationEndpointConfig],
 ) -> LocalGenerationEndpointConfig | None:
+    best_endpoint: LocalGenerationEndpointConfig | None = None
+    best_score = 0
+    ambiguous = False
+
     for endpoint in endpoints.values():
-        if _candidate_match_score(request_model, endpoint.model) <= 0:
+        score = _candidate_match_score(request_model, endpoint.model)
+        if score <= 0:
             continue
         if _base_origin(base_url) != _base_origin(endpoint.api_base):
             continue
-        return endpoint
-    return None
+        if score > best_score:
+            best_endpoint = endpoint
+            best_score = score
+            ambiguous = False
+        elif score == best_score:
+            ambiguous = True
+
+    return None if ambiguous else best_endpoint
 
 
 def _base_headers(api_key: str | None) -> dict[str, str]:

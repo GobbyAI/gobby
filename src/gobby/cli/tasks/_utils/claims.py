@@ -88,7 +88,7 @@ def get_claimed_task_owners() -> dict[str, str]:
         finally:
             db.close()
     except (RuntimeError, json.JSONDecodeError, KeyError) as e:
-        logger.debug(f"Failed to get claimed task owners: {e}")
+        logger.debug("Failed to get claimed task owners: %s", e, exc_info=True)
         return {}
 
 

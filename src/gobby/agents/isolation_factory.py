@@ -2,21 +2,27 @@
 
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Literal
 
 from gobby.agents.isolation_clone import CloneIsolationHandler
 from gobby.agents.isolation_models import IsolationHandler
 from gobby.agents.isolation_none import NoneIsolationHandler
 from gobby.agents.isolation_worktree import WorktreeIsolationHandler
 
+if TYPE_CHECKING:
+    from gobby.clones.git import CloneGitManager
+    from gobby.storage.clones import LocalCloneManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.worktrees.git import WorktreeGitManager
+
 
 def get_isolation_handler(
     mode: Literal["none", "worktree", "clone"],
     *,
-    git_manager: Any | None = None,
-    worktree_storage: Any | None = None,
-    clone_manager: Any | None = None,
-    clone_storage: Any | None = None,
+    git_manager: WorktreeGitManager | None = None,
+    worktree_storage: LocalWorktreeManager | None = None,
+    clone_manager: CloneGitManager | None = None,
+    clone_storage: LocalCloneManager | None = None,
 ) -> IsolationHandler:
     """
     Factory function to get the appropriate isolation handler.

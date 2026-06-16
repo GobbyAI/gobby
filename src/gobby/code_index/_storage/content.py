@@ -85,7 +85,7 @@ class CodeIndexContentStorageMixin:
             )
             rows = rows_by_ids(self.db, "code_content_chunks", [hit.id for hit in hits])
         except Exception as exc:
-            logger.warning("Code content keyword search failed: %s", exc)
+            logger.warning("Code content keyword search failed: %s", exc, exc_info=True)
             return []
 
         rows_by_id = {str(row["id"]): row for row in rows}

@@ -19,7 +19,7 @@ class CodeIndexRelationStorageMixin:
         file_path: str,
         imports: list[ImportRelation],
     ) -> int:
-        """Replace import relations for a file. Returns count inserted."""
+        """Replace import relations for a file. Returns attempted row count."""
         with self.db.transaction() as conn:
             conn.execute(
                 "DELETE FROM code_imports WHERE project_id = %s AND source_file = %s",
@@ -42,7 +42,7 @@ class CodeIndexRelationStorageMixin:
         file_path: str,
         calls: list[CallRelation],
     ) -> int:
-        """Replace call relations for a file. Returns count inserted."""
+        """Replace call relations for a file. Returns attempted row count."""
         with self.db.transaction() as conn:
             conn.execute(
                 "DELETE FROM code_calls WHERE project_id = %s AND file_path = %s",

@@ -1,0 +1,67 @@
+"""Tests for MCP client manager server registry helpers."""
+
+from __future__ import annotations
+
+import pytest
+
+from gobby.mcp_proxy.client_manager import server_registry
+from gobby.mcp_proxy.models import MCPServerConfig
+
+pytestmark = pytest.mark.unit
+
+
+class _LazyConnector:
+    def __init__(self) -> None:
+        self.registered: list[str] = []
+        self.unregistered: list[str] = []
+
+    def register_server(self, name: str) -> None:
+        self.registered.append(name)
+
+    def unregister_server(self, name: str) -> None:
+        self.unregistered.append(name)
+
+
+class _Manager:
+    def __init__(self) -> None:
+        self._configs = {
+            "custom": MCPServerConfig(
+                name="custom",
+                transport="stdio",
+                command="npx",
+                enabled=True,
+                project_id="existing-project",
+            )
+        }
+        self._connections: dict[str, object] = {}
+        self.health: dict[str, object] = {"custom": object()}
+        self._lazy_connector = _LazyConnector()
+        self.mcp_db_manager = None
+
+
+@pytest.mark.asyncio
+async def test_update_server_does_not_mutate_input_config() -> None:
+    manager = _Manager()
+    caller_config = MCPServerConfig(
+        name="custom",
+        transport="stdio",
+        command="npx",
+        args=["--stdio"],
+        enabled=False,
+        project_id=None,
+    )
+
+    result = await server_registry.update_server(
+        manager,
+        "custom",
+        caller_config,
+        project_id="route-project",
+    )
+
+    assert result == {"success": True, "name": "custom"}
+    assert caller_config.enabled is False
+    assert caller_config.project_id is None
+    updated = manager._configs["custom"]
+    assert updated is not caller_config
+    assert updated.enabled is True
+    assert updated.project_id == "route-project"

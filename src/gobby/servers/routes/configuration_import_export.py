@@ -369,7 +369,13 @@ def register_import_export_routes(
             elif request.config:
                 flat = flatten_config(request.config)
                 try:
-                    falkordb_config = request.config.get("databases", {}).get("falkordb", {})
+                    databases_config = request.config.get("databases", {})
+                    if databases_config is None:
+                        falkordb_config = {}
+                    elif isinstance(databases_config, dict):
+                        falkordb_config = databases_config.get("falkordb", {})
+                    else:
+                        raise ValueError("databases must be an object")
                     if isinstance(falkordb_config, dict):
                         falkordb_password = falkordb_config.get("password")
                         if falkordb_password not in (None, ""):

@@ -58,6 +58,8 @@ class TestMCPServer:
         assert config["command"] == "npx"
         assert config["args"] == ["-y", "@test/server"]
         assert config["env"] == {"API_KEY": "secret"}
+        assert config["requires_oauth"] is False
+        assert config["connect_timeout"] == 30.0
 
 
 class TestTool:
@@ -180,6 +182,58 @@ class TestLocalMCPManager:
         # Should be same server with updated URL
         assert server2.id == server1.id
         assert server2.url == "http://new-url"
+
+    def test_upsert_preserves_existing_oauth_and_timeout_when_unspecified(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        server1 = mcp_manager.upsert(
+            name="oauth-server",
+            transport="http",
+            url="http://old-url",
+            project_id=sample_project["id"],
+            requires_oauth=True,
+            oauth_provider="github",
+            connect_timeout=45.0,
+        )
+
+        server2 = mcp_manager.upsert(
+            name="oauth-server",
+            transport="http",
+            url="http://new-url",
+            project_id=sample_project["id"],
+        )
+
+        assert server2.id == server1.id
+        assert server2.url == "http://new-url"
+        assert server2.requires_oauth is True
+        assert server2.oauth_provider == "github"
+        assert server2.connect_timeout == 45.0
+
+    def test_to_config_preserves_stored_zero_timeout(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+        temp_db: HubDatabase,
+    ) -> None:
+        created = mcp_manager.upsert(
+            name="zero-timeout",
+            transport="http",
+            url="http://localhost:8080",
+            project_id=sample_project["id"],
+            connect_timeout=1.0,
+        )
+        temp_db.execute(
+            "UPDATE mcp_servers SET connect_timeout = 0 WHERE id = %s",
+            (created.id,),
+        )
+
+        server = mcp_manager.get_server("zero-timeout", project_id=sample_project["id"])
+
+        assert server is not None
+        assert server.connect_timeout == 0.0
+        assert server.to_config()["connect_timeout"] == 0.0
 
     def test_upsert_bundled_server_uses_global_project_and_strips_runtime_args(
         self,
@@ -1522,6 +1576,8 @@ class TestMCPServerToConfig:
         assert "env" not in config
         assert "headers" not in config
         assert "description" not in config
+        assert config["requires_oauth"] is False
+        assert config["connect_timeout"] == 30.0
 
     def test_to_config_with_project_id(
         self,

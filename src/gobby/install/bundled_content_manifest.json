@@ -365,7 +365,7 @@
     "workflows/rules/skill-discovery/require-php-skill.yaml": "30e3a075bf89ee4320dd7071f6374ccffc6ac4fa3f8083a9da4e2c981a6ba321",
     "workflows/rules/skill-discovery/require-python-skill.yaml": "3fb0ce4b7e6bccf391ec7d3da91e01901e20c526ee5b949c7e37ed6abb55867d",
     "workflows/rules/skill-discovery/require-ruby-skill.yaml": "247621916764c56727437d15c84ece20c601d0b617adb0d35241efa13a8ef395",
-    "workflows/rules/skill-discovery/require-rust-skill.yaml": "806a646be89b62f0ad1d8dd43f56f6ad929772db6da6766ad6df532bd8a2588e",
+  "workflows/rules/skill-discovery/require-rust-skill.yaml": "f6972f16a2f5a905130c30746d02938046408965642df47c56b35f2fc662c846",
     "workflows/rules/skill-discovery/require-swift-skill.yaml": "905f98f6d28f9e79b39e37e109c5e3926db44de5d6fd4d82ecd65b0a365b5381",
     "workflows/rules/skill-discovery/require-typescript-skill.yaml": "78dc4b70ed31ec6323d191d21428bec2da5b58339b3e81b9dd11469979046d8d",
     "workflows/rules/skill-discovery/require-yaml-skill.yaml": "2e64587ef493e90ae1aff405c583d9e69472331560222dca62e2e5961b44df5e",

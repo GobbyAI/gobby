@@ -6,9 +6,13 @@ import asyncio
 import logging
 import os
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.tmux_context import parse_terminal_context_value
+
+if TYPE_CHECKING:
+    from gobby.sessions.analyzer import HandoffContext
+    from gobby.storage.session_models import Session
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +30,7 @@ def _coerce_path(value: Any) -> Path | None:
     return Path(text).expanduser()
 
 
-def resolve_session_workspace(session: Any, transcript_path: str | None = None) -> Path:
+def resolve_session_workspace(session: Session, transcript_path: str | None = None) -> Path:
     """Resolve the workspace cwd for summary git context."""
     terminal_context = parse_terminal_context_value(getattr(session, "terminal_context", None))
     if terminal_context:
@@ -42,7 +46,7 @@ def resolve_session_workspace(session: Any, transcript_path: str | None = None) 
     return Path.cwd()
 
 
-async def enrich_git_context(handoff_ctx: Any, cwd: Path) -> None:
+async def enrich_git_context(handoff_ctx: HandoffContext, cwd: Path) -> None:
     """Enrich HandoffContext with real-time git status and commits."""
     if not handoff_ctx.git_status:
         try:

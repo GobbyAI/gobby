@@ -1446,6 +1446,18 @@ class TestExportImport:
         assert response.json()["detail"] == "FalkorDB password must be a string"
         assert ConfigStore(postgres_db).get(FALKOR_PASSWORD_KEY) is None
 
+    def test_import_config_non_object_databases_rejected(
+        self, postgres_client: TestClient, postgres_db: Any
+    ) -> None:
+        response = postgres_client.post(
+            "/api/config/import",
+            json={"config": {"databases": "not-an-object"}},
+        )
+
+        assert response.status_code == 422
+        assert response.json()["detail"] == "databases must be an object"
+        assert ConfigStore(postgres_db).get(FALKOR_PASSWORD_KEY) is None
+
     def test_import_falkordb_secret_reference_preserves_secret_row(
         self, postgres_client: TestClient, postgres_db: Any, mock_machine_id: Any
     ) -> None:

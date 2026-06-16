@@ -168,7 +168,7 @@ class CodeIndexSymbolStorageMixin:
             )
             rows = rows_by_ids(self.db, "code_symbols", [hit.id for hit in hits])
         except Exception as exc:
-            logger.debug("Code symbol keyword search failed: %s", exc)
+            logger.debug("Code symbol keyword search failed: %s", exc, exc_info=True)
             return []
         symbols_by_id = {str(row["id"]): Symbol.from_row(row) for row in rows}
         return [symbols_by_id[hit.id] for hit in hits if hit.id in symbols_by_id]

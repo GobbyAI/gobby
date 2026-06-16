@@ -361,7 +361,7 @@ class EvaluationMixin:
                         latency_ms=rule_latency,
                     )
                 except Exception as e:
-                    logger.debug(f"Metrics recording failed: {e}")
+                    logger.debug("Metrics recording failed: %s", e, exc_info=True)
 
             if rule_blocked:
                 # First block runs normal effects; later aggregation is read-only.

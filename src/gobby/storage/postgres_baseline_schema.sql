@@ -274,6 +274,10 @@ CREATE TABLE session_summary_revisions (
     created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
 CONSTRAINT session_summary_revisions_digest_turn_count_nonnegative
 CHECK (source_digest_turn_count IS NULL OR source_digest_turn_count >= 0),
+CONSTRAINT session_summary_revisions_generation_mode_valid
+CHECK (
+generation_mode IN ('agent_authored', 'full', 'delta', 'digest_fallback', 'noop')
+),
 CONSTRAINT session_summary_revisions_id_session_id_unique
 UNIQUE (id, session_id),
 CONSTRAINT session_summary_revisions_previous_same_session_fk
@@ -512,7 +516,7 @@ CREATE INDEX idx_dispatch_mutex_scan ON task_dispatch_mutex(lease_until, run_id)
 CREATE INDEX idx_dispatch_mutex_run_id ON task_dispatch_mutex(run_id);
 
 CREATE TABLE task_validation_backoff (
-    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+    task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
     consecutive_failures INTEGER NOT NULL DEFAULT 0,
     next_retry_at TIMESTAMPTZ,
     last_error TEXT,
@@ -1868,8 +1872,8 @@ CREATE TABLE task_artifacts (
             expansion_run_id TEXT,
             expansion_attempts INTEGER NOT NULL DEFAULT 0,
             updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW(), last_reviewed_plan_hash TEXT, plan_review_attempts INTEGER NOT NULL DEFAULT 0, qa_attempts INTEGER NOT NULL DEFAULT 0, holistic_attempts INTEGER NOT NULL DEFAULT 0, merge_attempts INTEGER NOT NULL DEFAULT 0,
-            plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0,
-            plan_enhancement_rounds_completed INTEGER NOT NULL DEFAULT 0,
+            plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0 CHECK (plan_enhancement_rounds >= 0),
+            plan_enhancement_rounds_completed INTEGER NOT NULL DEFAULT 0 CHECK (plan_enhancement_rounds_completed >= 0),
             plan_enhancement_converged BOOLEAN NOT NULL DEFAULT FALSE,
             CHECK (
                 (worktree_path IS NULL) = (worktree_id IS NULL)

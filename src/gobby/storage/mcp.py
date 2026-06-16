@@ -59,7 +59,11 @@ class MCPServer:
             description=row["description"],
             requires_oauth=bool(row.get("requires_oauth", False)),
             oauth_provider=row.get("oauth_provider"),
-            connect_timeout=float(row.get("connect_timeout") or 30.0),
+            connect_timeout=(
+                float(connect_timeout)
+                if (connect_timeout := row.get("connect_timeout")) is not None
+                else 30.0
+            ),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             project_id=row["project_id"],
@@ -107,12 +111,10 @@ class MCPServer:
             config["headers"] = self.headers
         if self.description:
             config["description"] = self.description
-        if self.requires_oauth:
-            config["requires_oauth"] = self.requires_oauth
+        config["requires_oauth"] = self.requires_oauth
         if self.oauth_provider:
             config["oauth_provider"] = self.oauth_provider
-        if self.connect_timeout:
-            config["connect_timeout"] = self.connect_timeout
+        config["connect_timeout"] = self.connect_timeout
         return config
 
 
@@ -174,9 +176,9 @@ class LocalMCPManager:
         headers: dict[str, str] | None = None,
         enabled: bool = True,
         description: str | None = None,
-        requires_oauth: bool = False,
+        requires_oauth: bool | None = None,
         oauth_provider: str | None = None,
-        connect_timeout: float = 30.0,
+        connect_timeout: float | None = None,
     ) -> MCPServer:
         """Persist a server row without applying bundled-server cleanup."""
         server_id = str(uuid.uuid4())
@@ -199,9 +201,9 @@ class LocalMCPManager:
                 headers = excluded.headers,
                 enabled = excluded.enabled,
                 description = COALESCE(excluded.description, mcp_servers.description),
-                requires_oauth = excluded.requires_oauth,
-                oauth_provider = excluded.oauth_provider,
-                connect_timeout = excluded.connect_timeout,
+                requires_oauth = COALESCE(excluded.requires_oauth, mcp_servers.requires_oauth),
+                oauth_provider = COALESCE(excluded.oauth_provider, mcp_servers.oauth_provider),
+                connect_timeout = COALESCE(excluded.connect_timeout, mcp_servers.connect_timeout),
                 updated_at = excluded.updated_at
             """,
             (
@@ -216,7 +218,7 @@ class LocalMCPManager:
                 json.dumps(headers) if headers else None,
                 bool(enabled),
                 description,
-                bool(requires_oauth),
+                requires_oauth,
                 oauth_provider,
                 connect_timeout,
                 now,
@@ -326,9 +328,9 @@ class LocalMCPManager:
         headers: dict[str, str] | None = None,
         enabled: bool = True,
         description: str | None = None,
-        requires_oauth: bool = False,
+        requires_oauth: bool | None = None,
         oauth_provider: str | None = None,
-        connect_timeout: float = 30.0,
+        connect_timeout: float | None = None,
     ) -> MCPServer:
         """
         Insert or update an MCP server in the database.

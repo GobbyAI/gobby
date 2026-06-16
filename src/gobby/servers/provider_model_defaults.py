@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-GEMINI_MODEL_CATALOG: list[dict[str, Any]] = [
+GEMINI_MODELS: list[dict[str, Any]] = [
     {
         "value": "gemini-3.5-flash",
         "label": "Gemini 3.5 Flash",
@@ -27,6 +27,8 @@ GEMINI_MODEL_CATALOG: list[dict[str, Any]] = [
         },
     },
 ]
+
+GEMINI_MODEL_CATALOG = [*GEMINI_MODELS]
 
 # Mirrors `droid exec --help` from Factory Droid 0.106.0 and docs.factory.ai/cli.
 DROID_MODEL_CATALOG: list[dict[str, Any]] = [
@@ -150,27 +152,7 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
             "default_effort": "medium",
         },
     },
-    {
-        "value": "gemini-3.5-flash",
-        "label": "Gemini 3.5 Flash",
-        "reasoning": {
-            "supported_efforts": ["minimal", "low", "medium", "high"],
-            "default_effort": "medium",
-        },
-    },
-    {
-        "value": "gemini-3.1-pro-preview",
-        "label": "Gemini 3.1 Pro",
-        "reasoning": {"supported_efforts": ["low", "medium", "high"], "default_effort": "high"},
-    },
-    {
-        "value": "gemini-3-flash-preview",
-        "label": "Gemini 3 Flash",
-        "reasoning": {
-            "supported_efforts": ["minimal", "low", "medium", "high"],
-            "default_effort": "high",
-        },
-    },
+    *GEMINI_MODELS,
     {
         "value": "minimax-m2.7",
         "label": "Droid Core (MiniMax M2.7)",

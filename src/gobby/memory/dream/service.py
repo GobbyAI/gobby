@@ -409,7 +409,7 @@ class MemoryDreamService:
             totals.reconcile = await self.memory_manager.reconcile_stores(dry_run=False)
         except Exception as exc:  # noqa: BLE001 - reconcile must not hide applied mutations
             totals.reconcile = {"error": str(exc)}
-            logger.warning("Memory dream reconcile failed: %s", exc)
+            logger.warning("Memory dream reconcile failed: %s", exc, exc_info=True)
 
     async def status(self, run_id: str) -> dict[str, Any]:
         await self._ensure_schema_async()

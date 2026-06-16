@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Awaitable, Callable
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
@@ -15,6 +15,9 @@ from gobby.storage.cron_models import CronJob
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 
 logger = logging.getLogger(__name__)
+
+if TYPE_CHECKING:
+    from gobby.config.app import DaemonConfig
 
 MEMORY_DREAM_CRON_JOB_NAME = "gobby:memory-dream"
 MEMORY_DREAM_CRON_HANDLER = "memory.dream"
@@ -49,7 +52,7 @@ def register_memory_dream_cron(
     dream_config: MemoryDreamConfig,
     llm_service: MemoryDreamLLMProtocol | None = None,
     project_id: str | None = None,
-    daemon_config: Any = None,
+    daemon_config: DaemonConfig | None = None,
 ) -> int:
     """Register the memory dream handler and reconcile its single system row."""
     if not dream_config.enabled:
