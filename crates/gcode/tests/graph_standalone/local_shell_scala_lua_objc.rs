@@ -72,10 +72,7 @@ fn index_resolves_cross_file_local_bash_calls() {
     .expect("write more.bash");
     fs::write(
         project.path().join("scripts/main.sh"),
-        // Bare `source lib/helpers.sh` remains intentionally unresolved: it can
-        // be PATH-like shell lookup, so local resolution only accepts explicit
-        // `./` or `../` file references.
-        "source ./lib/helpers.sh\n. ./lib/more.bash\n\nrun() {\n  greet\n  announce\n}\n",
+        "source lib/helpers.sh\n. ./lib/more.bash\n\nrun() {\n  greet\n  announce\n}\n",
     )
     .expect("write main.sh");
     write_identity(

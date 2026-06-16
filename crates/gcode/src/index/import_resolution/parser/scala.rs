@@ -98,10 +98,7 @@ fn register_scala_import_item(
         .insert(alias.to_string(), candidate_files.clone());
     extracted.bindings.local_bare.insert(
         alias.to_string(),
-        LocalCallBinding {
-            candidate_files,
-            callee_name: simple_name.to_string(),
-        },
+        LocalCallBinding::named(candidate_files, simple_name.to_string()),
     );
 }
 

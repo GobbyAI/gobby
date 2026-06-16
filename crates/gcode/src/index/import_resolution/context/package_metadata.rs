@@ -68,6 +68,9 @@ pub(in crate::index::import_resolution) fn build_go_package_files(
     candidate_files: &[PathBuf],
 ) -> HashMap<String, Vec<String>> {
     let mut packages: HashMap<String, Vec<String>> = HashMap::new();
+    let Ok(root_abs) = root_path.canonicalize() else {
+        return packages;
+    };
     for path in candidate_files {
         let ext = path
             .extension()
@@ -76,7 +79,7 @@ pub(in crate::index::import_resolution) fn build_go_package_files(
         if ext != "go" {
             continue;
         }
-        let Ok(rel) = path.strip_prefix(root_path) else {
+        let Some(rel) = canonical_relative_path(path, &root_abs) else {
             continue;
         };
         let rel_str = rel.to_string_lossy().replace('\\', "/");
@@ -91,6 +94,11 @@ pub(in crate::index::import_resolution) fn build_go_package_files(
         files.dedup();
     }
     packages
+}
+
+fn canonical_relative_path(path: &Path, root_abs: &Path) -> Option<PathBuf> {
+    let abs = path.canonicalize().ok()?;
+    abs.strip_prefix(root_abs).ok().map(Path::to_path_buf)
 }
 
 pub(in crate::index::import_resolution) fn load_rust_external_crates(
@@ -223,4 +231,41 @@ pub(in crate::index::import_resolution) fn load_dart_self_package_name(
     yaml.get("name")
         .and_then(|value| value.as_str())
         .map(ToOwned::to_owned)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+
+    #[cfg(unix)]
+    fn symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::unix::fs::symlink(target, link)
+    }
+
+    #[cfg(windows)]
+    fn symlink_dir(target: &Path, link: &Path) -> std::io::Result<()> {
+        std::os::windows::fs::symlink_dir(target, link)
+    }
+
+    #[test]
+    fn go_package_files_canonicalize_symlinked_candidates() {
+        let project = tempfile::tempdir().expect("temp project");
+        let real_dir = project.path().join("real/store");
+        fs::create_dir_all(&real_dir).expect("create real Go package");
+        fs::write(real_dir.join("query.go"), "package store\n").expect("write Go file");
+        let link = project.path().join("linked");
+        if let Err(err) = symlink_dir(&project.path().join("real"), &link) {
+            eprintln!("skipping symlink canonicalization test: {err}");
+            return;
+        }
+
+        let packages = build_go_package_files(project.path(), &[link.join("store/query.go")]);
+
+        assert_eq!(
+            packages.get("real/store"),
+            Some(&vec!["real/store/query.go".to_string()])
+        );
+        assert!(!packages.contains_key("linked/store"));
+    }
 }

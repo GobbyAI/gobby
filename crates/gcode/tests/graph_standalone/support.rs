@@ -10,6 +10,7 @@ pub(super) const TEST_PROJECT_ID: &str = "graph-standalone-project";
 pub(super) const LOCAL_IMPORT_PROJECT_ID: &str = "graph-standalone-local-import";
 pub(super) const NO_PHANTOM_PROJECT_ID: &str = "graph-standalone-no-phantom";
 pub(super) const GO_LOCAL_PROJECT_ID: &str = "graph-standalone-go-local";
+pub(super) const JS_DEFAULT_LOCAL_PROJECT_ID: &str = "graph-standalone-js-default-local";
 pub(super) const CPP_LOCAL_PROJECT_ID: &str = "graph-standalone-cpp-local";
 pub(super) const CPP_DB_LOCAL_PROJECT_ID: &str = "graph-standalone-cpp-db-local";
 pub(super) const JAVA_LOCAL_PROJECT_ID: &str = "graph-standalone-java-local";

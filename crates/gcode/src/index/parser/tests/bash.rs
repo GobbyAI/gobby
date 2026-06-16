@@ -66,15 +66,18 @@ fn resolves_sourced_bash_files_as_local_import_candidates() {
         r#"
 source ./lib/helpers.sh
 . ./lib/more.bash
+source lib/bare.sh
 
 run() {
   greet
   announce
+  bare
 }
 "#,
         &[
             ("scripts/lib/helpers.sh", "greet() { echo hi; }\n"),
             ("scripts/lib/more.bash", "announce() { echo hi; }\n"),
+            ("scripts/lib/bare.sh", "bare() { echo hi; }\n"),
         ],
     );
 
@@ -85,9 +88,11 @@ run() {
         .collect::<Vec<_>>();
     assert!(imports.contains(&"./lib/helpers.sh"));
     assert!(imports.contains(&"./lib/more.bash"));
+    assert!(imports.contains(&"lib/bare.sh"));
 
     assert_bash_local_import!(&parsed, "greet", "scripts/lib/helpers.sh");
     assert_bash_local_import!(&parsed, "announce", "scripts/lib/more.bash");
+    assert_bash_local_import!(&parsed, "bare", "scripts/lib/bare.sh");
     assert!(
         parsed
             .calls

@@ -89,7 +89,7 @@ pub(super) fn extract_objc_calls(
             )
         } else {
             let qualifier_path = call_qualifier_path(qualifier_from_name, || {
-                member_qualifier_path(source, target, name_n)
+                member_qualifier_path(ctx.language, source, target, name_n)
             });
             let detected_syntax = call_syntax_kind(name_n, target);
             let syntax = if qualifier_path.is_some() && detected_syntax == CallSyntaxKind::Bare {

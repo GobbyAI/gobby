@@ -52,10 +52,8 @@ pub(crate) fn resolve_shell_local_callee(
     let mut candidate_files = import_bindings.shell_source_files.clone();
     candidate_files.sort();
     candidate_files.dedup();
-    (!candidate_files.is_empty()).then(|| LocalCallBinding {
-        candidate_files,
-        callee_name: callee_name.to_string(),
-    })
+    (!candidate_files.is_empty())
+        .then(|| LocalCallBinding::named(candidate_files, callee_name.to_string()))
 }
 
 fn shell_source_target(rel_path: &str, source_path: &str) -> Option<String> {
@@ -75,9 +73,6 @@ fn shell_source_target(rel_path: &str, source_path: &str) -> Option<String> {
     }
     if source.components().next() == Some(Component::ParentDir) {
         return normalize_project_path(&Path::new(rel_path).parent()?.join(source));
-    }
-    if !source_path.starts_with("./") && !source_path.starts_with("../") {
-        return None;
     }
     normalize_project_path(&Path::new(rel_path).parent()?.join(source))
 }

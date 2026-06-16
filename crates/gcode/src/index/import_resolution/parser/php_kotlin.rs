@@ -131,10 +131,7 @@ pub(crate) fn parse_kotlin_import_statement(
         .insert(alias.to_string(), candidate_files.clone());
     extracted.bindings.local_bare.insert(
         alias.to_string(),
-        LocalCallBinding {
-            candidate_files,
-            callee_name: simple_name.to_string(),
-        },
+        LocalCallBinding::named(candidate_files, simple_name.to_string()),
     );
 }
 
@@ -217,10 +214,7 @@ fn seed_php_local_import(
     extracted.bindings.bare.remove(local_alias);
     extracted.bindings.local_bare.insert(
         local_alias.to_string(),
-        LocalCallBinding {
-            candidate_files: candidate_files.clone(),
-            callee_name: imported_name.to_string(),
-        },
+        LocalCallBinding::named(candidate_files.clone(), imported_name.to_string()),
     );
     if matches!(kind, PhpImportKind::ClassLike) {
         extracted.bindings.member.remove(local_alias);

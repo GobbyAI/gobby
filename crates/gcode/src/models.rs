@@ -360,6 +360,9 @@ impl CallRelation {
     ///
     /// Candidate files ride in `callee_external_module` joined by `\n`; the
     /// column is unused for local imports otherwise and is cleared on resolution.
+    /// JavaScript default imports prefix the list with an internal marker so
+    /// post-write resolution can use a unique top-level-symbol fallback while
+    /// unresolved calls still keep their source alias in `callee_name`.
     pub fn with_local_import_target(
         mut self,
         callee_name: String,
@@ -370,6 +373,31 @@ impl CallRelation {
         self.callee_symbol_id = None;
         self.callee_external_module = Some(candidate_files.join(LOCAL_IMPORT_CANDIDATE_SEP));
         self
+    }
+
+    pub fn with_local_default_import_target(
+        mut self,
+        callee_name: String,
+        candidate_files: Vec<String>,
+    ) -> Self {
+        self.callee_name = callee_name;
+        self.callee_target_kind = CallTargetKind::LocalImport;
+        self.callee_symbol_id = None;
+        let encoded = std::iter::once(LOCAL_IMPORT_DEFAULT_EXPORT_MARKER.to_string())
+            .chain(candidate_files)
+            .collect::<Vec<_>>()
+            .join(LOCAL_IMPORT_CANDIDATE_SEP);
+        self.callee_external_module = Some(encoded);
+        self
+    }
+
+    pub fn local_import_uses_default_export_fallback(&self) -> bool {
+        self.callee_target_kind == CallTargetKind::LocalImport
+            && self
+                .callee_external_module
+                .as_deref()
+                .and_then(|joined| joined.split(LOCAL_IMPORT_CANDIDATE_SEP).next())
+                == Some(LOCAL_IMPORT_DEFAULT_EXPORT_MARKER)
     }
 
     /// Candidate target files carried by a `LocalImport` call, parsed back out of
@@ -383,7 +411,7 @@ impl CallRelation {
             .map(|joined| {
                 joined
                     .split(LOCAL_IMPORT_CANDIDATE_SEP)
-                    .filter(|part| !part.is_empty())
+                    .filter(|part| !part.is_empty() && *part != LOCAL_IMPORT_DEFAULT_EXPORT_MARKER)
                     .map(ToOwned::to_owned)
                     .collect()
             })
@@ -395,6 +423,7 @@ impl CallRelation {
 /// while a call is a pending `LocalImport`. Newlines never appear in project
 /// file paths, so the join/split round-trips losslessly.
 pub const LOCAL_IMPORT_CANDIDATE_SEP: &str = "\n";
+const LOCAL_IMPORT_DEFAULT_EXPORT_MARKER: &str = "__gcode_local_import_default_export__";
 
 /// Project index statistics.
 #[derive(Debug, Clone, Serialize, Deserialize)]

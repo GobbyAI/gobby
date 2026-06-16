@@ -247,10 +247,10 @@ pub(crate) fn resolve_local_member_callee(
         return None;
     }
     let candidate_files = import_bindings.local_member.get(root_alias)?.clone();
-    Some(LocalCallBinding {
+    Some(LocalCallBinding::named(
         candidate_files,
-        callee_name: callee_name.to_string(),
-    })
+        callee_name.to_string(),
+    ))
 }
 
 /// Resolves a Ruby member call (`Widget.build`, `Widget.new`) against the files
@@ -287,10 +287,7 @@ pub(crate) fn resolve_ruby_local_member_callee(
     } else {
         callee_name.to_string()
     };
-    Some(LocalCallBinding {
-        candidate_files,
-        callee_name: target_name,
-    })
+    Some(LocalCallBinding::named(candidate_files, target_name))
 }
 
 /// Resolve a fully-qualified PHP static call (`\Ns\Class::method()`) against the
@@ -319,10 +316,10 @@ pub(crate) fn resolve_php_local_member_callee(
     if candidate_files.is_empty() {
         return None;
     }
-    Some(LocalCallBinding {
+    Some(LocalCallBinding::named(
         candidate_files,
-        callee_name: callee_name.to_string(),
-    })
+        callee_name.to_string(),
+    ))
 }
 
 /// Resolves a *bare* Swift call against the caller's own module. Swift has
@@ -347,10 +344,10 @@ pub(crate) fn resolve_swift_local_callee(
     if candidate_files.is_empty() {
         return None;
     }
-    Some(LocalCallBinding {
+    Some(LocalCallBinding::named(
         candidate_files,
-        callee_name: callee_name.to_string(),
-    })
+        callee_name.to_string(),
+    ))
 }
 
 /// Resolves a bare Dart call against the files brought into scope by this file's
@@ -380,10 +377,10 @@ pub(crate) fn resolve_dart_local_callee(
     let mut candidate_files = import_bindings.dart_local_import_files.clone();
     candidate_files.sort();
     candidate_files.dedup();
-    Some(LocalCallBinding {
+    Some(LocalCallBinding::named(
         candidate_files,
-        callee_name: callee_name.to_string(),
-    })
+        callee_name.to_string(),
+    ))
 }
 
 /// Resolve an Elixir call against a locally-declared module's file(s).
@@ -416,10 +413,10 @@ pub(crate) fn resolve_elixir_local_callee(
         if candidate_files.is_empty() {
             return None;
         }
-        return Some(LocalCallBinding {
+        return Some(LocalCallBinding::named(
             candidate_files,
-            callee_name: callee_name.to_string(),
-        });
+            callee_name.to_string(),
+        ));
     }
     if !is_bare_call {
         return None;
@@ -435,10 +432,10 @@ pub(crate) fn resolve_elixir_local_callee(
     let mut candidate_files = import_bindings.elixir_local_import_files.clone();
     candidate_files.sort();
     candidate_files.dedup();
-    Some(LocalCallBinding {
+    Some(LocalCallBinding::named(
         candidate_files,
-        callee_name: callee_name.to_string(),
-    })
+        callee_name.to_string(),
+    ))
 }
 
 pub(crate) fn resolve_rust_local_qualified_callee(
@@ -503,8 +500,8 @@ pub(crate) fn resolve_csharp_local_member_callee(
     if candidate_files.is_empty() {
         return None;
     }
-    Some(LocalCallBinding {
+    Some(LocalCallBinding::named(
         candidate_files,
-        callee_name: callee_name.to_string(),
-    })
+        callee_name.to_string(),
+    ))
 }

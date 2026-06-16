@@ -242,11 +242,7 @@ runHelper();
 }
 
 #[test]
-fn leaves_local_javascript_default_imports_unresolved() {
-    // A default export carries its own declared name, which the parse-time
-    // binding cannot know, so default imports degrade to unresolved rather than
-    // record a guaranteed-miss local_import. (A named export of the same symbol
-    // resolves fine — see the named-import test.)
+fn records_local_javascript_default_imports_as_default_local_import_calls() {
     let parsed = parse_javascript(
         r#"
 import helper from "./utils";
@@ -259,8 +255,8 @@ helper();
     );
 
     let call = parsed.calls.first().expect("call");
-    assert_eq!(call.callee_target_kind.as_str(), "unresolved");
-    assert!(call.callee_external_module.is_none());
+    assert_local_import_call!(call, "helper", "src/utils.js");
+    assert!(call.local_import_uses_default_export_fallback());
 }
 
 #[test]

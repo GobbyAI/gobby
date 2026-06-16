@@ -31,13 +31,10 @@ pub(crate) fn parse_lua_import_statement(
         return;
     };
     if let Some(member) = member {
-        extracted.bindings.local_bare.insert(
-            alias,
-            LocalCallBinding {
-                candidate_files,
-                callee_name: member,
-            },
-        );
+        extracted
+            .bindings
+            .local_bare
+            .insert(alias, LocalCallBinding::named(candidate_files, member));
     } else {
         extracted
             .bindings
@@ -64,10 +61,10 @@ pub(crate) fn resolve_lua_require_member_callee(
     if candidate_files.is_empty() {
         return None;
     }
-    Some(LocalCallBinding {
+    Some(LocalCallBinding::named(
         candidate_files,
-        callee_name: callee_name.to_string(),
-    })
+        callee_name.to_string(),
+    ))
 }
 
 fn lua_require_assignment(text: &str) -> Option<(String, Option<String>)> {

@@ -416,8 +416,14 @@ fn materialize_call(
         // Cross-file local import: record the original name plus the candidate
         // target files. The post-write pass resolves it against `code_symbols`
         // to a real indexed id (or degrades it to unresolved).
-        call =
-            call.with_local_import_target(local_binding.callee_name, local_binding.candidate_files);
+        call = if local_binding.is_default_export() {
+            call.with_local_default_import_target(
+                local_binding.callee_name,
+                local_binding.candidate_files,
+            )
+        } else {
+            call.with_local_import_target(local_binding.callee_name, local_binding.candidate_files)
+        };
     } else if let Some(external_target) = external_target {
         call = call.with_external_target(external_target.callee_name, external_target.module);
     } else if let Some(semantic_target) = semantic_target {

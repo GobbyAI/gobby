@@ -6,7 +6,9 @@
 //! pass runs once per index run *after* every file's symbols and calls are
 //! written, so `code_symbols` is fully current. For each pending call it looks
 //! the target up by `(candidate files, original name)` and rewrites the row to a
-//! `Symbol` target on a hit or `Unresolved` on a miss.
+//! `Symbol` target on a hit or `Unresolved` on a miss. JavaScript default
+//! imports use a conservative fallback: exactly one top-level callable/type
+//! symbol in the candidate files.
 //!
 //! Because the rewrite uses the real indexed symbol id (never a recomputed
 //! UUID), a phantom `CALLS` edge to a non-existent symbol is structurally
@@ -32,19 +34,38 @@ pub(super) fn resolve_local_import_calls(
     file_paths: &[String],
 ) -> anyhow::Result<usize> {
     let pending = db::read_local_import_calls(conn, project_id, file_paths)?;
-    if pending.is_empty() {
-        return Ok(0);
-    }
+    resolve_pending_local_import_calls(conn, project_id, pending)
+}
 
+/// Resolve any pending `local_import` rows left from an earlier interrupted
+/// promotion pass. Full, unfiltered indexes call this after the normal
+/// changed-file pass so stale project rows are not stranded forever.
+pub(super) fn resolve_project_local_import_calls(
+    conn: &mut Client,
+    project_id: &str,
+) -> anyhow::Result<usize> {
+    let pending = db::read_project_local_import_calls(conn, project_id)?;
+    resolve_pending_local_import_calls(conn, project_id, pending)
+}
+
+fn resolve_pending_local_import_calls(
+    conn: &mut Client,
+    project_id: &str,
+    pending: Vec<CallRelation>,
+) -> anyhow::Result<usize> {
     let mut resolved_count = 0usize;
     for call in &pending {
         let candidate_files = call.local_import_candidate_files();
-        let resolved_id = db::resolve_local_callee_symbol_id(
-            conn,
-            project_id,
-            &candidate_files,
-            &call.callee_name,
-        )?;
+        let resolved_id = if call.local_import_uses_default_export_fallback() {
+            db::resolve_default_import_symbol_id(conn, project_id, &candidate_files)?
+        } else {
+            db::resolve_local_callee_symbol_id(
+                conn,
+                project_id,
+                &candidate_files,
+                &call.callee_name,
+            )?
+        };
         let resolved = match resolved_id {
             Some(id) => {
                 resolved_count += 1;

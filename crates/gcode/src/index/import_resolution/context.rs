@@ -159,10 +159,10 @@ impl ImportResolutionContext {
             &self.rust_external_crates,
             path,
         )?;
-        Some(LocalCallBinding {
-            candidate_files: rust_candidate_files(&target.source_root, &target.module),
-            callee_name: target.name,
-        })
+        Some(LocalCallBinding::named(
+            rust_candidate_files(&target.source_root, &target.module),
+            target.name,
+        ))
     }
 
     /// Local-call binding for a path-qualified Rust call without a `use`
@@ -180,10 +180,10 @@ impl ImportResolutionContext {
             qualifier_path,
             name,
         )?;
-        Some(LocalCallBinding {
-            candidate_files: rust_candidate_files(&target.source_root, &target.module),
-            callee_name: target.name,
-        })
+        Some(LocalCallBinding::named(
+            rust_candidate_files(&target.source_root, &target.module),
+            target.name,
+        ))
     }
 
     /// Candidate target files for a local Go package `module` (a self-module

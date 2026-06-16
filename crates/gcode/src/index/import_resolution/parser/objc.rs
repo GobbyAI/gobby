@@ -43,10 +43,7 @@ pub(crate) fn parse_objc_import_statement(
                 .bindings
                 .local_bare
                 .entry(function_name.clone())
-                .or_insert_with(|| LocalCallBinding {
-                    candidate_files: Vec::new(),
-                    callee_name: function_name,
-                })
+                .or_insert_with(|| LocalCallBinding::named(Vec::new(), function_name))
                 .candidate_files
                 .push(file.clone());
         }
@@ -83,10 +80,8 @@ pub(crate) fn resolve_objc_local_callee(
     let mut candidate_files = import_bindings.objc_import_files.clone();
     candidate_files.sort();
     candidate_files.dedup();
-    (!candidate_files.is_empty()).then(|| LocalCallBinding {
-        candidate_files,
-        callee_name: callee_name.to_string(),
-    })
+    (!candidate_files.is_empty())
+        .then(|| LocalCallBinding::named(candidate_files, callee_name.to_string()))
 }
 
 fn objc_import_path(text: &str) -> Option<(String, bool)> {

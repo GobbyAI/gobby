@@ -10,6 +10,8 @@ mod common;
 mod local_c_cpp;
 #[path = "graph_standalone/local_csharp_kotlin_ruby.rs"]
 mod local_csharp_kotlin_ruby;
+#[path = "graph_standalone/local_js_default.rs"]
+mod local_js_default;
 #[path = "graph_standalone/local_php_swift_dart_elixir.rs"]
 mod local_php_swift_dart_elixir;
 #[path = "graph_standalone/local_python_go_java.rs"]

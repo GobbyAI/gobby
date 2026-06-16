@@ -86,10 +86,7 @@ pub(crate) fn parse_python_import_statement(
             extracted.bindings.bare.remove(&local_alias);
             extracted.bindings.local_bare.insert(
                 local_alias,
-                LocalCallBinding {
-                    candidate_files: candidate_files.clone(),
-                    callee_name: imported_name.to_string(),
-                },
+                LocalCallBinding::named(candidate_files.clone(), imported_name.to_string()),
             );
         }
         return Ok(());
@@ -301,19 +298,22 @@ fn parse_js_local_import_clause(
                 extracted.bindings.member.remove(&local_alias);
                 extracted.bindings.local_bare.insert(
                     local_alias,
-                    LocalCallBinding {
-                        candidate_files: candidate_files.clone(),
-                        callee_name: imported_name.to_string(),
-                    },
+                    LocalCallBinding::named(candidate_files.clone(), imported_name.to_string()),
                 );
             }
             continue;
         }
 
-        // Default imports (`import foo from "./m"`) bind the local alias to the
-        // module's default export. The DB resolver keys on the original name and
-        // a default export carries its own declared name, so there is nothing to
-        // match — leave the call unresolved rather than record a guaranteed miss.
+        let local_alias = part.trim_start_matches("type ").trim();
+        if local_alias.is_empty() {
+            continue;
+        }
+        extracted.bindings.bare.remove(local_alias);
+        extracted.bindings.member.remove(local_alias);
+        extracted.bindings.local_bare.insert(
+            local_alias.to_string(),
+            LocalCallBinding::default_export(candidate_files.clone(), local_alias.to_string()),
+        );
     }
     Ok(())
 }

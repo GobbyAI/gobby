@@ -145,6 +145,7 @@ fn resolve_same_file_associated_callee(
 }
 
 pub(super) fn member_qualifier_path(
+    language: &str,
     source: &[u8],
     call_node: tree_sitter::Node,
     name_node: tree_sitter::Node,
@@ -165,7 +166,10 @@ pub(super) fn member_qualifier_path(
     let full_qualifier = prefix
         .trim_end_matches(|ch: char| ch == '.' || ch == ':' || ch == '\\' || ch.is_whitespace())
         .trim();
-    if full_qualifier.starts_with("require") && full_qualifier.contains(['"', '\'']) {
+    if language == "lua"
+        && full_qualifier.starts_with("require")
+        && full_qualifier.contains(['"', '\''])
+    {
         return Some(full_qualifier.to_string());
     }
 
@@ -222,4 +226,61 @@ pub(super) fn qualifier_root_alias(qualifier: &str) -> Option<&str> {
         .trim_start_matches('\\')
         .split(['.', ':', '\\'])
         .find(|part| !part.is_empty())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::index::languages;
+    use streaming_iterator::StreamingIterator;
+    use tree_sitter::{Query, QueryCursor};
+
+    #[test]
+    fn quoted_require_member_qualifier_is_lua_only() {
+        let source: &[u8] = br#"require("./utils").helper();"#;
+        let ts_lang = languages::get_ts_language("javascript").expect("javascript language");
+        let mut parser = tree_sitter::Parser::new();
+        parser
+            .set_language(&ts_lang)
+            .expect("set javascript language");
+        let tree = parser.parse(source, None).expect("parse javascript");
+        let query = Query::new(
+            &ts_lang,
+            "(call_expression function: (member_expression property: (property_identifier) @name)) @call",
+        )
+        .expect("compile query");
+        let mut cursor = QueryCursor::new();
+        let mut matches = cursor.matches(&query, tree.root_node(), source);
+        let capture_names = query.capture_names();
+        let name_capture = capture_names
+            .iter()
+            .position(|name| *name == "name")
+            .expect("name capture");
+        let call_capture = capture_names
+            .iter()
+            .position(|name| *name == "call")
+            .expect("call capture");
+        let query_match = matches.next().expect("query match");
+        let mut name_node = None;
+        let mut call_node = None;
+        for cap in query_match.captures {
+            let capture_index = cap.index as usize;
+            if capture_index == name_capture {
+                name_node = Some(cap.node);
+            } else if capture_index == call_capture {
+                call_node = Some(cap.node);
+            }
+        }
+        let call_node = call_node.expect("call node");
+        let name_node = name_node.expect("name node");
+
+        assert_eq!(
+            member_qualifier_path("lua", source, call_node, name_node).as_deref(),
+            Some(r#"require("./utils")"#)
+        );
+        assert_eq!(
+            member_qualifier_path("javascript", source, call_node, name_node).as_deref(),
+            Some("require")
+        );
+    }
 }

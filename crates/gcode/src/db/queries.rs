@@ -258,6 +258,21 @@ pub fn read_local_import_calls(
     rows.iter().map(call_relation_from_row).collect()
 }
 
+pub fn read_project_local_import_calls(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+) -> anyhow::Result<Vec<CallRelation>> {
+    let rows = conn.query(
+        "SELECT caller_symbol_id, callee_symbol_id, callee_name,
+                callee_target_kind, callee_external_module, file_path, line::BIGINT AS line
+         FROM code_calls
+         WHERE project_id = $1 AND callee_target_kind = 'local_import'
+         ORDER BY file_path, line, caller_symbol_id, callee_name",
+        &[&project_id],
+    )?;
+    rows.iter().map(call_relation_from_row).collect()
+}
+
 /// Resolve a cross-file local-import call target to its canonical `code_symbols`
 /// id by `(candidate files, original name)`. Returns the real indexed id (no
 /// UUID recompute, so a phantom edge is structurally impossible), or `None` when
@@ -303,6 +318,42 @@ pub fn resolve_local_callee_symbol_id(
         .collect::<Result<_, _>>()?;
 
     Ok(select_local_callee_candidate_id(&candidates))
+}
+
+pub fn resolve_default_import_symbol_id(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    target_files: &[String],
+) -> anyhow::Result<Option<String>> {
+    if target_files.is_empty() {
+        return Ok(None);
+    }
+    let target_kinds = ["function", "class", "type"];
+    let rows = conn.query(
+        "SELECT id, kind, parent_symbol_id
+         FROM code_symbols
+         WHERE project_id = $1 AND file_path = ANY($2)
+           AND parent_symbol_id IS NULL
+           AND kind = ANY($3)
+         ORDER BY file_path, byte_start",
+        &[&project_id, &target_files, &target_kinds.as_slice()],
+    )?;
+
+    let candidates: Vec<LocalCalleeCandidate> = rows
+        .iter()
+        .map(|row| {
+            let id: String = row.try_get("id")?;
+            let kind: String = row.try_get("kind")?;
+            let parent_symbol_id: Option<String> = row.try_get("parent_symbol_id")?;
+            Ok::<_, anyhow::Error>(LocalCalleeCandidate {
+                id,
+                kind,
+                parent_symbol_id,
+            })
+        })
+        .collect::<Result<_, _>>()?;
+
+    Ok(select_default_import_candidate_id(&candidates))
 }
 
 #[derive(Debug)]
@@ -359,6 +410,18 @@ fn select_local_callee_candidate_id(candidates: &[LocalCalleeCandidate]) -> Opti
         .map(|candidate| &candidate.id)
         .collect();
     unique_id(&types)
+}
+
+fn select_default_import_candidate_id(candidates: &[LocalCalleeCandidate]) -> Option<String> {
+    let top_level: Vec<&String> = candidates
+        .iter()
+        .filter(|candidate| {
+            candidate.parent_symbol_id.is_none()
+                && matches!(candidate.kind.as_str(), "function" | "class" | "type")
+        })
+        .map(|candidate| &candidate.id)
+        .collect();
+    unique_id(&top_level)
 }
 
 fn unique_id(ids: &[&String]) -> Option<String> {
@@ -464,6 +527,30 @@ mod tests {
         ];
 
         assert_eq!(select_local_callee_candidate_id(&candidates), None);
+    }
+
+    #[test]
+    fn default_import_selector_resolves_unique_top_level_candidate() {
+        let candidates = [
+            code_symbol_row("helper", "function", None),
+            code_symbol_row("nested", "function", Some("helper")),
+            code_symbol_row("method", "method", Some("helper")),
+        ];
+
+        assert_eq!(
+            select_default_import_candidate_id(&candidates),
+            Some("helper".to_string())
+        );
+    }
+
+    #[test]
+    fn default_import_selector_leaves_ambiguous_top_level_candidates_unresolved() {
+        let candidates = [
+            code_symbol_row("helper", "function", None),
+            code_symbol_row("Widget", "class", None),
+        ];
+
+        assert_eq!(select_default_import_candidate_id(&candidates), None);
     }
 
     #[test]

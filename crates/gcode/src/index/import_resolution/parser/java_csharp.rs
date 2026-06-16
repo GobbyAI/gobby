@@ -54,10 +54,7 @@ pub(crate) fn parse_java_import_statement(
         extracted.bindings.bare.remove(member_name);
         extracted.bindings.local_bare.insert(
             member_name.to_string(),
-            LocalCallBinding {
-                candidate_files,
-                callee_name: member_name.to_string(),
-            },
+            LocalCallBinding::named(candidate_files, member_name.to_string()),
         );
         return;
     }
@@ -89,10 +86,7 @@ pub(crate) fn parse_java_import_statement(
         .insert(class_alias.to_string(), candidate_files.clone());
     extracted.bindings.local_bare.insert(
         class_alias.to_string(),
-        LocalCallBinding {
-            candidate_files,
-            callee_name: class_alias.to_string(),
-        },
+        LocalCallBinding::named(candidate_files, class_alias.to_string()),
     );
 }
 

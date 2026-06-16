@@ -8,6 +8,12 @@ pub(crate) struct ExternalImportBinding {
     pub(crate) callee_name: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LocalCallResolution {
+    Named,
+    DefaultExport,
+}
+
 /// A cross-file local import resolved at parse time to its candidate target
 /// files plus the originally imported name. Resolution to a canonical symbol id
 /// happens later, against `code_symbols`, in the post-write pass — so this type
@@ -19,6 +25,29 @@ pub(crate) struct LocalCallBinding {
     pub(crate) candidate_files: Vec<String>,
     /// The originally imported name (not the local alias).
     pub(crate) callee_name: String,
+    pub(crate) resolution: LocalCallResolution,
+}
+
+impl LocalCallBinding {
+    pub(crate) fn named(candidate_files: Vec<String>, callee_name: String) -> Self {
+        Self {
+            candidate_files,
+            callee_name,
+            resolution: LocalCallResolution::Named,
+        }
+    }
+
+    pub(crate) fn default_export(candidate_files: Vec<String>, local_alias: String) -> Self {
+        Self {
+            candidate_files,
+            callee_name: local_alias,
+            resolution: LocalCallResolution::DefaultExport,
+        }
+    }
+
+    pub(crate) fn is_default_export(&self) -> bool {
+        self.resolution == LocalCallResolution::DefaultExport
+    }
 }
 
 #[derive(Debug, Clone, Default)]

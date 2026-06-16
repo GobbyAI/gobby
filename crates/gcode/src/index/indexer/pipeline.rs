@@ -17,7 +17,7 @@ use super::lifecycle::{
     attach_projection_sync, cleanup_deleted_file_projections, current_file_state, get_orphan_files,
     get_stale_files, refresh_project_stats,
 };
-use super::local_imports::resolve_local_import_calls;
+use super::local_imports::{resolve_local_import_calls, resolve_project_local_import_calls};
 use super::overlay::index_overlay_files;
 use super::types::{IndexOutcome, IndexRequest};
 use super::util::{
@@ -159,6 +159,9 @@ fn index_discovered_files(
     // Resolve cross-file local-import calls now that every file's symbols are in
     // the hub. Order-independent and bounded by this run's changed files.
     resolve_local_import_calls(conn, project_id, &outcome.indexed_file_paths)?;
+    if request.full && request.path_filter.is_none() {
+        resolve_project_local_import_calls(conn, project_id)?;
+    }
     outcome.durations.indexing_ms = indexing_start.elapsed().as_millis() as u64;
 
     let stats_start = Instant::now();
