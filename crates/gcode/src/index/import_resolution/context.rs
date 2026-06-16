@@ -257,6 +257,13 @@ pub(crate) struct ImportBindings {
     /// member call `Type.M()` resolves `Type` against each namespace's declared
     /// types (`csharp_type_files["Ns.Type"]`).
     pub(crate) csharp_local_namespaces: Vec<String>,
+    /// Project-relative `.dart` files brought into bare scope by this file's
+    /// unaliased local imports (`package:<self>/…` or relative URIs). Dart
+    /// imports expose a file's public top-level symbols as a whole with no
+    /// per-name binding, so a bare call resolves its name against every one of
+    /// these files; the post-write DB pass narrows the set to a real id (or
+    /// degrades to unresolved). Aliased local imports feed `local_member`.
+    pub(crate) dart_local_import_files: Vec<String>,
 }
 
 #[derive(Debug, Clone)]

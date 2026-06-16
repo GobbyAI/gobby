@@ -2,8 +2,8 @@ use crate::models::ImportRelation;
 
 use super::super::context::{ExternalRootBinding, ExtractedImports, ImportResolutionContext};
 use super::super::helpers::{
-    collapse_whitespace, dart_import_alias, elixir_alias_as, extract_quoted_string,
-    is_elixir_alias_path,
+    collapse_whitespace, dart_import_alias, dart_local_import_target, elixir_alias_as,
+    extract_quoted_string, is_elixir_alias_path,
 };
 use super::super::predicates::is_external_dart_uri;
 
@@ -110,13 +110,44 @@ pub(crate) fn parse_dart_import_statement(
         module_name: uri.clone(),
     });
 
-    if !is_external_dart_uri(&uri, import_context) {
+    let alias = dart_import_alias(&normalized);
+
+    if is_external_dart_uri(&uri, import_context) {
+        match alias {
+            Some(alias) => {
+                extracted.bindings.member.insert(alias, uri);
+            }
+            None => extracted.bindings.bare_wildcard_modules.push(uri),
+        }
         return;
     }
-    if let Some(alias) = dart_import_alias(&normalized) {
-        extracted.bindings.member.insert(alias, uri);
-    } else {
-        extracted.bindings.bare_wildcard_modules.push(uri);
+
+    // Local import (self-package `package:<self>/…` or relative URI). Resolve the
+    // URI to the project-relative file it names. Dart brings a file's public
+    // top-level symbols into scope as a whole, so the imported name is the symbol
+    // name; record the target file as a candidate and let the post-write DB pass
+    // narrow it to a real id (or degrade to unresolved).
+    let Some(target_file) = dart_local_import_target(
+        &uri,
+        rel_path,
+        import_context.dart_self_package_name.as_deref(),
+    ) else {
+        return;
+    };
+
+    match alias {
+        // `import '…' as p;` only exposes symbols through the prefix `p.name()`;
+        // a bare `name()` does not see them, so the file feeds the member channel
+        // (`p.name()` resolves `name` against it).
+        Some(alias) => extracted
+            .bindings
+            .local_member
+            .entry(alias)
+            .or_default()
+            .push(target_file),
+        // An unaliased local import exposes the file's top-level symbols to bare
+        // calls in the importing file.
+        None => extracted.bindings.dart_local_import_files.push(target_file),
     }
 }
 

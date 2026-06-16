@@ -338,6 +338,39 @@ pub(crate) fn resolve_swift_local_callee(
     })
 }
 
+/// Resolves a bare Dart call against the files brought into scope by this file's
+/// unaliased local imports. The candidate set comes from `dart_local_import_files`
+/// (populated at import-parse time); the bare call name is the target symbol
+/// name. The post-write DB pass narrows the candidates to a real id, so a name
+/// that no imported file declares simply degrades to unresolved — never a
+/// phantom edge. Aliased prefixed calls (`p.name()`) and member calls resolve
+/// elsewhere (`resolve_local_member_callee`).
+pub(crate) fn resolve_dart_local_callee(
+    import_bindings: &ImportBindings,
+    symbols: &[Symbol],
+    callee_name: &str,
+    is_bare_call: bool,
+) -> Option<LocalCallBinding> {
+    if !is_bare_call {
+        return None;
+    }
+    if import_bindings.dart_local_import_files.is_empty() {
+        return None;
+    }
+    // A same-file top-level declaration is resolved by the same-file pass; never
+    // shadow it with a cross-file candidate set.
+    if symbols.iter().any(|symbol| symbol.name == callee_name) {
+        return None;
+    }
+    let mut candidate_files = import_bindings.dart_local_import_files.clone();
+    candidate_files.sort();
+    candidate_files.dedup();
+    Some(LocalCallBinding {
+        candidate_files,
+        callee_name: callee_name.to_string(),
+    })
+}
+
 pub(crate) fn resolve_rust_local_qualified_callee(
     import_context: &ImportResolutionContext,
     rel_path: &str,

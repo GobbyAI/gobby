@@ -10,7 +10,7 @@ pub(super) use super::super::context::{
     load_rust_self_crate_name,
 };
 pub(super) use super::super::helpers::{
-    extract_quoted_string, go_default_package_alias, split_top_level,
+    dart_local_import_target, extract_quoted_string, go_default_package_alias, split_top_level,
 };
 pub(super) use super::super::predicates::{
     bundled_elixir_dependency_roots, bundled_ruby_require_roots, csharp_declared_types,

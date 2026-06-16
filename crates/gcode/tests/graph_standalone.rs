@@ -260,6 +260,7 @@ const KOTLIN_LOCAL_PROJECT_ID: &str = "graph-standalone-kotlin-local";
 const RUBY_LOCAL_PROJECT_ID: &str = "graph-standalone-ruby-local";
 const PHP_LOCAL_PROJECT_ID: &str = "graph-standalone-php-local";
 const SWIFT_LOCAL_PROJECT_ID: &str = "graph-standalone-swift-local";
+const DART_LOCAL_PROJECT_ID: &str = "graph-standalone-dart-local";
 
 /// End-to-end check for the post-write local-import resolution (#790): indexing
 /// a two-file Python project must resolve the cross-file calls in `b.py` to the
@@ -1198,6 +1199,124 @@ fn index_resolves_cross_file_local_swift_calls() {
     assert_caller_present(&env, project.path(), "greet", "run", "after sync-file");
     assert_eq!(
         phantom_call_target_count(&mut graph, SWIFT_LOCAL_PROJECT_ID),
+        0,
+        "sync-file must not introduce a phantom CALLS target"
+    );
+}
+
+/// Resolves cross-file local Dart calls — a free function (`greet()`) reached
+/// through an unaliased self-package import (`package:app/greeter.dart`), and a
+/// constructor (`Widget()`) reached through an unaliased relative import
+/// (`widget.dart`) — across the index, rebuild, and sync-file paths. Dart
+/// imports name a whole file, so each bare call narrows the importing file's
+/// local-import candidate set to the real symbol. No target may be a phantom
+/// CALLS node.
+#[test]
+fn index_resolves_cross_file_local_dart_calls() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-file Dart local-call resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("lib")).expect("create lib");
+    fs::write(project.path().join("pubspec.yaml"), "name: app\n").expect("write pubspec.yaml");
+    fs::write(
+        project.path().join("lib/greeter.dart"),
+        "String greet() {\n  return 'hi';\n}\n",
+    )
+    .expect("write greeter.dart");
+    fs::write(project.path().join("lib/widget.dart"), "class Widget {}\n").expect("write widget");
+    fs::write(
+        project.path().join("lib/main.dart"),
+        "import 'package:app/greeter.dart';\nimport 'widget.dart';\n\nvoid run() {\n  greet();\n  Widget();\n}\n",
+    )
+    .expect("write main.dart");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": DART_LOCAL_PROJECT_ID,
+            "name": "graph-standalone-dart-local",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, DART_LOCAL_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    let greeter_file = "lib/greeter.dart";
+    let widget_file = "lib/widget.dart";
+    let main_file = "lib/main.dart";
+    let greet_id = required_symbol_id(&mut conn, DART_LOCAL_PROJECT_ID, greeter_file, "greet");
+    let widget_id = required_symbol_id(&mut conn, DART_LOCAL_PROJECT_ID, widget_file, "Widget");
+
+    // The free-function call resolves to the function in the imported
+    // self-package file, and the constructor call resolves to the class in the
+    // relatively-imported file — both cross-file, narrowed from the importing
+    // file's local-import candidate set.
+    assert_eq!(
+        resolved_call_target(&mut conn, DART_LOCAL_PROJECT_ID, main_file, "greet"),
+        Some(greet_id.clone()),
+        "Dart free-function call did not resolve to the canonical function"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, DART_LOCAL_PROJECT_ID, main_file, "Widget"),
+        Some(widget_id.clone()),
+        "Dart constructor call did not resolve to the canonical class"
+    );
+    assert_eq!(
+        pending_local_import_count(&mut conn, DART_LOCAL_PROJECT_ID),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Projection path 1+2: rebuild from resolved PostgreSQL facts, then every
+    // cross-file caller must be reachable and each target a real DEFINES-linked
+    // node (no phantom CALLS target).
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_caller_present(&env, project.path(), "greet", "run", "after rebuild");
+    assert_caller_present(&env, project.path(), "Widget", "run", "after rebuild");
+
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, DART_LOCAL_PROJECT_ID),
+        0,
+        "no CALLS target may lack a DEFINES edge after rebuild"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, DART_LOCAL_PROJECT_ID, &greet_id),
+        "the resolved Dart function target must be a defined, called CodeSymbol"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, DART_LOCAL_PROJECT_ID, &widget_id),
+        "the resolved Dart class target must be a defined, called CodeSymbol"
+    );
+
+    let blast = json_command(&env, project.path(), &["blast-radius", "greet"]);
+    assert!(
+        blast.get("center").is_some(),
+        "blast-radius should report a center: {blast}"
+    );
+
+    // Projection path 3: sync-file must recreate the same canonical edges.
+    let sync = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", main_file],
+    );
+    assert_success(sync, "graph sync-file main.dart");
+    assert_caller_present(&env, project.path(), "greet", "run", "after sync-file");
+    assert_eq!(
+        phantom_call_target_count(&mut graph, DART_LOCAL_PROJECT_ID),
         0,
         "sync-file must not introduce a phantom CALLS target"
     );

@@ -188,3 +188,42 @@ fn swift_module_files_group_files_by_module_and_track_paths() {
         Some(["Sources/Helpers/Util.swift".to_string()].as_slice())
     );
 }
+
+#[test]
+fn dart_local_import_target_resolves_self_package_and_relative_uris() {
+    // `package:<self>/…` maps into the package's `lib/` source root.
+    assert_eq!(
+        dart_local_import_target(
+            "package:app/widgets/button.dart",
+            "lib/main.dart",
+            Some("app")
+        ),
+        Some("lib/widgets/button.dart".to_string())
+    );
+    // A relative URI resolves against the importing file's directory...
+    assert_eq!(
+        dart_local_import_target("helper.dart", "lib/src/main.dart", Some("app")),
+        Some("lib/src/helper.dart".to_string())
+    );
+    // ...collapsing `..` segments that walk up out of it.
+    assert_eq!(
+        dart_local_import_target("../util.dart", "lib/src/main.dart", Some("app")),
+        Some("lib/util.dart".to_string())
+    );
+
+    // `dart:` SDK imports and external `package:` dependencies are not local
+    // project files.
+    assert_eq!(
+        dart_local_import_target("dart:async", "lib/main.dart", Some("app")),
+        None
+    );
+    assert_eq!(
+        dart_local_import_target("package:http/http.dart", "lib/main.dart", Some("app")),
+        None
+    );
+    // Without a known self package, a `package:` URI cannot be resolved to a path.
+    assert_eq!(
+        dart_local_import_target("package:app/x.dart", "lib/main.dart", None),
+        None
+    );
+}

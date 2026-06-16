@@ -1,3 +1,5 @@
+use std::path::{Component, Path};
+
 pub(super) fn collapse_whitespace(text: &str) -> String {
     text.split_whitespace().collect::<Vec<_>>().join(" ")
 }
@@ -327,6 +329,55 @@ pub(super) fn dart_import_alias(text: &str) -> Option<String> {
     } else {
         Some(alias.to_string())
     }
+}
+
+/// Resolves a *local* Dart import URI to the project-relative `.dart` file it
+/// refers to. `package:<self>/<p>` maps to `lib/<p>`; a relative URI resolves
+/// against the importing file's directory, collapsing `.`/`..`. Returns `None`
+/// for URIs that are not local project files — `dart:` SDK imports, external
+/// `package:` dependencies, a `package:` URI naming no path, or any other URI
+/// scheme. Pure path logic, no filesystem access; a path that points nowhere
+/// simply matches no indexed symbol in the post-write pass.
+pub(super) fn dart_local_import_target(
+    uri: &str,
+    rel_path: &str,
+    self_package: Option<&str>,
+) -> Option<String> {
+    if let Some(rest) = uri.strip_prefix("package:") {
+        let (package, within) = rest.split_once('/')?;
+        if within.is_empty() || Some(package) != self_package {
+            return None;
+        }
+        return Some(normalize_relative_dart_path(&Path::new("lib").join(within)));
+    }
+    // `dart:` SDK imports (and any other URI scheme) are never project files.
+    if uri.contains(':') {
+        return None;
+    }
+    let dir = Path::new(rel_path)
+        .parent()
+        .unwrap_or_else(|| Path::new(""));
+    let resolved = normalize_relative_dart_path(&dir.join(uri));
+    (!resolved.is_empty()).then_some(resolved)
+}
+
+/// Collapses `.`/`..` and redundant separators in a project-relative path,
+/// preserving the file extension (unlike the JS module normalizer, which strips
+/// it). A `..` that would escape the root is dropped, matching how an
+/// out-of-tree import resolves to no indexed file.
+fn normalize_relative_dart_path(path: &Path) -> String {
+    let mut parts: Vec<String> = Vec::new();
+    for component in path.components() {
+        match component {
+            Component::CurDir => {}
+            Component::ParentDir => {
+                parts.pop();
+            }
+            Component::Normal(part) => parts.push(part.to_string_lossy().into_owned()),
+            Component::RootDir | Component::Prefix(_) => {}
+        }
+    }
+    parts.join("/")
 }
 
 pub(super) fn is_elixir_alias(name: &str) -> bool {

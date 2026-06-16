@@ -46,6 +46,29 @@ macro_rules! assert_php_local_import {
     }};
 }
 
+/// Asserts a `local_import` call exists for `$callee_name` whose carried
+/// candidate files include `$expected_file`. Matching on the expected file lets
+/// a test distinguish two same-named calls (e.g. an aliased import pair). The
+/// post-write DB pass narrows these candidates to the real `code_symbols` id.
+macro_rules! assert_dart_local_import {
+    ($parsed:expr, $callee_name:expr, $expected_file:expr) => {{
+        let callee_name: &str = $callee_name;
+        let found = $parsed.calls.iter().any(|call| {
+            call.callee_target_kind.as_str() == "local_import"
+                && call.callee_name == callee_name
+                && call
+                    .local_import_candidate_files()
+                    .iter()
+                    .any(|file| file == $expected_file)
+        });
+        assert!(
+            found,
+            "no local_import call for {callee_name} carried candidate file {}; calls: {:?}",
+            $expected_file, $parsed.calls
+        );
+    }};
+}
+
 #[test]
 fn classifies_external_php_namespace_and_fully_qualified_calls() {
     let parsed = parse_php(
@@ -369,7 +392,7 @@ end
 }
 
 #[test]
-fn classifies_external_dart_alias_calls_only() {
+fn classifies_dart_alias_calls_by_locality() {
     let parsed = parse_dart(
         r#"
 import 'dart:convert' as convert;
@@ -395,6 +418,7 @@ dependencies:
         )],
     );
 
+    // External SDK/package alias calls carry their external module.
     let json_call = parsed
         .calls
         .iter()
@@ -403,12 +427,8 @@ dependencies:
                 && call.callee_target_kind.as_str() == "external"
                 && call.callee_external_module.as_deref() == Some("dart:convert")
         })
-        .expect("jsonDecode call");
+        .expect("convert.jsonDecode call");
     assert_eq!(json_call.callee_target_kind.as_str(), "external");
-    assert_eq!(
-        json_call.callee_external_module.as_deref(),
-        Some("dart:convert")
-    );
 
     let client_call = parsed
         .calls
@@ -421,14 +441,61 @@ dependencies:
         Some("package:http/http.dart")
     );
 
-    let unresolved: Vec<_> = parsed
+    // A *local* aliased import (self-package and relative) exposes its file only
+    // through the prefix, so `prefix.member()` resolves to a cross-file local
+    // import against that file — distinguished here by candidate path.
+    assert_dart_local_import!(&parsed, "helper", "lib/local.dart");
+    assert_dart_local_import!(&parsed, "helper", "lib/relative.dart");
+
+    // A bare call to a name only reachable through an alias prefix stays
+    // unresolved: the unaliased bare scope is empty here.
+    let bare_json = parsed
         .calls
         .iter()
-        .filter(|call| matches!(call.callee_name.as_str(), "helper" | "jsonDecode"))
-        .filter(|call| call.callee_target_kind.as_str() == "unresolved")
-        .collect();
-    assert_eq!(unresolved.len(), 3);
+        .find(|call| {
+            call.callee_name == "jsonDecode" && call.callee_target_kind.as_str() == "unresolved"
+        })
+        .expect("bare jsonDecode call");
+    assert_eq!(bare_json.callee_target_kind.as_str(), "unresolved");
     assert!(parsed.calls.iter().all(|call| call.callee_name != "run"));
+}
+
+#[test]
+fn resolves_unaliased_local_dart_import_bare_calls() {
+    let parsed = parse_dart(
+        r#"
+import 'package:app/greeter.dart';
+import 'widgets/button.dart';
+
+void run() {
+  greet();
+  Button();
+}
+"#,
+        &[
+            ("pubspec.yaml", "name: app\n"),
+            ("lib/greeter.dart", "String greet() => 'hi';\n"),
+            ("lib/widgets/button.dart", "class Button {}\n"),
+        ],
+    );
+
+    // Dart unaliased imports expose a file's public top-level symbols to bare
+    // calls. A self-package import (`package:app/…` -> `lib/…`) and a relative
+    // import each feed the importing file's bare-call candidate set; a free
+    // function and a constructor both resolve, pending the post-write DB pass.
+    assert_dart_local_import!(&parsed, "greet", "lib/greeter.dart");
+    assert_dart_local_import!(&parsed, "Button", "lib/widgets/button.dart");
+
+    // Both are local cross-file calls — neither carries an external module.
+    assert!(
+        parsed
+            .calls
+            .iter()
+            .filter(|call| matches!(call.callee_name.as_str(), "greet" | "Button"))
+            .all(|call| call.callee_target_kind.as_str() == "local_import"),
+        "bare calls to imported local symbols must classify as local_import: {:?}",
+        parsed.calls
+    );
 }
 
 #[test]
