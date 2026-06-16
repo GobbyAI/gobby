@@ -73,6 +73,18 @@ def _string_dict(value: Any) -> dict[str, str] | None:
     return {str(key): str(item) for key, item in value.items() if str(key)}
 
 
+def _public_secret_refs(value: Mapping[str, str] | None) -> dict[str, str] | None:
+    """Return only safe secret-reference values for unauthenticated server listings."""
+    if not value:
+        return None
+    refs = {
+        str(key): item
+        for key, item in value.items()
+        if str(key) and isinstance(item, str) and item.startswith("$secret:")
+    }
+    return refs or None
+
+
 def _string_list(value: Any) -> list[str] | None:
     if value is None:
         return None
@@ -171,8 +183,8 @@ async def list_mcp_servers(
                     "url": config.url,
                     "command": config.command,
                     "args": config.args,
-                    "env": config.env,
-                    "headers": config.headers,
+                    "env": _public_secret_refs(config.env),
+                    "headers": _public_secret_refs(config.headers),
                     "enabled": config.enabled,
                     "requires_oauth": config.requires_oauth,
                     "oauth_provider": config.oauth_provider,

@@ -637,6 +637,14 @@ class TestListMCPServers:
         )
         mcp_manager = FakeMCPManager()
         config = FakeServerConfig(name="external-server", transport="http")
+        config.env = {
+            "RAW_TOKEN": "raw-env-secret",
+            "TOKEN_REF": "$secret:mcp_token",
+        }
+        config.headers = {
+            "Authorization": "Bearer raw-header-secret",
+            "X-Token-Ref": "$secret:mcp_header",
+        }
         mcp_manager.server_configs.append(config)
         mcp_manager.health["external-server"] = FakeServerHealth()
         mcp_manager.connections["external-server"] = MagicMock()
@@ -651,6 +659,10 @@ class TestListMCPServers:
         assert data["connected"] == 1
         assert data["servers"][0]["name"] == "external-server"
         assert data["servers"][0]["transport"] == "http"
+        assert data["servers"][0]["env"] == {"TOKEN_REF": "$secret:mcp_token"}
+        assert data["servers"][0]["headers"] == {"X-Token-Ref": "$secret:mcp_header"}
+        assert "raw-env-secret" not in response.text
+        assert "raw-header-secret" not in response.text
 
     def test_list_servers_with_disconnected_servers(self, session_storage: SessionManager) -> None:
         """Test listing servers shows disconnected servers."""

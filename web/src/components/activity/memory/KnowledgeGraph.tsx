@@ -3,7 +3,7 @@ import ForceGraph3D from 'react-force-graph-3d'
 import SpriteText from 'three-spritetext'
 import { SphereGeometry, MeshLambertMaterial, Mesh } from 'three'
 import { IS_MOBILE, IS_IOS } from '../../../utils/platform'
-import { resolveCssVar, cn } from '../../../lib/utils'
+import { resolveCssVar, cn, escapeHtml } from '../../../lib/utils'
 import type { KnowledgeGraphData, KnowledgeEntity, KnowledgeRelationship } from '../../../hooks/useMemory'
 
 const CONTAINER_CLS = 'relative flex min-h-0 flex-1 overflow-hidden rounded-lg border border-[var(--border)] bg-[var(--bg-primary)]'
@@ -383,7 +383,7 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     return link.color || resolveCssVar('--text-muted', 0.4)
   }, [isSearchActive, searchLower])
 
-  const linkLabel = useCallback((link: any) => link.type as string, [])
+  const linkLabel = useCallback((link: any) => escapeHtml(String(link.type ?? '')), [])
 
   // Node breathing effect — use ref to avoid prop changes that trigger graph rebuilds
   const animateRef = useRef(animateIdle)
@@ -453,11 +453,11 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
         nodeLabel={(node: any) => {
           const e = node.entity as KnowledgeEntity
           const props = Object.entries(e.properties || {}).slice(0, 4)
-            .map(([k, v]) => `${k}: ${String(v).slice(0, 30)}`)
+            .map(([k, v]) => `${escapeHtml(k)}: ${escapeHtml(String(v).slice(0, 30))}`)
             .join('\n')
           return `<div style="text-align:center;font-family:var(--font-mono);font-size:var(--text-xs);line-height:1.4">
-            <b>${e.name}</b><br/>
-            <span style="color:${getEntityColorCss(e.entity_type)};text-transform:uppercase;font-size:var(--text-2xs)">${e.entity_type}</span>
+            <b>${escapeHtml(e.name)}</b><br/>
+            <span style="color:${getEntityColorCss(e.entity_type)};text-transform:uppercase;font-size:var(--text-2xs)">${escapeHtml(e.entity_type)}</span>
             ${props ? '<br/><span style="color:var(--text-muted);font-size:var(--text-2xs)">' + props.replace(/\n/g, '<br/>') + '</span>' : ''}
           </div>`
         }}

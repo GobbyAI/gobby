@@ -5,6 +5,14 @@ export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs))
 }
 
+export function escapeHtml(value: string): string {
+  return value
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+}
+
 // Resolves a CSS custom property to a concrete RGB color string at runtime.
 // Required for three.js / canvas consumers that can't read CSS vars themselves
 // and for older parsers that don't grok oklch()/lab()/color(). The canvas

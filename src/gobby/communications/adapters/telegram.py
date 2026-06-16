@@ -300,10 +300,10 @@ class TelegramAdapter(BaseChannelAdapter):
         self._acknowledged_update_ids.clear()
 
         for update in updates:
-            update_id = update["update_id"]
-            self._pending_update_ids.append(update_id)
-
             msg_list = self.parse_webhook(update, {})
+            update_id = update.get("update_id")
+            if msg_list and isinstance(update_id, int):
+                self._pending_update_ids.append(update_id)
             messages.extend(msg_list)
 
         return messages

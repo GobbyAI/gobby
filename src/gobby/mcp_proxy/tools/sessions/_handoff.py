@@ -222,7 +222,8 @@ def register_handoff_tools(
 
         parent_session = None
         project_ctx = get_project_context()
-        caller_project_id = project_id or (project_ctx.get("id") if project_ctx else None)
+        project_ctx_id = project_ctx.get("id") if project_ctx else None
+        caller_project_id = project_ctx_id if isinstance(project_ctx_id, str) else project_id
 
         # Option 1: Direct session_id lookup with resolution
         if session_id:

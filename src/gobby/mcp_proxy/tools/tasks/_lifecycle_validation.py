@@ -161,6 +161,16 @@ def _path_matches_reference(path: str, reference: str) -> bool:
     return "/" not in normalized_reference and Path(normalized_path).name == normalized_reference
 
 
+def _resolve_within_base(candidate: Path, base_path: Path) -> Path | None:
+    try:
+        resolved_candidate = candidate.resolve()
+        resolved_base = base_path.resolve()
+        resolved_candidate.relative_to(resolved_base)
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return resolved_candidate
+
+
 def _resolve_referenced_files(
     *,
     mentioned_files: list[str],
@@ -174,7 +184,7 @@ def _resolve_referenced_files(
 
     from gobby.utils.git import run_git_command
 
-    base_path = Path(repo_path) if repo_path else Path.cwd()
+    base_path = (Path(repo_path) if repo_path else Path.cwd()).resolve()
     tracked_output = run_git_command(["git", "ls-files"], cwd=base_path) or ""
     tracked_files = [line.strip() for line in tracked_output.splitlines() if line.strip()]
     resolved: list[Path] = []
@@ -198,8 +208,9 @@ def _resolve_referenced_files(
         for candidate in candidates:
             if len(resolved) >= max_files:
                 return resolved
-            if candidate.is_file() and candidate not in resolved:
-                resolved.append(candidate)
+            safe_candidate = _resolve_within_base(candidate, base_path)
+            if safe_candidate and safe_candidate.is_file() and safe_candidate not in resolved:
+                resolved.append(safe_candidate)
 
     return resolved
 

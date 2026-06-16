@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import pytest
@@ -30,6 +31,34 @@ def _ensure_session(db: HubDatabase, session_id: str) -> None:
     )
 
 
+class _DictVariablesConnection:
+    def __init__(self, variables: dict[str, Any]) -> None:
+        self.variables = variables
+        self.written_variables: dict[str, Any] | None = None
+
+    def __enter__(self) -> _DictVariablesConnection:
+        return self
+
+    def __exit__(self, *_exc: object) -> None:
+        return None
+
+    def execute(self, query: str, params: tuple[Any, ...]) -> _DictVariablesConnection:
+        if "UPDATE session_variables" in query:
+            self.written_variables = json.loads(params[0])
+        return self
+
+    def fetchone(self) -> dict[str, Any]:
+        return {"variables": self.variables}
+
+
+class _DictVariablesDB:
+    def __init__(self, variables: dict[str, Any]) -> None:
+        self.connection = _DictVariablesConnection(variables)
+
+    def transaction_immediate(self, _mutation: object) -> _DictVariablesConnection:
+        return self.connection
+
+
 def test_get_variables_empty(db: Any) -> None:
     """Test get_variables returns empty dict for new/unknown session."""
     from gobby.workflows.state_manager import SessionVariableManager
@@ -37,6 +66,32 @@ def test_get_variables_empty(db: Any) -> None:
     mgr = SessionVariableManager(db)
     result = mgr.get_variables("nonexistent")
     assert result == {}
+
+
+def test_append_to_set_variable_accepts_jsonb_dict_payload() -> None:
+    """PostgreSQL JSONB may return a dict instead of a JSON string."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    fake_db = _DictVariablesDB({"session_edited_files": ["b.py"]})
+    mgr = SessionVariableManager(fake_db)  # type: ignore[arg-type]
+
+    result = mgr.append_to_set_variable("s1", "session_edited_files", ["a.py"])
+
+    assert result is True
+    assert fake_db.connection.written_variables == {"session_edited_files": ["a.py", "b.py"]}
+
+
+def test_claim_startup_context_accepts_jsonb_dict_payload() -> None:
+    """Startup-context claims use the same JSONB session variable payload."""
+    from gobby.workflows.state_manager import SessionVariableManager
+
+    fake_db = _DictVariablesDB({"_startup_context_injected": False})
+    mgr = SessionVariableManager(fake_db)  # type: ignore[arg-type]
+
+    result = mgr.claim_startup_context("s1")
+
+    assert result == "full"
+    assert fake_db.connection.written_variables == {"_startup_context_injected": True}
 
 
 def test_set_variable(db: Any) -> None:

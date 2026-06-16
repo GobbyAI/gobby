@@ -4,7 +4,7 @@ import SpriteText from 'three-spritetext'
 import { useCodeGraph, mergeCodeGraphData } from '../../hooks/useCodeGraph'
 import type { CodeGraphData, CodeGraphNode, CodeGraphSearchResult } from '../../hooks/useCodeGraph'
 import { IS_MOBILE, IS_IOS } from '../../utils/platform'
-import { resolveCssVar, cn } from '../../lib/utils'
+import { resolveCssVar, cn, escapeHtml } from '../../lib/utils'
 
 const DEFAULT_CODE_GRAPH_LIMIT = IS_IOS ? 30 : IS_MOBILE ? 50 : 100
 const CODE_GRAPH_LIMIT_MIN = 10
@@ -183,10 +183,6 @@ function buildForceData(data: CodeGraphData): { nodes: GraphNode[]; links: Graph
 
 function edgeColor(relType: string): string {
   return resolveCssVar(edgeColorVar(relType))
-}
-
-function escapeHtml(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;')
 }
 
 function getStoredNumber(key: string, defaultVal: number, min?: number, max?: number): number {

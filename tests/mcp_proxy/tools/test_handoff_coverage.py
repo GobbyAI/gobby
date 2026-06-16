@@ -121,7 +121,7 @@ class TestGetHandoffContextProjectScope:
         mock_session_manager.find_parent.return_value = parent
         registry = _register_tools(mock_session_manager)
 
-        result = registry.get_tool("get_handoff_context")()
+        result = registry.get_tool("get_handoff_context")(project_id="spoofed-project")
 
         assert result["success"] is True
         assert result["session_id"] == "parent-session"

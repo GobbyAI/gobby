@@ -390,6 +390,45 @@ async def test_poll_acknowledges_only_contiguous_successful_updates(
 
 
 @pytest.mark.asyncio
+async def test_poll_ignores_non_message_updates_for_offset_tracking(
+    adapter: TelegramAdapter,
+    channel_config: ChannelConfig,
+    secret_resolver: Callable[[str], str | None],
+) -> None:
+    mock_get = AsyncMock()
+    mock_response = MagicMock()
+    mock_response.json.return_value = {
+        "ok": True,
+        "result": [
+            {"update_id": 500, "edited_message": {"message_id": 1}},
+            {
+                "update_id": 501,
+                "message": {
+                    "message_id": 2,
+                    "from": {"id": 2222222, "username": "second"},
+                    "chat": {"id": 123},
+                    "text": "second",
+                },
+            },
+        ],
+    }
+    mock_get.return_value = mock_response
+
+    with patch("httpx.AsyncClient") as MockClient:
+        mock_client_instance = MockClient.return_value
+        mock_client_instance.get = mock_get
+        mock_client_instance.post = AsyncMock()
+
+        await adapter.initialize(channel_config, secret_resolver)
+        messages = await adapter.poll()
+
+        assert [message.content for message in messages] == ["second"]
+
+        await adapter.acknowledge_messages(messages)
+        assert adapter._offset == 502
+
+
+@pytest.mark.asyncio
 async def test_shutdown(
     adapter: TelegramAdapter,
     channel_config: ChannelConfig,

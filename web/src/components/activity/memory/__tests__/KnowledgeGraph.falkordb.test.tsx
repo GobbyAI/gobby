@@ -3,6 +3,12 @@ import { describe, expect, it, vi } from 'vitest'
 
 import { KnowledgeGraph } from '../KnowledgeGraph'
 
+type ForceGraphProps = {
+  graphData?: { nodes: Array<{ entity: unknown }>; links: Array<{ type?: string }> }
+  nodeLabel?: (node: { entity: unknown }) => string
+  linkLabel?: (link: { type?: string }) => string
+}
+
 class MockResizeObserver {
   observe() {}
   unobserve() {}
@@ -10,7 +16,22 @@ class MockResizeObserver {
 }
 
 vi.mock('react-force-graph-3d', () => ({
-  default: () => <div data-testid="force-graph" />,
+  default: (props: ForceGraphProps) => {
+    const nodeLabel = props.graphData?.nodes[0]
+      ? props.nodeLabel?.(props.graphData.nodes[0])
+      : undefined
+    const linkLabel = props.graphData?.links[0]
+      ? props.linkLabel?.(props.graphData.links[0])
+      : undefined
+
+    return (
+      <div
+        data-link-label={linkLabel}
+        data-node-label={nodeLabel}
+        data-testid="force-graph"
+      />
+    )
+  },
 }))
 
 vi.mock('three-spritetext', () => ({
@@ -43,5 +64,56 @@ describe('KnowledgeGraph', () => {
     expect(
       screen.getByText('Connect a FalkorDB instance to explore knowledge graph entities and relationships.'),
     ).toBeInTheDocument()
+  })
+
+  it('escapes dynamic HTML in graph tooltips', async () => {
+    vi.stubGlobal('ResizeObserver', MockResizeObserver)
+
+    render(
+      <KnowledgeGraph
+        fetchKnowledgeGraph={vi.fn().mockResolvedValue({
+          entities: [
+            {
+              entity_key: 'entity-1',
+              name: '<img src=x onerror=alert(1)>',
+              entity_type: 'person<script>',
+              project_id: null,
+              properties: {
+                '<b>role</b>': '"admin" & <script>alert(1)</script>',
+              },
+            },
+            {
+              entity_key: 'entity-2',
+              name: 'target',
+              entity_type: 'file',
+              project_id: null,
+              properties: {},
+            },
+          ],
+          relationships: [
+            {
+              source_key: 'entity-1',
+              target_key: 'entity-2',
+              type: '<script>alert(1)</script>',
+              properties: {},
+            },
+          ],
+        })}
+        fetchEntityNeighbors={vi.fn()}
+      />,
+    )
+
+    await waitFor(() => expect(screen.getByTestId('force-graph')).toBeInTheDocument())
+
+    const forceGraph = screen.getByTestId('force-graph')
+    const nodeTooltip = forceGraph.getAttribute('data-node-label') ?? ''
+    const linkTooltip = forceGraph.getAttribute('data-link-label') ?? ''
+
+    expect(nodeTooltip).toContain('&lt;img src=x onerror=alert(1)&gt;')
+    expect(nodeTooltip).toContain('&lt;b&gt;role&lt;/b&gt;')
+    expect(nodeTooltip).toContain('&quot;admin&quot; &amp; &lt;script')
+    expect(nodeTooltip).not.toContain('<img src=x')
+    expect(nodeTooltip).not.toContain('<b>role</b>')
+    expect(linkTooltip).toBe('&lt;script&gt;alert(1)&lt;/script&gt;')
   })
 })

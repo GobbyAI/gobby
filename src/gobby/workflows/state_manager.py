@@ -11,6 +11,16 @@ from .definitions import WorkflowInstance
 logger = logging.getLogger(__name__)
 
 
+def _decode_variables_payload(variables: Any) -> dict[str, Any]:
+    if isinstance(variables, dict):
+        return variables
+    if isinstance(variables, str | bytes | bytearray) and variables:
+        loaded = json.loads(variables)
+        if isinstance(loaded, dict):
+            return loaded
+    return {}
+
+
 class WorkflowInstanceManager:
     """Manages CRUD operations for workflow instances (multi-workflow per session)."""
 
@@ -114,7 +124,7 @@ class WorkflowInstanceManager:
             ),
             step_action_count=row["step_action_count"],
             total_action_count=row["total_action_count"],
-            variables=json.loads(row["variables"]) if row["variables"] else {},
+            variables=_decode_variables_payload(row["variables"]),
             context_injected=bool(row["context_injected"]),
             created_at=(
                 datetime.fromisoformat(row["created_at"])
@@ -159,13 +169,7 @@ class SessionVariableManager:
         )
         session_vars = {}
         if row:
-            variables = row["variables"]
-            if isinstance(variables, dict):
-                session_vars = variables
-            elif isinstance(variables, str | bytes | bytearray) and variables:
-                loaded = json.loads(variables)
-                if isinstance(loaded, dict):
-                    session_vars = loaded
+            session_vars = _decode_variables_payload(row["variables"])
 
         if not defaults:
             return session_vars
@@ -225,7 +229,7 @@ class SessionVariableManager:
                 (session_id,),
             ).fetchone()
             if row:
-                current = json.loads(row["variables"]) if row["variables"] else {}
+                current = _decode_variables_payload(row["variables"])
                 current.update(updates)
                 conn.execute(
                     "UPDATE session_variables SET variables = %s, updated_at = %s "
@@ -262,7 +266,7 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
+            current_vars = _decode_variables_payload(row["variables"]) if row else {}
             stored = current_vars.get(name, [])
             if not isinstance(stored, list):
                 stored = [stored] if stored else []
@@ -306,7 +310,7 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
+            current_vars = _decode_variables_payload(row["variables"]) if row else {}
 
             if values:
                 stored = current_vars.get(name, [])
@@ -353,7 +357,7 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
+            current_vars = _decode_variables_payload(row["variables"]) if row else {}
 
             stored = current_vars.get("session_edited_files", [])
             if not isinstance(stored, list):
@@ -406,7 +410,7 @@ class SessionVariableManager:
                 "SELECT variables FROM session_variables WHERE session_id = %s",
                 (session_id,),
             ).fetchone()
-            current_vars = json.loads(row["variables"]) if row and row["variables"] else {}
+            current_vars = _decode_variables_payload(row["variables"]) if row else {}
 
             if current_vars.get("_startup_context_injected") is True:
                 return "live"
