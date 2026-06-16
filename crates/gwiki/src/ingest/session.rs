@@ -7,11 +7,13 @@ mod codex;
 mod droid;
 mod gemini;
 mod grok;
+mod qwen;
 
 use codex::CODEX_SESSION_ADAPTER;
 use droid::DROID_SESSION_ADAPTER;
 use gemini::GEMINI_SESSION_ADAPTER;
 use grok::GROK_SESSION_ADAPTER;
+use qwen::QWEN_SESSION_ADAPTER;
 
 use crate::WikiError;
 use crate::ingest::{
@@ -179,11 +181,12 @@ fn normalize_session_archive_value(value: Value) -> Result<SessionArchiveEnvelop
     })
 }
 
-fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 6] {
+fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 7] {
     [
         &COMMON_SESSION_ADAPTER,
         &GROK_SESSION_ADAPTER,
         &DROID_SESSION_ADAPTER,
+        &QWEN_SESSION_ADAPTER,
         &CLAUDE_CODE_ADAPTER,
         &CODEX_SESSION_ADAPTER,
         &GEMINI_SESSION_ADAPTER,

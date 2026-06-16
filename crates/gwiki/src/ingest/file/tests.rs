@@ -570,6 +570,47 @@ fn droid_jsonl_session_routes_to_session_orchestrator() {
     assert!(!raw_markdown.contains("system-reminder"));
 }
 
+#[test]
+fn qwen_jsonl_session_routes_to_session_orchestrator() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("qwen.jsonl");
+    std::fs::write(
+        &file_path,
+        r#"{"type":"user","uuid":"user-1","parentUuid":null,"sessionId":"session-1","timestamp":"2026-06-16T21:10:00Z","cwd":"/workspace","version":"0.18.0","message":{"role":"user","parts":[{"text":"Create cap_probe.txt."}]}}
+{"type":"system","subtype":"ui_telemetry","uuid":"system-1","parentUuid":"user-1","sessionId":"session-1","timestamp":"2026-06-16T21:10:01Z","cwd":"/workspace","version":"0.18.0","systemPayload":{"hidden":"telemetry"}}
+{"type":"assistant","uuid":"assistant-1","parentUuid":"system-1","sessionId":"session-1","timestamp":"2026-06-16T21:10:02Z","cwd":"/workspace","version":"0.18.0","model":"qwen/qwen3","message":{"role":"model","parts":[{"text":"private chain of thought","thought":true},{"text":"I will write the file."},{"functionCall":{"id":"call_1","name":"write_file","args":{"file_path":"cap_probe.txt","content":"hello"}}}]}}
+{"type":"tool_result","uuid":"tool-result-1","parentUuid":"assistant-1","sessionId":"session-1","timestamp":"2026-06-16T21:10:03Z","cwd":"/workspace","version":"0.18.0","toolCallResult":{"callId":"call_1","status":"cancelled"},"message":{"role":"user","parts":[{"functionResponse":{"id":"call_1","name":"write_file","response":{"error":"[Operation Cancelled]"}}}]}}"#,
+    )
+    .expect("write Qwen session jsonl");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+
+    let result = ingest_path(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-06-16T21:10:00Z",
+    )
+    .expect("ingest Qwen session archive");
+
+    assert_eq!(result.record.kind, SourceKind::Session);
+    assert!(result.asset_path.is_none());
+    let raw_markdown =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("session markdown");
+    assert!(raw_markdown.contains("session_type: qwen-code"));
+    assert!(raw_markdown.contains("# Qwen session"));
+    assert!(raw_markdown.contains("Create cap_probe.txt."));
+    assert!(raw_markdown.contains("Tool use: write_file: call_1"));
+    assert!(raw_markdown.contains("Tool result: write_file: call_1"));
+    assert!(!raw_markdown.contains("private chain of thought"));
+    assert!(!raw_markdown.contains("telemetry"));
+}
+
 #[cfg(feature = "documents")]
 #[test]
 fn dispatches_office_html_to_document() {
