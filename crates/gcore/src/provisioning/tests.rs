@@ -102,6 +102,27 @@ ai.embeddings:
 }
 
 #[test]
+fn gcore_yaml_text_generation_defaults_do_not_override_explicit_values() {
+    let config = StandaloneConfig::from_yaml_str(
+        r#"
+ai.embeddings.api_key: embedding-key
+ai.text_generate.routing: auto
+ai.text_generate.api_base: http://text.example/v1
+ai.text_generate.model: text-model
+"#,
+    )
+    .expect("parse config");
+
+    assert_eq!(config.get(ai_keys::TEXT_GENERATE_ROUTING), Some("auto"));
+    assert_eq!(
+        config.get(ai_keys::TEXT_GENERATE_API_BASE),
+        Some("http://text.example/v1")
+    );
+    assert_eq!(config.get(ai_keys::TEXT_GENERATE_MODEL), Some("text-model"));
+    assert_eq!(config.get(ai_keys::TEXT_GENERATE_API_KEY), None);
+}
+
+#[test]
 fn gcore_yaml_writes_nested_keys() {
     let dir = tempfile::tempdir().expect("tempdir");
     let path = dir.path().join(GCORE_CONFIG_FILENAME);

@@ -83,7 +83,9 @@ impl StandaloneConfig {
         let yaml: serde_yaml::Value = serde_yaml::from_str(contents)?;
         let mut values = BTreeMap::new();
         flatten_yaml_value(None, &yaml, &mut values)?;
-        Ok(Self { values })
+        let mut config = Self { values };
+        config.apply_text_generation_defaults_from_embeddings();
+        Ok(config)
     }
 
     pub fn write_at(&self, path: &Path) -> anyhow::Result<()> {
@@ -113,6 +115,21 @@ impl StandaloneConfig {
 
     pub fn values(&self) -> &BTreeMap<String, String> {
         &self.values
+    }
+
+    fn apply_text_generation_defaults_from_embeddings(&mut self) {
+        if self.get(ai_keys::TEXT_GENERATE_ROUTING).is_some()
+            || self.get(ai_keys::TEXT_GENERATE_API_BASE).is_some()
+            || self.get(ai_keys::TEXT_GENERATE_MODEL).is_some()
+        {
+            return;
+        }
+
+        let api_key = self.get(embedding_keys::AI_API_KEY).map(str::to_string);
+        apply_text_generation_bootstrap(
+            self,
+            &TextGenerationBootstrap::from_endpoint(None, DEFAULT_LM_STUDIO_API_BASE, api_key),
+        );
     }
 }
 
