@@ -11,13 +11,29 @@ You are maintaining persistent assistant memories. Review each candidate against
 
 ## Actions
 
-- `keep`: the memory is still true and useful now.
-- `delete`: the memory is obsolete, junk, one-time task residue, or code-derivable. Use only with confidence at least {{ min_delete_confidence }}.
+- `keep`: the memory reflects the current repo, or carries durable value generic to the repo, and is useful to agents as-is.
+- `delete`: the memory is obsolete residue — it neither reflects the current repo nor carries durable generic value — or it is junk, one-time task/status residue, or trivially code-derivable. Use only with confidence at least {{ min_delete_confidence }}, and only when you can name a concrete obsolescence signal (see Decision procedure).
 - `refresh`: the memory is worth keeping but its wording is outdated — supply better current content.
-- `review`: the memory is genuinely ambiguous and a human should look before it is hidden.
+- `review`: you genuinely cannot resolve the memory's current-ness or value, or it describes an unresolved issue that is plausibly still active. For real ambiguity only — never a soft `delete` for residue you are confident about.
 - `promote`: the memory is repo-scoped but clearly universal across projects and should become global. Use only with confidence at least {{ min_rescope_confidence }}.
 
-`delete` and `review` hide the memory from agents (recoverable). `keep`, `refresh`, and `promote` leave it visible. `promote` only changes scope to global; it must not rewrite content. There is no merge, demotion, or consolidation in this sweep.
+`delete` and `review` both hide the memory from agents (recoverable); the only difference is whether a human is expected to triage it — so never route confidently-obsolete memories to `review`. `keep`, `refresh`, and `promote` leave it visible. `promote` only changes scope to global; it must not rewrite content. There is no merge, demotion, or consolidation in this sweep.
+
+## Decision procedure
+
+Apply this to every candidate:
+
+1. Does the memory reflect the current state of the repo?
+   - Yes → Is it useful to agents?
+     - Yes → `keep` (use `refresh` if only the wording is stale; `promote` if it is universal across projects).
+     - No → `delete` if it is confidently noise; `keep` if it is harmless and you are unsure.
+   - No → Does it provide durable value generic to the repo — general rules, patterns, practices, user preferences, architectural or security decisions?
+     - Yes → `keep` (use `refresh` for stale wording; `promote` if universal across projects).
+     - No → `delete`. A memory that is neither current nor durably useful is obsolete residue.
+
+`review` is the escape hatch, not a branch of this tree: choose it only when you genuinely cannot answer the current-ness or value questions, or when the memory is an unresolved issue that is plausibly still active. A malformed, unknown, or below-threshold verdict degrades to a visible `keep`, never to `review` — so reserve `review` for a deliberate "a human should decide."
+
+A `delete` requires a concrete, citable obsolescence signal in your `reason` — for example: it contradicts the current truth below (removed or renamed API, superseded infrastructure, retired config key, stale daemon path); it references a task, epic, branch, or migration that is completed or closed; it has high `age_days` with `access_count` at or near zero; or it bakes in a hard date that marks it as time-bound state (a test-run snapshot, an in-progress investigation, a status or progress report). Absent such a signal, do not assign high `delete` confidence.
 
 ## Current truth
 
@@ -28,8 +44,8 @@ Judge each memory against these canonical current facts. A memory that contradic
 ## Rules
 
 1. Return exactly one action for every candidate ID.
-2. Preserve user preferences, project conventions, security constraints, workflow rules, and architectural decisions.
-3. Use `review` for unresolved bugs, open migrations, active tasks, or facts you genuinely cannot resolve against current truth.
+2. Preserve durable knowledge regardless of age: user preferences, project conventions, security constraints, workflow rules, reusable patterns and practices, and architectural decisions. These are `keep` (or `refresh`/`promote`) even when they predate the current repo state.
+3. Do not route stale residue to `review`. A memory that merely looks like a bug, test failure, migration, or task note is `delete` when it is stale — high `age_days`, no recent access, or a date, closed task/epic, or old branch baked into its content. Use `review` only for an unresolved issue that is plausibly still active, or a memory whose current-ness or value you genuinely cannot determine.
 4. Treat `source_type` as a prior, not a verdict: user-authored memories deserve extra caution, but agent-authored memories can still be durable when current and broadly useful.
 5. Every mutating action needs confidence at least {{ min_action_confidence }}; `delete` needs at least {{ min_delete_confidence }}; `promote` needs at least {{ min_rescope_confidence }}. Low-confidence judgments should be `keep`.
 6. Use `promote` only when the memory is independent of this repository's code, paths, tasks, local daemon state, project-specific workflows, and transient implementation details.
@@ -49,10 +65,10 @@ Return strict JSON only:
 {
   "actions": [
     {
-      "action": "review",
+      "action": "delete",
       "memory_id": "memory-id",
-      "confidence": 0.6,
-      "reason": "Needs human judgment."
+      "confidence": 0.9,
+      "reason": "Progress report for epic #8803, which is closed; age_days 120, access_count 0."
     }
   ]
 }
