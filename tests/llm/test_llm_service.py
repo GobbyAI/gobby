@@ -9,6 +9,7 @@ import pytest
 from gobby.ai import AIAdapterStyle, AICapability, AICapabilityRegistry, CapabilityBinding
 from gobby.config.app import DaemonConfig
 from gobby.config.sessions import DigestConfig
+from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import create_llm_service
 from gobby.llm.service import LLMService
 
@@ -94,7 +95,10 @@ async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfi
 async def test_call_json_feature_delegates_to_text_generation(llm_config: DaemonConfig) -> None:
     fake_generation = FakeTextGeneration()
     service = LLMService(llm_config, text_generation=fake_generation)
-    config = DigestConfig(candidates=["claude/haiku"])
+    config = TaskValidationConfig(
+        candidates=["claude/haiku"],
+        cli_candidate_timeout_seconds=180.0,
+    )
 
     result = await service.call_json_feature(
         config, "prompt", system_prompt="system", cwd="/tmp/project"
@@ -102,9 +106,11 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
 
     assert result == {"ok": True}
     request = fake_generation.requests[0]
-    assert request.profile == "feature_low"
+    assert request.profile == "feature_mid"
     assert request.candidates == ("claude/haiku",)
     assert request.cwd == "/tmp/project"
+    assert request.candidate_timeout_seconds is None
+    assert request.cli_candidate_timeout_seconds == 180.0
 
 
 def test_enabled_providers_reflects_text_generation_registry(llm_config: DaemonConfig) -> None:

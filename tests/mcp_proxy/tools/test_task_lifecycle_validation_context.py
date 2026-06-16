@@ -19,36 +19,42 @@ def test_gather_validation_context_prefers_linked_commit_diff_over_prose_summary
         description=None,
     )
     diff_result = SimpleNamespace(
-        diff="diff --git a/a.py b/a.py\n+change",
+        diff=(
+            "diff --git a/a.py b/a.py\n"
+            "index abc..def 100644\n"
+            "--- a/a.py\n"
+            "+++ b/a.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+change\n"
+        ),
         commits=["abc123"],
         file_count=1,
     )
+    long_summary = "prose only\n" + ("x" * 50000)
 
-    with (
-        patch(
-            "gobby.tasks.commits.get_task_diff",
-            return_value=diff_result,
-        ) as get_task_diff,
-        patch(
-            "gobby.tasks.commits.summarize_diff_for_validation",
-            return_value="summarized diff",
-        ) as summarize_diff,
-    ):
+    with patch(
+        "gobby.tasks.commits.get_task_diff",
+        return_value=diff_result,
+    ) as get_task_diff:
         context = gather_validation_context(
             task=task,
-            changes_summary="prose only",
+            changes_summary=long_summary,
             repo_path="/repo",
             task_manager=MagicMock(),
         )
 
     get_task_diff.assert_called_once()
-    summarize_diff.assert_called_once()
-    assert summarize_diff.call_args.kwargs["max_chars"] < 30000
     assert context.raw_diff == diff_result.diff
     assert context.validation_context is not None
     assert "Commit-based diff" in context.validation_context
-    assert "summarized diff" in context.validation_context
-    assert "Agent changes summary:\nprose only" in context.validation_context
+    assert "Changed File Manifest (authoritative):" in context.validation_context
+    assert "diff --git a/a.py b/a.py" in context.validation_context
+    assert "Agent Changes Summary (supplemental):" in context.validation_context
+    assert "agent changes summary shortened due to length" in context.validation_context
+    assert context.validation_context.find("diff --git a/a.py") < context.validation_context.find(
+        "Agent Changes Summary"
+    )
 
 
 def test_gather_validation_context_reads_mentioned_files_outside_linked_diff(tmp_path) -> None:

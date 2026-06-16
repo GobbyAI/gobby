@@ -94,25 +94,35 @@ class TextGenerationService:
             for profile, candidates in (profile_defaults or {}).items()
         }
 
-    def _candidate_timeout_for_binding(self, binding: CapabilityBinding | None) -> float | None:
+    def _candidate_timeout_for_binding(
+        self, request: TextGenerationRequest, binding: CapabilityBinding | None
+    ) -> float | None:
         """Select the per-candidate timeout for the lane behind ``binding``.
 
         Spawn-cold lanes get ``cli_candidate_timeout_seconds`` (more headroom for
         cold-start); fast API lanes keep the tight ``candidate_timeout_seconds``.
         """
-        if (
-            binding is not None
-            and binding.adapter_style in _SPAWN_COLD_ADAPTER_STYLES
-            and self._cli_candidate_timeout_seconds is not None
-        ):
-            return self._cli_candidate_timeout_seconds
-        return self._candidate_timeout_seconds
+        if binding is not None and binding.adapter_style in _SPAWN_COLD_ADAPTER_STYLES:
+            return (
+                request.cli_candidate_timeout_seconds
+                if request.cli_candidate_timeout_seconds is not None
+                else self._cli_candidate_timeout_seconds
+            )
+        return (
+            request.candidate_timeout_seconds
+            if request.candidate_timeout_seconds is not None
+            else self._candidate_timeout_seconds
+        )
 
     async def _await_candidate[T](
-        self, awaitable: Awaitable[T], *, binding: CapabilityBinding | None
+        self,
+        awaitable: Awaitable[T],
+        *,
+        request: TextGenerationRequest,
+        binding: CapabilityBinding | None,
     ) -> T:
         """Bound one candidate attempt by the lane-appropriate per-candidate timeout."""
-        timeout = self._candidate_timeout_for_binding(binding)
+        timeout = self._candidate_timeout_for_binding(request, binding)
         if timeout is None:
             return await awaitable
         try:
@@ -205,7 +215,9 @@ class TextGenerationService:
             try:
                 binding = self._select_binding(candidate)
                 adapter = self._adapter_for_provider(binding.provider)
-                result = await self._await_candidate(adapter.generate(candidate), binding=binding)
+                result = await self._await_candidate(
+                    adapter.generate(candidate), request=candidate, binding=binding
+                )
                 text_result = _coerce_text_result(result)
                 _validate_text_generation_output(candidate, text_result.text)
                 self._log_generation_event(
@@ -267,12 +279,15 @@ class TextGenerationService:
                         json_adapter,
                     )
                     result = await self._await_candidate(
-                        typed_json_adapter(candidate), binding=binding
+                        typed_json_adapter(candidate), request=candidate, binding=binding
                     )
                     parse_outcome = "provider_structured"
                 else:
+                    json_text_request = _json_request(candidate)
                     text = await self._await_candidate(
-                        adapter.generate(_json_request(candidate)), binding=binding
+                        adapter.generate(json_text_request),
+                        request=json_text_request,
+                        binding=binding,
                     )
                     raw = _coerce_text_result(text).text
                     try:

@@ -2005,8 +2005,8 @@ async def test_run_cli_text_generation_command_cleans_up_process_when_cancelled(
     class ObservableHangingProcess(HangingProcess):
         async def communicate(self) -> tuple[bytes, bytes]:
             started.set()
-            await asyncio.sleep(10)
-            return b"", b""
+            await asyncio.get_running_loop().create_future()
+            raise AssertionError("unreachable")
 
     process = ObservableHangingProcess()
 
@@ -2051,8 +2051,8 @@ async def test_run_cli_text_generation_command_signals_process_group_when_cancel
     class ObservableHangingProcess(HangingProcess):
         async def communicate(self) -> tuple[bytes, bytes]:
             started.set()
-            await asyncio.sleep(10)
-            return b"", b""
+            await asyncio.get_running_loop().create_future()
+            raise AssertionError("unreachable")
 
     process = ObservableHangingProcess()
     signals: list[tuple[int, object]] = []
@@ -2837,6 +2837,7 @@ def test_candidate_timeout_selection_by_adapter_style() -> None:
         candidate_timeout_seconds=60.0,
         cli_candidate_timeout_seconds=150.0,
     )
+    default_request = TextGenerationRequest(prompt="prompt")
 
     def _binding(style: AIAdapterStyle) -> CapabilityBinding:
         return CapabilityBinding(
@@ -2853,14 +2854,45 @@ def test_candidate_timeout_selection_by_adapter_style() -> None:
         AIAdapterStyle.LLM_PROVIDER,
         AIAdapterStyle.ACP,
     ):
-        assert service._candidate_timeout_for_binding(_binding(style)) == 150.0
+        assert service._candidate_timeout_for_binding(default_request, _binding(style)) == 150.0
 
     # Fast API lanes keep the tight candidate timeout.
     for style in (AIAdapterStyle.LOCAL, AIAdapterStyle.OPENAI_COMPATIBLE):
-        assert service._candidate_timeout_for_binding(_binding(style)) == 60.0
+        assert service._candidate_timeout_for_binding(default_request, _binding(style)) == 60.0
 
     # No binding falls back to the fast timeout.
-    assert service._candidate_timeout_for_binding(None) == 60.0
+    assert service._candidate_timeout_for_binding(default_request, None) == 60.0
+
+    cli_override_request = TextGenerationRequest(
+        prompt="prompt",
+        cli_candidate_timeout_seconds=180.0,
+    )
+    assert (
+        service._candidate_timeout_for_binding(
+            cli_override_request,
+            _binding(AIAdapterStyle.CLI),
+        )
+        == 180.0
+    )
+    assert (
+        service._candidate_timeout_for_binding(
+            cli_override_request,
+            _binding(AIAdapterStyle.LOCAL),
+        )
+        == 60.0
+    )
+
+    fast_override_request = TextGenerationRequest(
+        prompt="prompt",
+        candidate_timeout_seconds=12.0,
+    )
+    assert (
+        service._candidate_timeout_for_binding(
+            fast_override_request,
+            _binding(AIAdapterStyle.LOCAL),
+        )
+        == 12.0
+    )
 
 
 @pytest.mark.asyncio

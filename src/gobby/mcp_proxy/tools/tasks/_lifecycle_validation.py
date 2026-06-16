@@ -398,16 +398,17 @@ def gather_validation_context(
         changed_files_from_diff,
         extract_mentioned_files,
         get_task_diff,
-        summarize_diff_for_validation,
     )
     from gobby.tasks.validation import (
         VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
         VALIDATION_PROMPT_BUDGET_CHARS,
     )
+    from gobby.tasks.validation_evidence import build_diff_validation_evidence
 
     validation_context = ""
     raw_diff = None
     file_context_text = None
+    changes_summary_included = False
     task_payload = {
         "title": task.title,
         "description": task.description,
@@ -438,22 +439,24 @@ def gather_validation_context(
                 diff_budget = VALIDATION_PROMPT_BUDGET_CHARS
                 if file_context_text:
                     diff_budget -= VALIDATION_FILE_CONTEXT_BUDGET_CHARS
-                summarized_diff = summarize_diff_for_validation(
+                evidence = build_diff_validation_evidence(
                     raw_diff,
                     max_chars=diff_budget,
                     priority_files=mentioned_files,
+                    agent_summary=changes_summary,
                 )
+                changes_summary_included = bool(changes_summary)
                 logger.info(
                     "Validation diff for task %s: raw_diff_chars=%d diff_chars=%d "
                     "file_context_chars=%d",
                     task.id,
                     len(raw_diff),
-                    len(summarized_diff or ""),
+                    len(evidence.text),
                     len(file_context_text or ""),
                 )
                 validation_context = (
                     f"Commit-based diff ({len(diff_result.commits)} commits, "
-                    f"{diff_result.file_count} files):\n\n{summarized_diff}"
+                    f"{diff_result.file_count} files):\n\n{evidence.text}"
                 )
             else:
                 logger.warning(
@@ -462,8 +465,11 @@ def gather_validation_context(
         except Exception as e:
             logger.warning(f"get_task_diff failed for task {task.id}: {e}")
 
-    if validation_context and changes_summary:
-        validation_context = f"{validation_context}\n\nAgent changes summary:\n{changes_summary}"
+    if validation_context:
+        if changes_summary and not changes_summary_included:
+            validation_context = (
+                f"{validation_context}\n\nAgent changes summary:\n{changes_summary}"
+            )
     elif changes_summary:
         validation_context = changes_summary
 

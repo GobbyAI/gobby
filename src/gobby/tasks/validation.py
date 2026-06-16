@@ -23,6 +23,11 @@ from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.prompts import PromptLoader
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.tasks.validation_evidence import (
+    build_diff_validation_evidence,
+    build_file_context_evidence,
+    build_summary_validation_evidence,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -31,12 +36,9 @@ logger = logging.getLogger(__name__)
 DEFAULT_COMMIT_WINDOW = 10
 DEFAULT_MAX_CHARS = 50000
 RELATED_TEST_MAX_FILES = 5
-# Single shared budget (chars) for the large variable sections of the validation
-# prompt (the change diff/summary plus any read file context). Cold CLI model
-# lanes (e.g. gemini-3.5-flash) take ~29s on a 27KB prompt, so an oversized prompt
-# pushes every candidate past the per-candidate timeout. Keep the assembled prompt
-# small enough to finish well under that cap; the change section is prioritized
-# over raw file context because the diff already shows what changed.
+# Target char budget for shaped validation evidence. The manifest is authoritative
+# and may exceed this target in pathological diffs; raw details and prose summaries
+# are excerpted with explicit named omissions instead of being blindly clipped.
 VALIDATION_PROMPT_BUDGET_CHARS = 14000
 VALIDATION_FILE_CONTEXT_BUDGET_CHARS = 3500
 VALIDATION_GATES = {
@@ -47,69 +49,6 @@ VALIDATION_GATES = {
     ("pr", "needs_review"): "pr",
     ("merging", "open"): "merge_readiness",
 }
-
-
-@dataclass(frozen=True)
-class _BudgetedSections:
-    """Result of applying the validation prompt budget to the large sections."""
-
-    changes_section: str
-    file_context: str
-    changes_truncated_chars: int
-    file_context_truncated_chars: int
-
-
-_CHANGES_SECTION_TRUNCATED_MARKER = "\n... [changes section truncated] ...\n"
-_FILE_CONTEXT_TRUNCATED_MARKER = "\n... [file context truncated] ...\n"
-
-
-def _truncate_with_marker(text: str, max_chars: int, marker: str) -> str:
-    if len(text) <= max_chars:
-        return text
-    if max_chars <= len(marker):
-        return marker if len(marker) <= max_chars else ""
-    cutoff = max_chars - len(marker)
-    newline_cutoff = text.rfind("\n", 0, cutoff)
-    if newline_cutoff > 0:
-        cutoff = newline_cutoff
-    return text[:cutoff].rstrip() + marker
-
-
-def _budget_validation_sections(
-    changes_section: str,
-    file_context: str,
-    *,
-    budget_chars: int = VALIDATION_PROMPT_BUDGET_CHARS,
-    reserved_file_context_chars: int = VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
-) -> _BudgetedSections:
-    """Trim the change section and file context to a single shared char budget.
-
-    The change section (diff/summary plus appended verification evidence) is the
-    authoritative implementation artifact. When referenced file context exists,
-    reserve a small slice for it so large diffs cannot erase task-mentioned
-    registration/config files from the prompt. Deterministic by construction so
-    the same inputs always yield the same prompt.
-    """
-    file_budget = min(reserved_file_context_chars, budget_chars) if file_context else 0
-    changes_budget = max(0, budget_chars - file_budget)
-    changes_kept = _truncate_with_marker(
-        changes_section,
-        changes_budget,
-        _CHANGES_SECTION_TRUNCATED_MARKER,
-    )
-    remaining = max(0, budget_chars - len(changes_kept))
-    file_context_budget = min(max(file_budget, remaining), budget_chars)
-    file_context_kept = _truncate_with_marker(
-        file_context,
-        file_context_budget,
-        _FILE_CONTEXT_TRUNCATED_MARKER,
-    )
-    return _BudgetedSections(
-        changes_section=changes_kept,
-        file_context=file_context_kept,
-        changes_truncated_chars=len(changes_section) - len(changes_kept),
-        file_context_truncated_chars=len(file_context) - len(file_context_kept),
-    )
 
 
 _RELATED_TEST_STOPWORDS = frozenset(
@@ -762,48 +701,64 @@ class TaskValidator:
             else f"Task Description:\n{description}"
         )
 
-        # Detect if changes_summary is a git diff
-        is_git_diff = (
+        raw_changes_chars = len(changes_summary)
+        raw_file_context_chars = len(file_context)
+        shaped_file_context = (
+            build_file_context_evidence(
+                file_context,
+                max_chars=VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
+            )
+            if file_context
+            else ""
+        )
+        evidence_budget = VALIDATION_PROMPT_BUDGET_CHARS
+        if shaped_file_context:
+            evidence_budget -= VALIDATION_FILE_CONTEXT_BUDGET_CHARS
+
+        has_structured_manifest = "Changed File Manifest (authoritative):" in changes_summary
+        has_git_diff_blocks = "diff --git " in changes_summary
+        looks_like_git_diff = (
             changes_summary.startswith("Git diff")
-            or changes_summary.lstrip().startswith("diff --git")
+            or changes_summary.lstrip().startswith("--- ")
             or "@@" in changes_summary
         )
-        if (
-            changes_summary.lstrip().startswith("diff --git")
-            and len(changes_summary) > VALIDATION_PROMPT_BUDGET_CHARS
-        ):
-            from gobby.tasks.commits import summarize_diff_for_validation
-
-            diff_budget = VALIDATION_PROMPT_BUDGET_CHARS
-            if file_context:
-                diff_budget -= VALIDATION_FILE_CONTEXT_BUDGET_CHARS
-            changes_summary = (
-                summarize_diff_for_validation(
-                    changes_summary,
-                    max_chars=diff_budget,
-                )
-                or ""
+        if has_git_diff_blocks and not has_structured_manifest:
+            evidence = build_diff_validation_evidence(
+                changes_summary,
+                max_chars=evidence_budget,
             )
-
-        if is_git_diff:
             changes_section = (
                 "Code Changes (git diff):\n"
                 "Analyze these ACTUAL code changes to verify the implementation.\n\n"
+                f"{evidence.text}\n\n"
+            )
+        elif has_structured_manifest:
+            changes_section = (
+                "Code Changes (structured validation evidence):\n"
+                "Analyze this ACTUAL linked-commit evidence to verify the implementation.\n\n"
                 f"{changes_summary}\n\n"
             )
+        elif looks_like_git_diff:
+            summary = build_summary_validation_evidence(
+                changes_summary,
+                max_chars=evidence_budget,
+            )
+            changes_section = (
+                "Code Changes (git diff):\n"
+                "Analyze these ACTUAL code changes to verify the implementation.\n\n"
+                f"{summary}\n\n"
+            )
         else:
-            changes_section = f"Changes Summary:\n{changes_summary}\n\n"
+            summary = build_summary_validation_evidence(
+                changes_summary,
+                max_chars=evidence_budget,
+            )
+            changes_section = f"Changes Summary:\n{summary}\n\n"
 
         # Build test strategy section if provided
         category_section = ""
         if category:
             category_section = f"Test Strategy: {category}\n\n"
-
-        # Enforce a single shared prompt budget across the large variable sections
-        # so cold CLI model lanes finish well under the per-candidate timeout.
-        changes_section_chars = len(changes_section)
-        file_context_chars = len(file_context)
-        budgeted = _budget_validation_sections(changes_section, file_context or "")
 
         # Build prompt using PromptLoader
         prompt_path = self.config.prompt_path or "validation/validate"
@@ -811,18 +766,19 @@ class TaskValidator:
             "title": title,
             "category_section": category_section,
             "criteria_text": criteria_text,
-            "changes_section": budgeted.changes_section,
-            "file_context": budgeted.file_context,
+            "changes_section": changes_section,
+            "file_context": shaped_file_context,
         }
         prompt = self._loader.render(prompt_path, template_context)
         logger.info(
-            "Validation prompt assembled for task %s: changes_chars=%d file_context_chars=%d "
-            "changes_truncated=%d file_context_truncated=%d final_prompt_chars=%d",
+            "Validation prompt assembled for task %s: raw_changes_chars=%d "
+            "raw_file_context_chars=%d shaped_changes_chars=%d shaped_file_context_chars=%d "
+            "final_prompt_chars=%d",
             task_id,
-            changes_section_chars,
-            file_context_chars,
-            budgeted.changes_truncated_chars,
-            budgeted.file_context_truncated_chars,
+            raw_changes_chars,
+            raw_file_context_chars,
+            len(changes_section),
+            len(shaped_file_context),
             len(prompt),
         )
 

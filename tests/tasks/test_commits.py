@@ -735,11 +735,16 @@ diff --git a/info.markdown b/info.markdown
 class TestSummarizeDiffForValidation:
     """Tests for summarize_diff_for_validation function."""
 
-    def test_returns_original_for_small_diffs(self) -> None:
-        """Test that small diffs are returned unchanged."""
+    def test_includes_manifest_and_full_raw_diff_for_small_diffs(self) -> None:
+        """Small diffs include the complete manifest and full raw diff."""
         small_diff = "diff --git a/file.py b/file.py\n+line"
         result = summarize_diff_for_validation(small_diff)
-        assert result == small_diff
+
+        assert result is not None
+        assert "Changed File Manifest (authoritative):" in result
+        assert "- file.py (+1/-0) [source]" in result
+        assert "Full Raw Diff:" in result
+        assert small_diff in result
 
     def test_includes_file_list_summary(self) -> None:
         """Test that summarized diffs include file list."""
@@ -750,7 +755,7 @@ class TestSummarizeDiffForValidation:
 
         assert "file1.py" in result
         assert "file2.py" in result
-        assert "Files Changed:" in result
+        assert "Changed File Manifest (authoritative):" in result
 
     def test_counts_additions_and_deletions(self) -> None:
         """Test that summary includes +/- counts."""
@@ -810,9 +815,8 @@ class TestSummarizeDiffForValidation:
         assert "src/settings/McpToolsSection.test.tsx" in result
         assert "src/settings/shared-field.ts" in result
         assert "src/settings/zz-late.css" in result
-        assert result.rstrip().endswith("... [file diff truncated] ...")
-        before_marker = result.rsplit("... [file diff truncated] ...", 1)[0]
-        assert before_marker.endswith("\n")
+        assert "Omitted Evidence:" in result
+        assert "src/settings/aaa-large.tsx" in result
 
     def test_handles_empty_diff(self) -> None:
         """Test graceful handling of empty diff."""
@@ -881,11 +885,9 @@ index abc..def 100644
         assert aaa_pos != -1
         assert zzz_pos != -1
 
-        # Priority file should appear first in the details (after summary header)
-        # Find the "File Details" section
-        details_start = result.find("File Details")
+        # Priority file should appear first in the details (after manifest).
+        details_start = result.find("Diff Excerpts")
         if details_start != -1:
-            # After File Details, priority should come first
             assert result.find("priority_file.py", details_start) < result.find(
                 "aaa_first.py", details_start
             )

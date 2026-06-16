@@ -293,84 +293,24 @@ def summarize_diff_for_validation(
     max_hunk_lines: int = 50,
     priority_files: list[str] | None = None,
 ) -> str | None:
-    """Summarize a diff for LLM validation, ensuring all files are visible.
+    """Render structured diff evidence for LLM validation.
 
-    For large diffs, this:
-    1. Always shows the complete file list with stats
-    2. Truncates individual hunks to avoid overwhelming the LLM
-    3. Prioritizes showing file names over full content
-    4. When priority_files provided, shows those files first with more space
-
-    Args:
-        diff: Full git diff string.
-        max_chars: Maximum characters to return.
-        max_hunk_lines: Maximum lines per hunk before truncation.
-        priority_files: Optional list of file paths to prioritize.
-            These files appear first and get 60% of the space allocation.
-
-    Returns:
-        Summarized diff string that fits within max_chars.
+    The changed-file manifest is complete and authoritative. Large raw details
+    are excerpted with named omissions instead of anonymous truncation markers.
     """
-    if not diff or len(diff) <= max_chars:
+    if diff is None:
+        return None
+    if not diff:
         return diff
 
-    diff_files = _parse_diff_files(diff)
-    if not diff_files:
-        return _safe_truncate(diff, max_chars, _DIFF_TRUNCATION_MARKER)
+    from gobby.tasks.validation_evidence import build_diff_validation_evidence
 
-    total_additions = sum(file.additions for file in diff_files)
-    total_deletions = sum(file.deletions for file in diff_files)
-    ordered_files = sorted(diff_files, key=lambda file: _priority_key(file.path, priority_files))
-    manifest = [
-        f"## Diff Summary ({len(diff_files)} files, +{total_additions}/-{total_deletions})\n",
-        "### Files Changed:\n",
-        *[f"- {file.path} (+{file.additions}/-{file.deletions})\n" for file in ordered_files],
-    ]
-    manifest_text = "".join(manifest)
-    if len(manifest_text) > max_chars:
-        return _safe_truncate(_DIFF_TOO_LARGE_MESSAGE, max_chars, _DIFF_TRUNCATION_MARKER)
-
-    details_header = "\n### File Details:\n\n"
-    omission_marker = "\n... [file details omitted: validation budget exhausted] ...\n"
-    if len(manifest_text) + len(details_header) > max_chars:
-        if len(manifest_text) + len(omission_marker) <= max_chars:
-            return manifest_text.rstrip() + omission_marker
-        return manifest_text
-
-    manifest_text += details_header
-    remaining_chars = max_chars - len(manifest_text)
-    if remaining_chars <= len(_FILE_DIFF_TRUNCATION_MARKER):
-        if len(manifest_text) + len(omission_marker) <= max_chars:
-            return manifest_text.rstrip() + omission_marker
-        return manifest_text
-
-    priority_paths = {
-        file.path for file in ordered_files if _priority_key(file.path, priority_files)[0] == 0
-    }
-    non_priority_count = len(ordered_files) - len(priority_paths)
-    if priority_paths and non_priority_count:
-        priority_pool = int(remaining_chars * 0.6)
-        non_priority_pool = remaining_chars - priority_pool
-    else:
-        priority_pool = remaining_chars
-        non_priority_pool = remaining_chars
-
-    parts = [manifest_text]
-    for index, file in enumerate(ordered_files):
-        if file.path in priority_paths:
-            planned_budget = max(1, priority_pool // len(priority_paths))
-        elif non_priority_count:
-            planned_budget = max(1, non_priority_pool // non_priority_count)
-        else:
-            planned_budget = max(1, remaining_chars // len(ordered_files))
-        remaining_budget = max_chars - len("".join(parts))
-        budget = planned_budget if index < len(ordered_files) - 1 else remaining_budget
-        limited = (
-            _limit_hunk_lines(file.diff, max_hunk_lines) if len(file.diff) > budget else file.diff
-        )
-        parts.append(_safe_truncate(limited, budget, _FILE_DIFF_TRUNCATION_MARKER))
-
-    return "".join(parts)
+    return build_diff_validation_evidence(
+        diff,
+        max_chars=max_chars,
+        max_hunk_lines=max_hunk_lines,
+        priority_files=priority_files,
+    ).text
 
 
 def _build_file_patterns(

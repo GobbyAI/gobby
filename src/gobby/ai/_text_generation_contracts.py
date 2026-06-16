@@ -23,6 +23,8 @@ class TextGenerationRequest:
     max_tokens: int | None = None
     caller: str | None = None
     cwd: str | None = None
+    candidate_timeout_seconds: float | None = None
+    cli_candidate_timeout_seconds: float | None = None
 
 
 class TextGenerateAdapter(Protocol):

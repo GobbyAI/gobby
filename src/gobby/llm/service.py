@@ -46,6 +46,8 @@ def _feature_request(
 ) -> TextGenerationRequest:
     candidates = tuple(getattr(feature_config, "candidates", ()) or ())
     profile = getattr(feature_config, "profile", None)
+    candidate_timeout_seconds = getattr(feature_config, "candidate_timeout_seconds", None)
+    cli_candidate_timeout_seconds = getattr(feature_config, "cli_candidate_timeout_seconds", None)
     return TextGenerationRequest(
         prompt=prompt,
         profile=str(profile) if profile else None,
@@ -54,6 +56,8 @@ def _feature_request(
         max_tokens=max_tokens,
         caller=caller,
         cwd=cwd,
+        candidate_timeout_seconds=candidate_timeout_seconds,
+        cli_candidate_timeout_seconds=cli_candidate_timeout_seconds,
     )
 
 

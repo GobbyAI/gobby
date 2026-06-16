@@ -32,11 +32,16 @@ failing, or required evidence is absent. Do not return `valid` while describing 
 failed criterion, non-clean mypy/ruff/test result, missing verification, or errors
 that prevented a required gate from passing.
 
-If evidence is explicitly unavailable because the diff or file context exceeded
-the validation prompt budget, return `pending` with feedback naming the unavailable
-evidence. Do not treat `[file diff truncated]`, `[changes section truncated]`, or
-`[file context truncated]` as proof that a file is missing or incomplete; use the
-changed-file manifest and available file context.
+When a Changed File Manifest is present, treat it as authoritative for which
+files changed. Do not infer source, UI, test, docs, or config changes that are
+not listed there. If it says `Source/UI files changed: none`, do not require
+implementation or UI evidence unless an acceptance criterion explicitly requires
+it outside the diff.
+
+Treat `Omitted Evidence` entries and explicit shortened/omitted notices as
+unknown evidence, not proof of failure. Return `pending` only when that unknown
+evidence is necessary to decide a criterion; name the specific omitted file,
+hunk, or shortened context in the feedback.
 
 Task: {{ title }}
 {{ category_section }}{{ criteria_text }}

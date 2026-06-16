@@ -22,11 +22,9 @@ from gobby.ai.text_generation import FeatureGenerationUnavailableError
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import LLMService
 from gobby.tasks.validation import (
-    VALIDATION_FILE_CONTEXT_BUDGET_CHARS,
     VALIDATION_PROMPT_BUDGET_CHARS,
     TaskValidator,
     ValidationResult,
-    _budget_validation_sections,
     extract_file_patterns_from_text,
     find_matching_files,
     get_commits_since,
@@ -38,12 +36,13 @@ from gobby.tasks.validation import (
     read_files_content,
     run_git_command,
 )
+from gobby.tasks.validation_evidence import build_diff_validation_evidence
 
 pytestmark = pytest.mark.unit
 
 
 class TestValidationPromptBudget:
-    """Fix #2: bound the assembled validation prompt and emit size observability."""
+    """Validation prompts use shaped evidence with explicit omissions."""
 
     @pytest.fixture
     def mock_llm(self):
@@ -55,21 +54,39 @@ class TestValidationPromptBudget:
     def config(self):
         return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
-    def test_budget_helper_prioritizes_changes_over_file_context(self) -> None:
-        budgeted = _budget_validation_sections("D" * 30000, "F" * 20000)
-        assert (
-            len(budgeted.changes_section)
-            == VALIDATION_PROMPT_BUDGET_CHARS - VALIDATION_FILE_CONTEXT_BUDGET_CHARS
+    def test_diff_evidence_reports_source_ui_absence(self) -> None:
+        diff = (
+            "diff --git a/docs/guide.md b/docs/guide.md\n"
+            "index abc..def 100644\n"
+            "--- a/docs/guide.md\n"
+            "+++ b/docs/guide.md\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n"
         )
-        assert len(budgeted.file_context) == VALIDATION_FILE_CONTEXT_BUDGET_CHARS
-        assert budgeted.changes_section.endswith("... [changes section truncated] ...\n")
-        assert budgeted.file_context.endswith("... [file context truncated] ...\n")
 
-    def test_budget_helper_gives_file_context_remaining_budget(self) -> None:
-        budgeted = _budget_validation_sections("D" * 5000, "F" * 20000)
-        assert len(budgeted.changes_section) == 5000
-        assert len(budgeted.file_context) == VALIDATION_PROMPT_BUDGET_CHARS - 5000
-        assert budgeted.changes_truncated_chars == 0
+        evidence = build_diff_validation_evidence(diff, max_chars=2000)
+
+        assert "Changed File Manifest (authoritative):" in evidence.text
+        assert "Source/UI files changed: none" in evidence.text
+        assert "- docs/guide.md (+1/-1) [docs]" in evidence.text
+
+    def test_diff_evidence_names_omitted_files(self) -> None:
+        diff = "\n".join(
+            f"diff --git a/src/file_{index}.py b/src/file_{index}.py\n"
+            "index abc..def 100644\n"
+            f"--- a/src/file_{index}.py\n"
+            f"+++ b/src/file_{index}.py\n"
+            "@@ -1 +1,120 @@\n" + "".join(f"+value_{line}_{'x' * 30}\n" for line in range(120))
+            for index in range(5)
+        )
+
+        evidence = build_diff_validation_evidence(diff, max_chars=2200, max_hunk_lines=10)
+
+        for index in range(5):
+            assert f"- src/file_{index}.py" in evidence.text
+        assert "Omitted Evidence:" in evidence.text
+        assert "src/file_0.py" in evidence.text
 
     @pytest.mark.asyncio
     async def test_large_changes_summary_is_bounded(self, config, mock_llm) -> None:
@@ -80,13 +97,13 @@ class TestValidationPromptBudget:
             task_id="task-1",
             title="Big change",
             description="d",
-            changes_summary="@@ diff @@\n" + ("x" * 60000),
+            changes_summary="summary\n" + ("x" * 60000),
             validation_criteria="criteria",
         )
 
         prompt = mock_llm.call_json_feature.call_args.args[1]
-        # The whole prompt stays near the budget plus small boilerplate/criteria.
         assert len(prompt) < VALIDATION_PROMPT_BUDGET_CHARS + 2000
+        assert "agent changes summary shortened due to length" in prompt
 
     @pytest.mark.asyncio
     async def test_large_raw_git_diff_is_structurally_summarized(self, config, mock_llm) -> None:
@@ -122,9 +139,10 @@ class TestValidationPromptBudget:
         )
 
         prompt = mock_llm.call_json_feature.call_args.args[1]
-        assert "## Diff Summary (4 files" in prompt
+        assert "Changed File Manifest (authoritative):" in prompt
         assert "src/zz-later.ts" in prompt
-        assert "... [file diff truncated] ..." in prompt
+        assert "Source/UI files changed:" in prompt
+        assert "Omitted Evidence:" in prompt
 
     @pytest.mark.asyncio
     async def test_file_context_survives_oversized_changes(self, config, mock_llm) -> None:
@@ -142,7 +160,7 @@ class TestValidationPromptBudget:
 
         prompt = mock_llm.call_json_feature.call_args.args[1]
         assert "REGISTERED_MCP_TOOLS_SECTION" in prompt
-        assert "... [changes section truncated] ..." in prompt
+        assert "agent changes summary shortened due to length" in prompt
 
     @pytest.mark.asyncio
     async def test_prompt_size_observability_logged(self, config, mock_llm, caplog) -> None:

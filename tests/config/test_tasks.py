@@ -262,6 +262,7 @@ class TestTaskValidationConfigDefaults:
             "gemini/gemini-3.5-flash",
             "claude/sonnet",
         ]
+        assert config.cli_candidate_timeout_seconds == 180.0
         assert config.prompt_path is None
         assert config.max_iterations == 10
         assert config.max_consecutive_errors == 3

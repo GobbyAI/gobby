@@ -174,6 +174,14 @@ class TaskValidationConfig(FeatureDefaultConfig):
         default="You are a QA validator. Output ONLY valid JSON. No markdown, no explanation, no code blocks. Just the raw JSON object.",
         description="System prompt for task validation",
     )
+    cli_candidate_timeout_seconds: float = Field(
+        default=180.0,
+        gt=0.0,
+        description=(
+            "Per-candidate timeout for spawn-cold CLI validation lanes. Close validation "
+            "prompts need more cold-start headroom than ordinary feature calls."
+        ),
+    )
 
     prompt_path: str | None = Field(
         default=None,
