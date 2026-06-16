@@ -266,6 +266,8 @@ pub fn read_local_import_calls(
 /// Preference tiers, highest first:
 /// 1. top-level (`parent_symbol_id IS NULL`) `function`/`class`
 /// 2. `method`
+/// 3. module-scoped `function` (Elixir `def` inside `defmodule`)
+/// 4. top-level `type`
 ///
 /// The best non-empty tier must contain exactly one symbol; otherwise the call
 /// degrades to unresolved rather than risk a wrong edge.
@@ -286,34 +288,64 @@ pub fn resolve_local_callee_symbol_id(
         &[&project_id, &target_files, &name],
     )?;
 
-    let candidates: Vec<(String, String, Option<String>)> = rows
+    let candidates: Vec<LocalCalleeCandidate> = rows
         .iter()
         .map(|row| {
             let id: String = row.try_get("id")?;
             let kind: String = row.try_get("kind")?;
-            let parent: Option<String> = row.try_get("parent_symbol_id")?;
-            Ok::<_, anyhow::Error>((id, kind, parent))
+            let parent_symbol_id: Option<String> = row.try_get("parent_symbol_id")?;
+            Ok::<_, anyhow::Error>(LocalCalleeCandidate {
+                id,
+                kind,
+                parent_symbol_id,
+            })
         })
         .collect::<Result<_, _>>()?;
 
+    Ok(select_local_callee_candidate_id(&candidates))
+}
+
+#[derive(Debug)]
+struct LocalCalleeCandidate {
+    id: String,
+    kind: String,
+    parent_symbol_id: Option<String>,
+}
+
+fn select_local_callee_candidate_id(candidates: &[LocalCalleeCandidate]) -> Option<String> {
     let top_level: Vec<&String> = candidates
         .iter()
-        .filter(|(_, kind, parent)| {
-            parent.is_none() && matches!(kind.as_str(), "function" | "class")
+        .filter(|candidate| {
+            candidate.parent_symbol_id.is_none()
+                && matches!(candidate.kind.as_str(), "function" | "class")
         })
-        .map(|(id, _, _)| id)
+        .map(|candidate| &candidate.id)
         .collect();
     if !top_level.is_empty() {
-        return Ok(unique_id(&top_level));
+        return unique_id(&top_level);
     }
 
     let methods: Vec<&String> = candidates
         .iter()
-        .filter(|(_, kind, _)| kind == "method")
-        .map(|(id, _, _)| id)
+        .filter(|candidate| candidate.kind == "method")
+        .map(|candidate| &candidate.id)
         .collect();
     if !methods.is_empty() {
-        return Ok(unique_id(&methods));
+        return unique_id(&methods);
+    }
+
+    // Elixir `def greet(name)` remains a function under its defmodule parent.
+    // Non-Elixir nested functions are normalized to method in parser::link_parents,
+    // so this tier only catches module-scoped Elixir functions. Multi-clause or
+    // multi-arity defs still produce multiple same-name rows; the unique guard
+    // keeps those ambiguous calls unresolved until resolution tracks arity.
+    let module_scoped_functions: Vec<&String> = candidates
+        .iter()
+        .filter(|candidate| candidate.parent_symbol_id.is_some() && candidate.kind == "function")
+        .map(|candidate| &candidate.id)
+        .collect();
+    if !module_scoped_functions.is_empty() {
+        return unique_id(&module_scoped_functions);
     }
 
     // A top-level type (struct/enum/protocol/interface/...) is a valid
@@ -323,10 +355,10 @@ pub fn resolve_local_callee_symbol_id(
     // `type` (e.g. Swift structs/enums) resolve their initializer calls.
     let types: Vec<&String> = candidates
         .iter()
-        .filter(|(_, kind, parent)| parent.is_none() && kind == "type")
-        .map(|(id, _, _)| id)
+        .filter(|candidate| candidate.parent_symbol_id.is_none() && candidate.kind == "type")
+        .map(|candidate| &candidate.id)
         .collect();
-    Ok(unique_id(&types))
+    unique_id(&types)
 }
 
 fn unique_id(ids: &[&String]) -> Option<String> {
@@ -388,6 +420,51 @@ fn safe_symbol_select_alias(alias: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn code_symbol_row(
+        id: &str,
+        kind: &str,
+        parent_symbol_id: Option<&str>,
+    ) -> LocalCalleeCandidate {
+        LocalCalleeCandidate {
+            id: id.to_string(),
+            kind: kind.to_string(),
+            parent_symbol_id: parent_symbol_id.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn resolves_unique_module_scoped_function_candidate() {
+        let candidates = [code_symbol_row("greet-fn", "function", Some("app-greeter"))];
+
+        assert_eq!(
+            select_local_callee_candidate_id(&candidates),
+            Some("greet-fn".to_string())
+        );
+    }
+
+    #[test]
+    fn method_tier_precedes_module_scoped_function_candidates() {
+        let candidates = [
+            code_symbol_row("greet-fn", "function", Some("app-greeter")),
+            code_symbol_row("greet-method", "method", Some("app-greeter")),
+        ];
+
+        assert_eq!(
+            select_local_callee_candidate_id(&candidates),
+            Some("greet-method".to_string())
+        );
+    }
+
+    #[test]
+    fn leaves_ambiguous_module_scoped_function_candidates_unresolved() {
+        let candidates = [
+            code_symbol_row("greet-1", "function", Some("app-greeter")),
+            code_symbol_row("greet-2", "function", Some("app-greeter")),
+        ];
+
+        assert_eq!(select_local_callee_candidate_id(&candidates), None);
+    }
 
     #[test]
     fn symbol_select_columns_accepts_empty_or_safe_alias() {

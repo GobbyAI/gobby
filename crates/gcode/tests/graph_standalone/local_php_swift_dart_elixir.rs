@@ -381,11 +381,9 @@ fn index_resolves_cross_file_local_elixir_calls() {
     let project = tempfile::tempdir().expect("temp project");
     fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
     fs::create_dir_all(project.path().join("lib")).expect("create lib");
-    // Paren-less zero-arity `def`s so each function is indexed as a `method`
-    // symbol that the post-write pass can resolve against.
     fs::write(
         project.path().join("lib/greeter.ex"),
-        "defmodule App.Greeter do\n  def greet do\n    :hi\n  end\nend\n",
+        "defmodule App.Greeter do\n  def greet(name) do\n    {:hi, name}\n  end\nend\n",
     )
     .expect("write greeter.ex");
     fs::write(
@@ -400,7 +398,7 @@ fn index_resolves_cross_file_local_elixir_calls() {
     .expect("write format.ex");
     fs::write(
         project.path().join("lib/sample.ex"),
-        "defmodule App.Sample do\n  alias App.Greeter\n  import App.MathX\n\n  def run do\n    Greeter.greet()\n    tally()\n    App.Format.shout()\n  end\nend\n",
+        "defmodule App.Sample do\n  alias App.Greeter\n  import App.MathX\n\n  def run do\n    Greeter.greet(\"Ada\")\n    tally()\n    App.Format.shout()\n  end\nend\n",
     )
     .expect("write sample.ex");
     fs::write(
