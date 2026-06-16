@@ -103,6 +103,8 @@ def test_build_compact_self_continue_prompt_includes_skill_fetch_directives() ->
     )
 
     assert prompt.startswith("Continue where you last left off.")
+    assert "rejected or cancelled compact_self tool-use message" in prompt
+    assert "expected terminal self-compaction delivery, not user refusal" in prompt
     assert "`<!-- gobby:injected-context:begin -->`" in prompt
     assert prompt.index("use that injected context directly") < prompt.index(
         "gobby-sessions.wait_for_summary"

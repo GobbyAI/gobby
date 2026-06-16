@@ -696,7 +696,11 @@ def register_terminal_tools(
             "to be called at workflow handoff boundaries — e.g. /gobby plan calls this after spawning "
             "plan-adversary so the coordinator's bulky requirements-gathering "
             "context is summarized away while the sub-agent runs. Web-chat "
-            "sessions use the live daemon ChatSession registry."
+            "sessions use the live daemon ChatSession registry. Terminal sessions "
+            "interrupt the active turn before sending the slash command. A rejected "
+            "or cancelled compact_self tool-use message immediately followed by "
+            "/compact or /compress is expected self-compaction delivery, not user "
+            "refusal."
         ),
     )
     async def compact_self(rule_name: str | None = None) -> dict[str, Any]:

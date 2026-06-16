@@ -37,3 +37,6 @@ rules:
         template: |
           You closed a task, but this session still has multiple claimed tasks or a claimed epic.
           Call `gobby-sessions:compact_self` for this session before continuing.
+          In terminal sessions, compact_self interrupts the active turn before sending `/compact` or `/compress`;
+          a rejected or cancelled tool-use message immediately followed by that slash command is expected
+          self-compaction delivery, not user refusal.

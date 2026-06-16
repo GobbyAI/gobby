@@ -20,8 +20,14 @@ logger = logging.getLogger(__name__)
 
 COMPACT_SELF_CONTINUE_VARIABLE = "compact_self_continue_pending"
 COMPACT_RESUME_REQUIRED_SKILLS_VARIABLE = "compact_resume_required_skills"
+_COMPACT_SELF_CONTINUE_INTRO = (
+    "Continue where you last left off. If the previous turn shows a rejected or "
+    "cancelled compact_self tool-use message immediately followed by /compact or "
+    "/compress, treat it as expected terminal self-compaction delivery, not user "
+    "refusal. "
+)
 COMPACT_SELF_CONTINUE_PROMPT = (
-    "Continue where you last left off. If startup context contains "
+    _COMPACT_SELF_CONTINUE_INTRO + "If startup context contains "
     f"`{INJECTED_CONTEXT_BEGIN}`, use that injected context directly and continue. "
     "Only if the injected context is missing or incomplete, call "
     "`gobby-sessions.wait_for_summary` for the compacted session. If it returns "
@@ -388,7 +394,7 @@ def _prepare_compact_resume_skills(values: list[str]) -> list[str]:
 def _build_wait_for_summary_directive(summary_session_id: str | None) -> str:
     if summary_session_id:
         return (
-            "Continue where you last left off. If startup context contains "
+            _COMPACT_SELF_CONTINUE_INTRO + "If startup context contains "
             f"`{INJECTED_CONTEXT_BEGIN}`, use that injected context directly and continue. "
             "Only if the injected context is missing or incomplete, call "
             "`gobby-sessions.wait_for_summary("

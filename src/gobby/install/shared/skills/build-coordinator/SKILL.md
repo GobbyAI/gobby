@@ -161,6 +161,11 @@ Pass the current Gobby session ref as the top-level `call_tool.session_id`, not
 inside `arguments`. Set `rule_name` only when a workflow or rule specifically
 requires attribution.
 
+For terminal sessions, `compact_self` interrupts the active turn before sending
+`/compact` or `/compress`. If the tool-use message is rejected or cancelled and
+is immediately followed by the slash command, treat it as expected
+self-compaction delivery, not user refusal.
+
 Before compacting, leave enough state in the conversation or task notes for the
 continuation to resume without rediscovery.
 

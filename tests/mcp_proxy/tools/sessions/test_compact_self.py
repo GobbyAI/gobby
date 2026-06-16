@@ -161,6 +161,10 @@ class TestCompactSelfTerminalPath:
         input_schema = schema["inputSchema"]
         assert "session_id" not in input_schema["properties"]
         assert "session_id" not in input_schema.get("required", [])
+        description = schema["description"]
+        assert "interrupt the active turn before sending the slash command" in description
+        assert "rejected or cancelled compact_self tool-use message" in description
+        assert "expected self-compaction delivery, not user refusal" in description
 
     def test_claude_session_fires_slash_compact_via_send_keys(self) -> None:
         session = _make_terminal_session("claude")
