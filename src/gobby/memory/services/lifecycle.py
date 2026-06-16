@@ -168,6 +168,12 @@ class MemoryLifecycleService:
                 logger.debug(f"Memory already exists: {existing_record.id}")
                 return self._record_to_memory(existing_record)
 
+        # A soft-hidden duplicate is reactivated, not re-created as an invisible
+        # row: backend.create funnels through LocalMemoryManager.create_memory,
+        # whose deterministic-uuid5 collision path restores the hidden row and
+        # returns it active. Keeping the reactivation in that single storage
+        # chokepoint also covers direct storage/backend creates that bypass this
+        # service precheck entirely.
         record = await self.backend.create(
             content=content,
             memory_type=memory_type,

@@ -7,7 +7,7 @@ from datetime import UTC, datetime
 from typing import Any, Literal, cast
 
 from gobby.storage.hub.protocol import HubDatabase
-from gobby.storage.sql_dialect import newer_than_now_expr
+from gobby.storage.sql_dialect import newer_than_now_expr, older_than_now_expr
 
 # Stable namespace for deterministic memory UUIDs (uuid5)
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")
@@ -193,6 +193,12 @@ class LocalMemoryManager:
         # Check if memory already exists to avoid duplicate insert errors
         existing_row = self.db.fetchone("SELECT * FROM memories WHERE id = %s", (memory_id,))
         if existing_row:
+            # Deterministic uuid5 collision: identical content is already stored.
+            # If dream GC soft-hid that row, reactivate it here — this is the one
+            # create path every backend/storage caller funnels through, so a
+            # hidden collision must restore rather than return an invisible row.
+            if existing_row["deleted_at"] is not None:
+                self.restore_memory(memory_id, when=now)
             return self.get_memory(memory_id)
 
         # source_id proximity dedup: if the same session created a very similar
@@ -416,6 +422,123 @@ class LocalMemoryManager:
                 return False
         self._notify_listeners()
         return True
+
+    def mark_dreamed(
+        self,
+        memory_id: str,
+        *,
+        hidden_as: Literal["review", "delete"] | None = None,
+        when: str | None = None,
+    ) -> bool:
+        """Stamp ``last_dreamed_at`` and optionally soft-hide a dreamed memory.
+
+        Direct SQL that deliberately never touches ``updated_at`` — dream review
+        is GC bookkeeping, not a content edit, and bumping ``updated_at`` would
+        distort recency and temporal decay. When ``hidden_as`` is ``None`` the
+        row is only stamped (the ``keep`` case); when it is ``"review"`` or
+        ``"delete"`` the row is soft-hidden (``deleted_at`` set, ``dream_action``
+        recorded) so agent-facing reads skip it while it stays recoverable.
+
+        Raises ``ValueError`` if the memory does not exist.
+        """
+        stamp = when or datetime.now(UTC).isoformat()
+        if hidden_as is None:
+            sql = "UPDATE memories SET last_dreamed_at = %s WHERE id = %s"
+            params: tuple[Any, ...] = (stamp, memory_id)
+        else:
+            sql = (
+                "UPDATE memories SET last_dreamed_at = %s, deleted_at = %s, "
+                "dream_action = %s WHERE id = %s"
+            )
+            params = (stamp, stamp, hidden_as, memory_id)
+        with self.db.transaction() as conn:
+            cursor = conn.execute(sql, params)
+            if cursor.rowcount == 0:
+                raise ValueError(f"Memory {memory_id} not found")
+        self._notify_listeners()
+        return True
+
+    def restore_memory(self, memory_id: str, when: str | None = None) -> bool:
+        """Reactivate a soft-hidden memory.
+
+        Clears ``deleted_at`` and ``dream_action`` and stamps ``last_dreamed_at``
+        so a freshly restored memory is not immediately re-dreamed by the next
+        sweep (the cooldown applies). ``updated_at`` is left untouched.
+
+        Raises ``ValueError`` if the memory does not exist.
+        """
+        stamp = when or datetime.now(UTC).isoformat()
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET deleted_at = NULL, dream_action = NULL, "
+                "last_dreamed_at = %s WHERE id = %s",
+                (stamp, memory_id),
+            )
+            if cursor.rowcount == 0:
+                raise ValueError(f"Memory {memory_id} not found")
+        self._notify_listeners()
+        return True
+
+    def purge_dream_hidden(self, action: str, older_than_days: int) -> list[str]:
+        """Hard-delete soft-hidden rows of one ``dream_action`` past their grace.
+
+        Returns the IDs removed so callers can reconcile secondary stores
+        (Qdrant payloads, knowledge graph) after the physical rows are gone.
+        """
+        cutoff = older_than_now_expr(self.db, "deleted_at", "%s", "day")
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                f"DELETE FROM memories WHERE dream_action = %s "  # nosec B608
+                f"AND deleted_at IS NOT NULL AND {cutoff} RETURNING id",
+                (action, older_than_days),
+            ).fetchall()
+        ids = [row["id"] for row in rows]
+        if ids:
+            self._notify_listeners()
+        return ids
+
+    def list_dream_candidates(
+        self,
+        *,
+        limit: int,
+        redream_cutoff: str,
+        project_id: str | None = None,
+        memory_type: str | None = None,
+        include_global: bool = True,
+    ) -> list[Memory]:
+        """Return the next page of active memories due for a dream sweep.
+
+        Selects visible rows (``deleted_at IS NULL``) that have either never been
+        dreamed or were last dreamed before ``redream_cutoff`` (the cooldown
+        boundary, ``run_started_at - redream_after_hours``). Project/global and
+        memory-type scoping is applied in SQL, mirroring ``_in_scope``: a
+        ``project_id`` with ``include_global`` also matches global rows; without
+        it only that project's rows match; a ``None`` ``project_id`` sweeps every
+        row. Ordered oldest-dreamed first so the sweep drains deterministically as
+        each returned page is stamped out of the next page's window.
+        """
+        clauses = [
+            "deleted_at IS NULL",
+            "(last_dreamed_at IS NULL OR last_dreamed_at < %s)",
+        ]
+        params: list[Any] = [redream_cutoff]
+        if project_id is not None:
+            if include_global:
+                clauses.append("(project_id = %s OR project_id IS NULL)")
+            else:
+                clauses.append("project_id = %s")
+            params.append(project_id)
+        if memory_type is not None:
+            clauses.append("memory_type = %s")
+            params.append(memory_type)
+        where = " AND ".join(clauses)
+        params.append(limit)
+        rows = self.db.fetchall(
+            f"SELECT * FROM memories WHERE {where} "  # nosec B608
+            "ORDER BY last_dreamed_at ASC NULLS FIRST, updated_at ASC LIMIT %s",
+            tuple(params),
+        )
+        return [Memory.from_row(row) for row in rows]
 
     def mark_pending_graph(self, memory_id: str) -> None:
         """Mark a memory as pending KG graph processing."""

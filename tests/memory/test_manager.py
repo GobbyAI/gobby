@@ -122,6 +122,23 @@ class TestCreateMemory:
         assert memory.memory_type == "fact"
 
     @pytest.mark.asyncio
+    async def test_create_memory_restores_soft_hidden_duplicate(self, memory_manager):
+        """Re-creating content dream GC soft-hid reactivates the row via the
+        lifecycle content-check path, not an invisible duplicate."""
+        created = await memory_manager.create_memory(content="reactivate me via facade")
+        memory_manager.storage.mark_dreamed(created.id, hidden_as="delete")
+        with pytest.raises(ValueError, match="not found"):
+            memory_manager.storage.get_memory(created.id)
+
+        recreated = await memory_manager.create_memory(content="reactivate me via facade")
+
+        assert recreated.id == created.id
+        assert recreated.deleted_at is None
+        assert recreated.dream_action is None
+        # Restored to visibility rather than left hidden.
+        assert memory_manager.storage.get_memory(created.id).id == created.id
+
+    @pytest.mark.asyncio
     async def test_create_memory_with_all_params(self, db, memory_config):
         """Test memory creation with all parameters."""
         db.execute(

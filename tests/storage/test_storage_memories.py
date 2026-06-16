@@ -1,4 +1,5 @@
 import uuid
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -552,3 +553,167 @@ def test_restore_memory_row_tolerates_pre_289_snapshot(memory_manager, db) -> No
     assert restored.deleted_at is None
     assert restored.dream_action is None
     assert restored.last_dreamed_at is None
+
+
+def test_mark_dreamed_stamps_without_hiding_or_bumping_updated_at(memory_manager, db) -> None:
+    created = memory_manager.create_memory(content="keep me current")
+    before = db.fetchone("SELECT updated_at FROM memories WHERE id = %s", (created.id,))
+
+    memory_manager.mark_dreamed(created.id, when=datetime.now(UTC).isoformat())
+
+    row = db.fetchone(
+        "SELECT updated_at, last_dreamed_at, deleted_at, dream_action FROM memories WHERE id = %s",
+        (created.id,),
+    )
+    # GC bookkeeping must never bump recency / temporal decay.
+    assert row["updated_at"] == before["updated_at"]
+    assert row["last_dreamed_at"] is not None
+    assert row["deleted_at"] is None
+    assert row["dream_action"] is None
+    # Stays visible to agents (the "keep" case).
+    assert memory_manager.get_memory(created.id).id == created.id
+
+
+def test_mark_dreamed_soft_hides_without_bumping_updated_at(memory_manager, db) -> None:
+    created = memory_manager.create_memory(content="hide me")
+    before = db.fetchone("SELECT updated_at FROM memories WHERE id = %s", (created.id,))
+
+    memory_manager.mark_dreamed(created.id, hidden_as="delete")
+
+    row = db.fetchone(
+        "SELECT updated_at, last_dreamed_at, deleted_at, dream_action FROM memories WHERE id = %s",
+        (created.id,),
+    )
+    assert row["updated_at"] == before["updated_at"]
+    assert row["deleted_at"] is not None
+    assert row["dream_action"] == "delete"
+    assert row["last_dreamed_at"] is not None
+    # Hidden from agent-facing reads.
+    with pytest.raises(ValueError, match="not found"):
+        memory_manager.get_memory(created.id)
+
+
+def test_mark_dreamed_missing_raises(memory_manager) -> None:
+    with pytest.raises(ValueError, match="not found"):
+        memory_manager.mark_dreamed("00000000-0000-0000-0000-000000000000")
+
+
+def test_restore_memory_reactivates_hidden_row(memory_manager) -> None:
+    created = memory_manager.create_memory(content="bring me back")
+    memory_manager.mark_dreamed(created.id, hidden_as="review")
+    with pytest.raises(ValueError, match="not found"):
+        memory_manager.get_memory(created.id)
+
+    memory_manager.restore_memory(created.id)
+
+    restored = memory_manager.get_memory(created.id)
+    assert restored.id == created.id
+    assert restored.deleted_at is None
+    assert restored.dream_action is None
+    # Stamped so the next sweep's cooldown leaves it alone for a while.
+    assert restored.last_dreamed_at is not None
+
+
+def test_restore_memory_missing_raises(memory_manager) -> None:
+    with pytest.raises(ValueError, match="not found"):
+        memory_manager.restore_memory("00000000-0000-0000-0000-000000000000")
+
+
+def test_purge_dream_hidden_removes_only_aged_rows_of_action(memory_manager) -> None:
+    old = (datetime.now(UTC) - timedelta(days=40)).isoformat()
+    recent = datetime.now(UTC).isoformat()
+
+    aged_delete = memory_manager.create_memory(content="aged delete")
+    memory_manager.mark_dreamed(aged_delete.id, hidden_as="delete", when=old)
+    recent_delete = memory_manager.create_memory(content="recent delete")
+    memory_manager.mark_dreamed(recent_delete.id, hidden_as="delete", when=recent)
+    aged_review = memory_manager.create_memory(content="aged review")
+    memory_manager.mark_dreamed(aged_review.id, hidden_as="review", when=old)
+
+    purged = memory_manager.purge_dream_hidden("delete", older_than_days=30)
+
+    assert purged == [aged_delete.id]
+    assert not memory_manager.memory_exists(aged_delete.id)  # physically gone
+    assert memory_manager.memory_exists(recent_delete.id)  # within grace
+    assert memory_manager.memory_exists(aged_review.id)  # different action
+
+
+def test_list_dream_candidates_active_only_and_cooldown(memory_manager) -> None:
+    cutoff = (datetime.now(UTC) - timedelta(hours=20)).isoformat()
+    before_cutoff = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    after_cutoff = datetime.now(UTC).isoformat()
+
+    never = memory_manager.create_memory(content="never dreamed")
+    stale = memory_manager.create_memory(content="dreamed long ago")
+    memory_manager.mark_dreamed(stale.id, when=before_cutoff)
+    fresh = memory_manager.create_memory(content="dreamed just now")
+    memory_manager.mark_dreamed(fresh.id, when=after_cutoff)
+    hidden = memory_manager.create_memory(content="hidden one")
+    memory_manager.mark_dreamed(hidden.id, hidden_as="delete", when=before_cutoff)
+
+    page = memory_manager.list_dream_candidates(limit=50, redream_cutoff=cutoff)
+    ids = [m.id for m in page]
+
+    assert never.id in ids
+    assert stale.id in ids
+    assert fresh.id not in ids  # dreamed within the cooldown window
+    assert hidden.id not in ids  # soft-hidden rows are never candidates
+    # Never-dreamed sorts ahead of previously-dreamed (NULLS FIRST).
+    assert ids.index(never.id) < ids.index(stale.id)
+
+
+def test_list_dream_candidates_limit(memory_manager) -> None:
+    cutoff = datetime.now(UTC).isoformat()
+    for i in range(3):
+        memory_manager.create_memory(content=f"candidate {i}")
+    page = memory_manager.list_dream_candidates(limit=2, redream_cutoff=cutoff)
+    assert len(page) == 2
+
+
+def test_list_dream_candidates_project_and_global_scope(memory_manager, db) -> None:
+    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
+    db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
+    cutoff = datetime.now(UTC).isoformat()
+
+    glob = memory_manager.create_memory(content="global fact", project_id=None)
+    proj1 = memory_manager.create_memory(content="project one fact", project_id="proj1")
+    proj2 = memory_manager.create_memory(content="project two fact", project_id="proj2")
+
+    def ids(**kw) -> set[str]:
+        page = memory_manager.list_dream_candidates(limit=50, redream_cutoff=cutoff, **kw)
+        return {m.id for m in page}
+
+    # Project + global (default include_global=True).
+    assert ids(project_id="proj1") == {glob.id, proj1.id}
+    # Project only.
+    assert ids(project_id="proj1", include_global=False) == {proj1.id}
+    # No project filter sweeps every row.
+    assert {glob.id, proj1.id, proj2.id} <= ids()
+
+
+def test_list_dream_candidates_memory_type_scope(memory_manager) -> None:
+    cutoff = datetime.now(UTC).isoformat()
+    fact = memory_manager.create_memory(content="a fact", memory_type="fact")
+    pref = memory_manager.create_memory(content="a preference", memory_type="preference")
+
+    page = memory_manager.list_dream_candidates(
+        limit=50, redream_cutoff=cutoff, memory_type="preference"
+    )
+    ids = {m.id for m in page}
+    assert pref.id in ids
+    assert fact.id not in ids
+
+
+def test_create_memory_restores_hidden_duplicate(memory_manager) -> None:
+    created = memory_manager.create_memory(content="reactivate via recreate")
+    memory_manager.mark_dreamed(created.id, hidden_as="delete")
+    with pytest.raises(ValueError, match="not found"):
+        memory_manager.get_memory(created.id)
+
+    # Re-creating identical content collides on the deterministic uuid5 id and
+    # must reactivate the hidden row instead of returning an invisible memory.
+    recreated = memory_manager.create_memory(content="reactivate via recreate")
+    assert recreated.id == created.id
+    assert recreated.deleted_at is None
+    assert recreated.dream_action is None
+    assert memory_manager.get_memory(created.id).id == created.id
