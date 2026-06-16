@@ -9,9 +9,10 @@ import asyncio
 import json
 import logging
 import time
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Final, cast
 
 from fastapi import APIRouter, HTTPException, Request
+from fastapi.responses import JSONResponse
 from starlette.requests import ClientDisconnect
 
 from gobby.adapters.capabilities import ContextChannel, get_provider_capabilities
@@ -50,6 +51,7 @@ SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 # that a stuck daemon cannot leave provider hooks hanging indefinitely.
 FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0
 FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
+SUPPORTED_HOOK_SOURCES: Final = ("claude", "gemini", "grok", "qwen", "codex", "droid")
 
 
 def _graceful_error_response(
@@ -471,7 +473,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
     router = APIRouter(prefix="/api/hooks", tags=["hooks"])
 
     @router.post("/execute")
-    async def execute_hook(request: Request) -> dict[str, Any]:
+    async def execute_hook(request: Request) -> Any:
         """
         Execute CLI hook via adapter pattern.
 
@@ -546,6 +548,29 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             hook_manager = request.app.state.hook_manager
 
+            if source not in SUPPORTED_HOOK_SOURCES:
+                raise HTTPException(
+                    status_code=400,
+                    detail=(
+                        f"Unsupported source: {source}. "
+                        "Supported: claude, gemini, grok, qwen, codex, droid"
+                    ),
+                )
+
+            if envelope_id and not claim_envelope_processing(envelope_id):
+                stored_response = envelope_terminal_response(envelope_id)
+                if stored_response is not None:
+                    logger.info("Replaying processed hook envelope %s result", envelope_id)
+                    return stored_response
+                logger.debug("Hook envelope %s is already being processed", envelope_id)
+                return JSONResponse(
+                    status_code=409,
+                    content={
+                        "status": "processing",
+                        "reason": "duplicate envelope already processing",
+                    },
+                )
+
             # Select adapter based on source
             from gobby.adapters.base import BaseAdapter
             from gobby.adapters.claude_code import ClaudeCodeAdapter
@@ -583,18 +608,6 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                         "Supported: claude, gemini, grok, qwen, codex, droid"
                     ),
                 )
-
-            if envelope_id and not claim_envelope_processing(envelope_id):
-                stored_response = envelope_terminal_response(envelope_id)
-                if stored_response is not None:
-                    logger.info("Replaying processed hook envelope %s result", envelope_id)
-                    return stored_response
-                logger.warning("Hook envelope %s is already being processed", envelope_id)
-                return {
-                    "continue": False,
-                    "decision": "block",
-                    "reason": "duplicate envelope already processing",
-                }
 
             # Execute hook via adapter
             try:

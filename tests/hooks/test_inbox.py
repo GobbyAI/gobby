@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -9,6 +11,7 @@ from fastapi import FastAPI
 
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
+    claim_envelope_processing,
     is_envelope_processed,
     mark_envelope_processed,
 )
@@ -20,6 +23,18 @@ from gobby.hooks.inbox import (
 )
 
 pytestmark = pytest.mark.unit
+
+
+def _valid_envelope() -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": False,
+        "hook_type": "session-start",
+        "input_data": {},
+        "source": "claude",
+        "headers": {},
+    }
 
 
 @pytest.mark.asyncio
@@ -101,6 +116,81 @@ async def test_drain_hook_inbox_skips_already_processed_envelope(tmp_path: Path)
 
 
 @pytest.mark.asyncio
+async def test_drain_hook_inbox_skips_fresh_envelope(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    timestamp_ms = int(datetime.now(UTC).timestamp() * 1000)
+    envelope_path = inbox_dir / f"n-{timestamp_ms}-abcd.json"
+    envelope_path.write_text(json.dumps(_valid_envelope()))
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client):
+        replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
+
+    assert replayed == 0
+    assert envelope_path.exists()
+    mock_client.post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_drain_hook_inbox_skips_active_processing_marker(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_id = "n-0000000000001-abcd"
+    envelope_path = inbox_dir / f"{envelope_id}.json"
+    envelope_path.write_text(json.dumps(_valid_envelope()))
+    claim_envelope_processing(envelope_id, processed_dir=inbox_dir / "processed")
+
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock()
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client):
+        replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
+
+    assert replayed == 0
+    assert envelope_path.exists()
+    mock_client.post.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_drain_hook_inbox_clears_stale_processing_marker_and_replays(
+    tmp_path: Path,
+) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_id = "n-0000000000001-abcd"
+    envelope_path = inbox_dir / f"{envelope_id}.json"
+    envelope_path.write_text(json.dumps(_valid_envelope()))
+    processed_dir = inbox_dir / "processed"
+    claim_envelope_processing(envelope_id, processed_dir=processed_dir)
+    marker_path = next(processed_dir.glob("*.json"))
+    marker = json.loads(marker_path.read_text(encoding="utf-8"))
+    marker["claimed_at"] = (datetime.now(UTC) - timedelta(seconds=121)).isoformat()
+    marker_path.write_text(json.dumps(marker), encoding="utf-8")
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client):
+        replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
+
+    assert replayed == 1
+    assert not envelope_path.exists()
+    assert is_envelope_processed(envelope_id, processed_dir=processed_dir)
+    mock_client.post.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_drain_hook_inbox_keeps_failed_replay_files(tmp_path: Path) -> None:
     inbox_dir = tmp_path / "hooks" / "inbox"
     inbox_dir.mkdir(parents=True)
@@ -128,6 +218,28 @@ async def test_drain_hook_inbox_keeps_failed_replay_files(tmp_path: Path) -> Non
 
     assert replayed == 0
     assert envelope_path.exists()
+
+
+@pytest.mark.asyncio
+async def test_drain_hook_inbox_keeps_conflict_replay_files(tmp_path: Path) -> None:
+    inbox_dir = tmp_path / "hooks" / "inbox"
+    inbox_dir.mkdir(parents=True)
+    envelope_path = inbox_dir / "n-0000000000001-abcd.json"
+    envelope_path.write_text(json.dumps(_valid_envelope()))
+
+    mock_response = MagicMock()
+    mock_response.status_code = 409
+    mock_client = AsyncMock()
+    mock_client.post = AsyncMock(return_value=mock_response)
+    mock_client.__aenter__ = AsyncMock(return_value=mock_client)
+    mock_client.__aexit__ = AsyncMock(return_value=False)
+
+    with patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client):
+        replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
+
+    assert replayed == 0
+    assert envelope_path.exists()
+    mock_client.post.assert_awaited_once()
 
 
 def test_load_envelope_skips_quarantine_failure_without_raising(

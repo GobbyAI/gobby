@@ -15,9 +15,12 @@ import httpx
 from gobby.cli.utils import get_gobby_home
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
+    clear_stale_envelope_processing_marker,
     envelope_id_from_inbox_path,
     get_processed_envelope_dir,
     is_envelope_processed,
+    is_envelope_processing_active,
+    is_inbox_envelope_fresh,
     mark_envelope_processed,
 )
 from gobby.servers.routes.mcp.hooks import SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION
@@ -175,6 +178,20 @@ async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
             path.unlink(missing_ok=True)
             continue
 
+        if is_inbox_envelope_fresh(path):
+            logger.debug("Skipping fresh hook inbox envelope %s", path.name)
+            continue
+
+        if envelope_id and is_envelope_processing_active(envelope_id, processed_dir=processed_dir):
+            logger.debug("Skipping active hook inbox envelope %s", path.name)
+            continue
+
+        if envelope_id and clear_stale_envelope_processing_marker(
+            envelope_id,
+            processed_dir=processed_dir,
+        ):
+            logger.warning("Cleared stale processing marker for hook inbox envelope %s", path.name)
+
         envelope = _load_envelope(path)
         if envelope is None:
             continue
@@ -185,11 +202,30 @@ async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
             logger.warning("Hook inbox replay failed for %s: %s", path.name, exc)
             continue
 
-        if response.status_code == 200:
-            if envelope_id:
-                mark_envelope_processed(envelope_id, processed_dir=processed_dir)
-            path.unlink(missing_ok=True)
-            replayed += 1
+        if 200 <= response.status_code < 300:
+            if not envelope_id:
+                logger.warning(
+                    "Hook inbox replay succeeded for %s without an envelope ID; retaining file",
+                    path.name,
+                )
+                continue
+
+            mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+            if is_envelope_processed(envelope_id, processed_dir=processed_dir):
+                path.unlink(missing_ok=True)
+                replayed += 1
+            else:
+                logger.warning(
+                    "Hook inbox replay succeeded for %s but marker is not terminal; retaining file",
+                    path.name,
+                )
+            continue
+
+        if response.status_code == 409:
+            logger.debug(
+                "Hook inbox replay found active processing marker for %s; retaining file",
+                path.name,
+            )
             continue
 
         logger.warning(

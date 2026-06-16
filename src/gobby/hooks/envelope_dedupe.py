@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import re
 from collections.abc import Mapping
 from datetime import UTC, datetime
 from pathlib import Path
@@ -14,6 +15,8 @@ from uuid import uuid4
 from gobby.cli.utils import get_gobby_home
 
 ENVELOPE_ID_HEADER: Final = "X-Gobby-Envelope-Id"
+ENVELOPE_REPLAY_GRACE_SECONDS: Final = 120.0
+_ENVELOPE_FILENAME_RE: Final = re.compile(r"^[nc]-(?P<timestamp_ms>\d+)-.+$")
 
 
 def get_processed_envelope_dir(inbox_dir: Path | None = None) -> Path:
@@ -28,6 +31,36 @@ def envelope_id_from_inbox_path(path: Path) -> str | None:
     return stem or None
 
 
+def envelope_timestamp_ms_from_inbox_path(path: Path) -> int | None:
+    """Return the millisecond timestamp encoded in a ghook inbox filename."""
+    match = _ENVELOPE_FILENAME_RE.match(path.stem)
+    if match is None:
+        return None
+    try:
+        return int(match.group("timestamp_ms"))
+    except ValueError:
+        return None
+
+
+def is_inbox_envelope_fresh(
+    path: Path,
+    *,
+    now: datetime | None = None,
+    grace_seconds: float = ENVELOPE_REPLAY_GRACE_SECONDS,
+) -> bool:
+    """Return whether an inbox file is still inside the replay grace period."""
+    timestamp_ms = envelope_timestamp_ms_from_inbox_path(path)
+    if timestamp_ms is None:
+        return False
+    try:
+        created_at = datetime.fromtimestamp(timestamp_ms / 1000, UTC)
+    except (OSError, OverflowError, ValueError):
+        return False
+
+    reference = now or datetime.now(UTC)
+    return (reference - created_at).total_seconds() < grace_seconds
+
+
 def is_envelope_processed(envelope_id: str, *, processed_dir: Path | None = None) -> bool:
     """Return whether an envelope ID has a terminal processed marker."""
     if not envelope_id:
@@ -39,6 +72,48 @@ def is_envelope_processed(envelope_id: str, *, processed_dir: Path | None = None
     if not isinstance(status, str):
         return status is None
     return status == "processed"
+
+
+def is_envelope_processing_active(
+    envelope_id: str,
+    *,
+    processed_dir: Path | None = None,
+    now: datetime | None = None,
+    stale_after_seconds: float = ENVELOPE_REPLAY_GRACE_SECONDS,
+) -> bool:
+    """Return whether an envelope has an active in-flight processing marker."""
+    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    return _is_active_processing_record(
+        record,
+        now=now,
+        stale_after_seconds=stale_after_seconds,
+    )
+
+
+def clear_stale_envelope_processing_marker(
+    envelope_id: str,
+    *,
+    processed_dir: Path | None = None,
+    now: datetime | None = None,
+    stale_after_seconds: float = ENVELOPE_REPLAY_GRACE_SECONDS,
+) -> bool:
+    """Remove a stale processing marker so the envelope can be retried."""
+    record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    if record is None or record.get("status") != "processing":
+        return False
+    if _is_active_processing_record(
+        record,
+        now=now,
+        stale_after_seconds=stale_after_seconds,
+    ):
+        return False
+
+    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def claim_envelope_processing(envelope_id: str, *, processed_dir: Path | None = None) -> bool:
@@ -154,3 +229,33 @@ def _processed_marker_path(envelope_id: str, *, processed_dir: Path | None = Non
         if processed_dir is None
         else processed_dir / f"{digest}.json"
     )
+
+
+def _is_active_processing_record(
+    record: Mapping[str, Any] | None,
+    *,
+    now: datetime | None,
+    stale_after_seconds: float,
+) -> bool:
+    if record is None or record.get("status") != "processing":
+        return False
+
+    claimed_at = _processing_claimed_at(record)
+    if claimed_at is None:
+        return False
+
+    reference = now or datetime.now(UTC)
+    return (reference - claimed_at).total_seconds() < stale_after_seconds
+
+
+def _processing_claimed_at(record: Mapping[str, Any]) -> datetime | None:
+    raw_claimed_at = record.get("claimed_at")
+    if not isinstance(raw_claimed_at, str):
+        return None
+    try:
+        claimed_at = datetime.fromisoformat(raw_claimed_at)
+    except ValueError:
+        return None
+    if claimed_at.tzinfo is None:
+        return claimed_at.replace(tzinfo=UTC)
+    return claimed_at.astimezone(UTC)

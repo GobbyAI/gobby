@@ -1,5 +1,6 @@
 """Regression tests for hook ingress platform session metadata."""
 
+import logging
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -8,6 +9,7 @@ from fastapi.testclient import TestClient
 
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
+    claim_envelope_processing,
     envelope_terminal_response,
     is_envelope_processed,
 )
@@ -113,6 +115,58 @@ def test_envelope_id_marks_processed_and_skips_duplicate(
     assert second_response.status_code == 200
     assert second_response.json() == first_response.json()
     adapter.handle_native.assert_called_once()
+
+
+def test_envelope_id_active_processing_duplicate_returns_conflict(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    session_manager = SessionManager(temp_db)
+    server = create_http_server(
+        port=60887,
+        test_mode=True,
+        session_manager=session_manager,
+    )
+    server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
+
+    envelope_id = "n-0000000000001-abcd"
+    processed_dir = tmp_path / "gobby-home" / "hooks" / "inbox" / "processed"
+    claim_envelope_processing(envelope_id, processed_dir=processed_dir)
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": False,
+        "hook_type": "session-start",
+        "source": "claude",
+        "input_data": {},
+    }
+
+    with (
+        caplog.at_level("DEBUG", logger="gobby.servers.routes.mcp.hooks"),
+        TestClient(server.app) as client,
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
+    ):
+        response = client.post(
+            "/api/hooks/execute",
+            json=envelope,
+            headers={ENVELOPE_ID_HEADER: envelope_id},
+        )
+
+    hook_records = [
+        record for record in caplog.records if record.name == "gobby.servers.routes.mcp.hooks"
+    ]
+    assert response.status_code == 409
+    assert response.json() == {
+        "status": "processing",
+        "reason": "duplicate envelope already processing",
+    }
+    adapter_cls.assert_not_called()
+    assert "already being processed" in caplog.text
+    assert all(record.levelno < logging.WARNING for record in hook_records)
 
 
 def test_envelope_id_replays_terminal_denial(
