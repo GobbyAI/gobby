@@ -4,8 +4,10 @@ use serde::Deserialize;
 use serde_json::Value;
 
 mod codex;
+mod gemini;
 
 use codex::CODEX_SESSION_ADAPTER;
+use gemini::GEMINI_SESSION_ADAPTER;
 
 use crate::WikiError;
 use crate::ingest::{
@@ -166,11 +168,12 @@ fn normalize_session_archive_value(value: Value) -> Result<SessionArchiveEnvelop
     })
 }
 
-fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 3] {
+fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 4] {
     [
         &COMMON_SESSION_ADAPTER,
         &CLAUDE_CODE_ADAPTER,
         &CODEX_SESSION_ADAPTER,
+        &GEMINI_SESSION_ADAPTER,
     ]
 }
 

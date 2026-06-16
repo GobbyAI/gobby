@@ -450,6 +450,45 @@ fn codex_jsonl_session_routes_to_session_orchestrator() {
     assert!(raw_markdown.contains("/workspace"));
 }
 
+#[test]
+fn gemini_jsonl_session_routes_to_session_orchestrator() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("gemini.jsonl");
+    std::fs::write(
+        &file_path,
+        r#"{"type":"init","timestamp":"2026-06-16T20:00:00Z","session_id":"session-1","model":"gemini-3.5-flash"}
+{"type":"message","timestamp":"2026-06-16T20:00:01Z","role":"user","content":"Reply with exactly OK."}
+{"type":"message","timestamp":"2026-06-16T20:00:02Z","role":"assistant","content":"OK","delta":true}
+{"type":"result","timestamp":"2026-06-16T20:00:03Z","status":"success","stats":{"tool_calls":0}}"#,
+    )
+    .expect("write Gemini session jsonl");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+
+    let result = ingest_path(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-06-16T20:06:00Z",
+    )
+    .expect("ingest Gemini session archive");
+
+    assert_eq!(result.record.kind, SourceKind::Session);
+    assert!(result.asset_path.is_none());
+    let raw_markdown =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("session markdown");
+    assert!(raw_markdown.contains("session_type: gemini-cli"));
+    assert!(raw_markdown.contains("# Gemini CLI session"));
+    assert!(raw_markdown.contains("Reply with exactly OK."));
+    assert!(raw_markdown.contains("### assistant"));
+    assert!(raw_markdown.contains("OK"));
+}
+
 #[cfg(feature = "documents")]
 #[test]
 fn dispatches_office_html_to_document() {
