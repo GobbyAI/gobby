@@ -99,11 +99,11 @@ class TestIsEmbeddingReachable:
     async def test_probe_uses_shared_lock_for_cache_read_and_write(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
-        class TrackingLock:
+        class CountingMutex:
             def __init__(self) -> None:
                 self.enter_count = 0
 
-            def __enter__(self) -> TrackingLock:
+            def __enter__(self) -> CountingMutex:
                 self.enter_count += 1
                 return self
 
@@ -111,7 +111,7 @@ class TestIsEmbeddingReachable:
                 return False
 
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
-        lock = TrackingLock()
+        lock = CountingMutex()
         factory, _client = _mock_httpx_client(status=200)
 
         with (
@@ -123,18 +123,18 @@ class TestIsEmbeddingReachable:
         assert lock.enter_count == 2
 
     def test_clear_reachability_cache_uses_shared_lock(self) -> None:
-        class TrackingLock:
+        class CountingMutex:
             def __init__(self) -> None:
                 self.enter_count = 0
 
-            def __enter__(self) -> TrackingLock:
+            def __enter__(self) -> CountingMutex:
                 self.enter_count += 1
                 return self
 
             def __exit__(self, exc_type, exc, tb) -> bool:
                 return False
 
-        lock = TrackingLock()
+        lock = CountingMutex()
         _reachability_cache[("http://localhost:11434/v1", False)] = MagicMock()
 
         with patch("gobby.search.embeddings._get_lock", return_value=lock):

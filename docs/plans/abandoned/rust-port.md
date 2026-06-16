@@ -8,15 +8,15 @@
 
 ## Context
 
-gsqz and gcode are successfully ported to Rust as standalone binaries in the gobby-cli monorepo (~9K LOC). The Python daemon is ~184K LOC across 670 files with 63 PostgreSQL tables. Goal: incrementally replace the Python daemon with a compiled Rust binary. This is a clean rewrite opportunity — shed legacy cruft, optimize, ship a single binary.
+retired-compressor and gcode are successfully ported to Rust as standalone binaries in the gobby-cli monorepo (~9K LOC). The Python daemon is ~184K LOC across 670 files with 63 PostgreSQL tables. Goal: incrementally replace the Python daemon with a compiled Rust binary. This is a clean rewrite opportunity — shed legacy cruft, optimize, ship a single binary.
 
-The gsqz/gcode experience (standalone crate, clean design, fast iteration) is the template for how this should feel.
+The retired-compressor/gcode experience (standalone crate, clean design, fast iteration) is the template for how this should feel.
 
 ---
 
 ## Phase 1: `gobby-core` Shared Crate
 
-**What:** Extract duplicated patterns from gcode and gsqz into a shared foundation crate.
+**What:** Extract duplicated patterns from gcode and retired-compressor into a shared foundation crate.
 
 **Why now:** Both crates duplicate config resolution, daemon communication, and bootstrap parsing. This foundation is required by everything downstream — the daemon crate, future CLI crate, and existing tools all need it.
 
@@ -24,8 +24,8 @@ The gsqz/gcode experience (standalone crate, clean design, fast iteration) is th
 
 | Module | From | LOC | Purpose |
 |--------|------|-----|---------|
-| `bootstrap.rs` | gcode/config.rs, gsqz/config.rs | ~100 | bootstrap.yaml parsing, daemon URL resolution, GOBBY_PORT env |
-| `daemon.rs` | gsqz/daemon.rs, gcode/savings.rs | ~80 | ureq HTTP client for daemon API (savings reporting, config fetch) |
+| `bootstrap.rs` | gcode/config.rs, retired-compressor/config.rs | ~100 | bootstrap.yaml parsing, daemon URL resolution, GOBBY_PORT env |
+| `daemon.rs` | retired-compressor/daemon.rs, gcode/savings.rs | ~80 | ureq HTTP client for daemon API (savings reporting, config fetch) |
 | `db.rs` | gcode/db.rs | ~40 | PostgreSQL connection helpers (WAL, foreign keys, busy timeout) |
 | `secrets.rs` | gcode/secrets.rs | ~180 | Fernet decryption (machine_id + secret_salt → PBKDF2 → decrypt) |
 | `project.rs` | gcode/project.rs | ~80 | Project root detection, project.json reading, UUID5 generation |
@@ -39,7 +39,7 @@ The gsqz/gcode experience (standalone crate, clean design, fast iteration) is th
 - [ ] Create `crates/gobby-core/` in gobby-cli monorepo
 - [ ] Extract modules, wire up feature gates
 - [ ] Update gcode to depend on `gobby-core` (remove duplicated code)
-- [ ] Update gsqz to depend on `gobby-core` (remove duplicated code)
+- [ ] Update retired-compressor to depend on `gobby-core` (remove duplicated code)
 - [ ] Tests for each module (bootstrap resolution, secret decryption, project detection)
 
 ---
@@ -175,7 +175,7 @@ The gsqz/gcode experience (standalone crate, clean design, fast iteration) is th
 
 Each phase has its own verification:
 
-- **Phase 1:** gcode and gsqz build and pass tests with gobby-core dependency. No behavior change.
+- **Phase 1:** gcode and retired-compressor build and pass tests with gobby-core dependency. No behavior change.
 - **Phase 2:** Storage integration tests run against real PostgreSQL. CRUD operations match Python behavior. FTS5 search returns same results.
 - **Phase 3:** Rust daemon serves endpoints. Compare responses against Python daemon for same requests. CLI works against both.
 - **Phase 4:** Hook evaluation latency measured before/after. Rule engine produces same decisions as Python for test corpus.
@@ -191,8 +191,8 @@ Each phase has its own verification:
 - `~/Projects/gobby-cli/crates/gcode/src/db.rs` — PostgreSQL to extract
 - `~/Projects/gobby-cli/crates/gcode/src/secrets.rs` — secrets to extract
 - `~/Projects/gobby-cli/crates/gcode/src/project.rs` — project detection to extract
-- `~/Projects/gobby-cli/crates/gsqz/src/config.rs` — config to extract
-- `~/Projects/gobby-cli/crates/gsqz/src/daemon.rs` — daemon client to extract
+- `~/Projects/gobby-cli/crates/retired-compressor/src/config.rs` — config to extract
+- `~/Projects/gobby-cli/crates/retired-compressor/src/daemon.rs` — daemon client to extract
 
 **Python (schema source of truth):**
 - `src/gobby/storage/baseline_schema.sql` — v182 full schema

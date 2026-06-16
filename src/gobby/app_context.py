@@ -105,9 +105,6 @@ class ServiceContainer:
     web_chat_runtime_manager: Any | None = None  # WebChatRuntimeManager
     web_chat_session_registry: Any | None = None  # WebChatSessionRegistry
 
-    # Caches (lazily populated by savings, etc.)
-    _savings_tracker: Any | None = None  # SavingsTracker
-
     # Prompts
     prompt_manager: Any | None = None  # LocalPromptManager
     dev_mode: bool = False

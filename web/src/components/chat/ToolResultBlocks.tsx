@@ -3,11 +3,7 @@ import { useMemo } from 'react'
 import { cn } from '../../lib/utils'
 import { CodeBlock } from '../shared/CodeBlock'
 import { TOOL_CARD_SPACING } from '../shared/spacing'
-import {
-  type GsqzMetadata,
-  parseGsqzWrapper,
-  parseReadOutput,
-} from './ToolCallCard.helpers'
+import { parseReadOutput } from './ToolCallCard.helpers'
 import { TOOL_RESULT_CUSTOM_STYLE } from './ToolCallCard.styles'
 
 const TOOL_RESULT_WRAP_CLASS = 'tool-result-wrap'
@@ -49,34 +45,6 @@ export function MetadataStrip({ meta, className }: MetadataStripProps) {
           <span>{formatMetaValue(value)}</span>
         </span>
       ))}
-    </div>
-  )
-}
-
-interface GsqzMetadataStripProps {
-  metadata: GsqzMetadata
-}
-
-function GsqzMetadataStrip({ metadata }: GsqzMetadataStripProps) {
-  const parts: string[] = []
-  if (metadata.chunkId) parts.push(`chunk ${metadata.chunkId}`)
-  if (metadata.wallTimeSeconds != null) parts.push(`${metadata.wallTimeSeconds.toFixed(3)}s`)
-  if (metadata.exitCode != null) parts.push(`exit ${metadata.exitCode}`)
-  if (metadata.tokenCount != null) parts.push(`${metadata.tokenCount} tokens`)
-  if (metadata.strategy) parts.push(`gsqz:${metadata.strategy}`)
-  if (metadata.reduction) parts.push(metadata.reduction)
-  if (parts.length === 0) return null
-
-  const isError = metadata.exitCode != null && metadata.exitCode !== 0
-  return (
-    <div
-      className={cn(
-        TOOL_CARD_SPACING.metaStrip,
-        'text-[10px] font-mono border-b border-border/40 bg-muted/30',
-        isError ? 'text-destructive-foreground/80' : 'text-muted-foreground',
-      )}
-    >
-      {parts.join(' · ')}
     </div>
   )
 }
@@ -192,24 +160,4 @@ export function ToolResultBody({ body, language, variant }: ToolResultBodyProps)
   }
 
   return <PlainBody body={body} language={language} />
-}
-
-export interface GsqzResultBlockProps {
-  metadata: GsqzMetadata
-  body: string
-  language?: string
-}
-
-export function GsqzResultBlock({ metadata, body, language }: GsqzResultBlockProps) {
-  const nested = useMemo(() => parseGsqzWrapper(body), [body])
-  return (
-    <div className="overflow-hidden rounded border border-border/40">
-      <GsqzMetadataStrip metadata={metadata} />
-      {nested ? (
-        <GsqzResultBlock metadata={nested.metadata} body={nested.body} language={language} />
-      ) : (
-        <ToolResultBody body={body} language={language} />
-      )}
-    </div>
-  )
 }

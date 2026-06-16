@@ -44,7 +44,7 @@ SAFE_MCP_PROXY_TOOLS = frozenset(
 
 BUILT_IN_EXEMPTION_LABELS = (
     "mcp:gobby*:*",
-    "tool:Bash (gcode / safe gsqz input only)",
+    "tool:Bash (gcode only)",
 )
 
 GOBBY_EXEMPT_SERVERS = frozenset(
@@ -189,8 +189,6 @@ def approval_key_for_tool(tool_name: str, input_data: dict[str, Any]) -> str:
     return f"tool:{canonical}"
 
 
-_SAFE_GSQZ_TOP_LEVEL_FLAGS = frozenset({"-h", "--help", "-V", "--version", "--dump-config"})
-_SAFE_GSQZ_SUBCOMMANDS = frozenset({"input"})
 _GCODE_SHELL_SEPARATORS = (";", "&&", "||", "|", "&", "\n")
 
 
@@ -226,20 +224,6 @@ def is_gcode_shell_command(input_data: dict[str, Any]) -> bool:
     return os.path.basename(parts[0]) == "gcode"
 
 
-def _is_safe_gsqz_invocation(parts: list[str]) -> bool:
-    if os.path.basename(parts[0]) != "gsqz":
-        return False
-
-    args = parts[1:]
-    if not args or "--" in args:
-        return False
-
-    if len(args) == 1 and args[0] in _SAFE_GSQZ_TOP_LEVEL_FLAGS:
-        return True
-
-    return args[0] in _SAFE_GSQZ_SUBCOMMANDS
-
-
 def is_auto_exempt_shell_command(input_data: dict[str, Any]) -> bool:
     """Return True for hardcoded safe shell binaries."""
     command = input_data.get("command")
@@ -251,8 +235,6 @@ def is_auto_exempt_shell_command(input_data: dict[str, Any]) -> bool:
     first = os.path.basename(parts[0])
     if first == "gcode":
         return is_gcode_shell_command(input_data)
-    if first == "gsqz":
-        return _is_safe_gsqz_invocation(parts)
     return False
 
 

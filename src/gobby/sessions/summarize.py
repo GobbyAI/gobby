@@ -326,23 +326,6 @@ async def generate_session_summaries(
         session_manager=session_manager,
     )
 
-    # Record progressive discovery savings
-    resolved_db = db or getattr(session_manager, "db", None)
-    if resolved_db and getattr(session, "project_id", None):
-        try:
-            from gobby.savings.discovery import record_discovery_savings
-
-            await _run_db(
-                db_runner,
-                record_discovery_savings,
-                resolved_db,
-                session.id,
-                session.project_id,
-                getattr(session, "model", None),
-            )
-        except Exception as e:
-            logger.warning(f"Failed to record discovery savings for {session_id}: {e}")
-
     logger.info(
         f"Session summary generated for {session_id} ({(len(full_markdown) if full_markdown else 0)} chars)",
     )

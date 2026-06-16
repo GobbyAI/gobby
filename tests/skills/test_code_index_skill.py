@@ -30,7 +30,7 @@ def test_code_index_skill_documents_positional_path_filters() -> None:
     assert parsed.get_category() == "core"
 
     assert 'gcode search "query" [PATH ...]' in body
-    assert 'gcode grep "pattern" [PATH ...] -m 50' in body
+    assert 'gcode grep "regex" [PATH ...] -m 50' in body
     assert 'gcode search-content "query" [PATH ...]' in body
     assert "-m/--max-count" in body
     assert "--format json" in body
@@ -54,7 +54,7 @@ def test_code_index_skill_documents_gcode_first_retrieval_workflow() -> None:
     assert "`gcode symbol <full-uuid>`" in body
     assert "`gcode symbols <full-uuid> <full-uuid> ...`" in body
     assert "Search output is intentionally snippet-sized" in body
-    assert "`gsqz`" in body
+    assert "Broad file reads and wide line ranges are noisy" in body
     assert "use `sed`/`awk` only for tight neighboring context (1-3 lines)" in body
 
 

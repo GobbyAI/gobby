@@ -642,7 +642,7 @@ unavailable, fix the blocker and re-run the full matrix.
   #12251, #12252, #12253, #12255, #12256, #12257, #12258, #12261, #12263,
   #12265, #12286, #14139, #14144, #14165, #14166, #14167, #14175).
 - Refresh CLI install behavior for Codex, Claude, Gemini, Qwen, Droid, ghook,
-  gcode, gloc, and gsqz, including CLI trust seeding and policy file
+  and gcode, including CLI trust seeding and policy file
   installation (#12264, #14147, #14298).
 
 ### Fixed
@@ -1067,7 +1067,7 @@ Web chat now routes to Claude (SDK), Gemini (ACP client), and Codex (CLI subproc
 - Overhauled `gobby start/stop/status` output with step-by-step progress, polled startup tracker, and compact ready summary (#11631)
 - Persist discovery state and harden service-managed restart waits (#11720)
 - `set_config_batch` for atomic multi-key config updates (#11606)
-- Local LLM provider with tier-based fallback and `gsqz` input compression integrated into the context injection pipeline (#11552, #11603)
+- Local LLM provider with tier-based fallback integrated into the context injection pipeline (#11552, #11603)
 
 ### Refactors
 
@@ -1263,7 +1263,7 @@ Agents now always spawn via tmux — the `mode` concept (autonomous, interactive
 ### Chores
 
 - Clean up stale cron/pipeline sessions and hide from UI (#11292, #11293)
-- Add gsqz pipeline config and update lockfile
+- Add output-compression pipeline config and update lockfile
 
 ## [0.3.2]
 
@@ -1858,7 +1858,7 @@ Built autonomously via orchestrator pipeline — 10 subtasks across Gemini devs 
 
 #### Output Compression
 - Added compression banner to compressed tool output (#9814)
-- Expanded compress-bash-output patterns (vitest, jest, npx, pnpm, bun, uv, turbo, nx, webpack, vite)
+- Expanded shell-output compression patterns (vitest, jest, npx, pnpm, bun, uv, turbo, nx, webpack, vite)
 
 #### Variable Management
 - Promoted set_variable/get_variable to top-level MCP proxy tools (#9875)
@@ -1937,7 +1937,7 @@ Built autonomously via orchestrator pipeline — 10 subtasks across Gemini devs 
 #### Rule Engine
 - Added agent_scope to rules for per-agent targeting (#9656)
 - Added rewrite_input effect type for rule-based command rewriting (#9648)
-- Added output compression rules (compress-bash-output, compress-mcp-output) (#9649)
+- Added output compression rules for Bash and MCP tool output (#9649)
 - Added rule tagging and selector system for agent-scoped rule loading (#9650)
 - Wired rule tags/selectors into agent definitions (#9651)
 - Added reload_cache to sync bundled rules, agents, and variables (#9741)

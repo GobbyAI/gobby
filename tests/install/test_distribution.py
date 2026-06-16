@@ -42,7 +42,6 @@ def test_homebrew_helper_detection_fails_with_brew_guidance_when_missing(
     assert f"gcode >= {gcode_pin} required; gcode was not found on PATH." in message
     assert "brew install GobbyAI/tap/gobby-code" in message
     assert "brew upgrade GobbyAI/tap/gobby-code" in message
-    assert "gobby-local" not in message
 
 
 def test_homebrew_helper_detection_fails_with_brew_guidance_when_stale(tmp_path: Path) -> None:
@@ -77,7 +76,7 @@ def test_homebrew_helper_detection_accepts_valid_local_helpers_before_stale_path
 ) -> None:
     bin_dir = tmp_path / ".gobby" / "bin"
     bin_dir.mkdir(parents=True)
-    for binary in ("gcode", "gsqz", "ghook", "gwiki"):
+    for binary in ("gcode", "ghook", "gwiki"):
         helper = bin_dir / binary
         helper.write_text("")
         helper.chmod(0o755)
@@ -100,7 +99,6 @@ def test_homebrew_helper_detection_accepts_valid_local_helpers_before_stale_path
     mock_which.assert_not_called()
     assert [status.path for status in statuses] == [
         str(bin_dir / "gcode"),
-        str(bin_dir / "gsqz"),
         str(bin_dir / "ghook"),
         str(bin_dir / "gwiki"),
     ]
@@ -126,5 +124,5 @@ def test_homebrew_helper_detection_accepts_pinned_versions(tmp_path: Path) -> No
     ):
         statuses = verify_homebrew_managed_bins()
 
-    assert [status.name for status in statuses] == ["gcode", "gsqz", "ghook", "gwiki"]
+    assert [status.name for status in statuses] == ["gcode", "ghook", "gwiki"]
     assert all(status.ok for status in statuses)

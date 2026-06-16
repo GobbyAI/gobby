@@ -34,7 +34,6 @@ from gobby.install.distribution import (
 
 from . import install_setup_gcode as _gcode_impl
 from . import install_setup_ghook as _ghook_impl
-from . import install_setup_gsqz as _gsqz_impl
 from . import install_setup_gwiki as _gwiki_impl
 from .utils import get_install_dir
 
@@ -425,24 +424,6 @@ def _run_npm_install(label: str, package: str, project_path: Path) -> None:
 
 def _run_managed_native_binary_installs() -> None:
     try:
-        gsqz_result = _install_gsqz()
-        if gsqz_result.get("installed"):
-            verb = "Upgraded" if gsqz_result.get("upgraded") else "Installed"
-            click.echo(
-                f"{verb} gsqz {gsqz_result.get('version', '')} "
-                f"via {gsqz_result.get('method', 'unknown')} (output compressor)"
-            )
-        elif gsqz_result.get("skipped"):
-            reason = gsqz_result.get("reason", "")
-            suffix = f" ({reason})" if reason else ""
-            click.echo(f"gsqz already installed and up to date{suffix}")
-        else:
-            reason = gsqz_result.get("reason", "unknown error")
-            click.echo(f"Warning: Failed to install gsqz: {reason}")
-    except Exception as e:
-        click.echo(f"Warning: Failed to install gsqz: {e}")
-
-    try:
         gcode_result = _install_gcode()
         if gcode_result.get("installed"):
             verb = "Upgraded" if gcode_result.get("upgraded") else "Installed"
@@ -497,11 +478,6 @@ def _run_managed_native_binary_installs() -> None:
         click.echo(f"Warning: Failed to install gwiki: {e}")
 
 
-_GSQZ_RELEASE_TAG_PREFIX = "gsqz-v"
-_GSQZ_CRATES_API = "https://crates.io/api/v1/crates/gobby-squeeze"
-_GSQZ_VERSION_STAMP = ".gsqz-version"
-_GSQZ_BIN_NAME = "gsqz.exe" if sys.platform == "win32" else "gsqz"
-
 # Platform -> target triple mapping used across public binary installers.
 _PLATFORM_TARGETS: dict[tuple[str, str], str] = {
     ("darwin", "arm64"): "aarch64-apple-darwin",
@@ -513,36 +489,54 @@ _PLATFORM_TARGETS: dict[tuple[str, str], str] = {
 }
 
 
-def _get_latest_gsqz_version() -> str | None:
-    return _gsqz_impl.get_latest_gsqz_version(_module())
-
-
-def _get_installed_gsqz_version(bin_dir: Path) -> str | None:
-    return _gsqz_impl.get_installed_gsqz_version(_module(), bin_dir)
-
-
-def _write_gsqz_version_stamp(bin_dir: Path, version: str) -> None:
-    _gsqz_impl.write_gsqz_version_stamp(_module(), bin_dir, version)
-
-
-def _install_gsqz_from_github(bin_dir: Path, target: str, version: str | None = None) -> bool:
-    return _gsqz_impl.install_gsqz_from_github(_module(), bin_dir, target, version)
-
-
-def _install_gsqz_from_cargo_binstall(bin_dir: Path, version: str | None = None) -> bool:
-    return _gsqz_impl.install_gsqz_from_cargo_binstall(_module(), bin_dir, version)
-
-
-def _install_gsqz_from_cargo_install(bin_dir: Path, version: str | None = None) -> bool:
-    return _gsqz_impl.install_gsqz_from_cargo_install(_module(), bin_dir, version)
-
-
 def _ensure_gobby_bin_on_path() -> dict[str, Any]:
-    return _gsqz_impl.ensure_gobby_bin_on_path(_module())
+    """Add ~/.gobby/bin to PATH if shell rc does not already contain it."""
+    gobby_bin = str(Path.home() / ".gobby" / "bin")
+    result: dict[str, Any] = {"added": False}
 
+    if gobby_bin in os.environ.get("PATH", "").split(os.pathsep):
+        return result
 
-def _install_gsqz(force: bool = False) -> dict[str, Any]:
-    return _gsqz_impl.install_gsqz(_module(), force)
+    if sys.platform == "win32":
+        click.echo(f"  Add {gobby_bin} to your PATH manually (System > Environment Variables)")
+        return result
+
+    shell = os.environ.get("SHELL", "")
+    shell_name = Path(shell).name if shell else ""
+
+    rc_configs: dict[str, tuple[Path, str]] = {
+        "zsh": (
+            Path.home() / ".zshrc",
+            'export PATH="$HOME/.gobby/bin:$PATH"  # gobby\n',
+        ),
+        "bash": (
+            Path.home() / ".bashrc",
+            'export PATH="$HOME/.gobby/bin:$PATH"  # gobby\n',
+        ),
+        "fish": (
+            Path.home() / ".config" / "fish" / "config.fish",
+            "fish_add_path ~/.gobby/bin  # gobby\n",
+        ),
+    }
+
+    if shell_name not in rc_configs:
+        logger.debug("unknown shell %s, skipping PATH setup", shell_name)
+        return result
+
+    rc_file, export_line = rc_configs[shell_name]
+    if rc_file.exists():
+        content = rc_file.read_text()
+        if "# gobby" in content and ".gobby/bin" in content:
+            return result
+
+    rc_file.parent.mkdir(parents=True, exist_ok=True)
+    with open(rc_file, "a") as f:
+        f.write(f"\n{export_line}")
+
+    result["added"] = True
+    result["shell"] = shell_name
+    result["rc_file"] = str(rc_file)
+    return result
 
 
 _GCODE_RELEASE_TAG_PREFIX = "gcode-v"

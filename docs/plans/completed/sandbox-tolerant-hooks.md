@@ -22,7 +22,7 @@ symptom: "hook command won't start" — the `uv run` front end fails before
 Python even loads. Loopback failure is secondary.
 
 **Implementation strategy: Rust.** Gobby is mid-migration from Python to
-Rust; `~/Projects/gobby-cli` already ships `gcode`, `gsqz`, and `gloc` as
+Rust; `~/Projects/gobby-cli` already ships `gcode`, `retired-compressor`, and `retired-local-launcher` as
 standalone binaries. The hook dispatcher is exactly the shape of code being
 ported and is also the failure case we need to fix. Writing it in Python as a
 `gobby-hook` console_script and then porting later would be a double-
@@ -61,11 +61,11 @@ sandbox mode produces working hooks — no hand-edited CLI config.
   concurrently within a given (session, hook_type) pair.
 - **Python vs Rust:** Rust. `ghook` is the fourth crate in the gobby-cli
   workspace.
-- **Binary distribution model:** match `gcode` / `gsqz` exactly, including
+- **Binary distribution model:** match `gcode` / `retired-compressor` exactly, including
   **automatic install via `gobby install`**. `install_setup.py` already has
-  a three-tier fallback (`_install_gsqz_from_github` → `cargo-binstall` →
+  a three-tier fallback (`_install_retired-compressor_from_github` → `cargo-binstall` →
   `cargo install`) with crates.io version resolution, stamp files
-  (`~/.gobby/bin/.gsqz-version`), and PATH setup across shells. A new
+  (`~/.gobby/bin/.retired-compressor-version`), and PATH setup across shells. A new
   `_install_ghook()` mirrors that one-for-one. Python side resolves
   `~/.gobby/bin/ghook` first, then `shutil.which()`.
 
@@ -83,12 +83,12 @@ sandbox mode produces working hooks — no hand-edited CLI config.
 
 **Modified in `~/Projects/gobby` (the Python daemon side):**
 
-Binary installer — new `ghook` lane mirroring `gcode`/`gsqz`:
+Binary installer — new `ghook` lane mirroring `gcode`/`retired-compressor`:
 - `src/gobby/cli/install_setup.py` — add `_install_ghook()`,
   `_get_latest_ghook_version()`, `_get_installed_ghook_version()`,
   `_write_ghook_version_stamp()`, `_install_ghook_from_github()`, and the
   cargo-binstall / cargo-install fallbacks, parallel to the existing
-  `_install_gsqz` / `_install_gcode` structure at `install_setup.py:232+`.
+  `_install_retired-compressor` / `_install_gcode` structure at `install_setup.py:232+`.
   Hook the new lane into the main install flow around
   `install_setup.py:183`.
 
@@ -118,7 +118,7 @@ Server / drain:
 Cross-binary resolution utility:
 - New: `src/gobby/utils/native_bin.py` — one resolver used by `ghook`
   invocation, plus migrate `gcode` (in `src/gobby/code_index/maintenance.py`)
-  and `gsqz` (in `src/gobby/llm/sdk_utils.py`) to use it. Small, safe
+  and `retired-compressor` (in `src/gobby/llm/sdk_utils.py`) to use it. Small, safe
   refactor that pays down existing duplication.
 
 **To be retired (one release compatibility window):**
@@ -253,7 +253,7 @@ Pre-existing bugs / missing surfaces that must land first.
    them without touching the filesystem.
 5. **`native_bin.py` resolver + migrate existing callers.** Pays down
    duplicated `~/.gobby/bin/<name>` lookup logic now (currently two call
-   sites for `gcode` and `gsqz`) so Phase 2's `ghook` lookup is the third
+   sites for `gcode` and `retired-compressor`) so Phase 2's `ghook` lookup is the third
    user of one resolver, not new duplication.
 6. **Pin the coupling schemas in `gobby-cli`.** Write
    `gobby-cli/schemas/inbox-envelope.v1.schema.json` and
@@ -295,7 +295,7 @@ implementing a loss-free enqueue-first flow.
 1. **Scaffold the crate.** `crates/ghook/` in `gobby-cli`. Conventions match
    existing crates: `anyhow::Result`, `clap` derive, `serde_json`,
    `ureq` HTTP with 1s connect / 5s total for critical hooks and 500ms
-   total for non-critical, no tokio, fail-open pattern from `gsqz`.
+   total for non-critical, no tokio, fail-open pattern from `retired-compressor`.
 2. **CLI surface:**
    ```
    ghook --cli=<claude|codex|gemini|qwen> --type=<hook-type> [--critical]

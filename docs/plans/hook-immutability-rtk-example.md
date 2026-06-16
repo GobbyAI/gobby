@@ -26,7 +26,7 @@ Migration remains daemon-driven and explicit:
 - offer integration for known tools like RTK
 
 Before implementation begins, the PR author or feature owner must create and reference an
-out-of-scope `gobby-tasks` Phase 0 follow-up for `gsqz`/`gcode` alignment. Current
+out-of-scope `gobby-tasks` Phase 0 follow-up for `retired-compressor`/`gcode` alignment. Current
 follow-up: `#11752`. If that step is missed before PR creation, assign a blocking
 post-merge follow-up to the project lead, notify reviewers, and add the task ID to
 Section 0 and the implementation PR before the hook-immutability work is considered
@@ -47,7 +47,7 @@ complete.
 - As a Gobby user, I want RTK to become active only after Gobby has imported supported
   RTK behavior into the Gobby hook pipeline.
 - As a Gobby user, I want removing the RTK integration to restore the prior Gobby
-  baseline behavior, including `gsqz` where that is the recorded baseline.
+  baseline behavior, including `retired-compressor` where that is the recorded baseline.
 
 ### Existing RTK User Installing Gobby
 
@@ -67,21 +67,21 @@ complete.
 ### 0. Phase 0 Follow-Up Task
 
 Before implementation begins, the PR author or feature owner creates a separate
-`gobby-tasks` follow-up task for later work to align `gsqz` installation behavior with
+`gobby-tasks` follow-up task for later work to align `retired-compressor` installation behavior with
 `gcode`.
 
 Phase 0 ticket reference: `#11752`
 
 That task must capture:
 
-- review `gsqz` fallback precedence against `gcode`
+- review `retired-compressor` fallback precedence against `gcode`
 - normalize installer precedence, version-stamp behavior, skip/upgrade semantics, and
   PATH handling where no documented reason to differ exists
 - keep this work explicitly out of scope for the hook ownership/integration implementation
 
 Process requirements:
 
-- the task title must contain `gsqz/gcode alignment`
+- the task title must contain `retired-compressor/gcode alignment`
 - the task ID must be referenced in this document and in the hook-immutability
   implementation PR
 - the task body must explicitly state that the alignment work is out of scope for hook
@@ -91,7 +91,7 @@ Process requirements:
 Reviewer checklist item:
 
 - `Phase 0 ticket created: TASK-ID referenced`
-- verify the linked ticket title contains `gsqz/gcode alignment`
+- verify the linked ticket title contains `retired-compressor/gcode alignment`
 - verify the linked ticket explicitly says it is out of scope for hook
   ownership/integration work
 
@@ -165,7 +165,7 @@ Manifest should track:
 - backup paths and timestamps
 - known foreign fingerprints seen at install time
 - current integrated providers
-- current reversible baseline backend for affected behaviors such as `gsqz`
+- current reversible baseline backend for affected behaviors such as `retired-compressor`
 
 This baseline is what the daemon protects and reasserts.
 
@@ -280,12 +280,12 @@ RTK-specific requirements:
 - keep an audit trail of the imported values and source files
 - never let RTK remain the active installed hook owner once detected
 
-For the current `gsqz` replacement behavior:
+For the current `retired-compressor` replacement behavior:
 
 - successful RTK migration makes RTK the active Gobby-managed implementation for the
   relevant path
 - removing RTK integration restores the prior Gobby baseline behavior
-- that baseline defaults to `gsqz` unless another Gobby-managed replacement was already
+- that baseline defaults to `retired-compressor` unless another Gobby-managed replacement was already
   recorded
 
 Supported RTK semantics must be defined narrowly and explicitly.
@@ -301,7 +301,7 @@ Supported RTK scope for migration:
 - statically exported selectors from migrated slice modules and simple
   `createSelector(...)` wrappers that only reference migrated slices
 - Gobby-managed provider registration and removal flow for the migrated RTK integration,
-  including restoration to the recorded baseline such as `gsqz`
+  including restoration to the recorded baseline such as `retired-compressor`
 
 Unsupported RTK scope for migration:
 
@@ -333,7 +333,7 @@ Version and external-reference policy:
   report as unsupported and kept in preserved artifacts for audit
 
 The RTK migration flow, preserved foreign hook config record, Gobby-managed RTK
-integration/provider state, and reversible baseline behavior such as `gsqz` must all
+integration/provider state, and reversible baseline behavior such as `retired-compressor` must all
 reference this supported-scope definition so the implementation and audit trail can
 explicitly accept, reject, or report unsupported semantics together with the source
 files that produced them.
@@ -391,7 +391,7 @@ Ownership manifest details:
   are out of scope for this design
 - required fields: `schema_version`, `manifest_fingerprint`, claimed surfaces, managed
   regions, integrity fingerprints, backup paths and timestamps, known foreign
-  fingerprints, active providers, reversible baseline backend such as `gsqz`, pending
+  fingerprints, active providers, reversible baseline backend such as `retired-compressor`, pending
   offer IDs, and last successful restore state
 - corruption detection: the loader validates JSON shape, `schema_version`, and a
   checksum-style integrity fingerprint over canonicalized manifest content before the
@@ -406,7 +406,7 @@ Ownership manifest details:
   `~/.gobby/hooks/corrupt/`, attempt recovery from the newest valid dated backup, then
   reconcile the recovered manifest against actual hook content; if reconciliation is not
   safe, fall back to the protected Gobby baseline and recorded reversible backend such as
-  `gsqz`
+  `retired-compressor`
 - schema evolution: `schema_version` is required, same-major upgrades may migrate in
   place after writing a backup, newer-major manifests are read-only and must not be
   downgraded in place, and any failed migration restores the prior dated backup
@@ -434,7 +434,7 @@ Canonical operations and API surface:
   `hooks.status(view="integrations")`:
   CLI plus programmatic API; human-readable output by default and JSON with `--json`;
   lists active Gobby-managed integrations/providers and the currently recorded baseline
-  backend such as `gsqz`
+  backend such as `retired-compressor`
 - `gobby hooks offers --pending` and programmatic
   `hooks.list_offers(state="pending")`:
   CLI plus programmatic API; human-readable output by default and JSON with `--json`;
@@ -466,7 +466,7 @@ Canonical operations and API surface:
 - install success path:
   set up an existing foreign hook config, run `gobby install`, tear down by restoring the
   dated backup, and assert the doctor or report output, manifest backup metadata, active
-  Gobby baseline, and recorded reversible backend such as `gsqz`
+  Gobby baseline, and recorded reversible backend such as `retired-compressor`
 - install idempotency:
   run `gobby install` twice against the same already-managed surface, tear down by
   removing staged temp data, and assert no duplicate Gobby-owned entries, no duplicate
@@ -489,7 +489,7 @@ Canonical operations and API surface:
   corrupt or delete `ownership-manifest.v1.json`, trigger daemon load or `gobby hooks
   doctor`, tear down by restoring the latest valid backup, and assert quarantine of the
   bad manifest, recovery from backup or fallback to the protected baseline, preserved
-  pending migrations, and correct `gsqz` baseline reporting
+  pending migrations, and correct `retired-compressor` baseline reporting
 - daemon race with foreign modification during restore:
   simulate a foreign tool rewriting hook config while the daemon is restoring, tear down
   by stopping the writer and restoring the stable baseline, and assert preserved conflict
@@ -521,7 +521,7 @@ Canonical operations and API surface:
 - integration removal:
   migrate RTK successfully, remove the integration, tear down by confirming no active RTK
   provider remains, and assert the manifest and doctor surfaces show reversion to the
-  recorded baseline, including `gsqz` where applicable
+  recorded baseline, including `retired-compressor` where applicable
 - schema evolution and upgrade path:
   load older manifest snapshots and a simulated newer-major manifest, tear down by
   restoring the latest supported schema backup, and assert successful same-major
@@ -534,7 +534,7 @@ Canonical operations and API surface:
   migrations, preserved payloads, baseline state, and retry counts
 - Phase 0 follow-up verification:
   confirm before implementation and review that the linked `gobby-tasks` item exists,
-  that its title contains `gsqz/gcode alignment`, that it is referenced in this document
+  that its title contains `retired-compressor/gcode alignment`, that it is referenced in this document
   and the PR, and that it explicitly marks installer alignment as out of scope
 
 ## Assumptions and Defaults
@@ -550,4 +550,4 @@ Canonical operations and API surface:
 - Default: migration is explicit and user-approved, not automatic.
 - Default: semantic migration is tool-specific, not fully generic.
 - Default: removing a migrated integration reverts to the prior Gobby baseline behavior,
-  with `gsqz` as the fallback where it was the recorded baseline.
+  with `retired-compressor` as the fallback where it was the recorded baseline.

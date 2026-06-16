@@ -254,21 +254,11 @@ def format_status_message(
             lines.append(f"  {'gcode:':<{_LW}}{gobby['gcode']}{path_str}")
         elif gobby.get("gcode") is None:
             lines.append(f"  {'gcode:':<{_LW}}not installed")
-        if gobby.get("gsqz"):
-            path_str = f" ({gobby['gsqz_path']})" if gobby.get("gsqz_path") else ""
-            lines.append(f"  {'gsqz:':<{_LW}}{gobby['gsqz']}{path_str}")
-        elif gobby.get("gsqz") is None:
-            lines.append(f"  {'gsqz:':<{_LW}}not installed")
         if gobby.get("ghook"):
             path_str = f" ({gobby['ghook_path']})" if gobby.get("ghook_path") else ""
             lines.append(f"  {'ghook:':<{_LW}}{gobby['ghook']}{path_str}")
         elif gobby.get("ghook") is None:
             lines.append(f"  {'ghook:':<{_LW}}not installed")
-        if gobby.get("gloc"):
-            path_str = f" ({gobby['gloc_path']})" if gobby.get("gloc_path") else ""
-            lines.append(f"  {'gloc:':<{_LW}}{gobby['gloc']}{path_str}")
-        elif gobby.get("gloc") is None:
-            lines.append(f"  {'gloc:':<{_LW}}not installed")
         lines.append("")
 
     # ---- Coding CLIs ----

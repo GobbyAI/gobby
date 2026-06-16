@@ -234,10 +234,8 @@ effect options include:
 
 ### `rewrite_input`
 
-`rewrite_input` changes the pending tool input before it runs. The bundled
-`compress-bash-output` rule uses this to route verbose Bash commands through
-the gsqz output compressor; uv enforcement is implemented as a `block` rule,
-not a rewrite.
+`rewrite_input` changes the pending tool input before it runs. uv enforcement is
+implemented as a `block` rule, not a rewrite.
 
 For MCP `call_tool` events, rewrite updates are merged into the inner
 `arguments` object so routing fields stay intact.

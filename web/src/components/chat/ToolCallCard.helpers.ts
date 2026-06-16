@@ -440,63 +440,6 @@ export function extractBase64Image(result: unknown): string | null {
   return extractImageSrc(result)
 }
 
-export interface GsqzMetadata {
-  chunkId?: string
-  wallTimeSeconds?: number
-  exitCode?: number
-  tokenCount?: number
-  strategy?: string
-  reduction?: string
-}
-
-const GSQZ_FALLBACK_RE =
-  /^\[Output compressed by gsqz\s*[—-]\s*([A-Za-z0-9_-]+)(?:,\s*([\d.]+%\s*reduction))?\][^\n]*\n\[gsqz:[^\]]+\]\n/
-const CHUNK_HEADER_RE =
-  /^Chunk ID:\s*([^\n]+)\n((?:[A-Za-z][^\n]*\n)*?)Output:\n/
-
-export function parseGsqzWrapper(
-  text: string,
-): { metadata: GsqzMetadata; body: string } | null {
-  if (typeof text !== 'string' || text.length === 0) return null
-
-  const fallback = text.match(GSQZ_FALLBACK_RE)
-  if (fallback) {
-    return {
-      metadata: {
-        strategy: fallback[1],
-        reduction: fallback[2],
-      },
-      body: text.slice(fallback[0].length),
-    }
-  }
-
-  const chunk = text.match(CHUNK_HEADER_RE)
-  if (chunk) {
-    const metadata: GsqzMetadata = { chunkId: chunk[1].trim() }
-    const headerLines = chunk[2].split('\n').filter((line) => line.length > 0)
-    for (const line of headerLines) {
-      const wallTime = line.match(/^Wall time:\s*([\d.]+)/i)
-      if (wallTime) {
-        metadata.wallTimeSeconds = parseFloat(wallTime[1])
-        continue
-      }
-      const exit = line.match(/^Process exited with code\s+(-?\d+)/i)
-      if (exit) {
-        metadata.exitCode = parseInt(exit[1], 10)
-        continue
-      }
-      const tokens = line.match(/^Original token count:\s*(\d+)/i)
-      if (tokens) {
-        metadata.tokenCount = parseInt(tokens[1], 10)
-        continue
-      }
-    }
-    return { metadata, body: text.slice(chunk[0].length) }
-  }
-
-  return null
-}
-
 const PRIMARY_ENVELOPE_FIELDS = ['output', 'content', 'text', 'stdout'] as const
 
 export interface McpEnvelopeUnwrap {

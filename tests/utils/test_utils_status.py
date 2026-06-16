@@ -245,8 +245,8 @@ class TestFormatStatusMessage:
                     "gobby": "0.3.6",
                     "gcode": "0.2.1",
                     "gcode_path": None,
-                    "gsqz": None,
-                    "gsqz_path": None,
+                    "ghook": None,
+                    "ghook_path": None,
                 },
                 "coding_clis": {"claude": "installed", "gemini": None, "codex": None, "hooks": {}},
                 "dependencies": {

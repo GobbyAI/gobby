@@ -824,25 +824,6 @@ class TestComprehensions:
         ev.evaluate("any(p > 1 for p in items)")
         assert ctx["p"] == "original"
 
-    def test_compress_bash_rule_condition(self) -> None:
-        """End-to-end test of the exact compress-bash-output rule condition."""
-        ctx: dict[str, Any] = {
-            "event": {
-                "data": {
-                    "tool_name": "Bash",
-                    "tool_input": {"command": "uv run pytest tests/ -v"},
-                }
-            }
-        }
-        ev = SafeExpressionEvaluator(ctx, {"any": any, "str": str})
-        expr = (
-            "event.data.get('tool_name') == 'Bash' "
-            "and any(p in str(event.data.get('tool_input', {}).get('command', '')) "
-            "for p in ['git ', 'pytest', 'cargo test', 'npm test', "
-            "'ruff ', 'mypy ', 'eslint ', 'tsc '])"
-        )
-        assert ev.evaluate(expr) is True
-
     def test_dunder_attribute_access_blocked(self) -> None:
         """Dunder attributes must be rejected to prevent sandbox escape."""
         ctx: dict[str, Any] = {"obj": "hello"}

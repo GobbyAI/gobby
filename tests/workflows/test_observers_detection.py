@@ -1431,11 +1431,6 @@ class TestDetectVerificationEvidence:
                 [],
             ),
             ("cargo fmt --all -- --check", ["cargo", "fmt", "--all", "--", "--check"], []),
-            (
-                "/Users/josh/.gobby/bin/gsqz -- 'uv run ruff check src/'",
-                ["ruff", "check", "src/"],
-                ["gsqz-command-string", "uv-run"],
-            ),
         ],
     )
     def test_successful_validation_records_evidence(

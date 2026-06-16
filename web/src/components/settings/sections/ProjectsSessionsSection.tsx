@@ -82,7 +82,6 @@ const VERIFICATION_DEFAULTS_PATHS = [
   'verification_defaults.security',
   'verification_defaults.code_review',
   'verification_defaults.custom',
-  'verification_defaults.track_savings',
 ]
 
 // `validation_detection` is owned as a single object subtree, edited as a whole
@@ -407,12 +406,6 @@ function VerificationDefaultsGroup({ fields }: { fields: SettingsSectionFields }
         ariaLabel="Custom verification command"
         addLabel="Add command"
         keyPlaceholder="name"
-      />
-      <SwitchConfigField
-        fields={fields}
-        path="verification_defaults.track_savings"
-        label="Track token savings"
-        ariaLabel="Track token savings"
       />
     </Subsection>
   )

@@ -107,11 +107,10 @@ function makeConfigValues(): Record<string, unknown> {
       build: null,
       doc_tests: null,
       integration: null,
-      security: null,
-      code_review: null,
-      custom: { smoke: 'make smoke' },
-      track_savings: true,
-    },
+    security: null,
+    code_review: null,
+    custom: { smoke: 'make smoke' },
+  },
     validation_detection: {
       enabled: true,
       builtin_matchers_enabled: true,
@@ -200,21 +199,18 @@ describe('ProjectsSessionsSection', () => {
     expect(screen.getByLabelText('Max total characters')).toHaveValue(30000)
   })
 
-  it('reads verification defaults: command fields, the custom map editor, and track savings', () => {
-    renderSection(makeContext())
+it('reads verification defaults: command fields and the custom map editor', () => {
+  renderSection(makeContext())
 
     expect(screen.getByLabelText('Unit tests command')).toHaveValue(
       'uv run pytest tests/ -v',
     )
     // Custom map editor: one seeded entry rendered as key + value inputs.
-    expect(
-      screen.getByLabelText('Custom verification command key 1'),
-    ).toHaveValue('smoke')
-    expect(screen.getByLabelText('Value for smoke')).toHaveValue('make smoke')
-    expect(
-      screen.getByRole('switch', { name: 'Track token savings' }),
-    ).toBeChecked()
-  })
+  expect(
+    screen.getByLabelText('Custom verification command key 1'),
+  ).toHaveValue('smoke')
+  expect(screen.getByLabelText('Value for smoke')).toHaveValue('make smoke')
+})
 
   it('reuses ValidationDetectionEditor for the validation_detection subtree', () => {
     renderSection(makeContext())

@@ -1345,23 +1345,6 @@ CREATE TABLE model_costs (
     updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
-CREATE TABLE savings_ledger (
-    id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    session_id TEXT,
-    project_id TEXT,
-    category TEXT NOT NULL,
-    original_tokens INTEGER NOT NULL,
-    actual_tokens INTEGER NOT NULL,
-    tokens_saved INTEGER NOT NULL,
-    model TEXT,
-    metadata JSONB,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-
-CREATE INDEX idx_savings_ledger_created ON savings_ledger(created_at);
-
-CREATE INDEX idx_savings_ledger_project_cat ON savings_ledger(project_id, category);
-
 CREATE TABLE token_events (
     id INTEGER GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
     session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,

@@ -52,14 +52,14 @@ def test_non_zero_exit_returns_none(tmp_path: Path) -> None:
 
 
 def test_empty_output_returns_none(tmp_path: Path) -> None:
-    binary = _binary(tmp_path, "gsqz")
+    binary = _binary(tmp_path, "gcode")
     runner = _runner(stdout="   \n")
     assert probe_native_bin_version(binary, runner=runner) is None
 
 
 @pytest.mark.parametrize("error", [OSError("boom"), subprocess.SubprocessError("boom")])
 def test_runner_errors_return_none(tmp_path: Path, error: Exception) -> None:
-    binary = _binary(tmp_path, "gloc")
+    binary = _binary(tmp_path, "gwiki")
     runner = MagicMock(side_effect=error)
     assert probe_native_bin_version(binary, runner=runner) is None
 

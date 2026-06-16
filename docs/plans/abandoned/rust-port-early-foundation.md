@@ -8,7 +8,7 @@
 
 ## Context
 
-Gobby's Python daemon is ~184K LOC across 670 files. gsqz and gcode are already ported to Rust in the gobby-cli monorepo (~5.8K LOC, 2 crates). This plan covers the first wave of Rust extraction: shared foundation, storage layer (tasks + memory + config), and the rule engine as a standalone crate.
+Gobby's Python daemon is ~184K LOC across 670 files. retired-compressor and gcode are already ported to Rust in the gobby-cli monorepo (~5.8K LOC, 2 crates). This plan covers the first wave of Rust extraction: shared foundation, storage layer (tasks + memory + config), and the rule engine as a standalone crate.
 
 The hook dispatcher (`hook_dispatcher.py`) is initially Python but is replaced by a compiled Rust binary (`gobby-hook`, Crate 4) in this phase — it's a hot path invoked on every hook event, so eliminating Python cold-start is high-value. The *daemon-side* hook orchestrator (session lookup, event enrichment, webhooks, broadcasting) stays in Python; only the CLI-invoked dispatcher binary moves to Rust.
 
@@ -20,7 +20,7 @@ Docker-based Kùzu+Qdrant coexists with this work — the Rust crates talk to th
 
 ```text
 gcode ──────> gobby-core
-gsqz ──────> gobby-core
+retired-compressor ──────> gobby-core
 gobby-storage ──> gobby-core
 gobby-rules ───> gobby-core (types only)
                   gobby-storage (dev-deps, integration tests)
@@ -31,7 +31,7 @@ gobby-hook ────> gobby-core (bootstrap, daemon, project)
 
 ## Crate 1: `gobby-core` — Shared Foundation
 
-**Goal:** Eliminate duplication between gcode and gsqz. ~500 LOC extracted.
+**Goal:** Eliminate duplication between gcode and retired-compressor. ~500 LOC extracted.
 
 **Location:** `crates/gobby-core/`
 
@@ -39,8 +39,8 @@ gobby-hook ────> gobby-core (bootstrap, daemon, project)
 
 | Module | Source | Purpose |
 |--------|--------|---------|
-| `bootstrap.rs` | gcode/config.rs:152-234, gsqz/config.rs | bootstrap.yaml parsing, daemon URL resolution, GOBBY_PORT env |
-| `daemon.rs` | gsqz/daemon.rs (81 LOC) | ureq HTTP client for daemon API (get_json, post_json) |
+| `bootstrap.rs` | gcode/config.rs:152-234, retired-compressor/config.rs | bootstrap.yaml parsing, daemon URL resolution, GOBBY_PORT env |
+| `daemon.rs` | retired-compressor/daemon.rs (81 LOC) | ureq HTTP client for daemon API (get_json, post_json) |
 | `db.rs` | gcode/db.rs (38 LOC) | PostgreSQL connection helpers (WAL, FK, busy timeout) |
 | `secrets.rs` | gcode/secrets.rs (179 LOC) | Fernet decryption (machine_id + secret_salt -> PBKDF2 -> decrypt) |
 | `project.rs` | gcode/project.rs (338 LOC) | Project root detection, project.json, UUID5 generation |
@@ -55,13 +55,13 @@ gobby-hook ────> gobby-core (bootstrap, daemon, project)
 ### Migration
 
 - **gcode:** Replace `crate::db`, `crate::secrets`, `crate::project`, bootstrap parts of `crate::config` with `gobby_core::*`. gcode-specific config (Neo4j, Qdrant, Context) stays in gcode. Remove direct deps on fernet/pbkdf2/hmac/openssl/base64.
-- **gsqz:** Replace `crate::daemon` with `gobby_core::daemon::DaemonClient`. Remove ureq/serde_json optional deps. Config stays unchanged (gsqz-specific YAML).
+- **retired-compressor:** Replace `crate::daemon` with `gobby_core::daemon::DaemonClient`. Remove ureq/serde_json optional deps. Config stays unchanged (retired-compressor-specific YAML).
 
 ### Verification
 
 - `cargo test -p gobby-core` — unit tests for bootstrap resolution, secret decryption, project detection
 - `cargo test -p gobby-code` — existing tests still pass
-- `cargo test -p gobby-squeeze` — existing tests still pass
+- `cargo test -p retired-compressor-crate` — existing tests still pass
 - `cargo clippy --workspace` clean
 
 ---
@@ -372,7 +372,7 @@ members = [
     "crates/gobby-rules",
     "crates/gobby-hook",
     "crates/gcode",
-    "crates/gsqz",
+    "crates/retired-compressor",
 ]
 resolver = "3"
 ```
@@ -393,7 +393,7 @@ resolver = "3"
 ### Migration Phasing
 
 Rust crates integrate with the Python daemon via HTTP — no FFI/pyo3. The daemon remains the orchestrator; Rust crates are either:
-- **Libraries** consumed by Rust binaries (gobby-hook) or Rust CLIs (gcode, gsqz), or
+- **Libraries** consumed by Rust binaries (gobby-hook) or Rust CLIs (gcode, retired-compressor), or
 - **Standalone binaries** that talk to the daemon over its existing HTTP API.
 
 The rule engine (`gobby-rules`) is consumed as a library by `gobby-hook` and eventually by a Rust HTTP shell (`gobby-daemon`, not in this phase). During transition, the Python rule engine and Rust rule engine coexist — the Python daemon uses its own, gobby-hook uses the Rust one. Parity is verified by running the same test vectors against both.

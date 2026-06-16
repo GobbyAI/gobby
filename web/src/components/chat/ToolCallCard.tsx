@@ -25,7 +25,6 @@ import {
   groupToolCalls,
   hasVisibleToolCall,
   parseGrepOutput,
-  parseGsqzWrapper,
   parseReadOutput,
   pathBasename,
   resolveToolType,
@@ -33,7 +32,6 @@ import {
   unwrapMcpResultEnvelope,
 } from './ToolCallCard.helpers'
 import {
-  GsqzResultBlock,
   JsonResultBlock,
   MetadataStrip,
   ToolResultBody,
@@ -270,17 +268,12 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   // Bash results: show exit code from metadata when available
   if (toolType === 'bash' && metadata?.exit_code != null) {
     const exitCode = metadata.exit_code as number
-    const wrapper = parseGsqzWrapper(resultStr)
     return (
       <div>
         {exitCode !== 0 && (
           <div className="text-destructive-foreground/70 text-xs mb-1">exit code {exitCode}</div>
         )}
-        {wrapper ? (
-          <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
-        ) : (
-          <ToolResultBody body={resultStr} />
-        )}
+        <ToolResultBody body={resultStr} />
       </div>
     )
   }
@@ -299,22 +292,12 @@ function ToolResultContent({ call }: { call: ToolCall }) {
   // body and the remaining keys as a compact metadata strip.
   const envelope = unwrapMcpResultEnvelope(rawContent)
   if (envelope) {
-    const wrapper = parseGsqzWrapper(envelope.primary)
     return (
       <div className="overflow-hidden rounded border border-border/40">
         <MetadataStrip meta={envelope.meta} />
-        {wrapper ? (
-          <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
-        ) : (
-          <ToolResultBody body={envelope.primary} />
-        )}
+        <ToolResultBody body={envelope.primary} />
       </div>
     )
-  }
-
-  const wrapper = parseGsqzWrapper(resultStr)
-  if (wrapper) {
-    return <GsqzResultBlock metadata={wrapper.metadata} body={wrapper.body} />
   }
 
   return <ToolResultBody body={resultStr} />

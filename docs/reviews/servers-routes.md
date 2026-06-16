@@ -229,7 +229,7 @@
 - **Minimal fix:** `await asyncio.to_thread(_should_restart_via_service_manager)`; spawn the helper only after shutdown is confirmed; release the lock if shutdown wasn't initiated.
 - **Confidence:** high for (a)(b); med for (c)
 
-### [IMPORTANT] `/api/admin/savings/record` takes a raw `dict[str, Any]` body with no validation
+### [IMPORTANT] `retired-token-tracker-endpoint/record` takes a raw `dict[str, Any]` body with no validation
 - **Where:** `src/gobby/servers/routes/admin/_savings.py:64-112`
 - **Failure mode:** Raw `body.get(...)` (unlike every sibling Pydantic route); non-integer/negative token counts or a non-dict `metadata` flow into `tracker.record*` and surface as an unhandled 500 (should be 422), and pollute the ledger with negative rows.
 - **Minimal fix:** A `RecordSavingsRequest(BaseModel)` with typed, `ge=0` fields.

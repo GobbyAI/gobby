@@ -21,7 +21,7 @@ a live Python daemon:
 
 - `~/Projects/gobby` is the product repo and current source of truth
 - `~/Projects/gobby-cli` is the long-lived Rust workspace and already contains
-  `gcode`, `gsqz`, and `gloc`
+  `gcode`, `retired-compressor`, and `retired-local-launcher`
 - Python owns the live daemon, schema policy, fixtures, and rollout control
 - Rust does not yet have a shared `gobby-core` crate or a `gobby-daemon` crate
 
@@ -124,7 +124,7 @@ The following boundaries are explicitly deferred until later phases:
 ### Rust Workspace Responsibilities
 
 - Add shared crates and replacement binaries in `gobby-cli`
-- Preserve `gcode`, `gsqz`, and `gloc` behavior while foundations are extracted
+- Preserve `gcode`, `retired-compressor`, and `retired-local-launcher` behavior while foundations are extracted
 - Implement Rust replacements against Python-owned fixtures
 - Run side-by-side with Python on alternate ports and processes
 
@@ -253,7 +253,7 @@ daemon migration without destabilizing them.
 - Add `gobby-core` to `gobby-cli`
 - Extract only the shared seams required by current crates or near-term daemon
   work
-- Keep `gcode`, `gsqz`, and `gloc` healthy while extractions land
+- Keep `gcode`, `retired-compressor`, and `retired-local-launcher` healthy while extractions land
 
 ### Non-goals
 
@@ -271,12 +271,12 @@ daemon migration without destabilizing them.
 - `R2-06` Extract daemon HTTP client utilities into `gobby-core`
 - `R2-07` Extract PostgreSQL connection helpers into `gobby-core`
 - `R2-08` Migrate `gcode` to the extracted `gobby-core` helpers
-- `R2-09` Migrate `gsqz` to the extracted `gobby-core` helpers
-- `R2-10` Verify `gcode` and `gsqz` test coverage stays green after extraction
+- `R2-09` Migrate `retired-compressor` to the extracted `gobby-core` helpers
+- `R2-10` Verify `gcode` and `retired-compressor` test coverage stays green after extraction
 
 ### Exit Criteria
 
-- `gcode` and `gsqz` use `gobby-core` for shared concerns
+- `gcode` and `retired-compressor` use `gobby-core` for shared concerns
 - Existing Rust utility behavior is preserved
 - The extracted APIs are sufficient to bootstrap `gobby-daemon`
 
@@ -482,7 +482,7 @@ Every migrated boundary must satisfy all of the following before cutover:
 - Side-by-side execution on separate ports and processes
 - Route-scoped rollback without a release rollback
 - Observability strong enough to detect mismatches quickly
-- Regression protection for `gcode` and `gsqz` after shared extraction
+- Regression protection for `gcode` and `retired-compressor` after shared extraction
 
 At minimum, the migration test corpus must cover:
 
@@ -499,4 +499,4 @@ At minimum, the migration test corpus must cover:
 - `gobby-cli` is the long-lived Rust home for migration work
 - The old `rust-port` docs remain historical notes, not active plans
 - Shared Rust extraction should be driven by current code in `gcode` and
-  `gsqz`, not by stale estimates
+  `retired-compressor`, not by stale estimates

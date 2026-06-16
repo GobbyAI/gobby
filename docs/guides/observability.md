@@ -58,7 +58,6 @@ The dashboard aggregates:
 - Task counts and readiness.
 - Session totals by source.
 - Token usage by provider/model.
-- Savings totals and efficiency.
 - Memory counts.
 - HTTP, MCP, system resource, and latency charts.
 
@@ -68,7 +67,6 @@ Primary routes:
 /api/admin/status
 /api/admin/stats
 /api/admin/usage
-/api/admin/savings
 /api/admin/tokens/timeseries
 /api/metrics/snapshots
 ```
@@ -112,17 +110,7 @@ Token usage is exposed by:
 /api/admin/tokens/timeseries
 ```
 
-Savings are exposed by:
-
-```text
-/api/admin/savings
-/api/admin/savings/cumulative
-/api/admin/savings/record
-```
-
-Use token data to understand provider/model spend and volume. Use savings data to
-understand how much code index, compression, discovery, or other systems avoided
-sending to a model.
+Use token data to understand provider/model spend and volume.
 
 ## Prometheus And Admin Routes
 

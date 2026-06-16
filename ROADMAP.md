@@ -52,7 +52,7 @@ rewrite.
 - Compare mode calls both implementations and returns the Python response until
   parity is proven.
 - The bridgehead stays in [gobby-cli](https://github.com/GobbyAI/gobby-cli):
-  `gcode`, `gsqz`, `gloc`, `ghook`, and `gobby-core` shared primitives.
+  `gcode`, `ghook`, and `gobby-core` shared primitives.
 
 ## 0.6.0+ - Gobby Pro Sync
 

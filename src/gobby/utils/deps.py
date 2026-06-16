@@ -80,19 +80,9 @@ def get_gcode_version() -> str | None:
     return _get_native_binary_version("gcode", ".gcode-version")
 
 
-def get_gsqz_version() -> str | None:
-    """Get gsqz version from stamp file or CLI."""
-    return _get_native_binary_version("gsqz", ".gsqz-version")
-
-
 def get_ghook_version() -> str | None:
     """Get ghook version from stamp file or CLI."""
     return _get_native_binary_version("ghook", ".ghook-version")
-
-
-def get_gloc_version() -> str | None:
-    """Get gloc version from stamp file or CLI."""
-    return _get_native_binary_version("gloc", ".gloc-version")
 
 
 def get_gwiki_version() -> str | None:
@@ -552,12 +542,8 @@ def collect_all_deps() -> dict[str, Any]:
             "gobby": get_gobby_version(),
             "gcode": get_gcode_version(),
             "gcode_path": _local_binary_path("gcode"),
-            "gsqz": get_gsqz_version(),
-            "gsqz_path": _local_binary_path("gsqz"),
             "ghook": get_ghook_version(),
             "ghook_path": _local_binary_path("ghook"),
-            "gloc": get_gloc_version(),
-            "gloc_path": _local_binary_path("gloc"),
             "gwiki": get_gwiki_version(),
             "gwiki_path": _local_binary_path("gwiki"),
         },

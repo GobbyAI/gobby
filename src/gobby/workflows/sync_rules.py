@@ -19,7 +19,6 @@ from pydantic import ValidationError
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import json_array_contains_condition, json_text_expr
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
-from gobby.utils.native_bin import resolve_native_bin
 from gobby.workflows.definitions import RuleDefinitionBody
 
 logger = logging.getLogger(__name__)
@@ -278,11 +277,9 @@ def resolve_sync_placeholders(definition_json: str) -> str:
     - ``{{ gobby_bin }}``: resolved to the absolute path of the ``gobby``
       binary via ``shutil.which``, falling back to
       ``<sys.executable> -m gobby`` when the binary isn't on PATH.
-    - ``{{ gsqz_bin }}``: resolved to the absolute path of the ``gsqz``
-      binary. Checks ``~/.gobby/bin/gsqz`` first, then ``shutil.which``.
 
     Called once per rule during sync so the DB always stores a concrete path
-    that works regardless of whether the binaries are on the CLI's PATH.
+    that works regardless of whether the binary is on the CLI's PATH.
     """
     if "{{ gobby_bin }}" in definition_json:
         gobby_bin = shutil.which("gobby")
@@ -290,16 +287,7 @@ def resolve_sync_placeholders(definition_json: str) -> str:
             gobby_bin = f"{sys.executable} -m gobby"
         definition_json = definition_json.replace("{{ gobby_bin }}", gobby_bin)
 
-    if "{{ gsqz_bin }}" in definition_json:
-        gsqz_bin = _resolve_gsqz_bin()
-        definition_json = definition_json.replace("{{ gsqz_bin }}", gsqz_bin)
-
     return definition_json
-
-
-def _resolve_gsqz_bin() -> str:
-    """Resolve the gsqz binary path."""
-    return resolve_native_bin("gsqz") or "gsqz"
 
 
 def _sync_single_rule(

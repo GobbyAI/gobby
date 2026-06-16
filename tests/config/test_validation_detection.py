@@ -35,9 +35,6 @@ pytestmark = pytest.mark.unit
         ("ruff format --check src tests", "python-format-check"),
         ("uv run ruff format --check src/", "python-format-check"),
         ("uv run ruff check src/", "python-lint-type-format"),
-        ("/Users/josh/.gobby/bin/gsqz -- 'uv run ruff check src/'", "python-lint-type-format"),
-        ("/Users/josh/.gobby/bin/gsqz -- 'cargo check'", "rust-validation"),
-        ("gsqz -- 'cargo check --no-default-features'", "rust-validation"),
         ("rust-token-killer -- cargo check", "rust-validation"),
         ("rust-token-killer -- 'cargo check --no-default-features'", "rust-validation"),
         ("timeout 30 -- npm test", "js-ts-tests"),
@@ -71,7 +68,6 @@ def test_builtin_validation_detection_accepts_common_commands(
         "ruff check --fix src",
         "eslint . --fix",
         "dotnet format",
-        "gsqz -- 'git status'",
         "rust-token-killer -- 'git status'",
         "python script.py",
     ],
@@ -81,26 +77,18 @@ def test_builtin_validation_detection_rejects_non_validation_commands(command: s
 
 
 def test_default_wrapper_rules_apply_to_explicit_config() -> None:
-    match = classify_validation_command("gsqz -- 'cargo check'", ValidationDetectionConfig())
+    match = classify_validation_command(
+        "rust-token-killer -- 'cargo check'", ValidationDetectionConfig()
+    )
 
     assert match is not None
     assert match.matcher_id == "rust-validation"
-    assert match.wrapper_chain == ("gsqz-command-string",)
+    assert match.wrapper_chain == ("rust-token-killer-command-string",)
 
 
 @pytest.mark.parametrize(
     "command,normalized_argv,wrapper_chain",
     [
-        (
-            "gsqz -- 'uv run ruff check src/'",
-            ("ruff", "check", "src/"),
-            ("gsqz-command-string", "uv-run"),
-        ),
-        (
-            "/Users/josh/.gobby/bin/gsqz -- 'cargo check'",
-            ("cargo", "check"),
-            ("gsqz-command-string",),
-        ),
         (
             "rust-token-killer -- cargo check",
             ("cargo", "check"),

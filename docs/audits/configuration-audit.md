@@ -325,7 +325,6 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | verification_defaults.security | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | projects-sessions |  |
 | verification_defaults.code_review | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | projects-sessions |  |
 | verification_defaults.custom | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for map/object | mismatched-type | fix | projects-sessions | object items= map=string |
-| verification_defaults.track_savings | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | projects-sessions |  |
 | project_verification_synthesis.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | providers-models |  |
 | project_verification_synthesis.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | providers-models | array items=string map= |
 | project_verification_synthesis.confidence_threshold | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | providers-models |  |

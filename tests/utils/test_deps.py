@@ -62,23 +62,6 @@ def test_get_gcode_version(tmp_path: Path) -> None:
                 assert deps.get_gcode_version() == "0.2.1"
 
 
-def test_get_gsqz_version(tmp_path: Path) -> None:
-    with patch.object(Path, "home", return_value=tmp_path):
-        stamp = tmp_path / ".gobby" / "bin" / ".gsqz-version"
-        stamp.parent.mkdir(parents=True)
-        stamp.write_text("1.1.0")
-        with patch("gobby.utils.deps.resolve_native_bin", return_value=None):
-            assert deps.get_gsqz_version() == "1.1.0"
-
-    # CLI probe wins over stale stamps.
-    with patch.object(Path, "home", return_value=tmp_path):
-        with patch("gobby.utils.deps.resolve_native_bin", return_value="/usr/bin/gsqz"):
-            with patch("gobby.utils.deps.probe_native_bin_version", return_value="1.1.1"):
-                assert deps.get_gsqz_version() == "1.1.1"
-            with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
-                assert deps.get_gsqz_version() == "1.1.0"
-
-
 def test_get_ghook_version(tmp_path: Path) -> None:
     with patch.object(Path, "home", return_value=tmp_path):
         stamp = tmp_path / ".gobby" / "bin" / ".ghook-version"
@@ -95,24 +78,6 @@ def test_get_ghook_version(tmp_path: Path) -> None:
             assert deps.get_ghook_version() == "0.2.1"
         with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
             assert deps.get_ghook_version() == "0.2.0"
-
-
-def test_get_gloc_version(tmp_path: Path) -> None:
-    with patch.object(Path, "home", return_value=tmp_path):
-        stamp = tmp_path / ".gobby" / "bin" / ".gloc-version"
-        stamp.parent.mkdir(parents=True)
-        stamp.write_text("0.1.1")
-        with patch("gobby.utils.deps.resolve_native_bin", return_value=None):
-            assert deps.get_gloc_version() == "0.1.1"
-
-    with patch.object(Path, "home", return_value=tmp_path):
-        gloc = tmp_path / ".gobby" / "bin" / "gloc"
-        gloc.write_text("")
-        gloc.chmod(0o755)
-        with patch("gobby.utils.deps.probe_native_bin_version", return_value="0.1.2"):
-            assert deps.get_gloc_version() == "0.1.2"
-        with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
-            assert deps.get_gloc_version() == "0.1.1"
 
 
 def test_get_gwiki_version(tmp_path: Path) -> None:
@@ -567,9 +532,7 @@ def test_collect_all_deps() -> None:
     with (
         patch("gobby.utils.deps.get_gobby_version", return_value="1"),
         patch("gobby.utils.deps.get_gcode_version", return_value="2"),
-        patch("gobby.utils.deps.get_gsqz_version", return_value="3"),
         patch("gobby.utils.deps.get_ghook_version", return_value="3.5"),
-        patch("gobby.utils.deps.get_gloc_version", return_value="3.6"),
         patch("gobby.utils.deps.get_gwiki_version", return_value="3.7"),
         patch("gobby.utils.deps.get_claude_code_version", return_value="4"),
         patch("gobby.utils.deps.get_gemini_cli_version", return_value="5"),
@@ -590,7 +553,6 @@ def test_collect_all_deps() -> None:
         res = deps.collect_all_deps()
         assert res["gobby"]["gobby"] == "1"
         assert res["gobby"]["ghook"] == "3.5"
-        assert res["gobby"]["gloc"] == "3.6"
         assert res["gobby"]["gwiki"] == "3.7"
         assert res["coding_clis"]["droid"] == "6.5"
         assert res["coding_clis"]["qwen"] == "6.7"
@@ -606,11 +568,6 @@ def test_file_read_exceptions(tmp_path: Path) -> None:
             stamp.touch()
             with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
                 assert deps.get_gcode_version() is None
-
-            sqz = tmp_path / ".gobby" / "bin" / ".gsqz-version"
-            sqz.touch()
-            with patch("gobby.utils.deps.probe_native_bin_version", return_value=None):
-                assert deps.get_gsqz_version() is None
 
     with patch("pathlib.Path.read_text", side_effect=Exception):
         with patch.object(Path, "home", return_value=tmp_path):

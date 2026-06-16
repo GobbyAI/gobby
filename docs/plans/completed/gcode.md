@@ -12,7 +12,7 @@ Subagents (Claude Code Agent tool) can't use MCP — they only have Bash, Read, 
 
 | Decision | Choice | Why |
 |----------|--------|-----|
-| Binary name | `gcode` | Short, `g`-prefixed like `gsqz` |
+| Binary name | `gcode` | Short, `g`-prefixed like `retired-compressor` |
 | Repository | In-repo at `rust/gcode/` | Tightly coupled to gobby's schema, secrets, config — must ship together |
 | Daemon dependency | None — fully standalone | The whole point is subagent access without daemon |
 | PostgreSQL | Direct read/write (ruPostgreSQL) | Symbols, FTS5 search, file metadata |
@@ -297,7 +297,7 @@ New `_install_gcode()` in `src/gobby/cli/install_setup.py`:
 2. **Build from source** (fallback) — `cargo build --release --manifest-path rust/gcode/Cargo.toml` if Rust toolchain available
 3. **cargo install from path** (last resort) — `cargo install --path rust/gcode/`
 
-Binary installed to `~/.gobby/bin/gcode`. Version stamp at `~/.gobby/bin/.gcode-version`. PATH management same as gsqz.
+Binary installed to `~/.gobby/bin/gcode`. Version stamp at `~/.gobby/bin/.gcode-version`. PATH management same as retired-compressor.
 
 ## Gobby-Side Changes
 
@@ -391,4 +391,4 @@ After gcode Sprint 2, verify cross-runtime embedding parity: generate same text 
 | `src/gobby/config/bootstrap.py` | Bootstrap config format |
 | `src/gobby/search/local_embeddings.py` | llama-cpp-python embedding params to replicate |
 | `src/gobby/search/embeddings.py` | Embedding routing layer (prefix behavior) |
-| `src/gobby/cli/install_setup.py` (`_install_gsqz()`) | gsqz install template |
+| `src/gobby/cli/install_setup.py` (`_install_retired-compressor()`) | retired-compressor install template |

@@ -114,19 +114,17 @@ Limits are enforced on both HTTP upload and WebSocket binding:
 ## Dashboard
 
 The dashboard aggregates runtime health, task counts, sessions, token usage,
-savings, memory totals, and metrics charts. It is backed by admin and metrics
-routes:
+memory totals, and metrics charts. It is backed by admin and metrics routes:
 
 - `/api/admin/status`
 - `/api/admin/stats`
 - `/api/admin/usage`
-- `/api/admin/savings`
 - `/api/admin/tokens/timeseries`
 - `/api/metrics/snapshots`
 
 The dashboard hooks live in `web/src/hooks/useDashboard.ts`,
-`web/src/hooks/useUsage.ts`, `web/src/hooks/useSavings.ts`,
-`web/src/hooks/useMetrics.ts`, and `web/src/hooks/useTokenTimeSeries.ts`.
+`web/src/hooks/useUsage.ts`, `web/src/hooks/useMetrics.ts`, and
+`web/src/hooks/useTokenTimeSeries.ts`.
 
 ## Projects And Source Control
 

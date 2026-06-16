@@ -158,7 +158,6 @@ def default_validation_wrapper_rules() -> list[ValidationCommandWrapper]:
         _wrapper_rule("command", "command", "delimiter", ["command"]),
         _wrapper_rule("nice", "nice", "delimiter", ["nice"]),
         _wrapper_rule("rust-token-killer", "rust-token-killer", "delimiter", ["rust-token-killer"]),
-        _wrapper_rule("gsqz-command-string", "gsqz command string", "command_string", ["gsqz --"]),
         _wrapper_rule(
             "rust-token-killer-command-string",
             "rust-token-killer command string",

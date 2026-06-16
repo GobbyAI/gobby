@@ -155,7 +155,7 @@ File is written successfully.
 
 | Rule | Outcome |
 |---|---|
-| `compress-bash-output` | **REWRITES** -- wraps command through `gsqz` output compressor. Auto-approved. |
+| `legacy-output-rewrite` | **REWRITES** -- wraps command through `retired-compressor` output compressor. Auto-approved. |
 | `require-uv` | Evaluates but inner `when` doesn't match -- command already uses `uv run`, not bare `python`/`pip` |
 | `no-full-pytest-suite` | **PASSES** -- only blocks for `is_spawned_agent` (interactive session) |
 
@@ -176,7 +176,7 @@ File is written successfully.
 
 | Rule | Outcome |
 |---|---|
-| `compress-bash-output` | **REWRITES** through gsqz |
+| `legacy-output-rewrite` | **REWRITES** through retired-compressor |
 
 ### `Bash(command="uv run mypy src/new_file.py")`
 
@@ -184,7 +184,7 @@ File is written successfully.
 
 | Rule | Outcome |
 |---|---|
-| `compress-bash-output` | **REWRITES** through gsqz |
+| `legacy-output-rewrite` | **REWRITES** through retired-compressor |
 
 ### Successful validation evidence
 
@@ -200,7 +200,7 @@ Validation commands record completion-readiness evidence for Phase 8.
 
 | Rule | Outcome |
 |---|---|
-| `compress-bash-output` | **REWRITES** through gsqz |
+| `legacy-output-rewrite` | **REWRITES** through retired-compressor |
 
 ### `Bash(command="git commit -m '[gobby-#N] feat: add ...' ")`
 
@@ -208,7 +208,7 @@ Validation commands record completion-readiness evidence for Phase 8.
 
 | Rule | Outcome |
 |---|---|
-| `compress-bash-output` | **REWRITES** through gsqz |
+| `legacy-output-rewrite` | **REWRITES** through retired-compressor |
 
 **PostToolUse:** The commit SHA is detected by the session layer (not a rule -- this is the `CommitDetector` observer). It links the commit to the active task and sets `task_has_commits=true`.
 

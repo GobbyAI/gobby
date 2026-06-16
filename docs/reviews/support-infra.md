@@ -613,7 +613,7 @@
 ### [NIT] Savings ledger inconsistency and missing hardening
 
 - **Where:** `src/gobby/savings/tracker.py:75,86-88`; `src/gobby/savings/discovery.py:54-60`
-- **Note:** `tokens_saved = max(0, ...)` clamped but raw pairs stored unclamped — `SUM(original)-SUM(actual)` can disagree with `SUM(tokens_saved)`; `unlocked_tools` trusted to be a list while sibling code defends (`src/gobby/mcp_proxy/services/schema_guidance.py:63-64`); no retention on savings_ledger.
+- **Note:** `tokens_saved = max(0, ...)` clamped but raw pairs stored unclamped — `SUM(original)-SUM(actual)` can disagree with `SUM(tokens_saved)`; `unlocked_tools` trusted to be a list while sibling code defends (`src/gobby/mcp_proxy/services/schema_guidance.py:63-64`); no retention on retired_token_ledger.
 
 ## Systemic patterns
 

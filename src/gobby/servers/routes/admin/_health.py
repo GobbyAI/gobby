@@ -400,29 +400,6 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 if config.tools:
                     downstream_tools_count += len(config.tools)
 
-        # Get savings summary
-        savings_stats: dict[str, Any] = {
-            "total_tokens_saved": 0,
-            "total_events": 0,
-            "categories": {},
-        }
-        try:
-            from gobby.servers.routes.admin._savings import _get_tracker
-
-            tracker = _get_tracker(server)
-            if tracker:
-                today, cumulative = await server.run_db(
-                    lambda: (tracker.get_summary(days=1), tracker.get_cumulative(days=30))
-                )
-                savings_stats = {
-                    "today_tokens_saved": today.get("total_tokens_saved", 0),
-                    "today_events": today.get("total_events", 0),
-                    "cumulative_tokens_saved": cumulative.get("total_tokens_saved", 0),
-                    "categories": today.get("categories", {}),
-                }
-        except Exception as e:
-            logger.warning(f"Failed to get savings stats: {e}")
-
         # File descriptor usage
         fd_usage: dict[str, Any] = {}
         try:
@@ -538,7 +515,6 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "provider_models": provider_model_status,
             "database": database_status,
             "system_services": system_services,
-            "savings": savings_stats,
             "agents": agent_stats,
             "fd_usage": fd_usage,
             "db_size_bytes": db_size_bytes,

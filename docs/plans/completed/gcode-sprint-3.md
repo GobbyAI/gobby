@@ -12,7 +12,7 @@ Sprint 3 makes gcode the primary code index interface, replacing the gobby-code 
 
 | Decision | Choice | Why |
 |----------|--------|-----|
-| Repository | Standalone at GobbyAI/gobby-code | Zero source coupling to gobby; follows gsqz precedent |
+| Repository | Standalone at GobbyAI/gobby-code | Zero source coupling to gobby; follows retired-compressor precedent |
 | Cargo feature | `embeddings` (default on) wrapping `llama-cpp-2` | CI Linux can't use Metal; `--no-default-features` skips llama.cpp |
 | Install method | GitHub releases (primary), `cargo install --git` (fallback) | Standalone repo; not on crates.io yet |
 | Agent steering | gcode via Bash (prompt hints + PATH) | Simpler than MCP discovery (1 call vs 4), faster, standalone |
@@ -49,7 +49,7 @@ llama-cpp-2 = { version = "0.1", features = ["metal"], optional = true }
 
 Target: `.github/workflows/gcode-build.yml` (new file)
 
-Build matrix (6 targets, matching gsqz):
+Build matrix (6 targets, matching retired-compressor):
 - `macos-latest` / `aarch64-apple-darwin` / `--features embeddings` (install cmake)
 - `macos-13` / `x86_64-apple-darwin` / `--features embeddings` (install cmake)
 - `ubuntu-latest` / `x86_64-unknown-linux-gnu` / `--no-default-features`
@@ -93,7 +93,7 @@ Each build job packages the binary as `gcode-{target}.tar.gz` (or `.zip` for Win
 
 Target: `src/gobby/cli/install_setup.py`
 
-Follow the `_install_gsqz()` pattern (lines 416-511) but build from source:
+Follow the `_install_retired-compressor()` pattern (lines 416-511) but build from source:
 
 **Constants** (after line 214):
 ```python
@@ -101,24 +101,24 @@ _GCODE_VERSION_STAMP = ".gcode-version"
 _GCODE_BIN_NAME = "gcode.exe" if sys.platform == "win32" else "gcode"
 ```
 
-**New constants** (alongside gsqz constants):
+**New constants** (alongside retired-compressor constants):
 ```python
 _GCODE_RELEASE_URL = "https://github.com/GobbyAI/gobby-code/releases/latest/download/gcode-{target}.tar.gz"
 _GCODE_VERSIONED_RELEASE_URL = "https://github.com/GobbyAI/gobby-code/releases/download/v{version}/gcode-{target}.tar.gz"
-_GCODE_TARGETS = _GSQZ_TARGETS  # Same platform mapping
+_GCODE_TARGETS = _retired-compressor_TARGETS  # Same platform mapping
 ```
 
-**`_install_gcode(force=False)` function — fallback chain like gsqz:**
+**`_install_gcode(force=False)` function — fallback chain like retired-compressor:**
 1. Check `~/.gobby/bin/gcode` exists + version stamp matches current gobby version → skip
-2. Detect platform target triple (reuse `_GSQZ_TARGETS` mapping)
-3. **Strategy 1: GitHub release download** — `_install_gcode_from_github(bin_dir, target, version)`. Same pattern as `_install_gsqz_from_github()` but with gcode release URL. Fast, no deps.
+2. Detect platform target triple (reuse `_retired-compressor_TARGETS` mapping)
+3. **Strategy 1: GitHub release download** — `_install_gcode_from_github(bin_dir, target, version)`. Same pattern as `_install_retired-compressor_from_github()` but with gcode release URL. Fast, no deps.
 4. **Strategy 2: Build from source** — Find repo root (walk up from `__file__` for `rust/gcode/Cargo.toml`). Run `cargo build --release --manifest-path ...`. Copy binary to `~/.gobby/bin/gcode`. Only if cargo on PATH.
 5. chmod 0o755, write version stamp, ensure PATH
 6. Return result dict: `{"installed": bool, "upgraded": bool, "version": str, "method": str}`
 
 GitHub download is preferred (fast, no cargo needed). Cargo build is fallback for dev environments or when releases aren't published yet.
 
-**Wire into `run_daemon_setup()`** after the gsqz block (~line 184):
+**Wire into `run_daemon_setup()`** after the retired-compressor block (~line 184):
 ```python
 try:
     gcode_result = _install_gcode()
@@ -275,7 +275,7 @@ Target: `src/gobby/agents/spawners/base.py` (line 113)
 
 In `make_spawn_env()`, before `return spawn_env`, add `~/.gobby/bin` to PATH:
 ```python
-# Ensure ~/.gobby/bin is on PATH (gcode, gsqz)
+# Ensure ~/.gobby/bin is on PATH (gcode, retired-compressor)
 gobby_bin = str(Path.home() / ".gobby" / "bin")
 current_path = spawn_env.get("PATH", "")
 if gobby_bin not in current_path.split(os.pathsep):

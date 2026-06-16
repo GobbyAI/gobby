@@ -265,11 +265,6 @@ class ProjectVerificationConfig(BaseModel):
         result.update(self.custom)
         return result
 
-    track_savings: bool = Field(
-        default=True,
-        description="Track token savings via metrics",
-    )
-
 
 class ChatConfig(FeatureDefaultConfig):
     """Chat mode configuration."""

@@ -145,12 +145,10 @@ class TestStatusUtils:
                     "gobby": "0.3.6",
                     "gcode": "0.2.1",
                     "gcode_path": None,
-                    "gsqz": None,
-                    "gsqz_path": None,
                     "ghook": "0.2.0",
                     "ghook_path": "/Users/test/.gobby/bin/ghook",
-                    "gloc": "0.1.1",
-                    "gloc_path": "/Users/test/.gobby/bin/gloc",
+                    "gwiki": "0.3.0",
+                    "gwiki_path": "/Users/test/.gobby/bin/gwiki",
                 },
                 "coding_clis": {
                     "claude": "installed",
@@ -173,7 +171,6 @@ class TestStatusUtils:
         assert "0.3.6" in msg
         assert "0.2.1" in msg
         assert "0.2.0" in msg
-        assert "0.1.1" in msg
         assert "Claude Code:" in msg
         assert "tmux:" in msg
         assert "git:" in msg

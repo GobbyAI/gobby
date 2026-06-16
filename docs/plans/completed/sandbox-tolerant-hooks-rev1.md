@@ -25,7 +25,7 @@ symptom: "hook command won't start" — the `uv run` front end fails before
 Python even loads. Loopback failure is secondary.
 
 **Implementation strategy: Rust.** `~/Projects/gobby-cli` already ships
-`gcode`, `gsqz`, and `gloc` as standalone binaries. The hook dispatcher is
+`gcode`, `retired-compressor`, and `retired-local-launcher` as standalone binaries. The hook dispatcher is
 exactly the shape of code being ported and the failure case we need to fix.
 Writing it in Python as a `gobby-hook` console_script and then porting
 later would be a double-implementation tax.
@@ -45,16 +45,16 @@ default sandbox mode produces working hooks — no hand-edited CLI config.
   transcript + new `--dry-run` flag. No `--apply-sandbox` gate.
 - **Python vs Rust:** Rust. `ghook` is the fourth crate in the `gobby-cli`
   workspace.
-- **Binary distribution model:** match `gcode` / `gsqz` exactly, including
+- **Binary distribution model:** match `gcode` / `retired-compressor` exactly, including
   **automatic install via `gobby install`**. `install_setup.py` already has
   a three-tier fallback (GitHub Releases tarball → `cargo-binstall` →
   `cargo install`) with crates.io version resolution, stamp files
-  (`~/.gobby/bin/.gsqz-version`), and PATH setup across shells. A new
+  (`~/.gobby/bin/.retired-compressor-version`), and PATH setup across shells. A new
   `_install_ghook()` mirrors that one-for-one. Python side resolves
   `~/.gobby/bin/ghook` first, then `shutil.which()`.
 - **Cross-platform targets:** `darwin-arm64`, `darwin-x86_64`,
   `linux-x86_64`, `linux-arm64`, `windows-x86_64`. Mirrors
-  `install_setup.py:249-250` triples already used for `gsqz`/`gcode`.
+  `install_setup.py:249-250` triples already used for `retired-compressor`/`gcode`.
   Windows is best-effort consistent with the rest of the product's Windows
   posture — not tested in CI, not a release blocker.
 - **Context resolution:** headers come from the stdin payload and
@@ -112,12 +112,12 @@ drain concurrently within a given `(session, hook_type)` pair.
 
 **Modified in `~/Projects/gobby` (this repo):**
 
-Binary installer — new `ghook` lane mirroring `gcode`/`gsqz`:
+Binary installer — new `ghook` lane mirroring `gcode`/`retired-compressor`:
 - `src/gobby/cli/install_setup.py` — add `_install_ghook()`,
   `_get_latest_ghook_version()`, `_get_installed_ghook_version()`,
   `_write_ghook_version_stamp()`, `_install_ghook_from_github()`, and the
   cargo-binstall / cargo-install fallbacks, parallel to the existing
-  `_install_gsqz` / `_install_gcode` structure at `install_setup.py:232+`.
+  `_install_retired-compressor` / `_install_gcode` structure at `install_setup.py:232+`.
   Hook the new lane into the main install flow around
   `install_setup.py:183`. Include `windows-x86_64` target triple.
 
@@ -148,7 +148,7 @@ Server / drain:
 Cross-binary resolution utility:
 - New: `src/gobby/utils/native_bin.py` — one resolver used by `ghook`
   invocation, plus migrate `gcode` (in `src/gobby/code_index/maintenance.py`)
-  and `gsqz` (in `src/gobby/llm/sdk_utils.py`) to use it.
+  and `retired-compressor` (in `src/gobby/llm/sdk_utils.py`) to use it.
 
 Schema mirror:
 - New: `schemas/inbox-envelope.v1.schema.json` — hand-mirrored from
@@ -287,7 +287,7 @@ filesystem.
 ### 0.5 `native_bin.py` resolver + migrate existing callers
 
 Pays down duplicated `~/.gobby/bin/<name>` lookup logic now (currently two
-call sites for `gcode` and `gsqz`) so Phase 2's `ghook` lookup is the third
+call sites for `gcode` and `retired-compressor`) so Phase 2's `ghook` lookup is the third
 user of one resolver, not new duplication.
 
 ### 0.6 Fix dispatcher `get_daemon_url` to honor `bind_host`
@@ -350,8 +350,8 @@ implementing a loss-free enqueue-first flow.
 `crates/ghook/` in `gobby-cli`. Conventions match existing crates:
 `anyhow::Result`, `clap` derive, `serde_json`, `ureq` HTTP with 1s connect
 / 5s total for critical hooks and 500ms total for non-critical, no tokio,
-fail-open pattern from `gsqz`. `serde_yaml = "0.9"` for bootstrap parse —
-matches `gsqz`/`gcode` workspace consistency.
+fail-open pattern from `retired-compressor`. `serde_yaml = "0.9"` for bootstrap parse —
+matches `retired-compressor`/`gcode` workspace consistency.
 
 ### 2.2 CLI surface
 
@@ -384,7 +384,7 @@ same spec.
 
 Rules:
 1. Read `~/.gobby/bootstrap.yaml` with `serde_yaml`. Use `dirs::home_dir()`
-   for `~` expansion (matches `gsqz` config resolver).
+   for `~` expansion (matches `retired-compressor` config resolver).
 2. Extract `daemon_port` (default `60887`) and `bind_host` (default
    `"localhost"` — matches `BootstrapConfig` at
    `src/gobby/config/bootstrap.py:31`).

@@ -14,7 +14,6 @@ import {
   isReadOnlyBash,
   isReadOnlyMcp,
   parseGrepOutput,
-  parseGsqzWrapper,
   parseReadOutput,
   pathBasename,
   truncStr,
@@ -579,52 +578,6 @@ describe('getToolDisplayName', () => {
 })
 
 // ---------------------------------------------------------------------------
-// parseGsqzWrapper
-// ---------------------------------------------------------------------------
-describe('parseGsqzWrapper', () => {
-  it('returns null when no wrapper header is present', () => {
-    expect(parseGsqzWrapper('hello world\nline two')).toBeNull()
-  })
-
-  it('parses the gsqz fallback header', () => {
-    const text = '[Output compressed by gsqz — fallback, 99% reduction]\n[gsqz:passthrough]\nbody line 1\nbody line 2'
-    const result = parseGsqzWrapper(text)
-    expect(result).not.toBeNull()
-    expect(result!.metadata.strategy).toBe('fallback')
-    expect(result!.metadata.reduction).toBe('99% reduction')
-    expect(result!.body).toBe('body line 1\nbody line 2')
-  })
-
-  it('parses the chunked-output header with full metadata', () => {
-    const text =
-      'Chunk ID: beae62\nWall time: 0.0123 seconds\nProcess exited with code 0\nOriginal token count: 2174\nOutput:\nfrom __future__ import annotations\n'
-    const result = parseGsqzWrapper(text)
-    expect(result).not.toBeNull()
-    expect(result!.metadata.chunkId).toBe('beae62')
-    expect(result!.metadata.wallTimeSeconds).toBeCloseTo(0.0123)
-    expect(result!.metadata.exitCode).toBe(0)
-    expect(result!.metadata.tokenCount).toBe(2174)
-    expect(result!.body).toBe('from __future__ import annotations\n')
-  })
-
-  it('parses the short chunked header (no exit code or token count)', () => {
-    const text = 'Chunk ID: 21a8f9\nWall time: 0.1813 seconds\nOutput:\nhash ok? True\n'
-    const result = parseGsqzWrapper(text)
-    expect(result).not.toBeNull()
-    expect(result!.metadata.chunkId).toBe('21a8f9')
-    expect(result!.metadata.wallTimeSeconds).toBeCloseTo(0.1813)
-    expect(result!.metadata.exitCode).toBeUndefined()
-    expect(result!.metadata.tokenCount).toBeUndefined()
-    expect(result!.body).toBe('hash ok? True\n')
-  })
-
-  it('returns null for empty or non-string input', () => {
-    expect(parseGsqzWrapper('')).toBeNull()
-    expect(parseGsqzWrapper(null as unknown as string)).toBeNull()
-  })
-})
-
-// ---------------------------------------------------------------------------
 // unwrapMcpResultEnvelope
 // ---------------------------------------------------------------------------
 describe('unwrapMcpResultEnvelope', () => {
@@ -696,7 +649,7 @@ describe('isReadOnlyBash', () => {
     expect(isReadOnlyBash('grep pattern file')).toBe(true)
     expect(isReadOnlyBash('gcode outline foo.py')).toBe(true)
     expect(isReadOnlyBash('jq .')).toBe(true)
-    expect(isReadOnlyBash('which gsqz')).toBe(true)
+    expect(isReadOnlyBash('which gcode')).toBe(true)
   })
 
   it('matches two-word read prefixes', () => {

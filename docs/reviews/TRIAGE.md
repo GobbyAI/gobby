@@ -907,7 +907,7 @@
 - #16194 (U652, `docs/reviews/servers-routes.md`) — Validate parent_comment_id and return 404 on no-op delete in task comment routes
 - #16205 (U653, `docs/reviews/servers-routes.md`) — Validate project_id on POST /api/tasks; map FK violations to 400 not raw 500
 - #16219 (U654, `docs/reviews/servers-routes.md`) — Validate statusline_update body with a typed model before update_usage
-- #16395 (U626, `docs/reviews/servers-routes.md`) — Add a typed, validated request model for /api/admin/savings/record
+- #16395 (U626, `docs/reviews/servers-routes.md`) — Add a typed, validated request model for retired-token-tracker-endpoint/record
 - #16410 (U627, `docs/reviews/servers-routes.md`) — Apply per-server timeout to call_mcp_tool and mcp_proxy tool invocations
 - #16424 (U628, `docs/reviews/servers-routes.md`) — Cap upload sizes on vision, voice, and wiki endpoints like chat_attachments
 - #16437 (U629, `docs/reviews/servers-routes.md`) — Confine wiki /ingest paths to the project root; reject absolute/traversal paths

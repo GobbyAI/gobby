@@ -108,7 +108,7 @@
 
 ### [IMPORTANT] Claude PreToolUse `updatedInput` emitted without `permissionDecision:"allow"` is silently dropped
 - **Where:** `claude_code.py:386-387` — `if response.modified_input is not None and permission_decision != "deny": hook_output["updatedInput"] = response.modified_input`. A `rewrite_input` effect that omits `auto_approve` (default False, `workflows/definitions.py:154`) yields `modified_input` set, `permission_decision=None` → `updatedInput` written with no `permissionDecision`, which Claude Code's `PermissionResultAllow(updated_input=...)` contract requires.
-- **Failure mode:** A user-authored input-rewrite rule that forgets `auto_approve: true` silently no-ops; the agent runs the original command. The bundled `compress-bash-output.yaml` sets `auto_approve: true` so shipped config is safe, but the adapter doesn't enforce the coupling. No PreToolUse `updatedInput` round-trip test exists.
+- **Failure mode:** A user-authored input-rewrite rule that forgets `auto_approve: true` silently no-ops; the agent runs the original command. The bundled `legacy-output-rewrite.yaml` sets `auto_approve: true` so shipped config is safe, but the adapter doesn't enforce the coupling. No PreToolUse `updatedInput` round-trip test exists.
 - **Minimal fix:** Force `permissionDecision = "allow"` when `modified_input` is set and not denied; add the round-trip test.
 - **Confidence:** med (high on the code path; the live-CLI requirement is inferred from repo SDK docs).
 

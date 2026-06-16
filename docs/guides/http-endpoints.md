@@ -96,9 +96,6 @@ register a top-level `/health` REST route.
 | `POST` | `/api/admin/shutdown` | Graceful daemon shutdown. |
 | `POST` | `/api/admin/restart` | Restart the daemon through service-managed or direct restart helpers. |
 | `POST` | `/api/admin/workflows/reload` | Reload installed workflow definitions. |
-| `GET` | `/api/admin/savings` | Current token/cost savings tracker data. |
-| `GET` | `/api/admin/savings/cumulative` | Cumulative savings totals. |
-| `POST` | `/api/admin/savings/record` | Record a savings event. |
 | `GET` | `/api/admin/stats` | Aggregate daemon statistics. |
 | `GET` | `/api/admin/usage` | Usage metrics. |
 | `GET` | `/api/admin/tokens/timeseries` | Token usage time series. |

@@ -353,8 +353,7 @@ def _gemini_policy_content(gobby_bin: Path) -> str:
         "priority = 500\n"
         'modes = ["plan"]\n'
         "\n"
-        "# Allow shell invocations of Gobby-installed binaries\n"
-        "# (gcode, ghook, gloc, gsqz, plus future shims).\n"
+        "# Allow shell invocations of Gobby-installed binaries.\n"
         "[[rule]]\n"
         'toolName = "run_shell_command"\n'
         f"commandPrefix = {bin_prefix}\n"

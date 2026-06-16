@@ -482,66 +482,6 @@ class TestRequireUvBlockRule:
         assert response.modified_input is None
 
 
-class TestCompressBashOutputBundledRule:
-    """Bundled compress-bash-output should cover shell CLIs and skip gcode."""
-
-    @pytest.mark.asyncio
-    async def test_codex_rewrites_bash_through_gsqz(
-        self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
-    ) -> None:
-        _sync_bundled_rules(db)
-
-        row = manager.get_by_name("compress-bash-output")
-        assert row is not None
-
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.when is not None
-
-        event = _make_event(
-            data={"tool_name": "Bash", "tool_input": {"command": "echo ok"}},
-            source=SessionSource.CODEX,
-        )
-
-        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
-
-        assert response.decision == "allow"
-        assert response.modified_input is not None
-        assert "gsqz" in response.modified_input["command"]
-        assert "echo ok" in response.modified_input["command"]
-
-    @pytest.mark.asyncio
-    async def test_claude_still_rewrites_bash_through_gsqz(self, db: HubDatabase) -> None:
-        """Claude Bash commands still get compressed by the bundled rule."""
-        _sync_bundled_rules(db)
-
-        event = _make_event(
-            data={"tool_name": "Bash", "tool_input": {"command": "echo ok"}},
-            source=SessionSource.CLAUDE,
-        )
-
-        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
-
-        assert response.decision == "allow"
-        assert response.modified_input is not None
-        assert "gsqz" in response.modified_input["command"]
-        assert "echo ok" in response.modified_input["command"]
-
-    @pytest.mark.asyncio
-    async def test_gcode_command_stays_unwrapped(self, db: HubDatabase) -> None:
-        """gcode commands stay directly inspectable instead of being wrapped."""
-        _sync_bundled_rules(db)
-
-        event = _make_event(
-            data={"tool_name": "Bash", "tool_input": {"command": "  gcode search Codex"}},
-            source=SessionSource.CODEX,
-        )
-
-        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
-
-        assert response.decision == "allow"
-        assert response.modified_input is None
-
-
 class TestPermissionResponseEffects:
     """set_permission_response and set_retry should preserve explicit empty/false values."""
 
