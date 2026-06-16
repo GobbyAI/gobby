@@ -114,14 +114,7 @@ pub(crate) fn classify_definition(
         return None;
     }
     let declaration_path = &locations[0].path;
-    let kind = match local_candidate_file(declaration_path, root_path) {
-        // Definition inside the project root: a cross-file local call. Carry the
-        // project-relative file so the post-write DB pass can resolve it to a
-        // canonical symbol id.
-        Some(candidate_file) => SemanticTargetKind::LocalCandidate(candidate_file),
-        // Definition outside the root: an external dependency module.
-        None => SemanticTargetKind::External(declaration_path.to_string_lossy().to_string()),
-    };
+    let kind = definition_target_kind(declaration_path, root_path)?;
     Some(SemanticCallTarget {
         callee_name: callee_name.to_string(),
         kind,
@@ -216,22 +209,24 @@ fn macro_definition_name(line: &str) -> Option<&str> {
     }
 }
 
-/// Computes the project-relative path for a definition that lives inside
-/// `root_path`, matching exactly how the indexer derives `code_symbols.file_path`
-/// (canonicalize file + root, strip prefix, lossy string — see
-/// `parser::parse_file`) so the post-write DB pass can match the candidate
-/// against the stored symbol row. Returns `None` when the definition is outside
-/// the root, cannot be canonicalized, or resolves to the root itself — all of
-/// which the caller treats as "not a local definition".
-fn local_candidate_file(path: &Path, root_path: &Path) -> Option<String> {
+/// Classifies a semantic definition path after proving both the definition and
+/// root canonicalize. Canonicalization failure is unresolved; only a proven
+/// canonical path outside the canonical root is external.
+fn definition_target_kind(path: &Path, root_path: &Path) -> Option<SemanticTargetKind> {
     let canonical_path = path.canonicalize().ok()?;
     let canonical_root = root_path.canonicalize().ok()?;
-    let relative = canonical_path.strip_prefix(&canonical_root).ok()?;
-    let candidate = relative.to_string_lossy().to_string();
-    if candidate.is_empty() {
-        None
-    } else {
-        Some(candidate)
+    match canonical_path.strip_prefix(&canonical_root) {
+        Ok(relative) => {
+            let candidate = relative.to_string_lossy().to_string();
+            if candidate.is_empty() {
+                None
+            } else {
+                Some(SemanticTargetKind::LocalCandidate(candidate))
+            }
+        }
+        Err(_) => Some(SemanticTargetKind::External(
+            path.to_string_lossy().to_string(),
+        )),
     }
 }
 
@@ -747,6 +742,22 @@ mod tests {
         assert_eq!(
             target.kind,
             SemanticTargetKind::LocalCandidate("local.h".to_string())
+        );
+    }
+
+    #[test]
+    fn drops_single_definition_when_canonicalization_fails() {
+        let tempdir = TempDir::new().expect("tempdir");
+        let transient = tempdir.path().join("generated").join("missing.h");
+
+        assert!(
+            classify_definition(
+                tempdir.path(),
+                b"void run() { generated_call(); }",
+                "generated_call",
+                &[DefinitionLocation { path: transient }],
+            )
+            .is_none()
         );
     }
 

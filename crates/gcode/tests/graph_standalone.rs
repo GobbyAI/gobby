@@ -6,6 +6,8 @@
 
 mod common;
 
+#[path = "graph_standalone/local_c_cpp.rs"]
+mod local_c_cpp;
 #[path = "graph_standalone/local_csharp_kotlin_ruby.rs"]
 mod local_csharp_kotlin_ruby;
 #[path = "graph_standalone/local_php_swift_dart_elixir.rs"]
