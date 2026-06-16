@@ -327,9 +327,7 @@ class _GeminiCLITextGenerateAdapter:
                         exc,
                     )
                     continue
-                raise ValueError(
-                    f"Gemini CLI returned invalid JSON wrapper: {exc}"
-                ) from exc
+                raise ValueError(f"Gemini CLI returned invalid JSON wrapper: {exc}") from exc
         raise AssertionError("unreachable: retry loop returns or raises")
 
 

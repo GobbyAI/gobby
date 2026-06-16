@@ -51,12 +51,8 @@ async def build_raw_plan(
     planner_errors: list[str] = []
     actions: list[dict[str, Any]] = []
 
-    duplicate_ids = {
-        memory_id for group in duplicate_groups for memory_id in group.memory_ids
-    }
-    llm_candidates = [
-        candidate for candidate in candidates if candidate.id not in duplicate_ids
-    ]
+    duplicate_ids = {memory_id for group in duplicate_groups for memory_id in group.memory_ids}
+    llm_candidates = [candidate for candidate in candidates if candidate.id not in duplicate_ids]
 
     if llm_service is not None and llm_candidates and not skip_consolidation:
         batch_size = _positive_int(
