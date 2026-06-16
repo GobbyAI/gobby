@@ -87,6 +87,7 @@ reviews:
     - "!**/*.lock"
     - "!**/uv.lock"
     - "!**/.gobby/tasks.jsonl"
+    - "!**/.gobby/memories.json"
     - "!**/htmlcov/**"
     - "!**/__pycache__/**"
     - "!**/.mypy_cache/**"
