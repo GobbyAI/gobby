@@ -346,8 +346,12 @@ fn transient_generation_failure_retries_to_healthy_doc() {
             Ok("Generated prose.".to_string())
         }
     };
-    let mut generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
-        generate_with_bounded_retry(&mut flaky_transport).ok()
+    let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else {
+            generate_with_bounded_retry(&mut flaky_transport).ok()
+        }
     };
 
     let mut progress = CodewikiProgress::silent();

@@ -34,8 +34,13 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator =
-        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Generated prose.".to_string());
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
     let mut progress = CodewikiProgress::silent();
     let first = generate_hierarchical_docs_with_progress(
         &input,
@@ -105,7 +110,9 @@ fn reused_docs_feed_recorded_summaries_into_parent_prompts() {
     let out_dir = project.path().join("codewiki");
 
     let mut first_generator = |prompt: &str, system: &str, _tier: PromptTier| {
-        if system == prompts::MODULE_SYSTEM && prompt.contains("src/nested") {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else if system == prompts::MODULE_SYSTEM && prompt.contains("src/nested") {
             Some("Nested module marker prose.".to_string())
         } else {
             Some("Generated prose.".to_string())
@@ -240,8 +247,13 @@ fn interrupted_run_resumes_from_persisted_docs() {
 
     // Run 1 dies before any module doc lands: every file doc must already be
     // on disk with a matching meta entry, because the sink flushes per doc.
-    let mut first_generator =
-        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Generated prose.".to_string());
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
     let mut generate = Some::<&mut TextGenerator<'_>>(&mut first_generator);
     let mut progress = CodewikiProgress::silent();
     let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
@@ -322,8 +334,13 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
 
     // Simulate a meta written before summaries existed (#681): same pages on
     // disk, healthy entries, but nothing recorded to reuse.
-    let mut first_generator =
-        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Generated prose.".to_string());
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
     let mut progress = CodewikiProgress::silent();
     let mut first = generate_hierarchical_docs_with_progress(
         &input,
@@ -345,9 +362,13 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
     .expect("legacy-shaped write");
 
     let mut calls = 0_usize;
-    let mut second_generator = |_prompt: &str, _system: &str, _tier: PromptTier| {
+    let mut second_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         calls += 1;
-        Some("Backfilled prose.".to_string())
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else {
+            Some("Backfilled prose.".to_string())
+        }
     };
     let mut plan = ReusePlan::load(project.path(), &out_dir, "sections").expect("reuse plan loads");
     let mut reuse = Some(&mut plan);
@@ -398,8 +419,13 @@ fn missing_page_on_disk_regenerates_that_doc() {
     let (project, input) = reuse_project();
     let out_dir = project.path().join("codewiki");
 
-    let mut first_generator =
-        |_prompt: &str, _system: &str, _tier: PromptTier| Some("Generated prose.".to_string());
+    let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(test_curated_navigation_json())
+        } else {
+            Some("Generated prose.".to_string())
+        }
+    };
     let mut progress = CodewikiProgress::silent();
     let first = generate_hierarchical_docs_with_progress(
         &input,

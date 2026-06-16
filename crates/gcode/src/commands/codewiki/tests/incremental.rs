@@ -206,6 +206,11 @@ fn incremental_regenerates_only_changed() {
         vec![
             "code/files/src/lib.rs.md".to_string(),
             "code/modules/src.md".to_string(),
+            "code/concepts/index.md".to_string(),
+            "code/concepts/src.md".to_string(),
+            "code/narrative/introduction.md".to_string(),
+            "code/narrative/architecture.md".to_string(),
+            "code/narrative/data-flow.md".to_string(),
             "code/repo.md".to_string(),
             "code/_architecture.md".to_string(),
             "code/_onboarding.md".to_string(),
@@ -220,6 +225,11 @@ fn incremental_regenerates_only_changed() {
         &vec![
             serde_json::Value::String("code/files/src/lib.rs.md".to_string()),
             serde_json::Value::String("code/modules/src.md".to_string()),
+            serde_json::Value::String("code/concepts/index.md".to_string()),
+            serde_json::Value::String("code/concepts/src.md".to_string()),
+            serde_json::Value::String("code/narrative/introduction.md".to_string()),
+            serde_json::Value::String("code/narrative/architecture.md".to_string()),
+            serde_json::Value::String("code/narrative/data-flow.md".to_string()),
             serde_json::Value::String("code/repo.md".to_string()),
             serde_json::Value::String("code/_architecture.md".to_string()),
             serde_json::Value::String("code/_onboarding.md".to_string()),

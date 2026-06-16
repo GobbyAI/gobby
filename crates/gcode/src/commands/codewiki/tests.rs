@@ -9,6 +9,7 @@ mod support;
 mod ai;
 mod architecture;
 mod changes;
+mod concepts;
 mod contract;
 mod graph;
 mod hotspots;

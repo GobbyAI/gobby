@@ -134,6 +134,8 @@ pub(crate) fn render_repo_doc(
     doc.push_str("# Repository Overview\n\n");
     let summary = replace_citations_with_markers(summary, source_spans);
     write_section(&mut doc, "Overview", &summary);
+    doc.push_str("## Curated Navigation\n\n");
+    doc.push_str("- [[code/concepts/index|Concept tree and narrative tours]]\n\n");
     if let Some(diagram) = module_map {
         doc.push_str("## Module Map\n\n");
         doc.push_str(diagram);

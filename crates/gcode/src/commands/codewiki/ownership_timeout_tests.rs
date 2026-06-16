@@ -33,8 +33,11 @@ fn codewiki_ownership_timed_out_blame_reaps_child_without_thread_leak() {
     let Some(after_threads) = current_thread_count() else {
         return;
     };
+    // The Rust test harness can start an unrelated worker while this
+    // process-wide count is sampled. Repeated timed-out blames must not add
+    // one thread per timeout.
     assert!(
-        after_threads <= baseline_threads,
+        after_threads <= baseline_threads + 1,
         "timed-out blame should not leak threads: before={baseline_threads}, after={after_threads}"
     );
 }

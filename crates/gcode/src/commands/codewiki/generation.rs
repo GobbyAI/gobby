@@ -6,10 +6,11 @@ use crate::models::Symbol;
 use super::{
     AiDepth, BuiltDoc, CodewikiInput, CodewikiProgress, DocPruneScope, FileDocPosition,
     OwnershipMeta, OwnershipOptions, ReusePlan, TextGenerator, build_architecture_doc,
-    build_file_doc, build_hotspots_doc, build_module_docs_with_filter, build_onboarding_doc,
-    build_ownership_doc, build_repo_doc, cluster, cluster_file_modules, file_doc_path,
-    is_core_file, module_doc_path, module_for_file, render_architecture_doc, render_file_doc,
-    render_hotspots_doc, render_module_doc, render_onboarding_doc, span_files,
+    build_curated_navigation_docs, build_file_doc, build_hotspots_doc,
+    build_module_docs_with_filter, build_onboarding_doc, build_ownership_doc, build_repo_doc,
+    cluster, cluster_file_modules, file_doc_path, is_core_file, module_doc_path, module_for_file,
+    render_architecture_doc, render_file_doc, render_hotspots_doc, render_module_doc,
+    render_onboarding_doc, span_files,
 };
 
 pub fn generate_hierarchical_docs(
@@ -214,6 +215,9 @@ pub(crate) fn generate_hierarchical_docs_core(
     )?;
     if !doc_scope.is_unscoped() {
         return Ok(());
+    }
+    for doc in build_curated_navigation_docs(&file_docs, &module_docs, generate, reuse, progress) {
+        emit(doc)?;
     }
     let (repo_doc, repo_degraded) = build_repo_doc(
         &file_docs,

@@ -73,3 +73,34 @@ pub(crate) fn test_symbol_range(
         updated_at: String::new(),
     }
 }
+
+pub(crate) fn test_curated_navigation_json() -> String {
+    r#"{
+      "concept_modules": [
+        {
+          "title": "Source Tour",
+          "summary": "Reader-oriented entry points into the source reference.",
+          "modules": ["src"],
+          "files": ["src/lib.rs"]
+        }
+      ],
+      "sections": [
+        {
+          "title": "Start Here",
+          "summary": "Begin with source structure, then follow grounded references.",
+          "concepts": ["Source Tour"]
+        }
+      ],
+      "narrative_pages": [
+        {
+          "slug": "introduction",
+          "title": "Introduction",
+          "summary": "Start with the source tour and drill into linked code reference pages.",
+          "concepts": ["Source Tour"],
+          "modules": ["src"],
+          "files": ["src/lib.rs"]
+        }
+      ]
+    }"#
+    .to_string()
+}

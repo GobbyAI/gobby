@@ -37,8 +37,8 @@ mod types;
 pub(crate) use build::build_module_docs;
 pub(crate) use build::{
     FileDocPosition, build_architecture_doc, build_codewiki_changes_doc,
-    build_codewiki_index_snapshot, build_file_doc, build_hotspots_doc,
-    build_module_docs_with_filter, build_onboarding_doc,
+    build_codewiki_index_snapshot, build_curated_navigation_docs, build_file_doc,
+    build_hotspots_doc, build_module_docs_with_filter, build_onboarding_doc,
 };
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{

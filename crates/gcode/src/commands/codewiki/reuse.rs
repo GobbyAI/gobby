@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::io::{read_codewiki_meta, safe_doc_path};
-use super::{CodewikiDocMeta, SourceSpan};
+use super::{BuiltDoc, CodewikiDocMeta, SourceSpan};
 use crate::index::hasher;
 
 /// Decides whether a doc's previous content can be reused without any LLM
@@ -54,6 +54,37 @@ impl ReusePlan {
         let summary = self.docs.get(doc_path)?.summary.clone()?;
         let page = self.reusable_page(doc_path, sources)?;
         Some((page, summary))
+    }
+
+    pub(crate) fn reusable_pages_with_prefixes(
+        &mut self,
+        prefixes: &[&str],
+    ) -> Option<Vec<BuiltDoc>> {
+        let paths = self
+            .docs
+            .keys()
+            .filter(|path| prefixes.iter().any(|prefix| path.starts_with(prefix)))
+            .cloned()
+            .collect::<Vec<_>>();
+        if paths.is_empty() {
+            return None;
+        }
+
+        let mut docs = Vec::with_capacity(paths.len());
+        for path in paths {
+            let entry = self.docs.get(&path)?;
+            let sources = entry.source_hashes.keys().cloned().collect::<BTreeSet<_>>();
+            let summary = entry.summary.clone();
+            let content = self.reusable_page(&path, &sources)?;
+            docs.push(BuiltDoc {
+                path,
+                content,
+                degraded: false,
+                summary,
+            });
+        }
+        docs.sort_by(|left, right| left.path.cmp(&right.path));
+        Some(docs)
     }
 
     fn reusable(&mut self, doc_path: &str, sources: &BTreeSet<String>) -> bool {
