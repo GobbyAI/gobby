@@ -7,18 +7,44 @@ from datetime import datetime
 from typing import Any, Literal, NamedTuple, cast
 
 import click
+import httpx
 from croniter import croniter
 
 from gobby.cli.utils import resolve_project_ref
-from gobby.storage.cron import CronJobStorage
+from gobby.config.app import DaemonConfig
+from gobby.storage.cron import CronJobStorage, is_removed_automation_job
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.runtime import open_runtime_hub_database
+from gobby.utils.daemon_client import DaemonClient
 
 
 def get_cron_storage() -> tuple[HubDatabase, CronJobStorage]:
     """Get initialized cron storage."""
     db = open_runtime_hub_database(apply_migrations=False)
     return db, CronJobStorage(db)
+
+
+def _get_daemon_client(ctx: click.Context) -> DaemonClient:
+    config = (ctx.obj or {}).get("config") if isinstance(ctx.obj, dict) else None
+    if not isinstance(config, DaemonConfig):
+        raise click.ClickException(
+            "Configuration not initialized. Ensure the CLI is invoked through the main entry point."
+        )
+    return DaemonClient(host="localhost", port=config.daemon_port)
+
+
+def _daemon_error_message(response: Any) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        text = getattr(response, "text", "")
+        return f"HTTP {response.status_code}: {text}" if text else f"HTTP {response.status_code}"
+
+    detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+    if isinstance(detail, dict):
+        message = detail.get("message") or detail.get("error") or detail.get("detail")
+        return str(message) if message is not None else str(detail)
+    return str(detail)
 
 
 class ParsedSchedule(NamedTuple):
@@ -59,7 +85,11 @@ def list_jobs(
     """List cron jobs."""
     project_id = resolve_project_ref(project_ref) if project_ref else None
     _, storage = get_cron_storage()
-    jobs = storage.list_jobs(project_id=project_id, enabled=enabled)
+    jobs = [
+        job
+        for job in storage.list_jobs(project_id=project_id, enabled=enabled)
+        if not is_removed_automation_job(job)
+    ]
 
     if json_format:
         click.echo(json.dumps([j.to_dict() for j in jobs], indent=2, default=str))
@@ -151,21 +181,33 @@ def add_job(
 @cron.command("run")
 @click.argument("job_id")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
-def run_job(job_id: str, json_format: bool) -> None:
+@click.pass_context
+def run_job(ctx: click.Context, job_id: str, json_format: bool) -> None:
     """Trigger immediate execution of a cron job."""
-    _, storage = get_cron_storage()
-    job = storage.get_job(job_id)
-    if not job:
-        click.echo(f"Job not found: {job_id}", err=True)
-        raise SystemExit(1)
+    client = _get_daemon_client(ctx)
+    try:
+        response = client.call_http_api(
+            f"/api/cron/jobs/{job_id}/run",
+            method="POST",
+        )
+    except httpx.HTTPError as exc:
+        raise click.ClickException(f"Daemon unavailable: {exc}") from exc
+    except Exception as exc:
+        raise click.ClickException(f"Daemon unavailable: {exc}") from exc
 
-    run = storage.create_run(job.id)
+    if response.status_code != 200:
+        raise click.ClickException(_daemon_error_message(response))
+
+    payload = response.json()
+    if not isinstance(payload, dict) or not isinstance(payload.get("run"), dict):
+        raise click.ClickException("Daemon returned an invalid cron run response")
+    run = cast(dict[str, Any], payload["run"])
 
     if json_format:
-        click.echo(json.dumps(run.to_dict(), indent=2, default=str))
+        click.echo(json.dumps(run, indent=2, default=str))
         return
 
-    click.echo(f"Triggered run {run.id} for job {job.name}")
+    click.echo(f"Triggered run {run.get('id', '<unknown>')} for job {job_id}")
 
 
 @cron.command("toggle")

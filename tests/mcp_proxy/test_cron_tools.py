@@ -8,6 +8,7 @@ import pytest
 
 from gobby.mcp_proxy.tools.cron import create_cron_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.scheduler.scheduler import CronRunRejected
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun
 
@@ -90,6 +91,18 @@ class TestListCronJobs:
         result = tool(project_id=PROJECT_ID, enabled=True)
         assert result["success"] is True
         mock_storage.list_jobs.assert_called_once_with(project_id=PROJECT_ID, enabled=True)
+
+    def test_list_filters_removed_automation_rows(self, registry, mock_storage) -> None:
+        mock_storage.list_jobs.return_value = [
+            _make_job(name="User Job"),
+            _make_job(id="cj-system", name="gobby:dispatcher"),
+            _make_job(id="cj-heartbeat", name="gobby:pipeline-heartbeat"),
+        ]
+        tool = registry.get_tool("list_cron_jobs")
+        result = tool()
+        assert result["success"] is True
+        assert result["count"] == 1
+        assert result["jobs"][0]["name"] == "User Job"
 
 
 def test_internal_writers_not_exposed_via_mcp(registry: InternalToolRegistry) -> None:
@@ -210,3 +223,40 @@ class TestRunCronJobNow:
         tool = registry.get_tool("run_cron_job")
         result = await tool(job_id="cj-nonexistent")
         assert result["success"] is False
+        assert result["error_code"] == "cron_job_not_found"
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        "error",
+        [
+            CronRunRejected(
+                "cron_job_already_running",
+                "Cron job already has a running run: cj-abc123",
+            ),
+            CronRunRejected(
+                "cron_max_concurrent_jobs",
+                "Cron scheduler is at max concurrency (1/1)",
+            ),
+        ],
+    )
+    async def test_run_now_rejection(
+        self, registry, mock_scheduler, error: CronRunRejected
+    ) -> None:
+        mock_scheduler.run_now.side_effect = error
+        tool = registry.get_tool("run_cron_job")
+        result = await tool(job_id="cj-abc123")
+        assert result["success"] is False
+        assert result["error_code"] == error.code
+        assert result["error"] == str(error)
+
+    @pytest.mark.asyncio
+    async def test_run_now_scheduler_unavailable_does_not_create_run(self, mock_storage) -> None:
+        registry = create_cron_registry(cron_storage=mock_storage, cron_scheduler=None)
+        tool = registry.get_tool("run_cron_job")
+        result = await tool(job_id="cj-abc123")
+        assert result == {
+            "success": False,
+            "error_code": "cron_scheduler_unavailable",
+            "error": "Cron scheduler is not available",
+        }
+        mock_storage.create_run.assert_not_called()

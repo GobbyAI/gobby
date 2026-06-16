@@ -21,6 +21,7 @@ from gobby.utils.id import generate_prefixed_id
 logger = logging.getLogger(__name__)
 
 MIN_CRON_INTERVAL_SECONDS = 60
+REMOVED_AUTOMATION_JOB_NAMES = frozenset({"gobby:dispatcher", "gobby:pipeline-heartbeat"})
 CRON_JOB_NAME_PRIORITIES = {
     "gobby:pipeline-heartbeat": 0,
     "gobby:dispatcher": 1,
@@ -65,6 +66,10 @@ def _normalize_interval_seconds(schedule_type: str, interval_seconds: int | None
 
 def _cron_job_priority(job: CronJob) -> int:
     return CRON_JOB_NAME_PRIORITIES.get(job.name, DEFAULT_CRON_JOB_PRIORITY)
+
+
+def is_removed_automation_job(job: CronJob) -> bool:
+    return job.name in REMOVED_AUTOMATION_JOB_NAMES
 
 
 def compute_next_run(job: CronJob) -> datetime | None:
@@ -547,6 +552,19 @@ class CronJobStorage:
             cursor = conn.execute("DELETE FROM cron_jobs WHERE id = %s", (job_id,))
         return cursor.rowcount > 0
 
+    def delete_removed_automation_jobs(self) -> int:
+        """Delete stale bundled automation cron rows that no longer have executors."""
+        deleted = 0
+        for name in REMOVED_AUTOMATION_JOB_NAMES:
+            job = self.get_job_by_name(name)
+            if job is None:
+                continue
+            with self.db.transaction() as conn:
+                conn.execute("DELETE FROM cron_runs WHERE cron_job_id = %s", (job.id,))
+                cursor = conn.execute("DELETE FROM cron_jobs WHERE id = %s", (job.id,))
+            deleted += cursor.rowcount
+        return deleted
+
     def toggle_job(self, job_id: str) -> CronJob | None:
         """Toggle a cron job's enabled state."""
         job = self.get_job(job_id)
@@ -748,6 +766,25 @@ class CronJobStorage:
                    completed_at = %s,
                    error = %s
              WHERE status = 'running'
+            """,
+            (now, error[:5000]),
+        )
+        return cursor.rowcount
+
+    def fail_pending_runs(self, error: str) -> int:
+        """Mark pending cron runs failed.
+
+        Pending rows from a previous daemon cannot be safely replayed because they
+        only prove stale user intent, not a currently owned execution.
+        """
+        now = datetime.now(UTC).isoformat()
+        cursor = self.db.execute(
+            """
+            UPDATE cron_runs
+               SET status = 'failed',
+                   completed_at = %s,
+                   error = %s
+             WHERE status = 'pending'
             """,
             (now, error[:5000]),
         )

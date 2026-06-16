@@ -4,6 +4,7 @@ import json
 from collections.abc import Iterator
 from unittest.mock import MagicMock, patch
 
+import httpx
 import pytest
 from click.testing import CliRunner
 
@@ -58,6 +59,18 @@ def _make_run(**overrides: object) -> CronRun:
     }
     defaults.update(overrides)
     return CronRun(**defaults)
+
+
+def _make_daemon_response(
+    status_code: int = 200,
+    payload: dict[str, object] | None = None,
+    text: str = "",
+) -> MagicMock:
+    response = MagicMock()
+    response.status_code = status_code
+    response.json.return_value = payload or {"status": "success", "run": _make_run().to_dict()}
+    response.text = text
+    return response
 
 
 @pytest.fixture
@@ -122,6 +135,18 @@ class TestCronList:
         result = runner.invoke(cli, ["cron", "list", "--enabled"])
         assert result.exit_code == 0
         mock_storage.list_jobs.assert_called_once_with(project_id=None, enabled=True)
+
+    def test_list_filters_removed_automation_rows(self, runner, mock_storage) -> None:
+        mock_storage.list_jobs.return_value = [
+            _make_job(name="User Job"),
+            _make_job(id="cj-system", name="gobby:dispatcher"),
+            _make_job(id="cj-heartbeat", name="gobby:pipeline-heartbeat"),
+        ]
+        result = runner.invoke(cli, ["cron", "list"])
+        assert result.exit_code == 0
+        assert "User Job" in result.output
+        assert "gobby:dispatcher" not in result.output
+        assert "gobby:pipeline-heartbeat" not in result.output
 
 
 class TestCronAdd:
@@ -237,24 +262,102 @@ class TestCronRun:
     """Tests for 'gobby cron run'."""
 
     def test_run_triggers_execution(self, runner, mock_storage) -> None:
-        mock_storage.get_job.return_value = _make_job()
-        mock_storage.create_run.return_value = _make_run()
-        result = runner.invoke(cli, ["cron", "run", "cj-abc123"])
+        with patch("gobby.cli.cron.DaemonClient") as client_cls:
+            client = client_cls.return_value
+            client.call_http_api.return_value = _make_daemon_response()
+
+            result = runner.invoke(cli, ["cron", "run", "cj-abc123"])
+
         assert result.exit_code == 0
         assert "cr-run123" in result.output
+        client.call_http_api.assert_called_once_with(
+            "/api/cron/jobs/cj-abc123/run",
+            method="POST",
+        )
+        mock_storage.get_job.assert_not_called()
+        mock_storage.create_run.assert_not_called()
 
     def test_run_not_found(self, runner, mock_storage) -> None:
-        mock_storage.get_job.return_value = None
-        result = runner.invoke(cli, ["cron", "run", "cj-nonexistent"])
+        response = _make_daemon_response(
+            status_code=404,
+            payload={"detail": "Cron job not found: cj-nonexistent"},
+        )
+        with patch("gobby.cli.cron.DaemonClient") as client_cls:
+            client_cls.return_value.call_http_api.return_value = response
+            result = runner.invoke(cli, ["cron", "run", "cj-nonexistent"])
+
         assert result.exit_code != 0
+        assert "Cron job not found: cj-nonexistent" in result.output
+        mock_storage.create_run.assert_not_called()
 
     def test_run_json_output(self, runner, mock_storage) -> None:
-        mock_storage.get_job.return_value = _make_job()
-        mock_storage.create_run.return_value = _make_run()
-        result = runner.invoke(cli, ["cron", "run", "cj-abc123", "--json"])
+        with patch("gobby.cli.cron.DaemonClient") as client_cls:
+            client_cls.return_value.call_http_api.return_value = _make_daemon_response()
+            result = runner.invoke(cli, ["cron", "run", "cj-abc123", "--json"])
+
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["id"] == "cr-run123"
+        mock_storage.create_run.assert_not_called()
+
+    @pytest.mark.parametrize(
+        ("status_code", "detail", "expected"),
+        [
+            (
+                409,
+                {
+                    "code": "cron_job_already_running",
+                    "message": "Cron job already has a running run: cj-abc123",
+                },
+                "Cron job already has a running run",
+            ),
+            (
+                429,
+                {
+                    "code": "cron_max_concurrent_jobs",
+                    "message": "Cron scheduler is at max concurrency (1/1)",
+                },
+                "Cron scheduler is at max concurrency",
+            ),
+            (
+                503,
+                {
+                    "code": "cron_scheduler_unavailable",
+                    "message": "Cron scheduler is not available",
+                },
+                "Cron scheduler is not available",
+            ),
+        ],
+    )
+    def test_run_daemon_rejection(
+        self,
+        runner,
+        mock_storage,
+        status_code: int,
+        detail: dict[str, str],
+        expected: str,
+    ) -> None:
+        with patch("gobby.cli.cron.DaemonClient") as client_cls:
+            client_cls.return_value.call_http_api.return_value = _make_daemon_response(
+                status_code=status_code,
+                payload={"detail": detail},
+            )
+            result = runner.invoke(cli, ["cron", "run", "cj-abc123"])
+
+        assert result.exit_code != 0
+        assert expected in result.output
+        mock_storage.create_run.assert_not_called()
+
+    def test_run_daemon_unavailable(self, runner, mock_storage) -> None:
+        with patch("gobby.cli.cron.DaemonClient") as client_cls:
+            client_cls.return_value.call_http_api.side_effect = httpx.ConnectError(
+                "connection refused"
+            )
+            result = runner.invoke(cli, ["cron", "run", "cj-abc123"])
+
+        assert result.exit_code != 0
+        assert "Daemon unavailable" in result.output
+        mock_storage.create_run.assert_not_called()
 
 
 class TestCronToggle:

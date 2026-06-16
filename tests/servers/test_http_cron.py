@@ -7,6 +7,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.app_context import ServiceContainer
+from gobby.scheduler.scheduler import CronRunRejected
 from gobby.servers.http import HTTPServer
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun
@@ -218,6 +219,51 @@ class TestCronRunNow:
         cron_scheduler.run_now.return_value = None
         resp = client.post("/api/cron/jobs/cj-nonexistent/run")
         assert resp.status_code == 404
+
+    @pytest.mark.parametrize(
+        ("error", "status_code"),
+        [
+            (
+                CronRunRejected(
+                    "cron_job_already_running",
+                    "Cron job already has a running run: cj-abc123",
+                ),
+                409,
+            ),
+            (
+                CronRunRejected(
+                    "cron_max_concurrent_jobs",
+                    "Cron scheduler is at max concurrency (1/1)",
+                ),
+                429,
+            ),
+        ],
+    )
+    def test_run_now_rejections(
+        self,
+        client,
+        cron_scheduler,
+        error: CronRunRejected,
+        status_code: int,
+    ) -> None:
+        cron_scheduler.run_now.side_effect = error
+        resp = client.post("/api/cron/jobs/cj-abc123/run")
+        assert resp.status_code == status_code
+        assert resp.json()["detail"]["code"] == error.code
+
+    def test_run_now_scheduler_unavailable_does_not_create_run(
+        self,
+        client,
+        http_server,
+        cron_storage,
+    ) -> None:
+        http_server.services.cron_scheduler = None
+
+        resp = client.post("/api/cron/jobs/cj-abc123/run")
+
+        assert resp.status_code == 503
+        assert resp.json()["detail"]["code"] == "cron_scheduler_unavailable"
+        cron_storage.create_run.assert_not_called()
 
 
 class TestCronListRuns:

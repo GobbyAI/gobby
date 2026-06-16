@@ -18,6 +18,8 @@ import logging
 from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.scheduler.scheduler import CronRunRejected
+from gobby.storage.cron import is_removed_automation_job
 
 if TYPE_CHECKING:
     from gobby.scheduler.scheduler import CronScheduler
@@ -61,7 +63,11 @@ def create_cron_registry(
             enabled: Filter by enabled state (true/false)
         """
         try:
-            jobs = cron_storage.list_jobs(project_id=project_id, enabled=enabled)
+            jobs = [
+                job
+                for job in cron_storage.list_jobs(project_id=project_id, enabled=enabled)
+                if not is_removed_automation_job(job)
+            ]
             return {
                 "success": True,
                 "jobs": [j.to_brief() for j in jobs],
@@ -283,30 +289,26 @@ def create_cron_registry(
         """
         try:
             if cron_scheduler is not None:
-                run = await cron_scheduler.run_now(job_id)
+                try:
+                    run = await cron_scheduler.run_now(job_id)
+                except CronRunRejected as exc:
+                    return {"success": False, "error_code": exc.code, "error": str(exc)}
                 if not run:
-                    return {"success": False, "error": f"Cron job not found: {job_id}"}
+                    return {
+                        "success": False,
+                        "error_code": "cron_job_not_found",
+                        "error": f"Cron job not found: {job_id}",
+                    }
                 return {"success": True, "run": run.to_dict()}
 
-            # Fallback: create run record without execution
-            job = cron_storage.get_job(job_id)
-            if not job:
-                return {"success": False, "error": f"Cron job not found: {job_id}"}
-            run = cron_storage.create_run(job.id)
-            cron_storage.update_run(
-                run.id,
-                status="skipped",
-                output="Scheduler not running; run created but not executed",
-            )
-            run.status = "skipped"
             return {
-                "success": True,
-                "run": run.to_dict(),
-                "note": "Scheduler not running; run created but not executed",
+                "success": False,
+                "error_code": "cron_scheduler_unavailable",
+                "error": "Cron scheduler is not available",
             }
         except Exception as e:
             logger.exception("Failed to run cron job", extra={"job_id": job_id})
-            return {"success": False, "error": str(e)}
+            return {"success": False, "error_code": "cron_run_error", "error": str(e)}
 
     @registry.tool(
         name="list_cron_runs",

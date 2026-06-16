@@ -7,6 +7,7 @@ import contextvars
 import logging
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
+from typing import Literal
 
 from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
@@ -23,6 +24,18 @@ from gobby.utils.session_context import reset_session_context, set_session_conte
 logger = logging.getLogger(__name__)
 PLANNED_RESTART_MARKER_MIN_AGE_SECONDS = 120.0
 PLANNED_RESTART_MARKER_BUFFER_SECONDS = 120.0
+CRON_PENDING_STARTUP_ERROR = "Cron run was still marked pending when the scheduler started"
+CRON_RUNNING_STARTUP_ERROR = "Cron run was still marked running when the scheduler started"
+
+CronRunRejectionCode = Literal["cron_job_already_running", "cron_max_concurrent_jobs"]
+
+
+class CronRunRejected(RuntimeError):
+    """Raised when a manual cron run is rejected by scheduler execution guards."""
+
+    def __init__(self, code: CronRunRejectionCode, message: str):
+        super().__init__(message)
+        self.code = code
 
 
 class CronScheduler:
@@ -56,6 +69,7 @@ class CronScheduler:
             logger.info("Cron scheduler disabled by config")
             return
 
+        self._fail_orphaned_pending_runs_on_startup()
         self._fail_orphaned_running_runs_on_startup()
         self._running = True
         self._check_task = asyncio.create_task(
@@ -72,11 +86,14 @@ class CronScheduler:
         )
 
     def _fail_orphaned_running_runs_on_startup(self) -> None:
-        failed = self.storage.fail_running_runs(
-            "Cron run was still marked running when the scheduler started"
-        )
+        failed = self.storage.fail_running_runs(CRON_RUNNING_STARTUP_ERROR)
         if failed:
             logger.info("Marked %s orphaned cron run(s) failed at scheduler startup", failed)
+
+    def _fail_orphaned_pending_runs_on_startup(self) -> None:
+        failed = self.storage.fail_pending_runs(CRON_PENDING_STARTUP_ERROR)
+        if failed:
+            logger.info("Marked %s pending cron run(s) failed at scheduler startup", failed)
 
     async def stop(self) -> None:
         """Stop the scheduler loops gracefully."""
@@ -120,6 +137,10 @@ class CronScheduler:
 
     async def _check_due_jobs(self) -> None:
         """Check for due jobs and dispatch them."""
+        removed = self.storage.delete_removed_automation_jobs()
+        if removed:
+            logger.info("Deleted %s removed automation cron job(s)", removed)
+
         due_jobs = self.storage.get_due_jobs()
         if not due_jobs:
             return
@@ -274,12 +295,26 @@ class CronScheduler:
         """Trigger immediate execution of a job (bypasses schedule).
 
         The job executes in the background via create_task. The returned
-        CronRun will initially have status 'running'; poll the run or
+        CronRun will initially have status 'pending'; poll the run or
         check job.last_status for the final result.
         """
         job = self.storage.get_job(job_id)
         if not job:
             return None
+
+        if self.storage.has_running_run(job.id):
+            raise CronRunRejected(
+                "cron_job_already_running",
+                f"Cron job already has a running run: {job.id}",
+            )
+
+        running_count = self.storage.count_running()
+        if running_count >= self.config.max_concurrent_jobs:
+            raise CronRunRejected(
+                "cron_max_concurrent_jobs",
+                "Cron scheduler is at max concurrency "
+                f"({running_count}/{self.config.max_concurrent_jobs})",
+            )
 
         run = self.storage.create_run(job.id)
         logger.info(f"Manual trigger: cron job {job.id} ({job.name}), run {run.id}")

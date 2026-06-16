@@ -11,7 +11,7 @@ import pytest
 
 from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
-from gobby.scheduler.scheduler import CronScheduler
+from gobby.scheduler.scheduler import CronRunRejected, CronScheduler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronRun
 from tests._timing import drain_asyncio_tasks, wait_for_async_condition
@@ -148,6 +148,39 @@ async def test_start_fails_orphan_running_runs_before_first_tick(
     assert refreshed_run.error == "Cron run was still marked running when the scheduler started"
     mock_executor.execute.assert_called_once()
     assert mock_executor.execute.await_args.args[0].id == job.id
+
+
+@pytest.mark.asyncio
+async def test_start_fails_orphan_pending_runs(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+) -> None:
+    """Rows left pending by an old manual trigger must not be replayed."""
+    scheduler = CronScheduler(
+        storage=cron_storage,
+        executor=mock_executor,
+        config=CronConfig(check_interval_seconds=60, max_concurrent_jobs=1),
+    )
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Manual Pending",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "dispatch.tick"},
+        interval_seconds=60,
+    )
+    stale_run = cron_storage.create_run(job.id)
+
+    try:
+        await scheduler.start()
+    finally:
+        await scheduler.stop()
+
+    refreshed_run = cron_storage.get_run(stale_run.id)
+    assert refreshed_run is not None
+    assert refreshed_run.status == "failed"
+    assert refreshed_run.error == "Cron run was still marked pending when the scheduler started"
+    mock_executor.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -441,6 +474,107 @@ async def test_run_now(
         description="manual cron execution",
     )
     mock_executor.execute.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_run_now_reaches_terminal_state(
+    cron_storage: CronJobStorage,
+    config: CronConfig,
+) -> None:
+    """Manual runs move from pending to running to a terminal state."""
+    executor = CronExecutor(storage=cron_storage)
+    scheduler = CronScheduler(storage=cron_storage, executor=executor, config=config)
+    seen_statuses: list[str] = []
+
+    async def handler(job: Any) -> str:
+        runs = cron_storage.list_runs(job.id, limit=1)
+        seen_statuses.append(runs[0].status)
+        return "manual done"
+
+    executor.register_handler("manual.handler", handler)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Manual Terminal",
+        schedule_type="cron",
+        action_type="handler",
+        action_config={"handler": "manual.handler"},
+        cron_expr="0 * * * *",
+    )
+
+    run = await scheduler.run_now(job.id)
+    assert run is not None
+    assert run.status == "pending"
+
+    if scheduler._active_tasks:
+        await asyncio.gather(*list(scheduler._active_tasks), return_exceptions=True)
+
+    refreshed_run = cron_storage.get_run(run.id)
+    assert seen_statuses == ["running"]
+    assert refreshed_run is not None
+    assert refreshed_run.status == "completed"
+    assert refreshed_run.output == "manual done"
+
+
+@pytest.mark.asyncio
+async def test_run_now_rejects_when_job_already_running(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+    config: CronConfig,
+) -> None:
+    """Manual runs do not create a row when the same job is already running."""
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Manual Active",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    active_run = cron_storage.create_run(job.id)
+    cron_storage.update_run(active_run.id, status="running")
+
+    with pytest.raises(CronRunRejected) as exc_info:
+        await scheduler.run_now(job.id)
+
+    assert exc_info.value.code == "cron_job_already_running"
+    assert len(cron_storage.list_runs(job.id, limit=10)) == 1
+    mock_executor.execute.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_run_now_rejects_when_max_concurrency_full(
+    cron_storage: CronJobStorage,
+    mock_executor: CronExecutor,
+) -> None:
+    """Manual runs do not create a row when global concurrency is full."""
+    config = CronConfig(check_interval_seconds=60, max_concurrent_jobs=1)
+    scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
+    active_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Active Other",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    idle_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Manual Idle",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    active_run = cron_storage.create_run(active_job.id)
+    cron_storage.update_run(active_run.id, status="running")
+
+    with pytest.raises(CronRunRejected) as exc_info:
+        await scheduler.run_now(idle_job.id)
+
+    assert exc_info.value.code == "cron_max_concurrent_jobs"
+    assert cron_storage.list_runs(idle_job.id, limit=10) == []
+    mock_executor.execute.assert_not_called()
 
 
 @pytest.mark.asyncio
