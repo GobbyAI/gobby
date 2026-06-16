@@ -513,6 +513,42 @@ class TestDeleteMemory:
         assert "Delete error" in result["error"]
 
 
+class TestRestoreMemory:
+    """Tests for restore_memory tool."""
+
+    @pytest.mark.asyncio
+    async def test_restore_memory_success(self, memory_registry, mock_memory_manager):
+        """Restoring an existing memory returns success and calls storage."""
+        mock_memory_manager.restore_memory = MagicMock(return_value=True)
+
+        result = await memory_registry.call("restore_memory", {"memory_id": "mem-123"})
+
+        assert result == {"success": True}
+        mock_memory_manager.restore_memory.assert_called_once_with("mem-123")
+
+    @pytest.mark.asyncio
+    async def test_restore_memory_not_found(self, memory_registry, mock_memory_manager):
+        """A missing memory raises ValueError and is reported as an error."""
+        mock_memory_manager.restore_memory = MagicMock(
+            side_effect=ValueError("Memory nope not found")
+        )
+
+        result = await memory_registry.call("restore_memory", {"memory_id": "nope"})
+
+        assert result["success"] is False
+        assert "not found" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_restore_memory_error(self, memory_registry, mock_memory_manager):
+        """Unexpected storage failures are surfaced as errors, not raised."""
+        mock_memory_manager.restore_memory = MagicMock(side_effect=Exception("Restore error"))
+
+        result = await memory_registry.call("restore_memory", {"memory_id": "mem-123"})
+
+        assert result["success"] is False
+        assert "Restore error" in result["error"]
+
+
 class TestListMemories:
     """Tests for list_memories tool."""
 
@@ -787,6 +823,7 @@ class TestRegistryCreation:
             "create_memory",
             "search_memories",
             "delete_memory",
+            "restore_memory",
             "list_memories",
             "get_memory",
             "get_related_memories",

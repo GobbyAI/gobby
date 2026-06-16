@@ -14,7 +14,7 @@ from fastapi import APIRouter, HTTPException, Query
 from pydantic import BaseModel, Field
 from starlette.responses import JSONResponse
 
-from gobby.storage.memories import Memory
+from gobby.storage.memories import Memory, Visibility
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -205,16 +205,30 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         memory_type: str | None = Query(None, description="Filter by memory type"),
         limit: int = Query(50, description="Maximum results"),
         offset: int = Query(0, description="Pagination offset"),
+        visibility: Visibility = Query(
+            "active",
+            description=(
+                "Which memories to return: 'active' (default, dream-visible), "
+                "'hidden' (dream-flagged for review/deletion), or 'all'"
+            ),
+        ),
     ) -> dict[str, Any]:
-        """List memories with optional filters."""
+        """List memories with optional filters.
+
+        ``visibility`` selects the dream soft-delete scope and is applied to both
+        the page and its total so the count always matches the filtered rows.
+        """
         try:
             memories = server.memory_manager.list_memories(
                 project_id=project_id,
                 memory_type=memory_type,
                 limit=limit,
                 offset=offset,
+                visibility=visibility,
             )
-            total = server.memory_manager.count_memories(project_id=project_id)
+            total = server.memory_manager.count_memories(
+                project_id=project_id, visibility=visibility
+            )
             return {"memories": [m.to_dict() for m in memories], "total_memories": total}
         except Exception as e:
             logger.error(f"Failed to list memories: {e}")
@@ -537,6 +551,25 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         except Exception as e:
             logger.error(f"Failed to update memory {memory_id}: {e}")
             raise HTTPException(status_code=500, detail=str(e)) from e
+
+    @router.post("/{memory_id}/restore")
+    def restore_memory(memory_id: str) -> Any:
+        """Restore a soft-hidden (dream-flagged) memory to active visibility.
+
+        Returns the restored memory so callers can refresh from the response.
+        """
+        try:
+            server.memory_manager.restore_memory(memory_id)
+        except ValueError as e:
+            raise HTTPException(status_code=404, detail=str(e)) from e
+        except Exception as e:
+            logger.error(f"Failed to restore memory {memory_id}: {e}")
+            raise HTTPException(status_code=500, detail=str(e)) from e
+
+        memory = server.memory_manager.get_memory(memory_id)
+        if memory is None:
+            raise HTTPException(status_code=404, detail="Memory not found")
+        return memory.to_dict()
 
     @router.delete("/{memory_id}")
     async def delete_memory(memory_id: str) -> dict[str, Any]:

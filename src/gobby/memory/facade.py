@@ -266,6 +266,17 @@ class MemoryManagerFacadeMethods:
             await self._lifecycle_service.purge_secondary_indices(memory_id)
         return {"action": action, "purged": len(purged_ids), "memory_ids": purged_ids}
 
+    def restore_memory(self, memory_id: str, *, when: str | None = None) -> bool:
+        """Reactivate a soft-hidden (dream-flagged) memory.
+
+        Clears ``deleted_at``/``dream_action`` and stamps ``last_dreamed_at`` so the
+        row is visible to active reads again and is not immediately re-dreamed. The
+        secondary stores retain soft-hidden rows until purge, so flipping the primary
+        row's visibility is sufficient — no index reconcile is needed. Raises
+        ``ValueError`` if the memory does not exist.
+        """
+        return self.storage.restore_memory(memory_id, when=when)
+
     def list_memories(
         self,
         project_id: str | None = None,

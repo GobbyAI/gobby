@@ -187,6 +187,7 @@ class TestListMemories:
             memory_type="fact",
             limit=20,
             offset=0,
+            visibility="active",
         )
 
     def test_list_empty(self, client, mock_server) -> None:
@@ -195,6 +196,45 @@ class TestListMemories:
         response = client.get("/api/memories")
         assert response.status_code == 200
         assert response.json()["memories"] == []
+
+    def test_list_defaults_to_active_visibility(self, client, mock_server) -> None:
+        """Both the page and its total default to active visibility."""
+        mock_server.memory_manager.list_memories.return_value = []
+        mock_server.memory_manager.count_memories.return_value = 0
+        response = client.get("/api/memories")
+        assert response.status_code == 200
+        mock_server.memory_manager.list_memories.assert_called_once_with(
+            project_id=None,
+            memory_type=None,
+            limit=50,
+            offset=0,
+            visibility="active",
+        )
+        mock_server.memory_manager.count_memories.assert_called_once_with(
+            project_id=None, visibility="active"
+        )
+
+    @pytest.mark.parametrize("visibility", ["active", "hidden", "all"])
+    def test_list_visibility_passthrough(self, client, mock_server, visibility) -> None:
+        """visibility is threaded to the page and shared with the total."""
+        mock_server.memory_manager.list_memories.return_value = []
+        mock_server.memory_manager.count_memories.return_value = 7
+        response = client.get("/api/memories", params={"visibility": visibility})
+        assert response.status_code == 200
+        assert response.json()["total_memories"] == 7
+        assert (
+            mock_server.memory_manager.list_memories.call_args.kwargs["visibility"]
+            == visibility
+        )
+        mock_server.memory_manager.count_memories.assert_called_once_with(
+            project_id=None, visibility=visibility
+        )
+
+    def test_list_rejects_invalid_visibility(self, client, mock_server) -> None:
+        """An out-of-enum visibility value fails FastAPI validation with 422."""
+        response = client.get("/api/memories", params={"visibility": "bogus"})
+        assert response.status_code == 422
+        mock_server.memory_manager.list_memories.assert_not_called()
 
 
 # =============================================================================
@@ -314,6 +354,34 @@ class TestDeleteMemory:
         mock_server.memory_manager.delete_memory.return_value = False
         response = client.delete("/api/memories/nonexistent")
         assert response.status_code == 404
+
+
+class TestRestoreMemory:
+    """Test POST /memories/{id}/restore endpoint."""
+
+    def test_restore_returns_restored_memory(self, client, mock_server) -> None:
+        """POST /memories/{id}/restore un-hides the row and returns it."""
+        mock_server.memory_manager.restore_memory.return_value = True
+        mock_server.memory_manager.get_memory.return_value = _make_memory(id="mm-restored")
+        response = client.post("/api/memories/mm-restored/restore")
+        assert response.status_code == 200
+        assert response.json()["id"] == "mm-restored"
+        mock_server.memory_manager.restore_memory.assert_called_once_with("mm-restored")
+
+    def test_restore_not_found(self, client, mock_server) -> None:
+        """A missing memory raises ValueError in storage and surfaces as 404."""
+        mock_server.memory_manager.restore_memory.side_effect = ValueError(
+            "Memory nope not found"
+        )
+        response = client.post("/api/memories/nope/restore")
+        assert response.status_code == 404
+        mock_server.memory_manager.get_memory.assert_not_called()
+
+    def test_restore_server_error(self, client, mock_server) -> None:
+        """An unexpected storage failure surfaces as 500."""
+        mock_server.memory_manager.restore_memory.side_effect = RuntimeError("DB error")
+        response = client.post("/api/memories/mm-1/restore")
+        assert response.status_code == 500
 
 
 # =============================================================================

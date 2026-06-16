@@ -288,6 +288,36 @@ async def test_purge_dream_hidden_reconciles_qdrant_and_graph(manager, mock_vect
 
 
 @pytest.mark.asyncio
+async def test_restore_memory_unhides_dream_flagged_row(manager):
+    """Restoring a soft-hidden memory returns it to active visibility.
+
+    Secondary stores keep the row through soft-hide, so restore only flips the
+    primary row's visibility — the memory reappears in active reads with its
+    ``dream_action`` cleared.
+    """
+    memory = await manager.create_memory(content="still true fact")
+    manager.mark_dreamed(memory.id, hidden_as="review")
+
+    # Hidden: invisible to active reads, present under the hidden scope.
+    assert manager.get_memory(memory.id) is None
+    assert manager.get_memory(memory.id, visibility="hidden") is not None
+
+    assert manager.restore_memory(memory.id) is True
+
+    restored = manager.get_memory(memory.id)
+    assert restored is not None
+    assert restored.id == memory.id
+    assert manager.count_memories(visibility="hidden") == 0
+
+
+@pytest.mark.asyncio
+async def test_restore_memory_missing_raises(manager):
+    """Restoring an unknown memory id raises ValueError from storage."""
+    with pytest.raises(ValueError, match="not found"):
+        manager.restore_memory("does-not-exist")
+
+
+@pytest.mark.asyncio
 async def test_no_search_coordinator_import():
     """MemoryManager should not import SearchCoordinator."""
     import gobby.memory.manager as mod

@@ -372,6 +372,28 @@ def create_memory_registry(
             return {"success": False, "error": str(e)}
 
     @registry.tool(
+        name="restore_memory",
+        description="Restore a soft-hidden (dream-flagged) memory back to active visibility.",
+    )
+    def restore_memory(memory_id: str) -> dict[str, Any]:
+        """
+        Restore a dream-flagged (soft-hidden) memory to active visibility.
+
+        Hidden memories are excluded from agent reads and recall; restoring one
+        makes it visible again. Raises if the memory does not exist.
+
+        Args:
+            memory_id: The ID of the memory to restore
+        """
+        try:
+            memory_manager.restore_memory(memory_id)
+            return {"success": True}
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    @registry.tool(
         name="list_memories",
         description="List all memories with optional filtering. Supports tag-based filtering.",
     )
