@@ -530,6 +530,46 @@ fn grok_jsonl_session_routes_to_session_orchestrator() {
     assert!(raw_markdown.contains("hello"));
 }
 
+#[test]
+fn droid_jsonl_session_routes_to_session_orchestrator() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("droid.jsonl");
+    std::fs::write(
+        &file_path,
+        r#"{"type":"session_start","id":"session-1","title":"Droid Fixture","sessionTitle":"Droid Fixture","owner":"josh","version":2,"cwd":"/workspace","hostId":"host-1"}
+{"type":"message","id":"context-1","timestamp":"2026-06-16T20:08:00Z","visibility":"llm_only","message":{"role":"user","content":[{"type":"text","text":"<system-reminder>hidden</system-reminder>"}]}}
+{"type":"message","id":"user-1","timestamp":"2026-06-16T20:08:01Z","message":{"role":"user","content":[{"type":"text","text":"Reply with exactly OK."}]},"parentId":"context-1"}
+{"type":"message","id":"assistant-1","timestamp":"2026-06-16T20:08:02Z","message":{"role":"assistant","content":[{"type":"text","text":"OK"}]},"parentId":"user-1"}"#,
+    )
+    .expect("write Droid session jsonl");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+
+    let result = ingest_path(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-06-16T20:08:00Z",
+    )
+    .expect("ingest Droid session archive");
+
+    assert_eq!(result.record.kind, SourceKind::Session);
+    assert!(result.asset_path.is_none());
+    let raw_markdown =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("session markdown");
+    assert!(raw_markdown.contains("session_type: droid-cli"));
+    assert!(raw_markdown.contains("# Droid Fixture"));
+    assert!(raw_markdown.contains("Reply with exactly OK."));
+    assert!(raw_markdown.contains("### assistant"));
+    assert!(raw_markdown.contains("OK"));
+    assert!(!raw_markdown.contains("system-reminder"));
+}
+
 #[cfg(feature = "documents")]
 #[test]
 fn dispatches_office_html_to_document() {
