@@ -1,7 +1,7 @@
 //! Tree-sitter AST parsing for symbol, import, and call extraction.
 //! Ports logic from src/gobby/code_index/parser.py.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
 use anyhow::Context as _;
@@ -98,6 +98,7 @@ pub(crate) fn parse_file_with_semantic(
         &tree, &source, spec, language, &ts_lang, project_id, &rel_path,
     )?;
     link_parents(&mut symbols);
+    collapse_rust_impl_symbols(&mut symbols);
     let extracted_imports = extract_imports(
         &tree,
         &source,
@@ -260,6 +261,66 @@ fn link_parents(symbols: &mut [Symbol]) {
             }
         }
     }
+}
+
+fn collapse_rust_impl_symbols(symbols: &mut Vec<Symbol>) {
+    let canonical_types = symbols
+        .iter()
+        .filter(|symbol| {
+            symbol.language == "rust"
+                && (symbol.kind == "class" || symbol.kind == "type")
+                && !is_rust_impl_symbol(symbol)
+        })
+        .map(|symbol| {
+            (
+                (symbol.file_path.clone(), symbol.name.clone()),
+                (symbol.id.clone(), symbol.name.clone()),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    let impl_parent_map = symbols
+        .iter()
+        .filter(|symbol| is_rust_impl_symbol(symbol))
+        .map(|symbol| {
+            (
+                symbol.id.clone(),
+                canonical_types
+                    .get(&(symbol.file_path.clone(), symbol.name.clone()))
+                    .cloned(),
+            )
+        })
+        .collect::<HashMap<_, _>>();
+
+    if impl_parent_map.is_empty() {
+        return;
+    }
+
+    for symbol in symbols.iter_mut() {
+        let Some(parent_id) = symbol.parent_symbol_id.as_deref() else {
+            continue;
+        };
+        let Some(canonical_parent) = impl_parent_map.get(parent_id) else {
+            continue;
+        };
+        if let Some((canonical_id, canonical_name)) = canonical_parent {
+            symbol.parent_symbol_id = Some(canonical_id.clone());
+            symbol.qualified_name = format!("{canonical_name}::{}", symbol.name);
+        } else {
+            symbol.parent_symbol_id = None;
+            symbol.qualified_name = symbol.name.clone();
+        }
+    }
+
+    symbols.retain(|symbol| !is_rust_impl_symbol(symbol));
+}
+
+fn is_rust_impl_symbol(symbol: &Symbol) -> bool {
+    symbol.language == "rust"
+        && symbol.kind == "class"
+        && symbol.signature.as_deref().is_some_and(|signature| {
+            signature.starts_with("impl ") || signature.starts_with("unsafe impl ")
+        })
 }
 
 fn extract_docstring(node: &tree_sitter::Node, source: &[u8], language: &str) -> Option<String> {

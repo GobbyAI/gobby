@@ -382,6 +382,72 @@ name = "app"
 }
 
 #[test]
+fn rust_impl_blocks_do_not_emit_duplicate_type_symbols_and_parent_methods() {
+    let parsed = parse_rust(
+        r#"
+struct Parser;
+
+impl Parser {
+    fn new() -> Self {
+        Parser
+    }
+}
+
+impl Parser {
+    fn reset(&mut self) {}
+}
+"#,
+        &[(
+            "Cargo.toml",
+            r#"[package]
+name = "app"
+"#,
+        )],
+    );
+
+    let parser_symbols = parsed
+        .symbols
+        .iter()
+        .filter(|symbol| {
+            symbol.file_path == "src/main.rs"
+                && symbol.name == "Parser"
+                && (symbol.kind == "class" || symbol.kind == "type")
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        parser_symbols.len(),
+        1,
+        "Parser should have exactly one type symbol: {parser_symbols:?}"
+    );
+    let parser_id = parser_symbols[0].id.as_str();
+
+    for method_name in ["new", "reset"] {
+        let method = parsed
+            .symbols
+            .iter()
+            .find(|symbol| symbol.name == method_name && symbol.kind == "method")
+            .unwrap_or_else(|| panic!("missing {method_name} method"));
+        assert_eq!(method.parent_symbol_id.as_deref(), Some(parser_id));
+        assert_eq!(
+            method.qualified_name,
+            format!("Parser::{method_name}"),
+            "{method_name} should be qualified under the canonical Parser symbol"
+        );
+    }
+
+    assert!(
+        parsed.symbols.iter().all(|symbol| {
+            !symbol
+                .signature
+                .as_deref()
+                .is_some_and(|signature| signature.starts_with("impl Parser"))
+        }),
+        "impl blocks must not be emitted as symbols: {:?}",
+        parsed.symbols
+    );
+}
+
+#[test]
 fn classifies_rust_workspace_member_dependencies() {
     let parsed = parse_rust(
         r#"

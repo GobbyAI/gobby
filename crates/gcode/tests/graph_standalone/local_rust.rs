@@ -84,3 +84,88 @@ fn index_resolves_bare_rust_module_calls() {
         "sync-file must not introduce a phantom CALLS target"
     );
 }
+
+#[test]
+fn index_resolves_cross_file_rust_tuple_struct_construction() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-file Rust tuple-struct construction; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("src")).expect("create src");
+    fs::write(
+        project.path().join("Cargo.toml"),
+        "[package]\nname = \"rust-tuple-fixture\"\nversion = \"0.1.0\"\nedition = \"2021\"\n",
+    )
+    .expect("write Cargo.toml");
+    fs::write(
+        project.path().join("src/model.rs"),
+        "pub struct UserId(pub u64);\n\nimpl UserId {\n    pub fn raw(&self) -> u64 { self.0 }\n}\n",
+    )
+    .expect("write model.rs");
+    fs::write(
+        project.path().join("src/main.rs"),
+        "mod model;\n\nfn caller() {\n    let _ = model::UserId(7);\n}\n",
+    )
+    .expect("write main.rs");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": RUST_TUPLE_LOCAL_PROJECT_ID,
+            "name": "graph-standalone-rust-tuple-local",
+            "created_at": "2026-06-16T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    cleanup_project(&mut conn, RUST_TUPLE_LOCAL_PROJECT_ID).expect("cleanup Rust tuple project");
+    let _cleanup = ProjectCleanup::new(&env.database_url, RUST_TUPLE_LOCAL_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    let user_id = required_symbol_id(
+        &mut conn,
+        RUST_TUPLE_LOCAL_PROJECT_ID,
+        "src/model.rs",
+        "UserId",
+    );
+    assert_eq!(
+        resolved_call_target(
+            &mut conn,
+            RUST_TUPLE_LOCAL_PROJECT_ID,
+            "src/main.rs",
+            "UserId"
+        ),
+        Some(user_id.clone()),
+        "tuple-struct construction must resolve to the canonical type symbol"
+    );
+
+    let duplicate_count: i64 = conn
+        .query_one(
+            "SELECT COUNT(*)
+             FROM code_symbols
+             WHERE project_id = $1 AND file_path = 'src/model.rs'
+               AND name = 'UserId' AND kind IN ('class', 'type')",
+            &[&RUST_TUPLE_LOCAL_PROJECT_ID],
+        )
+        .expect("count UserId symbols")
+        .get(0);
+    assert_eq!(duplicate_count, 1, "UserId must have one type symbol");
+
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_caller_present(&env, project.path(), "UserId", "caller", "after rebuild");
+
+    let mut graph = phantom_graph_client(&env);
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, RUST_TUPLE_LOCAL_PROJECT_ID, &user_id),
+        "the tuple-struct target must be a defined, called CodeSymbol"
+    );
+}
