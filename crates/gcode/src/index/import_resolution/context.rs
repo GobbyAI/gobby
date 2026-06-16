@@ -43,6 +43,13 @@ pub struct ImportResolutionContext {
     /// `using X = Ns.Type;` then `X.M()`, or a namespace-imported `using Ns;`
     /// then `Type.M()`. The post-write DB pass narrows to the real symbol.
     pub(super) csharp_type_files: HashMap<String, Vec<String>>,
+    /// Maps a locally-declared Kotlin package (`com.example`) to the
+    /// project-relative files declaring it. A local import `import com.example.X`
+    /// resolves `X()`/`X.m()` against these files. Kotlin is package-granular:
+    /// file names need not match declared types, and top-level functions live at
+    /// package scope, so a name can be in any file of its package. The post-write
+    /// DB pass narrows to the real symbol.
+    pub(super) kotlin_package_files: HashMap<String, Vec<String>>,
     pub(super) php_local_symbols: HashSet<String>,
     pub(super) ruby_local_constant_roots: HashSet<String>,
     pub(super) ruby_require_root_overrides: HashMap<String, String>,
@@ -131,6 +138,17 @@ impl ImportResolutionContext {
     pub(super) fn csharp_type_files(&self, type_path: &str) -> Vec<String> {
         self.csharp_type_files
             .get(type_path)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Project-relative files declaring the local Kotlin `package`. Empty when no
+    /// indexed local file declares that package (an external import, or an
+    /// unknown package — e.g. a `pkg.Type.member` import whose package portion
+    /// `pkg.Type` is a type, not a declared package).
+    pub(super) fn kotlin_package_files(&self, package: &str) -> Vec<String> {
+        self.kotlin_package_files
+            .get(package)
             .cloned()
             .unwrap_or_default()
     }
@@ -300,6 +318,7 @@ pub fn build_import_resolution_context_with_overrides(
         java_class_files: java_index.class_files,
         csharp_local_roots: csharp_index.local_roots,
         csharp_type_files: csharp_index.type_files,
+        kotlin_package_files: build_kotlin_package_files(root_path, candidate_files),
         php_local_symbols: build_php_local_symbol_index(candidate_files),
         ruby_local_constant_roots: build_ruby_local_constant_roots(candidate_files),
         ruby_require_root_overrides,
@@ -709,6 +728,72 @@ pub(super) fn build_csharp_index(root_path: &Path, candidate_files: &[PathBuf]) 
         local_roots,
         type_files,
     }
+}
+
+/// Maps each locally-declared Kotlin package to the project-relative files that
+/// declare it, by reading every `.kt`/`.kts` file's leading `package`
+/// declaration. A file with no `package` line belongs to the root package
+/// (empty-string key). Files share a package freely (Kotlin packages are not
+/// file-granular), so an import `import pkg.Name` resolves `Name` against any
+/// file in `pkg`; the post-write DB pass narrows to the real symbol.
+pub(super) fn build_kotlin_package_files(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> HashMap<String, Vec<String>> {
+    let mut package_files = candidate_files
+        .par_iter()
+        .filter_map(|path| {
+            let ext = path
+                .extension()
+                .and_then(|ext| ext.to_str())
+                .unwrap_or_default();
+            if ext != "kt" && ext != "kts" {
+                return None;
+            }
+            let file = File::open(path).ok()?;
+            let rel = path.strip_prefix(root_path).unwrap_or(path);
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            // The `package` header is the first substantive element of a Kotlin
+            // file (after optional file annotations and comments). Stop at the
+            // first real line so a later string/identifier containing "package "
+            // cannot be mistaken for the declaration; absent a header, the file
+            // is in the root package.
+            let mut package = String::new();
+            for line in BufReader::new(file).lines().map_while(Result::ok) {
+                let line = line.trim();
+                if line.is_empty()
+                    || line.starts_with("//")
+                    || line.starts_with("/*")
+                    || line.starts_with('*')
+                    || line.starts_with('@')
+                {
+                    continue;
+                }
+                if let Some(rest) = line.strip_prefix("package ") {
+                    package = rest.trim().trim_end_matches(';').trim().to_string();
+                }
+                break;
+            }
+            Some((package, rel_str))
+        })
+        .fold(
+            HashMap::<String, Vec<String>>::new,
+            |mut acc, (package, rel)| {
+                acc.entry(package).or_default().push(rel);
+                acc
+            },
+        )
+        .reduce(HashMap::<String, Vec<String>>::new, |mut acc, map| {
+            for (package, files) in map {
+                acc.entry(package).or_default().extend(files);
+            }
+            acc
+        });
+    for files in package_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    package_files
 }
 
 pub(super) fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashSet<String> {

@@ -1,8 +1,10 @@
 use crate::models::ImportRelation;
 
-use super::super::context::{ExternalImportBinding, ExtractedImports, ImportResolutionContext};
+use super::super::context::{
+    ExternalImportBinding, ExtractedImports, ImportResolutionContext, LocalCallBinding,
+};
 use super::super::helpers::{split_alias, split_rust_use_group, split_top_level};
-use super::super::predicates::{is_external_java_class, is_external_php_symbol};
+use super::super::predicates::is_external_php_symbol;
 
 pub(crate) fn php_local_symbol_exists(
     import_context: &ImportResolutionContext,
@@ -76,31 +78,64 @@ pub(crate) fn parse_kotlin_import_statement(
         return;
     };
 
-    let target = rest
-        .split_once(" as ")
-        .map(|(target, _)| target.trim())
-        .unwrap_or_else(|| rest.trim())
-        .trim_end_matches(';')
-        .trim();
+    let (target, explicit_alias) = match rest.split_once(" as ") {
+        Some((target, alias)) => (
+            target.trim(),
+            Some(alias.trim().trim_end_matches(';').trim()),
+        ),
+        None => (rest.trim().trim_end_matches(';').trim(), None),
+    };
 
     extracted.imports.push(ImportRelation {
         file_path: rel_path.to_string(),
         module_name: target.to_string(),
     });
 
-    if target.ends_with(".*") || !is_external_java_class(target, import_context) {
+    // A wildcard import (`import pkg.*`) brings a whole package into scope;
+    // resolving bare-call members of a wildcard is risky for phantom edges, so
+    // it is left out of scope (unresolved, no false edge).
+    if target.ends_with(".*") {
         return;
     }
 
-    let class_alias = rest
-        .split_once(" as ")
-        .map(|(_, alias)| alias.trim())
+    // The import names `pkg.Name`: the last segment is the imported symbol, the
+    // rest is its package. A degenerate single-segment import names nothing.
+    let Some((package, simple_name)) = target.rsplit_once('.') else {
+        return;
+    };
+    let alias = explicit_alias
         .filter(|alias| !alias.is_empty())
-        .unwrap_or_else(|| target.rsplit('.').next().unwrap_or(target));
+        .unwrap_or(simple_name);
+
+    let candidate_files = import_context.kotlin_package_files(package);
+    if candidate_files.is_empty() {
+        // External (or unknown) import: bind the alias on the member channel so a
+        // qualified call `Alias.member()` still records an external target.
+        extracted
+            .bindings
+            .member
+            .insert(alias.to_string(), target.to_string());
+        return;
+    }
+
+    // Local import: bind the alias for both a member call (`Alias.m()` resolves
+    // the method against the package files) and a bare call (`Alias()` for a
+    // class constructor, or a top-level `name()` function). `callee_name` is the
+    // imported simple name, not the alias. The post-write DB pass narrows the
+    // candidate file(s) to a real id (or degrades to unresolved).
+    extracted.bindings.bare.remove(alias);
+    extracted.bindings.member.remove(alias);
     extracted
         .bindings
-        .member
-        .insert(class_alias.to_string(), target.to_string());
+        .local_member
+        .insert(alias.to_string(), candidate_files.clone());
+    extracted.bindings.local_bare.insert(
+        alias.to_string(),
+        LocalCallBinding {
+            candidate_files,
+            callee_name: simple_name.to_string(),
+        },
+    );
 }
 
 fn register_php_import_item(
