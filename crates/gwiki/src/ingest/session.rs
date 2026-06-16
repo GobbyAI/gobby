@@ -3,6 +3,10 @@ use std::path::{Path, PathBuf};
 use serde::Deserialize;
 use serde_json::Value;
 
+mod codex;
+
+use codex::CODEX_SESSION_ADAPTER;
+
 use crate::WikiError;
 use crate::ingest::{
     IngestResult, markdown_metadata, markdown_title, single_line, text_from_utf8_lossy,
@@ -162,8 +166,12 @@ fn normalize_session_archive_value(value: Value) -> Result<SessionArchiveEnvelop
     })
 }
 
-fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 2] {
-    [&COMMON_SESSION_ADAPTER, &CLAUDE_CODE_ADAPTER]
+fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 3] {
+    [
+        &COMMON_SESSION_ADAPTER,
+        &CLAUDE_CODE_ADAPTER,
+        &CODEX_SESSION_ADAPTER,
+    ]
 }
 
 static COMMON_SESSION_ADAPTER: CommonSessionAdapter = CommonSessionAdapter;

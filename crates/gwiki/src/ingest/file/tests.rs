@@ -406,6 +406,50 @@ fn raw_claude_jsonl_session_routes_to_session_orchestrator() {
     assert!(raw_markdown.contains("call trace"));
 }
 
+#[test]
+fn codex_jsonl_session_routes_to_session_orchestrator() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("codex.jsonl");
+    std::fs::write(
+        &file_path,
+        r#"{"type":"session_meta","timestamp":"2026-06-16T20:00:00Z","payload":{"originator":"codex-tui","timestamp":"2026-06-16T20:00:00Z"}}
+{"type":"event_msg","timestamp":"2026-06-16T20:00:01Z","payload":{"type":"user_message","message":"Trace the startup path."}}
+{"type":"response_item","timestamp":"2026-06-16T20:00:02Z","payload":{"type":"message","role":"assistant","phase":"commentary","content":[{"type":"output_text","text":"I will trace it."}]}}
+{"type":"response_item","timestamp":"2026-06-16T20:00:03Z","payload":{"type":"function_call","name":"exec_command","call_id":"call_1","arguments":"{\"cmd\":\"pwd\"}"}}
+{"type":"response_item","timestamp":"2026-06-16T20:00:04Z","payload":{"type":"function_call_output","call_id":"call_1","output":"Output:\n/workspace\n"}}"#,
+    )
+    .expect("write Codex session jsonl");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+
+    let result = ingest_path(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-06-16T20:05:00Z",
+    )
+    .expect("ingest Codex session archive");
+
+    assert_eq!(result.record.kind, SourceKind::Session);
+    assert!(result.asset_path.is_none());
+    let raw_markdown =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("session markdown");
+    assert!(raw_markdown.contains("session_type: codex-tui"));
+    assert!(raw_markdown.contains("# Codex session"));
+    assert!(raw_markdown.contains("Trace the startup path."));
+    assert!(raw_markdown.contains("### assistant (commentary)"));
+    assert!(raw_markdown.contains("I will trace it."));
+    assert!(raw_markdown.contains("### tool call"));
+    assert!(raw_markdown.contains("Function call: exec_command"));
+    assert!(raw_markdown.contains("### tool result"));
+    assert!(raw_markdown.contains("/workspace"));
+}
+
 #[cfg(feature = "documents")]
 #[test]
 fn dispatches_office_html_to_document() {
