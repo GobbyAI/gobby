@@ -489,6 +489,47 @@ fn gemini_jsonl_session_routes_to_session_orchestrator() {
     assert!(raw_markdown.contains("OK"));
 }
 
+#[test]
+fn grok_jsonl_session_routes_to_session_orchestrator() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("grok.jsonl");
+    std::fs::write(
+        &file_path,
+        r#"{"type":"user","content":[{"type":"text","text":"Run the command."}]}
+{"type":"assistant","content":"","model_id":"grok-build","tool_calls":[{"id":"call_1","name":"run_terminal_command","arguments":{"command":"echo hello"}}]}
+{"type":"tool_result","tool_call_id":"call_1","content":"exit: 0\nhello\n"}
+{"type":"assistant","content":"exit: 0\nhello","model_id":"grok-build"}"#,
+    )
+    .expect("write Grok session jsonl");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+
+    let result = ingest_path(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-06-16T20:07:00Z",
+    )
+    .expect("ingest Grok session archive");
+
+    assert_eq!(result.record.kind, SourceKind::Session);
+    assert!(result.asset_path.is_none());
+    let raw_markdown =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("session markdown");
+    assert!(raw_markdown.contains("session_type: grok-cli"));
+    assert!(raw_markdown.contains("# Grok session"));
+    assert!(raw_markdown.contains("Run the command."));
+    assert!(raw_markdown.contains("### tool call"));
+    assert!(raw_markdown.contains("run_terminal_command"));
+    assert!(raw_markdown.contains("### tool result"));
+    assert!(raw_markdown.contains("hello"));
+}
+
 #[cfg(feature = "documents")]
 #[test]
 fn dispatches_office_html_to_document() {

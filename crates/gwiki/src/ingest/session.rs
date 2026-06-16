@@ -5,9 +5,11 @@ use serde_json::Value;
 
 mod codex;
 mod gemini;
+mod grok;
 
 use codex::CODEX_SESSION_ADAPTER;
 use gemini::GEMINI_SESSION_ADAPTER;
+use grok::GROK_SESSION_ADAPTER;
 
 use crate::WikiError;
 use crate::ingest::{
@@ -50,6 +52,13 @@ pub(crate) struct SessionArchiveEnvelope {
 
 pub(crate) trait SessionTranscriptAdapter {
     fn supports(&self, envelope_type: &str) -> bool;
+
+    fn supports_archive(&self, envelopes: &[SessionArchiveEnvelope]) -> bool {
+        envelopes
+            .iter()
+            .any(|envelope| self.supports(&envelope.envelope_type))
+    }
+
     fn parse(&self, envelopes: &[SessionArchiveEnvelope]) -> Result<ParsedSession, WikiError>;
 }
 
@@ -90,11 +99,11 @@ pub(crate) fn parse_session_archive(
     envelopes: &[SessionArchiveEnvelope],
     adapters: &[&dyn SessionTranscriptAdapter],
 ) -> Result<ParsedSession, WikiError> {
-    let Some(adapter) = adapters.iter().copied().find(|adapter| {
-        envelopes
-            .iter()
-            .any(|envelope| adapter.supports(&envelope.envelope_type))
-    }) else {
+    let Some(adapter) = adapters
+        .iter()
+        .copied()
+        .find(|adapter| adapter.supports_archive(envelopes))
+    else {
         let types = envelopes
             .iter()
             .map(|envelope| envelope.envelope_type.as_str())
@@ -168,9 +177,10 @@ fn normalize_session_archive_value(value: Value) -> Result<SessionArchiveEnvelop
     })
 }
 
-fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 4] {
+fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 5] {
     [
         &COMMON_SESSION_ADAPTER,
+        &GROK_SESSION_ADAPTER,
         &CLAUDE_CODE_ADAPTER,
         &CODEX_SESSION_ADAPTER,
         &GEMINI_SESSION_ADAPTER,
