@@ -133,7 +133,7 @@ fn php_local_fully_qualified_function_stays_unresolved() {
 }
 
 #[test]
-fn php_local_symbol_index_normalizes_declared_names_to_lowercase() {
+fn php_symbol_files_normalize_declared_names_to_lowercase_and_track_files() {
     let tempdir = TempDir::new().expect("tempdir");
     let path = tempdir.path().join("Mailer.php");
     fs::write(
@@ -142,10 +142,15 @@ fn php_local_symbol_index_normalizes_declared_names_to_lowercase() {
     )
     .expect("write php file");
 
-    let symbols = build_php_local_symbol_index(&[path]);
+    let symbol_files = build_php_symbol_files(tempdir.path(), &[path]);
 
-    assert!(symbols.contains(r"app\services\mailer"));
-    assert!(symbols.contains(r"app\services\render"));
-    assert!(!symbols.contains(r"App\Services\Mailer"));
-    assert!(!symbols.contains(r"App\Services\Render"));
+    assert!(symbol_files.contains_key(r"app\services\mailer"));
+    assert!(symbol_files.contains_key(r"app\services\render"));
+    assert!(symbol_files.contains_key("mailer"));
+    assert!(!symbol_files.contains_key(r"App\Services\Mailer"));
+    assert!(!symbol_files.contains_key(r"App\Services\Render"));
+    assert_eq!(
+        symbol_files.get(r"app\services\mailer").map(Vec::as_slice),
+        Some(["Mailer.php".to_string()].as_slice())
+    );
 }

@@ -51,6 +51,14 @@ pub struct ImportResolutionContext {
     /// DB pass narrows to the real symbol.
     pub(super) kotlin_package_files: HashMap<String, Vec<String>>,
     pub(super) php_local_symbols: HashSet<String>,
+    /// Maps a locally-declared PHP symbol name to the project-relative files that
+    /// declare it. Both the bare name (`Widget`, `helper`) and the
+    /// namespace-qualified name (`App\Widget`) are keyed, lowercased because PHP
+    /// class/function names are case-insensitive. A `use`-imported local class
+    /// resolves `Widget::m()` / `new Widget()` against these files, and a
+    /// fully-qualified `\Ns\Class::method()` resolves its class path here. The
+    /// post-write DB pass narrows the candidates to the real symbol.
+    pub(super) php_symbol_files: HashMap<String, Vec<String>>,
     pub(super) ruby_local_constant_roots: HashSet<String>,
     /// Maps a locally-declared Ruby constant root (`Widget`, the first `::`
     /// segment of a `class`/`module` name) to the project-relative files that
@@ -156,6 +164,17 @@ impl ImportResolutionContext {
     pub(super) fn kotlin_package_files(&self, package: &str) -> Vec<String> {
         self.kotlin_package_files
             .get(package)
+            .cloned()
+            .unwrap_or_default()
+    }
+
+    /// Project-relative files declaring the local PHP class/function named
+    /// `name`. Accepts a bare name or a namespace-qualified name, with or without
+    /// a leading `\`; matching is case-insensitive. Empty when no indexed local
+    /// file declares it (an external/vendor symbol, or an unknown name).
+    pub(super) fn php_candidate_files(&self, name: &str) -> Vec<String> {
+        self.php_symbol_files
+            .get(&name.trim_start_matches('\\').to_ascii_lowercase())
             .cloned()
             .unwrap_or_default()
     }
@@ -321,6 +340,7 @@ pub fn build_import_resolution_context_with_overrides(
     let java_index = build_java_class_index(root_path, candidate_files);
     let csharp_index = build_csharp_index(root_path, candidate_files);
     let ruby_constant_files = build_ruby_constant_files(root_path, candidate_files);
+    let php_symbol_files = build_php_symbol_files(root_path, candidate_files);
     ImportResolutionContext {
         python_modules: build_python_module_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
@@ -334,7 +354,8 @@ pub fn build_import_resolution_context_with_overrides(
         csharp_local_roots: csharp_index.local_roots,
         csharp_type_files: csharp_index.type_files,
         kotlin_package_files: build_kotlin_package_files(root_path, candidate_files),
-        php_local_symbols: build_php_local_symbol_index(candidate_files),
+        php_local_symbols: php_symbol_files.keys().cloned().collect(),
+        php_symbol_files,
         ruby_local_constant_roots: ruby_constant_files.keys().cloned().collect(),
         ruby_constant_files,
         ruby_require_root_overrides,
@@ -812,22 +833,28 @@ pub(super) fn build_kotlin_package_files(
     package_files
 }
 
-pub(super) fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashSet<String> {
-    candidate_files
+pub(super) fn build_php_symbol_files(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> HashMap<String, Vec<String>> {
+    let mut symbol_files = candidate_files
         .par_iter()
-        .map(|path| {
-            let mut symbols = HashSet::new();
+        .filter_map(|path| {
             let ext = path
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .unwrap_or_default();
             if ext != "php" {
-                return symbols;
+                return None;
             }
-            let Ok(file) = File::open(path) else {
-                return symbols;
-            };
+            let file = File::open(path).ok()?;
+            let rel = path.strip_prefix(root_path).unwrap_or(path);
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            // A symbol is keyed under both its bare name and (when the file
+            // declares a namespace) its `namespace\name` qualified form, both
+            // lowercased because PHP class/function names are case-insensitive.
             let mut namespace = None;
+            let mut names = HashSet::new();
             for line in BufReader::new(file).lines().map_while(Result::ok) {
                 let line = line.trim();
                 if namespace.is_none() {
@@ -836,21 +863,40 @@ pub(super) fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashS
                         .map(|rest| rest.trim().trim_end_matches([';', '{']).to_string());
                 }
                 for name in php_declared_symbols(line) {
-                    symbols.insert(name.to_ascii_lowercase());
+                    names.insert(name.to_ascii_lowercase());
                     if let Some(namespace) = namespace.as_deref()
                         && !namespace.is_empty()
                     {
-                        let qualified = format!("{namespace}\\{name}");
-                        symbols.insert(qualified.to_ascii_lowercase());
+                        names.insert(format!("{namespace}\\{name}").to_ascii_lowercase());
                     }
                 }
             }
-            symbols
+            if names.is_empty() {
+                None
+            } else {
+                Some((rel_str, names))
+            }
         })
-        .reduce(HashSet::new, |mut all, symbols| {
-            all.extend(symbols);
+        .fold(
+            HashMap::<String, Vec<String>>::new,
+            |mut acc, (rel, names)| {
+                for name in names {
+                    acc.entry(name).or_default().push(rel.clone());
+                }
+                acc
+            },
+        )
+        .reduce(HashMap::<String, Vec<String>>::new, |mut all, map| {
+            for (name, files) in map {
+                all.entry(name).or_default().extend(files);
+            }
             all
-        })
+        });
+    for files in symbol_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    symbol_files
 }
 
 pub(super) fn build_ruby_constant_files(

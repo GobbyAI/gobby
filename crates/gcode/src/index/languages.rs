@@ -145,6 +145,7 @@ const PHP: LanguageSpec = LanguageSpec {
         (function_call_expression function: (qualified_name) @name) @call
         (scoped_call_expression scope: [(name) (qualified_name)] name: (name) @name) @call
         (member_call_expression name: (name) @name) @call
+        (object_creation_expression [(name) (qualified_name)] @name) @call
     "#,
 };
 

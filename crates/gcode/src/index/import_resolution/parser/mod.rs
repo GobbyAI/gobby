@@ -278,6 +278,38 @@ pub(crate) fn resolve_ruby_local_member_callee(
     })
 }
 
+/// Resolve a fully-qualified PHP static call (`\Ns\Class::method()`) against the
+/// file(s) that locally declare the qualifier's class. A PHP `\Ns\Class`
+/// qualifier *is* the class, so it is looked up directly in `php_symbol_files`
+/// (case-insensitively, since PHP class names are case-insensitive). A bare
+/// `Class::m()` is left to the `use`-provenance `local_member` channel, so this
+/// resolver only fires when the qualifier is namespace-qualified. Returns `None`
+/// (leaving the call unresolved) when the class is not locally declared. The
+/// post-write DB pass narrows the candidate file(s) to the real method symbol,
+/// so a non-local qualifier can never produce a false edge.
+pub(crate) fn resolve_php_local_member_callee(
+    import_context: &ImportResolutionContext,
+    callee_name: &str,
+    qualifier_path: Option<&str>,
+    is_member_call: bool,
+) -> Option<LocalCallBinding> {
+    if !is_member_call {
+        return None;
+    }
+    let class_path = qualifier_path?.trim_start_matches('\\');
+    if !class_path.contains('\\') {
+        return None;
+    }
+    let candidate_files = import_context.php_candidate_files(class_path);
+    if candidate_files.is_empty() {
+        return None;
+    }
+    Some(LocalCallBinding {
+        candidate_files,
+        callee_name: callee_name.to_string(),
+    })
+}
+
 pub(crate) fn resolve_rust_local_qualified_callee(
     import_context: &ImportResolutionContext,
     rel_path: &str,

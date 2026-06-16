@@ -5,7 +5,7 @@ pub(super) use std::collections::{HashMap, HashSet};
 pub(super) use tempfile::TempDir;
 
 pub(super) use super::super::context::{
-    build_php_local_symbol_index, load_dart_external_packages, load_elixir_dependency_names,
+    build_php_symbol_files, load_dart_external_packages, load_elixir_dependency_names,
     load_js_external_packages, load_rust_external_crates, load_rust_self_crate_name,
 };
 pub(super) use super::super::helpers::{

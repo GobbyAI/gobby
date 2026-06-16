@@ -258,6 +258,7 @@ const JAVA_LOCAL_PROJECT_ID: &str = "graph-standalone-java-local";
 const CSHARP_LOCAL_PROJECT_ID: &str = "graph-standalone-csharp-local";
 const KOTLIN_LOCAL_PROJECT_ID: &str = "graph-standalone-kotlin-local";
 const RUBY_LOCAL_PROJECT_ID: &str = "graph-standalone-ruby-local";
+const PHP_LOCAL_PROJECT_ID: &str = "graph-standalone-php-local";
 
 /// End-to-end check for the post-write local-import resolution (#790): indexing
 /// a two-file Python project must resolve the cross-file calls in `b.py` to the
@@ -945,6 +946,136 @@ fn index_resolves_cross_file_local_ruby_calls() {
     assert_caller_present(&env, project.path(), "build", "run", "after sync-file");
     assert_eq!(
         phantom_call_target_count(&mut graph, RUBY_LOCAL_PROJECT_ID),
+        0,
+        "sync-file must not introduce a phantom CALLS target"
+    );
+}
+
+/// End-to-end proof that cross-file local PHP call targets resolve to real symbol
+/// ids and project as DEFINES-linked CALLS edges. Exercises the three shapes the
+/// task calls out — a `use`-imported static member call (`Widget::build()`), a
+/// constructor (`new Widget()`, which resolves the class), and a fully-qualified
+/// static call (`\App\Service::dispatch()`) — across the index, rebuild, and
+/// sync-file paths. No target may be a phantom CALLS node.
+#[test]
+fn index_resolves_cross_file_local_php_calls() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-file PHP local-call resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("src")).expect("create src");
+    fs::write(
+        project.path().join("src/Widget.php"),
+        "<?php\nnamespace App;\n\nclass Widget {\n    public static function build($kind) {}\n}\n",
+    )
+    .expect("write Widget.php");
+    fs::write(
+        project.path().join("src/Service.php"),
+        "<?php\nnamespace App;\n\nclass Service {\n    public static function dispatch() {}\n}\n",
+    )
+    .expect("write Service.php");
+    fs::write(
+        project.path().join("src/main.php"),
+        "<?php\nnamespace App;\n\nuse App\\Widget;\n\nfunction run() {\n    Widget::build(\"box\");\n    new Widget();\n    \\App\\Service::dispatch();\n}\n",
+    )
+    .expect("write main.php");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": PHP_LOCAL_PROJECT_ID,
+            "name": "graph-standalone-php-local",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, PHP_LOCAL_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    let widget_file = "src/Widget.php";
+    let service_file = "src/Service.php";
+    let main_file = "src/main.php";
+    let build_id = required_symbol_id(&mut conn, PHP_LOCAL_PROJECT_ID, widget_file, "build");
+    let widget_id = required_symbol_id(&mut conn, PHP_LOCAL_PROJECT_ID, widget_file, "Widget");
+    let dispatch_id = required_symbol_id(&mut conn, PHP_LOCAL_PROJECT_ID, service_file, "dispatch");
+
+    // The `use`-imported static call resolves to the method symbol, the
+    // constructor resolves to the class symbol, and the fully-qualified static
+    // call resolves to the method in its namespaced file.
+    assert_eq!(
+        resolved_call_target(&mut conn, PHP_LOCAL_PROJECT_ID, main_file, "build"),
+        Some(build_id.clone()),
+        "PHP static member call did not resolve to the canonical method"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, PHP_LOCAL_PROJECT_ID, main_file, "Widget"),
+        Some(widget_id.clone()),
+        "PHP constructor call did not resolve to the canonical class"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, PHP_LOCAL_PROJECT_ID, main_file, "dispatch"),
+        Some(dispatch_id.clone()),
+        "PHP fully-qualified static call did not resolve to the canonical method"
+    );
+    assert_eq!(
+        pending_local_import_count(&mut conn, PHP_LOCAL_PROJECT_ID),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Projection path 1+2: rebuild from resolved PostgreSQL facts, then every
+    // cross-file caller must be reachable and each target must be a real
+    // DEFINES-linked node (no phantom CALLS target).
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_caller_present(&env, project.path(), "build", "run", "after rebuild");
+    assert_caller_present(&env, project.path(), "Widget", "run", "after rebuild");
+    assert_caller_present(&env, project.path(), "dispatch", "run", "after rebuild");
+
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, PHP_LOCAL_PROJECT_ID),
+        0,
+        "no CALLS target may lack a DEFINES edge after rebuild"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, PHP_LOCAL_PROJECT_ID, &build_id),
+        "the resolved PHP method target must be a defined, called CodeSymbol"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, PHP_LOCAL_PROJECT_ID, &widget_id),
+        "the resolved PHP class target must be a defined, called CodeSymbol"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, PHP_LOCAL_PROJECT_ID, &dispatch_id),
+        "the resolved PHP fully-qualified method target must be a defined, called CodeSymbol"
+    );
+
+    let blast = json_command(&env, project.path(), &["blast-radius", "build"]);
+    assert!(
+        blast.get("center").is_some(),
+        "blast-radius should report a center: {blast}"
+    );
+
+    // Projection path 3: sync-file must recreate the same canonical edges.
+    let sync = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", main_file],
+    );
+    assert_success(sync, "graph sync-file main.php");
+    assert_caller_present(&env, project.path(), "build", "run", "after sync-file");
+    assert_eq!(
+        phantom_call_target_count(&mut graph, PHP_LOCAL_PROJECT_ID),
         0,
         "sync-file must not introduce a phantom CALLS target"
     );

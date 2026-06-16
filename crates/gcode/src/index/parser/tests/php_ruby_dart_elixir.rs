@@ -23,6 +23,29 @@ macro_rules! assert_ruby_local_import {
     }};
 }
 
+/// Asserts a `local_import` call exists for `$callee_name` whose carried
+/// candidate files include `$expected_file`. The post-write DB pass narrows
+/// these candidates to the real `code_symbols` id.
+macro_rules! assert_php_local_import {
+    ($parsed:expr, $callee_name:expr, $expected_file:expr) => {{
+        let callee_name: &str = $callee_name;
+        let call = $parsed
+            .calls
+            .iter()
+            .find(|call| {
+                call.callee_target_kind.as_str() == "local_import"
+                    && call.callee_name == callee_name
+            })
+            .unwrap_or_else(|| panic!("missing local_import call for {callee_name}"));
+        let candidates = call.local_import_candidate_files();
+        assert!(
+            candidates.iter().any(|file| file == $expected_file),
+            "candidate files {candidates:?} did not contain {}",
+            $expected_file
+        );
+    }};
+}
+
 #[test]
 fn classifies_external_php_namespace_and_fully_qualified_calls() {
     let parsed = parse_php(
@@ -95,7 +118,97 @@ function run() {
 }
 
 #[test]
-fn leaves_php_dynamic_member_and_local_import_calls_unresolved() {
+fn resolves_local_php_use_imported_member_constructor_and_function_calls() {
+    let parsed = parse_php(
+        r#"
+<?php
+namespace App;
+
+use App\Widget;
+use App\Widget as Gadget;
+use function App\helpers\format_label as label;
+
+function run() {
+    Widget::build("box");
+    new Gadget();
+    label("hi");
+}
+"#,
+        &[
+            (
+                "src/Widget.php",
+                r#"
+<?php
+namespace App;
+
+class Widget {
+    public static function build($kind) {}
+}
+"#,
+            ),
+            (
+                "src/helpers.php",
+                r#"
+<?php
+namespace App\helpers;
+
+function format_label($text) {}
+"#,
+            ),
+        ],
+    );
+
+    // `Widget::build()` resolves the static method via the local member channel.
+    assert_php_local_import!(&parsed, "build", "src/Widget.php");
+    // `new Gadget()` (aliased `use App\Widget as Gadget`) resolves to the class
+    // itself via the constructor/bare channel, carrying the real class name.
+    assert_php_local_import!(&parsed, "Widget", "src/Widget.php");
+    // `label()` (aliased `use function App\helpers\format_label as label`)
+    // resolves to the real function name.
+    assert_php_local_import!(&parsed, "format_label", "src/helpers.php");
+}
+
+#[test]
+fn resolves_case_insensitive_php_fully_qualified_static_calls() {
+    let parsed = parse_php(
+        r#"
+<?php
+namespace App\Services;
+
+function run() {
+    \APP\SERVICES\Mailer::deliver();
+    \app\services\render();
+}
+"#,
+        &[(
+            "src/Services/Mailer.php",
+            r#"
+<?php
+namespace App\Services;
+
+class Mailer {
+    public static function deliver() {}
+}
+function render() {}
+"#,
+        )],
+    );
+
+    // PHP class names are case-insensitive, so the mis-cased fully-qualified
+    // static call still resolves against the declaring file.
+    assert_php_local_import!(&parsed, "deliver", "src/Services/Mailer.php");
+    // A namespaced free-function call has a namespace-only qualifier (not a
+    // declared class), so it is left to same-file/unresolved handling.
+    let render = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "render")
+        .expect("render call");
+    assert_eq!(render.callee_target_kind.as_str(), "unresolved");
+}
+
+#[test]
+fn leaves_php_dynamic_and_unknown_calls_unresolved() {
     let parsed = parse_php(
         r#"
 <?php
@@ -105,7 +218,6 @@ use App\Local\Client;
 
 function run($obj) {
     $obj->connect();
-    Client::connect();
     \missing();
     missing();
 }
@@ -121,38 +233,8 @@ class Client {}
         )],
     );
 
-    assert!(
-        parsed
-            .calls
-            .iter()
-            .all(|call| call.callee_target_kind.as_str() == "unresolved")
-    );
-}
-
-#[test]
-fn leaves_case_insensitive_php_local_symbols_unresolved() {
-    let parsed = parse_php(
-        r#"
-<?php
-namespace App\Services;
-
-function run() {
-    \APP\SERVICES\MAILER::send();
-    \app\services\render();
-}
-"#,
-        &[(
-            "src/Services/Mailer.php",
-            r#"
-<?php
-namespace App\Services;
-
-class Mailer {}
-function render() {}
-"#,
-        )],
-    );
-
+    // A dynamic instance call (`$obj->`) and calls to undeclared symbols never
+    // resolve, even though `Client` is a locally imported class.
     assert!(
         parsed
             .calls

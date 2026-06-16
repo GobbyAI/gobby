@@ -159,12 +159,31 @@ fn materialize_call(
     } else {
         None
     };
+    let php_member_target = if ctx.language == "php"
+        && local_target.is_none()
+        && external_target.is_none()
+        && local_qualified_target.is_none()
+        && local_member_target.is_none()
+        && csharp_member_target.is_none()
+        && ruby_member_target.is_none()
+        && !external_shadowed
+    {
+        import_resolution::resolve_php_local_member_callee(
+            ctx.import_context,
+            &site.callee_name,
+            site.qualifier_path.as_deref(),
+            site.syntax == CallSyntaxKind::Member,
+        )
+    } else {
+        None
+    };
     let local_import_target = if local_target.is_none()
         && external_target.is_none()
         && local_qualified_target.is_none()
         && local_member_target.is_none()
         && csharp_member_target.is_none()
         && ruby_member_target.is_none()
+        && php_member_target.is_none()
         && !external_shadowed
     {
         import_resolution::resolve_local_callee(
@@ -182,6 +201,7 @@ fn materialize_call(
         && local_member_target.is_none()
         && csharp_member_target.is_none()
         && ruby_member_target.is_none()
+        && php_member_target.is_none()
         && local_import_target.is_none()
         && !external_shadowed
     {
@@ -214,6 +234,7 @@ fn materialize_call(
         .or(local_member_target)
         .or(csharp_member_target)
         .or(ruby_member_target)
+        .or(php_member_target)
         .or(local_import_target)
     {
         // Cross-file local import: record the original name plus the candidate

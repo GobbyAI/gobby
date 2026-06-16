@@ -155,12 +155,22 @@ fn register_php_import_item(
         file_path: rel_path.to_string(),
         module_name: target.to_string(),
     });
-    if !is_external_php_symbol(target, import_context) {
-        return;
-    }
 
     let imported_name = target.rsplit('\\').next().unwrap_or(target);
     let local_alias = alias.unwrap_or(imported_name);
+
+    if !is_external_php_symbol(target, import_context) {
+        seed_php_local_import(
+            target,
+            imported_name,
+            local_alias,
+            kind,
+            import_context,
+            extracted,
+        );
+        return;
+    }
+
     if matches!(kind, PhpImportKind::Function) {
         let module = target
             .rsplit_once('\\')
@@ -178,6 +188,46 @@ fn register_php_import_item(
             .bindings
             .member
             .insert(local_alias.to_string(), target.to_string());
+    }
+}
+
+/// Seed call bindings for a `use` that imports a *local* PHP symbol. Mirrors the
+/// Java single-type import: a class is bound on both the member channel (for
+/// `Widget::method()`) and the bare channel (for `new Widget()`, which targets
+/// the class), while a `use function` is bound bare (for `helper()`). Const
+/// imports are not callable and seed nothing. The bare binding's callee is the
+/// imported name rather than the local alias, so the post-write DB pass narrows
+/// it to the real class/function symbol; the member channel keeps the called
+/// method name as written.
+fn seed_php_local_import(
+    target: &str,
+    imported_name: &str,
+    local_alias: &str,
+    kind: PhpImportKind,
+    import_context: &ImportResolutionContext,
+    extracted: &mut ExtractedImports,
+) {
+    if matches!(kind, PhpImportKind::Const) {
+        return;
+    }
+    let candidate_files = import_context.php_candidate_files(target);
+    if candidate_files.is_empty() {
+        return;
+    }
+    extracted.bindings.bare.remove(local_alias);
+    extracted.bindings.local_bare.insert(
+        local_alias.to_string(),
+        LocalCallBinding {
+            candidate_files: candidate_files.clone(),
+            callee_name: imported_name.to_string(),
+        },
+    );
+    if matches!(kind, PhpImportKind::ClassLike) {
+        extracted.bindings.member.remove(local_alias);
+        extracted
+            .bindings
+            .local_member
+            .insert(local_alias.to_string(), candidate_files);
     }
 }
 
