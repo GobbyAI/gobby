@@ -154,6 +154,13 @@ pub(super) fn member_qualifier_path(
     if prefix.starts_with('$') || prefix.contains("->") {
         return None;
     }
+    // A member qualifier is immediately followed by a path separator before the
+    // callee (`C.m`, `a::b`, `\Foo\bar`). When the text right before the name is
+    // not a separator — e.g. the `new` keyword in `new C()` — there is no
+    // qualifier and the call is bare.
+    if !prefix.ends_with(['.', ':', '\\']) {
+        return None;
+    }
     let is_absolute_namespace = prefix.starts_with('\\');
 
     let mut chars = prefix

@@ -124,6 +124,7 @@ const JAVA: LanguageSpec = LanguageSpec {
     "#,
     call_query: r#"
         (method_invocation name: (identifier) @name) @call
+        (object_creation_expression type: (type_identifier) @name) @call
     "#,
 };
 

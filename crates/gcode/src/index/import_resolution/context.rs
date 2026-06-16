@@ -31,6 +31,11 @@ pub struct ImportResolutionContext {
     pub(super) rust_external_crates: HashSet<String>,
     pub(super) rust_self_crate_name: Option<String>,
     pub(super) java_local_classes: HashSet<String>,
+    /// Maps a locally-declared fully-qualified class name (`pkg.Class`) to the
+    /// project-relative files that declare it. A local single-type import
+    /// `import pkg.Class;` resolves `Class.m()`/`new Class()` against these
+    /// files (Java classes are file-granular per the public-class convention).
+    pub(super) java_class_files: HashMap<String, Vec<String>>,
     pub(super) csharp_local_roots: HashSet<String>,
     pub(super) php_local_symbols: HashSet<String>,
     pub(super) ruby_local_constant_roots: HashSet<String>,
@@ -103,6 +108,14 @@ impl ImportResolutionContext {
             return Vec::new();
         };
         self.go_package_files.get(&dir).cloned().unwrap_or_default()
+    }
+
+    /// Project-relative files declaring the local class named by `fqcn` (a
+    /// fully-qualified `pkg.Class`). Empty when no indexed local file declares
+    /// it (e.g. an external class, or a local simple-name collision whose
+    /// fully-qualified form is not actually declared here).
+    pub(super) fn java_candidate_files(&self, fqcn: &str) -> Vec<String> {
+        self.java_class_files.get(fqcn).cloned().unwrap_or_default()
     }
 
     pub(super) fn ruby_require_root(&self, required: &str) -> Option<&str> {
@@ -252,6 +265,7 @@ pub fn build_import_resolution_context_with_overrides(
     ruby_require_root_overrides: HashMap<String, String>,
     elixir_external_root_overrides: HashMap<String, String>,
 ) -> ImportResolutionContext {
+    let java_index = build_java_class_index(root_path, candidate_files);
     ImportResolutionContext {
         python_modules: build_python_module_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
@@ -260,7 +274,8 @@ pub fn build_import_resolution_context_with_overrides(
         go_package_files: build_go_package_files(root_path, candidate_files),
         rust_external_crates: load_rust_external_crates(root_path),
         rust_self_crate_name: load_rust_self_crate_name(root_path),
-        java_local_classes: build_java_local_class_index(candidate_files),
+        java_local_classes: java_index.local_classes,
+        java_class_files: java_index.class_files,
         csharp_local_roots: build_csharp_local_roots(candidate_files),
         php_local_symbols: build_php_local_symbol_index(candidate_files),
         ruby_local_constant_roots: build_ruby_local_constant_roots(candidate_files),
@@ -521,21 +536,37 @@ pub(super) fn normalize_rust_crate_name(name: &str) -> String {
     name.trim().replace('-', "_")
 }
 
-pub(super) fn build_java_local_class_index(candidate_files: &[PathBuf]) -> HashSet<String> {
-    candidate_files
+/// Locally-declared Java class names plus the files that declare each one.
+pub(super) struct JavaClassIndex {
+    /// Simple and fully-qualified class names declared by local files. Used to
+    /// classify an import target as local (`is_external_java_class`).
+    pub(super) local_classes: HashSet<String>,
+    /// Fully-qualified class name (`pkg.Class`) -> declaring project-relative
+    /// files. Used to map a local single-type import to its target file(s).
+    pub(super) class_files: HashMap<String, Vec<String>>,
+}
+
+pub(super) fn build_java_class_index(
+    root_path: &Path,
+    candidate_files: &[PathBuf],
+) -> JavaClassIndex {
+    let (local_classes, mut class_files) = candidate_files
         .par_iter()
         .map(|path| {
-            let mut classes = HashSet::new();
+            let mut local_classes = HashSet::new();
+            let mut class_files: HashMap<String, Vec<String>> = HashMap::new();
             let ext = path
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .unwrap_or_default();
             if ext != "java" {
-                return classes;
+                return (local_classes, class_files);
             }
             let Ok(file) = File::open(path) else {
-                return classes;
+                return (local_classes, class_files);
             };
+            let rel = path.strip_prefix(root_path).unwrap_or(path);
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
             let mut package = None;
             for line in BufReader::new(file).lines().map_while(Result::ok) {
                 let line = line.trim();
@@ -545,20 +576,36 @@ pub(super) fn build_java_local_class_index(candidate_files: &[PathBuf]) -> HashS
                         .map(|rest| rest.trim().trim_end_matches(';').trim().to_string());
                 }
                 for class_name in java_declared_types(line) {
-                    classes.insert(class_name.clone());
+                    local_classes.insert(class_name.clone());
                     if let Some(package) = package.as_deref()
                         && !package.is_empty()
                     {
-                        classes.insert(format!("{package}.{class_name}"));
+                        let fqcn = format!("{package}.{class_name}");
+                        local_classes.insert(fqcn.clone());
+                        class_files.entry(fqcn).or_default().push(rel_str.clone());
                     }
                 }
             }
-            classes
+            (local_classes, class_files)
         })
-        .reduce(HashSet::new, |mut all, classes| {
-            all.extend(classes);
-            all
-        })
+        .reduce(
+            || (HashSet::new(), HashMap::new()),
+            |mut acc, (classes, files)| {
+                acc.0.extend(classes);
+                for (fqcn, paths) in files {
+                    acc.1.entry(fqcn).or_default().extend(paths);
+                }
+                acc
+            },
+        );
+    for files in class_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    JavaClassIndex {
+        local_classes,
+        class_files,
+    }
 }
 
 pub(super) fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<String> {

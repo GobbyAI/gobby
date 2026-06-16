@@ -505,7 +505,10 @@ class Sample {
 }
 
 #[test]
-fn leaves_local_java_imports_unresolved() {
+fn resolves_local_java_single_type_import_member_and_constructor_calls() {
+    // A local single-type import binds the class alias for both a static member
+    // call (`Helper.render()`) and a constructor call (`new Helper()`); each
+    // becomes a `local_import` pointing at the declaring class file.
     let parsed = parse_java(
         r#"
 package app;
@@ -515,6 +518,7 @@ import app.helpers.Helper;
 class Sample {
     void run() {
         Helper.render();
+        new Helper();
     }
 }
 "#,
@@ -530,7 +534,78 @@ class Helper {
         )],
     );
 
-    let call = parsed.calls.first().expect("call");
+    // Static member call resolves the method against the class file.
+    assert_rust_local_import!(&parsed, "render", "src/main/java/app/helpers/Helper.java");
+    // Constructor call resolves the class itself against the same file.
+    assert_rust_local_import!(&parsed, "Helper", "src/main/java/app/helpers/Helper.java");
+}
+
+#[test]
+fn resolves_local_java_static_imports() {
+    // A local static import binds the bare member name to its declaring class
+    // file so `square(..)` resolves to the static method symbol.
+    let parsed = parse_java(
+        r#"
+package app;
+
+import static app.util.Maths.square;
+
+class Sample {
+    void run() {
+        square(3);
+    }
+}
+"#,
+        &[(
+            "src/main/java/app/util/Maths.java",
+            r#"
+package app.util;
+
+class Maths {
+    static int square(int x) {
+        return x * x;
+    }
+}
+"#,
+        )],
+    );
+
+    assert_rust_local_import!(&parsed, "square", "src/main/java/app/util/Maths.java");
+}
+
+#[test]
+fn leaves_local_java_imports_without_class_files_unresolved() {
+    // The simple name `Helper` is locally declared (in `app.other`), so the
+    // import `app.missing.Helper` classifies as local — but no file declares
+    // that fully-qualified class, so the call degrades to unresolved rather
+    // than minting a false edge.
+    let parsed = parse_java(
+        r#"
+package app;
+
+import app.missing.Helper;
+
+class Sample {
+    void run() {
+        Helper.render();
+    }
+}
+"#,
+        &[(
+            "src/main/java/app/other/Helper.java",
+            r#"
+package app.other;
+
+class Helper {}
+"#,
+        )],
+    );
+
+    let call = parsed
+        .calls
+        .iter()
+        .find(|call| call.callee_name == "render")
+        .expect("render call");
     assert_eq!(call.callee_target_kind.as_str(), "unresolved");
 }
 

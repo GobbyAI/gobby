@@ -2,6 +2,7 @@ use crate::models::ImportRelation;
 
 use super::super::context::{
     ExternalImportBinding, ExternalRootBinding, ExtractedImports, ImportResolutionContext,
+    LocalCallBinding,
 };
 use super::super::predicates::{is_external_csharp_path, is_external_java_class};
 
@@ -33,30 +34,66 @@ pub(crate) fn parse_java_import_statement(
         let Some((class_path, member_name)) = target.rsplit_once('.') else {
             return;
         };
-        if !is_external_java_class(class_path, import_context) {
+        if is_external_java_class(class_path, import_context) {
+            extracted.bindings.bare.insert(
+                member_name.to_string(),
+                ExternalImportBinding {
+                    module: class_path.to_string(),
+                    callee_name: member_name.to_string(),
+                },
+            );
             return;
         }
-        extracted.bindings.bare.insert(
+        // Local static import: the member is invoked bare (`member()`); bind it
+        // to the declaring class's file(s) so the post-write DB pass narrows it
+        // to the real method symbol (or degrades to unresolved).
+        let candidate_files = import_context.java_candidate_files(class_path);
+        if candidate_files.is_empty() {
+            return;
+        }
+        extracted.bindings.bare.remove(member_name);
+        extracted.bindings.local_bare.insert(
             member_name.to_string(),
-            ExternalImportBinding {
-                module: class_path.to_string(),
+            LocalCallBinding {
+                candidate_files,
                 callee_name: member_name.to_string(),
             },
         );
         return;
     }
 
-    if !is_external_java_class(target, import_context) {
-        return;
-    }
     let class_alias = target
         .rsplit('.')
         .next()
         .expect("rsplit always yields at least one segment");
+    if is_external_java_class(target, import_context) {
+        extracted
+            .bindings
+            .member
+            .insert(class_alias.to_string(), target.to_string());
+        return;
+    }
+    // Local single-type import: bind the class alias for both static member
+    // calls (`Class.m()` -> member channel, resolves the method) and
+    // constructor calls (`new Class()` -> bare channel, resolves the class).
+    // The post-write DB pass narrows the candidate file(s) to a real id.
+    let candidate_files = import_context.java_candidate_files(target);
+    if candidate_files.is_empty() {
+        return;
+    }
+    extracted.bindings.bare.remove(class_alias);
+    extracted.bindings.member.remove(class_alias);
     extracted
         .bindings
-        .member
-        .insert(class_alias.to_string(), target.to_string());
+        .local_member
+        .insert(class_alias.to_string(), candidate_files.clone());
+    extracted.bindings.local_bare.insert(
+        class_alias.to_string(),
+        LocalCallBinding {
+            candidate_files,
+            callee_name: class_alias.to_string(),
+        },
+    );
 }
 
 pub(crate) fn parse_csharp_import_statement(

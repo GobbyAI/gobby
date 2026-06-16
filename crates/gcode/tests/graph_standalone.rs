@@ -254,6 +254,7 @@ fn graph_sync_file_classifies_missing_project_before_graph_access() {
 const LOCAL_IMPORT_PROJECT_ID: &str = "graph-standalone-local-import";
 const NO_PHANTOM_PROJECT_ID: &str = "graph-standalone-no-phantom";
 const GO_LOCAL_PROJECT_ID: &str = "graph-standalone-go-local";
+const JAVA_LOCAL_PROJECT_ID: &str = "graph-standalone-java-local";
 
 /// End-to-end check for the post-write local-import resolution (#790): indexing
 /// a two-file Python project must resolve the cross-file calls in `b.py` to the
@@ -477,6 +478,119 @@ fn index_resolves_cross_package_local_go_calls() {
     assert_caller_present(&env, project.path(), "Load", "Run", "after sync-file");
     assert_eq!(
         phantom_call_target_count(&mut graph, GO_LOCAL_PROJECT_ID),
+        0,
+        "sync-file must not introduce a phantom CALLS target"
+    );
+}
+
+/// #793: a Java cross-file call into a class defined in another local file must
+/// resolve to the canonical symbol so `callers`/`blast-radius` include the
+/// caller. Java classes are file-granular (public-class convention), so the
+/// import `app.svc.Service` maps to `.../svc/Service.java`. Exercises both
+/// resolution shapes the task calls out — the static member call
+/// `Service.start()` (resolves the method) and the constructor `new Service()`
+/// (resolves the class) — across the index, rebuild, and sync-file paths.
+#[test]
+fn index_resolves_cross_file_local_java_calls() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-file Java local-call resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("src/main/java/app/svc")).expect("create app/svc");
+    fs::write(
+        project.path().join("src/main/java/app/svc/Service.java"),
+        "package app.svc;\n\nclass Service {\n    static void start() {}\n}\n",
+    )
+    .expect("write Service.java");
+    fs::write(
+        project.path().join("src/main/java/app/Main.java"),
+        "package app;\n\nimport app.svc.Service;\n\nclass Main {\n    void run() {\n        Service.start();\n        new Service();\n    }\n}\n",
+    )
+    .expect("write Main.java");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": JAVA_LOCAL_PROJECT_ID,
+            "name": "graph-standalone-java-local",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, JAVA_LOCAL_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    let service_file = "src/main/java/app/svc/Service.java";
+    let main_file = "src/main/java/app/Main.java";
+    let start_id = required_symbol_id(&mut conn, JAVA_LOCAL_PROJECT_ID, service_file, "start");
+    let service_id = required_symbol_id(&mut conn, JAVA_LOCAL_PROJECT_ID, service_file, "Service");
+
+    // The static member call resolves to the method symbol and the constructor
+    // call resolves to the class symbol, both in the imported class file.
+    assert_eq!(
+        resolved_call_target(&mut conn, JAVA_LOCAL_PROJECT_ID, main_file, "start"),
+        Some(start_id.clone()),
+        "Java static member call did not resolve to the canonical method"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, JAVA_LOCAL_PROJECT_ID, main_file, "Service"),
+        Some(service_id.clone()),
+        "Java constructor call did not resolve to the canonical class"
+    );
+    assert_eq!(
+        pending_local_import_count(&mut conn, JAVA_LOCAL_PROJECT_ID),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Projection path 1+2: rebuild from resolved PostgreSQL facts, then both
+    // cross-file callers must be reachable and each target must be a real
+    // DEFINES-linked node (no phantom CALLS target).
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_caller_present(&env, project.path(), "start", "run", "after rebuild");
+    assert_caller_present(&env, project.path(), "Service", "run", "after rebuild");
+
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, JAVA_LOCAL_PROJECT_ID),
+        0,
+        "no CALLS target may lack a DEFINES edge after rebuild"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, JAVA_LOCAL_PROJECT_ID, &start_id),
+        "the resolved Java method target must be a defined, called CodeSymbol"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, JAVA_LOCAL_PROJECT_ID, &service_id),
+        "the resolved Java class target must be a defined, called CodeSymbol"
+    );
+
+    let blast = json_command(&env, project.path(), &["blast-radius", "start"]);
+    assert!(
+        blast.get("center").is_some(),
+        "blast-radius should report a center: {blast}"
+    );
+
+    // Projection path 3: sync-file must recreate the same canonical edges.
+    let sync = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", main_file],
+    );
+    assert_success(sync, "graph sync-file Main.java");
+    assert_caller_present(&env, project.path(), "start", "run", "after sync-file");
+    assert_eq!(
+        phantom_call_target_count(&mut graph, JAVA_LOCAL_PROJECT_ID),
         0,
         "sync-file must not introduce a phantom CALLS target"
     );
