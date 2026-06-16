@@ -2232,6 +2232,7 @@ dependencies = [
  "clap",
  "dirs 6.0.0",
  "encoding_rs",
+ "flate2",
  "fs4",
  "gobby-core",
  "html-escape",

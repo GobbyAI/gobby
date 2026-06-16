@@ -5,6 +5,7 @@ use serde::Deserialize;
 use serde_json::Value;
 
 mod codex;
+mod derived;
 mod droid;
 mod gemini;
 mod grok;
@@ -13,6 +14,7 @@ mod qwen;
 mod redaction;
 
 use codex::CODEX_SESSION_ADAPTER;
+use derived::write_session_derived_markdown;
 use droid::DROID_SESSION_ADAPTER;
 use gemini::GEMINI_SESSION_ADAPTER;
 use grok::GROK_SESSION_ADAPTER;
@@ -102,6 +104,7 @@ pub(crate) fn ingest_session_file_without_index(
     let markdown = render_session_markdown(&snapshot, &parsed, &title, &record.content_hash);
     let markdown = redact_session_markdown(&markdown);
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
+    write_session_derived_markdown(vault_root, &record, &markdown)?;
 
     Ok(IngestResult {
         record,

@@ -54,6 +54,7 @@ pub(crate) mod vision;
 pub use api::{
     BenchmarkOptions, Command, CommandOutcome, CommandResult, IngestFileOptions, ReadTarget,
     ReviewReportOptions, ScopeIdentity, ScopeKind, ScopeSelection, SetupOptions,
+    SyncSessionsOptions,
 };
 pub use error::WikiError;
 pub use runner::run;

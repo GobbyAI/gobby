@@ -177,6 +177,30 @@ pub fn contract() -> CliContract {
             },
             CommandContract {
                 daemon_consumed: true,
+                positionals: vec![],
+                flags: vec![
+                    FlagContract::value("--archive-dir", "PATH"),
+                    FlagContract::value("--limit", "N"),
+                ],
+                json_output_keys: scoped_keys(vec![
+                    "status",
+                    "archive_dir",
+                    "scanned",
+                    "accepted",
+                    "skipped",
+                    "failed",
+                    "indexed",
+                ]),
+                hard_dependencies: vec!["vault"],
+                optional_dependencies: vec!["PostgreSQL", "Qdrant+embeddings", "FalkorDB graph"],
+                multimodal: Some("session_transcript"),
+                ..CommandContract::new(
+                    "sync-sessions",
+                    "Sync archived Gobby session transcripts into the wiki vault.",
+                )
+            },
+            CommandContract {
+                daemon_consumed: true,
                 positionals: vec![optional_positional("QUERY", false)],
                 flags: vec![],
                 json_output_keys: scoped_keys(vec!["results", "changed_paths", "status"]),

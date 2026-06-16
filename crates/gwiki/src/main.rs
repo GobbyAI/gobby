@@ -5,7 +5,8 @@ use std::process::ExitCode;
 use clap::{ArgGroup, Args, Parser, Subcommand, ValueEnum};
 use gobby_core::config::AiRouting;
 use gobby_wiki::{
-    BenchmarkOptions, Command, IngestFileOptions, ReadTarget, ScopeSelection, WikiError, output,
+    BenchmarkOptions, Command, IngestFileOptions, ReadTarget, ScopeSelection, SyncSessionsOptions,
+    WikiError, output,
 };
 use serde_json::json;
 
@@ -17,6 +18,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "collect",
     "ingest-file",
     "ingest-url",
+    "sync-sessions",
     "refresh",
     "sources",
     "remove-source",
@@ -102,6 +104,8 @@ enum CliCommand {
         #[arg(value_name = "URL", num_args = 1..)]
         urls: Vec<String>,
     },
+    /// Sync archived Gobby session transcripts into the wiki vault.
+    SyncSessions(SyncSessionsArgs),
     /// Refresh URL-backed raw source records.
     Refresh(RefreshArgs),
     /// List raw source manifest entries in the selected scope.
@@ -237,6 +241,17 @@ struct AskArgs {
     /// Fail if synthesis is requested but no AI route succeeds.
     #[arg(long = "require-ai")]
     require_ai: bool,
+}
+
+#[derive(Debug, Args)]
+struct SyncSessionsArgs {
+    /// Directory containing archived *.jsonl.gz session transcripts.
+    #[arg(long, value_name = "PATH")]
+    archive_dir: Option<PathBuf>,
+
+    /// Maximum number of archives to process.
+    #[arg(long, value_name = "N", value_parser = parse_positive_usize)]
+    limit: Option<usize>,
 }
 
 #[derive(Debug, Args)]
@@ -565,6 +580,13 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             },
         }),
         CliCommand::IngestUrl { urls } => Ok(Command::IngestUrl { urls, scope }),
+        CliCommand::SyncSessions(args) => Ok(Command::SyncSessions {
+            scope,
+            options: SyncSessionsOptions {
+                archive_dir: args.archive_dir,
+                limit: args.limit,
+            },
+        }),
         CliCommand::Refresh(args) => Ok(Command::Refresh {
             scope,
             source_ids: args.id,

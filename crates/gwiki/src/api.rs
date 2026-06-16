@@ -31,6 +31,10 @@ pub enum Command {
         urls: Vec<String>,
         scope: ScopeSelection,
     },
+    SyncSessions {
+        scope: ScopeSelection,
+        options: SyncSessionsOptions,
+    },
     Refresh {
         scope: ScopeSelection,
         source_ids: Vec<String>,
@@ -172,6 +176,12 @@ pub struct IngestFileOptions {
     pub transcription_routing: Option<AiRouting>,
     pub vision_routing: Option<AiRouting>,
     pub text_routing: Option<AiRouting>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SyncSessionsOptions {
+    pub archive_dir: Option<PathBuf>,
+    pub limit: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

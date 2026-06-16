@@ -17,6 +17,7 @@ pub(crate) mod read;
 pub(crate) mod refresh;
 pub(crate) mod review_report;
 pub(crate) mod search;
+pub(crate) mod session_sync;
 pub(crate) mod setup;
 pub(crate) mod sources;
 pub(crate) mod status;
@@ -39,6 +40,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
             options,
         } => index::execute_ingest_file(path, scope, options),
         Command::IngestUrl { urls, scope } => index::execute_ingest_url(urls, scope),
+        Command::SyncSessions { scope, options } => session_sync::execute(scope, options),
         Command::Refresh {
             scope,
             source_ids,

@@ -271,20 +271,23 @@ fn gobby_home() -> Result<PathBuf, WikiError> {
     })
 }
 
-fn connect_postgres_index(database_url: &str, command: &str) -> Result<Client, WikiError> {
+pub(crate) fn connect_postgres_index(
+    database_url: &str,
+    command: &str,
+) -> Result<Client, WikiError> {
     gobby_core::postgres::connect_readwrite(database_url).map_err(|error| WikiError::Config {
         detail: format!("failed to connect to PostgreSQL for {command}: {error}"),
     })
 }
 
-fn postgres_store_for_search<'a>(
+pub(crate) fn postgres_store_for_search<'a>(
     conn: &'a mut Client,
     search_scope: &SearchScope,
 ) -> store::PostgresWikiStore<'a> {
     store::PostgresWikiStore::new(conn, store_scope_for_search(search_scope))
 }
 
-fn sync_falkor_graph(
+pub(crate) fn sync_falkor_graph(
     conn: &mut Client,
     search_scope: &SearchScope,
     command: &'static str,
@@ -310,7 +313,7 @@ fn sync_falkor_graph(
     Ok(None)
 }
 
-fn sync_qdrant_vectors(
+pub(crate) fn sync_qdrant_vectors(
     conn: &mut Client,
     search_scope: &SearchScope,
     command: &'static str,
@@ -453,7 +456,7 @@ fn effective_embedding_route(context: &AiContext) -> AiRouting {
     }
 }
 
-fn indexed_counts_for_postgres(
+pub(crate) fn indexed_counts_for_postgres(
     conn: &mut Client,
     search_scope: &SearchScope,
     should_count: bool,

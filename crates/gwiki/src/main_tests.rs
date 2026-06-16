@@ -354,6 +354,44 @@ fn ingest_url_cli_accepts_multiple_urls() {
 }
 
 #[test]
+fn sync_sessions_cli_flags_map_to_command_options() {
+    let cli = Cli::try_parse_from([
+        "gwiki",
+        "--project",
+        "/tmp/example-project",
+        "sync-sessions",
+        "--archive-dir",
+        "/tmp/session_transcripts",
+        "--limit",
+        "3",
+    ])
+    .expect("parse sync-sessions command");
+    let CliCommand::SyncSessions(args) = cli.command else {
+        panic!("expected parsed sync-sessions command");
+    };
+    assert_eq!(
+        args.archive_dir.as_deref(),
+        Some(std::path::Path::new("/tmp/session_transcripts"))
+    );
+    assert_eq!(args.limit, Some(3));
+
+    let command = command_from_cli(CliCommand::SyncSessions(args), cli.scope.into())
+        .expect("map sync-sessions command");
+    let Command::SyncSessions { scope, options } = command else {
+        panic!("expected sync-sessions command");
+    };
+    assert_eq!(
+        scope.project_root(),
+        Some(std::path::Path::new("/tmp/example-project"))
+    );
+    assert_eq!(
+        options.archive_dir.as_deref(),
+        Some(std::path::Path::new("/tmp/session_transcripts"))
+    );
+    assert_eq!(options.limit, Some(3));
+}
+
+#[test]
 fn refresh_cli_flags_map_to_command_options() {
     let cli = Cli::try_parse_from([
         "gwiki",

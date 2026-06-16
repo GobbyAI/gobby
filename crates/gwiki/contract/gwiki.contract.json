@@ -407,6 +407,50 @@
       ]
     },
     {
+      "name": "sync-sessions",
+      "summary": "Sync archived Gobby session transcripts into the wiki vault.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--archive-dir",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "status",
+        "archive_dir",
+        "scanned",
+        "accepted",
+        "skipped",
+        "failed",
+        "indexed"
+      ],
+      "hard_dependencies": [
+        "vault"
+      ],
+      "optional_dependencies": [
+        "PostgreSQL",
+        "Qdrant+embeddings",
+        "FalkorDB graph"
+      ],
+      "multimodal": "session_transcript"
+    },
+    {
       "name": "collect",
       "summary": "Collect recognized inbox drops into raw storage.",
       "daemon_consumed": true,

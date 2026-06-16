@@ -9,6 +9,7 @@ pub mod image;
 pub mod mediawiki;
 pub mod pdf;
 pub mod session;
+pub(crate) mod session_archive;
 pub mod url;
 pub mod video;
 pub mod wayback;

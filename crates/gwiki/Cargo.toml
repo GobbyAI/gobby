@@ -40,6 +40,7 @@ ureq = "2"
 html-escape = "0.2"
 encoding_rs = "0.8"
 dirs = "6"
+flate2 = "1"
 fs4 = "1.1"
 linked-hash-map = "0.5"
 uuid = { version = "1", features = ["v4", "v5"] }

@@ -93,6 +93,13 @@ mod tests {
         .expect("ingest session");
         let raw_markdown =
             std::fs::read_to_string(temp.path().join(result.raw_path)).expect("raw markdown");
+        let derived_markdown = std::fs::read_to_string(
+            temp.path()
+                .join("knowledge")
+                .join("sources")
+                .join(format!("{}.md", result.record.id)),
+        )
+        .expect("derived markdown");
 
         assert!(raw_markdown.contains("[REDACTED_HOME]/session.jsonl"));
         assert!(raw_markdown.contains("[REDACTED_HOME]/work/app.rs"));
@@ -103,6 +110,10 @@ mod tests {
         assert!(!raw_markdown.contains("ops@example.com"));
         assert!(!raw_markdown.contains(&openai_key));
         assert!(!raw_markdown.contains(&github_token));
+        assert!(derived_markdown.contains("[REDACTED_HOME]/work/app.rs"));
+        assert!(!derived_markdown.contains("/Users/casey"));
+        assert!(!derived_markdown.contains("ops@example.com"));
+        assert!(!derived_markdown.contains(&openai_key));
 
         let mut store = MemoryWikiStore::default();
         index_after_ingest(temp.path(), &mut store).expect("index redacted session markdown");
