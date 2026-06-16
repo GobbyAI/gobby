@@ -9,6 +9,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+#### gobby-core
+
+- **Retired local-tool support APIs** — removed `layered_config`,
+  `local_backend`, and the `local-backend` feature after retiring the only
+  active consumers.
+
+#### gobby-local / gobby-squeeze
+
+- **Retired from the active workspace** — `gobby-local`/`gloc` and
+  `gobby-squeeze`/`gsqz` source, release workflows, CI jobs, and live guides
+  have been removed from the repository mainline. Archive tags preserve the
+  last live source snapshots.
+
 ### Fixed
 
 #### gwiki

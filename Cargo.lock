@@ -2196,33 +2196,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "gobby-local"
-version = "0.1.5"
-dependencies = [
- "clap",
- "gobby-core",
- "serde",
- "serde_json",
- "ureq",
- "yaml_serde",
-]
-
-[[package]]
-name = "gobby-squeeze"
-version = "0.4.7"
-dependencies = [
- "clap",
- "gobby-core",
- "regex",
- "serde",
- "serde_json",
- "temp-env",
- "tempfile",
- "ureq",
- "yaml_serde",
-]
-
-[[package]]
 name = "gobby-wiki"
 version = "0.5.0"
 dependencies = [

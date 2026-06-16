@@ -284,11 +284,13 @@ fn summary_excerpt(summary: &str) -> String {
         .trim();
     let flattened = paragraph.split_whitespace().collect::<Vec<_>>().join(" ");
     let mut excerpt = flattened;
-    let cap = excerpt
-        .char_indices()
-        .nth(CHILD_SUMMARY_EXCERPT_MAX_CHARS)
-        .map(|(index, _)| index);
-    if let Some(cap) = cap {
+    if excerpt.chars().count() > CHILD_SUMMARY_EXCERPT_MAX_CHARS {
+        let body_cap = CHILD_SUMMARY_EXCERPT_MAX_CHARS.saturating_sub(1);
+        let cap = excerpt
+            .char_indices()
+            .nth(body_cap)
+            .map(|(index, _)| index)
+            .unwrap_or(excerpt.len());
         excerpt.truncate(cap);
         excerpt.push('…');
     }
@@ -386,6 +388,20 @@ mod tests {
         };
         let prompt = module_prompt("src", &[child], &[], &[], &[]);
         assert!(prompt.contains("| src/lib.rs | Concise healthy summary. |\n"));
+    }
+
+    #[test]
+    fn summary_excerpt_includes_ellipsis_inside_hard_cap() {
+        let exact = "a".repeat(CHILD_SUMMARY_EXCERPT_MAX_CHARS);
+        let oversized = format!("{exact}b");
+
+        assert_eq!(
+            summary_excerpt(&exact).chars().count(),
+            CHILD_SUMMARY_EXCERPT_MAX_CHARS
+        );
+        let excerpt = summary_excerpt(&oversized);
+        assert_eq!(excerpt.chars().count(), CHILD_SUMMARY_EXCERPT_MAX_CHARS);
+        assert!(excerpt.ends_with('…'));
     }
 
     #[test]

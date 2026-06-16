@@ -4,7 +4,7 @@ struct Workflow {
     content: &'static str,
 }
 
-const WORKFLOWS: [Workflow; 7] = [
+const WORKFLOWS: [Workflow; 5] = [
     Workflow {
         name: "ci.yml",
         content: include_str!("../../../.github/workflows/ci.yml"),
@@ -20,14 +20,6 @@ const WORKFLOWS: [Workflow; 7] = [
     Workflow {
         name: "release-ghook.yml",
         content: include_str!("../../../.github/workflows/release-ghook.yml"),
-    },
-    Workflow {
-        name: "release-gloc.yml",
-        content: include_str!("../../../.github/workflows/release-gloc.yml"),
-    },
-    Workflow {
-        name: "release-gsqz.yml",
-        content: include_str!("../../../.github/workflows/release-gsqz.yml"),
     },
     Workflow {
         name: "release-gwiki.yml",

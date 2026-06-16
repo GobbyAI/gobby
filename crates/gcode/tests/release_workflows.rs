@@ -5,7 +5,7 @@ fn count_run_step(workflow: &str, command: &str) -> usize {
         .count()
 }
 
-const RELEASE_WORKFLOWS: [(&str, &str); 5] = [
+const RELEASE_WORKFLOWS: [(&str, &str); 3] = [
     (
         "gcode",
         include_str!("../../../.github/workflows/release-gcode.yml"),
@@ -13,14 +13,6 @@ const RELEASE_WORKFLOWS: [(&str, &str); 5] = [
     (
         "ghook",
         include_str!("../../../.github/workflows/release-ghook.yml"),
-    ),
-    (
-        "gloc",
-        include_str!("../../../.github/workflows/release-gloc.yml"),
-    ),
-    (
-        "gsqz",
-        include_str!("../../../.github/workflows/release-gsqz.yml"),
     ),
     (
         "gwiki",
@@ -44,23 +36,17 @@ fn release_upload_marker(workflow: &str) -> Option<usize> {
 #[test]
 fn release_workflows_have_one_default_and_one_no_default_check() {
     // Crates with a library target run doctests with and without default
-    // features. The binary-only crates (gobby-hooks, gobby-squeeze,
-    // gobby-local) have no lib target, so `cargo test --doc -p <pkg>` errors
+    // features. The binary-only crate (gobby-hooks) has no lib target, so
+    // `cargo test --doc -p <pkg>` errors
     // with "no library targets found" and must NOT appear in their workflows.
     let lib_cases = [(
         include_str!("../../../.github/workflows/release-gcode.yml"),
         "gobby-code",
     )];
-    let bin_cases = [
-        (
-            include_str!("../../../.github/workflows/release-gsqz.yml"),
-            "gobby-squeeze",
-        ),
-        (
-            include_str!("../../../.github/workflows/release-ghook.yml"),
-            "gobby-hooks",
-        ),
-    ];
+    let bin_cases = [(
+        include_str!("../../../.github/workflows/release-ghook.yml"),
+        "gobby-hooks",
+    )];
 
     for (workflow, package) in lib_cases.iter().chain(bin_cases.iter()).copied() {
         assert_eq!(

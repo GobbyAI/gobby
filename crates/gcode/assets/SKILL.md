@@ -43,7 +43,7 @@ When navigating code for context or understanding:
 3. **Navigate by structure/ID**: use `gcode outline path/to/file` to survey structure, then `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> <full-uuid> ...` using IDs from search or outline.
 4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
 
-Search output is intentionally snippet-sized. Broad file reads and wide line ranges can be truncated or compressed by `gsqz`, so use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol` when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
+Search output is intentionally snippet-sized. Use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol` when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
 
 ## Navigation
 

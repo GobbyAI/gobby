@@ -68,20 +68,6 @@ jobs:
       - name: Clippy (ghook, no default features)
         run: cargo clippy -p gobby-hooks --all-targets --no-default-features -- -D warnings
 
-      # gsqz: full clippy + tests
-      - name: Clippy (gsqz)
-        run: cargo clippy -p gobby-squeeze -- -D warnings
-
-      - name: Test (gsqz)
-        run: cargo nextest run --profile ci -p gobby-squeeze
-
-      # gloc: full clippy + tests
-      - name: Clippy (gloc)
-        run: cargo clippy -p gobby-local -- -D warnings
-
-      - name: Test (gloc)
-        run: cargo nextest run --profile ci -p gobby-local
-
       # gwiki: default checks include documents/pdfium; no-default-features covers degraded storage path
       - name: Clippy (gwiki)
         run: cargo clippy -p gobby-wiki --all-targets -- -D warnings

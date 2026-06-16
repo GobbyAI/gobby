@@ -18,7 +18,6 @@ fn repo_file(path: &str) -> String {
 #[test]
 fn cargo_features_define_public_boundary() {
     let manifest = crate_file("Cargo.toml");
-    let gloc_manifest = repo_file("crates/gloc/Cargo.toml");
 
     for expected in [
         "default = []",
@@ -28,8 +27,7 @@ fn cargo_features_define_public_boundary() {
         r#"indexing = ["dep:ignore", "dep:sha2"]"#,
         "search = []",
         "graph-analytics = []",
-        r#"local-backend = []"#,
-        r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "dep:ureq", "local-backend", "reqwest/multipart"]"#,
+        r#"ai = ["dep:reqwest", "dep:base64", "dep:bytes", "dep:httpdate", "dep:rand", "dep:ureq", "reqwest/multipart"]"#,
         r#"full = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"]"#,
         r#"serde = { version = "1", features = ["derive"] }"#,
         r#"thiserror = "2""#,
@@ -54,13 +52,6 @@ fn cargo_features_define_public_boundary() {
             "Cargo.toml is missing expected public-boundary snippet: {expected}"
         );
     }
-
-    let gloc_gcore_dependency = r#"gobby-core = { path = "../gcore", version = "0.5.0", default-features = false, features = ["local-backend"] }"#;
-    assert!(
-        gloc_manifest.contains(gloc_gcore_dependency),
-        "gloc must keep default-features = false and opt only into gobby-core/local-backend; \
-         the explicit version is required for crates.io publishing"
-    );
 }
 
 #[test]
@@ -77,8 +68,6 @@ fn lib_rs_exposes_lightweight_and_feature_gated_modules() {
         "pub mod codewiki_contract;",
         "pub mod config;",
         "pub mod degradation;",
-        "pub mod layered_config;",
-        "pub mod local_backend;",
         "pub mod setup;",
         r#"#[cfg(test)]"#,
         "pub(crate) mod test_http;",
@@ -116,7 +105,6 @@ fn development_guide_documents_foundation_boundary() {
         "`qdrant`",
         "`indexing`",
         "`search`",
-        "`local-backend`",
         "`full`",
         "Feature-gated modules",
         "Adding a New Helper",
