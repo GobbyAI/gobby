@@ -8,6 +8,7 @@ use super::reads::{
     format_symbol_path_text, format_usage_result_line,
 };
 use super::{imports, report};
+use crate::commands::token_budget;
 use crate::config::Context;
 use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput};
 use crate::models::{
@@ -120,6 +121,59 @@ fn graph_read_text_lines_surface_confidence_labels() {
     assert_eq!(
         format_blast_radius_result_line(&result),
         "12 [INFERRED] [distance=2] run"
+    );
+}
+
+#[test]
+fn graph_read_token_budget_uses_rendered_rows() {
+    let first = GraphResult {
+        id: "sym-1".to_string(),
+        name: "run".to_string(),
+        file_path: "src/lib.rs".to_string(),
+        line: 12,
+        confidence: ProjectionProvenance::Extracted,
+        relation: Some("CALLS".to_string()),
+        distance: Some(1),
+        metadata: None,
+    };
+    let second = GraphResult {
+        id: "sym-2".to_string(),
+        name: "run_more".to_string(),
+        file_path: "src/lib.rs".to_string(),
+        line: 18,
+        confidence: ProjectionProvenance::Inferred,
+        relation: Some("CALLS".to_string()),
+        distance: Some(2),
+        metadata: None,
+    };
+    let budget = token_budget::estimate_tokens(&format_usage_result_line(&first, "main"));
+
+    let trimmed = token_budget::trim_results(
+        vec![first.clone(), second.clone()],
+        Some(budget),
+        "`--limit` or `--offset`",
+        |result| format_usage_result_line(result, "main"),
+    );
+
+    assert_eq!(trimmed.results.len(), 1);
+    assert_eq!(trimmed.results[0].id, first.id);
+    assert!(trimmed.hint.expect("usage budget hint").contains("1 of 2"));
+
+    let blast_budget = token_budget::estimate_tokens(&format_blast_radius_result_line(&first));
+    let trimmed_blast = token_budget::trim_results(
+        vec![first.clone(), second],
+        Some(blast_budget),
+        "`--depth`",
+        format_blast_radius_result_line,
+    );
+
+    assert_eq!(trimmed_blast.results.len(), 1);
+    assert_eq!(trimmed_blast.results[0].id, first.id);
+    assert!(
+        trimmed_blast
+            .hint
+            .expect("blast budget hint")
+            .contains("refine with `--depth`")
     );
 }
 

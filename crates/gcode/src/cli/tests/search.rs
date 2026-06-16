@@ -61,6 +61,19 @@ fn test_parse_search_language_filters() {
 }
 
 #[test]
+fn test_parse_search_token_budget() {
+    let cli = Cli::try_parse_from(["gcode", "search", "outline", "--token-budget", "120"])
+        .expect("search --token-budget parses");
+
+    match cli.command {
+        Command::Search { token_budget, .. } => {
+            assert_eq!(token_budget, Some(120));
+        }
+        _ => panic!("expected search command"),
+    }
+}
+
+#[test]
 fn test_parse_search_positional_paths() {
     let cli = Cli::try_parse_from([
         "gcode",

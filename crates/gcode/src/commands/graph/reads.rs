@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 
+use crate::commands::token_budget;
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph;
@@ -10,6 +11,10 @@ use serde::Serialize;
 
 const GRAPH_BACKEND_HINT: &str =
     "Graph commands require a configured FalkorDB graph backend and synced graph projection.";
+const USAGES_TOKEN_BUDGET_REFINE_HINT: &str =
+    "`--limit`, `--offset`, or a more specific symbol query";
+const BLAST_RADIUS_TOKEN_BUDGET_REFINE_HINT: &str =
+    "`--depth`, a more specific symbol query, or a symbol UUID";
 
 fn hint_for(ctx: &Context) -> Option<String> {
     if ctx.falkordb.is_none() {
@@ -32,6 +37,12 @@ fn hint_for_error(ctx: &Context, error: &anyhow::Error) -> Option<String> {
 fn print_graph_hint_text(ctx: &Context, error: Option<&anyhow::Error>) {
     let hint = error.and_then(|err| hint_for_error(ctx, err));
     let hint = hint.or_else(|| hint_for(ctx));
+    if let Some(hint) = hint {
+        eprintln!("Hint: {hint}");
+    }
+}
+
+fn print_hint_text(hint: Option<&str>) {
     if let Some(hint) = hint {
         eprintln!("Hint: {hint}");
     }
@@ -429,6 +440,7 @@ pub fn usages(
     symbol_name: &str,
     limit: usize,
     offset: usize,
+    token_budget: Option<usize>,
     format: Format,
 ) -> anyhow::Result<()> {
     let Some((symbol, total, results)) = read_paged_symbol_graph_results(
@@ -443,6 +455,15 @@ pub fn usages(
     else {
         return Ok(());
     };
+    let unbudgeted_result_count = results.len();
+    let budgeted = token_budget::trim_results(
+        results,
+        token_budget,
+        USAGES_TOKEN_BUDGET_REFINE_HINT,
+        |result| format_usage_result_line(result, &symbol.display_name),
+    );
+    let results = budgeted.results;
+    let hint = token_budget::combine_hints(hint_for(ctx), budgeted.hint);
 
     match format {
         Format::Json => output::print_json(&PagedResponse {
@@ -451,18 +472,21 @@ pub fn usages(
             offset,
             limit,
             results,
-            hint: hint_for(ctx),
+            hint,
         }),
         Format::Text => {
-            if results.is_empty() && offset == 0 {
+            if unbudgeted_result_count == 0 && offset == 0 {
                 output::print_text(&format!("No usages found for '{}'", symbol.display_name))?;
                 print_graph_hint_text(ctx, None);
-            } else if results.is_empty() {
+            } else if unbudgeted_result_count == 0 {
                 eprintln!("No usages at offset {offset} (total {total})");
+            } else if results.is_empty() {
+                print_hint_text(hint.as_deref());
             } else {
                 output::print_text(&format_grouped_graph_results(&results, |r| {
                     format_usage_result_line(r, &symbol.display_name)
                 }))?;
+                print_hint_text(hint.as_deref());
                 if total > offset + results.len() {
                     eprintln!(
                         "-- {} of {} results (use --offset {} for more)",
@@ -541,6 +565,7 @@ pub fn blast_radius(
     ctx: &Context,
     target: &str,
     depth: usize,
+    token_budget: Option<usize>,
     format: Format,
 ) -> anyhow::Result<()> {
     let Some(()) =
@@ -560,6 +585,14 @@ pub fn blast_radius(
         return Ok(());
     };
     let total = results.len();
+    let budgeted = token_budget::trim_results(
+        results,
+        token_budget,
+        BLAST_RADIUS_TOKEN_BUDGET_REFINE_HINT,
+        format_blast_radius_result_line,
+    );
+    let results = budgeted.results;
+    let hint = token_budget::combine_hints(hint_for(ctx), budgeted.hint);
     match format {
         Format::Json => output::print_json(&PagedResponse {
             project_id: ctx.project_id.clone(),
@@ -567,19 +600,22 @@ pub fn blast_radius(
             offset: 0,
             limit: total,
             results,
-            hint: hint_for(ctx),
+            hint,
         }),
         Format::Text => {
-            if results.is_empty() {
+            if total == 0 {
                 output::print_text(&format!(
                     "No blast radius found for '{}'",
                     symbol.display_name
                 ))?;
                 print_graph_hint_text(ctx, None);
+            } else if results.is_empty() {
+                print_hint_text(hint.as_deref());
             } else {
                 output::print_text(&format_grouped_graph_results(&results, |r| {
                     format_blast_radius_result_line(r)
                 }))?;
+                print_hint_text(hint.as_deref());
             }
             Ok(())
         }

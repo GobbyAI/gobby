@@ -10,4 +10,5 @@ pub mod setup;
 pub mod status;
 pub mod symbol_at;
 pub mod symbols;
+pub(crate) mod token_budget;
 pub mod vector;

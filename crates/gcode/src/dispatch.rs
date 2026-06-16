@@ -379,6 +379,7 @@ fn run() -> anyhow::Result<()> {
             offset,
             kind,
             language,
+            token_budget,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::search::search(
@@ -392,6 +393,7 @@ fn run() -> anyhow::Result<()> {
                     paths: &paths,
                     format,
                     with_graph: true,
+                    token_budget,
                 },
             )
         }
@@ -416,6 +418,7 @@ fn run() -> anyhow::Result<()> {
                     paths: &paths,
                     format,
                     with_graph,
+                    token_budget: None,
                 },
             )
         }
@@ -549,9 +552,10 @@ fn run() -> anyhow::Result<()> {
             symbol_name,
             limit,
             offset,
+            token_budget,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::usages(&ctx, &symbol_name, limit, offset, format)
+            commands::graph::usages(&ctx, &symbol_name, limit, offset, token_budget, format)
         }
         Command::Imports { file } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
@@ -565,9 +569,13 @@ fn run() -> anyhow::Result<()> {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::graph::path(&ctx, &symbol_a, &symbol_b, max_depth, format)
         }
-        Command::BlastRadius { target, depth } => {
+        Command::BlastRadius {
+            target,
+            depth,
+            token_budget,
+        } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
-            commands::graph::blast_radius(&ctx, &target, depth, format)
+            commands::graph::blast_radius(&ctx, &target, depth, token_budget, format)
         }
 
         Command::RepoOutline => {

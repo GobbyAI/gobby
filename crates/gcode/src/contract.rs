@@ -109,7 +109,11 @@ pub fn contract() -> CliContract {
                         repeatable: true,
                     },
                 ],
-                flags: search_flags(),
+                flags: {
+                    let mut flags = search_flags();
+                    flags.push(token_budget_flag());
+                    flags
+                },
                 json_output_keys: search_keys(),
                 ..CommandContract::new(
                     "search",
@@ -247,7 +251,11 @@ pub fn contract() -> CliContract {
             CommandContract {
                 daemon_consumed: true,
                 positionals: vec![PositionalContract::required("SYMBOL")],
-                flags: graph_read_flags(),
+                flags: {
+                    let mut flags = graph_read_flags();
+                    flags.push(token_budget_flag());
+                    flags
+                },
                 json_output_keys: graph_read_keys(),
                 ..CommandContract::new(
                     "usages",
@@ -275,7 +283,11 @@ pub fn contract() -> CliContract {
             },
             CommandContract {
                 positionals: vec![PositionalContract::required("SYMBOL")],
-                flags: vec![FlagContract::value("--depth", "N"), format_flag()],
+                flags: vec![
+                    FlagContract::value("--depth", "N"),
+                    token_budget_flag(),
+                    format_flag(),
+                ],
                 json_output_keys: graph_read_keys(),
                 ..CommandContract::new(
                     "blast-radius",
@@ -505,6 +517,10 @@ fn format_flag() -> FlagContract {
 fn ai_flag() -> FlagContract {
     FlagContract::value("--ai", "auto|daemon|direct|off")
         .allowed(vec!["auto", "daemon", "direct", "off"])
+}
+
+fn token_budget_flag() -> FlagContract {
+    FlagContract::value("--token-budget", "N")
 }
 
 fn search_flags() -> Vec<FlagContract> {

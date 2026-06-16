@@ -200,6 +200,9 @@ pub(crate) enum Command {
         /// Filter by source language (e.g. rust, python, css)
         #[arg(long)]
         language: Option<String>,
+        /// Trim returned rows to an approximate token budget
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
     },
     /// Exact-first symbol/name search with deterministic ranking
     SearchSymbol {
@@ -362,6 +365,9 @@ pub(crate) enum Command {
         /// Skip first N results (for pagination)
         #[arg(long, default_value = "0")]
         offset: usize,
+        /// Trim returned rows to an approximate token budget
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
     },
     /// Show import graph for a file [requires graph backend]
     Imports { file: String },
@@ -383,6 +389,9 @@ pub(crate) enum Command {
         target: String,
         #[arg(long, default_value = "3")]
         depth: usize,
+        /// Trim returned rows to an approximate token budget
+        #[arg(long, value_parser = positive_usize)]
+        token_budget: Option<usize>,
     },
 
     // ── Project Management ───────────────────────────────────────────

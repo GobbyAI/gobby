@@ -45,11 +45,24 @@ fn test_parse_usages_remains_top_level() {
             symbol_name,
             limit,
             offset,
+            token_budget,
         } => {
             assert_eq!(symbol_name, "DatabasePool");
             assert_eq!(limit, 10);
             assert_eq!(offset, 0);
+            assert_eq!(token_budget, None);
         }
+        _ => panic!("expected top-level usages command"),
+    }
+}
+
+#[test]
+fn test_parse_usages_token_budget() {
+    let cli = Cli::try_parse_from(["gcode", "usages", "DatabasePool", "--token-budget", "80"])
+        .expect("usages --token-budget parses");
+
+    match cli.command {
+        Command::Usages { token_budget, .. } => assert_eq!(token_budget, Some(80)),
         _ => panic!("expected top-level usages command"),
     }
 }
@@ -89,10 +102,32 @@ fn test_parse_blast_radius_remains_top_level() {
         Cli::try_parse_from(["gcode", "blast-radius", "handleAuth"]).expect("blast-radius parses");
 
     match cli.command {
-        Command::BlastRadius { target, depth } => {
+        Command::BlastRadius {
+            target,
+            depth,
+            token_budget,
+        } => {
             assert_eq!(target, "handleAuth");
             assert_eq!(depth, 3);
+            assert_eq!(token_budget, None);
         }
+        _ => panic!("expected top-level blast-radius command"),
+    }
+}
+
+#[test]
+fn test_parse_blast_radius_token_budget() {
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "blast-radius",
+        "handleAuth",
+        "--token-budget",
+        "100",
+    ])
+    .expect("blast-radius --token-budget parses");
+
+    match cli.command {
+        Command::BlastRadius { token_budget, .. } => assert_eq!(token_budget, Some(100)),
         _ => panic!("expected top-level blast-radius command"),
     }
 }

@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::collections::HashSet;
 
-use crate::commands::scope;
+use crate::commands::{scope, token_budget};
 use crate::config::Context;
 use crate::db;
 use crate::models::{PagedResponse, SearchResult, Symbol};
@@ -18,9 +18,12 @@ pub struct SearchOptions<'a> {
     pub paths: &'a [String],
     pub format: Format,
     pub with_graph: bool,
+    pub token_budget: Option<usize>,
 }
 
 const LITERAL_QUERY_HINT: &str = "`gcode search` is hybrid/fuzzy concept search. For exact strings, call sites, dotted config keys, quoted strings, or paths, use `gcode grep \"pattern\" [PATH...] -m 50`; for ranked file-content matches, use `gcode search-content \"query\" [PATH...]`.";
+const SEARCH_TOKEN_BUDGET_REFINE_HINT: &str =
+    "`--kind`, `--language`, PATH filters, or a narrower query";
 
 pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow::Result<()> {
     let mut conn = db::connect_readonly(&ctx.database_url)?;
@@ -161,13 +164,27 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
             result
         })
         .collect();
+    let unbudgeted_result_count = results.len();
+    let budgeted = token_budget::trim_results(
+        results,
+        options.token_budget,
+        SEARCH_TOKEN_BUDGET_REFINE_HINT,
+        format_search_result_line,
+    );
+    let results = budgeted.results;
 
-    print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
+    print_empty_diagnostic(ctx, unbudgeted_result_count == 0, options.offset, total);
     let literal_hint = literal_query_hint(query);
     let path_hint =
         fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
     let visibility_hint = visible_search_degraded.then(visible_search_degraded_hint);
-    let hint = combine_hints(combine_hints(literal_hint, path_hint), visibility_hint);
+    let hint = token_budget::combine_hints(
+        token_budget::combine_hints(
+            token_budget::combine_hints(literal_hint, path_hint),
+            visibility_hint,
+        ),
+        budgeted.hint,
+    );
 
     match options.format {
         Format::Json => output::print_json(&PagedResponse {
@@ -182,13 +199,7 @@ pub fn search(ctx: &Context, query: &str, options: SearchOptions<'_>) -> anyhow:
             print_search_warning(ctx, hint.as_deref());
             let lines = results
                 .iter()
-                .map(|r| {
-                    let sources = r.sources.as_ref().map(|s| s.join("+")).unwrap_or_default();
-                    format!(
-                        "{}:{} [{}] {} (score: {:.4}, via: {})",
-                        r.file_path, r.line_start, r.kind, r.qualified_name, r.score, sources
-                    )
-                })
+                .map(format_search_result_line)
                 .collect::<Vec<_>>();
             if !lines.is_empty() {
                 output::print_text(&lines.join("\n"))?;
@@ -252,7 +263,7 @@ pub fn search_symbol(ctx: &Context, query: &str, options: SearchOptions<'_>) -> 
         .collect();
 
     print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
-    let hint = combine_hints(
+    let hint = token_budget::combine_hints(
         fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint),
         visible_search_degraded.then(visible_search_degraded_hint),
     );
@@ -369,7 +380,7 @@ fn search_symbol_with_graph(
         .collect();
 
     print_empty_diagnostic(ctx, results.is_empty(), options.offset, total);
-    let hint = combine_hints(
+    let hint = token_budget::combine_hints(
         fts::path_filter_requires_post_filter(expanded_paths).then(path_filter_post_filter_hint),
         visible_search_degraded.then(visible_search_degraded_hint),
     );
@@ -436,8 +447,8 @@ pub fn search_text(
         .then(filtered_fetch_cap_hint);
     let path_hint =
         fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
-    let hint = combine_hints(
-        combine_hints(cap_hint, path_hint),
+    let hint = token_budget::combine_hints(
+        token_budget::combine_hints(cap_hint, path_hint),
         visible_search_degraded.then(visible_search_degraded_hint),
     );
     let all_results: Vec<_> = all_results
@@ -540,7 +551,7 @@ pub fn search_content(
         .then(filtered_fetch_cap_hint);
     let path_hint =
         fts::path_filter_requires_post_filter(&expanded_paths).then(path_filter_post_filter_hint);
-    let hint = combine_hints(cap_hint, path_hint);
+    let hint = token_budget::combine_hints(cap_hint, path_hint);
     let all_results: Vec<_> = all_results
         .into_iter()
         .filter(|r| {
@@ -715,21 +726,29 @@ fn is_dotted_literal_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric() || matches!(ch, '_' | '-')
 }
 
-fn combine_hints(first: Option<String>, second: Option<String>) -> Option<String> {
-    match (first, second) {
-        (Some(first), Some(second)) => Some(format!("{first} {second}")),
-        (Some(first), None) => Some(first),
-        (None, Some(second)) => Some(second),
-        (None, None) => None,
-    }
-}
-
 fn print_search_warning(ctx: &Context, hint: Option<&str>) {
     if let Some(hint) = hint
         && !ctx.quiet
     {
         eprintln!("warning: {hint}");
     }
+}
+
+fn format_search_result_line(result: &SearchResult) -> String {
+    let sources = result
+        .sources
+        .as_ref()
+        .map(|sources| sources.join("+"))
+        .unwrap_or_default();
+    format!(
+        "{}:{} [{}] {} (score: {:.4}, via: {})",
+        result.file_path,
+        result.line_start,
+        result.kind,
+        result.qualified_name,
+        result.score,
+        sources
+    )
 }
 
 fn format_symbol_lookup_text(symbol: &Symbol) -> String {
@@ -849,7 +868,7 @@ mod tests {
 
     #[test]
     fn combines_fetch_cap_and_path_post_filter_hints() {
-        let hint = combine_hints(
+        let hint = token_budget::combine_hints(
             Some(filtered_fetch_cap_hint()),
             Some(path_filter_post_filter_hint()),
         )
@@ -857,6 +876,31 @@ mod tests {
 
         assert!(hint.contains("fetch cap"));
         assert!(hint.contains("post-filtered"));
+    }
+
+    #[test]
+    fn search_result_token_budget_uses_text_row_estimate() {
+        let mut first = symbol("src/lib.rs", "function", "rust").to_brief();
+        first.score = 1.0;
+        first.sources = Some(vec!["exact".to_string()]);
+        let mut second = symbol("src/other.rs", "function", "rust").to_brief();
+        second.score = 0.9;
+        second.sources = Some(vec!["semantic".to_string()]);
+        let budget = token_budget::estimate_tokens(&format_search_result_line(&first));
+        let expected_path = first.file_path.clone();
+
+        let trimmed = token_budget::trim_results(
+            vec![first, second],
+            Some(budget),
+            SEARCH_TOKEN_BUDGET_REFINE_HINT,
+            format_search_result_line,
+        );
+
+        assert_eq!(trimmed.results.len(), 1);
+        assert_eq!(trimmed.results[0].file_path, expected_path);
+        let hint = trimmed.hint.expect("token budget hint");
+        assert!(hint.contains("1 of 2 results"));
+        assert!(hint.contains("refine with `--kind`, `--language`, PATH filters"));
     }
 
     #[test]

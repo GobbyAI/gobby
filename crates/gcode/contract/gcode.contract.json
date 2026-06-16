@@ -369,6 +369,14 @@
           "allowed_values": [],
           "required": false,
           "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -897,6 +905,7 @@
         "name",
         "file_path",
         "line",
+        "confidence",
         "relation",
         "distance",
         "metadata",
@@ -941,6 +950,14 @@
           ],
           "required": false,
           "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -953,6 +970,7 @@
         "name",
         "file_path",
         "line",
+        "confidence",
         "relation",
         "distance",
         "metadata",
@@ -993,6 +1011,7 @@
         "name",
         "file_path",
         "line",
+        "confidence",
         "relation",
         "distance",
         "metadata",
@@ -1074,6 +1093,14 @@
           "repeatable": false
         },
         {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--format",
           "takes_value": true,
           "value_name": "json|text",
@@ -1095,6 +1122,7 @@
         "name",
         "file_path",
         "line",
+        "confidence",
         "relation",
         "distance",
         "metadata",
