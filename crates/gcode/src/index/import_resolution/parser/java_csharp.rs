@@ -127,9 +127,25 @@ pub(crate) fn parse_csharp_import_statement(
             module_name: target.clone(),
         });
         // Empty aliases come from malformed `using = ...` declarations and are ignored.
-        if !alias.is_empty() && is_external_csharp_path(&target, import_context) {
-            extracted.bindings.member.insert(alias.to_string(), target);
+        if alias.is_empty() {
+            return;
         }
+        if is_external_csharp_path(&target, import_context) {
+            extracted.bindings.member.insert(alias.to_string(), target);
+            return;
+        }
+        // Local type alias: `using X = Ns.Type;` then `X.M()` resolves the
+        // method against the aliased type's file(s) via the member channel. The
+        // post-write DB pass narrows the candidate file(s) to a real id.
+        let candidate_files = import_context.csharp_type_files(&target);
+        if candidate_files.is_empty() {
+            return;
+        }
+        extracted.bindings.member.remove(alias);
+        extracted
+            .bindings
+            .local_member
+            .insert(alias.to_string(), candidate_files);
         return;
     }
 
@@ -139,6 +155,10 @@ pub(crate) fn parse_csharp_import_statement(
         module_name: namespace.clone(),
     });
     if !is_external_csharp_path(&namespace, import_context) {
+        // Local namespace import: `using Ns;` brings its types into scope, so a
+        // simple-type member call `Type.M()` resolves `Type` against the
+        // declared `Ns.Type` file(s) in `resolve_csharp_local_member_callee`.
+        extracted.bindings.csharp_local_namespaces.push(namespace);
         return;
     }
     if let Some(root) = namespace.split('.').next()

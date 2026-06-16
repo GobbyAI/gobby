@@ -37,6 +37,12 @@ pub struct ImportResolutionContext {
     /// files (Java classes are file-granular per the public-class convention).
     pub(super) java_class_files: HashMap<String, Vec<String>>,
     pub(super) csharp_local_roots: HashSet<String>,
+    /// Maps a locally-declared C# type's fully-qualified name (`Ns.Type`) to the
+    /// project-relative files declaring it. A member call resolves its type
+    /// against these files: a fully-qualified `Ns.Type.M()`, an aliased
+    /// `using X = Ns.Type;` then `X.M()`, or a namespace-imported `using Ns;`
+    /// then `Type.M()`. The post-write DB pass narrows to the real symbol.
+    pub(super) csharp_type_files: HashMap<String, Vec<String>>,
     pub(super) php_local_symbols: HashSet<String>,
     pub(super) ruby_local_constant_roots: HashSet<String>,
     pub(super) ruby_require_root_overrides: HashMap<String, String>,
@@ -118,6 +124,17 @@ impl ImportResolutionContext {
         self.java_class_files.get(fqcn).cloned().unwrap_or_default()
     }
 
+    /// Project-relative files declaring the local C# type named by `type_path`
+    /// (a fully-qualified `Ns.Type`). Empty when no indexed local file declares
+    /// it (e.g. an external type, or a namespace/type pair not actually present
+    /// here).
+    pub(super) fn csharp_type_files(&self, type_path: &str) -> Vec<String> {
+        self.csharp_type_files
+            .get(type_path)
+            .cloned()
+            .unwrap_or_default()
+    }
+
     pub(super) fn ruby_require_root(&self, required: &str) -> Option<&str> {
         self.ruby_require_root_overrides
             .get(required)
@@ -162,6 +179,10 @@ pub(crate) struct ImportBindings {
     pub(crate) bare_wildcard_modules: Vec<String>,
     pub(crate) member: HashMap<String, String>,
     pub(crate) external_roots: HashMap<String, ExternalRootBinding>,
+    /// Namespaces brought into scope by a local C# `using Ns;`. A simple-type
+    /// member call `Type.M()` resolves `Type` against each namespace's declared
+    /// types (`csharp_type_files["Ns.Type"]`).
+    pub(crate) csharp_local_namespaces: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +287,7 @@ pub fn build_import_resolution_context_with_overrides(
     elixir_external_root_overrides: HashMap<String, String>,
 ) -> ImportResolutionContext {
     let java_index = build_java_class_index(root_path, candidate_files);
+    let csharp_index = build_csharp_index(root_path, candidate_files);
     ImportResolutionContext {
         python_modules: build_python_module_index(root_path, candidate_files),
         js_external_packages: load_js_external_packages(root_path),
@@ -276,7 +298,8 @@ pub fn build_import_resolution_context_with_overrides(
         rust_self_crate_name: load_rust_self_crate_name(root_path),
         java_local_classes: java_index.local_classes,
         java_class_files: java_index.class_files,
-        csharp_local_roots: build_csharp_local_roots(candidate_files),
+        csharp_local_roots: csharp_index.local_roots,
+        csharp_type_files: csharp_index.type_files,
         php_local_symbols: build_php_local_symbol_index(candidate_files),
         ruby_local_constant_roots: build_ruby_local_constant_roots(candidate_files),
         ruby_require_root_overrides,
@@ -608,21 +631,38 @@ pub(super) fn build_java_class_index(
     }
 }
 
-pub(super) fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<String> {
-    candidate_files
+pub(super) struct CsharpIndex {
+    /// Namespace roots and simple type names declared by local files. Used to
+    /// classify a `using` target as local (`is_external_csharp_path`).
+    pub(super) local_roots: HashSet<String>,
+    /// Fully-qualified type name (`Ns.Type`) -> declaring project-relative
+    /// files. Used to map a local member call to its target file(s).
+    pub(super) type_files: HashMap<String, Vec<String>>,
+}
+
+pub(super) fn build_csharp_index(root_path: &Path, candidate_files: &[PathBuf]) -> CsharpIndex {
+    let (local_roots, mut type_files) = candidate_files
         .par_iter()
         .map(|path| {
-            let mut roots = HashSet::new();
+            let mut local_roots = HashSet::new();
+            let mut type_files: HashMap<String, Vec<String>> = HashMap::new();
             let ext = path
                 .extension()
                 .and_then(|ext| ext.to_str())
                 .unwrap_or_default();
             if ext != "cs" {
-                return roots;
+                return (local_roots, type_files);
             }
             let Ok(file) = File::open(path) else {
-                return roots;
+                return (local_roots, type_files);
             };
+            let rel = path.strip_prefix(root_path).unwrap_or(path);
+            let rel_str = rel.to_string_lossy().replace('\\', "/");
+            // Tracks the most recent `namespace` declaration so a declared type
+            // is keyed by its fully-qualified name. File-scoped namespaces (the
+            // common case) name the whole file; block-scoped namespaces apply to
+            // the types that follow them.
+            let mut current_namespace: Option<String> = None;
             for line in BufReader::new(file).lines().map_while(Result::ok) {
                 let line = line.trim();
                 if let Some(rest) = line.strip_prefix("namespace ") {
@@ -632,22 +672,43 @@ pub(super) fn build_csharp_local_roots(candidate_files: &[PathBuf]) -> HashSet<S
                         .split_whitespace()
                         .next()
                         .unwrap_or_default();
-                    if let Some(root) = namespace.split('.').next()
-                        && !root.is_empty()
-                    {
-                        roots.insert(root.to_string());
+                    if !namespace.is_empty() {
+                        if let Some(root) = namespace.split('.').next()
+                            && !root.is_empty()
+                        {
+                            local_roots.insert(root.to_string());
+                        }
+                        current_namespace = Some(namespace.to_string());
                     }
                 }
                 for type_name in csharp_declared_types(line) {
-                    roots.insert(type_name);
+                    local_roots.insert(type_name.clone());
+                    if let Some(namespace) = current_namespace.as_deref() {
+                        let fqcn = format!("{namespace}.{type_name}");
+                        type_files.entry(fqcn).or_default().push(rel_str.clone());
+                    }
                 }
             }
-            roots
+            (local_roots, type_files)
         })
-        .reduce(HashSet::new, |mut all, roots| {
-            all.extend(roots);
-            all
-        })
+        .reduce(
+            || (HashSet::new(), HashMap::new()),
+            |mut acc, (roots, files)| {
+                acc.0.extend(roots);
+                for (fqcn, paths) in files {
+                    acc.1.entry(fqcn).or_default().extend(paths);
+                }
+                acc
+            },
+        );
+    for files in type_files.values_mut() {
+        files.sort();
+        files.dedup();
+    }
+    CsharpIndex {
+        local_roots,
+        type_files,
+    }
 }
 
 pub(super) fn build_php_local_symbol_index(candidate_files: &[PathBuf]) -> HashSet<String> {

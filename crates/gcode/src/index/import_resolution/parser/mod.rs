@@ -251,3 +251,57 @@ pub(crate) fn resolve_rust_local_qualified_callee(
     let qualifier_path = qualifier_path?;
     import_context.rust_qualified_candidate(rel_path, qualifier_path, callee_name)
 }
+
+/// Resolve a C# member call against a locally-declared type's file(s).
+///
+/// Handles two qualifier shapes that the alias channel (`local_member`) does not
+/// cover:
+///
+/// * **Fully-qualified** `Ns.Type.M()` — the qualifier is the type's
+///   fully-qualified name, looked up directly in `csharp_type_files`.
+/// * **Namespace-imported simple type** `Type.M()` after `using Ns;` — the
+///   single-segment qualifier is resolved against each locally imported
+///   namespace (`Ns.Type`), merging the candidate files across namespaces.
+///
+/// Returns `None` (leaving the call unresolved) when the type is not locally
+/// declared or a same-file symbol shadows the qualifier root. The post-write DB
+/// pass narrows the candidate files to the real method symbol.
+pub(crate) fn resolve_csharp_local_member_callee(
+    import_context: &ImportResolutionContext,
+    import_bindings: &ImportBindings,
+    symbols: &[Symbol],
+    callee_name: &str,
+    root_alias: Option<&str>,
+    qualifier_path: Option<&str>,
+    is_member_call: bool,
+) -> Option<LocalCallBinding> {
+    if !is_member_call {
+        return None;
+    }
+    let qualifier_path = qualifier_path?;
+    let root_alias = root_alias?;
+    if symbols.iter().any(|symbol| symbol.name == root_alias) {
+        return None;
+    }
+    let candidate_files = if qualifier_path.contains('.') {
+        import_context.csharp_type_files(qualifier_path)
+    } else {
+        let mut files: Vec<String> = import_bindings
+            .csharp_local_namespaces
+            .iter()
+            .flat_map(|namespace| {
+                import_context.csharp_type_files(&format!("{namespace}.{qualifier_path}"))
+            })
+            .collect();
+        files.sort();
+        files.dedup();
+        files
+    };
+    if candidate_files.is_empty() {
+        return None;
+    }
+    Some(LocalCallBinding {
+        candidate_files,
+        callee_name: callee_name.to_string(),
+    })
+}

@@ -703,7 +703,11 @@ class Sample {
 }
 
 #[test]
-fn leaves_csharp_instance_and_local_namespace_calls_unresolved() {
+fn resolves_local_csharp_namespace_and_fully_qualified_member_calls() {
+    // A namespace import (`using App.Helpers;`) makes a simple-type member call
+    // (`Tool.Render()`) resolvable, and a fully-qualified member call
+    // (`App.Helpers.Tool.Render()`) resolves without any import. Both become a
+    // `local_import` pointing at the declaring type's file.
     let parsed = parse_csharp(
         r#"
 namespace App;
@@ -711,13 +715,98 @@ namespace App;
 using App.Helpers;
 
 class Sample {
-    void Run(Client client) {
-        client.Send();
+    void Run() {
+        Tool.Render();
         App.Helpers.Tool.Render();
     }
 }
 "#,
-        &[],
+        &[(
+            "src/Helpers/Tool.cs",
+            r#"
+namespace App.Helpers;
+
+class Tool {
+    public static void Render() {}
+}
+"#,
+        )],
+    );
+
+    let resolved_render = parsed
+        .calls
+        .iter()
+        .filter(|call| {
+            call.callee_name == "Render" && call.callee_target_kind.as_str() == "local_import"
+        })
+        .count();
+    assert_eq!(
+        resolved_render, 2,
+        "both the namespace-imported and fully-qualified calls should resolve"
+    );
+    assert_rust_local_import!(&parsed, "Render", "src/Helpers/Tool.cs");
+}
+
+#[test]
+fn resolves_local_csharp_type_alias_member_calls() {
+    // A local type alias (`using W = App.Helpers.Widget;`) binds the alias for a
+    // member call (`W.Build()`); it resolves to the aliased type's file.
+    let parsed = parse_csharp(
+        r#"
+namespace App;
+
+using W = App.Helpers.Widget;
+
+class Sample {
+    void Run() {
+        W.Build();
+    }
+}
+"#,
+        &[(
+            "src/Helpers/Widget.cs",
+            r#"
+namespace App.Helpers;
+
+class Widget {
+    public static void Build() {}
+}
+"#,
+        )],
+    );
+
+    assert_rust_local_import!(&parsed, "Build", "src/Helpers/Widget.cs");
+}
+
+#[test]
+fn leaves_csharp_instance_and_unimported_namespace_calls_unresolved() {
+    // An instance call (`client.Send()`) has no statically known type, and a
+    // namespace import (`using App.Missing;`) that does not actually declare the
+    // referenced type leaves `Tool.Render()` unresolved rather than minting a
+    // false edge to the unrelated `App.Other.Tool`.
+    let parsed = parse_csharp(
+        r#"
+namespace App;
+
+using App.Missing;
+
+class Sample {
+    void Run(Client client) {
+        client.Send();
+        Tool.Render();
+    }
+}
+"#,
+        &[(
+            "src/Other/Tool.cs",
+            r#"
+namespace App.Other;
+
+class Tool {
+    public static void Render() {}
+}
+"#,
+        )],
     );
 
     assert_eq!(parsed.calls.len(), 2);

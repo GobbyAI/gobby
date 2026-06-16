@@ -255,6 +255,7 @@ const LOCAL_IMPORT_PROJECT_ID: &str = "graph-standalone-local-import";
 const NO_PHANTOM_PROJECT_ID: &str = "graph-standalone-no-phantom";
 const GO_LOCAL_PROJECT_ID: &str = "graph-standalone-go-local";
 const JAVA_LOCAL_PROJECT_ID: &str = "graph-standalone-java-local";
+const CSHARP_LOCAL_PROJECT_ID: &str = "graph-standalone-csharp-local";
 
 /// End-to-end check for the post-write local-import resolution (#790): indexing
 /// a two-file Python project must resolve the cross-file calls in `b.py` to the
@@ -591,6 +592,125 @@ fn index_resolves_cross_file_local_java_calls() {
     assert_caller_present(&env, project.path(), "start", "run", "after sync-file");
     assert_eq!(
         phantom_call_target_count(&mut graph, JAVA_LOCAL_PROJECT_ID),
+        0,
+        "sync-file must not introduce a phantom CALLS target"
+    );
+}
+
+/// End-to-end proof that cross-file local C# call targets resolve to real symbol
+/// ids and project as DEFINES-linked CALLS edges. Exercises both new resolution
+/// shapes the task calls out — a namespace-imported simple-type member call
+/// (`using App.Helpers;` then `Tool.Render()`) and a fully-qualified member call
+/// (`App.Widgets.Widget.Build()`) — across the index, rebuild, and sync-file
+/// paths.
+#[test]
+fn index_resolves_cross_file_local_csharp_calls() {
+    let Some(env) = StandaloneEnv::from_env() else {
+        eprintln!(
+            "skipping cross-file C# local-call resolution; set GCODE_GRAPH_STANDALONE_DATABASE_URL, GCODE_GRAPH_STANDALONE_FALKOR_HOST, and GCODE_GRAPH_STANDALONE_FALKOR_PORT"
+        );
+        return;
+    };
+
+    let project = tempfile::tempdir().expect("temp project");
+    fs::create_dir_all(project.path().join(".gobby")).expect("create .gobby");
+    fs::create_dir_all(project.path().join("src/Helpers")).expect("create src/Helpers");
+    fs::create_dir_all(project.path().join("src/Widgets")).expect("create src/Widgets");
+    fs::write(
+        project.path().join("src/Helpers/Tool.cs"),
+        "namespace App.Helpers;\n\nclass Tool {\n    public static void Render() {}\n}\n",
+    )
+    .expect("write Tool.cs");
+    fs::write(
+        project.path().join("src/Widgets/Widget.cs"),
+        "namespace App.Widgets;\n\nclass Widget {\n    public static void Build() {}\n}\n",
+    )
+    .expect("write Widget.cs");
+    fs::write(
+        project.path().join("src/Main.cs"),
+        "namespace App;\n\nusing App.Helpers;\n\nclass Main {\n    void Run() {\n        Tool.Render();\n        App.Widgets.Widget.Build();\n    }\n}\n",
+    )
+    .expect("write Main.cs");
+    fs::write(
+        project.path().join(".gobby/gcode.json"),
+        serde_json::json!({
+            "id": CSHARP_LOCAL_PROJECT_ID,
+            "name": "graph-standalone-csharp-local",
+            "created_at": "2026-06-15T00:00:00Z"
+        })
+        .to_string(),
+    )
+    .expect("write gcode identity");
+
+    let mut conn = Client::connect(&env.database_url, NoTls).expect("connect PostgreSQL");
+    let _cleanup = ProjectCleanup::new(&env.database_url, CSHARP_LOCAL_PROJECT_ID);
+
+    let indexed = run_gcode(&env, project.path(), &["index", "--full"]);
+    assert_success(indexed, "gcode index --full");
+
+    let tool_file = "src/Helpers/Tool.cs";
+    let widget_file = "src/Widgets/Widget.cs";
+    let main_file = "src/Main.cs";
+    let render_id = required_symbol_id(&mut conn, CSHARP_LOCAL_PROJECT_ID, tool_file, "Render");
+    let build_id = required_symbol_id(&mut conn, CSHARP_LOCAL_PROJECT_ID, widget_file, "Build");
+
+    // The namespace-imported simple-type call and the fully-qualified call each
+    // resolve to the canonical method symbol in the declaring type's file.
+    assert_eq!(
+        resolved_call_target(&mut conn, CSHARP_LOCAL_PROJECT_ID, main_file, "Render"),
+        Some(render_id.clone()),
+        "C# namespace-imported member call did not resolve to the canonical method"
+    );
+    assert_eq!(
+        resolved_call_target(&mut conn, CSHARP_LOCAL_PROJECT_ID, main_file, "Build"),
+        Some(build_id.clone()),
+        "C# fully-qualified member call did not resolve to the canonical method"
+    );
+    assert_eq!(
+        pending_local_import_count(&mut conn, CSHARP_LOCAL_PROJECT_ID),
+        0,
+        "no local_import rows should survive a completed index run"
+    );
+
+    // Projection path 1+2: rebuild from resolved PostgreSQL facts, then both
+    // cross-file callers must be reachable and each target must be a real
+    // DEFINES-linked node (no phantom CALLS target).
+    let rebuilt = json_command(&env, project.path(), &["graph", "rebuild"]);
+    assert_eq!(rebuilt["success"], true);
+    assert_caller_present(&env, project.path(), "Render", "Run", "after rebuild");
+    assert_caller_present(&env, project.path(), "Build", "Run", "after rebuild");
+
+    let mut graph = phantom_graph_client(&env);
+    assert_eq!(
+        phantom_call_target_count(&mut graph, CSHARP_LOCAL_PROJECT_ID),
+        0,
+        "no CALLS target may lack a DEFINES edge after rebuild"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, CSHARP_LOCAL_PROJECT_ID, &render_id),
+        "the resolved C# namespace-imported method target must be a defined, called CodeSymbol"
+    );
+    assert!(
+        resolved_target_is_defined_and_called(&mut graph, CSHARP_LOCAL_PROJECT_ID, &build_id),
+        "the resolved C# fully-qualified method target must be a defined, called CodeSymbol"
+    );
+
+    let blast = json_command(&env, project.path(), &["blast-radius", "Render"]);
+    assert!(
+        blast.get("center").is_some(),
+        "blast-radius should report a center: {blast}"
+    );
+
+    // Projection path 3: sync-file must recreate the same canonical edges.
+    let sync = run_gcode(
+        &env,
+        project.path(),
+        &["graph", "sync-file", "--file", main_file],
+    );
+    assert_success(sync, "graph sync-file Main.cs");
+    assert_caller_present(&env, project.path(), "Render", "Run", "after sync-file");
+    assert_eq!(
+        phantom_call_target_count(&mut graph, CSHARP_LOCAL_PROJECT_ID),
         0,
         "sync-file must not introduce a phantom CALLS target"
     );

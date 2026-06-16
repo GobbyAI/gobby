@@ -123,10 +123,29 @@ fn materialize_call(
     } else {
         None
     };
+    let csharp_member_target = if local_target.is_none()
+        && external_target.is_none()
+        && local_qualified_target.is_none()
+        && local_member_target.is_none()
+        && !external_shadowed
+    {
+        import_resolution::resolve_csharp_local_member_callee(
+            ctx.import_context,
+            ctx.import_bindings,
+            ctx.symbols,
+            &site.callee_name,
+            root_alias.as_deref(),
+            site.qualifier_path.as_deref(),
+            site.syntax == CallSyntaxKind::Member,
+        )
+    } else {
+        None
+    };
     let local_import_target = if local_target.is_none()
         && external_target.is_none()
         && local_qualified_target.is_none()
         && local_member_target.is_none()
+        && csharp_member_target.is_none()
         && !external_shadowed
     {
         import_resolution::resolve_local_callee(
@@ -142,6 +161,7 @@ fn materialize_call(
         && external_target.is_none()
         && local_qualified_target.is_none()
         && local_member_target.is_none()
+        && csharp_member_target.is_none()
         && local_import_target.is_none()
         && !external_shadowed
     {
@@ -172,6 +192,7 @@ fn materialize_call(
         call = call.with_symbol_target(callee_symbol_id);
     } else if let Some(local_binding) = local_qualified_target
         .or(local_member_target)
+        .or(csharp_member_target)
         .or(local_import_target)
     {
         // Cross-file local import: record the original name plus the candidate
