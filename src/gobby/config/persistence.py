@@ -258,7 +258,10 @@ class MemoryDreamConfig(FeatureDefaultConfig):
     )
     scan_limit: int = Field(
         default=500,
-        description="Maximum stale candidates to include in one dream run",
+        description=(
+            "Deprecated and ignored. The sweep now pages every active memory "
+            "via page_size; retained so existing configs still load."
+        ),
     )
     planner_batch_size: int = Field(
         default=25,
@@ -270,7 +273,10 @@ class MemoryDreamConfig(FeatureDefaultConfig):
     )
     max_scan_rows: int = Field(
         default=5000,
-        description="Maximum memory rows to scan while finding stale candidates",
+        description=(
+            "Deprecated and ignored. The streaming page-and-apply loop is bounded "
+            "by page_size and the redream cooldown, not a global scan cap."
+        ),
     )
     candidate_page_timeout_seconds: float = Field(
         default=10.0,
@@ -278,7 +284,33 @@ class MemoryDreamConfig(FeatureDefaultConfig):
     )
     stale_age_days: int = Field(
         default=30,
-        description="Minimum age in days before a memory is reviewed by dream",
+        description=(
+            "Deprecated and ignored. Dream now reviews every active memory once "
+            "per cooldown window instead of gating on row age."
+        ),
+    )
+    page_size: int = Field(
+        default=200,
+        description="Active memories hydrated per page in the streaming dream sweep",
+    )
+    redream_after_hours: int = Field(
+        default=20,
+        description=(
+            "Cooldown in hours before a dreamed memory is eligible again; makes the "
+            "nightly sweep idempotent across same-day re-runs"
+        ),
+    )
+    purge_delete_after_days: int = Field(
+        default=30,
+        description="Grace days before soft-hidden delete-action memories are hard-purged",
+    )
+    purge_review_after_days: int = Field(
+        default=90,
+        description="Grace days before soft-hidden review-action memories are hard-purged",
+    )
+    run_retention_days: int = Field(
+        default=30,
+        description="Days to retain memory_dream_runs/_snapshots history before pruning",
     )
     min_action_confidence: float = Field(
         default=0.72,
@@ -312,6 +344,11 @@ class MemoryDreamConfig(FeatureDefaultConfig):
         "max_scan_rows",
         "stale_age_days",
         "max_tokens",
+        "page_size",
+        "redream_after_hours",
+        "purge_delete_after_days",
+        "purge_review_after_days",
+        "run_retention_days",
     )
     @classmethod
     def validate_positive_int(cls, v: int) -> int:

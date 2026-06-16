@@ -118,6 +118,63 @@ class TestMemoryConfigValidation:
 
 
 # =============================================================================
+# MemoryDreamConfig Tests (dream GC: page/cooldown/purge/retention)
+# =============================================================================
+
+
+class TestMemoryDreamConfig:
+    """Test MemoryDreamConfig GC fields added for the self-healing sweep."""
+
+    def test_dream_gc_field_defaults(self) -> None:
+        """New GC knobs carry the design-plan defaults."""
+        from gobby.config.persistence import MemoryDreamConfig
+
+        config = MemoryDreamConfig()
+        assert config.page_size == 200
+        assert config.redream_after_hours == 20
+        assert config.purge_delete_after_days == 30
+        assert config.purge_review_after_days == 90
+        assert config.run_retention_days == 30
+
+    @pytest.mark.parametrize(
+        "field",
+        [
+            "page_size",
+            "redream_after_hours",
+            "purge_delete_after_days",
+            "purge_review_after_days",
+            "run_retention_days",
+        ],
+    )
+    def test_dream_gc_fields_reject_non_positive(self, field: str) -> None:
+        """Each new GC int is registered in validate_positive_int."""
+        from gobby.config.persistence import MemoryDreamConfig
+
+        with pytest.raises(ValidationError):
+            MemoryDreamConfig(**{field: 0})
+
+    def test_deprecated_fields_still_accepted(self) -> None:
+        """Deprecated-ignored fields stay declared so existing configs still load.
+
+        FeatureDefaultConfig forbids extras, so removing these outright would break
+        startup for any user config that still sets them.
+        """
+        from gobby.config.persistence import MemoryDreamConfig
+
+        config = MemoryDreamConfig(scan_limit=750, max_scan_rows=9000, stale_age_days=14)
+        assert config.scan_limit == 750
+        assert config.max_scan_rows == 9000
+        assert config.stale_age_days == 14
+
+    def test_unknown_field_still_forbidden(self) -> None:
+        """The base model forbids extras — that's why deprecated fields are kept."""
+        from gobby.config.persistence import MemoryDreamConfig
+
+        with pytest.raises(ValidationError):
+            MemoryDreamConfig(not_a_real_dream_field=1)
+
+
+# =============================================================================
 # Backend Validator Tests
 # =============================================================================
 

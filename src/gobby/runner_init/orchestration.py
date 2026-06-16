@@ -178,6 +178,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
         llm_service=runner.llm_service,
         session_summary_config=runner.config.session_summary,
         memory_sync_manager=runner.memory_sync_manager,
+        memory_dream_config=getattr(getattr(runner.config, "memory", None), "dream", None),
     )
 
     runner.cron_storage = None

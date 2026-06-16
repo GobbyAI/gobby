@@ -5,7 +5,7 @@ from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, TypeVar
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import psycopg
 import pytest
@@ -771,6 +771,95 @@ class TestPurgeSoftDeletedDefinitions:
             # Should not raise
             await manager._purge_soft_deleted_definitions()
         assert MockWFM.return_value.purge_deleted.call_count == 1
+
+
+class TestPurgeDreamHiddenMemories:
+    """Tests for _purge_dream_hidden_memories (dream GC grace purge + retention)."""
+
+    @staticmethod
+    def _dream_config(**overrides: Any) -> SimpleNamespace:
+        base = {
+            "enabled": True,
+            "purge_delete_after_days": 30,
+            "purge_review_after_days": 90,
+            "run_retention_days": 45,
+        }
+        base.update(overrides)
+        return SimpleNamespace(**base)
+
+    def _manager(self, mock_db, mock_config, *, memory_manager, dream_config):
+        with patch(_SESSION_MANAGER_PATCH):
+            return SessionLifecycleManager(
+                mock_db,
+                mock_config,
+                memory_manager=memory_manager,
+                memory_dream_config=dream_config,
+            )
+
+    @pytest.mark.asyncio
+    async def test_purges_both_actions_then_prunes_runs(self, mock_db, mock_config):
+        """Both grace windows purge with reconcile, then run history is pruned."""
+        purge = AsyncMock()
+        memory_manager = SimpleNamespace(purge_dream_hidden=purge)
+        manager = self._manager(
+            mock_db, mock_config, memory_manager=memory_manager, dream_config=self._dream_config()
+        )
+        store = MagicMock()
+        store.prune_runs = MagicMock(return_value=2)
+        with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store) as store_cls:
+            await manager._purge_dream_hidden_memories()
+
+        # Each action class purges with its own grace window.
+        assert purge.await_args_list == [call("delete", 30), call("review", 90)]
+        # Run/snapshot history pruned by run_retention_days against the same db.
+        store_cls.assert_called_once_with(mock_db)
+        store.prune_runs.assert_called_once_with(45)
+
+    @pytest.mark.asyncio
+    async def test_noop_without_dream_config(self, mock_db, mock_config):
+        """No config means nothing to purge (memory disabled / unconfigured)."""
+        purge = AsyncMock()
+        memory_manager = SimpleNamespace(purge_dream_hidden=purge)
+        manager = self._manager(
+            mock_db, mock_config, memory_manager=memory_manager, dream_config=None
+        )
+        with patch("gobby.memory.dream.storage.MemoryDreamStore") as store_cls:
+            await manager._purge_dream_hidden_memories()
+        purge.assert_not_awaited()
+        store_cls.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_runs_independently_of_dream_enabled(self, mock_db, mock_config):
+        """Purge reclaims rows even after dream is switched off."""
+        purge = AsyncMock()
+        memory_manager = SimpleNamespace(purge_dream_hidden=purge)
+        manager = self._manager(
+            mock_db,
+            mock_config,
+            memory_manager=memory_manager,
+            dream_config=self._dream_config(enabled=False),
+        )
+        store = MagicMock()
+        store.prune_runs = MagicMock(return_value=0)
+        with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store):
+            await manager._purge_dream_hidden_memories()
+        assert purge.await_count == 2  # delete + review still purged
+        store.prune_runs.assert_called_once_with(45)
+
+    @pytest.mark.asyncio
+    async def test_purge_failure_does_not_block_run_pruning(self, mock_db, mock_config):
+        """A purge error for one action is logged; pruning still runs."""
+        purge = AsyncMock(side_effect=Exception("qdrant down"))
+        memory_manager = SimpleNamespace(purge_dream_hidden=purge)
+        manager = self._manager(
+            mock_db, mock_config, memory_manager=memory_manager, dream_config=self._dream_config()
+        )
+        store = MagicMock()
+        store.prune_runs = MagicMock(return_value=0)
+        with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store):
+            await manager._purge_dream_hidden_memories()  # must not raise
+        assert purge.await_count == 2
+        store.prune_runs.assert_called_once_with(45)
 
 
 class TestProcessSessionTranscriptParsers:

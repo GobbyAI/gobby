@@ -638,6 +638,42 @@ def test_purge_dream_hidden_removes_only_aged_rows_of_action(memory_manager) -> 
     assert memory_manager.memory_exists(aged_review.id)  # different action
 
 
+def test_prune_runs_drops_aged_runs_and_cascades_snapshots(db) -> None:
+    from gobby.memory.dream.storage import MemoryDreamStore
+
+    store = MemoryDreamStore(db)
+    # project_id is left NULL — memory_dream_runs.project_id carries an FK to projects.
+    aged = store.create_run(project_id=None, dry_run=False, options={})
+    fresh = store.create_run(project_id=None, dry_run=False, options={})
+    store.record_applied_snapshot(
+        run_id=aged,
+        memory_id="m-aged",
+        action="delete",
+        before_data={"id": "m-aged"},
+        after_data=None,
+    )
+    store.record_applied_snapshot(
+        run_id=fresh,
+        memory_id="m-fresh",
+        action="review",
+        before_data={"id": "m-fresh"},
+        after_data=None,
+    )
+
+    # Backdate the aged run beyond the retention window.
+    old_stamp = (datetime.now(UTC) - timedelta(days=400)).isoformat()
+    store.update_run(aged, created_at=old_stamp)
+
+    removed = store.prune_runs(older_than_days=30)
+
+    assert removed == 1
+    assert store.get_run(aged) is None
+    assert store.get_run(fresh) is not None
+    # The pruned run's snapshot cascades out; the fresh run keeps its history.
+    assert store.list_snapshots(aged) == []
+    assert len(store.list_snapshots(fresh)) == 1
+
+
 def test_list_dream_candidates_active_only_and_cooldown(memory_manager) -> None:
     cutoff = (datetime.now(UTC) - timedelta(hours=20)).isoformat()
     before_cutoff = (datetime.now(UTC) - timedelta(days=2)).isoformat()

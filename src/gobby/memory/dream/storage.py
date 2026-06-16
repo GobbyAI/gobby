@@ -8,6 +8,7 @@ from typing import Any
 from uuid import uuid4
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.sql_dialect import older_than_now_expr
 
 # Columns added by migration 289 (dream soft-delete). Snapshots taken before
 # 289 lack them, so restore_memory_row defaults them to NULL instead of failing.
@@ -309,6 +310,21 @@ class MemoryDreamStore:
 
     def delete_memory_row(self, memory_id: str) -> None:
         self.db.execute("DELETE FROM memories WHERE id = %s", (memory_id,))
+
+    def prune_runs(self, older_than_days: int) -> int:
+        """Delete dream runs older than the retention window.
+
+        Snapshots are reclaimed automatically: ``memory_dream_snapshots.run_id``
+        carries an ``ON DELETE CASCADE`` foreign key, so removing aged runs drops
+        their snapshot rows in the same statement. Returns the run count removed.
+        """
+        cutoff = older_than_now_expr(self.db, "created_at", "%s", "day")
+        with self.db.transaction() as conn:
+            rows = conn.execute(
+                f"DELETE FROM memory_dream_runs WHERE {cutoff} RETURNING id",  # nosec B608
+                (older_than_days,),
+            ).fetchall()
+        return len(rows)
 
 
 def _json(value: Any) -> str | None:

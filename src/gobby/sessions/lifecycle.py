@@ -96,6 +96,7 @@ class SessionLifecycleManager:
         session_summary_config: Any | None = None,
         memory_sync_manager: Any | None = None,
         kg_queue_config: Any | None = None,
+        memory_dream_config: Any | None = None,
     ):
         self.db = db
         self.config = config
@@ -106,6 +107,7 @@ class SessionLifecycleManager:
         self.session_summary_config = session_summary_config
         self.memory_sync_manager = memory_sync_manager
         self._kg_queue_config = kg_queue_config
+        self._memory_dream_config = memory_dream_config
 
         self._running = False
         self._expire_task: asyncio.Task[None] | None = None
@@ -212,6 +214,11 @@ class SessionLifecycleManager:
                 await self._purge_soft_deleted_definitions()
             except Exception as e:
                 logger.error(f"Error purging soft-deleted definitions: {e}")
+
+            try:
+                await self._purge_dream_hidden_memories()
+            except Exception as e:
+                logger.error(f"Error purging dream-hidden memories: {e}")
 
             try:
                 await asyncio.sleep(interval_seconds)
@@ -358,6 +365,41 @@ class SessionLifecycleManager:
             wf_mgr.purge_deleted(older_than_days=30)
         except Exception as e:
             logger.error(f"Failed to purge soft-deleted definitions: {e}")
+
+    async def _purge_dream_hidden_memories(self) -> None:
+        """Hard-purge aged dream-hidden memories and prune dream run/snapshot history.
+
+        Runs independently of ``dream.enabled`` so rows that dream soft-hid while it
+        was on are still reclaimed after it is switched off. Each action class
+        (``delete``/``review``) has its own grace window; the facade purge also
+        reconciles secondary stores (Qdrant, knowledge graph) for the removed rows.
+        Stale run/snapshot history is pruned by ``run_retention_days`` (snapshots
+        cascade with their run).
+        """
+        config = self._memory_dream_config
+        manager = self.memory_manager
+        if config is None:
+            return
+
+        purge_hidden = getattr(manager, "purge_dream_hidden", None)
+        if callable(purge_hidden):
+            for action, grace_days in (
+                ("delete", getattr(config, "purge_delete_after_days", 30)),
+                ("review", getattr(config, "purge_review_after_days", 90)),
+            ):
+                try:
+                    await purge_hidden(action, grace_days)
+                except Exception as e:
+                    logger.error(f"Failed to purge dream-hidden {action} memories: {e}")
+
+        retention_days = getattr(config, "run_retention_days", 30)
+        try:
+            from gobby.memory.dream.storage import MemoryDreamStore
+
+            store = MemoryDreamStore(self.db)
+            await self._run_memory_db(store.prune_runs, retention_days)
+        except Exception as e:
+            logger.error(f"Failed to prune dream run history: {e}")
 
     async def _process_pending_transcripts(self) -> int:
         """Process transcripts for expired sessions.
