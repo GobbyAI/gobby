@@ -9,6 +9,7 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
         &architecture.source_spans,
         &architecture.degraded_sources,
     );
+    append_relevant_source_files(&mut doc, &architecture.source_spans);
     doc.push_str("# Architecture Overview\n\n");
     if let Some(narrative) = &architecture.narrative {
         write_section(&mut doc, "Overview", narrative);
@@ -45,6 +46,7 @@ pub(crate) fn render_onboarding_doc(onboarding: &OnboardingDoc) -> String {
         &onboarding.source_spans,
         &onboarding.degraded_sources,
     );
+    append_relevant_source_files(&mut doc, &onboarding.source_spans);
     doc.push_str("# Start Here\n\n");
 
     if !onboarding.entry_points.is_empty() {
@@ -83,6 +85,7 @@ pub(crate) fn render_hotspots_doc(hotspots: &HotspotsDoc) -> String {
         &hotspots.source_spans,
         &hotspots.degraded_sources,
     );
+    append_relevant_source_files(&mut doc, &hotspots.source_spans);
     doc.push_str("# Hotspots\n\n");
 
     if hotspots

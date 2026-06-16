@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::io::{read_codewiki_meta, safe_doc_path};
-use super::{BuiltDoc, CodewikiDocMeta, SourceSpan};
+use super::{BuiltDoc, CODEWIKI_RENDER_VERSION, CodewikiDocMeta, SourceSpan};
 use crate::index::hasher;
 
 /// Decides whether a doc's previous content can be reused without any LLM
@@ -95,7 +95,11 @@ impl ReusePlan {
         // when its sources match (#687). An empty hash set cannot prove the
         // doc unchanged (#672), and a mode change invalidates content that
         // hashes cannot see (#677).
-        if entry.degraded || entry.ai_mode != self.ai_mode || entry.source_hashes.is_empty() {
+        if entry.degraded
+            || entry.ai_mode != self.ai_mode
+            || entry.render_version != CODEWIKI_RENDER_VERSION
+            || entry.source_hashes.is_empty()
+        {
             return false;
         }
         if entry.source_hashes.len() != sources.len()

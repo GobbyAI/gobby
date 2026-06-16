@@ -120,6 +120,7 @@ fn render_concept_tree(
         spans,
         &degraded_sources,
     );
+    append_relevant_source_files(&mut doc, spans);
     doc.push_str("# Curated Concept Navigation\n\n");
     doc.push_str("Reader-first paths into the grounded code reference.\n\n");
     doc.push_str("## Concept Tree\n\n");
@@ -157,6 +158,7 @@ fn render_concept_page(concept: &ConceptModule, spans: &[SourceSpan], degraded: 
     let degraded_sources = degraded_sources(degraded);
     let mut doc =
         frontmatter_with_degradation(&concept.title, "code_concept", spans, &degraded_sources);
+    append_relevant_source_files(&mut doc, spans);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", concept.title));
     write_section(
         &mut doc,
@@ -193,6 +195,7 @@ fn render_narrative_page(
     let degraded_sources = degraded_sources(degraded);
     let mut doc =
         frontmatter_with_degradation(&page.title, "code_narrative", spans, &degraded_sources);
+    append_relevant_source_files(&mut doc, spans);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", page.title));
     write_section(&mut doc, "Guide", &ground_text(&page.summary, spans, None));
     if !page.concepts.is_empty() {

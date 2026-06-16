@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet};
+use std::fmt::Write as _;
 
 use crate::commands::codewiki::SourceSpan;
 
@@ -63,6 +64,75 @@ fn frontmatter_with_options(
     degraded_sources: &[String],
     include_ranges: bool,
 ) -> String {
+    let (source_files, provenance_truncated) =
+        frontmatter_source_files(source_spans, include_ranges);
+    let data = Frontmatter {
+        title,
+        kind,
+        provenance: source_files,
+        provenance_truncated,
+        generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
+        trust: gobby_core::codewiki_contract::TRUST_GENERATED,
+        freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,
+        degraded: (!degraded_sources.is_empty()).then_some(true),
+        degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
+    };
+    let yaml = serde_yaml::to_string(&data)
+        .expect("codewiki frontmatter only contains YAML-serializable data");
+    let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
+
+    let mut out = String::from("---\n");
+    out.push_str(yaml);
+    if !out.ends_with('\n') {
+        out.push('\n');
+    }
+    out.push_str("---\n\n");
+    out
+}
+
+pub(crate) fn append_relevant_source_files(doc: &mut String, source_spans: &[SourceSpan]) {
+    let (source_files, provenance_truncated) = frontmatter_source_files(source_spans, true);
+    if source_files.is_empty() {
+        return;
+    }
+
+    doc.push_str("<details>\n<summary>Relevant source files</summary>\n\n");
+    for source in source_files {
+        doc.push_str("- ");
+        if source.ranges.is_empty() {
+            let _ = write!(
+                doc,
+                "[{}]({})",
+                escape_markdown_link_label(source.file),
+                encode_markdown_path(source.file)
+            );
+        } else {
+            for (index, range) in source.ranges.iter().enumerate() {
+                if index > 0 {
+                    doc.push_str(", ");
+                }
+                let _ = write!(
+                    doc,
+                    "[{}:{}]({})",
+                    escape_markdown_link_label(source.file),
+                    escape_markdown_link_label(range),
+                    source_range_href(source.file, range)
+                );
+            }
+        }
+        doc.push('\n');
+    }
+    if let Some(count) = provenance_truncated {
+        let noun = if count == 1 { "file" } else { "files" };
+        let _ = writeln!(doc, "\n_{count} more source {noun} omitted._");
+    }
+    doc.push_str("\n</details>\n\n");
+}
+
+fn frontmatter_source_files(
+    source_spans: &[SourceSpan],
+    include_ranges: bool,
+) -> (Vec<FrontmatterSourceFile<'_>>, Option<usize>) {
     let mut files: BTreeMap<&str, BTreeSet<(usize, usize)>> = BTreeMap::new();
     for span in source_spans {
         files
@@ -101,28 +171,10 @@ fn frontmatter_with_options(
             },
         })
         .collect();
-    let data = Frontmatter {
-        title,
-        kind,
-        provenance: source_files,
-        provenance_truncated: (provenance_truncated > 0).then_some(provenance_truncated),
-        generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
-        trust: gobby_core::codewiki_contract::TRUST_GENERATED,
-        freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,
-        degraded: (!degraded_sources.is_empty()).then_some(true),
-        degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
-    };
-    let yaml = serde_yaml::to_string(&data)
-        .expect("codewiki frontmatter only contains YAML-serializable data");
-    let yaml = yaml.strip_prefix("---\n").unwrap_or(&yaml);
-
-    let mut out = String::from("---\n");
-    out.push_str(yaml);
-    if !out.ends_with('\n') {
-        out.push('\n');
-    }
-    out.push_str("---\n\n");
-    out
+    (
+        source_files,
+        (provenance_truncated > 0).then_some(provenance_truncated),
+    )
 }
 
 fn format_frontmatter_ranges(ranges: BTreeSet<(usize, usize)>) -> Vec<String> {
@@ -149,4 +201,30 @@ fn format_frontmatter_ranges(ranges: BTreeSet<(usize, usize)>) -> Vec<String> {
             }
         })
         .collect()
+}
+
+fn source_range_href(file: &str, range: &str) -> String {
+    let anchor = match range.split_once('-') {
+        Some((start, end)) => format!("#L{start}-L{end}"),
+        None => format!("#L{range}"),
+    };
+    format!("{}{}", encode_markdown_path(file), anchor)
+}
+
+fn encode_markdown_path(path: &str) -> String {
+    let mut encoded = String::new();
+    for (index, segment) in path.split('/').enumerate() {
+        if index > 0 {
+            encoded.push('/');
+        }
+        encoded.push_str(&urlencoding::encode(segment));
+    }
+    encoded
+}
+
+fn escape_markdown_link_label(value: &str) -> String {
+    value
+        .replace('\\', "\\\\")
+        .replace('[', "\\[")
+        .replace(']', "\\]")
 }

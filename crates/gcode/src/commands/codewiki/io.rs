@@ -162,6 +162,7 @@ impl<'a> DocSink<'a> {
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
                     && meta.ai_mode == self.ai_mode
+                    && meta.render_version == CODEWIKI_RENDER_VERSION
                     && meta.source_hashes == source_hashes
                     && (doc.summary.is_none() || meta.summary.is_some())
             });
@@ -186,6 +187,7 @@ impl<'a> DocSink<'a> {
                     doc.summary.clone()
                 },
                 ai_mode: self.ai_mode.clone(),
+                render_version: CODEWIKI_RENDER_VERSION,
             }
         };
         self.next_docs.insert(doc.path.clone(), entry);

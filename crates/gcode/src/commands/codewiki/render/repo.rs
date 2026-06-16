@@ -131,6 +131,7 @@ pub(crate) fn render_repo_doc(
         source_spans,
         &model_degraded_sources(degraded),
     );
+    append_relevant_source_files(&mut doc, source_spans);
     doc.push_str("# Repository Overview\n\n");
     let summary = replace_citations_with_markers(summary, source_spans);
     write_section(&mut doc, "Overview", &summary);

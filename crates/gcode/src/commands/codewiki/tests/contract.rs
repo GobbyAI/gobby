@@ -84,6 +84,14 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
 
     assert!(repo.contains("[[code/modules/src|src]]"));
     assert!(file.contains("[[code/modules/src|src]]"));
+    assert!(file.contains("<details>\n<summary>Relevant source files</summary>"));
+    assert!(file.contains("- [src/lib.rs:1](src/lib.rs#L1)"));
+    assert!(
+        file.find("</details>")
+            .expect("source details closes before body")
+            < file.find("# src/lib.rs").expect("file heading")
+    );
+    assert!(repo.contains("- [src/lib.rs:1](src/lib.rs#L1)"));
     assert_eq!(
         frontmatter
             .get("generated_by")

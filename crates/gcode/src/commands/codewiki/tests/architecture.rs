@@ -77,8 +77,13 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
     assert!(rendered.contains("[[code/modules/src/domain|src/domain]]"));
     assert!(rendered.contains("[[code/modules/src/storage|src/storage]]"));
     assert!(rendered.contains("`src/api` contains 2 direct files and 0 child modules."));
-    assert!(!rendered.contains("src/api/handler.rs:1"));
-    assert!(!rendered.contains("src/api/router.rs:1"));
+    assert!(rendered.contains("- [src/api/handler.rs:1](src/api/handler.rs#L1)"));
+    let body = rendered
+        .split_once("</details>\n\n")
+        .map(|(_, body)| body)
+        .expect("relevant source files details block");
+    assert!(!body.contains("src/api/handler.rs:1"));
+    assert!(!body.contains("src/api/router.rs:1"));
     for line in rendered
         .lines()
         .filter(|line| line.starts_with("- [[code/modules/"))

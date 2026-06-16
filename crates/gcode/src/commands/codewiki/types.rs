@@ -307,6 +307,10 @@ pub(crate) struct CodewikiDocMeta {
     /// per-doc modes existed inherit the run-level `ai_mode` at read time.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) ai_mode: String,
+    /// Render-template version for deterministic markdown emitted after model
+    /// generation. Missing versions force a one-time rewrite on upgrade.
+    #[serde(default)]
+    pub(crate) render_version: u32,
 }
 
 /// One rendered doc plus the degradation outcome of its generation, carried

@@ -10,6 +10,7 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
         &module.source_spans,
         &model_degraded_sources(module.degraded),
     );
+    append_relevant_source_files(&mut doc, &module.source_spans);
     let _ = writeln!(doc, "# {}\n", module.module);
     match parent_module(&module.module) {
         Some(parent) => {
@@ -76,6 +77,7 @@ pub(crate) fn render_file_doc(file: &FileDoc) -> String {
         &file.source_spans,
         &model_degraded_sources(file.degraded),
     );
+    append_relevant_source_files(&mut doc, &file.source_spans);
     let _ = writeln!(doc, "# {}\n", file.path);
     if file.module.is_empty() {
         doc.push_str("Module: [[code/repo|Repository Overview]]\n\n");

@@ -124,6 +124,30 @@ fn frontmatter_serializes_scalars_with_serde_yaml() {
 }
 
 #[test]
+fn relevant_source_files_header_links_to_coalesced_line_ranges() {
+    let mut doc = String::new();
+    append_relevant_source_files(
+        &mut doc,
+        &[
+            SourceSpan {
+                file: "src/space file[1].rs".to_string(),
+                line_start: 7,
+                line_end: 9,
+            },
+            SourceSpan {
+                file: "src/space file[1].rs".to_string(),
+                line_start: 10,
+                line_end: 10,
+            },
+        ],
+    );
+
+    assert!(doc.starts_with("<details>\n<summary>Relevant source files</summary>"));
+    assert!(doc.contains("- [src/space file\\[1\\].rs:7-10](src/space%20file%5B1%5D.rs#L7-L10)"));
+    assert!(doc.ends_with("</details>\n\n"));
+}
+
+#[test]
 fn frontmatter_matches_the_shared_codewiki_contract_golden() {
     let doc = frontmatter_with_degradation(
         "src/lib.rs",
