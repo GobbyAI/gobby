@@ -24,6 +24,9 @@ type MemoryRecord = {
   access_count: number;
   last_accessed_at: string | null;
   tags: string[] | null;
+  deleted_at: string | null;
+  dream_action: string | null;
+  last_dreamed_at: string | null;
 };
 
 const recentIso = new Date(Date.now() - 60 * 60 * 1000).toISOString();
@@ -43,6 +46,9 @@ function makeMemory(overrides: Partial<MemoryRecord>): MemoryRecord {
     access_count: 0,
     last_accessed_at: null,
     tags: [],
+    deleted_at: null,
+    dream_action: null,
+    last_dreamed_at: null,
     ...overrides,
   };
 }
@@ -79,6 +85,9 @@ function setupFetch(memories: MemoryRecord[]) {
       });
     }
     if (url.endsWith("/api/memories/mem-recent") && method === "DELETE") {
+      return jsonResponse({ ok: true });
+    }
+    if (url.includes("/restore") && method === "POST") {
       return jsonResponse({ ok: true });
     }
     return jsonResponse({ error: "no mock route matched" }, 404);
@@ -182,5 +191,49 @@ describe("Memory activity tab", () => {
     const menu = screen.getByRole("menu", { name: "Actions for Persist panel width override" });
     expect(within(menu).getByRole("menuitem", { name: "Copy content" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
+  });
+
+  it("filters by visibility, badges hidden rows, and restores them", async () => {
+    const fetchMock = setupFetch([
+      makeMemory({ id: "mem-recent", content: "Active fact", created_at: recentIso }),
+      makeMemory({
+        id: "mem-hidden",
+        content: "Stale flagged fact",
+        created_at: recentIso,
+        deleted_at: recentIso,
+        dream_action: "review",
+      }),
+    ]);
+    const user = userEvent.setup();
+    render(<MemoryTab projectId="project-1" />);
+
+    // Active (default) hides dream-flagged rows.
+    expect(await screen.findByRole("button", { name: "Select Active fact" })).toBeInTheDocument();
+    expect(screen.queryByText("Stale flagged fact")).not.toBeInTheDocument();
+
+    // Switch the visibility scope to Hidden.
+    await user.click(screen.getByRole("button", { name: "Filter memories" }));
+    await user.click(screen.getByRole("radio", { name: "Hidden" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Select Stale flagged fact" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Active fact")).not.toBeInTheDocument();
+    // Text-and-icon badge — label carries the meaning, never hue alone.
+    expect(screen.getAllByText("Flagged for review").length).toBeGreaterThan(0);
+
+    // Restore via the row action menu.
+    await user.click(screen.getByRole("button", { name: "Open actions for Stale flagged fact" }));
+    const hiddenMenu = screen.getByRole("menu", { name: "Actions for Stale flagged fact" });
+    await user.click(within(hiddenMenu).getByRole("menuitem", { name: "Restore" }));
+
+    await waitFor(() => {
+      const restored = fetchMock.mock.calls.some(
+        ([reqUrl, init]) =>
+          String(reqUrl).includes("/api/memories/mem-hidden/restore") &&
+          (init?.method ?? "GET") === "POST",
+      );
+      expect(restored).toBe(true);
+    });
   });
 });

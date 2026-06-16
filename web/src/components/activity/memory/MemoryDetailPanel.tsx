@@ -1,6 +1,7 @@
-import { useEffect, useMemo, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type ReactNode } from "react";
 
 import type { GobbyMemory } from "../../../hooks/useMemory";
+import { cn } from "../../../lib/utils";
 import {
   DetailPaneHeader,
   SelectField,
@@ -9,13 +10,27 @@ import {
   useDetailDraft,
 } from "../fields";
 import type { MemoryDraft } from "./MemoryTabActions";
-import { MEMORY_TYPE_OPTIONS, normalizeMemoryTags } from "./MemoryTabData";
+import {
+  dreamFlagLabel,
+  isHiddenMemory,
+  MEMORY_TYPE_OPTIONS,
+  memoryDreamFlag,
+  normalizeMemoryTags,
+  purgeCountdownLabel,
+} from "./MemoryTabData";
 
 interface MemoryDetailPanelProps {
   memory: GobbyMemory | null;
   onSave: (draft: MemoryDraft) => Promise<boolean>;
   onConfirmLeaveChange: (handler: (next: () => void) => void) => void;
+  onRestore?: (memory: GobbyMemory) => Promise<void> | void;
   actions?: ReactNode;
+}
+
+function formatTimestamp(value: string | null): string {
+  if (!value) return "—";
+  const parsed = new Date(value);
+  return Number.isFinite(parsed.getTime()) ? parsed.toLocaleString() : "—";
 }
 
 function draftFromMemory(memory: GobbyMemory | null): MemoryDraft | null {
@@ -32,6 +47,7 @@ export function MemoryDetailPanel({
   memory,
   onSave,
   onConfirmLeaveChange,
+  onRestore,
   actions,
 }: MemoryDetailPanelProps) {
   const sourceDraft = useMemo(() => draftFromMemory(memory), [memory]);
@@ -40,6 +56,7 @@ export function MemoryDetailPanel({
     onSave,
   });
   const { draft, dirty, saving, serverChanged, save, discard, confirmIfDirty } = detailDraft;
+  const [restoring, setRestoring] = useState(false);
 
   useEffect(() => {
     onConfirmLeaveChange(confirmIfDirty);
@@ -53,6 +70,11 @@ export function MemoryDetailPanel({
     );
   }
 
+  const hidden = isHiddenMemory(memory);
+  const isDeleteFlag = memoryDreamFlag(memory) === "delete";
+  const flagLabel = dreamFlagLabel(memory);
+  const purgeLabel = purgeCountdownLabel(memory);
+
   return (
     <div className="flex h-full flex-col overflow-hidden">
       <DetailPaneHeader
@@ -64,6 +86,38 @@ export function MemoryDetailPanel({
         onSave={() => void save()}
         onDiscard={discard}
       />
+      {hidden && (
+        <div
+          className={cn(
+            "flex items-center justify-between gap-3 border-b border-border px-3 py-2",
+            isDeleteFlag ? "bg-destructive/10" : "bg-warning/10",
+          )}
+        >
+          <span
+            className={cn(
+              "text-xs font-medium",
+              isDeleteFlag ? "text-destructive-foreground" : "text-warning-foreground",
+            )}
+          >
+            {flagLabel}
+            {purgeLabel ? ` · ${purgeLabel}` : ""}
+          </span>
+          {onRestore && (
+            <button
+              type="button"
+              className="btn btn-ghost btn-sm"
+              aria-label="Restore memory"
+              disabled={restoring}
+              onClick={() => {
+                setRestoring(true);
+                void Promise.resolve(onRestore(memory)).finally(() => setRestoring(false));
+              }}
+            >
+              {restoring ? "Restoring…" : "Restore"}
+            </button>
+          )}
+        </div>
+      )}
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
         <TextAreaField
           label="Content"
@@ -93,6 +147,16 @@ export function MemoryDetailPanel({
           <dd className="text-foreground">{new Date(memory.updated_at).toLocaleString()}</dd>
           <dt className="text-muted-foreground">Accesses</dt>
           <dd className="text-foreground">{memory.access_count}</dd>
+          {hidden && (
+            <>
+              <dt className="text-muted-foreground">Flagged</dt>
+              <dd className="text-foreground">{flagLabel}</dd>
+              <dt className="text-muted-foreground">Last reviewed</dt>
+              <dd className="text-foreground">{formatTimestamp(memory.last_dreamed_at)}</dd>
+              <dt className="text-muted-foreground">Purge</dt>
+              <dd className="text-foreground">{purgeLabel ?? "—"}</dd>
+            </>
+          )}
         </dl>
       </div>
     </div>

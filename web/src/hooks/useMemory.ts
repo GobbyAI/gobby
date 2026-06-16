@@ -22,6 +22,11 @@ export interface MemoryGraphData {
   crossrefs: MemoryCrossRef[]
 }
 
+// Which memories a read should surface. Mirrors the backend 3-state contract
+// (Dream GC, #17165): 'active' hides dream-flagged rows, 'hidden' shows only
+// them, 'all' shows everything.
+export type MemoryVisibility = 'active' | 'hidden' | 'all'
+
 export interface GobbyMemory {
   id: string
   memory_type: string
@@ -35,6 +40,11 @@ export interface GobbyMemory {
   access_count: number
   last_accessed_at: string | null
   tags: string[] | null
+  // Dream GC soft-delete fields (#17165). Set once the nightly dream sweep
+  // flags a memory; null for active rows and pre-migration snapshots.
+  deleted_at: string | null
+  dream_action: string | null
+  last_dreamed_at: string | null
 
 }
 
@@ -63,6 +73,7 @@ export interface MemoryFilters {
   memoryType: string | null
   recentOnly: boolean
   search: string
+  visibility: MemoryVisibility
 }
 
 export interface MemoryStats {
@@ -103,6 +114,7 @@ export function useMemory(projectId?: string | null) {
     memoryType: null,
     recentOnly: false,
     search: '',
+    visibility: 'active',
   })
 
   // Keep projectId in sync when prop changes
@@ -123,6 +135,7 @@ export function useMemory(projectId?: string | null) {
       const params = new URLSearchParams({ limit: '100' })
       if (filters.projectId) params.set('project_id', filters.projectId)
       if (filters.memoryType) params.set('memory_type', filters.memoryType)
+      params.set('visibility', filters.visibility)
 
       const response = await fetch(`${baseUrl}/api/memories?${params}`)
       if (response.ok) {
@@ -139,7 +152,7 @@ export function useMemory(projectId?: string | null) {
     } finally {
       setIsLoading(false)
     }
-  }, [filters.projectId, filters.memoryType])
+  }, [filters.projectId, filters.memoryType, filters.visibility])
 
   // Create memory
   const createMemory = useCallback(
@@ -203,6 +216,35 @@ export function useMemory(projectId?: string | null) {
       } catch (e) {
         console.error('Failed to delete memory:', e)
       }
+      return false
+    },
+    [fetchMemories]
+  )
+
+  // Restore a dream-flagged (soft-hidden) memory back to active visibility.
+  const restoreMemory = useCallback(
+    async (memoryId: string): Promise<boolean> => {
+      // Optimistic: clear the soft-delete flags locally so the row leaves the
+      // hidden view immediately. The refetch below reconciles with the server
+      // (and corrects the optimistic state if the request failed).
+      setMemories(prev =>
+        prev.map(m =>
+          m.id === memoryId ? { ...m, deleted_at: null, dream_action: null } : m,
+        ),
+      )
+      try {
+        const baseUrl = getBaseUrl()
+        const response = await fetch(`${baseUrl}/api/memories/${memoryId}/restore`, {
+          method: 'POST',
+        })
+        if (response.ok) {
+          await fetchMemories()
+          return true
+        }
+      } catch (e) {
+        console.error('Failed to restore memory:', e)
+      }
+      await fetchMemories()
       return false
     },
     [fetchMemories]
@@ -341,6 +383,7 @@ export function useMemory(projectId?: string | null) {
     createMemory,
     updateMemory,
     deleteMemory,
+    restoreMemory,
     searchMemories,
     refreshMemories,
     fetchGraphData,

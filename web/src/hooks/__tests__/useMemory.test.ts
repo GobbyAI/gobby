@@ -131,6 +131,28 @@ describe('useMemory', () => {
     expect(ok).toBe(true)
   })
 
+  it('requests the active visibility scope by default', async () => {
+    const { result } = renderHook(() => useMemory())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    expect(mockFetch.fn).toHaveBeenCalledWith(expect.stringContaining('visibility=active'))
+  })
+
+  it('restoreMemory posts to the restore endpoint and re-fetches', async () => {
+    mockFetch.mockJsonResponse('/api/memories/mem-1/restore', { id: 'mem-1' })
+
+    const { result } = renderHook(() => useMemory())
+    await waitFor(() => expect(result.current.isLoading).toBe(false))
+
+    const ok = await act(() => result.current.restoreMemory('mem-1'))
+
+    expect(ok).toBe(true)
+    expect(mockFetch.fn).toHaveBeenCalledWith(
+      expect.stringContaining('/api/memories/mem-1/restore'),
+      expect.objectContaining({ method: 'POST' }),
+    )
+  })
+
   it('searchMemories debounces and fetches results', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true })
     mockFetch.mockJsonResponse('/api/memories/search', {

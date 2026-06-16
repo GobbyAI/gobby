@@ -19,6 +19,7 @@ import {
   filtersFromMemoryHook,
   memoryTypeCount,
   MEMORY_TYPE_OPTIONS,
+  MEMORY_VISIBILITY_OPTIONS,
 } from "./memory/MemoryTabData";
 import { MemoryDetailPanel } from "./memory/MemoryDetailPanel";
 import { MemoryGraphView } from "./memory/MemoryGraphView";
@@ -47,6 +48,7 @@ export const MemoryTab = memo(function MemoryTab({
     setFilters,
     updateMemory,
     deleteMemory,
+    restoreMemory,
     refreshMemories,
     fetchKnowledgeGraph,
     fetchEntityNeighbors,
@@ -155,6 +157,21 @@ export const MemoryTab = memo(function MemoryTab({
     [deleteMemory, selectedId],
   );
 
+  const handleRestore = useCallback(
+    async (memory: GobbyMemory) => {
+      setBusyId(memory.id);
+      setError(null);
+      try {
+        await restoreMemory(memory.id);
+      } catch (restoreError) {
+        setError(restoreError instanceof Error ? restoreError.message : "Failed to restore memory");
+      } finally {
+        setBusyId(null);
+      }
+    },
+    [restoreMemory],
+  );
+
   const hasDetail = Boolean(selectedMemory);
 
   const detailActions = isMobile ? (
@@ -240,6 +257,26 @@ export const MemoryTab = memo(function MemoryTab({
                   }
                 />
               </label>
+              <div className="mt-2 mb-1 px-1 text-xs font-medium text-muted-foreground">
+                Visibility
+              </div>
+              <div role="radiogroup" aria-label="Visibility" className="flex flex-col">
+                {MEMORY_VISIBILITY_OPTIONS.map((option) => (
+                  <label
+                    key={option.value}
+                    className="flex min-h-9 items-center justify-between gap-2 rounded-md px-2 text-sm hover:bg-muted"
+                  >
+                    <span>{option.label}</span>
+                    <input
+                      type="radio"
+                      name="memory-visibility"
+                      aria-label={option.label}
+                      checked={filters.visibility === option.value}
+                      onChange={() => patchFilters({ visibility: option.value })}
+                    />
+                  </label>
+                ))}
+              </div>
             </div>
           )}
         </div>
@@ -282,9 +319,11 @@ export const MemoryTab = memo(function MemoryTab({
               icon={<SessionsEmptyIcon />}
               heading="Memory"
               body={
-                memories.length === 0
-                  ? "Memories captured during sessions appear here."
-                  : "No memories match the current filters."
+                filters.visibility === "hidden"
+                  ? "No hidden memories — dream hasn't flagged anything."
+                  : memories.length === 0
+                    ? "Memories captured during sessions appear here."
+                    : "No memories match the current filters."
               }
             />
           ) : (
@@ -295,6 +334,7 @@ export const MemoryTab = memo(function MemoryTab({
               onSelect={handleSelect}
               onCopy={(memory) => void handleCopy(memory)}
               onDelete={(memory) => void handleDelete(memory)}
+              onRestore={(memory) => void handleRestore(memory)}
             />
           )}
         </div>
@@ -315,6 +355,7 @@ export const MemoryTab = memo(function MemoryTab({
               key={selectedMemory.id}
               memory={selectedMemory}
               onSave={handleSave}
+              onRestore={(memory) => handleRestore(memory)}
               actions={detailActions}
               onConfirmLeaveChange={(handler) => {
                 confirmLeaveRef.current = handler;
