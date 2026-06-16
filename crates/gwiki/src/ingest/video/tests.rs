@@ -19,6 +19,7 @@ mod degradation;
 mod frame_assets;
 mod processing;
 mod storage;
+#[cfg(feature = "ai")]
 mod translation;
 
 fn sample_snapshot() -> VideoSnapshot {

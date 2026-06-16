@@ -21,6 +21,7 @@ pub enum SourceKind {
     Text,
     File,
     Stdin,
+    Session,
     ResearchNote,
     #[serde(rename = "mediawiki")]
     MediaWiki,
@@ -42,6 +43,7 @@ impl fmt::Display for SourceKind {
             Self::Text => "text",
             Self::File => "file",
             Self::Stdin => "stdin",
+            Self::Session => "session",
             Self::ResearchNote => "research_note",
             Self::MediaWiki => "mediawiki",
             Self::Wayback => "wayback",

@@ -263,7 +263,6 @@ fn detects_documents_and_inlines_structured_text() {
     for extension in [
         "csv",
         "json",
-        "jsonl",
         "xml",
         "yaml",
         "yml",
@@ -282,6 +281,10 @@ fn detects_documents_and_inlines_structured_text() {
             SourceKind::Text
         );
     }
+    assert_eq!(
+        detect_source_kind(Path::new("session.jsonl")),
+        SourceKind::Session
+    );
 
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ScopeIdentity::global();
@@ -318,6 +321,47 @@ fn detects_documents_and_inlines_structured_text() {
     .expect("ingest large json");
     assert_eq!(large_result.record.kind, SourceKind::Text);
     assert!(large_result.asset_path.is_some());
+}
+
+#[test]
+fn jsonl_session_archive_routes_to_session_orchestrator() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let file_path = temp.path().join("session.jsonl");
+    std::fs::write(
+        &file_path,
+        r#"{"type":"session","timestamp":"2026-06-16T20:00:00Z","payload":{"title":"Fixture session","messages":[{"role":"user","content":"Please summarize the trace."},{"role":"assistant","content":"The trace has two calls."}]}}"#,
+    )
+    .expect("write session jsonl");
+    let mut store = MemoryWikiStore::default();
+    let scope = ScopeIdentity::global();
+    let ai_context = no_ai_context();
+    let options = ingest_options();
+
+    let result = ingest_path(
+        temp.path(),
+        &mut store,
+        &scope,
+        &ai_context,
+        &options,
+        &file_path,
+        "2026-06-16T20:01:00Z",
+    )
+    .expect("ingest session archive");
+
+    assert_eq!(result.record.kind, SourceKind::Session);
+    assert!(result.asset_path.is_none());
+    let raw_markdown =
+        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("session markdown");
+    assert!(raw_markdown.contains("source_kind: session"));
+    assert!(raw_markdown.contains("session_type: session"));
+    assert!(raw_markdown.contains("# Fixture session"));
+    assert!(raw_markdown.contains("### user"));
+    assert!(raw_markdown.contains("Please summarize the trace."));
+    assert!(raw_markdown.contains("### assistant"));
+    assert!(raw_markdown.contains("The trace has two calls."));
+    let manifest = SourceManifest::read(temp.path()).expect("read source manifest");
+    assert_eq!(manifest.entries.len(), 1);
+    assert_eq!(manifest.entries[0].kind, SourceKind::Session);
 }
 
 #[cfg(feature = "documents")]

@@ -19,6 +19,7 @@ use crate::ingest::image::{ImageSnapshot, ingest_image_with_production_vision_wi
 use crate::ingest::pdf::{
     PdfFileSnapshot, PdfIngestOptions, ingest_pdf_file_without_index, pdf_fetched_at,
 };
+use crate::ingest::session::{SessionFileSnapshot, ingest_session_file_without_index};
 use crate::ingest::video::{
     VideoFileSnapshot, ingest_video_file_with_production_processing_without_index,
 };
@@ -132,6 +133,23 @@ pub(crate) fn ingest_path_without_index(
             LocalFileIngestResult {
                 result: result.into(),
                 degradations,
+            }
+        }
+        SourceKind::Session => {
+            let bytes = read_source_file(path)?;
+            let result = ingest_session_file_without_index(
+                vault_root,
+                SessionFileSnapshot {
+                    location,
+                    file_name: file_name.to_string(),
+                    fetched_at: fetched_at.to_string(),
+                    path: path.to_path_buf(),
+                    bytes,
+                },
+            )?;
+            LocalFileIngestResult {
+                result,
+                degradations: Vec::new(),
             }
         }
         #[cfg(feature = "documents")]

@@ -8,6 +8,7 @@ pub mod git;
 pub mod image;
 pub mod mediawiki;
 pub mod pdf;
+pub mod session;
 pub mod url;
 pub mod video;
 pub mod wayback;

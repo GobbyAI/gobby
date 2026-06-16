@@ -15,9 +15,10 @@ pub(super) fn detect_source_kind(path: &Path) -> SourceKind {
         Some("png" | "jpg" | "jpeg" | "gif" | "webp" | "bmp" | "tiff") => SourceKind::Image,
         Some("mp4" | "mov" | "m4v" | "webm" | "mkv") => SourceKind::Video,
         Some("md" | "markdown") => SourceKind::Markdown,
+        Some("jsonl") => SourceKind::Session,
         Some(
-            "txt" | "text" | "csv" | "json" | "jsonl" | "xml" | "yaml" | "yml" | "toml" | "log"
-            | "ini" | "env" | "properties" | "conf" | "sql" | "sh" | "bash",
+            "txt" | "text" | "csv" | "json" | "xml" | "yaml" | "yml" | "toml" | "log" | "ini"
+            | "env" | "properties" | "conf" | "sql" | "sh" | "bash",
         ) => SourceKind::Text,
         _ => SourceKind::File,
     }

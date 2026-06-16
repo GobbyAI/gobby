@@ -179,6 +179,7 @@ fn is_local_file_source_kind(kind: &SourceKind) -> bool {
             | SourceKind::Html
             | SourceKind::Markdown
             | SourceKind::Text
+            | SourceKind::Session
             | SourceKind::File
     )
 }
