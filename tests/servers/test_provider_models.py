@@ -714,8 +714,28 @@ class TestProviderModelCatalog:
 
         assert source == "static"
         assert source_models == static_models
-        assert static_models[0]["value"] == "grok-build"
-        assert static_models[0]["context_length"] == 512_000
+        by_id = {model["value"]: model for model in static_models}
+        assert [model["value"] for model in static_models] == [
+            "grok-composer-2.5-fast",
+            "grok-build",
+        ]
+        assert by_id["grok-composer-2.5-fast"]["context_length"] == 200_000
+        assert by_id["grok-composer-2.5-fast"]["is_default"] is True
+        assert by_id["grok-composer-2.5-fast"]["reasoning"]["supported_efforts"] == [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ]
+        assert by_id["grok-build"]["context_length"] == 512_000
+        assert by_id["grok-build"]["reasoning"]["supported_efforts"] == [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ]
         assert static_models[0]["context_length_source"] == "static_default"
 
     @pytest.mark.asyncio

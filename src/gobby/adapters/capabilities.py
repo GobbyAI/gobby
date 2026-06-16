@@ -69,6 +69,7 @@ RESPONSE_FIELD_NAMES: frozenset[str] = frozenset(
 BASE_SUPPORTED_RESPONSE_FIELDS: frozenset[str] = frozenset(
     {"decision", "system_message", "reason", "metadata"}
 )
+TransportCapabilityValue = bool | tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -99,6 +100,7 @@ class ProviderCapabilities:
     source: SessionSource
     hook_events: Mapping[str, HookCapability]
     hook_aliases: Mapping[str, str] = field(default_factory=dict)
+    transport_capabilities: Mapping[str, TransportCapabilityValue] = field(default_factory=dict)
     supports_permissions: bool = False
     supports_elicitation: bool = False
 
@@ -339,6 +341,12 @@ GROK_HOOK_ALIASES: dict[str, str] = {
 
 GROK_ADDITIONAL_CONTEXT_HOOKS = frozenset({"session_start", "user_prompt_submit", "post_tool_use"})
 GROK_SYSTEM_MESSAGE_CONTEXT_HOOKS = frozenset({"pre_tool_use", "pre_compact", "stop"})
+GROK_TRANSPORT_CAPABILITIES: dict[str, TransportCapabilityValue] = {
+    "loadSession": True,
+    "x.ai/fs_notify": True,
+    "cancelRewind": True,
+    "availableCommands": ("compact", "context", "session-info"),
+}
 
 
 def _grok_capabilities() -> ProviderCapabilities:
@@ -376,6 +384,7 @@ def _grok_capabilities() -> ProviderCapabilities:
         source=SessionSource.GROK,
         hook_events=events,
         hook_aliases=GROK_HOOK_ALIASES,
+        transport_capabilities=GROK_TRANSPORT_CAPABILITIES,
         supports_permissions=True,
     )
 

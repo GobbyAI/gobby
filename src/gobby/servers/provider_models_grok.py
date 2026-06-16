@@ -11,13 +11,22 @@ from gobby.llm.context_windows import CONTEXT_LENGTH_SOURCE_KEY
 
 GROK_STATIC_MODEL_CATALOG: list[dict[str, Any]] = [
     {
+        "value": "grok-composer-2.5-fast",
+        "label": "Grok Composer 2.5 Fast",
+        "description": "Cursor's latest coding model",
+        "context_length": 200_000,
+        "context_length_source": "static_default",
+        "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
+        "is_default": True,
+    },
+    {
         "value": "grok-build",
         "label": "Grok Build",
-        "description": "Best for advanced coding tasks",
+        "description": "xAI's latest coding model",
         "context_length": 512_000,
         "context_length_source": "static_default",
-        "reasoning": {"supported_efforts": ["low", "medium", "high"]},
-    }
+        "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
+    },
 ]
 
 

@@ -97,6 +97,7 @@ _STATIC_CONTEXT_LENGTHS: dict[str, int] = {
     "gemini-3.1-pro-preview": 1_000_000,
     "gemini-3-flash-preview": 1_000_000,
     "gemini-2.5-pro": 1_000_000,
+    "grok-composer-2.5-fast": 200_000,
     "grok-build": 512_000,
     "qwen3-coder": 262_144,
     "qwen3-coder-plus": 262_144,

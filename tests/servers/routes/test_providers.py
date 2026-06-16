@@ -176,8 +176,17 @@ class TestProviderModelsRoute:
         assert qwen == []
 
         grok = providers["grok"]["models"]
-        assert [m["value"] for m in grok] == ["grok-build"]
-        assert grok[0]["context_length"] == 512_000
+        assert [m["value"] for m in grok] == ["grok-composer-2.5-fast", "grok-build"]
+        assert grok[0]["context_length"] == 200_000
+        assert grok[0]["is_default"] is True
+        assert grok[0]["reasoning"]["supported_efforts"] == [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ]
+        assert grok[1]["context_length"] == 512_000
 
         assert providers["agy"]["models"] == []
         assert providers["agy"]["source"] == "unsupported"

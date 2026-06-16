@@ -164,6 +164,11 @@ class TestResolveContextWindow:
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
             assert resolve_context_window(model, provider=provider) == expected
 
+    def test_grok_composer_static_fallback_uses_current_window(self) -> None:
+        """Grok Composer 2.5 Fast has a 200k static fallback."""
+        with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):
+            assert resolve_context_window("grok-composer-2.5-fast", provider="grok") == 200_000
+
     def test_family_fallback_scoped_to_claude_providers(self) -> None:
         """Claude family keys stay scoped to Claude-compatible providers."""
         with patch("gobby.llm.model_registry.lookup_context_window", return_value=None):

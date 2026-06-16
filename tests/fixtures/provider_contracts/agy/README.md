@@ -1,6 +1,7 @@
 # AGY Provider Contract Captures
 
-Captured against AGY `1.0.1` on 2026-05-22.
+Captured against AGY `1.0.1` on 2026-05-22; refreshed against AGY `1.0.8`
+on 2026-06-16.
 
 Capture procedure:
 
@@ -12,6 +13,11 @@ Capture procedure:
 5. Inspect `~/.gemini/antigravity-cli/cache/last_conversations.json`, recent
    logs under `~/.gemini/antigravity-cli/log/`, and conversation `.pb` paths.
 
-Important result: `agentapi` exists as a wrapper but did not expose a stable
-machine transport in AGY `1.0.1`. Treat AGY web-chat support as blocked until a
-real send/resume/stream contract is available.
+Important result: `agentapi` exists as a hidden wrapper, but `agy help agentapi`
+does not advertise it and `agentapi get-conversation-metadata ...` still fails
+outside the Antigravity launcher with `ANTIGRAVITY_LS_ADDRESS is not set`.
+AGY `1.0.8` exposes `--print`, `--prompt-interactive`, resume flags, hooks, MCP
+configuration, and model listing, but no documented daemon-grade transport for
+session create/resume, streaming, cancellation, external tool approval, or
+transcripts. Treat AGY web-chat and agent spawning as blocked unless AGY CLI
+adds ACP or the `google-antigravity` SDK proves a production replacement.

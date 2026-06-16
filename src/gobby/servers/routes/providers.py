@@ -14,6 +14,7 @@ from gobby.servers.provider_models import (
     GEMINI_MODEL_CATALOG,
     with_context_lengths,
 )
+from gobby.servers.provider_models_grok import static_models as grok_static_models
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -47,16 +48,7 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
         ],
     ),
     "gemini": GEMINI_MODEL_CATALOG,
-    "grok": with_context_lengths(
-        "grok",
-        [
-            {
-                "value": "grok-build",
-                "label": "Grok Build",
-                "reasoning": {"supported_efforts": ["low", "medium", "high"]},
-            },
-        ],
-    ),
+    "grok": grok_static_models(),
     "qwen": [],
     "codex": with_context_lengths(
         "codex",

@@ -90,6 +90,41 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert droid_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
 
+def test_grok_0_2_hook_capabilities_are_declared() -> None:
+    """Keep the Grok hook registry aligned with current ACP hook names."""
+    capabilities = get_provider_capabilities("grok")
+
+    assert capabilities.transport_capabilities == {
+        "loadSession": True,
+        "x.ai/fs_notify": True,
+        "cancelRewind": True,
+        "availableCommands": ("compact", "context", "session-info"),
+    }
+
+    assert capabilities.get_hook("PreToolUse") is capabilities.get_hook("pre_tool_use")
+    assert capabilities.get_hook("PreCompact") is capabilities.get_hook("pre_compact")
+    assert capabilities.get_hook("Stop") is capabilities.get_hook("stop")
+
+    pre_tool = capabilities.get_hook("pre_tool_use")
+    pre_compact = capabilities.get_hook("pre_compact")
+    post_tool = capabilities.get_hook("post_tool_use")
+
+    assert pre_tool is not None
+    assert pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
+    assert pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
+    assert pre_tool.supports_response_field("permission_decision")
+    assert pre_tool.supports_response_field("auto_approve")
+    assert pre_tool.supports_response_field("modified_input")
+
+    assert pre_compact is not None
+    assert pre_compact.context_channel is ContextChannel.SYSTEM_MESSAGE
+    assert pre_compact.decision_style is ProviderDecisionStyle.HARD_STOP
+
+    assert post_tool is not None
+    assert post_tool.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert post_tool.decision_style is ProviderDecisionStyle.NONE
+
+
 def test_unsupported_elicitation_fields_are_dropped_with_telemetry(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
