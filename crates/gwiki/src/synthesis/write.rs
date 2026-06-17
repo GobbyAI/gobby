@@ -33,6 +33,7 @@ pub fn write_synthesized_page(
     page: &SynthesizedPage,
     policy: WritePolicy,
 ) -> Result<PageWriteOutcome, WikiError> {
+    let markdown = crate::markdown::normalize(&page.markdown);
     ensure_synthesized_path_inside_vault(vault_root, &page.path, "synthesized_page")?;
     if let Some(parent) = page.path.parent() {
         ensure_existing_parent_inside_vault(vault_root, parent, "synthesized_page")?;
@@ -66,7 +67,7 @@ pub fn write_synthesized_page(
                         }
                     }
                 })?;
-            write_created_synthesized_page(file, &page.path, page.markdown.as_bytes())?;
+            write_created_synthesized_page(file, &page.path, markdown.as_bytes())?;
             sync_parent_dir(&page.path)?;
             PageWriteKind::Created
         }
@@ -77,12 +78,12 @@ pub fn write_synthesized_page(
                 .open(&page.path)
             {
                 Ok(file) => {
-                    write_created_synthesized_page(file, &page.path, page.markdown.as_bytes())?;
+                    write_created_synthesized_page(file, &page.path, markdown.as_bytes())?;
                     sync_parent_dir(&page.path)?;
                     PageWriteKind::Created
                 }
                 Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
-                    write_synthesized_page_atomically(&page.path, page.markdown.as_bytes())?;
+                    write_synthesized_page_atomically(&page.path, markdown.as_bytes())?;
                     PageWriteKind::Overwritten
                 }
                 Err(error) => {

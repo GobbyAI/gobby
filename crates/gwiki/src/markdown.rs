@@ -67,6 +67,136 @@ pub(crate) fn markdown_fence_closes(line: &str, fence: MarkdownFence) -> bool {
     len >= fence.len && trimmed[len..].trim().is_empty()
 }
 
+/// Normalize generated Markdown so it satisfies the whitespace family of
+/// markdownlint rules without reflowing prose or altering meaningful content.
+///
+/// Guaranteed rules:
+/// - **MD009** strip end-of-line whitespace (outside fenced code)
+/// - **MD012** collapse runs of blank lines to a single blank line
+/// - **MD022** surround ATX headings with a blank line
+/// - **MD031** surround fenced code blocks with a blank line
+/// - **MD047** end the file with exactly one trailing newline
+///
+/// The pass is fence-aware (content inside ` ``` ` / `~~~` fences is preserved
+/// byte for byte) and frontmatter-aware (a leading YAML `---` / TOML `+++` block
+/// is emitted verbatim). It never edits within a line, so table-cell `|` content
+/// and `[[wikilink]]` text are left intact. It is idempotent:
+/// `normalize(normalize(x)) == normalize(x)`.
+pub(crate) fn normalize(input: &str) -> String {
+    let body_start = parse_frontmatter(input)
+        .map(|parsed| parsed.body_start)
+        .unwrap_or(0);
+    let prefix = &input[..body_start];
+    let inner = normalize_body(&input[body_start..]);
+
+    let mut output = String::with_capacity(input.len() + 1);
+    output.push_str(prefix);
+    if !inner.is_empty() {
+        // A frontmatter prefix ends with its closing-delimiter newline; add one
+        // blank line so the first body block is separated from it (MD022).
+        if !prefix.is_empty() {
+            output.push('\n');
+        }
+        output.push_str(&inner);
+    }
+    // MD047: collapse trailing newlines to exactly one (none for empty output).
+    while output.ends_with('\n') {
+        output.pop();
+    }
+    if !output.is_empty() {
+        output.push('\n');
+    }
+    output
+}
+
+/// Classification of one body line, used to drive blank-line placement.
+enum BodyLine {
+    Blank,
+    Text(String),
+    Heading(String),
+    FenceOpen(String),
+    FenceContent(String),
+    FenceClose(String),
+}
+
+fn normalize_body(body: &str) -> String {
+    let mut lines = Vec::new();
+    let mut fence: Option<MarkdownFence> = None;
+    for raw in body.split('\n') {
+        if let Some(active) = fence {
+            if markdown_fence_closes(raw, active) {
+                fence = None;
+                lines.push(BodyLine::FenceClose(raw.to_string()));
+            } else {
+                lines.push(BodyLine::FenceContent(raw.to_string()));
+            }
+        } else {
+            let stripped = raw.trim_end();
+            if let Some(opening) = markdown_fence_start(stripped) {
+                fence = Some(opening);
+                lines.push(BodyLine::FenceOpen(stripped.to_string()));
+            } else if parse_atx_heading(stripped).is_some() {
+                lines.push(BodyLine::Heading(stripped.to_string()));
+            } else if stripped.is_empty() {
+                lines.push(BodyLine::Blank);
+            } else {
+                lines.push(BodyLine::Text(stripped.to_string()));
+            }
+        }
+    }
+
+    let mut out: Vec<String> = Vec::new();
+    // True when the previous block requires a trailing blank before more content
+    // (after a heading per MD022, after a closing fence per MD031).
+    let mut pending_blank = false;
+    for line in lines {
+        match line {
+            BodyLine::Blank => {
+                push_blank(&mut out);
+                pending_blank = false;
+            }
+            BodyLine::Heading(text) => {
+                push_blank(&mut out);
+                out.push(text);
+                pending_blank = true;
+            }
+            BodyLine::FenceOpen(text) => {
+                push_blank(&mut out);
+                out.push(text);
+                pending_blank = false;
+            }
+            BodyLine::FenceContent(text) => {
+                out.push(text);
+                pending_blank = false;
+            }
+            BodyLine::FenceClose(text) => {
+                out.push(text);
+                pending_blank = true;
+            }
+            BodyLine::Text(text) => {
+                if pending_blank {
+                    push_blank(&mut out);
+                }
+                out.push(text);
+                pending_blank = false;
+            }
+        }
+    }
+
+    while out.last().is_some_and(|line| line.is_empty()) {
+        out.pop();
+    }
+    out.join("\n")
+}
+
+/// Append a single blank line, unless that would create a leading or doubled
+/// blank (MD012). A no-op when `out` is empty or already ends with a blank.
+fn push_blank(out: &mut Vec<String>) {
+    if out.last().is_some_and(|line| !line.is_empty()) {
+        out.push(String::new());
+    }
+}
+
 impl fmt::Display for MarkdownParseError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
@@ -396,5 +526,74 @@ mod tests {
             parse_atx_heading("# Title ###").map(|(_, title)| title),
             Some("Title".to_string())
         );
+    }
+
+    #[test]
+    fn normalize_strips_trailing_whitespace_and_collapses_blank_lines() {
+        // MD009 (trailing whitespace) + MD012 (multiple blank lines).
+        assert_eq!(normalize("alpha   \n\n\n\nbeta\t\n"), "alpha\n\nbeta\n");
+    }
+
+    #[test]
+    fn normalize_surrounds_headings_with_blank_lines() {
+        // MD022.
+        assert_eq!(
+            normalize("intro\n# Heading\nbody\n"),
+            "intro\n\n# Heading\n\nbody\n"
+        );
+    }
+
+    #[test]
+    fn normalize_does_not_insert_blank_before_leading_heading() {
+        // MD022 does not require a blank line above the first line of a file.
+        assert_eq!(normalize("# Title\ntext\n"), "# Title\n\ntext\n");
+    }
+
+    #[test]
+    fn normalize_surrounds_fenced_code_with_blank_lines() {
+        // MD031.
+        assert_eq!(
+            normalize("before\n```rust\nlet x = 1;\n```\nafter\n"),
+            "before\n\n```rust\nlet x = 1;\n```\n\nafter\n"
+        );
+    }
+
+    #[test]
+    fn normalize_preserves_fenced_code_content_verbatim() {
+        // Trailing whitespace and blank runs inside a fence are not touched.
+        let input = "```\ncode  trailing   \n\n\nblank\n```\n";
+        assert_eq!(normalize(input), input);
+    }
+
+    #[test]
+    fn normalize_ends_with_exactly_one_trailing_newline() {
+        // MD047.
+        assert_eq!(normalize("text"), "text\n");
+        assert_eq!(normalize("text\n\n\n"), "text\n");
+    }
+
+    #[test]
+    fn normalize_preserves_frontmatter_and_separates_first_heading() {
+        assert_eq!(
+            normalize("---\ntitle: Page\n---\n# Heading\nbody\n"),
+            "---\ntitle: Page\n---\n\n# Heading\n\nbody\n"
+        );
+    }
+
+    #[test]
+    fn normalize_keeps_wikilink_and_table_pipes_intact() {
+        let normalized =
+            normalize("## Refs\n| Name | Link |\n| --- | --- |\n| A | [[Page|Alias]] |\n");
+        assert_eq!(
+            normalized,
+            "## Refs\n\n| Name | Link |\n| --- | --- |\n| A | [[Page|Alias]] |\n"
+        );
+    }
+
+    #[test]
+    fn normalize_is_idempotent() {
+        let input = "---\ntitle: T\n---\n\n\n#  Heading  \ntext   \n```\ncode \n```\nmore\n";
+        let once = normalize(input);
+        assert_eq!(normalize(&once), once);
     }
 }

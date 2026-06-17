@@ -53,7 +53,7 @@ pub(crate) fn write_document_derived_markdown(
         })?;
     }
 
-    let markdown = render_document_derived_markdown(
+    let markdown = crate::markdown::normalize(&render_document_derived_markdown(
         scope,
         record,
         snapshot,
@@ -61,7 +61,7 @@ pub(crate) fn write_document_derived_markdown(
         asset_path,
         extraction,
         degradation,
-    );
+    ));
     write_document_markdown_atomic(&path, markdown.as_bytes())?;
     Ok(relative_path)
 }
