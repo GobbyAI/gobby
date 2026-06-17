@@ -1,0 +1,53 @@
+pub(super) fn degraded_sources(degraded: bool) -> Vec<String> {
+    if degraded {
+        vec!["model-unavailable".to_string()]
+    } else {
+        Vec::new()
+    }
+}
+
+pub(super) fn concept_title(module: &str) -> String {
+    module
+        .rsplit('/')
+        .next()
+        .unwrap_or(module)
+        .split(['_', '-'])
+        .filter(|part| !part.is_empty())
+        .map(|part| {
+            let mut chars = part.chars();
+            match chars.next() {
+                Some(first) => first.to_uppercase().chain(chars).collect::<String>(),
+                None => String::new(),
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" ")
+}
+
+pub(super) fn concept_doc_path(slug: &str) -> String {
+    format!("{}.md", concept_doc_stem(slug))
+}
+
+pub(super) fn concept_doc_stem(slug: &str) -> String {
+    format!("code/concepts/{slug}")
+}
+
+pub(super) fn narrative_doc_path(slug: &str) -> String {
+    format!("code/narrative/{slug}.md")
+}
+
+pub(super) fn slugify(value: &str) -> String {
+    let mut slug = String::new();
+    let mut previous_dash = false;
+    for raw in value.chars() {
+        let ch = raw.to_ascii_lowercase();
+        if ch.is_ascii_alphanumeric() {
+            slug.push(ch);
+            previous_dash = false;
+        } else if !previous_dash && !slug.is_empty() {
+            slug.push('-');
+            previous_dash = true;
+        }
+    }
+    slug.trim_matches('-').to_string()
+}

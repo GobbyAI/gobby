@@ -1,0 +1,353 @@
+use super::super::super::*;
+use super::super::curated_content::{self, CuratedPageKind};
+use super::plan::{
+    largest_member_module, normalize_concepts, normalize_narrative_pages, normalize_sections,
+};
+use super::spans::{all_input_spans, item_spans, narrative_spans};
+use super::support::{concept_doc_path, concept_doc_stem, degraded_sources, narrative_doc_path};
+use super::types::*;
+use super::{MAX_CURATED_KEY_COMPONENTS, MAX_CURATED_SOURCE_FILE_LINKS};
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn render_curated_navigation_docs(
+    files: &[FileDoc],
+    modules: &[ModuleDoc],
+    plan: CuratedNavigationPlan,
+    degraded: bool,
+    leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
+    generate: &mut Option<&mut TextGenerator<'_>>,
+) -> Vec<BuiltDoc> {
+    let module_lookup = modules
+        .iter()
+        .map(|module| (module.module.as_str(), module))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let file_lookup = files
+        .iter()
+        .map(|file| (file.path.as_str(), file))
+        .collect::<std::collections::BTreeMap<_, _>>();
+    let mut concepts = normalize_concepts(plan.concept_modules, modules, files);
+    let sections = normalize_sections(plan.sections, &concepts);
+    let mut narrative_pages =
+        normalize_narrative_pages(plan.narrative_pages, modules, files, &concepts);
+    let all_spans = all_input_spans(files, modules);
+
+    // Per-page content pass: expand each curated page's one-line summary into a
+    // grounded, multi-section body (structural fallback on skip/failure). Runs
+    // after normalization so member lists are final, and before rendering so
+    // the bodies are in place. Mutates `concepts` first, so `concept_titles`
+    // (which borrows it) is built afterwards.
+    for concept in &mut concepts {
+        let spans = item_spans(
+            &concept.modules,
+            &concept.files,
+            &module_lookup,
+            &file_lookup,
+        );
+        let result = curated_content::curated_page_body(
+            CuratedPageKind::Concept,
+            &concept.title,
+            &concept.summary,
+            &concept.modules,
+            &concept.files,
+            &module_lookup,
+            &file_lookup,
+            leading_chunks,
+            &spans,
+            generate,
+        );
+        concept.body = result.body;
+        concept.body_degraded = result.degraded;
+    }
+    for page in &mut narrative_pages {
+        let (member_modules, member_files) = narrative_members(page, &concepts);
+        let spans = narrative_spans(page, &concepts, &module_lookup, &file_lookup);
+        let result = curated_content::curated_page_body(
+            CuratedPageKind::Narrative,
+            &page.title,
+            &page.summary,
+            &member_modules,
+            &member_files,
+            &module_lookup,
+            &file_lookup,
+            leading_chunks,
+            &spans,
+            generate,
+        );
+        page.body = result.body;
+        page.body_degraded = result.degraded;
+    }
+
+    let concept_titles = concepts
+        .iter()
+        .map(|concept| (concept.slug.as_str(), concept.title.as_str()))
+        .collect::<std::collections::BTreeMap<_, _>>();
+
+    let mut docs = Vec::new();
+    docs.push(BuiltDoc {
+        path: "code/concepts/index.md".to_string(),
+        content: render_concept_tree(&sections, &concepts, &narrative_pages, &all_spans, degraded),
+        degraded,
+        summary: Some("Curated concept navigation over the code reference.".to_string()),
+    });
+
+    for concept in &concepts {
+        let spans = item_spans(
+            &concept.modules,
+            &concept.files,
+            &module_lookup,
+            &file_lookup,
+        );
+        let diagram_module = largest_member_module(&concept.modules, &module_lookup);
+        docs.push(BuiltDoc {
+            path: concept_doc_path(&concept.slug),
+            content: render_concept_page(concept, &spans, degraded, diagram_module),
+            degraded,
+            summary: Some(concept.summary.clone()),
+        });
+    }
+
+    for (index, page) in narrative_pages.iter().enumerate() {
+        let spans = narrative_spans(page, &concepts, &module_lookup, &file_lookup);
+        let (member_modules, _) = narrative_members(page, &concepts);
+        let diagram_module = largest_member_module(&member_modules, &module_lookup);
+        // Reciprocal neighbors in the ordered tour drive the Previous/Next nav.
+        let prev = index
+            .checked_sub(1)
+            .map(|i| chapter_link(&narrative_pages[i]));
+        let next = narrative_pages.get(index + 1).map(chapter_link);
+        docs.push(BuiltDoc {
+            path: narrative_doc_path(&page.slug),
+            content: render_narrative_page(
+                page,
+                &spans,
+                &concept_titles,
+                degraded,
+                diagram_module,
+                prev,
+                next,
+            ),
+            degraded,
+            summary: Some(page.summary.clone()),
+        });
+    }
+
+    docs
+}
+
+/// Borrows a narrative chapter's `(slug, title)` for guided-tour wikilinks.
+fn chapter_link(page: &NarrativePage) -> (&str, &str) {
+    (page.slug.as_str(), page.title.as_str())
+}
+
+fn render_concept_tree(
+    sections: &[ConceptSection],
+    concepts: &[ConceptModule],
+    narrative_pages: &[NarrativePage],
+    spans: &[SourceSpan],
+    degraded: bool,
+) -> String {
+    let degraded_sources = degraded_sources(degraded);
+    let mut doc = frontmatter_with_degradation_without_ranges(
+        "Curated Concept Navigation",
+        "code_concept_tree",
+        spans,
+        &degraded_sources,
+    );
+    append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
+    doc.push_str("# Curated Concept Navigation\n\n");
+    doc.push_str("Reader-first paths into the grounded code reference.\n\n");
+    // The dependency-ordered narrative chapters are the primary entry point: a
+    // numbered guided tour above the concept catalog.
+    let chapters = narrative_pages.iter().map(chapter_link).collect::<Vec<_>>();
+    curated_content::append_guided_tour(&mut doc, &chapters);
+    doc.push_str("## Concept Tree\n\n");
+    for section in sections {
+        let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("### {}\n\n", section.title));
+        if !section.summary.trim().is_empty() {
+            let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("{}\n\n", section.summary));
+        }
+        for concept_slug in &section.concepts {
+            if let Some(concept) = concepts
+                .iter()
+                .find(|concept| &concept.slug == concept_slug)
+            {
+                let _ = std::fmt::Write::write_fmt(
+                    &mut doc,
+                    format_args!(
+                        "- [[{}|{}]] - {}\n",
+                        concept_doc_stem(&concept.slug),
+                        concept.title,
+                        concept.summary
+                    ),
+                );
+            }
+        }
+        doc.push('\n');
+    }
+    doc
+}
+
+fn render_concept_page(
+    concept: &ConceptModule,
+    spans: &[SourceSpan],
+    degraded: bool,
+    diagram_module: Option<&ModuleDoc>,
+) -> String {
+    let degraded = degraded || concept.body_degraded;
+    let degraded_sources = degraded_sources(degraded);
+    let mut doc = frontmatter_with_degradation_without_ranges(
+        &concept.title,
+        "code_concept",
+        spans,
+        &degraded_sources,
+    );
+    append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
+    let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", concept.title));
+    append_curated_body(
+        &mut doc,
+        concept.body.as_deref(),
+        "Overview",
+        &ground_text(&concept.summary, spans, None),
+    );
+    append_dependency_diagram(&mut doc, diagram_module);
+    append_explore_section(&mut doc, &concept.modules, &concept.files);
+    doc
+}
+
+fn render_narrative_page(
+    page: &NarrativePage,
+    spans: &[SourceSpan],
+    concept_titles: &std::collections::BTreeMap<&str, &str>,
+    degraded: bool,
+    diagram_module: Option<&ModuleDoc>,
+    prev: Option<(&str, &str)>,
+    next: Option<(&str, &str)>,
+) -> String {
+    let degraded = degraded || page.body_degraded;
+    let degraded_sources = degraded_sources(degraded);
+    let mut doc = frontmatter_with_degradation_without_ranges(
+        &page.title,
+        "code_narrative",
+        spans,
+        &degraded_sources,
+    );
+    append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
+    let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", page.title));
+    append_curated_body(
+        &mut doc,
+        page.body.as_deref(),
+        "Guide",
+        &ground_text(&page.summary, spans, None),
+    );
+    if !page.concepts.is_empty() {
+        doc.push_str("## Concepts\n\n");
+        for concept in &page.concepts {
+            let title = concept_titles
+                .get(concept.as_str())
+                .copied()
+                .unwrap_or(concept);
+            let _ = std::fmt::Write::write_fmt(
+                &mut doc,
+                format_args!("- [[{}|{}]]\n", concept_doc_stem(concept), title),
+            );
+        }
+        doc.push('\n');
+    }
+    append_dependency_diagram(&mut doc, diagram_module);
+    append_explore_section(&mut doc, &page.modules, &[]);
+    curated_content::append_tour_nav(&mut doc, prev, next);
+    doc
+}
+
+fn append_curated_body(
+    doc: &mut String,
+    body: Option<&str>,
+    fallback_heading: &str,
+    fallback_text: &str,
+) {
+    match body {
+        Some(body) if !body.trim().is_empty() => {
+            doc.push_str(body);
+            if !body.ends_with('\n') {
+                doc.push('\n');
+            }
+            doc.push('\n');
+        }
+        _ => write_section(doc, fallback_heading, fallback_text),
+    }
+}
+
+/// Bounded reference links for a curated page: module roots (not every member
+/// file), capped at [`MAX_CURATED_KEY_COMPONENTS`]. Files stay reachable and
+/// reciprocal via their parent module pages and the reference appendix, so the
+/// old exhaustive `## Reference Modules`/`## Source Files` down-link dumps -
+/// the missing_backlink source - collapse.
+fn append_explore_section(doc: &mut String, modules: &[String], files: &[String]) {
+    let mut links: Vec<String> = modules
+        .iter()
+        .take(MAX_CURATED_KEY_COMPONENTS)
+        .map(|module| module_wikilink(module))
+        .collect();
+    if links.is_empty() {
+        links = files
+            .iter()
+            .take(MAX_CURATED_KEY_COMPONENTS)
+            .map(|file| file_wikilink(file))
+            .collect();
+    }
+    if links.is_empty() {
+        return;
+    }
+    doc.push_str("## Explore\n\n");
+    for link in links {
+        let _ = std::fmt::Write::write_fmt(doc, format_args!("- {link}\n"));
+    }
+    doc.push('\n');
+}
+
+/// Union a narrative page's own modules/files with those of the concepts it
+/// covers, so a chapter's content pass has real members to describe even when
+/// the structure pass left its module/file lists sparse.
+fn narrative_members(
+    page: &NarrativePage,
+    concepts: &[ConceptModule],
+) -> (Vec<String>, Vec<String>) {
+    let mut modules = page.modules.clone();
+    let mut files = page.files.clone();
+    for concept_slug in &page.concepts {
+        if let Some(concept) = concepts
+            .iter()
+            .find(|concept| &concept.slug == concept_slug)
+        {
+            modules.extend(concept.modules.iter().cloned());
+            files.extend(concept.files.iter().cloned());
+        }
+    }
+    modules.sort();
+    modules.dedup();
+    files.sort();
+    files.dedup();
+    (modules, files)
+}
+
+/// Inject a member module's already-bounded dependency diagram onto a curated
+/// page. Honest about graph truncation (`graph-truncated` marker) and never
+/// fabricates edges; emits nothing when the graph is unavailable or no diagram
+/// was computed.
+pub(super) fn append_dependency_diagram(doc: &mut String, module: Option<&ModuleDoc>) {
+    let Some(module) = module else {
+        return;
+    };
+    let Some(diagram) = &module.dependency_diagram else {
+        return;
+    };
+    if module.graph_availability == CodewikiGraphAvailability::Unavailable {
+        return;
+    }
+    doc.push_str("## Architecture diagram\n\n");
+    if module.graph_availability == CodewikiGraphAvailability::Truncated {
+        doc.push_str("`degraded: graph-truncated`\n\n");
+    }
+    doc.push_str(diagram);
+    doc.push('\n');
+}
