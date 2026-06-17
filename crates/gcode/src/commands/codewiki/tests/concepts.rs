@@ -183,9 +183,68 @@ fn repo_leads_with_start_here_and_demotes_reference_appendix() {
     assert!(appendix < modules, "{repo}");
     assert!(repo.contains("| Module | Summary |"), "{repo}");
 
-    // Concept tree lists the narrative tours above the concept catalog.
+    // Concept tree lists the guided tour above the concept catalog.
     let index = rendered_doc(&docs, "code/concepts/index.md");
-    let tours = index.find("## Narrative Tours").expect("narrative tours");
+    let tours = index
+        .find("## Start here — guided tour")
+        .expect("guided tour");
     let tree = index.find("## Concept Tree").expect("concept tree");
     assert!(tours < tree, "{index}");
+}
+
+#[test]
+fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
+    let docs = generate_hierarchical_docs(&concept_input(), None);
+
+    // Front page and concept index both lead with the numbered guided tour,
+    // the new-to-this-codebase callout, and the ask/search pointer.
+    for path in ["code/repo.md", "code/concepts/index.md"] {
+        let doc = rendered_doc(&docs, path);
+        assert!(doc.contains("## Start here — guided tour"), "{path}: {doc}");
+        assert!(
+            doc.contains(
+                "New to this codebase? Begin with [[code/narrative/introduction|Introduction]]."
+            ),
+            "{path}: {doc}"
+        );
+        assert!(
+            doc.contains("1. [[code/narrative/introduction|Introduction]]"),
+            "{path}: {doc}"
+        );
+        assert!(
+            doc.contains("2. [[code/narrative/architecture|Architecture]]"),
+            "{path}: {doc}"
+        );
+        assert!(
+            doc.contains("3. [[code/narrative/data-flow|Data Flow]]"),
+            "{path}: {doc}"
+        );
+        assert!(doc.contains("`gwiki ask"), "{path}: {doc}");
+        assert!(doc.contains("`gwiki search"), "{path}: {doc}");
+    }
+
+    // Sequential reciprocal chapter nav along the spine.
+    let intro = rendered_doc(&docs, "code/narrative/introduction.md");
+    assert!(!intro.contains("← Previous"), "{intro}");
+    assert!(
+        intro.contains("Next →: [[code/narrative/architecture|Architecture]]"),
+        "{intro}"
+    );
+
+    let arch = rendered_doc(&docs, "code/narrative/architecture.md");
+    assert!(arch.contains("## Continue the tour"), "{arch}");
+    assert!(
+        arch.contains("← Previous: [[code/narrative/introduction|Introduction]]"),
+        "{arch}"
+    );
+    assert!(
+        arch.contains("Next →: [[code/narrative/data-flow|Data Flow]]"),
+        "{arch}"
+    );
+
+    let data_flow = rendered_doc(&docs, "code/narrative/data-flow.md");
+    assert!(
+        data_flow.contains("← Previous: [[code/narrative/architecture|Architecture]]"),
+        "{data_flow}"
+    );
 }

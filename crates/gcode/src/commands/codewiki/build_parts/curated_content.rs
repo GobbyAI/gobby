@@ -238,3 +238,51 @@ fn structural_body(
     }
     body
 }
+
+/// Renders the "Start here — guided tour" block shared by the front page and
+/// the concept index: a "new to this codebase" callout, the dependency-ordered
+/// narrative chapters numbered 1..N, and a one-line pointer to ask/search the
+/// same vault. Navigation only — no new generation. Takes `(slug, title)`
+/// pairs so it stays decoupled from the `NarrativePage` struct.
+pub(crate) fn append_guided_tour(doc: &mut String, chapters: &[(&str, &str)]) {
+    doc.push_str("## Start here — guided tour\n\n");
+    if let Some((slug, title)) = chapters.first() {
+        let _ = writeln!(
+            doc,
+            "New to this codebase? Begin with [[code/narrative/{slug}|{title}]].\n"
+        );
+    }
+    for (index, (slug, title)) in chapters.iter().enumerate() {
+        let _ = writeln!(doc, "{}. [[code/narrative/{slug}|{title}]]", index + 1);
+    }
+    doc.push('\n');
+    append_ask_hint(doc);
+}
+
+/// One-line pointer to the conversational/search leg over the same vault.
+pub(crate) fn append_ask_hint(doc: &mut String) {
+    doc.push_str(
+        "Ask questions across this vault with `gwiki ask \"...\"`, or find pages with `gwiki search \"...\"`.\n\n",
+    );
+}
+
+/// Renders the reciprocal `Previous`/`Next` chapter navigation at the foot of a
+/// narrative page. The links double as reciprocal wikilinks between adjacent
+/// chapters, so the guided tour also strengthens backlinks (#853D).
+pub(crate) fn append_tour_nav(
+    doc: &mut String,
+    prev: Option<(&str, &str)>,
+    next: Option<(&str, &str)>,
+) {
+    if prev.is_none() && next.is_none() {
+        return;
+    }
+    doc.push_str("## Continue the tour\n\n");
+    if let Some((slug, title)) = prev {
+        let _ = writeln!(doc, "- ← Previous: [[code/narrative/{slug}|{title}]]");
+    }
+    if let Some((slug, title)) = next {
+        let _ = writeln!(doc, "- Next →: [[code/narrative/{slug}|{title}]]");
+    }
+    doc.push('\n');
+}

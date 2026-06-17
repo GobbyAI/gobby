@@ -132,13 +132,25 @@ pub(crate) fn render_repo_doc(
     append_relevant_source_files(&mut doc, source_spans);
     doc.push_str("# Repository Overview\n\n");
     let summary = replace_citations_with_markers(summary, source_spans);
-    // Lead with a curated "Start here" TOC so the guided tour and concept
-    // navigation are the first thing a reader sees; the module/file tables are
-    // demoted to a reference appendix below (#853 root cause: the reference
-    // dump crowded out the narrative entry points).
-    doc.push_str("## Start here\n\n");
-    doc.push_str("- [[code/narrative/introduction|Introduction]] — start of the guided tour\n");
-    doc.push_str("- [[code/concepts/index|Concept tree and narrative tours]]\n\n");
+    // Lead with the guided tour: the canonical narrative spine
+    // (introduction -> architecture -> data-flow, always generated) as a
+    // numbered Chapter 1..N path, with a "new to this codebase" callout and a
+    // one-line ask/search pointer. The module/file tables are demoted to a
+    // reference appendix below (#853 root cause: the reference dump crowded out
+    // the narrative entry points).
+    doc.push_str("## Start here — guided tour\n\n");
+    doc.push_str(
+        "New to this codebase? Begin with [[code/narrative/introduction|Introduction]].\n\n",
+    );
+    doc.push_str("1. [[code/narrative/introduction|Introduction]]\n");
+    doc.push_str("2. [[code/narrative/architecture|Architecture]]\n");
+    doc.push_str("3. [[code/narrative/data-flow|Data Flow]]\n\n");
+    doc.push_str(
+        "Browse all concepts in the [[code/concepts/index|Concept tree and narrative tours]].\n\n",
+    );
+    doc.push_str(
+        "Ask questions across this vault with `gwiki ask \"...\"`, or find pages with `gwiki search \"...\"`.\n\n",
+    );
     write_section(&mut doc, "Overview", &summary);
     let has_appendix = module_map.is_some() || !modules.is_empty() || !files.is_empty();
     if has_appendix {

@@ -140,7 +140,7 @@ fn render_curated_navigation_docs(
     let mut docs = Vec::new();
     docs.push(BuiltDoc {
         path: "code/concepts/index.md".to_string(),
-        content: render_concept_tree(&sections, &concepts, &all_spans, degraded),
+        content: render_concept_tree(&sections, &concepts, &narrative_pages, &all_spans, degraded),
         degraded,
         summary: Some("Curated concept navigation over the code reference.".to_string()),
     });
@@ -161,13 +161,26 @@ fn render_curated_navigation_docs(
         });
     }
 
-    for page in &narrative_pages {
+    for (index, page) in narrative_pages.iter().enumerate() {
         let spans = narrative_spans(page, &concepts, &module_lookup, &file_lookup);
         let (member_modules, _) = narrative_members(page, &concepts);
         let diagram_module = largest_member_module(&member_modules, &module_lookup);
+        // Reciprocal neighbors in the ordered tour drive the Previous/Next nav.
+        let prev = index
+            .checked_sub(1)
+            .map(|i| chapter_link(&narrative_pages[i]));
+        let next = narrative_pages.get(index + 1).map(chapter_link);
         docs.push(BuiltDoc {
             path: narrative_doc_path(&page.slug),
-            content: render_narrative_page(page, &spans, &concept_titles, degraded, diagram_module),
+            content: render_narrative_page(
+                page,
+                &spans,
+                &concept_titles,
+                degraded,
+                diagram_module,
+                prev,
+                next,
+            ),
             degraded,
             summary: Some(page.summary.clone()),
         });
@@ -176,9 +189,15 @@ fn render_curated_navigation_docs(
     docs
 }
 
+/// Borrows a narrative chapter's `(slug, title)` for guided-tour wikilinks.
+fn chapter_link(page: &NarrativePage) -> (&str, &str) {
+    (page.slug.as_str(), page.title.as_str())
+}
+
 fn render_concept_tree(
     sections: &[ConceptSection],
     concepts: &[ConceptModule],
+    narrative_pages: &[NarrativePage],
     spans: &[SourceSpan],
     degraded: bool,
 ) -> String {
@@ -192,12 +211,10 @@ fn render_concept_tree(
     append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     doc.push_str("# Curated Concept Navigation\n\n");
     doc.push_str("Reader-first paths into the grounded code reference.\n\n");
-    // Narrative tours are the primary entry point, listed above the concept
-    // catalog so a reader lands on the guided tour first.
-    doc.push_str("## Narrative Tours\n\n");
-    doc.push_str("- [[code/narrative/introduction|Introduction]]\n");
-    doc.push_str("- [[code/narrative/architecture|Architecture]]\n");
-    doc.push_str("- [[code/narrative/data-flow|Data Flow]]\n\n");
+    // The dependency-ordered narrative chapters are the primary entry point: a
+    // numbered guided tour above the concept catalog.
+    let chapters = narrative_pages.iter().map(chapter_link).collect::<Vec<_>>();
+    curated_content::append_guided_tour(&mut doc, &chapters);
     doc.push_str("## Concept Tree\n\n");
     for section in sections {
         let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("### {}\n\n", section.title));
@@ -258,6 +275,8 @@ fn render_narrative_page(
     concept_titles: &std::collections::BTreeMap<&str, &str>,
     degraded: bool,
     diagram_module: Option<&ModuleDoc>,
+    prev: Option<(&str, &str)>,
+    next: Option<(&str, &str)>,
 ) -> String {
     let degraded = degraded || page.body_degraded;
     let degraded_sources = degraded_sources(degraded);
@@ -291,6 +310,7 @@ fn render_narrative_page(
     }
     append_dependency_diagram(&mut doc, diagram_module);
     append_explore_section(&mut doc, &page.modules, &[]);
+    curated_content::append_tour_nav(&mut doc, prev, next);
     doc
 }
 
