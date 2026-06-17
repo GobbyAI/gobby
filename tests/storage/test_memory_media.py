@@ -87,10 +87,3 @@ class TestMediaColumnRemoved:
         )
 
         assert "media JSONB" not in baseline
-
-    def test_drop_migration_removes_media_column(self) -> None:
-        migration = (
-            REPO_ROOT / "src/gobby/storage/migrations/275_drop_memory_media.sql"
-        ).read_text(encoding="utf-8")
-
-        assert "ALTER TABLE memories DROP COLUMN IF EXISTS media;" in migration

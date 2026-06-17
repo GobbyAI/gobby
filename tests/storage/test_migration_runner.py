@@ -58,7 +58,7 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     hub = _PostgresMigrationHub()
     runner = module.MigrationRunner(hub)
     migration = Migration(
-        version=262,
+        version=295,
         name="add_needed_column",
         path=Path("unused.sql"),
     )
@@ -89,8 +89,16 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     with caplog.at_level("WARNING", logger="gobby.storage.migrations"):
         runner.apply_pending()
 
-    assert hub.applied == [262]
-    assert "Applying PostgreSQL migration 262_add_needed_column" in caplog.text
+    assert hub.applied == [295]
+    assert "Applying PostgreSQL migration 295_add_needed_column" in caplog.text
+
+
+def test_postgres_migration_discovery_is_empty_after_flattening() -> None:
+    module = _migration_module()
+    hub = _PostgresMigrationHub()
+    runner = module.MigrationRunner(hub)
+
+    assert runner._discover_migrations() == []
 
 
 def test_split_statements_respecting_dollar_quotes_keeps_function_bodies_intact() -> None:

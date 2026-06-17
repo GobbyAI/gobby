@@ -1864,6 +1864,10 @@ CREATE TABLE task_artifacts (
             plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0 CHECK (plan_enhancement_rounds >= 0),
             plan_enhancement_rounds_completed INTEGER NOT NULL DEFAULT 0 CHECK (plan_enhancement_rounds_completed >= 0),
             plan_enhancement_converged BOOLEAN NOT NULL DEFAULT FALSE,
+            CONSTRAINT task_artifacts_plan_enhancement_rounds_nonnegative
+            CHECK (plan_enhancement_rounds >= 0),
+            CONSTRAINT task_artifacts_plan_enhancement_rounds_completed_nonnegative
+            CHECK (plan_enhancement_rounds_completed >= 0),
             CHECK (
                 (worktree_path IS NULL) = (worktree_id IS NULL)
                 AND (clone_path IS NULL) = (clone_id IS NULL)

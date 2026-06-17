@@ -1,1 +1,0 @@
-ALTER TABLE memories DROP COLUMN IF EXISTS media;

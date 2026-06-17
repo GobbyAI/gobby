@@ -251,8 +251,8 @@ class PostgresHubDatabase:
                 return
             if state == "corrupt_partial":
                 raise MigrationUnsupportedError(
-                    "Postgres database has application tables but no schema_migrations; "
-                    "dump-and-restore from a known-good baseline."
+                    "Pre-0.5 PostgreSQL hub databases below schema version 294 "
+                    "require backup/export and recreation under Gobby 0.5.0."
                 )
             _require_pg_search_extension(conn)
 
@@ -498,10 +498,12 @@ def _is_gwiki_table(table: str) -> bool:
 
 def _has_baseline_version(conn: Any, version: int) -> bool:
     row = conn.execute(
-        "SELECT 1 FROM schema_migrations WHERE version = %s LIMIT 1",
-        (version,),
+        "SELECT MAX(version) AS version FROM schema_migrations",
     ).fetchone()
-    return row is not None
+    if row is None:
+        return False
+    max_version = _row_value(row, "version")
+    return max_version is not None and int(max_version) >= version
 
 
 def _require_pg_search_extension(conn: Any) -> None:

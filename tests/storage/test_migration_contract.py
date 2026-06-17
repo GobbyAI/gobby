@@ -11,6 +11,7 @@ pytestmark = pytest.mark.unit
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SRC_ROOT = REPO_ROOT / "src" / "gobby"
 MIGRATIONS_SOURCE = SRC_ROOT / "storage" / "migrations.py"
+POSTGRES_BASELINE_SCHEMA = SRC_ROOT / "storage" / "postgres_baseline_schema.sql"
 MIGRATION_HELPERS_MODULE = "gobby.storage.migration_helpers"
 MEMORY_DREAM_STATUS_INVARIANTS = (
     "'started'",
@@ -120,6 +121,10 @@ def _assert_absent_all(label: str, content: str, snippets: tuple[str, ...]) -> N
     assert present == [], f"{label} contained forbidden snippets: {present}"
 
 
+def _baseline_text() -> str:
+    return POSTGRES_BASELINE_SCHEMA.read_text(encoding="utf-8")
+
+
 def _assert_memory_dream_project_scope(label: str, content: str) -> None:
     _assert_contains_all(label, content, (MEMORY_DREAM_PROJECT_FK, MEMORY_DREAM_PROJECT_COMMENT))
 
@@ -180,110 +185,42 @@ def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
 def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
-    assert _tracked_migration_names(migrations_dir) == [
-        "261_implementation_domain.sql",
-        "262_neo4j_config_to_falkordb.sql",
-        "264_drop_migration_state.sql",
-        "265_build_runs_project_root_started.sql",
-        "266_agent_run_resume_metadata.sql",
-        "267_context_usage_snapshot.sql",
-        "268_prevent_self_parent_sessions.sql",
-        "269_context_usage_ratio_range.sql",
-        "270_context_usage_value_constraints.sql",
-        "271_embeddings_namespace_to_ai_embeddings.sql",
-        "272_drop_embedding_provider_config.sql",
-        "273_task_merge_status.sql",
-        "274_memory_dream.sql",
-        "275_drop_memory_media.sql",
-        "276_memory_dream_constraints.sql",
-        "277_drop_llm_providers_config.sql",
-        "278_session_summary_revisions.sql",
-        "279_session_summary_revision_integrity.sql",
-        "280_code_index_projection_cleanup_pending.sql",
-        "281_code_index_failure_attempts.sql",
-        "282_comms_messages_platform_dedup.sql",
-        "283_mcp_server_auth_timeout_fields.sql",
-        "284_task_validation_status_error.sql",
-        "285_task_validation_backoff.sql",
-        "286_code_index_prune_dirty_projects.sql",
-        "287_plan_enhancement_artifacts.sql",
-        "288_build_profile_plan_enhancement_rounds.sql",
-        "289_memory_dream_soft_delete.sql",
-        "290_memory_dream_promote_action.sql",
-        "291_memory_dream_interrupted.sql",
-        "292_python_hygiene_constraints.sql",
-        "293_cron_durable_dispatch.sql",
-    ]
+    assert _tracked_migration_names(migrations_dir) == []
 
 
-def test_implementation_domain_migration_adds_column_and_backfills_open_code_tasks() -> None:
-    migration = (SRC_ROOT / "storage" / "migrations" / "261_implementation_domain.sql").read_text(
-        encoding="utf-8"
+def test_postgres_baseline_version_is_flattened_to_294() -> None:
+    import gobby.storage.migrations as module
+
+    assert module.BASELINE_VERSION == 294
+    assert module.latest_known_version() == 294
+
+
+def test_postgres_baseline_defines_implementation_domain_and_current_config_state() -> None:
+    baseline = _baseline_text()
+
+    _assert_contains_all(
+        "implementation domain baseline",
+        baseline,
+        (
+            "implementation_domain TEXT CHECK(",
+            "implementation_domain IN ('backend', 'frontend', 'fullstack')",
+        ),
+    )
+    _assert_absent_all(
+        "baseline config seed",
+        baseline,
+        (
+            'INSERT INTO "config_store"',
+            "databases.neo4j.",
+            "embeddings.provider",
+            "ai.embeddings.provider",
+            "llm_providers",
+        ),
     )
 
-    assert "ADD COLUMN IF NOT EXISTS implementation_domain" in migration
-    assert "category = 'code'" in migration
-    assert "closed_at IS NULL" in migration
-    assert "assigned_agent = 'frontend-developer'" in migration
-    assert "assigned_agent = 'fullstack-developer'" in migration
-    assert "ELSE 'backend'" in migration
 
-
-def test_neo4j_config_migration_preserves_tunables_and_uses_json_secret_guard() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "262_neo4j_config_to_falkordb.sql"
-    ).read_text(encoding="utf-8")
-
-    assert "databases.neo4j.graph_search" in migration
-    assert "databases.neo4j.graph_min_score" in migration
-    assert "databases.neo4j.rrf_k" in migration
-    assert "databases.neo4j.graph_name" in migration
-    assert "databases.falkordb." in migration
-    assert "ON CONFLICT (key) DO NOTHING" in migration
-    assert "DELETE FROM config_store" in migration
-    assert "WHERE key LIKE 'databases.neo4j.%'" in migration
-    assert "to_json('$secret:auth'::text)::text" in migration
-
-
-def test_embedding_namespace_migration_uses_namespaced_secret_reference() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "271_embeddings_namespace_to_ai_embeddings.sql"
-    ).read_text(encoding="utf-8")
-
-    assert "ai.embeddings.api_key" in migration
-    assert "embeddings_api_key" in migration
-    assert """'"$secret:embeddings_api_key"'""" in migration
-    assert "to_json('$secret:embeddings_api_key'::text)::text" not in migration
-    assert "'secret-' || md5(source_secret.name || ':embeddings_api_key')" in migration
-    assert "WHERE key = 'embeddings.api_key'\n      AND EXISTS" in migration
-    assert "DELETE FROM config_store" in migration
-
-
-def test_embedding_provider_cleanup_migration_removes_dead_keys() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "272_drop_embedding_provider_config.sql"
-    ).read_text(encoding="utf-8")
-
-    assert "'ai.embeddings.provider'" in migration
-    assert "'embeddings.provider'" in migration
-    assert "DELETE FROM config_store" in migration
-
-
-def test_llm_providers_cleanup_migration_removes_dead_prefix() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "277_drop_llm_providers_config.sql"
-    ).read_text(encoding="utf-8")
-
-    assert "DELETE FROM config_store" in migration
-    assert "key = 'llm_providers'" in migration
-    assert "key LIKE 'llm_providers.%'" in migration
-
-
-def test_session_summary_revisions_migration_and_baseline_define_schema() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "278_session_summary_revisions.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+def test_session_summary_revisions_baseline_defines_schema() -> None:
+    baseline = _baseline_text()
     session_columns = (
         "summary_revision_id",
         "summary_source_context_hash",
@@ -292,7 +229,7 @@ def test_session_summary_revisions_migration_and_baseline_define_schema() -> Non
         "summary_generated_at",
     )
     revision_snippets = (
-        "CREATE TABLE IF NOT EXISTS session_summary_revisions",
+        "CREATE TABLE session_summary_revisions",
         "summary_markdown TEXT NOT NULL",
         "generation_mode TEXT NOT NULL",
         "source_context_hash TEXT",
@@ -300,27 +237,15 @@ def test_session_summary_revisions_migration_and_baseline_define_schema() -> Non
         "previous_revision_id TEXT",
         "metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb",
         "session_summary_revisions_digest_turn_count_nonnegative",
+        "session_summary_revisions_generation_mode_valid",
         "sessions_summary_revision_fk",
         "idx_session_summary_revisions_session_created",
         "idx_sessions_summary_revision",
     )
 
     for column in session_columns:
-        assert f"ADD COLUMN IF NOT EXISTS {column}" in migration
         assert column in baseline
 
-    for snippet in revision_snippets:
-        assert snippet in migration
-
-    _assert_contains_all(
-        "session summary revision baseline",
-        baseline,
-        tuple(snippet.replace("IF NOT EXISTS ", "") for snippet in revision_snippets),
-    )
-
-    integrity_migration = (
-        SRC_ROOT / "storage" / "migrations" / "279_session_summary_revision_integrity.sql"
-    ).read_text(encoding="utf-8")
     integrity_snippets = (
         "sessions_summary_digest_turn_count_nonnegative",
         "session_summary_revisions_id_session_id_unique",
@@ -329,93 +254,61 @@ def test_session_summary_revisions_migration_and_baseline_define_schema() -> Non
         "FOREIGN KEY (summary_revision_id, id)",
         "ON DELETE SET NULL (summary_revision_id)",
     )
-    _assert_contains_all(
-        "summary revision integrity migration", integrity_migration, integrity_snippets
-    )
+    _assert_contains_all("session summary revision baseline", baseline, revision_snippets)
     _assert_contains_all("summary revision integrity baseline", baseline, integrity_snippets)
 
 
-def test_code_index_projection_cleanup_pending_migration_and_baseline_define_schema() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "280_code_index_projection_cleanup_pending.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
+    baseline = _baseline_text()
 
-    migration_snippets = (
-        "CREATE TABLE IF NOT EXISTS code_index_projection_cleanup_pending",
+    projection_snippets = (
+        "CREATE TABLE code_index_projection_cleanup_pending",
         "PRIMARY KEY(project_id, store)",
+        "code_index_projection_cleanup_store",
         "CHECK (store IN ('graph', 'vector'))",
-        "CREATE INDEX IF NOT EXISTS idx_cipcp_updated",
+        "CREATE INDEX idx_cipcp_updated",
     )
-    baseline_snippets = tuple(
-        snippet.replace(" IF NOT EXISTS", "") for snippet in migration_snippets
-    )
-    _assert_contains_all("projection cleanup migration", migration, migration_snippets)
-    _assert_contains_all("projection cleanup baseline", baseline, baseline_snippets)
-
-
-def test_code_index_failure_attempts_migration_and_baseline_define_columns() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "281_code_index_failure_attempts.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
-
-    snippets = (
+    failure_snippets = (
         "vector_sync_attempted_at TIMESTAMPTZ",
         "summary_attempted_at TIMESTAMPTZ",
     )
-    _assert_contains_all("code index failure attempts migration", migration, snippets)
-    _assert_contains_all("code index failure attempts baseline", baseline, snippets)
-
-
-def test_code_index_prune_dirty_projects_migration_and_baseline_define_schema() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "286_code_index_prune_dirty_projects.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
-
-    migration_snippets = (
-        "CREATE TABLE IF NOT EXISTS code_index_prune_dirty_projects",
+    prune_snippets = (
+        "CREATE TABLE code_index_prune_dirty_projects",
         "project_id TEXT PRIMARY KEY",
         "root_path TEXT NOT NULL",
         "reason TEXT NOT NULL",
         "attempts INTEGER NOT NULL DEFAULT 0",
-        "CREATE INDEX IF NOT EXISTS idx_cipdp_updated",
+        "CREATE INDEX idx_cipdp_updated",
     )
-    baseline_snippets = tuple(
-        snippet.replace(" IF NOT EXISTS", "") for snippet in migration_snippets
+
+    _assert_contains_all("projection cleanup baseline", baseline, projection_snippets)
+    _assert_contains_all("code index failure attempts baseline", baseline, failure_snippets)
+    _assert_contains_all("code index prune dirty baseline", baseline, prune_snippets)
+
+
+def test_plan_enhancement_baseline_defines_artifacts_and_build_profile_columns() -> None:
+    baseline = _baseline_text()
+
+    _assert_contains_all(
+        "plan enhancement artifacts baseline",
+        baseline,
+        (
+            "plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0",
+            "plan_enhancement_rounds_completed INTEGER NOT NULL DEFAULT 0",
+            "plan_enhancement_converged BOOLEAN NOT NULL DEFAULT FALSE",
+            "task_artifacts_plan_enhancement_rounds_nonnegative",
+            "task_artifacts_plan_enhancement_rounds_completed_nonnegative",
+        ),
     )
-    _assert_contains_all("code index prune dirty migration", migration, migration_snippets)
-    _assert_contains_all("code index prune dirty baseline", baseline, baseline_snippets)
-
-
-def test_plan_enhancement_artifacts_migration_and_baseline_define_columns() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "287_plan_enhancement_artifacts.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
-
-    snippets = (
-        "plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0",
-        "plan_enhancement_rounds_completed INTEGER NOT NULL DEFAULT 0",
-        "plan_enhancement_converged BOOLEAN NOT NULL DEFAULT FALSE",
+    _assert_contains_all(
+        "build profile plan enhancement baseline",
+        baseline,
+        (
+            "CREATE TABLE build_profiles",
+            "plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0",
+            "CHECK (plan_enhancement_rounds >= 0)",
+        ),
     )
-    _assert_contains_all("plan enhancement artifacts migration", migration, snippets)
-    _assert_contains_all("plan enhancement artifacts baseline", baseline, snippets)
-
-
-def test_build_profile_plan_enhancement_rounds_migration_and_baseline_define_column() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "288_build_profile_plan_enhancement_rounds.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
-
-    snippets = (
-        "plan_enhancement_rounds INTEGER NOT NULL DEFAULT 0",
-        "CHECK (plan_enhancement_rounds >= 0)",
-    )
-    _assert_contains_all("build profile plan enhancement migration", migration, snippets)
-    _assert_contains_all("build profile plan enhancement baseline", baseline, snippets)
 
 
 def test_removed_migration_baseline_and_import_files_are_absent() -> None:
@@ -433,10 +326,7 @@ def test_removed_migration_baseline_and_import_files_are_absent() -> None:
 
 
 def test_context_usage_snapshot_migration_and_baseline_define_session_snapshot_fields() -> None:
-    migration = (SRC_ROOT / "storage" / "migrations" / "267_context_usage_snapshot.sql").read_text(
-        encoding="utf-8"
-    )
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    baseline = _baseline_text()
     expected_columns = [
         "context_used_tokens",
         "context_usage_ratio",
@@ -451,107 +341,43 @@ def test_context_usage_snapshot_migration_and_baseline_define_session_snapshot_f
     ]
 
     for column in expected_columns:
-        assert f"ADD COLUMN IF NOT EXISTS {column}" in migration
         assert column in baseline
 
-    assert "idx_sessions_context_usage_ratio" in migration
+    assert "context_usage_ratio DOUBLE PRECISION" in baseline
     assert "idx_sessions_context_usage_ratio" in baseline
 
 
 def test_self_parent_sessions_migration_and_baseline_define_invariant() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "268_prevent_self_parent_sessions.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    baseline = _baseline_text()
     invariant = "CHECK (parent_session_id IS NULL OR parent_session_id <> id)"
 
-    assert "UPDATE sessions" in migration
-    assert "SET parent_session_id = NULL" in migration
-    assert "WHERE parent_session_id = id" in migration
-    assert "sessions_parent_session_not_self" in migration
-    assert invariant in migration
     assert "sessions_parent_session_not_self" in baseline
     assert invariant in baseline
 
 
 def test_context_usage_ratio_range_migration_and_baseline_define_invariant() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "269_context_usage_ratio_range.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    baseline = _baseline_text()
     invariant = "context_usage_ratio >= 0 AND context_usage_ratio <= 1"
 
-    assert "sessions_context_usage_ratio_range" in migration
-    assert invariant in migration
     assert "sessions_context_usage_ratio_range" in baseline
     assert invariant in baseline
 
 
 def test_context_usage_value_constraints_migration_and_baseline_define_invariants() -> None:
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "270_context_usage_value_constraints.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+    baseline = _baseline_text()
     token_invariant = "context_used_tokens IS NULL OR context_used_tokens >= 0"
     confidence_invariant = "context_usage_confidence IN ('reported', 'estimated', 'unknown')"
 
-    assert "sessions_context_usage_tokens_nonnegative" in migration
-    assert "UPDATE sessions" in migration
-    assert "WHEN context_window < 0 THEN 0" in migration
-    assert "ELSE 'unknown'" in migration
-    assert token_invariant in migration
-    assert "sessions_context_usage_confidence_valid" in migration
-    assert confidence_invariant in migration
     assert "sessions_context_usage_tokens_nonnegative" in baseline
     assert token_invariant in baseline
     assert "sessions_context_usage_confidence_valid" in baseline
     assert confidence_invariant in baseline
 
 
-def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> None:
-    creation_migration = (SRC_ROOT / "storage" / "migrations" / "274_memory_dream.sql").read_text(
-        encoding="utf-8"
-    )
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "276_memory_dream_constraints.sql"
-    ).read_text(encoding="utf-8")
-    promote_migration = (
-        SRC_ROOT / "storage" / "migrations" / "290_memory_dream_promote_action.sql"
-    ).read_text(encoding="utf-8")
-    baseline = (SRC_ROOT / "storage" / "postgres_baseline_schema.sql").read_text(encoding="utf-8")
+def test_memory_dream_baseline_and_runtime_define_invariants() -> None:
+    baseline = _baseline_text()
     runtime_storage = (SRC_ROOT / "memory" / "dream" / "storage.py").read_text(encoding="utf-8")
-    interrupted_migration = (
-        SRC_ROOT / "storage" / "migrations" / "291_memory_dream_interrupted.sql"
-    ).read_text(encoding="utf-8")
 
-    _assert_memory_dream_project_scope("memory dream creation migration", creation_migration)
-    _assert_memory_dream_snapshot_run_index("memory dream creation migration", creation_migration)
-    _assert_memory_dream_constraints("memory dream creation migration", creation_migration)
-    _assert_contains_all(
-        "memory dream constraint migration",
-        migration,
-        (
-            "ALTER COLUMN status SET DEFAULT 'started'",
-            "UPDATE memory_dream_runs",
-            "SET status = 'failed'",
-            "supersede_create' THEN 'supersede",
-        ),
-    )
-    _assert_memory_dream_constraints("memory dream constraint migration", migration)
-    _assert_contains_all(
-        "memory dream promote migration",
-        promote_migration,
-        ("memory_dream_snapshots_action_check", *MEMORY_DREAM_PROMOTE_ACTION_INVARIANTS),
-    )
-    _assert_contains_all(
-        "memory dream interrupted migration",
-        interrupted_migration,
-        (
-            "memory_dream_runs_status_check",
-            "'interrupted'",
-            "WHERE status IN ('started', 'running')",
-        ),
-    )
     _assert_contains_all("memory dream baseline interrupted status", baseline, ("'interrupted'",))
     _assert_contains_all(
         "memory dream runtime storage interrupted status",
@@ -569,15 +395,15 @@ def test_memory_dream_constraints_migration_and_baseline_define_invariants() -> 
         runtime_storage,
         MEMORY_DREAM_RUNTIME_NORMALIZERS,
     )
-
-
-def test_memory_dream_migration_only_deletes_retired_system_cron_jobs() -> None:
-    migration = (SRC_ROOT / "storage" / "migrations" / "274_memory_dream.sql").read_text(
-        encoding="utf-8"
+    _assert_absent_all(
+        "baseline retired memory cleanup cron seed",
+        baseline,
+        (
+            "nightly-memory-cleanup",
+            "gobby:nightly-memory-cleanup",
+            "gobby:memory-cleanup",
+        ),
     )
-
-    assert "DELETE FROM cron_jobs\nWHERE is_system = true\nAND (" in migration
-    assert "action_config->>'pipeline_name' = 'nightly-memory-cleanup'" in migration
 
 
 def test_migration_helpers_are_not_imported_by_runtime_storage_paths() -> None:

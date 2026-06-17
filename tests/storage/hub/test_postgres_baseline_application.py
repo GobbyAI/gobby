@@ -33,6 +33,9 @@ class _ClassifyConnection:
     def execute(self, sql: str, params=()):
         if "pg_tables" in sql:
             return _Result([(table,) for table in sorted(self.tables)])
+        if "MAX(version)" in sql:
+            max_version = max(self.baseline_versions) if self.baseline_versions else None
+            return _Result([(max_version,)])
         if "schema_migrations" in sql:
             version = BASELINE_VERSION if not params else params[0]
             return _Result([(1,)] if version in self.baseline_versions else [])
@@ -46,6 +49,8 @@ class _ClassifyConnection:
         ({"gobby_install_ownership"}, set(), "fresh_with_install_infra"),
         ({"_pgaudit_probe"}, set(), "fresh_with_install_infra"),
         ({"schema_migrations", "tasks"}, {BASELINE_VERSION}, "already_baselined"),
+        ({"schema_migrations", "tasks"}, {BASELINE_VERSION + 1}, "already_baselined"),
+        ({"schema_migrations", "tasks"}, {BASELINE_VERSION - 1}, "corrupt_partial"),
         ({"schema_migrations"}, set(), "fresh"),
         ({"tasks"}, set(), "corrupt_partial"),
         ({"gobby_install_ownership", "tasks"}, set(), "corrupt_partial"),
@@ -324,7 +329,7 @@ def test_apply_postgres_baseline_rejects_partial_baseline_state(monkeypatch) -> 
     monkeypatch.setattr(module.importlib, "resources", _Resources())
     db = _new_db(module, _Pool(fast, locked))
 
-    with pytest.raises(MigrationUnsupportedError, match="dump-and-restore"):
+    with pytest.raises(MigrationUnsupportedError, match="version 294"):
         db._apply_postgres_baseline()
 
     assert "CREATE TABLE tasks(id INTEGER)" not in locked.statements
