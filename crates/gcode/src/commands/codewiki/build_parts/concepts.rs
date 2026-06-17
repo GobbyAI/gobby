@@ -152,9 +152,10 @@ fn render_curated_navigation_docs(
             &module_lookup,
             &file_lookup,
         );
+        let diagram_module = largest_member_module(&concept.modules, &module_lookup);
         docs.push(BuiltDoc {
             path: concept_doc_path(&concept.slug),
-            content: render_concept_page(concept, &spans, degraded),
+            content: render_concept_page(concept, &spans, degraded, diagram_module),
             degraded,
             summary: Some(concept.summary.clone()),
         });
@@ -162,9 +163,11 @@ fn render_curated_navigation_docs(
 
     for page in &narrative_pages {
         let spans = narrative_spans(page, &concepts, &module_lookup, &file_lookup);
+        let (member_modules, _) = narrative_members(page, &concepts);
+        let diagram_module = largest_member_module(&member_modules, &module_lookup);
         docs.push(BuiltDoc {
             path: narrative_doc_path(&page.slug),
-            content: render_narrative_page(page, &spans, &concept_titles, degraded),
+            content: render_narrative_page(page, &spans, &concept_titles, degraded, diagram_module),
             degraded,
             summary: Some(page.summary.clone()),
         });
@@ -220,7 +223,12 @@ fn render_concept_tree(
     doc
 }
 
-fn render_concept_page(concept: &ConceptModule, spans: &[SourceSpan], degraded: bool) -> String {
+fn render_concept_page(
+    concept: &ConceptModule,
+    spans: &[SourceSpan],
+    degraded: bool,
+    diagram_module: Option<&ModuleDoc>,
+) -> String {
     let degraded = degraded || concept.body_degraded;
     let degraded_sources = degraded_sources(degraded);
     let mut doc = frontmatter_with_degradation_without_ranges(
@@ -237,6 +245,7 @@ fn render_concept_page(concept: &ConceptModule, spans: &[SourceSpan], degraded: 
         "Overview",
         &ground_text(&concept.summary, spans, None),
     );
+    append_dependency_diagram(&mut doc, diagram_module);
     append_explore_section(&mut doc, &concept.modules, &concept.files);
     doc
 }
@@ -246,6 +255,7 @@ fn render_narrative_page(
     spans: &[SourceSpan],
     concept_titles: &std::collections::BTreeMap<&str, &str>,
     degraded: bool,
+    diagram_module: Option<&ModuleDoc>,
 ) -> String {
     let degraded = degraded || page.body_degraded;
     let degraded_sources = degraded_sources(degraded);
@@ -277,6 +287,7 @@ fn render_narrative_page(
         }
         doc.push('\n');
     }
+    append_dependency_diagram(&mut doc, diagram_module);
     append_explore_section(&mut doc, &page.modules, &[]);
     doc
 }
@@ -350,6 +361,48 @@ fn narrative_members(
     files.sort();
     files.dedup();
     (modules, files)
+}
+
+/// The most substantial member module that already has a bounded dependency
+/// diagram, ranked by file + submodule count then name (stable). Curated pages
+/// reuse the precomputed `ModuleDoc.dependency_diagram` - no new graph work and
+/// no fabricated edges.
+fn largest_member_module<'a>(
+    modules: &[String],
+    module_lookup: &std::collections::BTreeMap<&str, &'a ModuleDoc>,
+) -> Option<&'a ModuleDoc> {
+    modules
+        .iter()
+        .filter_map(|module| module_lookup.get(module.as_str()).copied())
+        .filter(|module| module.dependency_diagram.is_some())
+        .max_by_key(|module| {
+            (
+                module.direct_files.len() + module.child_modules.len(),
+                std::cmp::Reverse(module.module.clone()),
+            )
+        })
+}
+
+/// Inject a member module's already-bounded dependency diagram onto a curated
+/// page. Honest about graph truncation (`graph-truncated` marker) and never
+/// fabricates edges; emits nothing when the graph is unavailable or no diagram
+/// was computed.
+fn append_dependency_diagram(doc: &mut String, module: Option<&ModuleDoc>) {
+    let Some(module) = module else {
+        return;
+    };
+    let Some(diagram) = &module.dependency_diagram else {
+        return;
+    };
+    if module.graph_availability == CodewikiGraphAvailability::Unavailable {
+        return;
+    }
+    doc.push_str("## Architecture diagram\n\n");
+    if module.graph_availability == CodewikiGraphAvailability::Truncated {
+        doc.push_str("`degraded: graph-truncated`\n\n");
+    }
+    doc.push_str(diagram);
+    doc.push('\n');
 }
 
 fn curated_navigation_prompt(files: &[FileDoc], modules: &[ModuleDoc]) -> String {
@@ -832,4 +885,88 @@ struct NarrativePage {
     body: Option<String>,
     #[serde(skip)]
     body_degraded: bool,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn module_with_diagram(
+        name: &str,
+        diagram: Option<&str>,
+        availability: CodewikiGraphAvailability,
+    ) -> ModuleDoc {
+        ModuleDoc {
+            module: name.to_string(),
+            summary: String::new(),
+            source_spans: Vec::new(),
+            direct_files: Vec::new(),
+            child_modules: Vec::new(),
+            component_ids: Vec::new(),
+            dependency_diagram: diagram.map(str::to_string),
+            call_diagram: None,
+            graph_availability: availability,
+            degraded: false,
+            reused_page: None,
+        }
+    }
+
+    #[test]
+    fn curated_diagram_injected_when_graph_available() {
+        let module = module_with_diagram(
+            "src",
+            Some("```mermaid\ngraph TD\n```"),
+            CodewikiGraphAvailability::Available,
+        );
+        let mut doc = String::new();
+        append_dependency_diagram(&mut doc, Some(&module));
+        assert!(doc.contains("## Architecture diagram"), "{doc}");
+        assert!(doc.contains("```mermaid"), "{doc}");
+        assert!(!doc.contains("graph-truncated"), "{doc}");
+    }
+
+    #[test]
+    fn curated_diagram_marks_truncated_graph() {
+        let module = module_with_diagram(
+            "src",
+            Some("```mermaid\ngraph TD\n```"),
+            CodewikiGraphAvailability::Truncated,
+        );
+        let mut doc = String::new();
+        append_dependency_diagram(&mut doc, Some(&module));
+        assert!(doc.contains("`degraded: graph-truncated`"), "{doc}");
+        assert!(doc.contains("```mermaid"), "{doc}");
+    }
+
+    #[test]
+    fn curated_diagram_skipped_when_unavailable_or_absent() {
+        let mut doc = String::new();
+        append_dependency_diagram(&mut doc, None);
+        let unavailable = module_with_diagram(
+            "src",
+            Some("```mermaid\n```"),
+            CodewikiGraphAvailability::Unavailable,
+        );
+        append_dependency_diagram(&mut doc, Some(&unavailable));
+        let no_diagram = module_with_diagram("src", None, CodewikiGraphAvailability::Available);
+        append_dependency_diagram(&mut doc, Some(&no_diagram));
+        assert!(doc.is_empty(), "{doc}");
+    }
+
+    #[test]
+    fn largest_member_module_requires_a_diagram() {
+        let with = module_with_diagram(
+            "src/a",
+            Some("```mermaid\n```"),
+            CodewikiGraphAvailability::Available,
+        );
+        let without = module_with_diagram("src/b", None, CodewikiGraphAvailability::Available);
+        let lookup = std::collections::BTreeMap::from([("src/a", &with), ("src/b", &without)]);
+        let members = ["src/a".to_string(), "src/b".to_string()];
+        assert_eq!(
+            largest_member_module(&members, &lookup).map(|module| module.module.as_str()),
+            Some("src/a")
+        );
+        assert!(largest_member_module(&["src/b".to_string()], &lookup).is_none());
+    }
 }
