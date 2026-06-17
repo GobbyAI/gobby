@@ -52,6 +52,13 @@ indexing:
   respect_gitignore: true
 ```
 
+Project wiki markdown for the default project scope lives under
+`<project>/gobby-wiki/`. Git tracks authored and generated Markdown there, while
+vault runtime state stays local: `gobby-wiki/_meta/**`,
+`gobby-wiki/meta/health/**`, lock files, and local Obsidian workspace JSON are
+ignored. Legacy `<project>/.gobby/wiki` roots in `wiki.roots` load as the sibling
+`<project>/gobby-wiki` vault.
+
 ### Bootstrap
 
 `~/.gobby/bootstrap.yaml` contains only values needed before the hub database is

@@ -1051,6 +1051,30 @@ class TestLoadConfig:
         assert not hasattr(config, "task_description")
         assert not hasattr(config.gobby_tasks, "enrichment")
 
+    def test_load_config_migrates_legacy_project_wiki_root(self, temp_dir: Path) -> None:
+        """Legacy .gobby/wiki project roots load from the top-level gobby-wiki vault."""
+        legacy_root = temp_dir / "repo" / ".gobby" / "wiki"
+        topic_root = temp_dir / "topics" / "research"
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {
+                    "wiki.roots": [
+                        {"scope": "project", "path": str(legacy_root)},
+                        {"scope": "topic:research", "path": str(topic_root)},
+                    ]
+                }
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert [(root.scope, root.path) for root in config.wiki.roots] == [
+            ("project", temp_dir / "repo" / "gobby-wiki"),
+            ("topic:research", topic_root),
+        ]
+
     def test_load_config_clamps_legacy_cron_interval_from_db(self, temp_dir: Path) -> None:
         """Legacy cron intervals below the scheduler floor do not block startup."""
 

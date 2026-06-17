@@ -81,6 +81,7 @@ from gobby.config.validation_detection import (
 )
 from gobby.config.voice import VoiceConfig
 from gobby.config.wiki import WikiConfig
+from gobby.config.wiki_migration import migrate_legacy_wiki_roots
 from gobby.search.models import SearchConfig
 from gobby.telemetry.config import TelemetrySettings
 
@@ -721,6 +722,7 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
     Handles:
     - logging.* → telemetry.* (field name remapping)
     - Removal of _meta, title_synthesis, rules, ui_settings
+    - wiki.roots entries ending in .gobby/wiki → sibling gobby-wiki
     """
     # Drop removed top-level keys
     for key in _LEGACY_KEYS_TO_DROP:
@@ -739,6 +741,8 @@ def _migrate_legacy_config(config_dict: dict[str, Any]) -> dict[str, Any]:
         gobby_tasks = config_dict.get(key)
         if isinstance(gobby_tasks, dict):
             gobby_tasks.pop("enrichment", None)
+
+    migrate_legacy_wiki_roots(config_dict)
 
     return config_dict
 

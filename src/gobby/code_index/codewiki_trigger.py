@@ -17,7 +17,7 @@ from gobby.gwiki_gateway import GwikiGateway, GwikiGatewayError
 logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "wiki.codewiki_on_commit"
-_DEFAULT_OUT_DIR = "codewiki"
+_DEFAULT_OUT_DIR = "gobby-wiki"
 _AI_VALUES = {"auto", "daemon", "direct", "off"}
 
 
@@ -189,9 +189,10 @@ class CodewikiRefreshTrigger:
         try:
             result = await gcode.codewiki(root, out_dir, ai=request.ai)
             changed_paths = _changed_doc_paths(out_dir, result)
-            for path in changed_paths:
-                await gwiki.ingest_file(path)
             if changed_paths:
+                if not out_dir.is_relative_to(self._default_out_dir(root)):
+                    for path in changed_paths:
+                        await gwiki.ingest_file(path)
                 await gwiki.index()
             logger.debug(
                 "codewiki refresh completed for %s with %d changed docs",
@@ -214,6 +215,10 @@ class CodewikiRefreshTrigger:
         if not path.is_absolute():
             path = root / path
         return path.resolve(strict=False)
+
+    @staticmethod
+    def _default_out_dir(root: Path) -> Path:
+        return (root / _DEFAULT_OUT_DIR).resolve(strict=False)
 
 
 def _changed_doc_paths(out_dir: Path, result: dict[str, Any]) -> list[Path]:

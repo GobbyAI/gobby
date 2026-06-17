@@ -96,7 +96,7 @@ def test_codewiki_on_commit_enabled_propagates_runtime_config_errors() -> None:
 
 
 @pytest.mark.asyncio
-async def test_refresh_runs_codewiki_and_ingests_changed_docs(tmp_path: Path) -> None:
+async def test_refresh_runs_codewiki_and_indexes_changed_vault_docs(tmp_path: Path) -> None:
     gcode = FakeGcodeGateway({"changed_paths": ["repo.md", "files/src/lib.rs.md"]})
     gwiki = FakeGwikiGateway()
     trigger = CodewikiRefreshTrigger(
@@ -112,10 +112,38 @@ async def test_refresh_runs_codewiki_and_ingests_changed_docs(tmp_path: Path) ->
     )
     await trigger._flush(trigger._root_key(str(tmp_path)))
 
-    assert gcode.calls == [(tmp_path, tmp_path / "codewiki", "daemon")]
+    assert gcode.calls == [(tmp_path, tmp_path / "gobby-wiki", "daemon")]
+    assert gwiki.ingested == []
+    assert gwiki.index_count == 1
+
+
+@pytest.mark.asyncio
+async def test_refresh_with_external_out_dir_ingests_changed_docs(tmp_path: Path) -> None:
+    gcode = FakeGcodeGateway({"changed_paths": ["repo.md", "files/src/lib.rs.md"]})
+    gwiki = FakeGwikiGateway()
+    out_dir = tmp_path / "external-codewiki"
+    trigger = CodewikiRefreshTrigger(
+        loop=asyncio.get_running_loop(),
+        config_store_provider=lambda: FakeConfigStore(True),
+        gcode_gateway_factory=lambda: gcode,
+        gwiki_gateway_factory=lambda _root: gwiki,
+        debounce_seconds=60,
+    )
+
+    trigger._schedule_request(
+        CodewikiRefreshRequest(
+            root_path=str(tmp_path),
+            project_id="proj-1",
+            out_dir=str(out_dir),
+            ai="daemon",
+        )
+    )
+    await trigger._flush(trigger._root_key(str(tmp_path)))
+
+    assert gcode.calls == [(tmp_path, out_dir, "daemon")]
     assert gwiki.ingested == [
-        tmp_path / "codewiki" / "repo.md",
-        tmp_path / "codewiki" / "files/src/lib.rs.md",
+        out_dir / "repo.md",
+        out_dir / "files/src/lib.rs.md",
     ]
     assert gwiki.index_count == 1
 
