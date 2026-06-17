@@ -11,7 +11,7 @@ const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
 const MAX_MERMAID_HOPS: usize = 2;
 const MAX_MERMAID_EDGES: usize = 20;
 const MAX_EDGE_LIMIT: usize = 100_000;
-const CODEWIKI_RENDER_VERSION: u32 = 3;
+const CODEWIKI_RENDER_VERSION: u32 = 4;
 
 /// Default daemon feature profile for aggregate (module/repo/architecture)
 /// prose, which synthesizes 10k+-token grounded prompts; file and symbol
