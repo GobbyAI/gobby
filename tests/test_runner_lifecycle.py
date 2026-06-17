@@ -575,7 +575,11 @@ class TestInitSubsystems:
             await runner_lifecycle._init_subsystems(runner, AsyncMock())
 
         vector_store.initialize.assert_awaited_once()
-        vector_store.ensure_collection.assert_awaited_once()
+        vector_store.ensure_collection.assert_awaited_once_with(
+            "tool_embeddings",
+            768,
+            recreate_on_mismatch=True,
+        )
         await asyncio.wait_for(refresh_started.wait(), timeout=1.0)
         assert "Provider model discovery timed out" not in caplog.text
 

@@ -52,9 +52,9 @@ class TestProviderConfig:
 
     def test_openai_compatible_config(self) -> None:
         cfg = _PROVIDER_CONFIG["openai-compatible"]
-        assert cfg["model"] == "text-embedding-3-small"
+        assert cfg["model"] == "nomic-embed-text"
         assert cfg["api_base"] is None
-        assert cfg["dim"] == 0
+        assert cfg["dim"] == 768
 
     def test_none_config_exists(self) -> None:
         assert "none" in _PROVIDER_CONFIG
@@ -273,7 +273,7 @@ class TestInstallEmbeddingOverrides:
 
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
     @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
-    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=1536)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=768)
     def test_openai_compatible_custom_url_uses_probe(
         self,
         mock_probe: MagicMock,
@@ -287,24 +287,54 @@ class TestInstallEmbeddingOverrides:
 
         assert result["success"] is True
         assert result["provider"] == "openai-compatible"
-        assert result["model"] == "text-embedding-3-small"
-        assert result["dim"] == 1536
+        assert result["model"] == "nomic-embed-text"
+        assert result["dim"] == 768
         mock_probe.assert_called_once()
         assert mock_health.call_args.kwargs["api_base"] == "https://embeddings.example.test/v1"
         assert mock_persist.call_args.kwargs["provider"] == "openai-compatible"
 
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
+    @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=1536)
+    def test_openai_compatible_explicit_openai_small_model_can_use_1536_probe(
+        self,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_persist: MagicMock,
+    ) -> None:
+        result = install_embedding(
+            provider="openai-compatible",
+            model_override="text-embedding-3-small",
+            api_base_override="https://embeddings.example.test/v1",
+        )
+
+        assert result["success"] is True
+        assert result["model"] == "text-embedding-3-small"
+        assert result["dim"] == 1536
+        mock_probe.assert_called_once()
+        assert mock_health.call_args.kwargs["expected_dim"] == 1536
+        assert mock_persist.call_args.kwargs["dim"] == 1536
+
+    @patch("gobby.cli.installers.embedding._persist_embedding_config")
+    @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
     @patch("gobby.cli.installers.embedding._probe_embedding_dim", return_value=None)
-    def test_openai_compatible_probe_failure_requires_explicit_dim(
-        self, mock_probe: MagicMock
+    def test_openai_compatible_probe_failure_falls_back_to_768(
+        self,
+        mock_probe: MagicMock,
+        mock_health: MagicMock,
+        mock_persist: MagicMock,
     ) -> None:
         result = install_embedding(
             provider="openai-compatible",
             api_base_override="https://embeddings.example.test/v1",
         )
 
-        assert result["success"] is False
-        assert "Could not probe embedding dim" in result["error"]
-        assert "--embedding-dim" in result["error"]
+        assert result["success"] is True
+        assert result["model"] == "nomic-embed-text"
+        assert result["dim"] == 768
+        mock_probe.assert_called_once()
+        assert mock_health.call_args.kwargs["expected_dim"] == 768
+        assert mock_persist.call_args.kwargs["dim"] == 768
 
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
     @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)

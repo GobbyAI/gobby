@@ -613,8 +613,8 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         if request_data.target_project_id is not None:
             raise HTTPException(
                 status_code=422,
-            detail="Only promote-to-global is supported.",
-        )
+                detail="Only promote-to-global is supported.",
+            )
         try:
             _ensure_memory_in_current_project(server, memory_id)
             memory = await server.memory_manager.rescope_memory(memory_id, None)

@@ -56,6 +56,10 @@ class VectorStoreUnavailableError(RuntimeError):
         super().__init__(message)
 
 
+class VectorStoreCollectionDimensionError(RuntimeError):
+    """Raised when an existing collection has an unexpected vector dimension."""
+
+
 def is_recoverable_vector_store_error(error: BaseException) -> bool:
     """Return True for transient VectorStore/Qdrant availability errors."""
     if isinstance(error, VectorStoreUnavailableError | ResponseHandlingException):
@@ -127,7 +131,7 @@ class VectorStore:
         url: str | None = None,
         api_key: str | None = None,
         collection_name: str = "memories",
-        embedding_dim: int = 1536,
+        embedding_dim: int = 768,
     ) -> None:
         self._path = path
         self._url = url
@@ -590,7 +594,7 @@ class VectorStore:
         collection_name: str,
         embedding_dim: int | None = None,
         *,
-        recreate_on_mismatch: bool = True,
+        recreate_on_mismatch: bool = False,
     ) -> None:
         """Ensure a named collection exists, creating it if needed.
 
@@ -628,7 +632,10 @@ class VectorStore:
                                 dim,
                                 existing_dim,
                             )
-                            return
+                            raise VectorStoreCollectionDimensionError(
+                                f"Qdrant collection '{collection_name}' dimension mismatch "
+                                f"(expected_dim={dim}, observed_dim={existing_dim})"
+                            )
                         await asyncio.to_thread(
                             client.delete_collection,
                             collection_name=collection_name,
@@ -641,7 +648,7 @@ class VectorStore:
                                 existing_dim,
                                 dim,
                             )
-                except VectorStoreUnavailableError:
+                except (VectorStoreCollectionDimensionError, VectorStoreUnavailableError):
                     raise
                 except Exception as e:
                     self._raise_if_recoverable(e)

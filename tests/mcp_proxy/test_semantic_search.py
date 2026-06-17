@@ -232,7 +232,7 @@ class TestSemanticToolSearch:
         mock_vs.ensure_collection.assert_called_once_with(
             "tool_embeddings",
             DEFAULT_EMBEDDING_DIM,
-            recreate_on_mismatch=False,
+            recreate_on_mismatch=True,
         )
         mock_vs.upsert.assert_called_once()
         call_kwargs = mock_vs.upsert.call_args[1]
@@ -723,58 +723,83 @@ class TestSearchTools:
             assert results[0].description == "Create a new task"
 
     @pytest.mark.asyncio
-    async def test_store_embedding_reports_dimension_conflict_without_repair(
+    async def test_store_embedding_repairs_preexisting_dimension_conflict(
         self,
         temp_db: HubDatabase,
     ) -> None:
-        """store_embedding does not recreate a mismatched tool collection."""
+        """store_embedding recreates a mismatched tool collection before writing."""
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(return_value=1536)
         mock_vs.upsert = AsyncMock()
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
-        with pytest.raises(RuntimeError, match="configured_dim=768, observed_dim=1536"):
-            await search.store_embedding(
-                tool_id="tool-1",
-                server_name="test-server",
-                project_id="proj-1",
-                embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
-            )
+        await search.store_embedding(
+            tool_id="tool-1",
+            server_name="test-server",
+            project_id="proj-1",
+            embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
+        )
 
-        mock_vs.ensure_collection.assert_not_awaited()
-        mock_vs.upsert.assert_not_awaited()
+        mock_vs.ensure_collection.assert_awaited_once_with(
+            "tool_embeddings",
+            DEFAULT_EMBEDDING_DIM,
+            recreate_on_mismatch=True,
+        )
+        mock_vs.upsert.assert_awaited_once()
+        payload = mock_vs.upsert.await_args.kwargs["payload"]
+        assert payload["server_name"] == "test-server"
+        assert payload["project_id"] == "proj-1"
+        assert payload["embedding_model"] == DEFAULT_EMBEDDING_MODEL
 
     @pytest.mark.asyncio
-    async def test_search_tools_reports_runtime_dimension_conflict_without_repair(
+    async def test_search_tools_repairs_runtime_dimension_conflict_and_retries(
         self,
         search_with_vs: SemanticToolSearch,
         sample_project: dict,
     ) -> None:
-        """search_tools reports runtime dimension conflicts without recreating."""
+        """search_tools recreates a mismatched tool collection and retries once."""
         search_with_vs._vector_store.get_collection_dimension = AsyncMock(
             side_effect=[DEFAULT_EMBEDDING_DIM, 1]
         )
         search_with_vs._vector_store.search_with_payload = AsyncMock(
-            side_effect=RuntimeError(
-                "Wrong input: Vector dimension error: expected dim: 1, got 768"
-            )
+            side_effect=[
+                RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"),
+                [
+                    (
+                        "tool-1",
+                        0.95,
+                        {
+                            "server_name": "test-server",
+                            "tool_name": "test_tool",
+                            "description": "A repaired result",
+                            "project_id": sample_project["id"],
+                        },
+                    )
+                ],
+            ]
         )
 
         with patch.object(search_with_vs, "embed_text", new_callable=AsyncMock) as mock_embed:
             mock_embed.return_value = [0.9] * DEFAULT_EMBEDDING_DIM
 
-            with pytest.raises(RuntimeError, match="configured_dim=768, observed_dim=1"):
-                await search_with_vs.search_tools(
-                    query="find something",
-                    project_id=sample_project["id"],
-                )
+            results = await search_with_vs.search_tools(
+                query="find something",
+                project_id=sample_project["id"],
+            )
 
-        assert search_with_vs._vector_store.search_with_payload.await_count == 1
+        assert len(results) == 1
+        assert results[0].tool_id == "tool-1"
+        assert search_with_vs._vector_store.search_with_payload.await_count == 2
         assert search_with_vs._vector_store.ensure_collection.await_args_list == [
             call(
                 "tool_embeddings",
                 DEFAULT_EMBEDDING_DIM,
-                recreate_on_mismatch=False,
+                recreate_on_mismatch=True,
+            ),
+            call(
+                "tool_embeddings",
+                DEFAULT_EMBEDDING_DIM,
+                recreate_on_mismatch=True,
             ),
         ]
 
@@ -787,19 +812,19 @@ class TestSearchTools:
         mock_vs = AsyncMock()
         mock_vs.get_collection_dimension = AsyncMock(side_effect=[DEFAULT_EMBEDDING_DIM, 1])
         mock_vs.upsert = AsyncMock(
-            side_effect=RuntimeError(
-                "Wrong input: Vector dimension error: expected dim: 1, got 768"
-            )
+            side_effect=[
+                RuntimeError("Wrong input: Vector dimension error: expected dim: 1, got 768"),
+                None,
+            ]
         )
         search = SemanticToolSearch(temp_db, vector_store=mock_vs)
 
-        with pytest.raises(RuntimeError, match="Semantic tool collection dimension conflict"):
-            await search.store_embedding(
-                tool_id="tool-1",
-                server_name="test-server",
-                project_id="proj-1",
-                embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
-            )
+        await search.store_embedding(
+            tool_id="tool-1",
+            server_name="test-server",
+            project_id="proj-1",
+            embedding=[0.1] * DEFAULT_EMBEDDING_DIM,
+        )
 
         for ensure_call in mock_vs.ensure_collection.await_args_list:
             assert ensure_call.args[0] == SemanticToolSearch.TOOL_COLLECTION

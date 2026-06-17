@@ -528,6 +528,21 @@ async def test_create_collection_conflict_rejects_unexpected_dimension() -> None
 
 
 @pytest.mark.asyncio
+async def test_ensure_collection_dimension_mismatch_fails_without_recreate() -> None:
+    store = VectorStore(collection_name="mock_memories", embedding_dim=4)
+    client = MagicMock()
+    client.collection_exists.return_value = True
+    client.get_collection.return_value = _collection_info(3)
+    store._client = client
+
+    with pytest.raises(RuntimeError, match="expected_dim=4, observed_dim=3"):
+        await store.ensure_collection("mock_memories", embedding_dim=4)
+
+    client.delete_collection.assert_not_called()
+    client.create_collection.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_rebuild_same_dimension_removes_stale_point_ids(
     vector_store: VectorStore,
 ) -> None:

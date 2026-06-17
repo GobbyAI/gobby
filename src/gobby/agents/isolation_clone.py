@@ -259,7 +259,6 @@ class CloneIsolationHandler(IsolationHandler):
             except Exception as e:
                 logger.warning(f"Failed to clean up clone record {clone_id}: {e}")
 
-
     def build_context_prompt(self, original_prompt: str, ctx: IsolationContext) -> str:
         """
         Build prompt with CRITICAL clone context warning.

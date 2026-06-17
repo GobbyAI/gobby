@@ -167,6 +167,7 @@ async def _initialize_vector_store(
         await runner.vector_store.ensure_collection(
             SemanticToolSearch.TOOL_COLLECTION,
             runner.config.embeddings.dim,
+            recreate_on_mismatch=True,
         )
         qdrant_count = await runner.vector_store.count()
         if qdrant_count == 0 and runner.memory_manager:

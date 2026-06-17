@@ -16,19 +16,21 @@ from typing import Any
 
 logger = logging.getLogger(__name__)
 
+_DEFAULT_EMBEDDING_DIM = 768
 _LMSTUDIO_MODEL_ID = "text-embedding-nomic-embed-text-v1.5@f16"
+_GENERIC_OPENAI_COMPATIBLE_MODEL = "nomic-embed-text"
 
 # Provider configuration table
 _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
     "lmstudio": {
         "model": _LMSTUDIO_MODEL_ID,
         "api_base": "http://localhost:1234/v1",
-        "dim": 768,
+        "dim": _DEFAULT_EMBEDDING_DIM,
     },
     "ollama": {
         "model": "nomic-embed-text",
         "api_base": "http://localhost:11434/v1",
-        "dim": 768,
+        "dim": _DEFAULT_EMBEDDING_DIM,
     },
     "openai": {
         "model": "text-embedding-3-small",
@@ -36,9 +38,9 @@ _PROVIDER_CONFIG: dict[str, dict[str, Any]] = {
         "dim": 1536,
     },
     "openai-compatible": {
-        "model": "text-embedding-3-small",
+        "model": _GENERIC_OPENAI_COMPATIBLE_MODEL,
         "api_base": None,
-        "dim": 0,  # Sentinel: requires explicit dim_override or successful probe
+        "dim": _DEFAULT_EMBEDDING_DIM,
     },
     "none": {
         "model": None,
@@ -126,11 +128,7 @@ def install_embedding(
         probed = _probe_embedding_dim(model=model, api_base=api_base, api_key=embedding_api_key)
         if probed is not None:
             dim = probed
-        use_provider_default_fallback = (
-            api_base_override is not None
-            and model_override is None
-            and provider != "openai-compatible"
-        )
+        use_provider_default_fallback = api_base_override is not None and model_override is None
         if probed is None and use_provider_default_fallback:
             dim = cfg["dim"]
             logger.warning(

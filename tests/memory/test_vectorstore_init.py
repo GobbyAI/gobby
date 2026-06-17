@@ -33,6 +33,7 @@ class TestVectorStoreInitialization:
         )
         assert vs._url == "http://localhost:6333"
         assert vs._path is None
+        assert vs._embedding_dim == 768
 
     @pytest.mark.asyncio
     async def test_vectorstore_created_with_custom_url_and_key(self) -> None:
