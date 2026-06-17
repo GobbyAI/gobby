@@ -83,8 +83,8 @@ pub use run::run;
 pub(crate) use run::{load_symbols_for_codewiki, should_document_file, validate_edge_limit};
 // AI and structural text helpers.
 pub(crate) use text::{
-    Generation, append_relevant_source_files, citation_list, citation_markers, collect_link_spans,
-    display_child_summary, frontmatter_with_degradation,
+    Generation, append_curated_source_files, append_relevant_source_files, citation_list,
+    citation_markers, collect_link_spans, display_child_summary, frontmatter_with_degradation,
     frontmatter_with_degradation_without_ranges, ground_text, maybe_generate,
     neutralize_symbol_purpose_links, replace_citations_with_markers, resolve_text_generator,
     structural_file_summary, structural_module_summary, structural_repo_summary,

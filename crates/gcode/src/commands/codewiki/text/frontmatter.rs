@@ -129,6 +129,41 @@ pub(crate) fn append_relevant_source_files(doc: &mut String, source_spans: &[Sou
     doc.push_str("\n</details>\n\n");
 }
 
+/// Bounded "Relevant source files" block for curated pages: no per-range
+/// expansion and capped at `limit` files. Reference pages keep the full,
+/// range-complete [`append_relevant_source_files`] block (the agent-grounding
+/// surface); curated pages keep a small provenance footprint so prose, not
+/// provenance, dominates the file (#853 root cause 5).
+pub(crate) fn append_curated_source_files(
+    doc: &mut String,
+    source_spans: &[SourceSpan],
+    limit: usize,
+) {
+    let (mut source_files, provenance_truncated) = frontmatter_source_files(source_spans, false);
+    let mut omitted = provenance_truncated.unwrap_or(0);
+    if source_files.len() > limit {
+        omitted += source_files.len() - limit;
+        source_files.truncate(limit);
+    }
+    if source_files.is_empty() {
+        return;
+    }
+    doc.push_str("<details>\n<summary>Relevant source files</summary>\n\n");
+    for source in source_files {
+        let _ = writeln!(
+            doc,
+            "- [{}]({})",
+            escape_markdown_link_label(source.file),
+            encode_markdown_path(source.file)
+        );
+    }
+    if omitted > 0 {
+        let noun = if omitted == 1 { "file" } else { "files" };
+        let _ = writeln!(doc, "\n_{omitted} more source {noun} omitted._");
+    }
+    doc.push_str("\n</details>\n\n");
+}
+
 fn frontmatter_source_files(
     source_spans: &[SourceSpan],
     include_ranges: bool,

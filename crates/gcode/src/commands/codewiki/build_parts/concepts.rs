@@ -11,6 +11,10 @@ const MAX_CONCEPT_LINKS: usize = 6;
 /// down-link surface (the missing_backlink source) collapses (root cause 6;
 /// also the #853D mechanism).
 const MAX_CURATED_KEY_COMPONENTS: usize = 8;
+/// Cap on the bounded "Relevant source files" links a curated page lists (no
+/// per-range expansion). Curated pages keep a small provenance footprint;
+/// reference pages keep the full range-complete block.
+const MAX_CURATED_SOURCE_FILE_LINKS: usize = 12;
 /// Cap on *extra* model-supplied narrative chapters beyond the required
 /// introduction/architecture/data-flow spine, so a verbose structure response
 /// cannot crowd out the canonical guided tour.
@@ -176,13 +180,13 @@ fn render_concept_tree(
     degraded: bool,
 ) -> String {
     let degraded_sources = degraded_sources(degraded);
-    let mut doc = frontmatter_with_degradation(
+    let mut doc = frontmatter_with_degradation_without_ranges(
         "Curated Concept Navigation",
         "code_concept_tree",
         spans,
         &degraded_sources,
     );
-    append_relevant_source_files(&mut doc, spans);
+    append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     doc.push_str("# Curated Concept Navigation\n\n");
     doc.push_str("Reader-first paths into the grounded code reference.\n\n");
     doc.push_str("## Concept Tree\n\n");
@@ -219,9 +223,13 @@ fn render_concept_tree(
 fn render_concept_page(concept: &ConceptModule, spans: &[SourceSpan], degraded: bool) -> String {
     let degraded = degraded || concept.body_degraded;
     let degraded_sources = degraded_sources(degraded);
-    let mut doc =
-        frontmatter_with_degradation(&concept.title, "code_concept", spans, &degraded_sources);
-    append_relevant_source_files(&mut doc, spans);
+    let mut doc = frontmatter_with_degradation_without_ranges(
+        &concept.title,
+        "code_concept",
+        spans,
+        &degraded_sources,
+    );
+    append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", concept.title));
     append_curated_body(
         &mut doc,
@@ -241,9 +249,13 @@ fn render_narrative_page(
 ) -> String {
     let degraded = degraded || page.body_degraded;
     let degraded_sources = degraded_sources(degraded);
-    let mut doc =
-        frontmatter_with_degradation(&page.title, "code_narrative", spans, &degraded_sources);
-    append_relevant_source_files(&mut doc, spans);
+    let mut doc = frontmatter_with_degradation_without_ranges(
+        &page.title,
+        "code_narrative",
+        spans,
+        &degraded_sources,
+    );
+    append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", page.title));
     append_curated_body(
         &mut doc,

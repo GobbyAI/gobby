@@ -8,7 +8,7 @@ pub(crate) use citations::{
     citation_list, citation_markers, ground_text, replace_citations_with_markers, write_references,
 };
 pub(crate) use frontmatter::{
-    append_relevant_source_files, frontmatter_with_degradation,
+    append_curated_source_files, append_relevant_source_files, frontmatter_with_degradation,
     frontmatter_with_degradation_without_ranges,
 };
 pub(crate) use generation::{Generation, maybe_generate, resolve_text_generator};

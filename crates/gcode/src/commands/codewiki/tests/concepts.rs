@@ -132,6 +132,8 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
     assert!(concept.contains("[[code/modules/src|src]]"), "{concept}");
     assert!(!concept.contains("[[code/files/"), "{concept}");
     assert!(concept.contains("provenance:"));
+    // Curated frontmatter is range-free (bounded provenance, commit 5).
+    assert!(!concept.contains("ranges:"), "{concept}");
 
     let narrative = rendered_doc(&docs, "code/narrative/introduction.md");
     assert!(narrative.contains("type: code_narrative"));
