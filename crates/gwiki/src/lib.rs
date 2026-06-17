@@ -33,6 +33,7 @@ pub(crate) mod log;
 pub(crate) mod markdown;
 pub mod media;
 pub mod models;
+pub(crate) mod obsidian;
 pub mod output;
 pub(crate) mod paths;
 pub(crate) mod provenance;

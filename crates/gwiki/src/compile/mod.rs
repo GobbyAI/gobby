@@ -224,7 +224,7 @@ pub fn prepare_handoff(
     let bundle_path = session
         .scope
         .root()
-        .join(".gwiki")
+        .join(crate::vault::STATE_ROOT)
         .join("compile")
         .join(format!("{handoff_id}.md"));
     let collected_sources = collect_accepted_sources(session)?;

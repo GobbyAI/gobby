@@ -14,6 +14,11 @@ pub const CODE_ROOT: &str = "code";
 pub const KNOWLEDGE_ROOT: &str = "knowledge";
 pub const SHARED_META_ROOT: &str = "_meta";
 
+/// Per-vault control/state dir (scope file, research checkpoint, locks, compile
+/// bundles). Underscore-prefixed, not dot-prefixed, so CodeRabbit's minimatch
+/// `path_filters` can exclude it (its globstar skips dot segments).
+pub const STATE_ROOT: &str = "_gwiki";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 #[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 pub struct VaultPaths {
@@ -40,7 +45,7 @@ const DIRECTORIES: &[&str] = &[
     "outputs",
     "meta",
     "meta/health",
-    ".gwiki",
+    STATE_ROOT,
 ];
 
 pub const DEFAULT_FILES: &[(&str, &str)] = &[
@@ -80,7 +85,7 @@ pub fn initialize(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError>
     }
     let identity = scope.identity();
     let root_path = root.display().to_string();
-    let scope_file = root.join(".gwiki/scope.json");
+    let scope_file = root.join(STATE_ROOT).join("scope.json");
     let scope_json = serde_json::to_string_pretty(&ScopeFile {
         identity: &identity,
         root: &root_path,
@@ -93,7 +98,7 @@ pub fn initialize(scope: &ResolvedScope) -> Result<CreatedVaultPaths, WikiError>
     let scope_file_created = !scope_file.exists();
     write_scope_file_atomically(scope_file.as_path(), format!("{scope_json}\n").as_bytes())?;
     if scope_file_created {
-        created.files.push(".gwiki/scope.json".to_string());
+        created.files.push(format!("{STATE_ROOT}/scope.json"));
     }
     Ok(created)
 }
@@ -312,7 +317,7 @@ mod tests {
             temp.path().join("wikis.json"),
         );
         initialize(&scope).expect("initialize once");
-        let scope_file = root.join(".gwiki/scope.json");
+        let scope_file = root.join(STATE_ROOT).join("scope.json");
         std::fs::write(&scope_file, "stale").expect("write stale scope");
 
         let created = initialize(&scope).expect("initialize twice");
@@ -320,7 +325,7 @@ mod tests {
         let contents = std::fs::read_to_string(scope_file).expect("read scope");
         assert!(contents.contains("topic:rust"));
         assert!(!contents.contains("stale"));
-        assert!(!created.files.contains(&".gwiki/scope.json".to_string()));
+        assert!(!created.files.contains(&format!("{STATE_ROOT}/scope.json")));
     }
 
     #[test]

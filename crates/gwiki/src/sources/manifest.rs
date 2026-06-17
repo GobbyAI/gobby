@@ -216,7 +216,9 @@ fn with_manifest_lock<T>(
     vault_root: &Path,
     action: impl FnOnce() -> Result<T, WikiError>,
 ) -> Result<T, WikiError> {
-    let lock_path = vault_root.join(".gwiki").join("source-manifest.lock");
+    let lock_path = vault_root
+        .join(crate::vault::STATE_ROOT)
+        .join("source-manifest.lock");
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create source manifest lock directory",

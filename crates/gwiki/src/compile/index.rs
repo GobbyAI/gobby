@@ -17,7 +17,7 @@ pub(crate) fn update_wiki_index(
     vault_root: &Path,
     article: &SynthesizedPage,
 ) -> Result<(), WikiError> {
-    let lock_path = vault_root.join(".gwiki").join("index.lock");
+    let lock_path = vault_root.join(crate::vault::STATE_ROOT).join("index.lock");
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create wiki index lock directory",
@@ -193,7 +193,9 @@ pub(crate) fn write_provenance(
 }
 
 fn lock_provenance(vault_root: &Path) -> Result<fs::File, WikiError> {
-    let lock_path = vault_root.join(".gwiki").join("provenance.lock");
+    let lock_path = vault_root
+        .join(crate::vault::STATE_ROOT)
+        .join("provenance.lock");
     if let Some(parent) = lock_path.parent() {
         fs::create_dir_all(parent).map_err(|error| WikiError::Io {
             action: "create provenance lock directory",

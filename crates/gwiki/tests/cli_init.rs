@@ -10,7 +10,7 @@ fn assert_vault_shape(root: &std::path::Path) {
         "inbox",
         "outputs",
         "meta/health",
-        ".gwiki",
+        "_gwiki",
     ] {
         assert!(root.join(dir).is_dir(), "missing directory {dir}");
     }
@@ -65,4 +65,68 @@ fn init_creates_vault_shape() {
             .is_file()
     );
     common::assert_gcode_json_unchanged(&gcode_json);
+}
+
+#[test]
+fn init_seeds_obsidian_and_gitignores_inside_git_repo() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let project = tmp.path().join("project");
+    std::fs::create_dir_all(project.join(".git")).expect("fake git work tree");
+    let gcode_json = common::write_gcode_json(&project);
+
+    let output = common::gwiki_command()
+        .args(["init", "--project"])
+        .env_remove("GOBBY_WIKI_HUB")
+        .current_dir(&project)
+        .output()
+        .expect("run project init");
+    assert!(
+        output.status.success(),
+        "project init failed\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let vault = project.join(".gobby").join("wiki");
+    let app_json = std::fs::read_to_string(vault.join(".obsidian").join("app.json"))
+        .expect("read obsidian app.json");
+    assert!(app_json.contains("userIgnoreFilters"));
+    assert!(app_json.contains("_gwiki/"));
+
+    let gitignore = std::fs::read_to_string(project.join(".gitignore")).expect("read .gitignore");
+    assert_eq!(
+        gitignore
+            .lines()
+            .filter(|l| l.trim() == ".obsidian/")
+            .count(),
+        1,
+        "exactly one .obsidian/ rule"
+    );
+
+    common::assert_gcode_json_unchanged(&gcode_json);
+}
+
+#[test]
+fn init_outside_git_repo_seeds_obsidian_without_gitignore() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let project = tmp.path().join("project");
+    common::write_gcode_json(&project);
+
+    let output = common::gwiki_command()
+        .args(["init", "--project"])
+        .env_remove("GOBBY_WIKI_HUB")
+        .current_dir(&project)
+        .output()
+        .expect("run project init");
+    assert!(output.status.success(), "project init failed");
+
+    let vault = project.join(".gobby").join("wiki");
+    assert!(
+        vault.join(".obsidian").join("app.json").is_file(),
+        "app.json seeded even without git"
+    );
+    assert!(
+        !project.join(".gitignore").exists(),
+        "no .gitignore created outside a git work tree"
+    );
 }

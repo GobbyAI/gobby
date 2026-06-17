@@ -224,7 +224,9 @@ impl ResearchSession {
     }
 
     pub fn checkpoint_path(vault_root: &Path) -> PathBuf {
-        vault_root.join(".gwiki").join("research-session.json")
+        vault_root
+            .join(crate::vault::STATE_ROOT)
+            .join("research-session.json")
     }
 
     pub fn save_checkpoint(&self) -> Result<(), WikiError> {
@@ -403,7 +405,10 @@ mod tests {
             .record_compile_state(CompileState {
                 handoff_id: "compile-123".to_string(),
                 topic: "Compile state".to_string(),
-                bundle_path: scope.root().join(".gwiki/compile/compile-123.md"),
+                bundle_path: scope
+                    .root()
+                    .join(crate::vault::STATE_ROOT)
+                    .join("compile/compile-123.md"),
                 selected_note_paths: vec![scope.root().join("raw/research/compile.md")],
                 selected_source_titles: vec!["Compile behavior".to_string()],
                 citations: vec!["Example Docs".to_string()],
@@ -478,7 +483,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let project = temp.path().join("repo");
         let expected = project.join(".gobby").join("wiki");
-        fs::create_dir_all(expected.join(".gwiki")).expect("create checkpoint dir");
+        fs::create_dir_all(expected.join(crate::vault::STATE_ROOT)).expect("create checkpoint dir");
         let expected = expected.canonicalize().expect("canonicalize expected root");
         let session = ResearchSession::new(
             "Which root?",
@@ -506,7 +511,7 @@ mod tests {
         let temp = tempfile::tempdir().expect("tempdir");
         let expected = temp.path().join("expected");
         let other = temp.path().join("other");
-        fs::create_dir_all(expected.join(".gwiki")).expect("create checkpoint dir");
+        fs::create_dir_all(expected.join(crate::vault::STATE_ROOT)).expect("create checkpoint dir");
         fs::create_dir_all(&other).expect("create other root");
         let session = ResearchSession::new(
             "Which root?",
@@ -529,7 +534,8 @@ mod tests {
     fn load_checkpoint_normalizes_relative_scope_root_against_checkpoint_vault() {
         let temp = tempfile::tempdir().expect("tempdir");
         let expected = temp.path().join("expected");
-        fs::create_dir_all(expected.join(".gwiki/research")).expect("create checkpoint dir");
+        fs::create_dir_all(expected.join(crate::vault::STATE_ROOT).join("research"))
+            .expect("create checkpoint dir");
         let session = ResearchSession::new(
             "Which root?",
             ResearchScope::project_for_id("project-1", "."),

@@ -4,12 +4,18 @@ use serde_json::json;
 
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::vault::CreatedVaultPaths;
-use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, registry, vault};
+use crate::{CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, obsidian, registry, vault};
 
 pub(crate) fn execute(selection: ScopeSelection) -> Result<CommandOutcome, WikiError> {
     let scope = resolve_command_scope(&selection)?;
 
     let created_paths = vault::initialize(&scope)?;
+
+    obsidian::seed_app_json(scope.root())?;
+    if let Some(project_root) = scope.project_root() {
+        obsidian::ensure_gitignore_obsidian(project_root)?;
+    }
+
     if let Err(error) = registry::register_scope(scope.registry_path(), &scope) {
         let _ = vault::cleanup_created(scope.root(), &created_paths);
         return Err(error);

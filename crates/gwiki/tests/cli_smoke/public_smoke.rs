@@ -340,7 +340,7 @@ fn public_cli_smoke_compile_source_bootstraps_fresh_project_checkpoint() {
     let provenance = fs::read_to_string(&provenance_path).expect("read provenance");
     assert!(provenance.contains(&format!("raw/{source_id}.md")));
 
-    let checkpoint_path = vault.join(".gwiki/research-session.json");
+    let checkpoint_path = vault.join("_gwiki/research-session.json");
     assert!(
         checkpoint_path.is_file(),
         "missing checkpoint {}",
