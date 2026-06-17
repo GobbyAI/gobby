@@ -315,7 +315,6 @@
     "workflows/rules/build-coordinator/require-build-coordinator-for-gobby-build.yaml": "d2bf00170f01fa832f8f0c4738b609132e4230d38ded596ad7bf1090c975126a",
     "workflows/rules/code-index/require-code-index-skill.yaml": "09a1de72b13717dd857e05f1b2e48da37edbc295dd4ce444b9e5b81407ecdd89",
     "workflows/rules/context-handoff/auto-compact-after-task-close.yaml": "404f74d80aa61d83d0308aa729cbf5e5ee228b496caf7db197dd97b6190a9e9d",
-    "workflows/rules/context-handoff/capture-baseline-dirty-files-on-start.yaml": "ec8a02d9c1da20bb78acdfc058f300d273fc15f45e4b6991e4cf5a19f79cb824",
     "workflows/rules/context-handoff/clear-pending-context-reset-on-start.yaml": "1e02ad509474cb4950655af4b2f1d3deb99edb3c5430076740d4f0d706f9f40b",
     "workflows/rules/context-handoff/inject-compact-handoff.yaml": "c5a2135d01f8f946eefc2184ab8af68145ea5769b5184877d93488bd44c86eaa",
     "workflows/rules/context-handoff/inject-previous-session-summary.yaml": "71ae576e53a70ac782671f3156461fb4061e4926222b583a63fb999ca5f09aa2",

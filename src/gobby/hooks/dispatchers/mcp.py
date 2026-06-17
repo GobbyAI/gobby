@@ -32,6 +32,9 @@ def run_coro_blocking(
     coro: Any,
     loop: asyncio.AbstractEventLoop | None,
     logger: logging.Logger,
+    *,
+    label: str | None = None,
+    timeout_seconds: float = 30,
 ) -> Any:
     """Run a coroutine blocking, using the best available event loop strategy.
 
@@ -39,17 +42,30 @@ def run_coro_blocking(
         coro: The coroutine to run.
         loop: Captured event loop for thread-safe scheduling.
         logger: Logger for diagnostics.
+        label: Optional call label for diagnostics.
+        timeout_seconds: Timeout for thread-safe scheduling.
 
     Returns:
         The coroutine result, or None on failure.
     """
+    label_suffix = f"[{label}]" if label else ""
     if loop and loop.is_running():
+        future: concurrent.futures.Future[Any] | None = None
         try:
             future = asyncio.run_coroutine_threadsafe(coro, loop)
-            return future.result(timeout=30)
+            return future.result(timeout=timeout_seconds)
+        except concurrent.futures.TimeoutError as e:
+            if future is not None:
+                future.cancel()
+            logger.error(
+                f"run_coro_blocking{label_suffix}: threadsafe failed after "
+                f"{timeout_seconds}s: {type(e).__name__}: {e}",
+                exc_info=True,
+            )
+            return None
         except Exception as e:
             logger.error(
-                f"run_coro_blocking: threadsafe failed: {type(e).__name__}: {e}",
+                f"run_coro_blocking{label_suffix}: threadsafe failed: {type(e).__name__}: {e}",
                 exc_info=True,
             )
             return None
@@ -58,7 +74,7 @@ def run_coro_blocking(
             return asyncio.run(coro)
         except Exception as e:
             logger.error(
-                f"run_coro_blocking: asyncio.run failed: {type(e).__name__}: {e}",
+                f"run_coro_blocking{label_suffix}: asyncio.run failed: {type(e).__name__}: {e}",
                 exc_info=True,
             )
             return None
@@ -478,7 +494,14 @@ def dispatch_mcp_calls(
 
         # If we need to capture the result, always run blocking
         if needs_capture:
-            result = run_coro_blocking(_call(server, tool, arguments), loop, logger)
+            event_type_label = getattr(event.event_type, "value", event.event_type)
+            label = f"{event_type_label}:{server}/{tool}"
+            result = run_coro_blocking(
+                _call(server, tool, arguments),
+                loop,
+                logger,
+                label=label,
+            )
             success = isinstance(result, dict) and result.get("success", False)
             dispatch_results.append(
                 {
@@ -542,6 +565,8 @@ def dispatch_mcp_calls(
                         )
         else:
             # Blocking dispatch -- must await completion, not fire-and-forget
-            run_coro_blocking(coro, loop, logger)
+            event_type_label = getattr(event.event_type, "value", event.event_type)
+            label = f"{event_type_label}:{server}/{tool}"
+            run_coro_blocking(coro, loop, logger, label=label)
 
     return dispatch_results

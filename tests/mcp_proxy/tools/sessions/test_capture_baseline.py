@@ -112,3 +112,32 @@ class TestCaptureBaselineDirtyFiles:
         assert variables["baseline_dirty_files"] == []
         assert variables["active_task_id"] is None
         assert variables["task_edited_files"] == {}
+
+    @patch("gobby.mcp_proxy.tools.sessions._actions.get_dirty_files")
+    def test_blocking_work_is_offloaded_to_thread(self, mock_dirty, db) -> None:
+        """Git status and session variable writes should not run on the event loop."""
+        mock_dirty.return_value = {"file_a.py"}
+
+        async def fake_to_thread(fn, *args, **kwargs):
+            return fn(*args, **kwargs)
+
+        registry = _make_registry(db=db)
+        tool = registry.get_tool("capture_baseline_dirty_files")
+        assert tool is not None
+
+        with patch(
+            "gobby.mcp_proxy.tools.sessions._actions.asyncio.to_thread",
+            side_effect=fake_to_thread,
+        ) as mock_to_thread:
+            with session_context_for_test("sess-1"):
+                result = asyncio.run(tool(project_path="/tmp"))
+
+        assert result["success"] is True
+        assert result["files"] == ["file_a.py"]
+        assert len(mock_to_thread.call_args_list) == 2
+        dirty_call = mock_to_thread.call_args_list[0]
+        merge_call = mock_to_thread.call_args_list[1]
+        assert dirty_call.args == (mock_dirty, "/tmp")
+        assert merge_call.args[0].__name__ == "merge_variables"
+        assert merge_call.args[1] == "sess-1"
+        assert merge_call.args[2]["baseline_dirty_files"] == ["file_a.py"]

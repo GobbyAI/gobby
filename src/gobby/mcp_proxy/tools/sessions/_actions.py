@@ -6,6 +6,7 @@ Exposes internal workflow actions as MCP tools:
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import TYPE_CHECKING, Any
 
@@ -56,14 +57,15 @@ def register_action_tools(
 
         session_id = get_current_session_id()
         try:
-            dirty_files = get_dirty_files(project_path)
+            dirty_files = await asyncio.to_thread(get_dirty_files, project_path)
             baseline = sorted(dirty_files)
 
             # Persist baseline to session variables so it survives daemon restarts
             if session_id and db:
                 from gobby.workflows.state_manager import SessionVariableManager
 
-                SessionVariableManager(db).merge_variables(
+                await asyncio.to_thread(
+                    SessionVariableManager(db).merge_variables,
                     session_id,
                     {
                         "baseline_dirty_files": baseline,

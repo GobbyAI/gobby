@@ -2,7 +2,6 @@
 
 Verifies context handoff rules sync correctly and have proper structure:
 - clear-pending-context-reset-on-start: set_variable on session_start
-- capture-baseline-dirty-files-on-start: mcp_call on session_start
 - inject-previous-session-summary: inject_context on session_start
 - inject-compact-handoff: inject_context on session_start
 - inject-task-context-on-start: inject_context on session_start
@@ -30,7 +29,6 @@ pytestmark = pytest.mark.unit
 
 CONTEXT_HANDOFF_RULES = {
     "clear-pending-context-reset-on-start",
-    "capture-baseline-dirty-files-on-start",
     "inject-previous-session-summary",
     "inject-compact-handoff",
     "inject-task-context-on-start",
@@ -116,6 +114,18 @@ class TestContextHandoffSync:
                         "mcp_call",
                     }
 
+    def test_session_start_rules_do_not_capture_baseline_via_mcp(self, db, manager) -> None:
+        """Session start should rely on workflow lazy init, not an MCP capture rule."""
+        _sync_bundled(db)
+
+        session_start_rule_names = []
+        for row in manager.list_all(workflow_type="rule", enabled=True):
+            body = RuleDefinitionBody.model_validate_json(row.definition_json)
+            if body.event.value == "session_start":
+                session_start_rule_names.append(row.name)
+
+        assert "capture-baseline-dirty-files-on-start" not in session_start_rule_names
+
 
 # ═══════════════════════════════════════════════════════════════════════
 # clear-pending-context-reset-on-start
@@ -140,25 +150,6 @@ class TestClearPendingContextResetOnStart:
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
         assert "pending_context_reset" in body.when
-
-
-# ═══════════════════════════════════════════════════════════════════════
-# capture-baseline-dirty-files-on-start
-# ═══════════════════════════════════════════════════════════════════════
-
-
-class TestCaptureBaselineDirtyFilesOnStart:
-    """Capture baseline dirty files on session_start."""
-
-    def test_event_and_effect(self, db, manager) -> None:
-        _sync_bundled(db)
-        row = manager.get_by_name("capture-baseline-dirty-files-on-start")
-        assert row is not None
-        body = RuleDefinitionBody.model_validate_json(row.definition_json)
-        assert body.event.value == "session_start"
-        assert body.effects[0].type == "mcp_call"
-        assert body.effects[0].server == "gobby-sessions"
-        assert body.effects[0].tool == "capture_baseline_dirty_files"
 
 
 # ═══════════════════════════════════════════════════════════════════════

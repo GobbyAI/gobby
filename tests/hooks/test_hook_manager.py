@@ -1,5 +1,7 @@
 """Tests for HookManager edge cases and error handling."""
 
+import asyncio
+import threading
 from collections.abc import Callable
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -14,6 +16,7 @@ from gobby.hooks.dispatchers.mcp import (
     _project_memory_next_line_budget,
     _project_memory_render_len,
     _render_project_memory,
+    run_coro_blocking,
 )
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
@@ -1154,6 +1157,53 @@ class TestRunCoroBlocking:
         message = manager.logger.error.call_args.args[0]
         assert "RuntimeError: fail" in message
         assert manager.logger.error.call_args.kwargs["exc_info"] is True
+
+    def test_run_coro_blocking_timeout_logs_label_and_cancels_future(self) -> None:
+        """Thread-safe dispatch timeout should be labelled and cancel the scheduled work."""
+        loop = asyncio.new_event_loop()
+        loop_started = threading.Event()
+        coro_cancelled = threading.Event()
+
+        def run_loop() -> None:
+            asyncio.set_event_loop(loop)
+            loop_started.set()
+            loop.run_forever()
+
+        thread = threading.Thread(target=run_loop, daemon=True)
+        thread.start()
+        assert loop_started.wait(timeout=1)
+
+        async def slow_coro() -> str:
+            pending: asyncio.Future[str] = asyncio.Future()
+            try:
+                await pending
+            except asyncio.CancelledError:
+                coro_cancelled.set()
+                raise
+            return "done"
+
+        logger = MagicMock()
+        label = "session_start:gobby-sessions/capture_baseline_dirty_files"
+
+        try:
+            result = run_coro_blocking(
+                slow_coro(),
+                loop,
+                logger,
+                label=label,
+                timeout_seconds=0.01,
+            )
+
+            assert result is None
+            logger.error.assert_called_once()
+            assert label in logger.error.call_args.args[0]
+            assert "TimeoutError" in logger.error.call_args.args[0]
+            assert logger.error.call_args.kwargs["exc_info"] is True
+            assert coro_cancelled.wait(timeout=1)
+        finally:
+            loop.call_soon_threadsafe(loop.stop)
+            thread.join(timeout=1)
+            loop.close()
 
 
 class TestEnsureProjectInDb:
