@@ -66,6 +66,23 @@ class CronExecutor:
         """Return whether a named handler is registered."""
         return name in self._handlers
 
+    async def shutdown(self) -> None:
+        """Cancel and await cron executor background tasks."""
+        if not self._background_tasks:
+            return
+
+        tasks = list(self._background_tasks)
+        logger.info("Cancelling %s cron background task(s)", len(tasks))
+        for task in tasks:
+            task.cancel()
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        for task, result in zip(tasks, results, strict=True):
+            if isinstance(result, Exception) and not isinstance(result, asyncio.CancelledError):
+                logger.warning("Cron background task %s raised during shutdown: %s", task, result)
+
+        self._background_tasks.clear()
+
     async def execute(self, job: CronJob, run: CronRun) -> CronRun:
         """Execute a cron job and update the run record.
 

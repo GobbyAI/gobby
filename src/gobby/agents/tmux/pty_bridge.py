@@ -132,6 +132,7 @@ class TmuxPTYBridge:
             slave_fd = None
 
             assert master_fd is not None
+            assert proc is not None
 
             try:
                 bridge = BridgeInfo(

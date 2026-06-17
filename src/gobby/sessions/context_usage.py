@@ -98,7 +98,7 @@ def _resolve_context_window_for_source_model(
     catalog: Any | None = None,
 ) -> int | None:
     """Resolve context-window metadata for a provider/model pair."""
-    snapshot_source = normalize_context_usage_source(source) if isinstance(source, str) else source
+    snapshot_source = source
     if snapshot_source == "agy":
         return _context_window_for_agy_model(model)
     provider = snapshot_source

@@ -320,6 +320,16 @@ class _FakePipelineExecutor:
         self.called.set()
 
 
+class _ValueErrorPipelineLoader:
+    async def load_pipeline(self, _name: str):
+        raise ValueError("bad pipeline")
+
+
+class _RuntimeErrorPipelineLoader:
+    async def load_pipeline(self, _name: str):
+        raise RuntimeError("loader unavailable")
+
+
 async def _wait_for_executor_calls(
     executor: _FakePipelineExecutor,
 ) -> list[dict[str, object]]:
@@ -335,6 +345,86 @@ def _pipeline_action(task_id: str) -> StartPipelineAction:
         pipeline_name="expand-task",
         dispatch_inputs={"task_id": "${{ task_id }}"},
     )
+
+
+@pytest.mark.asyncio
+async def test_stage_pipeline_loader_value_error_escalates() -> None:
+    from gobby.dispatch.stage_pipeline import start_pipeline_action
+
+    mutex = object()
+    db = object()
+    escalations: list[tuple[str, bool, bool, str]] = []
+
+    def escalate(
+        action: StartPipelineAction,
+        received_mutex: object,
+        received_db: object,
+        reason: str,
+    ) -> dict[str, object]:
+        escalations.append(
+            (
+                action.task_id,
+                received_mutex is mutex,
+                received_db is db,
+                reason,
+            )
+        )
+        return {"success": False, "reason": reason}
+
+    def unexpected_sync_call(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("pipeline dispatch should have escalated before this call")
+
+    async def unexpected_async_call(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("pipeline dispatch should have escalated before this call")
+
+    result = await start_pipeline_action(
+        _pipeline_action("task-1"),
+        mutex=mutex,
+        db=db,
+        context=SimpleNamespace(project_id="project-1"),
+        services=SimpleNamespace(
+            pipeline_executor=SimpleNamespace(loader=_ValueErrorPipelineLoader())
+        ),
+        field=lambda obj, key, default=None: getattr(obj, key, default),
+        escalate_pipeline_dispatch=escalate,
+        retry_neutral_pipeline_dispatch=unexpected_sync_call,
+        render_dispatch_inputs=unexpected_sync_call,
+        create_stage_pipeline_execution=unexpected_sync_call,
+        execute_pipeline_background=unexpected_async_call,
+        register_background_task=unexpected_sync_call,
+    )
+
+    assert result == {"success": False, "reason": "pipeline_invalid:bad pipeline"}
+    assert escalations == [("task-1", True, True, "pipeline_invalid:bad pipeline")]
+
+
+@pytest.mark.asyncio
+async def test_stage_pipeline_loader_unexpected_error_propagates() -> None:
+    from gobby.dispatch.stage_pipeline import start_pipeline_action
+
+    def unexpected_sync_call(*_args: object, **_kwargs: object) -> object:
+        raise AssertionError("unexpected loader errors should propagate before this call")
+
+    async def unexpected_async_call(*_args: object, **_kwargs: object) -> None:
+        raise AssertionError("unexpected loader errors should propagate before this call")
+
+    with pytest.raises(RuntimeError, match="loader unavailable"):
+        await start_pipeline_action(
+            _pipeline_action("task-1"),
+            mutex=object(),
+            db=object(),
+            context=SimpleNamespace(project_id="project-1"),
+            services=SimpleNamespace(
+                pipeline_executor=SimpleNamespace(loader=_RuntimeErrorPipelineLoader())
+            ),
+            field=lambda obj, key, default=None: getattr(obj, key, default),
+            escalate_pipeline_dispatch=unexpected_sync_call,
+            retry_neutral_pipeline_dispatch=unexpected_sync_call,
+            render_dispatch_inputs=unexpected_sync_call,
+            create_stage_pipeline_execution=unexpected_sync_call,
+            execute_pipeline_background=unexpected_async_call,
+            register_background_task=unexpected_sync_call,
+        )
 
 
 def test_candidate_filter_excludes_claimed_leased_blocked_terminal(temp_db, sample_project) -> None:

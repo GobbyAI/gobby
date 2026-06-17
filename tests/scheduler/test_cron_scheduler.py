@@ -13,7 +13,7 @@ from gobby.config.cron import CronConfig
 from gobby.scheduler.executor import CronExecutor
 from gobby.scheduler.scheduler import CronRunRejected, CronScheduler
 from gobby.storage.cron import CronJobStorage
-from gobby.storage.cron_models import CronRun
+from gobby.storage.cron_models import CronJob, CronRun
 from tests._timing import drain_asyncio_tasks, wait_for_async_condition
 
 if TYPE_CHECKING:
@@ -192,6 +192,21 @@ async def test_stop_cancels_tasks(scheduler: CronScheduler) -> None:
 
 
 @pytest.mark.asyncio
+async def test_stop_shuts_down_executor(
+    scheduler: CronScheduler, mock_executor: CronExecutor
+) -> None:
+    mock_executor.shutdown = AsyncMock()
+
+    await scheduler.start()
+    await scheduler.stop()
+
+    mock_executor.shutdown.assert_awaited_once()
+    assert scheduler._running is False
+    assert scheduler._check_task is not None and scheduler._check_task.cancelled()
+    assert scheduler._cleanup_task is not None and scheduler._cleanup_task.cancelled()
+
+
+@pytest.mark.asyncio
 async def test_double_start_is_noop(scheduler: CronScheduler) -> None:
     """Calling start() twice doesn't create duplicate tasks."""
     await scheduler.start()
@@ -327,12 +342,12 @@ async def test_skips_job_with_active_run_but_dispatches_other_due_job(
 
 
 @pytest.mark.asyncio
-async def test_due_jobs_remove_legacy_automation_rows_before_dispatch(
+async def test_due_jobs_skip_legacy_automation_rows_before_dispatch(
     cron_storage: CronJobStorage,
     mock_executor: CronExecutor,
     config: CronConfig,
 ) -> None:
-    """Removed dispatcher cron rows are deleted instead of dispatched."""
+    """Removed dispatcher cron rows are skipped instead of dispatched."""
     scheduler = CronScheduler(storage=cron_storage, executor=mock_executor, config=config)
     past = (datetime.now(UTC) - timedelta(minutes=5)).isoformat()
     names = ["other-job", "gobby:dispatcher", "gobby:pipeline-heartbeat"]
@@ -355,8 +370,42 @@ async def test_due_jobs_remove_legacy_automation_rows_before_dispatch(
 
     dispatched = [call.args[0].name for call in mock_executor.execute.await_args_list]
     assert dispatched == ["other-job"]
-    assert cron_storage.get_job_by_name("gobby:dispatcher") is None
-    assert cron_storage.get_job_by_name("gobby:pipeline-heartbeat") is None
+    assert cron_storage.get_job_by_name("gobby:dispatcher") is not None
+    assert cron_storage.get_job_by_name("gobby:pipeline-heartbeat") is not None
+
+
+@pytest.mark.asyncio
+async def test_due_jobs_skip_removed_automation_jobs_returned_after_cleanup(
+    config: CronConfig,
+) -> None:
+    removed_job = CronJob(
+        id="cj-removed",
+        project_id=PROJECT_ID,
+        name="gobby:dispatcher",
+        schedule_type="interval",
+        action_type="handler",
+        action_config={"handler": "dispatch.tick"},
+        created_at="2026-02-10T00:00:00+00:00",
+        updated_at="2026-02-10T00:00:00+00:00",
+        interval_seconds=60,
+        next_run_at=(datetime.now(UTC) - timedelta(minutes=5)).isoformat(),
+    )
+    storage = MagicMock()
+    storage.delete_removed_automation_jobs.return_value = 0
+    storage.get_due_jobs.return_value = [removed_job]
+    storage.count_running.return_value = 0
+    storage.delete_job.return_value = True
+    executor = MagicMock()
+    executor.execute = AsyncMock()
+    scheduler = CronScheduler(storage=storage, executor=executor, config=config)
+
+    await scheduler._check_due_jobs()
+
+    storage.delete_job.assert_not_called()
+    storage.create_run.assert_not_called()
+    executor.execute.assert_not_called()
+    assert scheduler._active_tasks == set()
+    assert scheduler._running is False
 
 
 @pytest.mark.asyncio

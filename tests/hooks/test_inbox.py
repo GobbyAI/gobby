@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -14,6 +15,7 @@ from gobby.hooks.envelope_dedupe import (
     claim_envelope_processing,
     is_envelope_processed,
     mark_envelope_processed,
+    read_envelope_marker,
 )
 from gobby.hooks.inbox import (
     _compute_sleep_seconds,
@@ -35,6 +37,42 @@ def _valid_envelope() -> dict[str, Any]:
         "source": "claude",
         "headers": {},
     }
+
+
+def test_malformed_nonempty_marker_logs_and_counts_processed(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    processed_dir = tmp_path / "processed"
+    mark_envelope_processed("n-0000000000001-abcd", processed_dir=processed_dir)
+    marker = next(processed_dir.glob("*.json"))
+    marker.write_text("{not json", encoding="utf-8")
+
+    with caplog.at_level(logging.WARNING, logger="gobby.hooks.envelope_dedupe"):
+        record = read_envelope_marker(
+            "n-0000000000001-abcd",
+            processed_dir=processed_dir,
+        )
+
+    assert record == {"envelope_id": "n-0000000000001-abcd", "status": "processed"}
+    assert is_envelope_processed("n-0000000000001-abcd", processed_dir=processed_dir)
+    assert "Malformed processed hook envelope marker" in caplog.text
+
+
+def test_response_less_mark_preserves_existing_terminal_response(tmp_path: Path) -> None:
+    processed_dir = tmp_path / "processed"
+    response = {"continue": False, "decision": "block", "reason": "task open"}
+
+    mark_envelope_processed(
+        "n-0000000000001-abcd",
+        response=response,
+        processed_dir=processed_dir,
+    )
+    mark_envelope_processed("n-0000000000001-abcd", processed_dir=processed_dir)
+
+    record = read_envelope_marker("n-0000000000001-abcd", processed_dir=processed_dir)
+    assert record is not None
+    assert record["response"] == response
 
 
 @pytest.mark.asyncio

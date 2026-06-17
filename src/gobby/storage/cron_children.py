@@ -12,6 +12,7 @@ from gobby.storage.hub.protocol import HubDatabase
 
 PIPELINE_ACTIVE_STATUSES = ("pending", "running", "waiting_approval", "interrupted")
 PIPELINE_TERMINAL_STATUSES = ("completed", "failed", "cancelled")
+CHILD_STATUS_TABLES = frozenset({"pipeline_executions", "agent_runs"})
 
 ChildActionType = Literal["agent_spawn", "pipeline", "shell", "handler", "dispatcher"]
 
@@ -58,6 +59,8 @@ def reconcile_interrupted_runs(db: HubDatabase) -> dict[str, int]:
 
 
 def _fetch_statuses(db: HubDatabase, table: str, ids: Sequence[str | None]) -> dict[str, str]:
+    if table not in CHILD_STATUS_TABLES:
+        raise ValueError(f"unsupported cron child status table: {table}")
     unique_ids = sorted({value for value in ids if value})
     if not unique_ids:
         return {}

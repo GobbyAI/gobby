@@ -292,7 +292,14 @@ def setup_cron_event_broadcasting(
                 "skipped": "run_skipped",
                 "dispatched": "run_dispatched",
             }
-            event = event_by_status.get(run.status, "run_failed")
+            event = event_by_status.get(run.status)
+            if event is None:
+                logger.warning(
+                    "Unknown cron run status %s for run %s; broadcasting run_unknown",
+                    run.status,
+                    run.id,
+                )
+                event = "run_unknown"
             await websocket_server.broadcast_cron_event(
                 event=event,
                 job_id=job.id,

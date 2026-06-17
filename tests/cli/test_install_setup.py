@@ -812,6 +812,46 @@ class TestEnsurePath:
         res2 = _ensure_gobby_bin_on_path()
         assert res2["added"] is False
 
+    @patch("gobby.cli.install_setup.sys.platform", "linux")
+    @patch("gobby.cli.install_setup.os.environ")
+    @patch("gobby.cli.install_setup.Path.home")
+    def test_ensure_gobby_bin_on_path_skips_non_utf8_rc(
+        self,
+        mock_home,
+        mock_environ,
+        tmp_path,
+    ):
+        mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
+        mock_home.return_value = tmp_path
+        bashrc = tmp_path / ".bashrc"
+        bashrc.write_bytes(b"\xff")
+
+        res = _ensure_gobby_bin_on_path()
+
+        assert res == {"added": False}
+        assert bashrc.read_bytes() == b"\xff"
+
+    @patch("gobby.cli.install_setup.sys.platform", "linux")
+    @patch("gobby.cli.install_setup.os.environ")
+    @patch("gobby.cli.install_setup.Path.home")
+    def test_ensure_gobby_bin_on_path_skips_unreadable_rc(
+        self,
+        mock_home,
+        mock_environ,
+        tmp_path,
+    ):
+        mock_environ.get.side_effect = lambda k, default="": "/bin/bash" if k == "SHELL" else ""
+        mock_home.return_value = tmp_path
+        rc_file = tmp_path / ".bashrc"
+        rc_file.write_text("# user config\n")
+
+        with patch.object(Path, "read_text", side_effect=OSError("permission denied")) as read_text:
+            res = _ensure_gobby_bin_on_path()
+
+        assert res == {"added": False}
+        read_text.assert_called_once()
+        assert rc_file.read_text() == "# user config\n"
+
 
 def _checksum_resp(text: str) -> MagicMock:
     resp = MagicMock()

@@ -12,6 +12,7 @@ from gobby.hooks.envelope_dedupe import (
     claim_envelope_processing,
     envelope_terminal_response,
     is_envelope_processed,
+    mark_envelope_processed,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
@@ -223,6 +224,51 @@ def test_envelope_id_replays_terminal_denial(
         == terminal_response
     )
     adapter.handle_native.assert_called_once()
+
+
+def test_envelope_id_processed_marker_without_response_returns_conflict(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path / "gobby-home"))
+    session_manager = SessionManager(temp_db)
+    server = create_http_server(
+        port=60887,
+        test_mode=True,
+        session_manager=session_manager,
+    )
+    server.app.state.hook_manager = MagicMock()
+    server.app.state.hook_manager.shutdown_async = AsyncMock()
+
+    envelope_id = "n-0000000000003-abcd"
+    processed_dir = tmp_path / "gobby-home" / "hooks" / "inbox" / "processed"
+    mark_envelope_processed(envelope_id, processed_dir=processed_dir)
+    envelope = {
+        "schema_version": 1,
+        "enqueued_at": "2026-04-16T12:00:00Z",
+        "critical": False,
+        "hook_type": "session-start",
+        "source": "claude",
+        "input_data": {},
+    }
+
+    with (
+        TestClient(server.app) as client,
+        patch("gobby.adapters.claude_code.ClaudeCodeAdapter") as adapter_cls,
+    ):
+        response = client.post(
+            "/api/hooks/execute",
+            json=envelope,
+            headers={ENVELOPE_ID_HEADER: envelope_id},
+        )
+
+    assert response.status_code == 409
+    assert response.json() == {
+        "status": "processing",
+        "reason": "duplicate envelope already processing",
+    }
+    adapter_cls.assert_not_called()
 
 
 def test_envelope_headers_cannot_override_real_session_header(temp_db: HubDatabase) -> None:

@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Any
 
 import uvicorn
 
+from gobby.app_context import clear_app_context
 from gobby.runner_lifecycle_agents import (
     _cancel_active_agent_runs_for_shutdown,
     _cleanup_persisted_completion_subscribers,
@@ -192,3 +193,5 @@ async def run_daemon(runner: GobbyRunner) -> None:
         logger.error(f"Fatal error: {e}", exc_info=True)
         cleanup_pid_file()
         sys.exit(1)
+    finally:
+        clear_app_context()

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 from collections.abc import Mapping
@@ -13,6 +14,8 @@ from typing import Any, Final
 from uuid import uuid4
 
 from gobby.cli.utils import get_gobby_home
+
+logger = logging.getLogger(__name__)
 
 ENVELOPE_ID_HEADER: Final = "X-Gobby-Envelope-Id"
 ENVELOPE_REPLAY_GRACE_SECONDS: Final = 120.0
@@ -167,7 +170,12 @@ def read_envelope_marker(
     *,
     processed_dir: Path | None = None,
 ) -> dict[str, Any] | None:
-    """Return the persisted envelope marker, if present and well-formed."""
+    """Return the persisted envelope marker, if present.
+
+    Non-empty malformed JSON is treated as processed. The marker is already
+    terminal enough to prevent duplicate hook execution, even if its response
+    payload cannot be replayed.
+    """
     if not envelope_id:
         return None
     marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
@@ -179,6 +187,10 @@ def read_envelope_marker(
         data = json.loads(raw)
     except json.JSONDecodeError:
         if raw.strip():
+            logger.warning(
+                "Malformed processed hook envelope marker %s; treating as processed",
+                marker,
+            )
             return {"envelope_id": envelope_id, "status": "processed"}
         return None
     return data if isinstance(data, dict) else None
@@ -209,7 +221,11 @@ def mark_envelope_processed(
     response: Mapping[str, Any] | None = None,
     processed_dir: Path | None = None,
 ) -> None:
-    """Persist a terminal processed marker for an envelope ID."""
+    """Persist a terminal processed marker for an envelope ID.
+
+    A response-less write keeps an existing stored response so inbox replay can
+    mark completion without degrading future duplicate-response replay.
+    """
     if not envelope_id:
         return
 

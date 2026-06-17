@@ -5,7 +5,7 @@ import logging
 import os
 import signal
 import sys
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Iterator
 from contextlib import ExitStack, suppress
 from pathlib import Path
 from types import SimpleNamespace
@@ -15,11 +15,18 @@ import pytest
 
 import gobby.runner_lifecycle as runner_lifecycle
 import gobby.runner_lifecycle_shutdown as runner_lifecycle_shutdown
+from gobby.app_context import clear_app_context, get_app_context
 from gobby.runner import GobbyRunner, main, run_gobby
 from gobby.shutdown_intent import ShutdownIntent
 from tests.runner_helpers import create_base_patches
 
 pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_window")]
+
+
+@pytest.fixture(autouse=True)
+def _clear_app_context_between_tests() -> Iterator[None]:
+    yield
+    clear_app_context()
 
 
 class TestGobbyRunnerSignalHandlers:
@@ -79,6 +86,7 @@ class TestGobbyRunnerRun:
             mock_mcp_manager.disconnect_all.assert_called_once()
             assert runner._shutdown_requested is True
             assert runner.database.close.called is True
+            assert get_app_context() is None
 
     @pytest.mark.asyncio
     async def test_run_handles_mcp_timeout(self, mock_config):
@@ -1391,6 +1399,43 @@ class TestCronEventBroadcasting:
             "terminal": False,
             "missing": False,
         }
+
+    @pytest.mark.asyncio
+    async def test_unknown_run_status_broadcasts_neutral_event(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from gobby.runner_broadcasting import setup_cron_event_broadcasting
+        from gobby.storage.cron_models import CronJob, CronRun
+
+        mock_ws_server = AsyncMock()
+        mock_scheduler = MagicMock()
+        setup_cron_event_broadcasting(mock_ws_server, mock_scheduler)
+        job = CronJob(
+            id="cj-1",
+            project_id="project-1",
+            name="Unknown Cron",
+            schedule_type="cron",
+            action_type="handler",
+            action_config={},
+            created_at="2026-02-10T00:00:00+00:00",
+            updated_at="2026-02-10T00:00:00+00:00",
+        )
+        run = CronRun(
+            id="cr-1",
+            cron_job_id="cj-1",
+            triggered_at="2026-02-10T00:00:00+00:00",
+            created_at="2026-02-10T00:00:00+00:00",
+            status="paused",
+        )
+
+        with caplog.at_level(logging.WARNING, logger="gobby.runner_broadcasting"):
+            await mock_scheduler.on_run_complete(job, run)
+
+        kwargs = mock_ws_server.broadcast_cron_event.await_args.kwargs
+        assert kwargs["event"] == "run_unknown"
+        assert kwargs["status"] == "paused"
+        assert "Unknown cron run status paused" in caplog.text
 
 
 class TestMetricsCleanupLoop:

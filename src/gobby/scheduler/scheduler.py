@@ -101,6 +101,7 @@ class CronScheduler:
         # Wait for in-flight job executions to finish
         if self._active_tasks:
             await asyncio.gather(*self._active_tasks, return_exceptions=True)
+        await self.executor.shutdown()
         logger.info("Cron scheduler stopped")
 
     async def _check_loop(self) -> None:
@@ -157,8 +158,11 @@ class CronScheduler:
                 break
             try:
                 if is_removed_automation_job(job):
-                    if self.storage.delete_job(job.id):
-                        logger.info("Deleted removed automation cron job %s (%s)", job.id, job.name)
+                    logger.info(
+                        "Skipping removed automation cron job %s (%s)",
+                        job.id,
+                        job.name,
+                    )
                     continue
 
                 # Check backoff for consecutive failures

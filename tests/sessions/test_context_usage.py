@@ -5,6 +5,7 @@ from unittest.mock import patch
 
 import pytest
 
+from gobby.sessions import context_usage
 from gobby.sessions.context_usage import (
     backfill_session_context_windows,
     context_window_for_source_model,
@@ -35,6 +36,29 @@ def test_agy_uses_model_family_context_windows(model: str, expected: int) -> Non
 
 def test_agy_does_not_use_gemini_fallback_for_unknown_models() -> None:
     assert context_window_for_source_model("agy", "unknown-claudeish-model") is None
+
+
+def test_private_resolver_uses_normalized_source_without_renormalizing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def fail_normalize(_source: str | None) -> None:
+        raise AssertionError("private resolver should receive normalized source")
+
+    def fake_resolve_context_window(
+        model: str | None,
+        *,
+        provider: str | None,
+        catalog: object | None = None,
+    ) -> int:
+        assert model == "model-x"
+        assert provider == "claude"
+        assert catalog is None
+        return 123
+
+    monkeypatch.setattr(context_usage, "normalize_context_usage_source", fail_normalize)
+    monkeypatch.setattr(context_usage, "resolve_context_window", fake_resolve_context_window)
+
+    assert context_usage._resolve_context_window_for_source_model("claude", "model-x") == 123
 
 
 def test_grok_window_only_snapshot_uses_model_metadata() -> None:

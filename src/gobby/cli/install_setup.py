@@ -525,7 +525,11 @@ def _ensure_gobby_bin_on_path() -> dict[str, Any]:
 
     rc_file, export_line = rc_configs[shell_name]
     if rc_file.exists():
-        content = rc_file.read_text()
+        try:
+            content = rc_file.read_text()
+        except (OSError, UnicodeDecodeError) as exc:
+            logger.debug("could not read shell rc file %s: %s", rc_file, exc)
+            return result
         if "# gobby" in content and ".gobby/bin" in content:
             return result
 

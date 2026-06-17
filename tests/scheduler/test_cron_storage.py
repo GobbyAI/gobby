@@ -8,6 +8,7 @@ from typing import TYPE_CHECKING
 import pytest
 
 from gobby.storage.cron import CronJobStorage, compute_next_run
+from gobby.storage.cron_children import _fetch_statuses
 from gobby.storage.cron_models import CronJob
 
 if TYPE_CHECKING:
@@ -43,6 +44,11 @@ def test_cron_runs_table_exists(temp_db: HubDatabase) -> None:
         ("cron_runs",),
     )
     assert row is not None
+
+
+def test_fetch_statuses_rejects_unknown_child_table(temp_db: HubDatabase) -> None:
+    with pytest.raises(ValueError, match="unsupported cron child status table"):
+        _fetch_statuses(temp_db, "cron_runs; DROP TABLE cron_runs", ["cr-1"])
 
 
 def test_cron_jobs_has_expected_columns(temp_db: HubDatabase) -> None:

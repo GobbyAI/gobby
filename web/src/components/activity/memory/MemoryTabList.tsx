@@ -176,7 +176,7 @@ export function MemoryTabList({
                 {memoryScopeLabel(memory)}
               </span>
               {hidden && <DreamFlagBadge memory={memory} />}
-              <span className="activity-row-title">{memory.content}</span>
+              <span className="activity-row-title">{previewContent(memory.content)}</span>
               <span className="activity-row-meta">
                 {formatRelativeTime(memory.created_at)}
               </span>

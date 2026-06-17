@@ -258,6 +258,12 @@ def set_app_context(container: ServiceContainer) -> None:
     _current_container = container
 
 
+def clear_app_context() -> None:
+    """Clear the global ServiceContainer singleton."""
+    global _current_container
+    _current_container = None
+
+
 def get_app_context() -> ServiceContainer | None:
     """Retrieve the global ServiceContainer, or None if not yet initialised."""
     return _current_container

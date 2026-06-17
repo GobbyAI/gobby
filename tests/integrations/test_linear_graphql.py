@@ -8,7 +8,7 @@ import pytest
 from gobby.integrations import linear_graphql
 from gobby.integrations.linear_graphql import LinearGraphQLClient, LinearGraphQLError
 
-pytestmark = pytest.mark.integration
+pytestmark = pytest.mark.unit
 
 
 @pytest.mark.asyncio

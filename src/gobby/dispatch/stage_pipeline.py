@@ -66,7 +66,7 @@ async def start_pipeline_action(
 
     try:
         pipeline = await loader.load_pipeline(action.pipeline_name)
-    except Exception as exc:
+    except ValueError as exc:
         return escalate_pipeline_dispatch(action, mutex, db, f"pipeline_invalid:{exc}")
     if pipeline is None:
         return escalate_pipeline_dispatch(

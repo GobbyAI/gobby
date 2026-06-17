@@ -43,6 +43,25 @@ def _make_job(storage: CronJobStorage, action_type: str, action_config: dict) ->
 
 
 @pytest.mark.asyncio
+async def test_shutdown_cancels_background_tasks(executor: CronExecutor) -> None:
+    started = asyncio.Event()
+    release = asyncio.Event()
+
+    async def wait_forever() -> None:
+        started.set()
+        await release.wait()
+
+    task = asyncio.create_task(wait_forever(), name="cron-background-test")
+    executor._track_background_task(task)
+    await started.wait()
+
+    await executor.shutdown()
+
+    assert task.cancelled()
+    assert not executor._background_tasks
+
+
+@pytest.mark.asyncio
 async def test_execute_shell_success(cron_storage: CronJobStorage, executor: CronExecutor) -> None:
     """Shell action runs command and captures output."""
     job = _make_job(cron_storage, "shell", {"command": "echo", "args": ["hello world"]})

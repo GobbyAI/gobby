@@ -23,7 +23,6 @@ from gobby.hooks.envelope_dedupe import (
     claim_envelope_processing,
     clear_stale_envelope_processing_marker,
     envelope_terminal_response,
-    is_envelope_processed,
     mark_envelope_processed,
 )
 from gobby.servers.tool_approvals import (
@@ -564,16 +563,10 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
                     return stored_response
-                if clear_stale_envelope_processing_marker(envelope_id) and claim_envelope_processing(
+                if clear_stale_envelope_processing_marker(
                     envelope_id
-                ):
+                ) and claim_envelope_processing(envelope_id):
                     logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
-                elif is_envelope_processed(envelope_id):
-                    logger.info("Replaying legacy processed hook envelope %s result", envelope_id)
-                    return {
-                        "status": "processed",
-                        "reason": "duplicate envelope already processed",
-                    }
                 else:
                     logger.debug("Hook envelope %s is already being processed", envelope_id)
                     return JSONResponse(
