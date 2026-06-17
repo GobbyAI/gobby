@@ -1,7 +1,10 @@
 use crate::config::{CODE_SYMBOL_COLLECTION_PREFIX, Context};
 use crate::db;
 use crate::output::{self, Format};
-use crate::projection::sync::{ProjectionStatus, ProjectionSyncReport};
+use crate::projection::{
+    self,
+    sync::{ProjectionStatus, ProjectionSyncError, ProjectionSyncReport},
+};
 use crate::vector::code_symbols::{
     self, CodeSymbolVectorLifecycle, CodeSymbolVectorLifecycleAction,
     CodeSymbolVectorLifecycleOutput, CodeSymbolVectorLifecycleStatus, EmbeddingSource,
@@ -41,18 +44,29 @@ fn lifecycle_from_resolved_embedding_source(
     )
 }
 
-pub fn sync_file(ctx: &Context, file_path: &str, format: Format) -> anyhow::Result<()> {
-    let mut lifecycle = lifecycle_from_context(ctx)?;
+pub fn sync_file(
+    ctx: &Context,
+    file_path: &str,
+    allow_missing_indexed_file: bool,
+    format: Format,
+) -> anyhow::Result<()> {
     let mut conn = db::connect_readwrite(&ctx.database_url)?;
     if !db::indexed_file_exists(&mut conn, &ctx.project_id, file_path)? {
+        if allow_missing_indexed_file {
+            return print_skipped_missing_indexed_file(ctx, file_path, format);
+        }
         anyhow::bail!(
             "indexed file `{file_path}` was not found for project {}",
             ctx.project_id
         );
     }
+    let mut lifecycle = lifecycle_from_context(ctx)?;
     let symbols = code_symbols::fetch_symbols_for_file(&mut conn, &ctx.project_id, file_path)?;
     let output = lifecycle.sync_file_symbols(file_path, &symbols)?;
     if !db::mark_vectors_synced(&mut conn, &ctx.project_id, file_path)? {
+        if allow_missing_indexed_file {
+            return print_skipped_missing_indexed_file(ctx, file_path, format);
+        }
         anyhow::bail!(
             "indexed file `{file_path}` was not found for project {}",
             ctx.project_id
@@ -60,6 +74,60 @@ pub fn sync_file(ctx: &Context, file_path: &str, format: Format) -> anyhow::Resu
     }
     let report = ProjectionSyncReport::ok(1, output.symbols);
     print_lifecycle_output(&output, report, format)
+}
+
+fn print_skipped_missing_indexed_file(
+    ctx: &Context,
+    file_path: &str,
+    format: Format,
+) -> anyhow::Result<()> {
+    let failures = projection::reconcile_deleted_file(ctx, file_path);
+    let collection = code_symbols::collection_name(CODE_SYMBOL_COLLECTION_PREFIX, &ctx.project_id)?;
+    let error = if failures.is_empty() {
+        None
+    } else {
+        Some(ProjectionSyncError {
+            kind: "projection_reconcile_failed".to_string(),
+            message: failures
+                .iter()
+                .map(|failure| {
+                    format!(
+                        "failed to reconcile {:?} projection: {}",
+                        failure.target, failure.message
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; "),
+        })
+    };
+    let degraded = error.is_some();
+    let payload = serde_json::json!({
+        "success": true,
+        "project_id": ctx.project_id,
+        "projection": "vector",
+        "action": "sync_file",
+        "file_path": file_path,
+        "collection": collection,
+        "status": "skipped",
+        "reason": "indexed_file_not_found",
+        "synced_files": 0,
+        "synced_symbols": 0,
+        "skipped_files": 1,
+        "failed_files": 0,
+        "degraded": degraded,
+        "error": error,
+        "summary": format!("skipped vector sync for {file_path}: indexed file not found"),
+    });
+    match format {
+        Format::Json => output::print_json(&payload),
+        Format::Text => {
+            output::print_text(&format!(
+                "Skipped code-symbol vector sync for project {}: indexed file `{file_path}` was not found",
+                ctx.project_id
+            ))?;
+            output::print_json_compact(&payload)
+        }
+    }
 }
 
 pub fn clear(ctx: &Context, format: Format) -> anyhow::Result<()> {
@@ -141,6 +209,8 @@ pub(crate) struct VectorLifecycleJsonPayload {
     pub status: ProjectionStatus,
     pub synced_files: usize,
     pub synced_symbols: usize,
+    pub skipped_files: usize,
+    pub failed_files: usize,
     pub degraded: bool,
     pub error: Option<crate::projection::sync::ProjectionSyncError>,
     pub symbols: usize,
@@ -162,6 +232,8 @@ pub(crate) fn lifecycle_json_payload(
         status: report.status,
         synced_files: report.synced_files,
         synced_symbols: report.synced_symbols,
+        skipped_files: report.skipped_files,
+        failed_files: report.failed_files,
         degraded: report.degraded,
         error: report.error,
         symbols: output.symbols,
@@ -261,6 +333,8 @@ mod tests {
                 status: ProjectionStatus::Ok,
                 synced_files: 1,
                 synced_symbols: 2,
+                skipped_files: 0,
+                failed_files: 0,
                 degraded: false,
                 error: None,
             },
@@ -273,11 +347,13 @@ mod tests {
                 "action": "sync_file",
                 "file_path": "src/lib.rs",
                 "collection": "gcode_code_symbols_project-1",
-                "status": "ok",
-                "synced_files": 1,
-                "synced_symbols": 2,
-                "degraded": false,
-                "error": null,
+            "status": "ok",
+            "synced_files": 1,
+            "synced_symbols": 2,
+            "skipped_files": 0,
+            "failed_files": 0,
+            "degraded": false,
+            "error": null,
                 "symbols": 2,
                 "vectors_upserted": 2,
                 "delete_operations_issued": 1,
@@ -291,6 +367,8 @@ mod tests {
                 status: ProjectionStatus::Degraded,
                 synced_files: 0,
                 synced_symbols: 0,
+                skipped_files: 0,
+                failed_files: 0,
                 degraded: true,
                 error: Some(ProjectionSyncError {
                     kind: "missing_qdrant_config".to_string(),

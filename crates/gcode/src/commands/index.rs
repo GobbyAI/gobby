@@ -277,6 +277,8 @@ mod tests {
                 status: ProjectionStatus::Ok,
                 synced_files: 12,
                 synced_symbols: 348,
+                skipped_files: 1,
+                failed_files: 0,
                 degraded: false,
                 error: None,
             },
@@ -284,6 +286,8 @@ mod tests {
                 status: ProjectionStatus::Degraded,
                 synced_files: 0,
                 synced_symbols: 0,
+                skipped_files: 0,
+                failed_files: 0,
                 degraded: true,
                 error: Some(ProjectionSyncError {
                     kind: "missing_qdrant_config".to_string(),

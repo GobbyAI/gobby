@@ -1,3 +1,4 @@
+use super::reconcile_deleted_file;
 use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph::{self, GraphReadError};
@@ -47,16 +48,29 @@ pub struct ProjectionSyncReport {
     pub status: ProjectionStatus,
     pub synced_files: usize,
     pub synced_symbols: usize,
+    pub skipped_files: usize,
+    pub failed_files: usize,
     pub degraded: bool,
     pub error: Option<ProjectionSyncError>,
 }
 
 impl ProjectionSyncReport {
     pub fn ok(synced_files: usize, synced_symbols: usize) -> Self {
+        Self::ok_with_counts(synced_files, synced_symbols, 0, 0)
+    }
+
+    pub fn ok_with_counts(
+        synced_files: usize,
+        synced_symbols: usize,
+        skipped_files: usize,
+        failed_files: usize,
+    ) -> Self {
         Self {
             status: ProjectionStatus::Ok,
             synced_files,
             synced_symbols,
+            skipped_files,
+            failed_files,
             degraded: false,
             error: None,
         }
@@ -68,10 +82,23 @@ impl ProjectionSyncReport {
         synced_files: usize,
         synced_symbols: usize,
     ) -> Self {
+        Self::degraded_with_counts(kind, message, synced_files, synced_symbols, 0, 0)
+    }
+
+    pub fn degraded_with_counts(
+        kind: impl Into<String>,
+        message: impl Into<String>,
+        synced_files: usize,
+        synced_symbols: usize,
+        skipped_files: usize,
+        failed_files: usize,
+    ) -> Self {
         Self {
             status: ProjectionStatus::Degraded,
             synced_files,
             synced_symbols,
+            skipped_files,
+            failed_files,
             degraded: true,
             error: Some(ProjectionSyncError {
                 kind: kind.into(),
@@ -85,11 +112,23 @@ impl ProjectionSyncReport {
         synced_files: usize,
         synced_symbols: usize,
     ) -> Self {
+        Self::degraded_from_error_with_counts(error, synced_files, synced_symbols, 0, 0)
+    }
+
+    fn degraded_from_error_with_counts(
+        error: &anyhow::Error,
+        synced_files: usize,
+        synced_symbols: usize,
+        skipped_files: usize,
+        failed_files: usize,
+    ) -> Self {
         let typed = typed_projection_error(error);
         Self {
             status: ProjectionStatus::Degraded,
             synced_files,
             synced_symbols,
+            skipped_files,
+            failed_files,
             degraded: true,
             error: Some(typed),
         }
@@ -100,6 +139,12 @@ impl ProjectionSyncReport {
 pub struct ProjectionSyncReports {
     pub graph: ProjectionSyncReport,
     pub vector: ProjectionSyncReport,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum ProjectionFileSyncOutcome {
+    Synced { symbols: usize },
+    SkippedMissingIndexedFile,
 }
 
 pub fn pending_after_code_fact_write(request: ProjectionSyncRequest) -> ProjectionSyncStatus {
@@ -122,32 +167,60 @@ pub fn sync_after_index(
 }
 
 pub(crate) fn sync_files_with_state<S>(
+    ctx: &Context,
     file_paths: &[String],
     state: &mut S,
-    mut sync_one: impl FnMut(&mut S, &str) -> anyhow::Result<usize>,
-    mut mark_synced: impl FnMut(&mut S, &str) -> anyhow::Result<()>,
+    mut sync_one: impl FnMut(&mut S, &str) -> anyhow::Result<ProjectionFileSyncOutcome>,
 ) -> ProjectionSyncReport {
     let mut synced_files = 0usize;
     let mut synced_symbols = 0usize;
+    let mut skipped_files = 0usize;
+    let mut failed_files = 0usize;
+    let mut errors = Vec::new();
+    let mut error_kind = None;
 
     for file_path in file_paths {
-        let symbols = match sync_one(state, file_path)
-            .and_then(|symbols| mark_synced(state, file_path).map(|()| symbols))
-        {
-            Ok(symbols) => symbols,
-            Err(error) => {
-                return ProjectionSyncReport::degraded_from_error(
-                    &error,
-                    synced_files,
-                    synced_symbols,
-                );
+        match sync_one(state, file_path) {
+            Ok(ProjectionFileSyncOutcome::Synced { symbols }) => {
+                synced_files += 1;
+                synced_symbols += symbols;
             }
-        };
-        synced_files += 1;
-        synced_symbols += symbols;
+            Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile) => {
+                skipped_files += 1;
+                for failure in reconcile_deleted_file(ctx, file_path) {
+                    error_kind.get_or_insert_with(|| "projection_reconcile_failed".to_string());
+                    errors.push(format!(
+                        "{file_path}: failed to reconcile {:?} projection: {}",
+                        failure.target, failure.message
+                    ));
+                }
+            }
+            Err(error) => {
+                failed_files += 1;
+                let typed = typed_projection_error(&error);
+                error_kind.get_or_insert(typed.kind);
+                errors.push(format!("{file_path}: {}", typed.message));
+            }
+        }
     }
 
-    ProjectionSyncReport::ok(synced_files, synced_symbols)
+    if errors.is_empty() {
+        ProjectionSyncReport::ok_with_counts(
+            synced_files,
+            synced_symbols,
+            skipped_files,
+            failed_files,
+        )
+    } else {
+        ProjectionSyncReport::degraded_with_counts(
+            error_kind.unwrap_or_else(|| "sync_failed".to_string()),
+            errors.join("; "),
+            synced_files,
+            synced_symbols,
+            skipped_files,
+            failed_files,
+        )
+    }
 }
 
 fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<ProjectionSyncReport> {
@@ -162,23 +235,53 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
     let report = match code_graph::with_code_graph(ctx, |graph| {
         let mut synced_files = 0usize;
         let mut synced_symbols = 0usize;
+        let mut skipped_files = 0usize;
+        let mut failed_files = 0usize;
+        let mut errors = Vec::new();
+        let mut error_kind = None;
 
         for file_path in file_paths {
-            let symbols = match sync_graph_file(ctx, &mut conn, graph, file_path) {
-                Ok(symbols) => symbols,
-                Err(error) => {
-                    return Ok(ProjectionSyncReport::degraded_from_error(
-                        &error,
-                        synced_files,
-                        synced_symbols,
-                    ));
+            match sync_graph_file(ctx, &mut conn, graph, file_path) {
+                Ok(ProjectionFileSyncOutcome::Synced { symbols }) => {
+                    synced_files += 1;
+                    synced_symbols += symbols;
                 }
-            };
-            synced_files += 1;
-            synced_symbols += symbols;
+                Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile) => {
+                    skipped_files += 1;
+                    for failure in reconcile_deleted_file(ctx, file_path) {
+                        error_kind.get_or_insert_with(|| "projection_reconcile_failed".to_string());
+                        errors.push(format!(
+                            "{file_path}: failed to reconcile {:?} projection: {}",
+                            failure.target, failure.message
+                        ));
+                    }
+                }
+                Err(error) => {
+                    failed_files += 1;
+                    let typed = typed_projection_error(&error);
+                    error_kind.get_or_insert(typed.kind);
+                    errors.push(format!("{file_path}: {}", typed.message));
+                }
+            }
         }
 
-        Ok(ProjectionSyncReport::ok(synced_files, synced_symbols))
+        if errors.is_empty() {
+            Ok(ProjectionSyncReport::ok_with_counts(
+                synced_files,
+                synced_symbols,
+                skipped_files,
+                failed_files,
+            ))
+        } else {
+            Ok(ProjectionSyncReport::degraded_with_counts(
+                error_kind.unwrap_or_else(|| "sync_failed".to_string()),
+                errors.join("; "),
+                synced_files,
+                synced_symbols,
+                skipped_files,
+                failed_files,
+            ))
+        }
     }) {
         Ok(report) => report,
         Err(error)
@@ -195,10 +298,12 @@ fn sync_graph_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Proj
         && report.error.is_none()
         && let Err(error) = code_graph::cleanup_orphans(ctx)
     {
-        return Ok(ProjectionSyncReport::degraded_from_error(
+        return Ok(ProjectionSyncReport::degraded_from_error_with_counts(
             &error,
             report.synced_files,
             report.synced_symbols,
+            report.skipped_files,
+            report.failed_files,
         ));
     }
     Ok(report)
@@ -227,10 +332,10 @@ fn sync_vector_files(ctx: &Context, file_paths: &[String]) -> anyhow::Result<Pro
         lifecycle,
     };
     Ok(sync_files_with_state(
+        ctx,
         file_paths,
         &mut state,
         VectorProjectionState::sync_file,
-        VectorProjectionState::mark_synced,
     ))
 }
 
@@ -239,14 +344,11 @@ fn sync_graph_file(
     conn: &mut postgres::Client,
     graph: &mut code_graph::CodeGraph<'_>,
     file_path: &str,
-) -> anyhow::Result<usize> {
-    let facts = db::read_graph_file_facts(conn, &ctx.project_id, file_path)?;
+) -> anyhow::Result<ProjectionFileSyncOutcome> {
     if !db::mark_graph_sync_attempted(conn, &ctx.project_id, file_path)? {
-        anyhow::bail!(
-            "indexed file `{file_path}` was not found for project {}",
-            ctx.project_id
-        );
+        return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
     }
+    let facts = db::read_graph_file_facts(conn, &ctx.project_id, file_path)?;
     graph.sync_file(
         &facts.file_path,
         &facts.imports,
@@ -255,12 +357,11 @@ fn sync_graph_file(
         false,
     )?;
     if !db::mark_graph_synced(conn, &ctx.project_id, file_path)? {
-        anyhow::bail!(
-            "indexed file `{file_path}` was not found for project {}",
-            ctx.project_id
-        );
+        return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
     }
-    Ok(facts.definitions.len())
+    Ok(ProjectionFileSyncOutcome::Synced {
+        symbols: facts.definitions.len(),
+    })
 }
 
 struct VectorProjectionState<'a> {
@@ -270,28 +371,20 @@ struct VectorProjectionState<'a> {
 }
 
 impl VectorProjectionState<'_> {
-    fn sync_file(&mut self, file_path: &str) -> anyhow::Result<usize> {
+    fn sync_file(&mut self, file_path: &str) -> anyhow::Result<ProjectionFileSyncOutcome> {
         if !db::indexed_file_exists(&mut self.conn, &self.ctx.project_id, file_path)? {
-            anyhow::bail!(
-                "indexed file `{file_path}` was not found for project {}",
-                self.ctx.project_id
-            );
+            return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
         }
         let symbols =
             code_symbols::fetch_symbols_for_file(&mut self.conn, &self.ctx.project_id, file_path)?;
         let symbol_count = symbols.len();
         self.lifecycle.sync_file_symbols(file_path, &symbols)?;
-        Ok(symbol_count)
-    }
-
-    fn mark_synced(&mut self, file_path: &str) -> anyhow::Result<()> {
         if db::mark_vectors_synced(&mut self.conn, &self.ctx.project_id, file_path)? {
-            Ok(())
+            Ok(ProjectionFileSyncOutcome::Synced {
+                symbols: symbol_count,
+            })
         } else {
-            anyhow::bail!(
-                "indexed file `{file_path}` was not found for project {}",
-                self.ctx.project_id
-            )
+            Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile)
         }
     }
 }
@@ -350,42 +443,87 @@ fn vector_error_kind(error: &VectorLifecycleError) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
+
+    fn test_context() -> Context {
+        Context {
+            database_url: "postgresql://localhost/nonexistent".to_string(),
+            project_root: PathBuf::from("/nonexistent"),
+            project_id: "project-1".to_string(),
+            quiet: true,
+            falkordb: None,
+            qdrant: None,
+            embedding: None,
+            code_vectors: crate::config::CodeVectorSettings { vector_dim: None },
+            indexing: gobby_core::config::IndexingConfig::default(),
+            daemon_url: None,
+            index_scope: crate::config::ProjectIndexScope::Single,
+        }
+    }
 
     #[test]
-    fn sync_state_tracks_projection_success() {
-        let files = vec!["src/ok.rs".to_string(), "src/fail.rs".to_string()];
+    fn sync_state_continues_after_projection_errors() {
+        let files = vec![
+            "src/ok.rs".to_string(),
+            "src/fail.rs".to_string(),
+            "src/next.rs".to_string(),
+        ];
         #[derive(Default)]
         struct State {
             synced: Vec<String>,
-            marked_synced: Vec<String>,
         }
         let mut state = State::default();
 
-        let report = sync_files_with_state(
-            &files,
-            &mut state,
-            |state, file_path| {
+        let report =
+            sync_files_with_state(&test_context(), &files, &mut state, |state, file_path| {
                 state.synced.push(file_path.to_string());
                 if file_path == "src/fail.rs" {
                     anyhow::bail!("projection write failed");
                 }
-                Ok(3)
-            },
-            |state, file_path| {
-                state.marked_synced.push(file_path.to_string());
-                Ok(())
-            },
-        );
+                Ok(ProjectionFileSyncOutcome::Synced { symbols: 3 })
+            });
 
-        assert_eq!(state.synced, vec!["src/ok.rs", "src/fail.rs"]);
-        assert_eq!(state.marked_synced, vec!["src/ok.rs"]);
+        assert_eq!(
+            state.synced,
+            vec!["src/ok.rs", "src/fail.rs", "src/next.rs"]
+        );
         assert_eq!(report.status, ProjectionStatus::Degraded);
-        assert_eq!(report.synced_files, 1);
-        assert_eq!(report.synced_symbols, 3);
+        assert_eq!(report.synced_files, 2);
+        assert_eq!(report.synced_symbols, 6);
+        assert_eq!(report.skipped_files, 0);
+        assert_eq!(report.failed_files, 1);
         assert!(report.degraded);
         assert_eq!(
             report.error.as_ref().map(|error| error.kind.as_str()),
             Some("sync_failed")
         );
+    }
+
+    #[test]
+    fn sync_state_treats_missing_indexed_file_as_non_degraded_skip() {
+        let files = vec!["src/missing.rs".to_string(), "src/ok.rs".to_string()];
+        #[derive(Default)]
+        struct State {
+            synced: Vec<String>,
+        }
+        let mut state = State::default();
+
+        let report =
+            sync_files_with_state(&test_context(), &files, &mut state, |state, file_path| {
+                state.synced.push(file_path.to_string());
+                if file_path == "src/missing.rs" {
+                    return Ok(ProjectionFileSyncOutcome::SkippedMissingIndexedFile);
+                }
+                Ok(ProjectionFileSyncOutcome::Synced { symbols: 2 })
+            });
+
+        assert_eq!(state.synced, vec!["src/missing.rs", "src/ok.rs"]);
+        assert_eq!(report.status, ProjectionStatus::Ok);
+        assert_eq!(report.synced_files, 1);
+        assert_eq!(report.synced_symbols, 2);
+        assert_eq!(report.skipped_files, 1);
+        assert_eq!(report.failed_files, 0);
+        assert!(!report.degraded);
+        assert!(report.error.is_none());
     }
 }

@@ -311,10 +311,16 @@ fn run() -> anyhow::Result<()> {
             commands::graph::report(&ctx, top_n, format)
         }
         Command::Vector {
-            command: VectorCommand::SyncFile { file },
+            command:
+                VectorCommand::SyncFile {
+                    file,
+                    allow_missing_indexed_file,
+                },
         } => {
-            ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
-            commands::vector::sync_file(&ctx, &file, format)
+            if !allow_missing_indexed_file {
+                ensure_file_fresh(&ctx, cli.no_freshness, &file)?;
+            }
+            commands::vector::sync_file(&ctx, &file, allow_missing_indexed_file, format)
         }
         Command::Vector {
             command: VectorCommand::Clear,

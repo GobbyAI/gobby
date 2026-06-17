@@ -40,8 +40,15 @@ fn parse_projection_lifecycle_commands() {
     assert!(matches!(cli.format, Some(output::Format::Text)));
     match cli.command {
         Command::Vector {
-            command: VectorCommand::SyncFile { file },
-        } => assert_eq!(file, "src/lib.rs"),
+            command:
+                VectorCommand::SyncFile {
+                    file,
+                    allow_missing_indexed_file,
+                },
+        } => {
+            assert_eq!(file, "src/lib.rs");
+            assert!(!allow_missing_indexed_file);
+        }
         _ => panic!("expected vector sync-file command"),
     }
 
@@ -273,5 +280,31 @@ fn parse_graph_sync_file_with_flag() {
             assert!(allow_missing_indexed_file);
         }
         _ => panic!("expected graph sync-file command"),
+    }
+}
+
+#[test]
+fn parse_vector_sync_file_with_flag() {
+    let cli = Cli::try_parse_from([
+        "gcode",
+        "vector",
+        "sync-file",
+        "--file",
+        "src/lib.rs",
+        "--allow-missing-indexed-file",
+    ])
+    .expect("vector sync-file with flag parses");
+    match cli.command {
+        Command::Vector {
+            command:
+                VectorCommand::SyncFile {
+                    file,
+                    allow_missing_indexed_file,
+                },
+        } => {
+            assert_eq!(file, "src/lib.rs");
+            assert!(allow_missing_indexed_file);
+        }
+        _ => panic!("expected vector sync-file command"),
     }
 }

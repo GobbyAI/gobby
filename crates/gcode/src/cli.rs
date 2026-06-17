@@ -481,6 +481,9 @@ pub(crate) enum VectorCommand {
         /// Indexed file path to sync
         #[arg(long)]
         file: String,
+        /// Skip sync if indexed file not found (daemon/background-worker only)
+        #[arg(long)]
+        allow_missing_indexed_file: bool,
     },
     /// Clear the current project's code-symbol vector projection
     Clear,

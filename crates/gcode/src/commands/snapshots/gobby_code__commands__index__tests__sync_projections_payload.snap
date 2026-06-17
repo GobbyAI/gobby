@@ -1,5 +1,6 @@
 ---
 source: crates/gcode/src/commands/index.rs
+assertion_line: 304
 expression: payload
 ---
 {
@@ -12,6 +13,8 @@ expression: payload
       "status": "ok",
       "synced_files": 12,
       "synced_symbols": 348,
+      "skipped_files": 1,
+      "failed_files": 0,
       "degraded": false,
       "error": null
     },
@@ -19,6 +22,8 @@ expression: payload
       "status": "degraded",
       "synced_files": 0,
       "synced_symbols": 0,
+      "skipped_files": 0,
+      "failed_files": 0,
       "degraded": true,
       "error": {
         "kind": "missing_qdrant_config",

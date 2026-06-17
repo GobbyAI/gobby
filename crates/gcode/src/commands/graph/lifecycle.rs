@@ -2,7 +2,7 @@ use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph::{self, GraphLifecycleAction, GraphLifecycleOutput};
 use crate::output::{self, Format};
-use crate::projection::sync::ProjectionSyncReport;
+use crate::projection::{self, ProjectionReconcileFailure, sync::ProjectionSyncReport};
 use serde_json::{Value, json};
 use std::collections::HashSet;
 
@@ -134,15 +134,47 @@ enum GraphFileSyncOutcome {
         symbols_synced: usize,
     },
     SkippedNoGraphFacts,
-    SkippedMissingIndexedFile,
+    SkippedMissingIndexedFile {
+        reconcile_failures: Vec<ProjectionReconcileFailure>,
+    },
 }
 
-pub(super) fn skipped_missing_indexed_file_payload(ctx: &Context, file_path: &str) -> Value {
+pub(super) fn skipped_missing_indexed_file_payload(
+    ctx: &Context,
+    file_path: &str,
+    reconcile_failures: &[ProjectionReconcileFailure],
+) -> Value {
+    let error = if reconcile_failures.is_empty() {
+        None
+    } else {
+        Some(serde_json::json!({
+            "kind": "projection_reconcile_failed",
+            "message": reconcile_failures
+                .iter()
+                .map(|failure| {
+                    format!(
+                        "failed to reconcile {:?} projection: {}",
+                        failure.target, failure.message
+                    )
+                })
+                .collect::<Vec<_>>()
+                .join("; "),
+        }))
+    };
     json!({
+        "success": true,
         "project_id": ctx.project_id,
         "file_path": file_path,
         "status": "skipped",
         "reason": "indexed_file_not_found",
+        "synced_files": 0,
+        "synced_symbols": 0,
+        "skipped_files": 1,
+        "failed_files": 0,
+        "relationships_written": 0,
+        "degraded": error.is_some(),
+        "error": error,
+        "summary": format!("skipped graph sync for {file_path}: indexed file not found"),
     })
 }
 
@@ -155,7 +187,11 @@ pub(super) fn skipped_no_graph_facts_payload(ctx: &Context, file_path: &str) -> 
         "reason": "no_graph_facts",
         "synced_files": 1,
         "synced_symbols": 0,
+        "skipped_files": 1,
+        "failed_files": 0,
         "relationships_written": 0,
+        "degraded": false,
+        "error": null,
         "summary": format!("skipped graph sync for {file_path}: no graph facts"),
     })
 }
@@ -176,7 +212,9 @@ fn sync_file_graph(
     code_graph::require_graph_reads(ctx)?;
     if !db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)? {
         if allow_missing_indexed_file {
-            return Ok(GraphFileSyncOutcome::SkippedMissingIndexedFile);
+            return Ok(GraphFileSyncOutcome::SkippedMissingIndexedFile {
+                reconcile_failures: projection::reconcile_deleted_file(ctx, file_path),
+            });
         }
         return Err(GraphSyncContractError::indexed_file_not_found(ctx, file_path).into());
     }
@@ -225,6 +263,8 @@ fn clear_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> {
             "status": report.status,
             "synced_files": report.synced_files,
             "synced_symbols": report.synced_symbols,
+            "skipped_files": report.skipped_files,
+            "failed_files": report.failed_files,
             "degraded": report.degraded,
             "error": report.error,
             "files_marked_pending": files_marked_pending,
@@ -240,43 +280,59 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
 
     let mut files_synced = 0usize;
     let mut symbols_synced = 0usize;
+    let mut files_skipped = 0usize;
+    let mut files_failed = 0usize;
     let mut errors = Vec::new();
+    let mut error_kind = None;
     code_graph::with_code_graph(ctx, |graph| {
         for file_path in &file_paths {
-            let synced_symbols =
-                match db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path)
-                    .and_then(|updated| {
-                        if updated {
-                            Ok(())
-                        } else {
-                            anyhow::bail!("indexed file no longer exists")
-                        }
-                    })
-                    .and_then(|_| {
-                        let facts =
-                            db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
-                        if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
-                            graph.delete_file_graph(&facts.file_path, &[])?;
-                            graph.delete_file_node(&facts.file_path)?;
-                            db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
-                            return Ok(0);
-                        }
-                        graph.sync_file(
-                            &facts.file_path,
-                            &facts.imports,
-                            &facts.definitions,
-                            &facts.calls,
-                            false,
-                        )?;
-                        db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
-                        Ok(facts.definitions.len())
-                    }) {
-                    Ok(symbols) => symbols,
-                    Err(err) => {
-                        errors.push(format!("{file_path}: {err}"));
-                        continue;
+            match db::mark_graph_sync_attempted(&mut conn, &ctx.project_id, file_path) {
+                Ok(true) => {}
+                Ok(false) => {
+                    files_skipped += 1;
+                    for failure in projection::reconcile_deleted_file(ctx, file_path) {
+                        error_kind.get_or_insert_with(|| "projection_reconcile_failed".to_string());
+                        errors.push(format!(
+                            "{file_path}: failed to reconcile {:?} projection: {}",
+                            failure.target, failure.message
+                        ));
                     }
-                };
+                    continue;
+                }
+                Err(err) => {
+                    files_failed += 1;
+                    error_kind.get_or_insert_with(|| "sync_failed".to_string());
+                    errors.push(format!("{file_path}: {err}"));
+                    continue;
+                }
+            }
+
+            let synced_symbols = match (|| -> anyhow::Result<usize> {
+                let facts = db::read_graph_file_facts(&mut conn, &ctx.project_id, file_path)?;
+                if has_no_graph_facts(&facts.imports, &facts.definitions, &facts.calls) {
+                    graph.delete_file_graph(&facts.file_path, &[])?;
+                    graph.delete_file_node(&facts.file_path)?;
+                    db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                    return Ok(0);
+                }
+                graph.sync_file(
+                    &facts.file_path,
+                    &facts.imports,
+                    &facts.definitions,
+                    &facts.calls,
+                    false,
+                )?;
+                db::mark_graph_synced(&mut conn, &ctx.project_id, file_path)?;
+                Ok(facts.definitions.len())
+            })() {
+                Ok(symbols) => symbols,
+                Err(err) => {
+                    files_failed += 1;
+                    error_kind.get_or_insert_with(|| "sync_failed".to_string());
+                    errors.push(format!("{file_path}: {err}"));
+                    continue;
+                }
+            };
             files_synced += 1;
             symbols_synced += synced_symbols;
         }
@@ -286,17 +342,25 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
         && files_synced > 0
         && let Err(err) = code_graph::cleanup_orphans(ctx)
     {
+        error_kind.get_or_insert_with(|| "sync_failed".to_string());
         errors.push(format!("cleanup_orphans: {err}"));
     }
 
     let report = if errors.is_empty() {
-        ProjectionSyncReport::ok(files_synced, symbols_synced)
+        ProjectionSyncReport::ok_with_counts(
+            files_synced,
+            symbols_synced,
+            files_skipped,
+            files_failed,
+        )
     } else {
-        ProjectionSyncReport::degraded(
-            "sync_failed",
+        ProjectionSyncReport::degraded_with_counts(
+            error_kind.unwrap_or_else(|| "sync_failed".to_string()),
             errors.join("; "),
             files_synced,
             symbols_synced,
+            files_skipped,
+            files_failed,
         )
     };
     Ok(lifecycle_output(
@@ -308,11 +372,14 @@ fn rebuild_project_graph(ctx: &Context) -> anyhow::Result<GraphLifecycleOutput> 
             "status": report.status,
             "synced_files": report.synced_files,
             "synced_symbols": report.synced_symbols,
+            "skipped_files": report.skipped_files,
+            "failed_files": report.failed_files,
             "degraded": report.degraded,
             "error": report.error,
             "files_processed": file_paths.len(),
             "files_synced": files_synced,
-            "files_failed": errors.len(),
+            "files_skipped": files_skipped,
+            "files_failed": files_failed,
             "errors": errors,
             "summary": format!("synced {files_synced}/{} files", file_paths.len()),
         }),
@@ -399,8 +466,8 @@ pub fn sync_file(
                 }
             };
         }
-        GraphFileSyncOutcome::SkippedMissingIndexedFile => {
-            let payload = skipped_missing_indexed_file_payload(ctx, file_path);
+        GraphFileSyncOutcome::SkippedMissingIndexedFile { reconcile_failures } => {
+            let payload = skipped_missing_indexed_file_payload(ctx, file_path, &reconcile_failures);
             return match format {
                 Format::Json => output::print_json(&payload),
                 Format::Text => {
@@ -422,6 +489,8 @@ pub fn sync_file(
         "status": report.status,
         "synced_files": report.synced_files,
         "synced_symbols": report.synced_symbols,
+        "skipped_files": report.skipped_files,
+        "failed_files": report.failed_files,
         "degraded": report.degraded,
         "error": report.error,
         "relationships_written": relationships_written,

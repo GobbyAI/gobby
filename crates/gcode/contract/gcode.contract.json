@@ -1221,6 +1221,8 @@
         "reason",
         "synced_files",
         "synced_symbols",
+        "skipped_files",
+        "failed_files",
         "relationships_written",
         "degraded",
         "error",
@@ -1419,6 +1421,8 @@
         "project_id",
         "synced_files",
         "synced_symbols",
+        "skipped_files",
+        "failed_files",
         "synced_relationships",
         "deleted_nodes",
         "deleted_relationships",
@@ -1449,6 +1453,8 @@
         "project_id",
         "synced_files",
         "synced_symbols",
+        "skipped_files",
+        "failed_files",
         "synced_relationships",
         "deleted_nodes",
         "deleted_relationships",
@@ -1530,6 +1536,14 @@
           "repeatable": false
         },
         {
+          "name": "--allow-missing-indexed-file",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--format",
           "takes_value": true,
           "value_name": "json|text",
@@ -1545,13 +1559,20 @@
         "success",
         "status",
         "project_id",
+        "projection",
         "action",
-        "provider",
+        "file_path",
         "collection",
-        "points_written",
-        "points_deleted",
+        "synced_files",
+        "synced_symbols",
+        "skipped_files",
+        "failed_files",
+        "symbols",
+        "vectors_upserted",
+        "delete_operations_issued",
         "degraded",
-        "error"
+        "error",
+        "summary"
       ]
     },
     {
@@ -1576,13 +1597,20 @@
         "success",
         "status",
         "project_id",
+        "projection",
         "action",
-        "provider",
+        "file_path",
         "collection",
-        "points_written",
-        "points_deleted",
+        "synced_files",
+        "synced_symbols",
+        "skipped_files",
+        "failed_files",
+        "symbols",
+        "vectors_upserted",
+        "delete_operations_issued",
         "degraded",
-        "error"
+        "error",
+        "summary"
       ]
     },
     {
@@ -1607,13 +1635,20 @@
         "success",
         "status",
         "project_id",
+        "projection",
         "action",
-        "provider",
+        "file_path",
         "collection",
-        "points_written",
-        "points_deleted",
+        "synced_files",
+        "synced_symbols",
+        "skipped_files",
+        "failed_files",
+        "symbols",
+        "vectors_upserted",
+        "delete_operations_issued",
         "degraded",
-        "error"
+        "error",
+        "summary"
       ]
     },
     {

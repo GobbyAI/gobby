@@ -1,5 +1,6 @@
 ---
 source: crates/gcode/src/commands/index.rs
+assertion_line: 312
 expression: text
 ---
-{"indexed_files":12,"skipped_files":0,"symbols_indexed":348,"chunks_indexed":921,"projections":{"graph":{"status":"ok","synced_files":12,"synced_symbols":348,"degraded":false,"error":null},"vector":{"status":"degraded","synced_files":0,"synced_symbols":0,"degraded":true,"error":{"kind":"missing_qdrant_config","message":"Qdrant config is required"}}}}
+{"indexed_files":12,"skipped_files":0,"symbols_indexed":348,"chunks_indexed":921,"projections":{"graph":{"status":"ok","synced_files":12,"synced_symbols":348,"skipped_files":1,"failed_files":0,"degraded":false,"error":null},"vector":{"status":"degraded","synced_files":0,"synced_symbols":0,"skipped_files":0,"failed_files":0,"degraded":true,"error":{"kind":"missing_qdrant_config","message":"Qdrant config is required"}}}}

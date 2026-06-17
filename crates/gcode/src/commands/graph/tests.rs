@@ -299,17 +299,26 @@ fn missing_project_sync_error_has_typed_payload() {
 fn missing_file_sync_error_and_skip_payloads_are_typed() {
     let ctx = make_ctx_no_falkordb();
     let error = GraphSyncContractError::indexed_file_not_found(&ctx, "src/missing.rs");
-    let skipped = skipped_missing_indexed_file_payload(&ctx, "src/missing.rs");
+    let skipped = skipped_missing_indexed_file_payload(&ctx, "src/missing.rs", &[]);
 
     assert_eq!(error.exit_code(), GRAPH_SYNC_CONTRACT_EXIT_CODE);
     assert_eq!(error.payload()["reason"], "indexed_file_not_found");
     assert_eq!(
         skipped,
         json!({
+            "success": true,
             "project_id": "test-project",
             "file_path": "src/missing.rs",
             "status": "skipped",
             "reason": "indexed_file_not_found",
+            "synced_files": 0,
+            "synced_symbols": 0,
+            "skipped_files": 1,
+            "failed_files": 0,
+            "relationships_written": 0,
+            "degraded": false,
+            "error": null,
+            "summary": "skipped graph sync for src/missing.rs: indexed file not found",
         })
     );
 }
@@ -329,7 +338,11 @@ fn no_graph_facts_skip_payload_is_terminal_success_shape() {
             "reason": "no_graph_facts",
             "synced_files": 1,
             "synced_symbols": 0,
+            "skipped_files": 1,
+            "failed_files": 0,
             "relationships_written": 0,
+            "degraded": false,
+            "error": null,
             "summary": "skipped graph sync for docs/generated.json: no graph facts",
         })
     );
