@@ -90,7 +90,7 @@ pub fn run(
             changed.push(relative_path(vault_root, path));
         }
     }
-    changed.sort();
+    // `changed` is built from the pre-sorted `files`, so it is already ordered.
 
     Ok(NormalizeReport {
         command: "normalize",
@@ -122,6 +122,18 @@ pub fn render_text(report: &NormalizeReport) -> String {
         text.push('\n');
     }
     text
+}
+
+/// Exit code for the command layer. `--check` is a gate: it returns a non-zero
+/// code when authored docs still need normalization, so CI can fail on
+/// un-normalized markdown (like `cargo fmt --check`). A write pass always
+/// succeeds — it fixed the files in place.
+pub(crate) fn check_exit_code(report: &NormalizeReport) -> u8 {
+    if report.check_only && !report.changed.is_empty() {
+        1
+    } else {
+        0
+    }
 }
 
 /// Recursively collect markdown files under `directory`. Skips nothing — the
@@ -205,6 +217,16 @@ mod tests {
             std::fs::read_to_string(root.join("knowledge/concepts/dirty.md")).expect("read fixed");
         assert_eq!(fixed, crate::markdown::normalize(DIRTY));
 
+        // code/** is in scope: the dirty code/INDEX.md was normalized too.
+        assert!(
+            report.changed.contains(&PathBuf::from("code/INDEX.md")),
+            "code/** docs are in scope: {:?}",
+            report.changed
+        );
+        // Exactly the two authored docs were scanned — the raw capture was never
+        // visited (proves exclusion, not just a no-op rewrite).
+        assert_eq!(report.scanned, 2, "raw/<id>.md must not be scanned");
+
         // The raw capture must be byte-for-byte identical (excluded from scope).
         assert_eq!(
             std::fs::read(&raw_path).expect("read raw"),
@@ -265,5 +287,46 @@ mod tests {
 
         assert!(report.changed.contains(&PathBuf::from("_index.md")));
         assert!(report.changed.contains(&PathBuf::from("log.md")));
+    }
+
+    fn report_with(check_only: bool, changed: Vec<PathBuf>) -> NormalizeReport {
+        NormalizeReport {
+            command: "normalize",
+            scope: ScopeIdentity::topic("ops"),
+            root: PathBuf::from("/tmp/vault"),
+            scanned: changed.len(),
+            changed,
+            check_only,
+        }
+    }
+
+    #[test]
+    fn render_text_summarizes_changed_paths() {
+        let report = report_with(
+            true,
+            vec![PathBuf::from("knowledge/a.md"), PathBuf::from("_index.md")],
+        );
+
+        let text = render_text(&report);
+
+        assert!(text.contains("2 need normalization."), "{text}");
+        assert!(text.contains("- knowledge/a.md"));
+        assert!(text.contains("- _index.md"));
+    }
+
+    #[test]
+    fn check_exit_code_gates_only_dirty_check_runs() {
+        // Clean check run -> success.
+        assert_eq!(check_exit_code(&report_with(true, Vec::new())), 0);
+        // Dirty check run -> gate fails.
+        assert_eq!(
+            check_exit_code(&report_with(true, vec![PathBuf::from("knowledge/a.md")])),
+            1,
+        );
+        // Dirty write run -> success: it fixed the files in place.
+        assert_eq!(
+            check_exit_code(&report_with(false, vec![PathBuf::from("knowledge/a.md")])),
+            0,
+        );
     }
 }
