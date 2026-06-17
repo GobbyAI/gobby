@@ -108,6 +108,10 @@ pub enum Command {
     Lint {
         scope: ScopeSelection,
     },
+    Normalize {
+        scope: ScopeSelection,
+        check: bool,
+    },
     Health {
         scope: ScopeSelection,
     },

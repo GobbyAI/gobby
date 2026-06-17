@@ -36,6 +36,7 @@ const CLI_SUBCOMMANDS: &[&str] = &[
     "review-report",
     "audit",
     "lint",
+    "normalize",
     "health",
     "librarian",
     "status",
@@ -137,6 +138,8 @@ enum CliCommand {
     Audit,
     /// Detect broken links and vault hygiene issues.
     Lint,
+    /// Normalize whitespace in already-written vault markdown (markdownlint repair).
+    Normalize(NormalizeArgs),
     /// Write wiki health snapshots under meta/health.
     Health,
     /// Propose wiki upkeep tasks and patches without rewriting pages.
@@ -165,6 +168,13 @@ struct ScopeArgs {
     /// Use a named topic wiki scope.
     #[arg(long, global = true, value_name = "NAME")]
     topic: Option<String>,
+}
+
+#[derive(Debug, Args)]
+struct NormalizeArgs {
+    /// Report which authored docs need normalization without rewriting them.
+    #[arg(long)]
+    check: bool,
 }
 
 #[derive(Debug, Args)]
@@ -695,6 +705,10 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
         }),
         CliCommand::Audit => Ok(Command::Audit { scope }),
         CliCommand::Lint => Ok(Command::Lint { scope }),
+        CliCommand::Normalize(args) => Ok(Command::Normalize {
+            scope,
+            check: args.check,
+        }),
         CliCommand::Health => Ok(Command::Health { scope }),
         CliCommand::Librarian => Ok(Command::Librarian { scope }),
         CliCommand::Status => Ok(Command::Status { scope }),

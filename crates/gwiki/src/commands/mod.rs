@@ -13,6 +13,7 @@ pub(crate) mod index;
 pub(crate) mod init;
 pub(crate) mod librarian;
 pub(crate) mod lint;
+pub(crate) mod normalize;
 pub(crate) mod read;
 pub(crate) mod refresh;
 pub(crate) mod review_report;
@@ -95,6 +96,7 @@ pub(crate) fn run(command: Command) -> Result<CommandOutcome, WikiError> {
         Command::ReviewReport { scope, options } => review_report::execute(scope, options),
         Command::Audit { scope } => audit::execute(scope),
         Command::Lint { scope } => lint::execute(scope),
+        Command::Normalize { scope, check } => normalize::execute(scope, check),
         Command::Health { scope } => health::execute(scope),
         Command::Librarian { scope } => librarian::execute(scope),
         Command::Status { scope } => status::execute(scope),
