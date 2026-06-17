@@ -159,11 +159,19 @@ async def test_record_converged_leaves_needs_review(stage_ops_registry, mock_tas
                 "task_id": "#42",
                 "round_number": 1,
                 "converged": True,
-                "suggestions": ["Final wording is acceptable"],
+                "suggestions": [],
             },
         )
 
     assert "error" not in result
+    mock_task_manager.record_plan_enhancement.assert_called_once_with(
+        sample.id,
+        round_number=1,
+        converged=True,
+        suggestions=[],
+        signoff_summary=None,
+        by_session_id="resolved-session-abc",
+    )
     # A converged round leaves the planning stage in needs_review for the adversary.
     ctx.session_task_manager.link_task.assert_called_once_with(
         "resolved-session-abc", sample.id, "needs_review"

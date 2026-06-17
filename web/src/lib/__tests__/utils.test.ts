@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { cn, escapeHtml } from '../utils'
+import { cn, escapeHtml, previewContent } from '../utils'
 
 describe('cn', () => {
   it('returns empty string with no args', () => {
@@ -51,6 +51,12 @@ describe('cn', () => {
 
 describe('escapeHtml', () => {
   it('escapes single quotes along with other HTML-sensitive characters', () => {
-    expect(escapeHtml(`'"<>&`)).toBe('&#39;&quot;&lt;&gt;&amp;')
+    expect(escapeHtml(`'"<>&`)).toBe('&#x27;&quot;&lt;&gt;&amp;')
+  })
+})
+
+describe('previewContent', () => {
+  it('truncates long memory text for compact labels', () => {
+    expect(previewContent('a'.repeat(141))).toBe(`${'a'.repeat(140)}...`)
   })
 })

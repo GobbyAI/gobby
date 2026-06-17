@@ -210,15 +210,9 @@ async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
                 )
                 continue
 
-            mark_envelope_processed(envelope_id, processed_dir=processed_dir)
-            if is_envelope_processed(envelope_id, processed_dir=processed_dir):
+                mark_envelope_processed(envelope_id, processed_dir=processed_dir)
                 path.unlink(missing_ok=True)
                 replayed += 1
-            else:
-                logger.warning(
-                    "Hook inbox replay succeeded for %s but marker is not terminal; retaining file",
-                    path.name,
-                )
             continue
 
         if response.status_code == 409:

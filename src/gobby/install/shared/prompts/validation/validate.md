@@ -52,6 +52,12 @@ unknown evidence, not proof of failure. Return `pending` only when that unknown
 evidence is necessary to decide a criterion; name the specific omitted file,
 hunk, or shortened context in the feedback.
 
+Missing evidence is different from omitted evidence. If required evidence is
+absent from the Changed File Manifest entirely, or a required command/gate has no
+reported result, return `invalid` and name that missing evidence in
+`blocking_reasons`. Use `pending` only for evidence that the manifest says was
+captured but deliberately shortened or omitted from the prompt payload.
+
 Task: {{ title }}
 {{ category_section }}{{ criteria_text }}
 

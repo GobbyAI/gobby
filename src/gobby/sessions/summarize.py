@@ -590,12 +590,10 @@ async def _build_summary_prompt_context(
             last_turns,
             format_turns_for_llm,
         )
-        transcript_summary = strip_injected_context(transcript_summary)
         last_messages = _strip_injected_context_from_value(
             parser.extract_last_messages(turns, num_pairs=2)
         )
         last_messages_str = format_turns_for_llm(last_messages) if last_messages else ""
-        last_messages_str = strip_injected_context(last_messages_str)
 
     resolved_db = _summary_context_db(db, session_manager)
     claimed_tasks = (

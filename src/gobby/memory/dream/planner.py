@@ -15,7 +15,7 @@ from gobby.prompts.loader import PromptLoader
 logger = logging.getLogger(__name__)
 DEFAULT_MIN_ACTION_CONFIDENCE = 0.72
 DEFAULT_MIN_DELETE_CONFIDENCE = 0.85
-DEFAULT_MIN_RESCOPE_CONFIDENCE = 0.85
+DEFAULT_MIN_PROMOTE_CONFIDENCE = 0.85
 DEFAULT_PLANNER_BATCH_SIZE = 25
 DEFAULT_PLANNER_MAX_CONCURRENCY = 3
 _EXPECTED_PLANNER_ERRORS = (
@@ -203,7 +203,7 @@ async def _call_llm_planner(
             "min_rescope_confidence": getattr(
                 dream_config,
                 "min_rescope_confidence",
-                DEFAULT_MIN_RESCOPE_CONFIDENCE,
+                DEFAULT_MIN_PROMOTE_CONFIDENCE,
             ),
         },
     )

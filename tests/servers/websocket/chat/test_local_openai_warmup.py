@@ -170,6 +170,39 @@ def test_resolve_qwen_local_openai_target_uses_best_endpoint_match(
     )
 
 
+def test_resolve_qwen_local_openai_target_returns_none_for_ambiguous_endpoint(
+    temp_dir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    settings_path = temp_dir / ".qwen" / "settings.json"
+    _write_qwen_settings(
+        settings_path,
+        {
+            "security": {"auth": {"selectedType": "openai"}},
+            "modelProviders": {
+                "openai": [
+                    {
+                        "id": "qwen3.6-35b-a3b-q8-local",
+                        "baseUrl": "http://localhost:1234/v1",
+                    }
+                ]
+            },
+        },
+    )
+    monkeypatch.setattr(warmup, "_QWEN_SETTINGS_PATH", settings_path)
+
+    target = warmup.resolve_qwen_local_openai_target(
+        "qwen3.6-35b-a3b-q8-local(openai)",
+        project_path=None,
+        local_generation_endpoints={
+            "exact-a": _endpoint(model="qwen3.6-35b-a3b-q8-local", api_key="a-token"),
+            "exact-b": _endpoint(model="qwen3.6-35b-a3b-q8-local", api_key="b-token"),
+        },
+    )
+
+    assert target is None
+
+
 def test_resolve_qwen_local_openai_target_skips_openai_compatible_provider(
     temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,

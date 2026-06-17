@@ -388,7 +388,9 @@ class SessionLifecycleManager:
                 ("review", getattr(config, "purge_review_after_days", 90)),
             ):
                 try:
-                    await purge_hidden(action, grace_days)
+                    result = purge_hidden(action, grace_days)
+                    if inspect.isawaitable(result):
+                        await result
                 except Exception as e:
                     logger.error(f"Failed to purge dream-hidden {action} memories: {e}")
 

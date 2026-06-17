@@ -41,7 +41,9 @@ def reconcile_interrupted_dream_runs(memory_manager: MemoryDreamManagerProtocol)
     that orphans are cleaned up even after the feature is turned off. Returns the
     reconciled run IDs.
     """
-    return MemoryDreamStore(memory_manager.db).mark_interrupted_runs()
+    store = MemoryDreamStore(memory_manager.db)
+    store.ensure_schema()
+    return store.mark_interrupted_runs()
 
 
 def register_memory_dream_cron(

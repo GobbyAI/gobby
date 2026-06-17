@@ -5,7 +5,10 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { ACTIVITY_PANEL_TABS } from "../../ActivityPanelTabs";
 import { IntegrationsTab } from "../../IntegrationsTab";
 import { createMockFetch, type MockFetchInstance } from "../../../../test/mocks/fetch";
-import { validateIntegrationDraft } from "../IntegrationsTabModel";
+import {
+  integrationPayloadFromDraft,
+  validateIntegrationDraft,
+} from "../IntegrationsTabModel";
 
 vi.mock("../../../../hooks/useWebSocketEvent", () => ({
   useWebSocketEvent: vi.fn(),
@@ -400,5 +403,25 @@ describe("validateIntegrationDraft", () => {
         secrets: { password: "secret" },
       }),
     ).toBe("SMTP Port must be a finite number");
+  });
+
+  it("rejects non-finite numeric config while building a payload", () => {
+    expect(() =>
+      integrationPayloadFromDraft({
+        id: null,
+        mode: "create",
+        name: "Email bridge",
+        channel_type: "email",
+        enabled: true,
+        config: {
+          smtp_host: "smtp.example.com",
+          smtp_port: "Infinity",
+          imap_host: "imap.example.com",
+          imap_port: "993",
+          from_address: "ops@example.com",
+        },
+        secrets: { password: "secret" },
+      }),
+    ).toThrow("SMTP Port must be a finite number");
   });
 });

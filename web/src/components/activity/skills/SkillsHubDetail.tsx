@@ -91,22 +91,20 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
   const [scanning, setScanning] = useState(false);
   const [installing, setInstalling] = useState(false);
 
-  // Reset transient scan/install state when a different hub result is selected,
-  // so a prior scan can't enable install for newly shown content. Adjusting
-  // state during render is the codebase convention (see RulesDetailPanel).
   const resultKey = result ? `${result.hub_name}/${result.slug}` : null;
   const [loadedResultKey, setLoadedResultKey] = useState(resultKey);
-  if (loadedResultKey !== resultKey) {
-    setLoadedResultKey(resultKey);
-    setScanResult(null);
-    setScanning(false);
-    setInstalling(false);
-  }
+  const showingLoadedResult = loadedResultKey === resultKey;
+  const activeScanResult = showingLoadedResult ? scanResult : null;
+  const activeScanning = showingLoadedResult && scanning;
+  const activeInstalling = showingLoadedResult && installing;
 
   const content = result?.content?.trim() ?? "";
   const sortedFindings = useMemo(
-    () => [...(scanResult?.findings ?? [])].sort((a, b) => findingSortValue(b) - findingSortValue(a)),
-    [scanResult],
+    () =>
+      [...(activeScanResult?.findings ?? [])].sort(
+        (a, b) => findingSortValue(b) - findingSortValue(a),
+      ),
+    [activeScanResult],
   );
 
   if (!result) {
@@ -120,24 +118,28 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
   }
 
   const title = result.display_name || result.slug;
-  const canScan = Boolean(content) && !scanning && !installing;
-  const canAttemptInstall = Boolean(content && scanResult) && !scanning && !installing;
+  const canScan = Boolean(content) && !activeScanning && !activeInstalling;
+  const canAttemptInstall =
+    Boolean(content && activeScanResult) && !activeScanning && !activeInstalling;
   const installReason = !content
     ? "Hub result does not include content to scan."
-    : !scanResult
+    : !activeScanResult
       ? "Run a safety scan before installing."
-      : scanResult.is_safe
+      : activeScanResult.is_safe
         ? "Safety scan passed."
         : "Findings require confirmation before install.";
-  const scanStatusLabel = scanResult
-    ? scanResult.is_safe
+  const scanStatusLabel = activeScanResult
+    ? activeScanResult.is_safe
       ? "SAFE"
-      : severityLabel(scanResult.max_severity)
+      : severityLabel(activeScanResult.max_severity)
     : null;
 
   async function handleScan() {
     if (!content || !result) return;
+    setLoadedResultKey(resultKey);
+    setScanResult(null);
     setScanning(true);
+    setInstalling(false);
     onError(null);
     try {
       setScanResult(await scanHubSkill(content, title));
@@ -149,9 +151,9 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
   }
 
   async function handleInstall() {
-    if (!result || !scanResult || !content) return;
-    if (!scanResult.is_safe) {
-      const maxSeverity = severityLabel(scanResult.max_severity);
+    if (!result || !activeScanResult || !content) return;
+    if (!activeScanResult.is_safe) {
+      const maxSeverity = severityLabel(activeScanResult.max_severity);
       const confirmed = await confirm({
         title: `Install despite ${maxSeverity} findings?`,
         description: "Review the scan findings before installing this hub skill into your local skill library.",
@@ -161,6 +163,7 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
       if (!confirmed) return;
     }
 
+    setLoadedResultKey(resultKey);
     setInstalling(true);
     onError(null);
     try {
@@ -191,9 +194,9 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
           <>
             {scanStatusLabel && (
               <span
-                className={`inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs font-semibold ${SEVERITY_STYLES[severityKey(scanResult?.max_severity)]}`}
+                className={`inline-flex min-h-8 items-center gap-1.5 rounded-md px-2 text-xs font-semibold ${SEVERITY_STYLES[severityKey(activeScanResult?.max_severity)]}`}
               >
-                <SeverityIcon severity={severityKey(scanResult?.max_severity)} />
+                <SeverityIcon severity={severityKey(activeScanResult?.max_severity)} />
                 {scanStatusLabel}
               </span>
             )}
@@ -204,7 +207,7 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
               disabled={!canScan}
               onClick={() => void handleScan()}
             >
-              {scanning ? "Scanning..." : "Scan"}
+              {activeScanning ? "Scanning..." : "Scan"}
             </button>
             <button
               type="button"
@@ -214,7 +217,7 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
               title={installReason}
               onClick={() => void handleInstall()}
             >
-              {installing ? "Installing..." : "Install"}
+              {activeInstalling ? "Installing..." : "Install"}
             </button>
           </>
         }
@@ -245,7 +248,7 @@ export function SkillsHubDetail({ result, projectId, onInstalled, onError }: Ski
                 <span className="text-sm font-medium text-foreground">Safety scan</span>
                 <span className="text-xs text-muted-foreground">{installReason}</span>
               </div>
-              {!scanResult ? (
+              {!activeScanResult ? (
                 <p className="m-0 text-sm text-muted-foreground">
                   Scan the candidate content before installing from a hub.
                 </p>

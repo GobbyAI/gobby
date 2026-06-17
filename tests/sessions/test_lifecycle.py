@@ -41,12 +41,12 @@ class EmptyTokenEventStore:
 
 
 @pytest.fixture
-def mock_db():
+def mock_db() -> MagicMock:
     return MagicMock()
 
 
 @pytest.fixture
-def mock_config():
+def mock_config() -> MagicMock:
     config = MagicMock(spec=SessionLifecycleConfig)
     config.expire_check_interval_minutes = 1
     config.transcript_processing_interval_minutes = 1
@@ -57,7 +57,7 @@ def mock_config():
 
 
 @pytest.fixture
-def manager(mock_db, mock_config):
+def manager(mock_db: MagicMock, mock_config: MagicMock) -> SessionLifecycleManager:
     with patch(_SESSION_MANAGER_PATCH):
         return SessionLifecycleManager(mock_db, mock_config)
 
@@ -66,7 +66,7 @@ class TestSessionLifecycleManager:
     """Tests for SessionLifecycleManager."""
 
     @pytest.mark.asyncio
-    async def test_start_creates_background_tasks(self, manager):
+    async def test_start_creates_background_tasks(self, manager: SessionLifecycleManager) -> None:
         """Test that start() creates background tasks."""
         await manager.start()
 

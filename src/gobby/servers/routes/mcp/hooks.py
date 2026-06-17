@@ -21,7 +21,9 @@ from gobby.adapters.degradation import AdapterDegradationKind, record_adapter_de
 from gobby.hooks.envelope_dedupe import (
     ENVELOPE_ID_HEADER,
     claim_envelope_processing,
+    clear_stale_envelope_processing_marker,
     envelope_terminal_response,
+    is_envelope_processed,
     mark_envelope_processed,
 )
 from gobby.servers.tool_approvals import (
@@ -562,14 +564,25 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
                     return stored_response
-                logger.debug("Hook envelope %s is already being processed", envelope_id)
-                return JSONResponse(
-                    status_code=409,
-                    content={
-                        "status": "processing",
-                        "reason": "duplicate envelope already processing",
-                    },
-                )
+                if clear_stale_envelope_processing_marker(envelope_id) and claim_envelope_processing(
+                    envelope_id
+                ):
+                    logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
+                elif is_envelope_processed(envelope_id):
+                    logger.info("Replaying legacy processed hook envelope %s result", envelope_id)
+                    return {
+                        "status": "processed",
+                        "reason": "duplicate envelope already processed",
+                    }
+                else:
+                    logger.debug("Hook envelope %s is already being processed", envelope_id)
+                    return JSONResponse(
+                        status_code=409,
+                        content={
+                            "status": "processing",
+                            "reason": "duplicate envelope already processing",
+                        },
+                    )
 
             # Select adapter based on source
             from gobby.adapters.base import BaseAdapter

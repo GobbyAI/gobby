@@ -40,6 +40,15 @@ class TelegramAdapter(BaseChannelAdapter):
         self._pending_update_ids: list[int] = []
         self._acknowledged_update_ids: set[int] = set()
 
+    def _advance_acknowledged_offset(self) -> None:
+        while self._pending_update_ids:
+            update_id = self._pending_update_ids[0]
+            if update_id not in self._acknowledged_update_ids:
+                break
+            self._offset = max(self._offset, update_id + 1)
+            self._pending_update_ids.pop(0)
+            self._acknowledged_update_ids.discard(update_id)
+
     def _redact_bot_token(self, value: str) -> str:
         """Replace the resolved Telegram bot token in error strings."""
         if not self._bot_token:
@@ -300,12 +309,15 @@ class TelegramAdapter(BaseChannelAdapter):
         self._acknowledged_update_ids.clear()
 
         for update in updates:
-            msg_list = self.parse_webhook(update, {})
             update_id = update.get("update_id")
-            if msg_list and isinstance(update_id, int):
+            if isinstance(update_id, int):
                 self._pending_update_ids.append(update_id)
+            msg_list = self.parse_webhook(update, {})
+            if not msg_list and isinstance(update_id, int):
+                self._acknowledged_update_ids.add(update_id)
             messages.extend(msg_list)
 
+        self._advance_acknowledged_offset()
         return messages
 
     async def acknowledge_messages(self, messages: list[CommsMessage]) -> None:
@@ -315,13 +327,7 @@ class TelegramAdapter(BaseChannelAdapter):
             if isinstance(update_id, int):
                 self._acknowledged_update_ids.add(update_id)
 
-        while self._pending_update_ids:
-            update_id = self._pending_update_ids[0]
-            if update_id not in self._acknowledged_update_ids:
-                break
-            self._offset = max(self._offset, update_id + 1)
-            self._pending_update_ids.pop(0)
-            self._acknowledged_update_ids.discard(update_id)
+        self._advance_acknowledged_offset()
 
 
 # Register the adapter

@@ -61,6 +61,7 @@ export function MemoryDetailPanel({
   });
   const { draft, dirty, saving, serverChanged, save, discard, confirmIfDirty } = detailDraft;
   const [restoring, setRestoring] = useState(false);
+  const [restoreError, setRestoreError] = useState<string | null>(null);
 
   useEffect(() => {
     onConfirmLeaveChange(confirmIfDirty);
@@ -114,8 +115,14 @@ export function MemoryDetailPanel({
               disabled={restoring}
               onClick={() => {
                 setRestoring(true);
+                setRestoreError(null);
                 void Promise.resolve()
                   .then(() => onRestore(memory))
+                  .catch((error) => {
+                    setRestoreError(
+                      error instanceof Error ? error.message : "Failed to restore memory",
+                    );
+                  })
                   .finally(() => setRestoring(false));
               }}
             >
@@ -123,6 +130,16 @@ export function MemoryDetailPanel({
             </button>
           )}
         </div>
+      )}
+      {restoreError && (
+        <button
+          type="button"
+          className="border-b border-border bg-error-soft px-3 py-2 text-left text-sm text-error"
+          onClick={() => setRestoreError(null)}
+          aria-label={`Dismiss restore error: ${restoreError}`}
+        >
+          {restoreError}
+        </button>
       )}
       <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-3">
         <TextAreaField

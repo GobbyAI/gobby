@@ -50,7 +50,8 @@ class _TableConfig:
     aliases: tuple[str, ...] = ()
     postgres_columns: tuple[str, ...] = ()
     filters: Mapping[str, str] | None = None
-    # Unconditional SQL predicate (no parameters) appended to every search's WHERE.
+    # Static unconditional SQL predicate (no user input, no parameters) appended
+    # to every search's WHERE.
     # The shared ``filters`` mapping only expresses column equality, so an ``IS NULL``
     # visibility gate cannot be expressed there. Memory keyword search uses this to keep
     # soft-hidden rows (``deleted_at IS NOT NULL``) out of recall.

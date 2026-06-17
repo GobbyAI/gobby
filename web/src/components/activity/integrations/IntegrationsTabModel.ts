@@ -104,7 +104,9 @@ export function integrationPayloadFromDraft(draft: IntegrationDraft): Integratio
       secrets[field.key] = rawValue;
     } else if (field.type === "number") {
       const numeric = Number(rawValue);
-      if (!Number.isFinite(numeric)) continue;
+      if (!Number.isFinite(numeric)) {
+        throw new Error(`${field.label} must be a finite number`);
+      }
       config[field.key] = numeric;
     } else {
       config[field.key] = rawValue;

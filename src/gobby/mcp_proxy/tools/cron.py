@@ -19,7 +19,6 @@ from typing import TYPE_CHECKING, Any, Literal
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.scheduler.scheduler import CronRunRejected
-from gobby.storage.cron import is_removed_automation_job
 
 if TYPE_CHECKING:
     from gobby.scheduler.scheduler import CronScheduler
@@ -63,11 +62,11 @@ def create_cron_registry(
             enabled: Filter by enabled state (true/false)
         """
         try:
-            jobs = [
-                job
-                for job in cron_storage.list_jobs(project_id=project_id, enabled=enabled)
-                if not is_removed_automation_job(job)
-            ]
+            jobs = cron_storage.list_jobs(
+                project_id=project_id,
+                enabled=enabled,
+                exclude_removed_automation=True,
+            )
             return {
                 "success": True,
                 "jobs": [j.to_brief() for j in jobs],
@@ -313,6 +312,7 @@ def create_cron_registry(
                 "error": "Cron scheduler is not available",
             }
         except Exception as e:
+            # Tool calls must return structured errors to MCP clients instead of raising.
             logger.exception("Failed to run cron job", extra={"job_id": job_id})
             return {"success": False, "error_code": "cron_run_error", "error": str(e)}
 

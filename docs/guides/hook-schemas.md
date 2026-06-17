@@ -59,6 +59,14 @@ the older flat shape without `schema_version` is no longer accepted.
 `codex`, or `droid`. `hook_type` is the provider hook name that the selected
 adapter understands.
 
+## HTTP Response Semantics
+
+Gobby hook delivery is at-least-once. Clients should treat HTTP 409 with
+`reason: "duplicate envelope already processing"` as an in-flight duplicate for
+the same `X-Gobby-Envelope-Id`, not as a terminal failure. Retry with
+exponential backoff and the same envelope ID; the daemon replays a stored
+terminal response once the original delivery finishes.
+
 ## Native To Workflow Mapping
 
 ### Semantic Rule Events

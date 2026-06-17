@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import { TextField } from '../../activity/fields'
 import { BoundedSelectField } from '../fields'
 import { SettingsSection, type SettingsSectionFields } from './SettingsSection'
@@ -218,6 +220,7 @@ function asHubMap(value: unknown): Record<string, HubConfig> {
 function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
   const hubs = asHubMap(fields.getValue('skills.hubs'))
   const entries = Object.entries(hubs)
+  const [keyError, setKeyError] = useState<string | null>(null)
 
   function commit(next: Record<string, HubConfig>) {
     fields.setValue('skills.hubs', next)
@@ -228,11 +231,13 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
       nextKey !== '' &&
       entries.some((entry, i) => i !== index && entry[0] === nextKey)
     if (isDuplicate) {
+      setKeyError(`Hub key "${nextKey}" already exists`)
       console.warn(
         `SkillHubsField: ignored rename to duplicate hub "${nextKey}" to avoid overwriting an existing entry`,
       )
       return
     }
+    setKeyError(null)
     commit(
       Object.fromEntries(
         entries.map((entry, i) => (i === index ? [nextKey, entry[1]] : entry)),
@@ -249,10 +254,12 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
   }
 
   function removeEntry(index: number) {
+    setKeyError(null)
     commit(Object.fromEntries(entries.filter((_, i) => i !== index)))
   }
 
   function addEntry() {
+    setKeyError(null)
     commit({ ...hubs, '': { type: 'clawdhub' } })
   }
 
@@ -262,6 +269,11 @@ function SkillHubsField({ fields }: { fields: SettingsSectionFields }) {
       <p className="settings-field__hint">
         External hubs searched by the skills hub, keyed by hub name.
       </p>
+      {keyError && (
+        <p className="settings-field__hint text-error" role="alert">
+          {keyError}
+        </p>
+      )}
       {entries.length > 0 ? (
         <ul className="settings-hubs-field__items">
           {entries.map(([key, hub], index) => (

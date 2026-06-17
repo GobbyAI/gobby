@@ -63,6 +63,14 @@ def get_current_project_id() -> str | None:
     return None
 
 
+def _memory_allowed_in_current_project(memory: Any) -> bool:
+    memory_project_id = getattr(memory, "project_id", None)
+    current_project_id = get_current_project_id()
+    return memory_project_id is None or (
+        current_project_id is not None and memory_project_id == current_project_id
+    )
+
+
 def _speculative_memory_task_title(content: str) -> str | None:
     """Return a planning task title for narrow implementation-proposal memories."""
     normalized = " ".join(content.lower().split())
@@ -375,7 +383,7 @@ def create_memory_registry(
         name="restore_memory",
         description="Restore a soft-hidden (dream-flagged) memory back to active visibility.",
     )
-    def restore_memory(memory_id: str) -> dict[str, Any]:
+    async def restore_memory(memory_id: str) -> dict[str, Any]:
         """
         Restore a dream-flagged (soft-hidden) memory to active visibility.
 
@@ -386,10 +394,11 @@ def create_memory_registry(
             memory_id: The ID of the memory to restore
         """
         try:
-            memory_manager.restore_memory(memory_id)
+            memory = memory_manager.get_memory(memory_id, visibility="all")
+            if not _memory_allowed_in_current_project(memory):
+                return {"success": False, "error": f"Memory {memory_id} not found"}
+            await asyncio.to_thread(memory_manager.restore_memory, memory_id)
             return {"success": True}
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -414,6 +423,9 @@ def create_memory_registry(
                 "error": "Only promote-to-global is supported.",
             }
         try:
+            existing = memory_manager.get_memory(memory_id, visibility="all")
+            if not _memory_allowed_in_current_project(existing):
+                return {"success": False, "error": f"Memory {memory_id} not found"}
             memory = await memory_manager.rescope_memory(memory_id, None)
             return {
                 "success": True,
@@ -423,8 +435,6 @@ def create_memory_registry(
                     "updated_at": memory.updated_at,
                 },
             }
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -505,8 +515,6 @@ def create_memory_registry(
                 }
             else:
                 return {"success": False, "error": f"Memory {memory_id} not found"}
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -552,8 +560,6 @@ def create_memory_registry(
                 ],
                 "count": len(memories),
             }
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
@@ -587,8 +593,6 @@ def create_memory_registry(
                     "updated_at": memory.updated_at,
                 },
             }
-        except ValueError as e:
-            return {"success": False, "error": str(e)}
         except Exception as e:
             return {"success": False, "error": str(e)}
 

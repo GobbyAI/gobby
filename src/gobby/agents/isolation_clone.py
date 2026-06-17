@@ -20,6 +20,32 @@ from gobby.storage.tasks import TaskArtifactManager
 
 logger = logging.getLogger("gobby.agents.isolation")
 
+type _SpawnStateKey = tuple[
+    str,
+    str | None,
+    int | None,
+    str | None,
+    str | None,
+    str,
+    str,
+    str,
+    str,
+]
+
+
+def _spawn_state_key(config: SpawnConfig) -> _SpawnStateKey:
+    return (
+        config.project_id,
+        config.task_id,
+        config.task_seq_num,
+        config.branch_name,
+        config.branch_prefix,
+        config.base_branch,
+        config.project_path,
+        config.provider,
+        config.parent_session_id,
+    )
+
 
 def _capture_base_commit_sha(isolation_path: str) -> str:
     result = subprocess.run(  # nosec B603 B607 # fixed git argv on local isolation path.
@@ -62,9 +88,7 @@ class CloneIsolationHandler(IsolationHandler):
         self._clone_storage = clone_storage
         self._git_manager = git_manager
         # Track partial state for cleanup on failure
-        self._created_clone_path: str | None = None
-        self._created_clone_id: str | None = None
-        self._partial_clones: dict[int, dict[str, str | None]] = {}
+        self._partial_clones: dict[_SpawnStateKey, dict[str, str | None]] = {}
 
     async def prepare_environment(self, config: SpawnConfig) -> IsolationContext:
         """
@@ -76,11 +100,9 @@ class CloneIsolationHandler(IsolationHandler):
         - Return IsolationContext with clone info
         """
         # Reset partial state
-        state_key = id(config)
+        state_key = _spawn_state_key(config)
         partial_state: dict[str, str | None] = {"path": None, "id": None}
         self._partial_clones[state_key] = partial_state
-        self._created_clone_path = None
-        self._created_clone_id = None
 
         branch_name = generate_branch_name(config)
 
@@ -96,6 +118,7 @@ class CloneIsolationHandler(IsolationHandler):
                     provider=config.provider,
                 )
                 # Use existing clone
+                self._partial_clones.pop(state_key, None)
                 return IsolationContext(
                     cwd=existing.clone_path,
                     branch_name=existing.branch_name,
@@ -160,7 +183,6 @@ class CloneIsolationHandler(IsolationHandler):
             raise RuntimeError(f"Failed to create clone: {result.error}")
 
         # Track for cleanup — clone exists on disk now
-        self._created_clone_path = clone_path
         partial_state["path"] = clone_path
 
         # Record in storage
@@ -174,7 +196,6 @@ class CloneIsolationHandler(IsolationHandler):
         )
 
         # Track storage record for cleanup
-        self._created_clone_id = clone.id
         partial_state["id"] = clone.id
 
         base_commit_sha: str | None = None
@@ -196,8 +217,6 @@ class CloneIsolationHandler(IsolationHandler):
 
         # Success — clear partial state
         self._partial_clones.pop(state_key, None)
-        self._created_clone_path = None
-        self._created_clone_id = None
 
         return IsolationContext(
             cwd=clone.clone_path,
@@ -212,14 +231,12 @@ class CloneIsolationHandler(IsolationHandler):
 
     async def cleanup_environment(self, config: SpawnConfig) -> None:
         """Clean up partially created clone on prepare failure."""
-        partial_state = self._partial_clones.pop(id(config), None)
+        partial_state = self._partial_clones.pop(_spawn_state_key(config), None)
         if partial_state is None:
-            logger.warning(
+            logger.debug(
                 "Skipping clone cleanup for %s: no partial clone state recorded",
                 config.task_id or config.project_id,
             )
-            self._created_clone_path = None
-            self._created_clone_id = None
             return
         clone_path = partial_state.get("path")
         clone_id = partial_state.get("id")
@@ -242,8 +259,6 @@ class CloneIsolationHandler(IsolationHandler):
             except Exception as e:
                 logger.warning(f"Failed to clean up clone record {clone_id}: {e}")
 
-        self._created_clone_path = None
-        self._created_clone_id = None
 
     def build_context_prompt(self, original_prompt: str, ctx: IsolationContext) -> str:
         """

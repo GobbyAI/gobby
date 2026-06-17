@@ -1,6 +1,6 @@
 """Heartbeat result types and counters."""
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 
 @dataclass(frozen=True)
@@ -13,23 +13,11 @@ class HeartbeatResult:
 
 
 def skipped(result: HeartbeatResult) -> HeartbeatResult:
-    return HeartbeatResult(
-        result.scanned,
-        result.executed,
-        result.skipped + 1,
-        result.cap_reached,
-        result.reason,
-    )
+    return replace(result, skipped=result.skipped + 1)
 
 
 def cap_reached(result: HeartbeatResult) -> HeartbeatResult:
-    return HeartbeatResult(
-        scanned=result.scanned,
-        executed=result.executed,
-        skipped=result.skipped,
-        cap_reached=True,
-        reason=result.reason,
-    )
+    return replace(result, cap_reached=True)
 
 
 def action_cap_reached(result: HeartbeatResult, max_actions: int | None) -> bool:
@@ -37,4 +25,4 @@ def action_cap_reached(result: HeartbeatResult, max_actions: int | None) -> bool
 
 
 def unavailable(result: HeartbeatResult, reason: str) -> HeartbeatResult:
-    return HeartbeatResult(result.scanned, result.executed, result.skipped + 1, False, reason)
+    return replace(result, skipped=result.skipped + 1, cap_reached=False, reason=reason)

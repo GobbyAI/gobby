@@ -301,15 +301,16 @@ class CronScheduler:
         if not job:
             return None
 
-        running_count = self.storage.count_running()
-        if running_count >= self.config.max_concurrent_jobs:
+        run, running_count = self.storage.create_run_if_admitted(
+            job.id,
+            max_concurrent_jobs=self.config.max_concurrent_jobs,
+        )
+        if run is None and running_count >= self.config.max_concurrent_jobs:
             raise CronRunRejected(
                 "cron_max_concurrent_jobs",
                 "Cron scheduler is at max concurrency "
                 f"({running_count}/{self.config.max_concurrent_jobs})",
             )
-
-        run = self.storage.create_run(job.id)
         if run is None:
             return None
         logger.info(f"Manual trigger: cron job {job.id} ({job.name}), run {run.id}")

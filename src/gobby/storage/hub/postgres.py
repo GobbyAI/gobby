@@ -20,6 +20,7 @@ from gobby.storage.hub._ambient import ambient_transaction, enter_transaction
 from gobby.storage.hub.protocol import (
     AgentCapAdmission,
     ChatAttachmentMutation,
+    CronRunAdmission,
     Cursor,
     DispatchMutexRow,
     LockAcquisitionOrderError,
@@ -549,6 +550,8 @@ def _validate_identifier(identifier: str) -> None:
 
 
 def _advisory_lock_keys(lock: LockTarget) -> tuple[str, ...]:
+    if isinstance(lock, CronRunAdmission):
+        return ("cron_run_admission",)
     if isinstance(lock, AgentCapAdmission):
         return (f"agent_cap_admission:{lock.project_id or '*'}",)
     if isinstance(lock, DispatchMutexRow):

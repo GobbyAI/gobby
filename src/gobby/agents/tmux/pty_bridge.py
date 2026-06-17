@@ -83,17 +83,20 @@ class TmuxPTYBridge:
                 config = get_configured_tmux_config()
             cfg = config
 
-            master_fd, slave_fd = os.openpty()
-
-            # Set initial terminal size
-            fcntl.ioctl(
-                slave_fd,
-                termios.TIOCSWINSZ,
-                struct.pack("HHHH", rows, cols, 0, 0),
-            )
-
-            cmd = self._build_attach_cmd(session_name, cfg)
+            master_fd: int | None = None
+            slave_fd: int | None = None
+            proc: asyncio.subprocess.Process | None = None
             try:
+                master_fd, slave_fd = os.openpty()
+
+                # Set initial terminal size
+                fcntl.ioctl(
+                    slave_fd,
+                    termios.TIOCSWINSZ,
+                    struct.pack("HHHH", rows, cols, 0, 0),
+                )
+
+                cmd = self._build_attach_cmd(session_name, cfg)
                 proc = await asyncio.create_subprocess_exec(
                     *cmd,
                     stdin=slave_fd,
@@ -101,11 +104,34 @@ class TmuxPTYBridge:
                     stderr=slave_fd,
                 )
             except Exception:
-                os.close(master_fd)
-                os.close(slave_fd)
+                if master_fd is not None:
+                    try:
+                        os.close(master_fd)
+                    except OSError:
+                        pass
+                if slave_fd is not None:
+                    try:
+                        os.close(slave_fd)
+                    except OSError:
+                        pass
+                if proc is not None and proc.returncode is None:
+                    try:
+                        proc.terminate()
+                        await asyncio.wait_for(proc.wait(), timeout=2.0)
+                    except (TimeoutError, ProcessLookupError):
+                        try:
+                            proc.kill()
+                        except ProcessLookupError:
+                            pass
                 raise
 
-            os.close(slave_fd)
+            try:
+                os.close(slave_fd)
+            except OSError:
+                pass
+            slave_fd = None
+
+            assert master_fd is not None
 
             try:
                 bridge = BridgeInfo(

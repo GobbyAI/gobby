@@ -312,21 +312,6 @@ def init_orchestration(runner: GobbyRunner) -> None:
         else:
             logger.debug("Skipping memory dream cron registration; memory.dream config missing")
 
-        if runner.memory_manager is not None:
-            try:
-                from gobby.memory.dream.cron import reconcile_interrupted_dream_runs
-
-                interrupted_runs = reconcile_interrupted_dream_runs(runner.memory_manager)
-                if interrupted_runs:
-                    logger.info(
-                        "Reconciled %d orphaned memory dream run(s) to interrupted "
-                        "after restart: %s",
-                        len(interrupted_runs),
-                        ", ".join(interrupted_runs),
-                    )
-            except Exception as e:
-                logger.error(f"Failed to reconcile orphaned memory dream runs: {e}")
-
         runner.code_index_pruner = None
         if runner.code_indexer is not None:
             try:
@@ -355,6 +340,20 @@ def init_orchestration(runner: GobbyRunner) -> None:
         logger.debug("CronScheduler initialized")
     except Exception as e:
         logger.error(f"Failed to initialize CronScheduler: {e}")
+
+    if runner.memory_manager is not None:
+        try:
+            from gobby.memory.dream.cron import reconcile_interrupted_dream_runs
+
+            interrupted_runs = reconcile_interrupted_dream_runs(runner.memory_manager)
+            if interrupted_runs:
+                logger.info(
+                    "Reconciled %d orphaned memory dream run(s) to interrupted after restart: %s",
+                    len(interrupted_runs),
+                    ", ".join(interrupted_runs),
+                )
+        except Exception as e:
+            logger.error(f"Failed to reconcile orphaned memory dream runs: {e}")
 
     runner.communications_manager = None
     if hasattr(runner.config, "communications") and runner.config.communications.enabled:

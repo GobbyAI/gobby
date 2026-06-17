@@ -19,7 +19,7 @@ export interface DirtyGuardContextValue {
 export const noopDirtyGuard: DirtyGuardContextValue = {
   registerDirtyGuard: () => () => {},
   guardedRun: async (action) => {
-    await action();
+    return await action();
   },
 };
 
@@ -44,17 +44,24 @@ export function useDirtyGuardController(): DirtyGuardContextValue {
     const dirtyGuards = Array.from(guardsRef.current).filter((guard) =>
       guard.isDirty(),
     );
-    try {
-      if (dirtyGuards.length > 0) {
-        for (const guard of dirtyGuards) {
+
+    if (dirtyGuards.length > 0) {
+      for (const guard of dirtyGuards) {
+        try {
           if (!(await guard.confirmLeave())) {
             return;
           }
+        } catch (error) {
+          console.error("Dirty-guard confirmation failed", error);
+          throw error;
         }
       }
+    }
+
+    try {
       await action();
     } catch (error) {
-      console.error("Dirty-guard confirmation failed", error);
+      console.error("Dirty-guard action failed", error);
       throw error;
     }
   }, []);

@@ -650,9 +650,10 @@ class TestSpawnAgentPreRegistration:
 
             assert result["success"] is False
             # DB should mark the run as failed
-            mock_runner.run_storage.fail.assert_called_once()
-            assert mock_runner.run_storage.fail.call_count == 1
-            assert mock_runner.run_storage.fail.call_args is not None
+            mock_runner.run_storage.fail.assert_called_once_with(
+                ANY,
+                error="Terminal not found",
+            )
 
     @pytest.mark.asyncio
     async def test_spawn_exception_fails_run_and_cleans_child_session(

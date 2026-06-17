@@ -116,7 +116,8 @@ def _echo_install_details(
     if config_path:
         click.echo(f"Configuration: {config_path}")
 
-    for message in result.get("messages", []):
+    for raw_message in result.get("messages", []):
+        message: str = str(raw_message)
         click.echo(message)
 
 

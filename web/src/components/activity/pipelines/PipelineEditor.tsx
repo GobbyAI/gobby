@@ -261,6 +261,7 @@ export const PipelineEditor = forwardRef<PipelineEditorHandle, PipelineEditorPro
     setSteps(initSteps)
     setExpandedId(null)
     setDirty(false)
+    setSaveError(null)
   }
 
   const markDirty = useCallback(() => setDirty(true), [])

@@ -115,7 +115,10 @@ class StdioTransportConnection(BaseTransportConnection):
         errlog_handle = self._stdio_errlog_handle
         self._stdio_errlog_handle = None
         if errlog_handle is not None:
-            errlog_handle.close()
+            try:
+                errlog_handle.close()
+            except Exception as exc:
+                logger.warning("Error closing stdio errlog for %s: %s", self.config.name, exc)
 
     async def connect(self) -> Any:
         """Connect via stdio transport."""

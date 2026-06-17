@@ -1,6 +1,10 @@
 import json
 
+import pytest
+
 from gobby.sessions.transcripts.typed_json import TypedJsonTranscriptParser
+
+pytestmark = pytest.mark.unit
 
 
 def test_parse_session_json_skips_malformed_items_and_preserves_empty_tool_result() -> None:
@@ -60,4 +64,3 @@ def test_parse_line_inline_function_call_assigns_tool_use_id() -> None:
     assert message.tool_name == "lookup"
     assert message.tool_input == {"q": "x"}
     assert message.tool_use_id == "inline-1"
-    assert parser._last_tool_use_id == "inline-1"

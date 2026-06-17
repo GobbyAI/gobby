@@ -99,12 +99,16 @@ export const MemoryTab = memo(function MemoryTab({
     async function fetchPurgeConfig() {
       try {
         const response = await fetch("/api/config/values", { signal: controller.signal });
-        if (!response.ok) return;
+        if (!response.ok) {
+          setError(`Failed to load memory purge settings (${response.status})`);
+          return;
+        }
         const payload = await response.json();
         setPurgeGraceDays(extractDreamPurgeGraceDays(payload.values));
       } catch (configError) {
         if (configError instanceof DOMException && configError.name === "AbortError") return;
         console.warn("Failed to load memory dream purge config", configError);
+        setError("Failed to load memory purge settings");
       }
     }
     void fetchPurgeConfig();
@@ -183,7 +187,10 @@ export const MemoryTab = memo(function MemoryTab({
       setBusyId(memory.id);
       setError(null);
       try {
-        await restoreMemory(memory.id);
+        const restored = await restoreMemory(memory.id);
+        if (!restored) {
+          setError("Failed to restore memory");
+        }
       } catch (restoreError) {
         setError(restoreError instanceof Error ? restoreError.message : "Failed to restore memory");
       } finally {

@@ -179,21 +179,21 @@ export function RulesTab({ projectId: _projectId }: RulesTabProps) {
 
   const handleSelect = useCallback(
     (rule: RuleSummary) => {
-      guardedRun(() => setSelectedName(rule.name));
+      void guardedRun(() => setSelectedName(rule.name));
     },
     [guardedRun],
   );
 
   const handleStatusChange = useCallback(
     (value: RuleStatusSegment) => {
-      guardedRun(() => data.setStatusSegment(value));
+      void guardedRun(() => data.setStatusSegment(value));
     },
     [data, guardedRun],
   );
 
   const handleFiltersChange = useCallback(
     (filters: RulesFilters) => {
-      guardedRun(() => data.setFilters(filters));
+      void guardedRun(() => data.setFilters(filters));
     },
     [data, guardedRun],
   );

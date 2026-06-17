@@ -22,7 +22,7 @@ from gobby.storage.cron_children import (
     reconcile_interrupted_runs as reconcile_interrupted_cron_runs,
 )
 from gobby.storage.cron_models import CronJob, CronRun
-from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.hub.protocol import CronRunAdmission, HubDatabase
 from gobby.utils.id import generate_prefixed_id
 
 logger = logging.getLogger(__name__)
@@ -254,6 +254,7 @@ class CronJobStorage:
         project_id: str | None = None,
         enabled: bool | None = None,
         is_system: bool | None = None,
+        exclude_removed_automation: bool = False,
         limit: int = 50,
     ) -> list[CronJob]:
         """List cron jobs with optional filters."""
@@ -269,6 +270,11 @@ class CronJobStorage:
         if is_system is not None:
             conditions.append("is_system = %s")
             params.append(bool(is_system))
+        if exclude_removed_automation and REMOVED_AUTOMATION_JOB_NAMES:
+            removed_names = sorted(REMOVED_AUTOMATION_JOB_NAMES)
+            placeholders = ", ".join(["%s"] * len(removed_names))
+            conditions.append(f"name NOT IN ({placeholders})")
+            params.extend(removed_names)
 
         where_clause = " AND ".join(conditions) if conditions else "1=1"
         params.append(limit)
@@ -687,6 +693,67 @@ class CronJobStorage:
         if row is None:
             return None
         return self._hydrate_run(CronRun.from_row(row))
+
+    def create_run_if_admitted(
+        self,
+        cron_job_id: str,
+        *,
+        max_concurrent_jobs: int,
+    ) -> tuple[CronRun | None, int]:
+        """Create a cron run after atomically checking global active-run capacity."""
+        if max_concurrent_jobs < 1:
+            raise ValueError("max_concurrent_jobs must be positive")
+
+        run_id = generate_prefixed_id("cr", length=12)
+        now = datetime.now(UTC).isoformat()
+
+        candidate = CronRun(
+            id=run_id,
+            cron_job_id=cron_job_id,
+            triggered_at=now,
+            created_at=now,
+        )
+
+        with self.db.transaction_immediate(lock=CronRunAdmission()) as conn:
+            count_row = conn.execute(
+                "SELECT COUNT(*) as cnt FROM cron_runs WHERE status IN ('pending', 'running')"
+            ).fetchone()
+            active_count = int(count_row["cnt"]) if count_row else 0
+            if active_count >= max_concurrent_jobs:
+                return None, active_count
+
+            row = conn.execute(
+                """
+                INSERT INTO cron_runs (
+                    id, cron_job_id, triggered_at, started_at, completed_at,
+                    status, output, error, agent_run_id,
+                    pipeline_execution_id, created_at
+                )
+                SELECT %s, id, %s, %s, %s, %s, %s, %s, %s, %s, %s
+                  FROM cron_jobs
+                 WHERE id = %s
+                ON CONFLICT (cron_job_id) WHERE status IN ('pending', 'running')
+                DO NOTHING
+                RETURNING *
+                """,
+                (
+                    candidate.id,
+                    candidate.triggered_at,
+                    candidate.started_at,
+                    candidate.completed_at,
+                    candidate.status,
+                    candidate.output,
+                    candidate.error,
+                    candidate.agent_run_id,
+                    candidate.pipeline_execution_id,
+                    candidate.created_at,
+                    candidate.cron_job_id,
+                ),
+            ).fetchone()
+
+        if row is None:
+            return None, active_count
+        return self._hydrate_run(CronRun.from_row(row)), active_count
 
     def update_run(self, run_id: str, **fields: Any) -> CronRun | None:
         """Update a cron run's fields."""

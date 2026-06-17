@@ -518,7 +518,7 @@ class TestRestoreMemory:
     """Tests for restore_memory tool."""
 
     @pytest.mark.asyncio
-    async def test_restore_memory_success(self, memory_registry, mock_memory_manager):
+    async def test_restore_memory_success(self, memory_registry, mock_memory_manager) -> None:
         """Restoring an existing memory returns success and calls storage."""
         mock_memory_manager.restore_memory = MagicMock(return_value=True)
 
@@ -528,7 +528,7 @@ class TestRestoreMemory:
         mock_memory_manager.restore_memory.assert_called_once_with("mem-123")
 
     @pytest.mark.asyncio
-    async def test_restore_memory_not_found(self, memory_registry, mock_memory_manager):
+    async def test_restore_memory_not_found(self, memory_registry, mock_memory_manager) -> None:
         """A missing memory raises ValueError and is reported as an error."""
         mock_memory_manager.restore_memory = MagicMock(
             side_effect=ValueError("Memory nope not found")
@@ -540,7 +540,7 @@ class TestRestoreMemory:
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_restore_memory_error(self, memory_registry, mock_memory_manager):
+    async def test_restore_memory_error(self, memory_registry, mock_memory_manager) -> None:
         """Unexpected storage failures are surfaced as errors, not raised."""
         mock_memory_manager.restore_memory = MagicMock(side_effect=Exception("Restore error"))
 
@@ -558,7 +558,7 @@ class TestPromoteMemoryToGlobal:
         self,
         memory_registry,
         mock_memory_manager,
-    ):
+    ) -> None:
         promoted = MockMemory(id="mem-123", project_id=None)
         mock_memory_manager.rescope_memory.return_value = promoted
 
@@ -582,7 +582,7 @@ class TestPromoteMemoryToGlobal:
         self,
         memory_registry,
         mock_memory_manager,
-    ):
+    ) -> None:
         result = await memory_registry.call(
             "promote_memory_to_global",
             {"memory_id": "mem-123", "target_project_id": "proj-2"},

@@ -29,13 +29,24 @@ UPDATE memory_dream_runs
            'Interrupted: daemon restarted while the dream run was in progress'
        ),
        updated_at = NOW()
- WHERE status IN ('started', 'running');
+ WHERE status IN ('started', 'running')
+   AND created_at < NOW() - INTERVAL '1 minute';
 
-ALTER TABLE memory_dream_runs
-    ADD CONSTRAINT memory_dream_runs_status_check
-    CHECK (
-        status IN (
-            'started', 'running', 'completed', 'failed', 'reverted',
-            'revert_failed', 'interrupted'
-        )
-    );
+DO $$
+BEGIN
+    IF NOT EXISTS (
+        SELECT 1
+          FROM pg_constraint
+         WHERE conname = 'memory_dream_runs_status_check'
+           AND conrelid = 'memory_dream_runs'::regclass
+    ) THEN
+        ALTER TABLE memory_dream_runs
+            ADD CONSTRAINT memory_dream_runs_status_check
+            CHECK (
+                status IN (
+                    'started', 'running', 'completed', 'failed', 'reverted',
+                    'revert_failed', 'interrupted'
+                )
+            );
+    END IF;
+END $$;

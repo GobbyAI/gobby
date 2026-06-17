@@ -85,6 +85,26 @@ class MemoryPromoteRequest(BaseModel):
     )
 
 
+def _current_project_id(server: "HTTPServer") -> str | None:
+    from gobby.utils.project_context import get_project_context
+
+    try:
+        project_ctx = get_project_context()
+    except (LookupError, OSError):
+        logger.debug("Failed to load current project context", exc_info=True)
+        project_ctx = None
+    if project_ctx and project_ctx.get("id"):
+        return str(project_ctx["id"])
+    return cast(str | None, getattr(getattr(server, "services", None), "project_id", None))
+
+
+def _ensure_memory_in_current_project(server: "HTTPServer", memory_id: str) -> None:
+    memory = server.memory_manager.get_memory(memory_id, visibility="all")
+    current_project_id = _current_project_id(server)
+    if memory.project_id is not None and memory.project_id != current_project_id:
+        raise ValueError(f"Memory {memory_id} not found")
+
+
 # =============================================================================
 # Router
 # =============================================================================
@@ -570,11 +590,12 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         Returns the restored memory so callers can refresh from the response.
         """
         try:
+            _ensure_memory_in_current_project(server, memory_id)
             server.memory_manager.restore_memory(memory_id)
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to restore memory {memory_id}: {e}")
+            logger.error("Failed to restore memory %s", memory_id, exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
         memory = server.memory_manager.get_memory(memory_id)
@@ -592,15 +613,16 @@ def create_memory_router(server: "HTTPServer") -> APIRouter:
         if request_data.target_project_id is not None:
             raise HTTPException(
                 status_code=422,
-                detail="Only promote-to-global is supported.",
-            )
+            detail="Only promote-to-global is supported.",
+        )
         try:
+            _ensure_memory_in_current_project(server, memory_id)
             memory = await server.memory_manager.rescope_memory(memory_id, None)
             return memory.to_dict()
         except ValueError as e:
             raise HTTPException(status_code=404, detail=str(e)) from e
         except Exception as e:
-            logger.error(f"Failed to promote memory {memory_id}: {e}")
+            logger.error("Failed to promote memory %s", memory_id, exc_info=True)
             raise HTTPException(status_code=500, detail=str(e)) from e
 
     @router.delete("/{memory_id}")

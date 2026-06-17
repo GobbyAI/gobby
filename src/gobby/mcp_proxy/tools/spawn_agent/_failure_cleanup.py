@@ -60,7 +60,12 @@ async def start_run_or_cleanup(
             cleanup_isolation=cleanup_isolation,
             child_session_id=child_session_id,
         )
-        return {"success": False, "error": error, "run_id": run_id}
+        return {
+            "success": False,
+            "error": error,
+            "run_id": run_id,
+            "child_session_id": child_session_id,
+        }
 
     if not start_skipped:
         return None

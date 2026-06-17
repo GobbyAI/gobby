@@ -58,7 +58,8 @@ def is_inbox_envelope_fresh(
         return False
 
     reference = now or datetime.now(UTC)
-    return (reference - created_at).total_seconds() < grace_seconds
+    age_seconds = (reference - created_at).total_seconds()
+    return 0 <= age_seconds < grace_seconds
 
 
 def is_envelope_processed(envelope_id: str, *, processed_dir: Path | None = None) -> bool:
@@ -98,8 +99,15 @@ def clear_stale_envelope_processing_marker(
     stale_after_seconds: float = ENVELOPE_REPLAY_GRACE_SECONDS,
 ) -> bool:
     """Remove a stale processing marker so the envelope can be retried."""
+    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
     record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
-    if record is None or record.get("status") != "processing":
+    if record is None:
+        return _clear_stale_unreadable_marker(
+            marker,
+            now=now,
+            stale_after_seconds=stale_after_seconds,
+        )
+    if record.get("status") != "processing":
         return False
     if _is_active_processing_record(
         record,
@@ -108,7 +116,20 @@ def clear_stale_envelope_processing_marker(
     ):
         return False
 
-    marker = _processed_marker_path(envelope_id, processed_dir=processed_dir)
+    latest_record = read_envelope_marker(envelope_id, processed_dir=processed_dir)
+    if latest_record is None:
+        return _clear_stale_unreadable_marker(
+            marker,
+            now=now,
+            stale_after_seconds=stale_after_seconds,
+        )
+    if latest_record.get("status") != "processing" or _is_active_processing_record(
+        latest_record,
+        now=now,
+        stale_after_seconds=stale_after_seconds,
+    ):
+        return False
+
     try:
         marker.unlink()
     except FileNotFoundError:
@@ -157,6 +178,8 @@ def read_envelope_marker(
     try:
         data = json.loads(raw)
     except json.JSONDecodeError:
+        if raw.strip():
+            return {"envelope_id": envelope_id, "status": "processed"}
         return None
     return data if isinstance(data, dict) else None
 
@@ -245,7 +268,30 @@ def _is_active_processing_record(
         return False
 
     reference = now or datetime.now(UTC)
-    return (reference - claimed_at).total_seconds() < stale_after_seconds
+    age_seconds = (reference - claimed_at).total_seconds()
+    return 0 <= age_seconds < stale_after_seconds
+
+
+def _clear_stale_unreadable_marker(
+    marker: Path,
+    *,
+    now: datetime | None,
+    stale_after_seconds: float,
+) -> bool:
+    try:
+        stat = marker.stat()
+    except FileNotFoundError:
+        return False
+    reference = now or datetime.now(UTC)
+    modified_at = datetime.fromtimestamp(stat.st_mtime, UTC)
+    age_seconds = (reference - modified_at).total_seconds()
+    if age_seconds < stale_after_seconds:
+        return False
+    try:
+        marker.unlink()
+    except FileNotFoundError:
+        return False
+    return True
 
 
 def _processing_claimed_at(record: Mapping[str, Any]) -> datetime | None:

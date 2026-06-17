@@ -251,13 +251,20 @@ class MemoryDreamService:
             # if the executor cannot run during loop teardown, startup
             # reconciliation still recovers the row on next boot.
             completed_ts = datetime.now(UTC).isoformat()
-            await asyncio.to_thread(
-                self.store.update_run,
-                run_id,
-                status="interrupted",
-                completed_at=completed_ts,
-                error=INTERRUPTED_CANCELLED_ERROR,
-            )
+            try:
+                await asyncio.to_thread(
+                    self.store.update_run,
+                    run_id,
+                    status="interrupted",
+                    completed_at=completed_ts,
+                    error=INTERRUPTED_CANCELLED_ERROR,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to persist interrupted memory dream run %s",
+                    run_id,
+                    exc_info=True,
+                )
             raise
         except Exception as exc:  # noqa: BLE001 - failure must be persisted on the run
             completed_ts = datetime.now(UTC).isoformat()

@@ -40,7 +40,7 @@ def manager(db: HubDatabase) -> LocalWorkflowDefinitionManager:
     return LocalWorkflowDefinitionManager(db)
 
 
-def _sync_bundled(db):
+def _sync_bundled(db: HubDatabase) -> object:
     """Sync bundled rules and coerce source to 'installed' for test evaluation.
 
     sync_bundled_rules() imports templates with source='template', but the rule
@@ -575,29 +575,16 @@ class TestRequireRustSkillStructure:
 class TestRequireRustSkillCondition:
     """Test the require-rust-skill condition evaluates correctly."""
 
-    CONDITION = (
-        "not skill_loaded('rust') "
-        "and event.data.get('canonical_tool_kind') == 'write' "
-        "and ("
-        "event.data.get('canonical_file_path', '').endswith('.rs') "
-        "or event.data.get('canonical_file_path', '').rpartition('/')[2] in ("
-        "'Cargo.toml', "
-        "'Cargo.lock', "
-        "'rust-toolchain', "
-        "'rust-toolchain.toml', "
-        "'rustfmt.toml', "
-        "'.rustfmt.toml', "
-        "'clippy.toml', "
-        "'.clippy.toml'"
-        ") "
-        "or event.data.get('canonical_file_path', '') in ("
-        "'.cargo/config', '.cargo/config.toml'"
-        ") "
-        "or event.data.get('canonical_file_path', '').endswith(("
-        "'/.cargo/config', '/.cargo/config.toml'"
-        "))"
-        ")"
-    )
+    condition: str
+
+    @pytest.fixture(autouse=True)
+    def _load_condition(self, db: HubDatabase, manager: LocalWorkflowDefinitionManager) -> None:
+        _sync_bundled(db)
+        row = manager.get_by_name("require-rust-skill")
+        assert row is not None
+        body = RuleDefinitionBody.model_validate_json(row.definition_json)
+        assert body.when is not None
+        self.condition = body.when
 
     def _eval(
         self,
@@ -622,7 +609,7 @@ class TestRequireRustSkillCondition:
         }
         allowed_funcs = build_condition_helpers(context=context)
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
-        return evaluator.evaluate(self.CONDITION)
+        return evaluator.evaluate(self.condition)
 
     def test_matches_rust_write(self) -> None:
         assert self._eval("/project/src/main.rs") is True

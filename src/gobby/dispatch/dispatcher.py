@@ -7,6 +7,7 @@ import inspect
 import logging
 import uuid
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
 from typing import Any, ParamSpec, TypeVar, cast
 
 import psycopg
@@ -251,7 +252,7 @@ async def _run_heartbeat_unlocked(
                 action, current
             ):
                 write_set_guard.reserve(action.task_id)
-            result = HeartbeatResult(result.scanned, result.executed + 1, result.skipped)
+            result = replace(result, executed=result.executed + 1)
         except (TypeError, AttributeError, psycopg.Error):
             await run_db(mutex.release)
             raise
@@ -362,16 +363,17 @@ async def _execute_action_with_agent_cap(
         if count_active_agents(db, project_id=project_id) >= cap:
             mutex.release()
             return _AGENT_CAP_REACHED
-        try:
-            return await _execute_action(
-                action,
-                mutex=mutex,
-                db=db,
-                context=context,
-                services=services,
-            )
-        except DispatchSpawnFailed as exc:
-            spawn_failure = exc
+
+    try:
+        return await _execute_action(
+            action,
+            mutex=mutex,
+            db=db,
+            context=context,
+            services=services,
+        )
+    except DispatchSpawnFailed as exc:
+        spawn_failure = exc
 
     await _handle_spawn_failure(
         action,

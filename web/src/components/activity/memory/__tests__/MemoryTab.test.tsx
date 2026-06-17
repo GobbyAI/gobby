@@ -60,7 +60,12 @@ function jsonResponse(data: unknown, status = 200) {
   });
 }
 
-function setupFetch(initialMemories: MemoryRecord[]) {
+interface FetchFailureRoutes {
+  promote?: Set<string>;
+  restore?: Set<string>;
+}
+
+function setupFetch(initialMemories: MemoryRecord[], failures: FetchFailureRoutes = {}) {
   let memories = [...initialMemories];
   const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
@@ -102,6 +107,7 @@ function setupFetch(initialMemories: MemoryRecord[]) {
     }
     if (url.endsWith("/promote") && method === "POST") {
       const memoryId = url.split("/").slice(-2, -1)[0];
+      if (failures.promote?.has(memoryId)) return jsonResponse({ error: "not found" }, 404);
       const index = memories.findIndex((memory) => memory.id === memoryId);
       if (index === -1) return jsonResponse({ error: "not found" }, 404);
       memories = memories.map((memory, memoryIndex) =>
@@ -111,6 +117,7 @@ function setupFetch(initialMemories: MemoryRecord[]) {
     }
     if (url.includes("/restore") && method === "POST") {
       const memoryId = url.split("/").slice(-2, -1)[0];
+      if (failures.restore?.has(memoryId)) return jsonResponse({ error: "not found" }, 404);
       const index = memories.findIndex((memory) => memory.id === memoryId);
       if (index === -1) return jsonResponse({ error: "not found" }, 404);
       memories = memories.map((memory, memoryIndex) =>
@@ -258,6 +265,31 @@ describe("Memory activity tab", () => {
     expect(screen.getByText("Available across projects")).toBeInTheDocument();
   });
 
+  it("surfaces promote failures in the memory tab", async () => {
+    setupFetch(
+      [
+        makeMemory({
+          id: "mem-recent",
+          content: "Project-only checklist",
+          project_id: "project-1",
+        }),
+      ],
+      { promote: new Set(["mem-recent"]) },
+    );
+    const user = userEvent.setup();
+
+    render(<MemoryTab projectId="project-1" />);
+
+    expect(
+      await screen.findByRole("button", { name: "Select Project-only checklist" }),
+    ).toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Promote to global" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Dismiss error: Failed to promote memory" }),
+    ).toBeInTheDocument();
+  });
+
   it("filters by visibility, badges hidden rows, and restores them", async () => {
     const fetchMock = setupFetch([
       makeMemory({ id: "mem-recent", content: "Active fact", created_at: recentIso }),
@@ -300,5 +332,36 @@ describe("Memory activity tab", () => {
       );
       expect(restored).toBe(true);
     });
+  });
+
+  it("surfaces restore failures in the memory tab", async () => {
+    setupFetch(
+      [
+        makeMemory({
+          id: "mem-hidden",
+          content: "Restore failure fact",
+          created_at: recentIso,
+          deleted_at: recentIso,
+          dream_action: "review",
+        }),
+      ],
+      { restore: new Set(["mem-hidden"]) },
+    );
+    const user = userEvent.setup();
+    render(<MemoryTab projectId="project-1" />);
+
+    await user.click(await screen.findByRole("button", { name: "Filter memories" }));
+    await user.click(screen.getByRole("radio", { name: "Hidden" }));
+    expect(
+      await screen.findByRole("button", { name: "Select Restore failure fact" }),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Open actions for Restore failure fact" }));
+    const hiddenMenu = screen.getByRole("menu", { name: "Actions for Restore failure fact" });
+    await user.click(within(hiddenMenu).getByRole("menuitem", { name: "Restore" }));
+
+    expect(
+      await screen.findByRole("button", { name: "Dismiss error: Failed to restore memory" }),
+    ).toBeInTheDocument();
   });
 });

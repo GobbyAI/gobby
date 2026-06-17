@@ -183,6 +183,8 @@ class LocalMCPManager:
         """Persist a server row without applying bundled-server cleanup."""
         server_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
+        if requires_oauth is False:
+            oauth_provider = None
 
         self.db.execute(
             """
@@ -202,7 +204,11 @@ class LocalMCPManager:
                 enabled = excluded.enabled,
                 description = COALESCE(excluded.description, mcp_servers.description),
                 requires_oauth = COALESCE(excluded.requires_oauth, mcp_servers.requires_oauth),
-                oauth_provider = COALESCE(excluded.oauth_provider, mcp_servers.oauth_provider),
+                oauth_provider = CASE
+                    WHEN COALESCE(excluded.requires_oauth, mcp_servers.requires_oauth) = FALSE
+                    THEN NULL
+                    ELSE COALESCE(excluded.oauth_provider, mcp_servers.oauth_provider)
+                END,
                 connect_timeout = COALESCE(excluded.connect_timeout, mcp_servers.connect_timeout),
                 updated_at = excluded.updated_at
             """,
@@ -529,6 +535,9 @@ class LocalMCPManager:
                     headers=canonical_source.headers,
                     enabled=canonical_source.enabled,
                     description=canonical_source.description,
+                    requires_oauth=canonical_source.requires_oauth,
+                    oauth_provider=canonical_source.oauth_provider,
+                    connect_timeout=canonical_source.connect_timeout,
                 )
 
                 if tools_to_preserve and (
@@ -596,6 +605,8 @@ class LocalMCPManager:
             fields["enabled"] = bool(fields["enabled"])
         if "requires_oauth" in fields:
             fields["requires_oauth"] = bool(fields["requires_oauth"])
+            if fields["requires_oauth"] is False:
+                fields["oauth_provider"] = None
         if "connect_timeout" in fields and fields["connect_timeout"] is not None:
             fields["connect_timeout"] = float(fields["connect_timeout"])
 
@@ -884,6 +895,9 @@ class LocalMCPManager:
                     headers=config.get("headers"),
                     enabled=config.get("enabled", True),
                     description=config.get("description"),
+                    requires_oauth=config.get("requires_oauth"),
+                    oauth_provider=config.get("oauth_provider"),
+                    connect_timeout=config.get("connect_timeout"),
                     project_id=project_id,
                 )
                 imported += 1
@@ -902,6 +916,9 @@ class LocalMCPManager:
                     headers=config.get("headers"),
                     enabled=config.get("enabled", True),
                     description=config.get("description"),
+                    requires_oauth=config.get("requires_oauth"),
+                    oauth_provider=config.get("oauth_provider"),
+                    connect_timeout=config.get("connect_timeout"),
                     project_id=project_id,
                 )
                 imported += 1

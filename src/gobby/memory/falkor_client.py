@@ -729,10 +729,7 @@ class FalkorClient:
         filtered = [
             row
             for row in rows
-            if (
-                (row.get("project_id") == project_id or row.get("project_id") is None)
-                and row.get("score", 0.0) >= min_score
-            )
+            if row.get("project_id") == project_id or row.get("project_id") is None
         ]
         return filtered[:limit]
 

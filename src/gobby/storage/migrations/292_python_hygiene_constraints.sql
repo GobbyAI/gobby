@@ -25,6 +25,9 @@ END $$;
 ALTER TABLE task_validation_backoff
     DROP CONSTRAINT IF EXISTS task_validation_backoff_task_id_fkey;
 
+-- Add as NOT VALID first so this migration can install the forward constraint
+-- even if an older database contains orphaned retry rows. Migration 294 removes
+-- those orphan rows and validates this constraint.
 ALTER TABLE task_validation_backoff
     ADD CONSTRAINT task_validation_backoff_task_id_fkey
     FOREIGN KEY (task_id)

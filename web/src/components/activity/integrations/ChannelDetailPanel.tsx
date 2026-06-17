@@ -199,7 +199,8 @@ export function ChannelDetailPanel({
       setCopied(true);
       window.setTimeout(() => setCopied(false), 2000);
     } catch (error) {
-      console.error("Failed to copy webhook URL", error);
+      const message = error instanceof Error ? error.message : String(error);
+      console.error("Failed to copy webhook URL:", message);
     }
   };
 

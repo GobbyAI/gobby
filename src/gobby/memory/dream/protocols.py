@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Any, Literal, Protocol
 
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.memories import Memory
 
 
 class MemoryDreamManagerProtocol(Protocol):
@@ -47,7 +48,7 @@ class MemoryDreamManagerProtocol(Protocol):
         tags: list[str] | None = None,
     ) -> Any: ...
 
-    async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Any: ...
+    async def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory: ...
 
     async def sync_memory_scope_indices(
         self,

@@ -110,7 +110,7 @@ class TestCreateMemory:
     """Tests for the create_memory method."""
 
     @pytest.mark.asyncio
-    async def test_create_memory_basic(self, memory_manager):
+    async def test_create_memory_basic(self, memory_manager) -> None:
         """Test basic memory creation."""
         memory = await memory_manager.create_memory(
             content="Test fact",
@@ -122,7 +122,7 @@ class TestCreateMemory:
         assert memory.memory_type == "fact"
 
     @pytest.mark.asyncio
-    async def test_create_memory_restores_soft_hidden_duplicate(self, memory_manager):
+    async def test_create_memory_restores_soft_hidden_duplicate(self, memory_manager) -> None:
         """Re-creating content dream GC soft-hid reactivates the row via the
         lifecycle content-check path, not an invisible duplicate."""
         created = await memory_manager.create_memory(content="reactivate me via facade")
@@ -139,7 +139,7 @@ class TestCreateMemory:
         assert memory_manager.storage.get_memory(created.id).id == created.id
 
     @pytest.mark.asyncio
-    async def test_create_memory_with_all_params(self, db, memory_config):
+    async def test_create_memory_with_all_params(self, db, memory_config) -> None:
         """Test memory creation with all parameters."""
         db.execute(
             "INSERT INTO projects (id, name, repo_path) VALUES (%s, %s, %s)",

@@ -141,9 +141,39 @@ describe("draft field primitives (#17014)", () => {
     expect(onChange).toHaveBeenCalledWith({});
   });
 
-  it("rejects duplicate empty keys instead of overwriting an existing row", () => {
+  it("shows visible feedback when a non-empty key duplicates another row", () => {
     const onChange = vi.fn();
     const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+
+    try {
+      render(
+        <KeyValueField
+          label="Environment"
+          value={{ API_KEY: "old", TOKEN: "new" }}
+          onChange={onChange}
+          ariaLabel="Environment"
+        />,
+      );
+
+      const group = screen.getByRole("group", { name: "Environment" });
+      fireEvent.change(within(group).getByLabelText("Key 2"), {
+        target: { value: "API_KEY" },
+      });
+
+      expect(onChange).not.toHaveBeenCalled();
+      expect(screen.getByRole("alert")).toHaveTextContent(
+        'Key "API_KEY" already exists',
+      );
+      expect(warn).toHaveBeenCalledWith(
+        'KeyValueField: ignored rename to duplicate key "API_KEY" to avoid overwriting an existing entry',
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("allows empty draft keys to be edited without duplicate feedback", () => {
+    const onChange = vi.fn();
 
     render(
       <KeyValueField
@@ -159,10 +189,8 @@ describe("draft field primitives (#17014)", () => {
       target: { value: "" },
     });
 
-    expect(onChange).not.toHaveBeenCalled();
-    expect(warn).toHaveBeenCalledWith(
-      'KeyValueField: ignored rename to duplicate key "" to avoid overwriting an existing entry',
-    );
+    expect(onChange).toHaveBeenCalledWith({ "": "old" });
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
   });
 
   it("renders a numeric input that emits parsed numbers and null when cleared", () => {

@@ -12,6 +12,7 @@ Row = Mapping[str, Any]
 __all__ = [
     "Cursor",
     "ChatAttachmentMutation",
+    "CronRunAdmission",
     "DispatchMutexRow",
     "HubDatabase",
     "LockAcquisitionOrderError",
@@ -57,6 +58,13 @@ class AgentCapAdmission:
 
     PRIORITY: ClassVar[int] = 100
     project_id: str | None
+
+
+@dataclass(frozen=True)
+class CronRunAdmission:
+    """Serializes cron run admission against global active-run caps."""
+
+    PRIORITY: ClassVar[int] = 100
 
 
 @dataclass(frozen=True)

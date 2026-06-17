@@ -273,8 +273,8 @@ async def _promote(
     )
     db_mutated = False
     try:
-        await memory_manager.rescope_memory(memory_id, None)
         db_mutated = True
+        await memory_manager.rescope_memory(memory_id, None)
         await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
         after = await asyncio.to_thread(store.get_memory_row, memory_id)
         await asyncio.to_thread(store.complete_snapshot, snapshot_id, after_data=after)
@@ -282,7 +282,9 @@ async def _promote(
     except Exception:
         if db_mutated:
             try:
-                await _restore_promote_row(memory_manager, store, before)
+                current = await asyncio.to_thread(store.get_memory_row, memory_id)
+                if current is not None and current.get("project_id") != before.get("project_id"):
+                    await _restore_promote_row(memory_manager, store, before)
             except Exception as rollback_exc:
                 logger.warning(
                     "Memory dream promote rollback restore failed: %s",
@@ -302,7 +304,7 @@ async def _advance_cursor(
         return
     try:
         await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
-    except _EXPECTED_ACTION_ERRORS as exc:
+    except ValueError as exc:
         # Row vanished (e.g. concurrent delete); it drops out of the sweep naturally.
         logger.debug("Memory dream cursor advance skipped memory_id=%s: %s", memory_id, exc)
 
@@ -546,7 +548,13 @@ async def _restore_promote_row(
 ) -> None:
     await asyncio.to_thread(store.restore_memory_row, row)
     memory_id = str(row["id"])
-    await memory_manager.sync_memory_scope_indices(memory_id, row.get("project_id"))
+    failures = await memory_manager.sync_memory_scope_indices(memory_id, row.get("project_id"))
+    if failures:
+        logger.warning(
+            "Memory dream promote rollback secondary sync failed for %s: %s",
+            memory_id,
+            failures,
+        )
 
 
 def _now() -> str:

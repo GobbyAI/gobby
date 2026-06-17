@@ -135,7 +135,10 @@ describe('useMemory', () => {
     const { result } = renderHook(() => useMemory())
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
-    expect(mockFetch.fn).toHaveBeenCalledWith(expect.stringContaining('visibility=active'))
+    const urls = mockFetch.fn.mock.calls.map(([url]) => String(url))
+    expect(urls).toEqual(expect.arrayContaining([
+      expect.stringContaining('visibility=active'),
+    ]))
   })
 
   it('restoreMemory posts to the restore endpoint and re-fetches', async () => {
@@ -175,6 +178,12 @@ describe('useMemory', () => {
     await waitFor(() => expect(result.current.searchResults).toBeTruthy())
 
     expect(result.current.searchResults).toHaveLength(1)
+    expect(
+      mockFetch.fn.mock.calls.some(([url]) =>
+        String(url).includes('/api/memories/search?') &&
+        String(url).includes('visibility=active'),
+      ),
+    ).toBe(true)
   })
 
   it('searchMemories clears results for empty query', async () => {
@@ -232,6 +241,12 @@ describe('useMemory', () => {
 
     expect(kg?.entities).toHaveLength(1)
     expect(kg?.entities[0].name).toBe('React')
+    expect(
+      mockFetch.fn.mock.calls.some(([url]) =>
+        String(url).includes('/api/memories/graph/entities?') &&
+        String(url).includes('visibility=active'),
+      ),
+    ).toBe(true)
   })
 
   it('fetchEntityNeighbors returns neighbors', async () => {

@@ -14,9 +14,9 @@ Multi-strategy context gathering:
 import logging
 import re
 import subprocess  # nosec B404 # subprocess needed for validation commands
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 from gobby.ai.text_generation import is_feature_generation_infrastructure_error
 from gobby.config.tasks import TaskValidationConfig
@@ -609,6 +609,35 @@ class ValidationResult:
 
     status: Literal["valid", "invalid", "pending", "error"]
     feedback: str | None = None
+    blocking_reasons: list[str] = field(default_factory=list)
+
+
+def _coerce_blocking_reasons(value: Any) -> list[str]:
+    if isinstance(value, list):
+        return [reason for item in value if (reason := str(item).strip())]
+    if isinstance(value, str) and value.strip():
+        return [value.strip()]
+    return []
+
+
+def _validation_result_from_data(result_data: dict[str, Any]) -> ValidationResult:
+    status = str(result_data.get("status", "pending")).strip().lower()
+    if status not in {"valid", "invalid", "pending"}:
+        status = "pending"
+    reasons = _coerce_blocking_reasons(result_data.get("blocking_reasons"))
+    feedback = result_data.get("feedback")
+    if not isinstance(feedback, str):
+        feedback = None
+    if status == "valid":
+        reasons = []
+    elif not reasons:
+        status = "pending"
+        reasons = ["Validation response did not name unmet criteria or failing gates"]
+    return ValidationResult(
+        status=cast(Literal["valid", "invalid", "pending", "error"], status),
+        feedback=feedback,
+        blocking_reasons=reasons,
+    )
 
 
 def _is_unsupported_reject(result_data: dict[str, Any]) -> bool:
@@ -840,10 +869,19 @@ class TaskValidator:
                 )
                 if reroll:
                     result_data = reroll
+                else:
+                    return ValidationResult(
+                        status="pending",
+                        feedback=(
+                            "Validation inconclusive: unsupported invalid verdict named no "
+                            "blocking reasons and reroll returned no payload"
+                        ),
+                        blocking_reasons=[
+                            "Validation response did not name unmet criteria or failing gates"
+                        ],
+                    )
 
-            return ValidationResult(
-                status=result_data.get("status", "pending"), feedback=result_data.get("feedback")
-            )
+            return _validation_result_from_data(result_data)
 
         except Exception as e:
             if is_feature_generation_infrastructure_error(e):

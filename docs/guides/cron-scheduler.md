@@ -17,6 +17,14 @@ auditable without pretending to be part of a user's active conversation.
 
 ## Quick Start
 
+Cron execution is daemon-backed. Start or verify the daemon before commands that
+run jobs immediately or inspect live run state:
+
+```bash
+uv run gobby status
+uv run gobby start --verbose
+```
+
 List jobs:
 
 ```bash

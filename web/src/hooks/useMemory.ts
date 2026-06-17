@@ -7,15 +7,39 @@ function normalizeTags(tags: unknown): string[] | null {
 }
 
 function normalizeImportance(value: unknown): number {
-  return typeof value === 'number' ? value : 0.5
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0.5
+}
+
+function normalizeCount(value: unknown): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : 0
+}
+
+function normalizeString(value: unknown): string {
+  return typeof value === 'string' ? value : ''
+}
+
+function normalizeNullableString(value: unknown): string | null {
+  return typeof value === 'string' ? value : null
 }
 
 function normalizeMemory(record: Record<string, unknown>): GobbyMemory {
   return {
-    ...record,
+    id: normalizeString(record.id),
+    memory_type: normalizeString(record.memory_type),
+    content: normalizeString(record.content),
+    created_at: normalizeString(record.created_at),
+    updated_at: normalizeString(record.updated_at),
+    project_id: normalizeNullableString(record.project_id),
+    source_type: normalizeNullableString(record.source_type),
+    source_session_id: normalizeNullableString(record.source_session_id),
     importance: normalizeImportance(record.importance),
+    access_count: normalizeCount(record.access_count),
+    last_accessed_at: normalizeNullableString(record.last_accessed_at),
     tags: normalizeTags(record.tags),
-  } as GobbyMemory
+    deleted_at: normalizeNullableString(record.deleted_at),
+    dream_action: normalizeNullableString(record.dream_action),
+    last_dreamed_at: normalizeNullableString(record.last_dreamed_at),
+  }
 }
 
 export interface MemoryCrossRef {
@@ -293,18 +317,23 @@ export function useMemory(projectId?: string | null) {
           const baseUrl = getBaseUrl()
           const params = new URLSearchParams({ q: query })
           if (filters.projectId) params.set('project_id', filters.projectId)
+          params.set('visibility', filters.visibility)
 
           const response = await fetch(`${baseUrl}/api/memories/search?${params}`)
           if (response.ok) {
             const data = await response.json()
-            setSearchResults(data.results || [])
+            setSearchResults(
+              (data.results || []).map((m: Record<string, unknown>) =>
+                normalizeMemory(m),
+              ),
+            )
           }
         } catch (e) {
           console.error('Failed to search memories:', e)
         }
       }, DEBOUNCE_MS)
     },
-    [filters.projectId]
+    [filters.projectId, filters.visibility]
   )
 
   // Fetch stats
@@ -347,6 +376,7 @@ export function useMemory(projectId?: string | null) {
       const baseUrl = getBaseUrl()
       const params = new URLSearchParams({ limit: String(limit) })
       if (filters.projectId) params.set('project_id', filters.projectId)
+      params.set('visibility', filters.visibility)
       const response = await fetch(`${baseUrl}/api/memories/graph/entities?${params}`)
       if (response.ok) {
         return await response.json()
@@ -355,13 +385,14 @@ export function useMemory(projectId?: string | null) {
       console.error('Failed to fetch knowledge graph:', e)
     }
     return null
-  }, [filters.projectId])
+  }, [filters.projectId, filters.visibility])
 
   const fetchEntityNeighbors = useCallback(async (entityKey: string): Promise<KnowledgeGraphData | null> => {
     try {
       const baseUrl = getBaseUrl()
       const params = new URLSearchParams()
       if (filters.projectId) params.set('project_id', filters.projectId)
+      params.set('visibility', filters.visibility)
       const response = await fetch(
         `${baseUrl}/api/memories/graph/entities/${encodeURIComponent(entityKey)}/neighbors?${params}`
       )
@@ -372,13 +403,14 @@ export function useMemory(projectId?: string | null) {
       console.error('Failed to fetch entity neighbors:', e)
     }
     return null
-  }, [filters.projectId])
+  }, [filters.projectId, filters.visibility])
 
   const fetchGraphData = useCallback(async (memoryLimit?: number): Promise<MemoryGraphData | null> => {
     try {
       const baseUrl = getBaseUrl()
       const params = new URLSearchParams()
       if (filters.projectId) params.set('project_id', filters.projectId)
+      params.set('visibility', filters.visibility)
       if (memoryLimit !== undefined) params.set('memory_limit', String(memoryLimit))
 
       const response = await fetch(`${baseUrl}/api/memories/graph?${params}`)
@@ -395,7 +427,7 @@ export function useMemory(projectId?: string | null) {
       console.error('Failed to fetch graph data:', e)
     }
     return null
-  }, [filters.projectId])
+  }, [filters.projectId, filters.visibility])
 
   return {
     memories,

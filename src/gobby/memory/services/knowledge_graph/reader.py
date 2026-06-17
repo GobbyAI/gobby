@@ -526,7 +526,11 @@ class KnowledgeGraphReader:
             # than blank the entire visualization on a non-visibility fault.
             return graph
         all_memory_ids = sorted({mid for ids in backing.values() for mid in ids})
-        active_ids = await self._active_memory_filter(all_memory_ids, project_id)
+        try:
+            active_ids = await self._active_memory_filter(all_memory_ids, project_id)
+        except Exception:
+            logger.warning("Active memory filter failed for entity graph", exc_info=True)
+            return graph
 
         visible_keys = {
             key

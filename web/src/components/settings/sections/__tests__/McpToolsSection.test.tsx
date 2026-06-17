@@ -170,6 +170,38 @@ describe('McpToolsSection', () => {
     expect(screen.getByLabelText('clawd hub auth key name')).toHaveValue('')
   })
 
+  it('shows visible feedback for duplicate skill hub keys', () => {
+    const ctx = makeContext({
+      configValues: {
+        ...makeConfigValues(),
+        skills: {
+          ...(makeConfigValues().skills as Record<string, unknown>),
+          hubs: {
+            clawd: { type: 'clawdhub' },
+            local: { type: 'skillsmp' },
+          },
+        },
+      },
+    })
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => undefined)
+
+    try {
+      renderSection(ctx)
+      fireEvent.change(screen.getByLabelText('Skill hub key 2'), {
+        target: { value: 'clawd' },
+      })
+
+      expect(screen.getByRole('alert')).toHaveTextContent(
+        'Hub key "clawd" already exists',
+      )
+      expect(warn).toHaveBeenCalledWith(
+        'SkillHubsField: ignored rename to duplicate hub "clawd" to avoid overwriting an existing entry',
+      )
+    } finally {
+      warn.mockRestore()
+    }
+  })
+
   it('persists an edited draft row through the section Save', async () => {
     const ctx = makeContext()
     renderSection(ctx)

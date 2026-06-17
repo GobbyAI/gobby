@@ -14,17 +14,19 @@ function ActivityPanelSearchImpl({
   ariaLabel,
 }: ActivityPanelSearchProps) {
   const inputLabel = ariaLabel ?? placeholder;
+  const inputName =
+    inputLabel
+      .trim()
+      .toLowerCase()
+      .replace(/[^a-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "") || "activity-panel-search";
 
   return (
     <input
       type="search"
       className="activity-panel-search pointer-coarse:min-h-11"
       value={value}
-      name={inputLabel
-        .trim()
-        .toLowerCase()
-        .replace(/[^a-z0-9_-]+/g, "-")
-        .replace(/^-+|-+$/g, "")}
+      name={inputName}
       onChange={(event: ChangeEvent<HTMLInputElement>) =>
         onChange(event.target.value)
       }

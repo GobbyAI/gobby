@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from copy import deepcopy
 from typing import Any, Protocol, cast
 
 from gobby.mcp_proxy.bundled import normalize_bundled_server_config
@@ -238,7 +237,7 @@ async def update_server(
 
     The existing enabled state is preserved; use set_server_enabled to change it.
     """
-    config = deepcopy(normalize_bundled_server_config(config))
+    config = normalize_bundled_server_config(config)
     if name not in manager._configs:
         raise ValueError(f"MCP server '{name}' not found")
     if config.name != name:

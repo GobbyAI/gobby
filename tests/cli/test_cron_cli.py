@@ -134,19 +134,22 @@ class TestCronList:
         mock_storage.list_jobs.return_value = []
         result = runner.invoke(cli, ["cron", "list", "--enabled"])
         assert result.exit_code == 0
-        mock_storage.list_jobs.assert_called_once_with(project_id=None, enabled=True)
+        mock_storage.list_jobs.assert_called_once_with(
+            project_id=None,
+            enabled=True,
+            exclude_removed_automation=True,
+        )
 
     def test_list_filters_removed_automation_rows(self, runner, mock_storage) -> None:
-        mock_storage.list_jobs.return_value = [
-            _make_job(name="User Job"),
-            _make_job(id="cj-system", name="gobby:dispatcher"),
-            _make_job(id="cj-heartbeat", name="gobby:pipeline-heartbeat"),
-        ]
+        mock_storage.list_jobs.return_value = [_make_job(name="User Job")]
         result = runner.invoke(cli, ["cron", "list"])
         assert result.exit_code == 0
         assert "User Job" in result.output
-        assert "gobby:dispatcher" not in result.output
-        assert "gobby:pipeline-heartbeat" not in result.output
+        mock_storage.list_jobs.assert_called_once_with(
+            project_id=None,
+            enabled=None,
+            exclude_removed_automation=True,
+        )
 
 
 class TestCronAdd:

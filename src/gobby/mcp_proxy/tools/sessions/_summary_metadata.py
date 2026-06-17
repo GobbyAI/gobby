@@ -68,7 +68,7 @@ async def compact_summary_metadata_matches(
             handoff_ctx=handoff_ctx,
             db=db,
             session_manager=session_manager,
-            project_path=str(cwd),
+            project_path=str(cwd) if cwd is not None else None,
         )
         prompt_template = _load_summary_prompt_template(
             path="handoff/session_end",

@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 _DIFF_HEADER_RE = re.compile(r"^diff --git a/(.*?) b/(.*?)$", re.MULTILINE)
+_BINARY_FILES_RE = re.compile(r"^Binary files (?P<left>\S+) and (?P<right>\S+) differ$", re.MULTILINE)
 _HUNK_HEADER_RE = re.compile(r"^@@ .* @@")
 
 _DOC_EXTENSIONS = {".md", ".mdx", ".rst", ".txt", ".adoc"}
@@ -73,6 +74,7 @@ class ValidationEvidence:
     text: str
     manifest: tuple[ChangedFileEvidence, ...]
     omissions: tuple[EvidenceOmission, ...]
+    agent_summary_included: bool = False
 
 
 def build_diff_validation_evidence(
@@ -92,25 +94,35 @@ def build_diff_validation_evidence(
 
     files = tuple(_parse_diff_files(diff))
     if not files:
-        text = _append_agent_summary(
+        text, agent_summary_included = _append_agent_summary(
             f"Raw Change Evidence:\n{_shorten_text(diff, max_chars, label='raw change evidence')}",
             agent_summary,
             max_chars=max_chars,
             max_summary_chars=agent_summary_max_chars,
         )
-        return ValidationEvidence(text=text, manifest=(), omissions=())
+        return ValidationEvidence(
+            text=_fit_evidence_text(text, max_chars),
+            manifest=(),
+            omissions=(),
+            agent_summary_included=agent_summary_included,
+        )
 
     ordered_files = tuple(sorted(files, key=lambda file: _priority_key(file.path, priority_files)))
     header = _render_manifest(ordered_files)
     full_diff_text = f"{header}\nFull Raw Diff:\n{diff.rstrip()}\n"
-    full_text = _append_agent_summary(
+    full_text, agent_summary_included = _append_agent_summary(
         full_diff_text,
         agent_summary,
         max_chars=max_chars,
         max_summary_chars=agent_summary_max_chars,
     )
     if len(full_text) <= max_chars:
-        return ValidationEvidence(text=full_text, manifest=ordered_files, omissions=())
+        return ValidationEvidence(
+            text=full_text,
+            manifest=ordered_files,
+            omissions=(),
+            agent_summary_included=agent_summary_included,
+        )
 
     text, omissions = _render_excerpted_diff(
         header,
@@ -118,13 +130,19 @@ def build_diff_validation_evidence(
         max_chars=max_chars,
         max_hunk_lines=max_hunk_lines,
     )
-    text = _append_agent_summary(
+    text, agent_summary_included = _append_agent_summary(
         text,
         agent_summary,
         max_chars=max_chars,
         max_summary_chars=agent_summary_max_chars,
     )
-    return ValidationEvidence(text=text, manifest=ordered_files, omissions=tuple(omissions))
+    text = _fit_evidence_text(text, max_chars)
+    return ValidationEvidence(
+        text=text,
+        manifest=ordered_files,
+        omissions=tuple(omissions),
+        agent_summary_included=agent_summary_included,
+    )
 
 
 def build_summary_validation_evidence(summary: str, *, max_chars: int) -> str:
@@ -146,9 +164,9 @@ def categorize_changed_path(path: str) -> str:
 
     if "tests" in parts or "test" in parts or name.startswith("test_"):
         return "test"
-    if name.endswith("_test.py") or name.endswith(".test.ts") or name.endswith(".test.tsx"):
+    if name.endswith(("_test.py", ".test.js", ".test.jsx", ".test.ts", ".test.tsx")):
         return "test"
-    if name.endswith(".spec.ts") or name.endswith(".spec.tsx"):
+    if name.endswith((".spec.js", ".spec.jsx", ".spec.ts", ".spec.tsx")):
         return "test"
     if "docs" in parts or suffix in _DOC_EXTENSIONS:
         return "docs"
@@ -179,11 +197,32 @@ def _parse_diff_files(diff: str) -> list[ChangedFileEvidence]:
                 diff=file_diff,
             )
         )
+    known_paths = {file.path for file in files}
+    for match in _BINARY_FILES_RE.finditer(diff):
+        path = _normalize_binary_diff_path(match.group("left"), match.group("right"))
+        if path in known_paths:
+            continue
+        files.append(
+            ChangedFileEvidence(
+                path=path,
+                additions=0,
+                deletions=0,
+                category=categorize_changed_path(path),
+                diff=match.group(0),
+            )
+        )
+        known_paths.add(path)
     return files
 
 
 def _normalize_diff_path(path: str) -> str:
     return path.strip().strip('"')
+
+
+def _normalize_binary_diff_path(left: str, right: str) -> str:
+    candidate = right if right != "/dev/null" else left
+    candidate = candidate.removeprefix("b/").removeprefix("a/")
+    return _normalize_diff_path(candidate)
 
 
 def _count_file_stats(file_diff: str) -> tuple[int, int]:
@@ -325,15 +364,15 @@ def _append_agent_summary(
     *,
     max_chars: int,
     max_summary_chars: int,
-) -> str:
+) -> tuple[str, bool]:
     if not summary:
-        return text
+        return text, False
     summary = summary.strip()
     if not summary:
-        return text
+        return text, False
     block = f"\nAgent Changes Summary (supplemental):\n{summary}\n"
     if len(text) + len(block) <= max_chars and len(summary) <= max_summary_chars:
-        return text + block
+        return text + block, True
 
     notice = (
         "\nAgent Changes Summary (supplemental): omitted due to length "
@@ -341,22 +380,40 @@ def _append_agent_summary(
     )
     available = max_chars - len(text) - len(notice)
     if available < 240:
-        return text + notice
+        if len(notice) >= max_chars:
+            return _shorten_text(notice, max_chars, label="agent changes summary notice"), False
+        return (
+            _shorten_text(
+                text,
+                max_chars - len(notice),
+                label="validation evidence",
+            )
+            + notice,
+            False,
+        )
 
     excerpt = _shorten_text(
         summary,
         min(available, max_summary_chars),
         label="agent changes summary",
     )
-    return f"{text}\nAgent Changes Summary (supplemental):\n{excerpt}\n"
+    return f"{text}\nAgent Changes Summary (supplemental):\n{excerpt}\n", True
 
 
 def _shorten_text(text: str, max_chars: int, *, label: str) -> str:
+    if max_chars <= 0:
+        return ""
     if len(text) <= max_chars:
         return text
     marker = f"\n... [{label} shortened due to length; omitted {len(text) - max_chars} chars] ...\n"
+    if len(marker) >= max_chars:
+        return marker[:max_chars]
     keep_chars = max(0, max_chars - len(marker))
     return text[:keep_chars].rstrip() + marker
+
+
+def _fit_evidence_text(text: str, max_chars: int) -> str:
+    return _shorten_text(text, max_chars, label="validation evidence")
 
 
 def _strip_and_shorten(text: str, *, max_chars: int, label: str) -> str:

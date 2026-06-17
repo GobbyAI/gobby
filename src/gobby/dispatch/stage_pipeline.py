@@ -66,7 +66,7 @@ async def start_pipeline_action(
 
     try:
         pipeline = await loader.load_pipeline(action.pipeline_name)
-    except ValueError as exc:
+    except Exception as exc:
         return escalate_pipeline_dispatch(action, mutex, db, f"pipeline_invalid:{exc}")
     if pipeline is None:
         return escalate_pipeline_dispatch(
@@ -83,7 +83,7 @@ async def start_pipeline_action(
 
     try:
         inputs = render_dispatch_inputs(action, context, services)
-    except ValueError as exc:
+    except Exception as exc:
         return escalate_pipeline_dispatch(action, mutex, db, f"pipeline_render_failed:{exc}")
 
     try:
@@ -136,8 +136,10 @@ def escalate_pipeline_dispatch(
     *,
     escalate_task: EscalateTask,
 ) -> dict[str, object]:
-    escalate_task(db=db, task_id=action.task_id, reason=f"stage_pipeline_dispatch:{reason}")
-    mutex.release()
+    try:
+        escalate_task(db=db, task_id=action.task_id, reason=f"stage_pipeline_dispatch:{reason}")
+    finally:
+        mutex.release()
     return {"success": False, "error": reason}
 
 
@@ -260,7 +262,7 @@ def create_stage_pipeline_execution(
             {"name": action.pipeline_name, "error": "serialization failed"}
         )
     with db.transaction_immediate() as conn:
-        conn.execute(
+        cursor = conn.execute(
             """
             INSERT INTO pipeline_executions (
                 id, pipeline_name, project_id, status, inputs_json, session_id,
@@ -279,6 +281,8 @@ def create_stage_pipeline_execution(
                 action.task_id,
             ),
         )
+        if cursor.rowcount < 1:
+            raise RuntimeError(f"task missing before attaching {execution_id}")
         cursor = conn.execute(
             """
             UPDATE task_dispatch_mutex

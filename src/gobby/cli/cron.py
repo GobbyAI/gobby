@@ -7,11 +7,12 @@ from datetime import datetime
 from typing import Any, Literal, NamedTuple, cast
 
 import click
+import httpx
 from croniter import croniter
 
 from gobby.cli.utils import resolve_project_ref
 from gobby.config.app import DaemonConfig
-from gobby.storage.cron import CronJobStorage, is_removed_automation_job
+from gobby.storage.cron import CronJobStorage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.utils.daemon_client import DaemonClient
@@ -27,7 +28,8 @@ def _get_daemon_client(ctx: click.Context) -> DaemonClient:
     config = (ctx.obj or {}).get("config") if isinstance(ctx.obj, dict) else None
     if not isinstance(config, DaemonConfig):
         raise click.ClickException(
-            "Configuration not initialized. Ensure the CLI is invoked through the main entry point."
+            "Daemon configuration is unavailable. Run this command through the main "
+            "gobby CLI after the daemon has been configured and started."
         )
     return DaemonClient(host="localhost", port=config.daemon_port)
 
@@ -84,11 +86,11 @@ def list_jobs(
     """List cron jobs."""
     project_id = resolve_project_ref(project_ref) if project_ref else None
     _, storage = get_cron_storage()
-    jobs = [
-        job
-        for job in storage.list_jobs(project_id=project_id, enabled=enabled)
-        if not is_removed_automation_job(job)
-    ]
+    jobs = storage.list_jobs(
+        project_id=project_id,
+        enabled=enabled,
+        exclude_removed_automation=True,
+    )
 
     if json_format:
         click.echo(json.dumps([j.to_dict() for j in jobs], indent=2, default=str))
@@ -189,7 +191,7 @@ def run_job(ctx: click.Context, job_id: str, json_format: bool) -> None:
             f"/api/cron/jobs/{job_id}/run",
             method="POST",
         )
-    except Exception as exc:
+    except httpx.HTTPError as exc:
         raise click.ClickException(f"Daemon unavailable: {exc}") from exc
 
     if response.status_code != 200:

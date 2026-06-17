@@ -214,6 +214,8 @@ def test_envelope_id_replays_terminal_denial(
         )
 
     processed_dir = tmp_path / "gobby-home" / "hooks" / "inbox" / "processed"
+    assert first_response.status_code == 200
+    assert second_response.status_code == 200
     assert first_response.json() == terminal_response
     assert second_response.json() == terminal_response
     assert (

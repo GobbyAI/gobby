@@ -456,7 +456,7 @@ def gather_validation_context(
                     priority_files=mentioned_files,
                     agent_summary=changes_summary,
                 )
-                changes_summary_included = bool(changes_summary)
+                changes_summary_included = evidence.agent_summary_included
                 logger.info(
                     "Validation diff for task %s: raw_diff_chars=%d diff_chars=%d "
                     "file_context_chars=%d",

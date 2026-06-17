@@ -1,3 +1,5 @@
+import { useState } from "react";
+
 import { cn } from "../../../lib/utils";
 
 interface KeyValueFieldProps {
@@ -20,16 +22,20 @@ export function KeyValueField({
   ariaLabel,
 }: KeyValueFieldProps) {
   const entries = Object.entries(value);
+  const [keyError, setKeyError] = useState<string | null>(null);
 
   function updateKey(index: number, nextKey: string) {
     const isDuplicate =
+      nextKey !== "" &&
       entries.some((entry, entryIndex) => entryIndex !== index && entry[0] === nextKey);
     if (isDuplicate) {
+      setKeyError(`Key "${nextKey}" already exists`);
       console.warn(
         `KeyValueField: ignored rename to duplicate key "${nextKey}" to avoid overwriting an existing entry`,
       );
       return;
     }
+    setKeyError(null);
     onChange(
       entriesToRecord(
         entries.map((entry, entryIndex) =>
@@ -57,6 +63,11 @@ export function KeyValueField({
     <div className="flex flex-col gap-2">
       <span className="text-xs font-medium text-muted-foreground">{label}</span>
       <div role="group" aria-label={ariaLabel} className="flex flex-col gap-2">
+        {keyError && (
+          <span className="text-xs text-error" role="alert">
+            {keyError}
+          </span>
+        )}
         {entries.map(([key, entryValue], index) => (
           <div key={index} className="grid grid-cols-[1fr_1fr_auto] gap-2">
             <input

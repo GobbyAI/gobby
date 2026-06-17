@@ -417,10 +417,11 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
             except Exception as e:
                 logger.debug(f"Best-effort session close linking failed: {e}")
 
-        # Remove closed task from claimed_tasks dict
-        # This is done here because Claude Code's post-tool-use hook doesn't include
-        # the tool result, so the detection_helpers can't verify close succeeded
+        # Remove closed task from claimed_tasks dict. This is done here because
+        # Claude Code's post-tool-use hook does not include the tool result, so
+        # detection_helpers cannot verify close succeeded.
         remaining_task_edit_state: dict[str, Any] | None = None
+        claim_state_merged = False
         if edit_session_id:
             try:
                 from gobby.workflows.task_claim_state import remove_claimed_task
@@ -429,6 +430,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
                 merge_dict = remove_claimed_task(fresh_session_vars, resolved_id)
                 remaining_task_edit_state = merge_dict.get("task_edited_files")
                 ctx.session_var_manager.merge_variables(edit_session_id, merge_dict)
+                claim_state_merged = True
                 logger.debug(
                     f"Removed task {resolved_id} from claimed_tasks for session {edit_session_id}",
                 )
@@ -441,6 +443,7 @@ def register_close_task(registry: InternalToolRegistry, ctx: RegistryContext) ->
         if (
             edit_session_id
             and (bool(task.commits) or bool(commit_sha))
+            and claim_state_merged
             and not remaining_task_edit_state
         ):
             try:

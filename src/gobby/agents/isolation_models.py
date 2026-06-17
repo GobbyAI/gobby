@@ -31,6 +31,7 @@ def _sanitize_branch_name(value: str) -> str:
     while ".." in ref:
         ref = ref.replace("..", "-")
     ref = re.sub(r"/+", "/", ref)
+    ref = "/".join(part for part in (part.lstrip(".") for part in ref.split("/")) if part)
     ref = ref.strip("./-")
     while ref.endswith(".lock"):
         ref = ref[: -len(".lock")].rstrip("./-")

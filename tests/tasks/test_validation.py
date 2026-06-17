@@ -46,13 +46,13 @@ class TestValidationPromptBudget:
     """Validation prompts use shaped evidence with explicit omissions."""
 
     @pytest.fixture
-    def mock_llm(self):
+    def mock_llm(self) -> MagicMock:
         llm = MagicMock(spec=LLMService)
         llm.call_json_feature = AsyncMock()
         return llm
 
     @pytest.fixture
-    def config(self):
+    def config(self) -> TaskValidationConfig:
         return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     def test_diff_evidence_reports_source_ui_absence(self) -> None:
@@ -71,6 +71,50 @@ class TestValidationPromptBudget:
         assert "Changed File Manifest (authoritative):" in evidence.text
         assert "Source/UI files changed: none" in evidence.text
         assert "- docs/guide.md (+1/-1) [docs]" in evidence.text
+
+    def test_diff_evidence_includes_binary_file_markers_in_manifest(self) -> None:
+        evidence = build_diff_validation_evidence(
+            "Binary files a/web/public/logo.png and b/web/public/logo.png differ\n",
+            max_chars=2000,
+        )
+
+        assert [file.path for file in evidence.manifest] == ["web/public/logo.png"]
+        assert "- web/public/logo.png (+0/-0) [other]" in evidence.text
+
+    def test_diff_evidence_respects_max_chars_for_raw_text(self) -> None:
+        evidence = build_diff_validation_evidence(
+            "raw change payload\n" + ("x" * 500),
+            max_chars=80,
+        )
+
+        assert len(evidence.text) <= 80
+
+    def test_diff_evidence_reports_when_agent_summary_is_included(self) -> None:
+        included = build_diff_validation_evidence(
+            "diff --git a/src/app.py b/src/app.py\n"
+            "index abc..def 100644\n"
+            "--- a/src/app.py\n"
+            "+++ b/src/app.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n",
+            max_chars=2000,
+            agent_summary="Updated app behavior.",
+        )
+        omitted = build_diff_validation_evidence(
+            "diff --git a/src/app.py b/src/app.py\n"
+            "index abc..def 100644\n"
+            "--- a/src/app.py\n"
+            "+++ b/src/app.py\n"
+            "@@ -1 +1 @@\n"
+            "-old\n"
+            "+new\n",
+            max_chars=120,
+            agent_summary="x" * 500,
+        )
+
+        assert included.agent_summary_included is True
+        assert omitted.agent_summary_included is False
 
     def test_diff_evidence_names_omitted_files(self) -> None:
         diff = "\n".join(
@@ -187,13 +231,13 @@ class TestValidationInfrastructureFailure:
     """Fix #4: infra generation failures return status='error', not a verdict."""
 
     @pytest.fixture
-    def mock_llm(self):
+    def mock_llm(self) -> MagicMock:
         llm = MagicMock(spec=LLMService)
         llm.call_json_feature = AsyncMock()
         return llm
 
     @pytest.fixture
-    def config(self):
+    def config(self) -> TaskValidationConfig:
         return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.asyncio
@@ -236,13 +280,13 @@ class TestInconsistentVerdictReconciliation:
     re-validated once instead of being trusted; reasoned rejects are not."""
 
     @pytest.fixture
-    def mock_llm(self):
+    def mock_llm(self) -> MagicMock:
         llm = MagicMock(spec=LLMService)
         llm.call_json_feature = AsyncMock()
         return llm
 
     @pytest.fixture
-    def config(self):
+    def config(self) -> TaskValidationConfig:
         return TaskValidationConfig(enabled=True, candidates=["claude/test-model"])
 
     @pytest.mark.parametrize(
@@ -286,6 +330,40 @@ class TestInconsistentVerdictReconciliation:
         )
 
         assert result.status == "valid"
+        assert mock_llm.call_json_feature.call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_consecutive_unsupported_invalid_stops_after_single_retry(
+        self,
+        config: TaskValidationConfig,
+        mock_llm: MagicMock,
+    ) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.side_effect = [
+            {
+                "status": "invalid",
+                "feedback": "Looks complete to me.",
+                "blocking_reasons": [],
+            },
+            {
+                "status": "invalid",
+                "feedback": "Still no actionable reason.",
+                "blocking_reasons": [],
+            },
+        ]
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "pending"
+        assert result.blocking_reasons == [
+            "Validation response did not name unmet criteria or failing gates"
+        ]
         assert mock_llm.call_json_feature.call_count == 2
 
     @pytest.mark.asyncio

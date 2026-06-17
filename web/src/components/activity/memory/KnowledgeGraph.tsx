@@ -259,16 +259,17 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
   // Initial data fetch (refetches when limit changes)
   useEffect(() => {
     let cancelled = false
-    fetchKnowledgeGraph(limit)
-      .then(data => {
+    void (async () => {
+      try {
+        const data = await fetchKnowledgeGraph(limit)
         if (!cancelled && data) setGraphData(data)
         if (!cancelled) setLoading(false)
-      })
-      .catch(error => {
+      } catch (error) {
         if (cancelled) return
         console.error('Failed to load knowledge graph', error)
         setLoading(false)
-      })
+      }
+    })()
     return () => { cancelled = true }
   }, [fetchKnowledgeGraph, limit])
 
@@ -316,12 +317,16 @@ export function KnowledgeGraph({ fetchKnowledgeGraph, fetchEntityNeighbors, limi
     const entityKey = node.id as string
     const displayName = (node.name as string) || entityKey
     setExpandingNode(displayName)
-    fetchEntityNeighbors(entityKey).then(data => {
-      if (data) {
-        setGraphData(prev => prev ? mergeGraphData(prev, data) : data)
+    void (async () => {
+      try {
+        const data = await fetchEntityNeighbors(entityKey)
+        if (data) {
+          setGraphData(prev => prev ? mergeGraphData(prev, data) : data)
+        }
+      } finally {
+        setExpandingNode(null)
       }
-      setExpandingNode(null)
-    }).catch(() => setExpandingNode(null))
+    })()
   }, [fetchEntityNeighbors, expandingNode])
 
   // Shared sphere geometry (reused across all iOS nodes to reduce GPU allocations)

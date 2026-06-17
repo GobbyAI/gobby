@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -13,6 +14,9 @@ from gobby.memory.services.maintenance import get_stats as _get_stats
 from gobby.memory.services.repository import DEFAULT_LIST_LIMIT, MemoryRepository
 from gobby.memory.services.search import DEFAULT_SEARCH_LIMIT, SearchService
 from gobby.storage.memories import Memory, Visibility
+
+logger = logging.getLogger(__name__)
+_PURGE_SECONDARY_BATCH_SIZE = 64
 
 if TYPE_CHECKING:
     from gobby.memory.services.crossref import CrossrefService
@@ -271,12 +275,22 @@ class MemoryManagerFacadeMethods:
         secondary stores — which retain soft-hidden rows until purge — stay consistent.
         """
         purged_ids = self.storage.purge_dream_hidden(action, older_than_days)
-        await asyncio.gather(
-            *(
-                self._lifecycle_service.purge_secondary_indices(memory_id)
-                for memory_id in purged_ids
+        for start in range(0, len(purged_ids), _PURGE_SECONDARY_BATCH_SIZE):
+            batch = purged_ids[start : start + _PURGE_SECONDARY_BATCH_SIZE]
+            results = await asyncio.gather(
+                *(
+                    self._lifecycle_service.purge_secondary_indices(memory_id)
+                    for memory_id in batch
+                ),
+                return_exceptions=True,
             )
-        )
+            for memory_id, result in zip(batch, results, strict=True):
+                if isinstance(result, Exception):
+                    logger.warning(
+                        "Failed to purge secondary memory indices for %s",
+                        memory_id,
+                        exc_info=(type(result), result, result.__traceback__),
+                    )
         return {"action": action, "purged": len(purged_ids), "memory_ids": purged_ids}
 
     def restore_memory(self, memory_id: str, *, when: str | None = None) -> bool:

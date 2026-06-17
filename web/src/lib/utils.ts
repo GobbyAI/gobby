@@ -1,4 +1,5 @@
 import { clsx, type ClassValue } from 'clsx'
+import { escape as escapeHtmlValue } from 'he'
 import { twMerge } from 'tailwind-merge'
 
 export function cn(...inputs: ClassValue[]) {
@@ -6,12 +7,15 @@ export function cn(...inputs: ClassValue[]) {
 }
 
 export function escapeHtml(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;')
-    .replace(/'/g, '&#39;')
+  return escapeHtmlValue(value)
+}
+
+export const PREVIEW_LENGTH = 140
+
+export function previewContent(content: string): string {
+  return content.length > PREVIEW_LENGTH
+    ? `${content.slice(0, PREVIEW_LENGTH)}...`
+    : content
 }
 
 // Resolves a CSS custom property to a concrete RGB color string at runtime.

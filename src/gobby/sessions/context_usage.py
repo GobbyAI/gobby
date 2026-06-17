@@ -23,6 +23,7 @@ _AGY_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")
 _AGY_MODEL_ALIASES: dict[str, str] = {
     "gemini-3.1-pro": "gemini-3.1-pro-preview",
 }
+_GPT_OSS_CONTEXT_WINDOW = 131_072
 
 
 def normalize_context_usage_source(source: str | None) -> ContextUsageSource | None:
@@ -87,10 +88,21 @@ def context_window_for_source_model(
 ) -> int | None:
     """Resolve context-window metadata for a provider/model pair."""
     snapshot_source = normalize_context_usage_source(source) if isinstance(source, str) else source
+    return _resolve_context_window_for_source_model(snapshot_source, model)
+
+
+def _resolve_context_window_for_source_model(
+    source: ContextUsageSource | None,
+    model: str | None,
+    *,
+    catalog: Any | None = None,
+) -> int | None:
+    """Resolve context-window metadata for a provider/model pair."""
+    snapshot_source = normalize_context_usage_source(source) if isinstance(source, str) else source
     if snapshot_source == "agy":
         return _context_window_for_agy_model(model)
     provider = snapshot_source
-    return resolve_context_window(model, provider=provider)
+    return resolve_context_window(model, provider=provider, catalog=catalog)
 
 
 def _context_window_for_agy_model(model: str | None) -> int | None:
@@ -103,7 +115,7 @@ def _context_window_for_agy_model(model: str | None) -> int | None:
     if lookup_model.startswith("claude-"):
         return resolve_context_window(lookup_model, provider="claude")
     if lookup_model.startswith("gpt-oss-"):
-        return 131_072
+        return _GPT_OSS_CONTEXT_WINDOW
     return None
 
 
@@ -138,8 +150,9 @@ def effective_context_window_for_session(
         return reported_session_window
 
     model = _effective_session_model(session, variables or {})
-    provider = _provider_for_session(session)
-    resolved = resolve_context_window(model, provider=provider, catalog=catalog)
+    source = getattr(session, "source", None)
+    snapshot_source = normalize_context_usage_source(source if isinstance(source, str) else None)
+    resolved = _resolve_context_window_for_source_model(snapshot_source, model, catalog=catalog)
     if resolved is not None:
         return resolved
 
@@ -166,8 +179,6 @@ def _effective_session_model(session: Any, variables: dict[str, Any]) -> str | N
 def _provider_for_session(session: Any) -> str | None:
     source = getattr(session, "source", None)
     snapshot_source = normalize_context_usage_source(source if isinstance(source, str) else None)
-    if snapshot_source == "agy":
-        return "gemini"
     return snapshot_source
 
 
@@ -329,9 +340,11 @@ def backfill_session_context_windows(
         snapshot_source = normalize_context_usage_source(
             source if isinstance(source, str) else None
         )
-        provider = "gemini" if snapshot_source == "agy" else snapshot_source
-
-        resolved = resolve_context_window(model, provider=provider, catalog=catalog)
+        resolved = _resolve_context_window_for_source_model(
+            snapshot_source,
+            model,
+            catalog=catalog,
+        )
         if resolved is None:
             continue
 

@@ -64,12 +64,9 @@ export function ValidationDetectionEditor({
   const [preview, setPreview] = useState<PreviewResult | null>(null)
   const [previewError, setPreviewError] = useState<string | null>(null)
 
-  // Resync the editor text when the external value changes (e.g. a different
-  // record is loaded), without clobbering in-progress edits that already
-  // produced this same value. Adjusting state during render is the codebase
-  // convention (see RulesDetailPanel).
+  let editorJsonText = jsonText
+  let editorJsonError = jsonError
   if (syncedValue !== incoming) {
-    setSyncedValue(incoming)
     let currentCanonical: string | null = null
     try {
       currentCanonical = JSON.stringify(normalizeValue(JSON.parse(jsonText)), null, 2)
@@ -77,12 +74,13 @@ export function ValidationDetectionEditor({
       currentCanonical = null
     }
     if (currentCanonical !== incoming) {
-      setJsonText(incoming)
-      setJsonError(null)
+      editorJsonText = incoming
+      editorJsonError = null
     }
   }
 
   const handleJsonChange = (next: string) => {
+    setSyncedValue(incoming)
     setJsonText(next)
     try {
       const parsed = JSON.parse(next)
@@ -101,7 +99,7 @@ export function ValidationDetectionEditor({
     setPreview(null)
     setPreviewError(null)
     try {
-      const parsed = JSON.parse(jsonText) as Record<string, unknown>
+      const parsed = JSON.parse(editorJsonText) as Record<string, unknown>
       const response = await fetch('/api/config/validation-detection/preview', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -135,11 +133,11 @@ export function ValidationDetectionEditor({
           <textarea
             id="validation-detection-json"
             className={`${INPUT_CLS} min-h-[220px] resize-y leading-5`}
-            value={jsonText}
+            value={editorJsonText}
             spellCheck={false}
             onChange={(event) => handleJsonChange(event.target.value)}
           />
-          {jsonError && <span className="text-[length:var(--text-sm)] text-[var(--color-error)]">{jsonError}</span>}
+          {editorJsonError && <span className="text-[length:var(--text-sm)] text-[var(--color-error)]">{editorJsonError}</span>}
         </div>
 
         <div className={FORM_FIELD_CLS}>
@@ -158,7 +156,7 @@ export function ValidationDetectionEditor({
               type="button"
               className={TOOLBAR_BTN_CLS}
               onClick={() => { void previewCommand() }}
-              disabled={!command.trim() || Boolean(jsonError)}
+              disabled={!command.trim() || Boolean(editorJsonError)}
             >
               Preview
             </button>

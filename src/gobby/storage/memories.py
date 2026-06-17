@@ -418,6 +418,13 @@ class LocalMemoryManager:
     def rescope_memory(self, memory_id: str, new_project_id: str | None) -> Memory:
         """Update a memory's project scope without changing content recency."""
         with self.db.transaction() as conn:
+            if new_project_id is not None:
+                project_row = conn.execute(
+                    "SELECT 1 FROM projects WHERE id = %s",
+                    (new_project_id,),
+                ).fetchone()
+                if project_row is None:
+                    raise ValueError(f"Project {new_project_id} not found")
             cursor = conn.execute(
                 "UPDATE memories SET project_id = %s WHERE id = %s",
                 (new_project_id, memory_id),
@@ -426,7 +433,7 @@ class LocalMemoryManager:
                 raise ValueError(f"Memory {memory_id} not found")
 
         self._notify_listeners()
-        return self.get_memory(memory_id)
+        return self.get_memory(memory_id, visibility="all")
 
     def delete_memory(self, memory_id: str) -> bool:
         with self.db.transaction() as conn:

@@ -90,19 +90,24 @@ class TestListCronJobs:
         tool = registry.get_tool("list_cron_jobs")
         result = tool(project_id=PROJECT_ID, enabled=True)
         assert result["success"] is True
-        mock_storage.list_jobs.assert_called_once_with(project_id=PROJECT_ID, enabled=True)
+        mock_storage.list_jobs.assert_called_once_with(
+            project_id=PROJECT_ID,
+            enabled=True,
+            exclude_removed_automation=True,
+        )
 
     def test_list_filters_removed_automation_rows(self, registry, mock_storage) -> None:
-        mock_storage.list_jobs.return_value = [
-            _make_job(name="User Job"),
-            _make_job(id="cj-system", name="gobby:dispatcher"),
-            _make_job(id="cj-heartbeat", name="gobby:pipeline-heartbeat"),
-        ]
+        mock_storage.list_jobs.return_value = [_make_job(name="User Job")]
         tool = registry.get_tool("list_cron_jobs")
         result = tool()
         assert result["success"] is True
         assert result["count"] == 1
         assert result["jobs"][0]["name"] == "User Job"
+        mock_storage.list_jobs.assert_called_once_with(
+            project_id=None,
+            enabled=None,
+            exclude_removed_automation=True,
+        )
 
 
 def test_internal_writers_not_exposed_via_mcp(registry: InternalToolRegistry) -> None:

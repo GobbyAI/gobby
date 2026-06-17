@@ -1,5 +1,5 @@
 import type { GobbyMemory } from "../../../hooks/useMemory";
-import { cn } from "../../../lib/utils";
+import { cn, previewContent } from "../../../lib/utils";
 import { formatRelativeTime } from "../../../utils/formatTime";
 import { QuickMenu, type QuickMenuItem } from "../QuickMenu";
 import {
@@ -18,14 +18,6 @@ interface MemoryTabListProps {
   onCopy: (memory: GobbyMemory) => void;
   onDelete: (memory: GobbyMemory) => void;
   onRestore: (memory: GobbyMemory) => void;
-}
-
-const PREVIEW_LENGTH = 140;
-
-function previewContent(content: string): string {
-  return content.length > PREVIEW_LENGTH
-    ? `${content.slice(0, PREVIEW_LENGTH)}...`
-    : content;
 }
 
 function EyeOffGlyph() {
@@ -71,8 +63,8 @@ function TrashGlyph() {
 function RestoreGlyph() {
   return (
     <svg
-      width="14"
-      height="14"
+      width="11"
+      height="11"
       viewBox="0 0 24 24"
       fill="none"
       stroke="currentColor"
@@ -184,7 +176,7 @@ export function MemoryTabList({
                 {memoryScopeLabel(memory)}
               </span>
               {hidden && <DreamFlagBadge memory={memory} />}
-              <span className="activity-row-title">{previewContent(memory.content)}</span>
+              <span className="activity-row-title">{memory.content}</span>
               <span className="activity-row-meta">
                 {formatRelativeTime(memory.created_at)}
               </span>

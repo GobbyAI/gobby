@@ -372,6 +372,8 @@ class MemoryDreamStore:
         carries an ``ON DELETE CASCADE`` foreign key, so removing aged runs drops
         their snapshot rows in the same statement. Returns the run count removed.
         """
+        if older_than_days <= 0:
+            raise ValueError("older_than_days must be positive")
         cutoff = older_than_now_expr(self.db, "created_at", "%s", "day")
         with self.db.transaction() as conn:
             rows = conn.execute(
