@@ -836,11 +836,17 @@ def _mount_vite_dev_ui(app: FastAPI, server: "HTTPServer") -> None:
             headers=_proxied_response_headers(backend_response.headers),
         )
 
-    app.add_api_route("/", vite_proxy, methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"])
+    app.add_api_route(
+        "/",
+        vite_proxy,
+        methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
+    )
     app.add_api_route(
         "/{path:path}",
         vite_proxy,
         methods=["GET", "HEAD", "POST", "PUT", "PATCH", "DELETE"],
+        include_in_schema=False,
     )
     logger.info(f"Dev UI proxy mounted at / -> localhost:{ui_port}")
 

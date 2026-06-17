@@ -1,5 +1,6 @@
 """Tests for app-factory UI mounting modes."""
 
+import warnings
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -79,6 +80,32 @@ def test_dev_ui_proxies_root_to_vite_and_keeps_api_daemon_owned(
         ("GET", "http://localhost:5173/"),
         ("GET", "http://localhost:5173/src/main.tsx?x=1"),
     ]
+
+
+def test_dev_ui_proxy_routes_are_hidden_from_openapi() -> None:
+    config = DaemonConfig(ui={"enabled": True, "mode": "dev", "port": 5173})
+    app = FastAPI()
+
+    app_factory._mount_vite_dev_ui(app, _server(config))
+
+    expected_methods = {"DELETE", "GET", "HEAD", "PATCH", "POST", "PUT"}
+    proxy_routes = {
+        getattr(route, "path", ""): getattr(route, "methods", set())
+        for route in app.routes
+        if getattr(route, "name", "") == "vite_proxy"
+    }
+    assert proxy_routes == {"/": expected_methods, "/{path:path}": expected_methods}
+
+    with warnings.catch_warnings(record=True) as caught:
+        warnings.simplefilter("always")
+        schema = app.openapi()
+
+    duplicate_operation_warnings = [
+        str(item.message) for item in caught if "Duplicate Operation ID" in str(item.message)
+    ]
+    assert duplicate_operation_warnings == []
+    assert "/" not in schema["paths"]
+    assert "/{path}" not in schema["paths"]
 
 
 def test_hmr_proxy_uses_dedicated_route_and_ws_remains_gobby_owned() -> None:
