@@ -375,6 +375,25 @@ fn is_orphan_exempt(path: &Path) -> bool {
         })
 }
 
+/// Pure navigation/index/aggregate roots (the repo front page, the concept
+/// index, and the ownership/hotspots/onboarding dashboards) link out to many
+/// pages by design, so links *originating* from them never count as missing
+/// backlinks. Matched by relative path only (any `.md` extension stripped),
+/// never by display title — a content page that merely happens to be named
+/// `index` is not exempt (#853D).
+fn is_backlink_source_exempt(path: &Path) -> bool {
+    let relative = path.to_string_lossy().replace('\\', "/");
+    let relative = relative.strip_suffix(".md").unwrap_or(&relative);
+    matches!(
+        relative,
+        "code/repo"
+            | "code/concepts/index"
+            | "code/_ownership"
+            | "code/_hotspots"
+            | "code/_onboarding"
+    )
+}
+
 fn duplicate_aliases(pages: &[WikiPage]) -> Vec<DuplicateAlias> {
     let mut aliases: BTreeMap<String, (String, Vec<PathBuf>)> = BTreeMap::new();
     for page in pages {
@@ -406,6 +425,11 @@ fn missing_backlinks(
         .collect();
     let mut issues = Vec::new();
     for (source, targets) in outgoing {
+        // Navigation/index/aggregate roots fan out by design; do not require
+        // every page they link to link back (#853D).
+        if is_backlink_source_exempt(source) {
+            continue;
+        }
         for target in targets {
             if outgoing
                 .get(target)
@@ -584,6 +608,64 @@ mod tests {
 
         assert_eq!(std::fs::read_to_string(&page).expect("read after"), before);
         assert!(!root.join("meta/health/latest.json").exists());
+    }
+
+    #[test]
+    fn navigation_root_links_are_exempt_from_missing_backlinks() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        // The repo front page links out to a content page that never links
+        // back. As a navigation root it is exempt, so this produces no
+        // missing_backlink.
+        write_page(
+            root,
+            "code/repo.md",
+            "---\ntitle: Repository Overview\n---\n# Repository Overview\nStart with [[Introduction]].\n",
+        );
+        write_page(
+            root,
+            "code/narrative/introduction.md",
+            "---\ntitle: Introduction\n---\n# Introduction\nNo link back.\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("lint runs");
+
+        assert!(
+            report.missing_backlinks.is_empty(),
+            "{:?}",
+            report.missing_backlinks
+        );
+    }
+
+    #[test]
+    fn content_page_links_still_require_reciprocity() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        // A content page (not a navigation root) linking out without a
+        // reciprocal link is still flagged, even under `code/`.
+        write_page(
+            root,
+            "code/narrative/introduction.md",
+            "---\ntitle: Introduction\n---\n# Introduction\nContinue to [[Architecture]].\n",
+        );
+        write_page(
+            root,
+            "code/narrative/architecture.md",
+            "---\ntitle: Architecture\n---\n# Architecture\nNo link back.\n",
+        );
+
+        let report = run(root, ScopeIdentity::topic("ops")).expect("lint runs");
+
+        assert_eq!(
+            report.missing_backlinks.len(),
+            1,
+            "{:?}",
+            report.missing_backlinks
+        );
+        let issue = &report.missing_backlinks[0];
+        assert_eq!(issue.path, PathBuf::from("code/narrative/architecture.md"));
+        assert_eq!(issue.kind, "missing_backlink");
+        assert_eq!(issue.target, "Introduction");
     }
 
     fn write_page(root: &Path, relative: &str, markdown: &str) {
