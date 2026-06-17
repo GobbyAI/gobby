@@ -132,16 +132,25 @@ pub(crate) fn render_repo_doc(
     append_relevant_source_files(&mut doc, source_spans);
     doc.push_str("# Repository Overview\n\n");
     let summary = replace_citations_with_markers(summary, source_spans);
-    write_section(&mut doc, "Overview", &summary);
-    doc.push_str("## Curated Navigation\n\n");
+    // Lead with a curated "Start here" TOC so the guided tour and concept
+    // navigation are the first thing a reader sees; the module/file tables are
+    // demoted to a reference appendix below (#853 root cause: the reference
+    // dump crowded out the narrative entry points).
+    doc.push_str("## Start here\n\n");
+    doc.push_str("- [[code/narrative/introduction|Introduction]] — start of the guided tour\n");
     doc.push_str("- [[code/concepts/index|Concept tree and narrative tours]]\n\n");
+    write_section(&mut doc, "Overview", &summary);
+    let has_appendix = module_map.is_some() || !modules.is_empty() || !files.is_empty();
+    if has_appendix {
+        doc.push_str("## Reference appendix\n\n");
+    }
     if let Some(diagram) = module_map {
-        doc.push_str("## Module Map\n\n");
+        doc.push_str("### Module Map\n\n");
         doc.push_str(diagram);
         doc.push('\n');
     }
     if !modules.is_empty() {
-        doc.push_str("## Modules\n\n");
+        doc.push_str("### Modules\n\n");
         write_markdown_table_header(&mut doc, &["Module", "Summary"]);
         for module in modules {
             let summary = replace_citations_with_markers(&module.summary, source_spans);
@@ -150,7 +159,7 @@ pub(crate) fn render_repo_doc(
         doc.push('\n');
     }
     if !files.is_empty() {
-        doc.push_str("## Files\n\n");
+        doc.push_str("### Files\n\n");
         write_markdown_table_header(&mut doc, &["File", "Summary"]);
         for file in files {
             // Structural no-symbol filler is dropped from the front page so

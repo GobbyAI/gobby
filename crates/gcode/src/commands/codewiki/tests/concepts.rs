@@ -157,3 +157,35 @@ fn curated_navigation_falls_back_to_structural_concepts_without_ai() {
     // --ai off still yields a structural multi-section body, not a bare summary.
     assert!(introduction.contains("## Key components"), "{introduction}");
 }
+
+#[test]
+fn repo_leads_with_start_here_and_demotes_reference_appendix() {
+    let docs = generate_hierarchical_docs(&concept_input(), None);
+    let repo = rendered_doc(&docs, "code/repo.md");
+
+    let start_here = repo.find("## Start here").expect("start-here section");
+    let overview = repo.find("## Overview").expect("overview section");
+    let appendix = repo
+        .find("## Reference appendix")
+        .expect("reference appendix");
+    // Start here leads; the module/file reference is demoted below it.
+    assert!(start_here < overview, "{repo}");
+    assert!(overview < appendix, "{repo}");
+
+    // The guided tour entry point is the first link a reader sees.
+    assert!(
+        repo.contains("[[code/narrative/introduction|Introduction]]"),
+        "{repo}"
+    );
+
+    // Module/file tables stay reachable, but under the appendix (level-3).
+    let modules = repo.find("### Modules").expect("modules table heading");
+    assert!(appendix < modules, "{repo}");
+    assert!(repo.contains("| Module | Summary |"), "{repo}");
+
+    // Concept tree lists the narrative tours above the concept catalog.
+    let index = rendered_doc(&docs, "code/concepts/index.md");
+    let tours = index.find("## Narrative Tours").expect("narrative tours");
+    let tree = index.find("## Concept Tree").expect("concept tree");
+    assert!(tours < tree, "{index}");
+}

@@ -192,6 +192,12 @@ fn render_concept_tree(
     append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     doc.push_str("# Curated Concept Navigation\n\n");
     doc.push_str("Reader-first paths into the grounded code reference.\n\n");
+    // Narrative tours are the primary entry point, listed above the concept
+    // catalog so a reader lands on the guided tour first.
+    doc.push_str("## Narrative Tours\n\n");
+    doc.push_str("- [[code/narrative/introduction|Introduction]]\n");
+    doc.push_str("- [[code/narrative/architecture|Architecture]]\n");
+    doc.push_str("- [[code/narrative/data-flow|Data Flow]]\n\n");
     doc.push_str("## Concept Tree\n\n");
     for section in sections {
         let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("### {}\n\n", section.title));
@@ -216,10 +222,6 @@ fn render_concept_tree(
         }
         doc.push('\n');
     }
-    doc.push_str("## Narrative Tours\n\n");
-    doc.push_str("- [[code/narrative/introduction|Introduction]]\n");
-    doc.push_str("- [[code/narrative/architecture|Architecture]]\n");
-    doc.push_str("- [[code/narrative/data-flow|Data Flow]]\n");
     doc
 }
 
