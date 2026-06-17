@@ -447,7 +447,26 @@ fn init_logger(quiet: bool) {
     log::set_max_level(log_level(quiet, rust_log.as_deref()));
 }
 
+/// Restore the default `SIGPIPE` disposition so a closed stdout (e.g. piping to
+/// `head`) terminates the process quietly instead of panicking inside `println!`.
+///
+/// The Rust runtime ignores `SIGPIPE` at startup, turning a closed downstream
+/// pipe into an `EPIPE` that `print!`/`println!` escalate to a panic. Resetting
+/// it to `SIG_DFL` makes every print site behave like a standard Unix CLI.
+#[cfg(unix)]
+fn reset_sigpipe() {
+    // SAFETY: called once at startup before any threads are spawned; resetting a
+    // signal to its default disposition is async-signal-safe.
+    unsafe {
+        libc::signal(libc::SIGPIPE, libc::SIG_DFL);
+    }
+}
+
+#[cfg(not(unix))]
+fn reset_sigpipe() {}
+
 fn main() -> ExitCode {
+    reset_sigpipe();
     let Cli {
         scope,
         format,

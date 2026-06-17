@@ -91,6 +91,10 @@ wait-timeout = "0.2"
 # Temp files (for tests)
 tempfile = "3"
 
+# Reset SIGPIPE to its default disposition so closed pipes don't panic stdout writes.
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }
 proptest = "1"
