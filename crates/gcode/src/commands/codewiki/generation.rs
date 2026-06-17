@@ -216,7 +216,14 @@ pub(crate) fn generate_hierarchical_docs_core(
     if !doc_scope.is_unscoped() {
         return Ok(());
     }
-    for doc in build_curated_navigation_docs(&file_docs, &module_docs, generate, reuse, progress) {
+    for doc in build_curated_navigation_docs(
+        &file_docs,
+        &module_docs,
+        &input.leading_chunks,
+        generate,
+        reuse,
+        progress,
+    ) {
         emit(doc)?;
     }
     let (repo_doc, repo_degraded) = build_repo_doc(

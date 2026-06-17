@@ -11,7 +11,9 @@ pub const MODULE_SYSTEM: &str = "You write module documentation briefs. Using on
 pub const REPO_SYSTEM: &str = "You write repository overview briefs. Using only the supplied module summaries, root-file summaries, and source excerpts, write one to two short paragraphs covering what the system is, how the major pieces fit together, and where a reader should start. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
 pub const ARCHITECTURE_SYSTEM: &str = "You write concise architecture documentation. Using only the supplied summaries, component table, and source excerpts, return a short responsibility summary plus compact Markdown tables for enumerable facts such as public API symbols, CLI commands or flags, configuration keys, and environment variables. No markdown fences.";
 pub const ARCHITECTURE_NARRATIVE_SYSTEM: &str = "You write architecture overviews. Using only the supplied subsystem responsibilities and dependency edges, write two to three short paragraphs describing the system in layers: which subsystems sit at the foundation, which build on them, and how the layers interact. Plain paragraphs only - no headings, no lists, no markdown fences.";
-pub const CURATED_NAVIGATION_SYSTEM: &str = "You design a curated navigation layer for grounded code documentation. Return strict JSON only. Name user-facing concept modules, organize them into a hierarchy, and create short narrative tour pages. Use only supplied module and file identifiers, and link into reference pages instead of duplicating source detail.";
+pub const CURATED_NAVIGATION_SYSTEM: &str = "You design a curated navigation layer for grounded code documentation. Return strict JSON only. Name user-facing concept modules, organize them into a hierarchy, and create short narrative tour pages. Use only supplied module and file identifiers, and link into reference pages instead of duplicating source detail. Order narrative_pages as a learning path: foundational subsystems first, then the layers that build on them, so the tour reads from chapter one onward.";
+pub const CONCEPT_PAGE_SYSTEM: &str = "You write a reference explainer page for one concept in a codebase, written for an engineer who is new to it. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown page with these sections, in order: '## Purpose' (what this concept is and the problem it solves), '## Covers / Does not cover' (the scope boundaries), '## Architecture' (how the pieces fit together; a diagram is injected separately, so describe the structure in prose), '## Data flow' (a numbered list tracing the real runtime flow), '## Key components' (a compact Markdown table of the most important symbols and their role), and '## Where to start' (which page or symbol to read first). Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
+pub const NARRATIVE_PAGE_SYSTEM: &str = "You write one chapter of a guided, beginner-friendly tour of a codebase, in the style of a progressive tutorial. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown chapter with these sections, in order: '## Why this matters' (the motivation and the problem this part of the system solves), '## How it works' (a numbered, step-by-step walkthrough of the real flow, grounded in the supplied symbols), '## Key components' (a compact Markdown table of the important symbols), and '## What to read next' (which chapter or reference page to read next). You may include at most one brief analogy if it is anchored to the supplied source; do not pad with long generic metaphors. Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
 
 pub fn symbol_prompt(symbol: &Symbol) -> String {
     let mut prompt = format!(
@@ -199,6 +201,111 @@ pub fn architecture_narrative_prompt(
 }
 
 #[allow(clippy::too_many_arguments)]
+/// One source-grounded row for a curated page content prompt: a member
+/// module/file or a key symbol paired with a `file:line` citation.
+/// [`ChildSummary`] alone carries no location, so the content pass would have
+/// nothing real to cite; these rows give the model concrete anchors to ground
+/// prose against (review #4).
+pub struct PageEvidenceRow {
+    pub name: String,
+    pub kind: String,
+    pub citation: String,
+    pub summary: String,
+}
+
+/// Build the per-page content prompt for a curated concept page (reference
+/// explainer voice; pair with [`CONCEPT_PAGE_SYSTEM`]).
+pub fn concept_page_prompt(
+    title: &str,
+    summary: &str,
+    members: &[PageEvidenceRow],
+    symbols: &[PageEvidenceRow],
+    sources: &[SourceExcerpt],
+) -> String {
+    build_curated_page_prompt(
+        "Write a reference explainer page for this concept.",
+        title,
+        summary,
+        members,
+        symbols,
+        sources,
+        CONCEPT_PAGE_SOURCE_EXCERPTS,
+    )
+}
+
+/// Build the per-page content prompt for a curated narrative chapter (guided
+/// tutorial voice; pair with [`NARRATIVE_PAGE_SYSTEM`]).
+pub fn narrative_page_prompt(
+    title: &str,
+    summary: &str,
+    members: &[PageEvidenceRow],
+    symbols: &[PageEvidenceRow],
+    sources: &[SourceExcerpt],
+) -> String {
+    build_curated_page_prompt(
+        "Write one guided-tour chapter for this part of the codebase.",
+        title,
+        summary,
+        members,
+        symbols,
+        sources,
+        NARRATIVE_PAGE_SOURCE_EXCERPTS,
+    )
+}
+
+fn build_curated_page_prompt(
+    header: &str,
+    title: &str,
+    summary: &str,
+    members: &[PageEvidenceRow],
+    symbols: &[PageEvidenceRow],
+    sources: &[SourceExcerpt],
+    excerpt_take: usize,
+) -> String {
+    let mut prompt = format!(
+        "{header}\n\nPage: {title}\n\nWorking summary (expand into full sections; do not just restate it): {}\n\n",
+        summary_excerpt(summary)
+    );
+    append_table_guidance(&mut prompt);
+    prompt.push_str("Member modules and files (cite these file:line anchors):\n");
+    if members.is_empty() {
+        prompt.push_str("- No members.\n");
+    } else {
+        append_evidence_table(
+            &mut prompt,
+            &["Name", "Kind", "Evidence", "Summary"],
+            members,
+        );
+    }
+    prompt.push_str("\nKey symbols (cite these file:line anchors):\n");
+    if symbols.is_empty() {
+        prompt.push_str("- No indexed symbols.\n");
+    } else {
+        append_evidence_table(
+            &mut prompt,
+            &["Symbol", "Kind", "Evidence", "Purpose"],
+            symbols,
+        );
+    }
+    append_source_excerpt_section_n(&mut prompt, sources, excerpt_take);
+    prompt
+}
+
+fn append_evidence_table(prompt: &mut String, headers: &[&str; 4], rows: &[PageEvidenceRow]) {
+    write_markdown_table_header(prompt, headers);
+    for row in rows {
+        write_markdown_table_row(
+            prompt,
+            [
+                row.name.clone(),
+                row.kind.clone(),
+                row.citation.clone(),
+                summary_excerpt(&row.summary),
+            ],
+        );
+    }
+}
+
 fn build_entity_prompt(
     header: &str,
     entity_label: &str,
@@ -242,12 +349,19 @@ fn append_child_summary_sections(
 }
 
 fn append_source_excerpt_section(prompt: &mut String, sources: &[SourceExcerpt]) {
+    append_source_excerpt_section_n(prompt, sources, MAX_PROMPT_SOURCE_EXCERPTS);
+}
+
+/// Like [`append_source_excerpt_section`] but with a caller-chosen excerpt
+/// count, so per-page content passes can feed more grounded source than the
+/// shared aggregate prompts without changing the aggregate budget.
+fn append_source_excerpt_section_n(prompt: &mut String, sources: &[SourceExcerpt], take: usize) {
     prompt.push_str("\nSource excerpts:\n");
     if sources.is_empty() {
         prompt.push_str("- No source excerpts.\n");
         return;
     }
-    for source in sources.iter().take(MAX_PROMPT_SOURCE_EXCERPTS) {
+    for source in sources.iter().take(take) {
         let _ = writeln!(
             prompt,
             "--- {} (lines {}-{})",
@@ -270,6 +384,13 @@ const CHILD_SUMMARY_EXCERPT_MAX_CHARS: usize = 2_000;
 /// even though they now carry real source content.
 pub(crate) const SOURCE_EXCERPT_MAX_CHARS: usize = 2_400;
 pub(crate) const MAX_PROMPT_SOURCE_EXCERPTS: usize = 4;
+/// Per-page content-pass excerpt budgets. Curated concept/narrative pages run a
+/// dedicated second pass that is fed more source than the shared aggregate
+/// prompts, so "rich input -> rich output" holds for the human-facing layer
+/// without loosening the four pinned aggregate-prompt tests
+/// ([`MAX_PROMPT_SOURCE_EXCERPTS`] stays at 4).
+pub(crate) const CONCEPT_PAGE_SOURCE_EXCERPTS: usize = 8;
+pub(crate) const NARRATIVE_PAGE_SOURCE_EXCERPTS: usize = 8;
 const ENUMERABLE_FACTS_GUIDANCE: &str = "When the supplied input exposes enumerable facts (CLI commands/flags, configuration keys, environment variables, or public API symbols), prefer compact Markdown tables beside the narrative instead of burying those facts in prose.";
 
 /// First paragraph of a child summary, flattened to one line and hard-capped
@@ -526,5 +647,98 @@ mod tests {
 
         let empty = architecture_narrative_prompt(&subsystems, &[]);
         assert!(empty.contains("- No cross-subsystem dependency edges.\n"));
+    }
+
+    fn evidence(name: &str, kind: &str, citation: &str, summary: &str) -> PageEvidenceRow {
+        PageEvidenceRow {
+            name: name.to_string(),
+            kind: kind.to_string(),
+            citation: citation.to_string(),
+            summary: summary.to_string(),
+        }
+    }
+
+    #[test]
+    fn concept_page_prompt_embeds_evidence_anchors_and_extra_excerpts() {
+        let members = vec![evidence(
+            "code/modules/src/search",
+            "module",
+            "src/search.rs:1-120",
+            "Hybrid search entry point.",
+        )];
+        let symbols = vec![evidence(
+            "query",
+            "function",
+            "src/search.rs:4-40",
+            "Runs a hybrid search.",
+        )];
+        let sources = (0..6)
+            .map(|index| excerpt(&format!("src/file_{index}.rs"), "fn demo() {}"))
+            .collect::<Vec<_>>();
+
+        let prompt = concept_page_prompt(
+            "Search",
+            "Hybrid search over the index.",
+            &members,
+            &symbols,
+            &sources,
+        );
+
+        assert!(prompt.contains("src/search.rs:1-120"), "{prompt}");
+        assert!(
+            prompt.contains("| query | function | src/search.rs:4-40 |"),
+            "{prompt}"
+        );
+        // Per-page budget is CONCEPT_PAGE_SOURCE_EXCERPTS (8), so a 5th excerpt
+        // - which the shared aggregate cap of 4 would drop - is still present.
+        assert!(prompt.contains("src/file_4.rs"), "{prompt}");
+    }
+
+    #[test]
+    fn narrative_page_prompt_grounds_with_members_and_symbols() {
+        let members = vec![evidence(
+            "code/modules/src",
+            "module",
+            "src/lib.rs:1-50",
+            "Crate root.",
+        )];
+        let symbols = vec![evidence(
+            "Client",
+            "struct",
+            "src/lib.rs:1-1",
+            "Public client.",
+        )];
+
+        let prompt = narrative_page_prompt("Introduction", "Start here.", &members, &symbols, &[]);
+
+        assert!(prompt.contains("src/lib.rs:1-50"), "{prompt}");
+        assert!(
+            prompt.contains("| Client | struct | src/lib.rs:1-1 |"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("- No source excerpts.\n"), "{prompt}");
+    }
+
+    #[test]
+    fn curated_page_systems_demand_grounded_multi_section_output() {
+        for heading in [
+            "## Purpose",
+            "## Data flow",
+            "## Key components",
+            "## Where to start",
+        ] {
+            assert!(CONCEPT_PAGE_SYSTEM.contains(heading), "{heading}");
+        }
+        for heading in [
+            "## Why this matters",
+            "## How it works",
+            "## What to read next",
+        ] {
+            assert!(NARRATIVE_PAGE_SYSTEM.contains(heading), "{heading}");
+        }
+        for system in [CONCEPT_PAGE_SYSTEM, NARRATIVE_PAGE_SYSTEM] {
+            assert!(system.contains("file:line"), "{system}");
+            assert!(system.contains("No markdown fences."), "{system}");
+        }
     }
 }

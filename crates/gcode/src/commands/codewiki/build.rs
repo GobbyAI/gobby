@@ -4,6 +4,8 @@ mod architecture;
 mod changes;
 #[path = "build_parts/concepts.rs"]
 mod concepts;
+#[path = "build_parts/curated_content.rs"]
+mod curated_content;
 #[path = "build_parts/file.rs"]
 mod file;
 #[path = "build_parts/hotspots.rs"]

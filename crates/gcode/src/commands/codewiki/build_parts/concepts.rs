@@ -1,13 +1,25 @@
 use serde::Deserialize;
 
 use super::super::*;
+use super::curated_content::{self, CuratedPageKind};
 
 const MAX_CONCEPT_MODULES: usize = 12;
 const MAX_CONCEPT_LINKS: usize = 6;
+/// Cap on the bounded "Explore" reference links a curated page emits (module
+/// roots, not every member file). Replaces the old exhaustive
+/// `## Reference Modules`/`## Source Files` dumps so the curated->reference
+/// down-link surface (the missing_backlink source) collapses (root cause 6;
+/// also the #853D mechanism).
+const MAX_CURATED_KEY_COMPONENTS: usize = 8;
+/// Cap on *extra* model-supplied narrative chapters beyond the required
+/// introduction/architecture/data-flow spine, so a verbose structure response
+/// cannot crowd out the canonical guided tour.
+const MAX_EXTRA_NARRATIVE_PAGES: usize = 4;
 
 pub(crate) fn build_curated_navigation_docs(
     files: &[FileDoc],
     modules: &[ModuleDoc],
+    leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
@@ -44,14 +56,17 @@ pub(crate) fn build_curated_navigation_docs(
         Generation::Skipped => fallback_plan(files, modules),
     };
 
-    render_curated_navigation_docs(files, modules, plan, degraded)
+    render_curated_navigation_docs(files, modules, plan, degraded, leading_chunks, generate)
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_curated_navigation_docs(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     plan: CuratedNavigationPlan,
     degraded: bool,
+    leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
+    generate: &mut Option<&mut TextGenerator<'_>>,
 ) -> Vec<BuiltDoc> {
     let module_lookup = modules
         .iter()
@@ -61,11 +76,58 @@ fn render_curated_navigation_docs(
         .iter()
         .map(|file| (file.path.as_str(), file))
         .collect::<std::collections::BTreeMap<_, _>>();
-    let concepts = normalize_concepts(plan.concept_modules, modules, files);
+    let mut concepts = normalize_concepts(plan.concept_modules, modules, files);
     let sections = normalize_sections(plan.sections, &concepts);
-    let narrative_pages =
+    let mut narrative_pages =
         normalize_narrative_pages(plan.narrative_pages, modules, files, &concepts);
     let all_spans = all_input_spans(files, modules);
+
+    // Per-page content pass: expand each curated page's one-line summary into a
+    // grounded, multi-section body (structural fallback on skip/failure). Runs
+    // after normalization so member lists are final, and before rendering so
+    // the bodies are in place. Mutates `concepts` first, so `concept_titles`
+    // (which borrows it) is built afterwards.
+    for concept in &mut concepts {
+        let spans = item_spans(
+            &concept.modules,
+            &concept.files,
+            &module_lookup,
+            &file_lookup,
+        );
+        let result = curated_content::curated_page_body(
+            CuratedPageKind::Concept,
+            &concept.title,
+            &concept.summary,
+            &concept.modules,
+            &concept.files,
+            &module_lookup,
+            &file_lookup,
+            leading_chunks,
+            &spans,
+            generate,
+        );
+        concept.body = result.body;
+        concept.body_degraded = result.degraded;
+    }
+    for page in &mut narrative_pages {
+        let (member_modules, member_files) = narrative_members(page, &concepts);
+        let spans = narrative_spans(page, &concepts, &module_lookup, &file_lookup);
+        let result = curated_content::curated_page_body(
+            CuratedPageKind::Narrative,
+            &page.title,
+            &page.summary,
+            &member_modules,
+            &member_files,
+            &module_lookup,
+            &file_lookup,
+            leading_chunks,
+            &spans,
+            generate,
+        );
+        page.body = result.body;
+        page.body_degraded = result.degraded;
+    }
+
     let concept_titles = concepts
         .iter()
         .map(|concept| (concept.slug.as_str(), concept.title.as_str()))
@@ -155,34 +217,19 @@ fn render_concept_tree(
 }
 
 fn render_concept_page(concept: &ConceptModule, spans: &[SourceSpan], degraded: bool) -> String {
+    let degraded = degraded || concept.body_degraded;
     let degraded_sources = degraded_sources(degraded);
     let mut doc =
         frontmatter_with_degradation(&concept.title, "code_concept", spans, &degraded_sources);
     append_relevant_source_files(&mut doc, spans);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", concept.title));
-    write_section(
+    append_curated_body(
         &mut doc,
+        concept.body.as_deref(),
         "Overview",
         &ground_text(&concept.summary, spans, None),
     );
-    if !concept.modules.is_empty() {
-        doc.push_str("## Reference Modules\n\n");
-        for module in &concept.modules {
-            let _ = std::fmt::Write::write_fmt(
-                &mut doc,
-                format_args!("- {}\n", module_wikilink(module)),
-            );
-        }
-        doc.push('\n');
-    }
-    if !concept.files.is_empty() {
-        doc.push_str("## Source Files\n\n");
-        for file in &concept.files {
-            let _ =
-                std::fmt::Write::write_fmt(&mut doc, format_args!("- {}\n", file_wikilink(file)));
-        }
-        doc.push('\n');
-    }
+    append_explore_section(&mut doc, &concept.modules, &concept.files);
     doc
 }
 
@@ -192,12 +239,18 @@ fn render_narrative_page(
     concept_titles: &std::collections::BTreeMap<&str, &str>,
     degraded: bool,
 ) -> String {
+    let degraded = degraded || page.body_degraded;
     let degraded_sources = degraded_sources(degraded);
     let mut doc =
         frontmatter_with_degradation(&page.title, "code_narrative", spans, &degraded_sources);
     append_relevant_source_files(&mut doc, spans);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", page.title));
-    write_section(&mut doc, "Guide", &ground_text(&page.summary, spans, None));
+    append_curated_body(
+        &mut doc,
+        page.body.as_deref(),
+        "Guide",
+        &ground_text(&page.summary, spans, None),
+    );
     if !page.concepts.is_empty() {
         doc.push_str("## Concepts\n\n");
         for concept in &page.concepts {
@@ -212,25 +265,79 @@ fn render_narrative_page(
         }
         doc.push('\n');
     }
-    if !page.modules.is_empty() {
-        doc.push_str("## Reference Modules\n\n");
-        for module in &page.modules {
-            let _ = std::fmt::Write::write_fmt(
-                &mut doc,
-                format_args!("- {}\n", module_wikilink(module)),
-            );
-        }
-        doc.push('\n');
-    }
-    if !page.files.is_empty() {
-        doc.push_str("## Source Files\n\n");
-        for file in &page.files {
-            let _ =
-                std::fmt::Write::write_fmt(&mut doc, format_args!("- {}\n", file_wikilink(file)));
-        }
-        doc.push('\n');
-    }
+    append_explore_section(&mut doc, &page.modules, &[]);
     doc
+}
+
+fn append_curated_body(
+    doc: &mut String,
+    body: Option<&str>,
+    fallback_heading: &str,
+    fallback_text: &str,
+) {
+    match body {
+        Some(body) if !body.trim().is_empty() => {
+            doc.push_str(body);
+            if !body.ends_with('\n') {
+                doc.push('\n');
+            }
+            doc.push('\n');
+        }
+        _ => write_section(doc, fallback_heading, fallback_text),
+    }
+}
+
+/// Bounded reference links for a curated page: module roots (not every member
+/// file), capped at [`MAX_CURATED_KEY_COMPONENTS`]. Files stay reachable and
+/// reciprocal via their parent module pages and the reference appendix, so the
+/// old exhaustive `## Reference Modules`/`## Source Files` down-link dumps -
+/// the missing_backlink source - collapse.
+fn append_explore_section(doc: &mut String, modules: &[String], files: &[String]) {
+    let mut links: Vec<String> = modules
+        .iter()
+        .take(MAX_CURATED_KEY_COMPONENTS)
+        .map(|module| module_wikilink(module))
+        .collect();
+    if links.is_empty() {
+        links = files
+            .iter()
+            .take(MAX_CURATED_KEY_COMPONENTS)
+            .map(|file| file_wikilink(file))
+            .collect();
+    }
+    if links.is_empty() {
+        return;
+    }
+    doc.push_str("## Explore\n\n");
+    for link in links {
+        let _ = std::fmt::Write::write_fmt(doc, format_args!("- {link}\n"));
+    }
+    doc.push('\n');
+}
+
+/// Union a narrative page's own modules/files with those of the concepts it
+/// covers, so a chapter's content pass has real members to describe even when
+/// the structure pass left its module/file lists sparse.
+fn narrative_members(
+    page: &NarrativePage,
+    concepts: &[ConceptModule],
+) -> (Vec<String>, Vec<String>) {
+    let mut modules = page.modules.clone();
+    let mut files = page.files.clone();
+    for concept_slug in &page.concepts {
+        if let Some(concept) = concepts
+            .iter()
+            .find(|concept| &concept.slug == concept_slug)
+        {
+            modules.extend(concept.modules.iter().cloned());
+            files.extend(concept.files.iter().cloned());
+        }
+    }
+    modules.sort();
+    modules.dedup();
+    files.sort();
+    files.dedup();
+    (modules, files)
 }
 
 fn curated_navigation_prompt(files: &[FileDoc], modules: &[ModuleDoc]) -> String {
@@ -294,6 +401,8 @@ fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> CuratedNavigationP
                 .take(MAX_CONCEPT_LINKS)
                 .map(|file| file.path.clone())
                 .collect(),
+            body: None,
+            body_degraded: false,
         })
         .collect::<Vec<_>>();
 
@@ -334,6 +443,8 @@ fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> CuratedNavigationP
                 concepts: concept_titles.clone(),
                 modules: root_modules.clone(),
                 files: representative_files.clone(),
+                body: None,
+                body_degraded: false,
             },
             NarrativePage {
                 slug: "architecture".to_string(),
@@ -342,6 +453,8 @@ fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> CuratedNavigationP
                 concepts: concept_titles.clone(),
                 modules: root_modules,
                 files: representative_files.clone(),
+                body: None,
+                body_degraded: false,
             },
             NarrativePage {
                 slug: "data-flow".to_string(),
@@ -350,6 +463,8 @@ fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> CuratedNavigationP
                 concepts: concept_titles,
                 modules: Vec::new(),
                 files: representative_files,
+                body: None,
+                body_degraded: false,
             },
         ],
     }
@@ -449,7 +564,7 @@ fn normalize_narrative_pages(
         .iter()
         .map(|file| file.path.as_str())
         .collect::<std::collections::BTreeSet<_>>();
-    let mut normalized = pages
+    let normalized = pages
         .into_iter()
         .filter_map(|mut page| {
             page.title = page.title.trim().to_string();
@@ -476,13 +591,33 @@ fn normalize_narrative_pages(
         })
         .collect::<Vec<_>>();
 
-    for (slug, title) in [
+    // The canonical spine (introduction -> architecture -> data-flow) always
+    // leads, in that dependency order; only *extra* model chapters are capped,
+    // so a verbose structure response cannot crowd out the guided tour.
+    const DEFAULT_CHAPTERS: [(&str, &str); 3] = [
         ("introduction", "Introduction"),
         ("architecture", "Architecture"),
         ("data-flow", "Data Flow"),
-    ] {
-        if !normalized.iter().any(|page| page.slug == slug) {
-            normalized.push(NarrativePage {
+    ];
+    let is_default = |slug: &str| DEFAULT_CHAPTERS.iter().any(|(default, _)| *default == slug);
+    let mut spine: std::collections::BTreeMap<String, NarrativePage> =
+        std::collections::BTreeMap::new();
+    let mut extras: Vec<NarrativePage> = Vec::new();
+    for page in normalized {
+        if is_default(&page.slug) {
+            spine.insert(page.slug.clone(), page);
+        } else {
+            extras.push(page);
+        }
+    }
+    extras.truncate(MAX_EXTRA_NARRATIVE_PAGES);
+
+    let mut ordered = Vec::with_capacity(DEFAULT_CHAPTERS.len() + extras.len());
+    for (slug, title) in DEFAULT_CHAPTERS {
+        if let Some(page) = spine.remove(slug) {
+            ordered.push(page);
+        } else {
+            ordered.push(NarrativePage {
                 slug: slug.to_string(),
                 title: title.to_string(),
                 summary: format!("{title} tour linking into the code reference."),
@@ -493,10 +628,13 @@ fn normalize_narrative_pages(
                     .collect(),
                 modules: Vec::new(),
                 files: Vec::new(),
+                body: None,
+                body_degraded: false,
             });
         }
     }
-    normalized
+    ordered.extend(extras);
+    ordered
 }
 
 fn concept_key_map(concepts: &[ConceptModule]) -> std::collections::BTreeMap<&str, String> {
@@ -643,6 +781,15 @@ struct ConceptModule {
     modules: Vec<String>,
     #[serde(default)]
     files: Vec<String>,
+    /// Multi-section body from the per-page content pass. `#[serde(skip)]` so
+    /// the structure-pass JSON parse ignores it (and extra model fields can't
+    /// perturb deserialization); populated after normalization.
+    #[serde(skip)]
+    body: Option<String>,
+    /// True when the content pass was attempted and fell back to the structural
+    /// body, so the page records the degradation honestly (review #1).
+    #[serde(skip)]
+    body_degraded: bool,
 }
 
 #[derive(Debug, Deserialize)]
@@ -667,4 +814,10 @@ struct NarrativePage {
     modules: Vec<String>,
     #[serde(default)]
     files: Vec<String>,
+    /// Multi-section chapter body from the per-page content pass; see
+    /// [`ConceptModule::body`]. `#[serde(skip)]` for the same reason.
+    #[serde(skip)]
+    body: Option<String>,
+    #[serde(skip)]
+    body_degraded: bool,
 }
