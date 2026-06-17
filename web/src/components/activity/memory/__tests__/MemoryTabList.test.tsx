@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { render, screen, within } from "@testing-library/react";
 import { describe, expect, it, vi } from "vitest";
 
 import type { GobbyMemory } from "../../../../hooks/useMemory";
@@ -42,7 +42,10 @@ describe("MemoryTabList", () => {
       />,
     );
 
-    expect(screen.getByText(preview)).toBeInTheDocument();
+    const row = screen.getByRole("listitem");
+    expect(
+      within(row).getByText(preview, { selector: ".activity-row-title" }),
+    ).toBeInTheDocument();
     expect(screen.queryByText(fullContent)).not.toBeInTheDocument();
   });
 });

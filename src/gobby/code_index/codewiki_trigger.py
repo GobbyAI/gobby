@@ -191,6 +191,7 @@ class CodewikiRefreshTrigger:
             changed_paths = _changed_doc_paths(out_dir, result)
             if changed_paths:
                 if not out_dir.is_relative_to(self._default_out_dir(root)):
+                    # Default vault state is already tracked; gwiki.index() completes that refresh.
                     for path in changed_paths:
                         await gwiki.ingest_file(path)
                 await gwiki.index()

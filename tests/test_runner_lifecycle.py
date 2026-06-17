@@ -25,6 +25,7 @@ pytestmark = [pytest.mark.unit, pytest.mark.usefixtures("fast_stop_hook_grace_wi
 
 @pytest.fixture(autouse=True)
 def _clear_app_context_between_tests() -> Iterator[None]:
+    clear_app_context()
     yield
     clear_app_context()
 
