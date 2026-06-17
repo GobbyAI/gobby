@@ -482,12 +482,12 @@ mod tests {
     fn load_checkpoint_rejects_legacy_project_vault_relative_scope_root() {
         let temp = tempfile::tempdir().expect("tempdir");
         let project = temp.path().join("repo");
-        let expected = project.join(".gobby").join("wiki");
+        let expected = project.join("gobby-wiki");
         fs::create_dir_all(expected.join(crate::vault::STATE_ROOT)).expect("create checkpoint dir");
         let expected = expected.canonicalize().expect("canonicalize expected root");
         let session = ResearchSession::new(
             "Which root?",
-            ResearchScope::project_for_id("project-1", PathBuf::from(".gobby").join("wiki")),
+            ResearchScope::project_for_id("project-1", PathBuf::from("gobby-wiki")),
             Vec::new(),
             1,
             None,
@@ -502,7 +502,7 @@ mod tests {
         let WikiError::InvalidScope { detail } = error else {
             panic!("expected InvalidScope, got {error:?}");
         };
-        assert!(detail.contains(".gobby/wiki"));
+        assert!(detail.contains("gobby-wiki"));
         assert!(detail.contains(&expected.display().to_string()));
     }
 

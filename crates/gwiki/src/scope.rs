@@ -146,7 +146,7 @@ fn resolve_project_from_root(project_root: &Path) -> Result<ResolvedScope, WikiE
         }
     })?;
     let project_id = validate_project_id(&project_id)?;
-    let root = project_root.join(".gobby").join("wiki");
+    let root = project_root.join("gobby-wiki");
 
     Ok(ResolvedScope::project(project_id, project_root, root))
 }
@@ -300,13 +300,13 @@ mod tests {
         let canonical_project = project.canonicalize().expect("canonicalize project root");
 
         assert_eq!(scope.identity(), "project:project-123");
-        assert_eq!(scope.root(), canonical_project.join(".gobby").join("wiki"));
+        assert_eq!(scope.root(), canonical_project.join("gobby-wiki"));
         assert_eq!(
             fs::read_to_string(gcode_json).expect("read gcode json"),
             original_gcode_json
         );
         assert!(
-            !project.join(".gobby").join("wiki").exists(),
+            !project.join("gobby-wiki").exists(),
             "resolution must not initialize the vault"
         );
     }
@@ -336,7 +336,7 @@ mod tests {
         let project = project.canonicalize().expect("canonicalize project root");
 
         assert_eq!(scope.project_root(), Some(project.as_path()));
-        assert_eq!(scope.root(), project.join(".gobby").join("wiki"));
+        assert_eq!(scope.root(), project.join("gobby-wiki"));
         assert!(scope.root().is_absolute());
     }
 }

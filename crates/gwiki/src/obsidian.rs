@@ -5,10 +5,10 @@
 //! 1. [`seed_app_json`] writes `<vault>/.obsidian/app.json` with a
 //!    `userIgnoreFilters` entry for the control dir ([`crate::vault::STATE_ROOT`])
 //!    so it is de-noised in Obsidian's search/graph.
-//! 2. [`ensure_gitignore_obsidian`] adds `.obsidian/` to the project's
-//!    `.gitignore` — but only inside a git work tree. Obsidian's workspace config
-//!    is machine-local, and `.obsidian/` is itself a dot-dir that CodeRabbit's
-//!    minimatch `path_filters` cannot exclude, so it must never be committed.
+//! 2. [`ensure_gitignore_obsidian`] adds the machine-local Obsidian workspace
+//!    files to the project's `.gitignore` — but only inside a git work tree.
+//!    Stable vault config such as `app.json` stays commit-eligible so clones open
+//!    with the intended vault behavior.
 
 use std::path::{Path, PathBuf};
 
@@ -83,15 +83,20 @@ pub(crate) fn seed_app_json(vault_root: &Path) -> Result<(), WikiError> {
     })
 }
 
-/// Ensure `.obsidian/` is git-ignored, but only when `project_root` lives inside a
-/// git work tree (not every wiki lives in a code project).
+/// Ensure machine-local Obsidian workspace state is git-ignored, but only when
+/// `project_root` lives inside a git work tree (not every wiki lives in a code
+/// project).
 ///
-/// The rule is appended at end-of-file: git uses last-match-wins, so a `.gitignore`
-/// that re-includes the vault (e.g. `!.gobby/wiki/**`) would otherwise keep tracking
-/// the vault's `.obsidian/`. The entry is generic (`.obsidian/`), so it matches the
-/// vault's nested `.obsidian` at any depth. Creates the `.gitignore` if absent.
-/// Idempotent: a no-op when an `.obsidian` rule already exists.
+/// The rules are appended at end-of-file: git uses last-match-wins, so a
+/// `.gitignore` that re-includes the vault would otherwise keep tracking local
+/// workspace churn. Idempotent: a no-op when all workspace rules already exist.
 pub(crate) fn ensure_gitignore_obsidian(project_root: &Path) -> Result<(), WikiError> {
+    const WORKSPACE_RULES: &[&str] = &[
+        "gobby-wiki/.obsidian/workspace.json",
+        "gobby-wiki/.obsidian/workspaces.json",
+        "gobby-wiki/.obsidian/workspace-mobile.json",
+    ];
+
     let Some(git_root) = find_git_root(project_root) else {
         return Ok(());
     };
@@ -110,9 +115,9 @@ pub(crate) fn ensure_gitignore_obsidian(project_root: &Path) -> Result<(), WikiE
     };
 
     if let Some(text) = &existing
-        && text
-            .lines()
-            .any(|line| matches!(line.trim(), ".obsidian" | ".obsidian/"))
+        && WORKSPACE_RULES
+            .iter()
+            .all(|rule| text.lines().any(|line| line.trim() == *rule))
     {
         return Ok(());
     }
@@ -121,7 +126,12 @@ pub(crate) fn ensure_gitignore_obsidian(project_root: &Path) -> Result<(), WikiE
     if !next.is_empty() && !next.ends_with('\n') {
         next.push('\n');
     }
-    next.push_str(".obsidian/\n");
+    for rule in WORKSPACE_RULES {
+        if !next.lines().any(|line| line.trim() == *rule) {
+            next.push_str(rule);
+            next.push('\n');
+        }
+    }
 
     std::fs::write(&gitignore, next).map_err(|source| WikiError::Io {
         action: "write .gitignore",
@@ -200,7 +210,7 @@ mod tests {
     }
 
     #[test]
-    fn gitignore_appends_once_and_preserves_existing() {
+    fn gitignore_appends_workspace_state_once_and_preserves_existing() {
         let temp = tempfile::tempdir().expect("tempdir");
         let root = temp.path();
         std::fs::create_dir_all(root.join(".git")).expect("fake git");
@@ -210,15 +220,26 @@ mod tests {
         ensure_gitignore_obsidian(root).expect("second");
 
         let text = std::fs::read_to_string(root.join(".gitignore")).expect("read");
-        assert_eq!(
-            text.lines().filter(|l| l.trim() == ".obsidian/").count(),
-            1,
-            "rule appended exactly once"
-        );
+        for rule in [
+            "gobby-wiki/.obsidian/workspace.json",
+            "gobby-wiki/.obsidian/workspaces.json",
+            "gobby-wiki/.obsidian/workspace-mobile.json",
+        ] {
+            assert_eq!(
+                text.lines().filter(|l| l.trim() == rule).count(),
+                1,
+                "{rule} appended exactly once"
+            );
+        }
         assert!(text.contains("/target"), "existing content preserved");
         assert!(
-            text.trim_end().ends_with(".obsidian/"),
-            "rule lands at end of file"
+            text.trim_end()
+                .ends_with("gobby-wiki/.obsidian/workspace-mobile.json"),
+            "workspace rules land at end of file"
+        );
+        assert!(
+            !text.lines().any(|l| l.trim() == ".obsidian/"),
+            "stable Obsidian config remains commit-eligible"
         );
     }
 
@@ -229,6 +250,13 @@ mod tests {
         std::fs::create_dir_all(root.join(".git")).expect("fake git");
         ensure_gitignore_obsidian(root).expect("create");
         let text = std::fs::read_to_string(root.join(".gitignore")).expect("read");
-        assert_eq!(text, ".obsidian/\n");
+        assert_eq!(
+            text,
+            concat!(
+                "gobby-wiki/.obsidian/workspace.json\n",
+                "gobby-wiki/.obsidian/workspaces.json\n",
+                "gobby-wiki/.obsidian/workspace-mobile.json\n"
+            )
+        );
     }
 }

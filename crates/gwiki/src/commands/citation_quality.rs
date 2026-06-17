@@ -821,7 +821,8 @@ mod tests {
     #[serial_test::serial]
     fn citation_quality_requires_configured_postgres_index() {
         let temp = tempfile::tempdir().expect("tempdir");
-        std::fs::create_dir_all(temp.path().join(".gobby/wiki")).expect("create wiki root");
+        std::fs::create_dir_all(temp.path().join("gobby-wiki")).expect("create wiki root");
+        std::fs::create_dir_all(temp.path().join(".gobby")).expect("create project metadata dir");
         std::fs::write(
             temp.path().join(".gobby/project.json"),
             r#"{"id":"11111111-1111-4111-8111-111111111111"}"#,

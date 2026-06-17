@@ -31,7 +31,7 @@ fn skips_non_allowlisted_hidden_metadata_by_default() {
     write_file(root, ".github/ISSUE_TEMPLATE/bug.md", b"# Bug\n");
     write_file(root, ".gobby/gcode.json", br#"{"id":"project"}"#);
     write_file(root, ".gobby/project.json", br#"{"id":"project"}"#);
-    write_file(root, ".gobby/wiki/page.md", b"# Wiki\n");
+    write_file(root, "gobby-wiki/page.md", b"# Wiki\n");
     write_file(root, ".gobby/screenshots/shot.md", b"# Screenshot\n");
     write_file(root, ".gobby/tasks.jsonl", b"{}\n");
     write_file(root, ".gobby/memories.jsonl", b"{}\n");
@@ -39,31 +39,35 @@ fn skips_non_allowlisted_hidden_metadata_by_default() {
     let (ast, content_only) = discover_files(root, &[] as &[&str]);
 
     assert!(rels(root, ast).is_empty());
-    assert_eq!(rels(root, content_only), vec![".gobby/wiki/page.md"]);
+    assert_eq!(rels(root, content_only), vec!["gobby-wiki/page.md"]);
 }
 
 #[test]
 fn discovers_wiki_markdown_and_skips_generated_wiki_metadata() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();
-    write_file(root, ".gobby/wiki/page.md", b"# Wiki\n");
-    write_file(root, ".gobby/wiki/nested/page.md", b"# Nested\n");
-    write_file(root, ".gobby/wiki/_meta/codewiki.json", b"{}\n");
-    write_file(root, ".gobby/wiki/_meta/readme.md", b"# Generated\n");
-    write_file(root, ".gobby/wiki/wikis.json.lock", b"lock\n");
-    write_file(root, ".gobby/wiki/nested/page.json.lock", b"lock\n");
+    write_file(root, "gobby-wiki/page.md", b"# Wiki\n");
+    write_file(root, "gobby-wiki/nested/page.md", b"# Nested\n");
+    write_file(root, "gobby-wiki/_meta/codewiki.json", b"{}\n");
+    write_file(root, "gobby-wiki/_meta/readme.md", b"# Generated\n");
+    write_file(root, "gobby-wiki/_gwiki/scope.json", b"{}\n");
+    write_file(root, "gobby-wiki/wikis.json", b"{}\n");
+    write_file(root, "gobby-wiki/.obsidian/app.json", b"{}\n");
+    write_file(root, "gobby-wiki/.obsidian/workspace.json", b"{}\n");
+    write_file(root, "gobby-wiki/wikis.json.lock", b"lock\n");
+    write_file(root, "gobby-wiki/nested/page.lock", b"lock\n");
 
     let (ast, content_only) = discover_files(root, &[] as &[&str]);
 
     assert!(rels(root, ast).is_empty());
     assert_eq!(
         rels(root, content_only),
-        vec![".gobby/wiki/nested/page.md", ".gobby/wiki/page.md"]
+        vec!["gobby-wiki/nested/page.md", "gobby-wiki/page.md"]
     );
     assert_eq!(
         classify_file(
             root,
-            &root.join(".gobby/wiki/_meta/codewiki.json"),
+            &root.join("gobby-wiki/_meta/codewiki.json"),
             &[] as &[&str]
         ),
         None
@@ -71,7 +75,15 @@ fn discovers_wiki_markdown_and_skips_generated_wiki_metadata() {
     assert_eq!(
         classify_file(
             root,
-            &root.join(".gobby/wiki/wikis.json.lock"),
+            &root.join("gobby-wiki/wikis.json.lock"),
+            &[] as &[&str]
+        ),
+        None
+    );
+    assert_eq!(
+        classify_file(
+            root,
+            &root.join("gobby-wiki/.obsidian/app.json"),
             &[] as &[&str]
         ),
         None

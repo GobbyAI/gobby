@@ -56,14 +56,8 @@ fn init_creates_vault_shape() {
         String::from_utf8_lossy(&project_output.stdout),
         String::from_utf8_lossy(&project_output.stderr)
     );
-    assert_vault_shape(&project.join(".gobby").join("wiki"));
-    assert!(
-        project
-            .join(".gobby")
-            .join("wiki")
-            .join("wikis.json")
-            .is_file()
-    );
+    assert_vault_shape(&project.join("gobby-wiki"));
+    assert!(project.join("gobby-wiki").join("wikis.json").is_file());
     common::assert_gcode_json_unchanged(&gcode_json);
 }
 
@@ -87,7 +81,7 @@ fn init_seeds_obsidian_and_gitignores_inside_git_repo() {
         String::from_utf8_lossy(&output.stderr)
     );
 
-    let vault = project.join(".gobby").join("wiki");
+    let vault = project.join("gobby-wiki");
     let app_json = std::fs::read_to_string(vault.join(".obsidian").join("app.json"))
         .expect("read obsidian app.json");
     assert!(app_json.contains("userIgnoreFilters"));
@@ -97,10 +91,14 @@ fn init_seeds_obsidian_and_gitignores_inside_git_repo() {
     assert_eq!(
         gitignore
             .lines()
-            .filter(|l| l.trim() == ".obsidian/")
+            .filter(|l| l.trim() == "gobby-wiki/.obsidian/workspace.json")
             .count(),
         1,
-        "exactly one .obsidian/ rule"
+        "exactly one workspace.json rule"
+    );
+    assert!(
+        !gitignore.lines().any(|l| l.trim() == ".obsidian/"),
+        "stable Obsidian config should not be ignored wholesale"
     );
 
     common::assert_gcode_json_unchanged(&gcode_json);
@@ -120,7 +118,7 @@ fn init_outside_git_repo_seeds_obsidian_without_gitignore() {
         .expect("run project init");
     assert!(output.status.success(), "project init failed");
 
-    let vault = project.join(".gobby").join("wiki");
+    let vault = project.join("gobby-wiki");
     assert!(
         vault.join(".obsidian").join("app.json").is_file(),
         "app.json seeded even without git"

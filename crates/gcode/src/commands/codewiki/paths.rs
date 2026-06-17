@@ -69,12 +69,18 @@ pub(crate) fn component_label(symbol: &Symbol) -> String {
 
 pub(crate) fn is_core_file(file: &str) -> bool {
     // Hidden (dot-prefixed) components are repo metadata, not core code.
-    // This keeps the indexer's content-search allowlist (.gobby/wiki,
-    // .gobby/plans) out of codewiki input, so codewiki never documents its
-    // own previously generated vault output.
+    // This keeps the indexer's content-search allowlist out of codewiki input,
+    // so codewiki never documents its own previously generated vault output.
     if Path::new(file)
         .components()
         .any(|component| component.as_os_str().to_string_lossy().starts_with('.'))
+    {
+        return false;
+    }
+    if Path::new(file)
+        .components()
+        .next()
+        .is_some_and(|component| component.as_os_str() == "gobby-wiki")
     {
         return false;
     }

@@ -4,7 +4,7 @@ use std::path::{Component, Path, PathBuf};
 const GCODE_CONFIG_PATH: &str = ".gobby/gcode.json";
 const DEFAULT_HIDDEN_ALLOWLIST_PATTERNS: &[&str] = &[
     ".gobby/plans/**/*.md",
-    ".gobby/wiki/**/*.md",
+    "gobby-wiki/**/*.md",
     ".github/workflows/**/*.yml",
     ".github/workflows/**/*.yaml",
 ];
@@ -134,11 +134,7 @@ pub(super) fn is_hidden_metadata_content_only(root: &Path, path: &Path) -> bool 
         return true;
     }
 
-    if components.len() >= 3
-        && components[0] == ".gobby"
-        && components[1] == "wiki"
-        && path_has_extension(path, &["md"])
-    {
+    if components.len() >= 2 && components[0] == "gobby-wiki" && path_has_extension(path, &["md"]) {
         return true;
     }
 
@@ -158,21 +154,27 @@ pub(super) fn is_generated_wiki_metadata(root: &Path, path: &Path) -> bool {
         })
         .collect::<Vec<_>>();
 
-    if components.len() >= 3
-        && components[0] == ".gobby"
-        && components[1] == "wiki"
-        && components[2] == "_meta"
+    if components.first().copied() != Some("gobby-wiki") {
+        return false;
+    }
+
+    if components.get(1).copied() == Some("_meta")
+        || components.get(1).copied() == Some(".obsidian")
     {
         return true;
     }
 
-    components.len() >= 3
-        && components[0] == ".gobby"
-        && components[1] == "wiki"
-        && path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.ends_with(".json.lock"))
+    if components.len() == 2 && components[1] == "wikis.json" {
+        return true;
+    }
+
+    if components.len() == 3 && components[1] == "_gwiki" && path_has_extension(path, &["json"]) {
+        return true;
+    }
+
+    path.file_name()
+        .and_then(|name| name.to_str())
+        .is_some_and(|name| name.ends_with(".lock"))
 }
 
 fn path_has_extension(path: &Path, extensions: &[&str]) -> bool {

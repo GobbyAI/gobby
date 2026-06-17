@@ -327,7 +327,7 @@ fn public_cli_smoke_compile_source_bootstraps_fresh_project_checkpoint() {
     assert_eq!(compile_payload["command"], "compile");
     assert_eq!(compile_payload["ai"]["route"], "off");
 
-    let vault = fixture.project().join(".gobby/wiki");
+    let vault = fixture.project().join("gobby-wiki");
     let article = vault.join("knowledge/topics/fresh-vault-compile.md");
     assert!(article.is_file(), "missing article {}", article.display());
 
