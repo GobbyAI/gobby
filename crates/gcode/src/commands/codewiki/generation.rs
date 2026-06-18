@@ -5,8 +5,8 @@ use crate::models::Symbol;
 
 use super::{
     AiDepth, BuiltDoc, CodewikiInput, CodewikiProgress, DocPruneScope, FileDocPosition,
-    OwnershipMeta, OwnershipOptions, ReusePlan, TextGenerator, build_architecture_doc,
-    build_curated_navigation_docs, build_file_doc, build_hotspots_doc,
+    OwnershipMeta, OwnershipOptions, ReusePlan, TextGenerator, TextVerifier,
+    build_architecture_doc, build_curated_navigation_docs, build_file_doc, build_hotspots_doc,
     build_module_docs_with_filter, build_onboarding_doc, build_ownership_doc, build_repo_doc,
     cluster, cluster_file_modules, file_doc_path, is_core_file, module_doc_path, module_for_file,
     render_architecture_doc, render_file_doc, render_hotspots_doc, render_module_doc,
@@ -34,6 +34,7 @@ fn generate_hierarchical_docs_with_graph_availability(
         input,
         None,
         &mut generate,
+        &mut None,
         AiDepth::Symbols,
         &mut None,
         &mut progress,
@@ -54,6 +55,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
     input: &CodewikiInput,
     ownership: Option<(&Path, &mut OwnershipMeta)>,
     mut generate: Option<&mut TextGenerator<'_>>,
+    mut verify: Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
@@ -64,6 +66,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
         input,
         ownership,
         &mut generate,
+        &mut verify,
         ai_depth,
         reuse,
         progress,
@@ -97,6 +100,7 @@ pub(crate) fn generate_hierarchical_docs_with_reuse(
         input,
         None,
         &mut generate,
+        &mut None,
         ai_depth,
         reuse,
         progress,
@@ -112,14 +116,50 @@ pub(crate) fn generate_hierarchical_docs_with_reuse(
     docs
 }
 
+/// Test entry point that threads a verifier alongside the generator, so the
+/// grounded verification pass can be exercised end-to-end through the curated
+/// page pipeline without the CLI runtime.
+#[cfg(test)]
+pub(crate) fn generate_hierarchical_docs_with_verify(
+    input: &CodewikiInput,
+    generate: Option<&mut TextGenerator<'_>>,
+    verify: Option<&mut TextVerifier<'_>>,
+    ai_depth: AiDepth,
+) -> Vec<BuiltDoc> {
+    let mut generate = generate;
+    let mut verify = verify;
+    let mut progress = CodewikiProgress::silent();
+    let doc_scope = DocPruneScope::unscoped();
+    let mut docs = Vec::new();
+    if let Err(error) = generate_hierarchical_docs_core(
+        input,
+        None,
+        &mut generate,
+        &mut verify,
+        ai_depth,
+        &mut None,
+        &mut progress,
+        &doc_scope,
+        &mut |doc| {
+            docs.push(doc);
+            Ok(())
+        },
+    ) {
+        log::warn!("codewiki generation failed without ownership metadata: {error}");
+        return Vec::new();
+    }
+    docs
+}
+
 #[expect(
     clippy::too_many_arguments,
-    reason = "core generation threads mutable generator, reuse, progress, scope, and emit state"
+    reason = "core generation threads mutable generator, verifier, reuse, progress, scope, and emit state"
 )]
 pub(crate) fn generate_hierarchical_docs_core(
     input: &CodewikiInput,
     ownership: Option<(&Path, &mut OwnershipMeta)>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    verify: &mut Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
@@ -221,6 +261,7 @@ pub(crate) fn generate_hierarchical_docs_core(
         &module_docs,
         &input.leading_chunks,
         generate,
+        verify,
         reuse,
         progress,
     ) {

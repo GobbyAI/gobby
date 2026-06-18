@@ -9,6 +9,7 @@ fn generate_docs_for_scope(input: &CodewikiInput, doc_scope: &DocPruneScope) -> 
         input,
         None,
         &mut generate,
+        &mut None,
         AiDepth::Symbols,
         &mut None,
         &mut progress,

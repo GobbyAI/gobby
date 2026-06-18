@@ -217,6 +217,16 @@ pub struct CapabilityBinding {
     /// Daemon feature profile (text_generate only); ignored when an explicit
     /// provider/model pair routes the call.
     pub profile: Option<String>,
+    /// Daemon feature profile for the grounded verification pass (text_generate
+    /// only). `None` lets the consumer pick its default verify profile.
+    pub verify_profile: Option<String>,
+    /// Direct-mode model for the verification pass (text_generate only).
+    /// Overrides [`model`](Self::model) for verify calls; `None` reuses `model`.
+    pub verify_model: Option<String>,
+    /// Direct-mode API key for the verification pass (text_generate only).
+    /// `None` falls back to [`api_key`](Self::api_key); provider, api_base, and
+    /// transport always inherit from the generate binding.
+    pub verify_api_key: Option<String>,
 }
 
 /// Shared AI tuning values.
@@ -291,6 +301,9 @@ pub mod ai_keys {
     pub const TEXT_GENERATE_MODEL: &str = "ai.text_generate.model";
     pub const TEXT_GENERATE_PROVIDER: &str = "ai.text_generate.provider";
     pub const TEXT_GENERATE_PROFILE: &str = "ai.text_generate.profile";
+    pub const TEXT_GENERATE_VERIFY_PROFILE: &str = "ai.text_generate.verify_profile";
+    pub const TEXT_GENERATE_VERIFY_MODEL: &str = "ai.text_generate.verify_model";
+    pub const TEXT_GENERATE_VERIFY_API_KEY: &str = "ai.text_generate.verify_api_key";
 
     const ALL_KEYS: &[&str] = &[
         ROUTING,
@@ -333,6 +346,9 @@ pub mod ai_keys {
         TEXT_GENERATE_MODEL,
         TEXT_GENERATE_PROVIDER,
         TEXT_GENERATE_PROFILE,
+        TEXT_GENERATE_VERIFY_PROFILE,
+        TEXT_GENERATE_VERIFY_MODEL,
+        TEXT_GENERATE_VERIFY_API_KEY,
     ];
 
     pub fn all() -> &'static [&'static str] {

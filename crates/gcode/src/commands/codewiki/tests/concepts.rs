@@ -248,3 +248,78 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
         "{data_flow}"
     );
 }
+
+#[test]
+fn verify_pass_strips_unsupported_block_from_curated_page() {
+    // Generator: the structure pass plus a concept body carrying one planted,
+    // unsupported "Fabricated" block among grounded blocks.
+    let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            Some(
+                r#"{
+                  "concept_modules": [
+                    {
+                      "title": "Query Engine",
+                      "summary": "How requests enter the system and resolve into repository answers.",
+                      "modules": ["src"],
+                      "files": ["src/lib.rs", "src/search.rs"]
+                    }
+                  ],
+                  "sections": [
+                    {"title": "Understanding the System", "summary": "Start with query flow.", "concepts": ["Query Engine"]}
+                  ],
+                  "narrative_pages": [
+                    {"slug": "introduction", "title": "Introduction", "summary": "Begin at the query engine.", "concepts": ["Query Engine"], "modules": ["src"], "files": ["src/lib.rs"]}
+                  ]
+                }"#
+                .to_string(),
+            )
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(
+                "## Purpose\n\nThe query engine resolves requests into repository answers [src/search.rs:4].\n\nFabricated: the engine secretly trains a neural ranker each night [src/search.rs:4].\n\n## Where to start\n\nBegin with `query` [src/search.rs:4].\n"
+                    .to_string(),
+            )
+        } else {
+            // Narrative chapters: keep a clean, fully-supported body.
+            Some(
+                "## Why this matters\n\nQuery flow is the spine of the system [src/search.rs:4].\n\n## What to read next\n\nContinue to the architecture chapter.\n"
+                    .to_string(),
+            )
+        }
+    };
+
+    // Verifier: flag the numbered block that carries the planted sentinel; any
+    // page without it is fully supported (`[]`).
+    let mut verifier = |prompt: &str, _system: &str| {
+        for line in prompt.lines() {
+            let trimmed = line.trim_start();
+            if trimmed.starts_with('[') && trimmed.contains("Fabricated") {
+                let id = trimmed[1..].split(']').next().unwrap_or_default().trim();
+                return Some(format!("[{id}]"));
+            }
+        }
+        Some("[]".to_string())
+    };
+
+    let docs = generate_hierarchical_docs_with_verify(
+        &concept_input(),
+        Some(&mut generator),
+        Some(&mut verifier),
+        AiDepth::Files,
+    );
+
+    let concept = docs
+        .iter()
+        .find(|doc| doc.path == "code/concepts/query-engine.md")
+        .map(|doc| doc.content.as_str())
+        .expect("concept page");
+
+    // The grounded block survives; the planted unsupported block is stripped.
+    assert!(
+        concept.contains("resolves requests into repository answers"),
+        "{concept}"
+    );
+    assert!(!concept.contains("Fabricated"), "{concept}");
+    // Stripping an unsupported block marks the page degraded.
+    assert!(concept.contains("degraded: true"), "{concept}");
+}

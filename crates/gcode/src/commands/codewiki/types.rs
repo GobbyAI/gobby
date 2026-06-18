@@ -363,6 +363,14 @@ pub(crate) struct CodewikiSymbolSnapshot {
 
 pub type TextGenerator<'a> = dyn FnMut(&str, &str, PromptTier) -> Option<String> + 'a;
 
+/// Grounded verification call: given a verify prompt and system prompt, returns
+/// the raw model response, or `None` when the verifier is unavailable (routed
+/// off, transport failure, or generation error). Callers treat `None` as "skip
+/// verification, proceed undegraded". The deterministic block numbering,
+/// response parsing, and stripping live in [`super::text`], so the closure is
+/// just the model call — mirroring [`TextGenerator`] but without a prompt tier.
+pub type TextVerifier<'a> = dyn FnMut(&str, &str) -> Option<String> + 'a;
+
 /// Weight tier of one codewiki generation call. Aggregate docs roll up many
 /// child summaries into one long grounded synthesis and route to a heavier
 /// daemon profile; standard calls (file summaries, symbol purposes) are
@@ -412,6 +420,14 @@ pub struct CodewikiAiOptions {
     /// Daemon feature profile for aggregate docs; `None` means
     /// [`super::DEFAULT_AGGREGATE_PROFILE`].
     pub aggregate_profile: Option<String>,
+    /// Override seams for the grounded verification pass. There is no CLI flag
+    /// for these (verify is config-only): each `None` falls back to the resolved
+    /// `ai.text_generate.verify_*` config, then to the generate model/key and
+    /// [`super::DEFAULT_VERIFY_PROFILE`]. Kept here so the generator set is
+    /// resolved from one options value and the precedence is unit-testable.
+    pub verify_profile: Option<String>,
+    pub verify_model: Option<String>,
+    pub verify_api_key: Option<String>,
 }
 
 impl SourceSpan {

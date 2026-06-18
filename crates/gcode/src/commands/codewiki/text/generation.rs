@@ -8,7 +8,8 @@ use gobby_core::ai_types::AiError;
 use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::commands::codewiki::{
-    CodewikiAiOptions, DEFAULT_AGGREGATE_PROFILE, PromptTier, TextGenerator,
+    CodewikiAiOptions, DEFAULT_AGGREGATE_PROFILE, DEFAULT_VERIFY_PROFILE, PromptTier,
+    TextGenerator, TextVerifier,
 };
 use crate::config::{self, Context};
 use crate::{db, secrets};
@@ -58,6 +59,81 @@ pub(crate) fn resolve_text_generator(
                     eprintln!(
                         "text generation failed; affected codewiki docs fall back to AST-only \
                          content and record degraded: true: {error}"
+                    );
+                    warned = true;
+                }
+                None
+            }
+        }
+    }))
+}
+
+/// Resolve the grounded-verification call that pairs with
+/// [`resolve_text_generator`]. Returns `None` when text generation is routed
+/// off (no generation, so nothing to verify). Profile/model precedence:
+/// explicit [`CodewikiAiOptions`] override -> resolved `ai.text_generate.verify_*`
+/// config -> the generate model/api_key and [`DEFAULT_VERIFY_PROFILE`]. Daemon
+/// mode selects the verify model server-side via the verify profile; direct mode
+/// swaps in `verify_model`/`verify_api_key` while inheriting
+/// provider/api_base/transport from the generate binding.
+pub(crate) fn resolve_text_verifier(
+    ctx: &Context,
+    ai: &CodewikiAiOptions,
+) -> Option<Box<TextVerifier<'static>>> {
+    let mut ai_context = resolve_ai_context(ctx, ai.routing).ok()?;
+    let route = effective_route(&ai_context, AiCapability::TextGenerate);
+    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+        return None;
+    }
+
+    let binding = ai_context.binding(AiCapability::TextGenerate);
+    let verify_profile = ai
+        .verify_profile
+        .clone()
+        .or_else(|| binding.verify_profile.clone())
+        .unwrap_or_else(|| DEFAULT_VERIFY_PROFILE.to_string());
+    let verify_model = ai
+        .verify_model
+        .clone()
+        .or_else(|| binding.verify_model.clone());
+    let verify_api_key = ai
+        .verify_api_key
+        .clone()
+        .or_else(|| binding.verify_api_key.clone());
+
+    if matches!(route, AiRouting::Direct) {
+        let text_generate = &mut ai_context.bindings.text_generate;
+        if let Some(model) = verify_model {
+            text_generate.model = Some(model);
+        }
+        if let Some(api_key) = verify_api_key {
+            text_generate.api_key = Some(api_key);
+        }
+    }
+
+    let quiet = ctx.quiet;
+    let mut warned = false;
+    Some(Box::new(move |prompt: &str, system: &str| {
+        let result = generate_with_bounded_retry(|| match route {
+            AiRouting::Daemon => generate_via_daemon_with_max_tokens(
+                &ai_context,
+                prompt,
+                Some(system),
+                None,
+                Some(verify_profile.as_str()),
+            ),
+            AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
+            AiRouting::Off | AiRouting::Auto => {
+                unreachable!("non-generating routes returned above")
+            }
+        });
+        match result {
+            Ok(result) => clean_generated(result.text),
+            Err(error) => {
+                if !quiet && !warned {
+                    eprintln!(
+                        "codewiki verification unavailable; generated narratives ship \
+                         unverified (degraded: false): {error}"
                     );
                     warned = true;
                 }

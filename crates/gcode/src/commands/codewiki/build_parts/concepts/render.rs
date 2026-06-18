@@ -16,6 +16,7 @@ pub(super) fn render_curated_navigation_docs(
     degraded: bool,
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    verify: &mut Option<&mut TextVerifier<'_>>,
 ) -> Vec<BuiltDoc> {
     let module_lookup = modules
         .iter()
@@ -54,6 +55,7 @@ pub(super) fn render_curated_navigation_docs(
             leading_chunks,
             &spans,
             generate,
+            verify,
         );
         concept.body = result.body;
         concept.body_degraded = result.degraded;
@@ -72,6 +74,7 @@ pub(super) fn render_curated_navigation_docs(
             leading_chunks,
             &spans,
             generate,
+            verify,
         );
         page.body = result.body;
         page.body_degraded = result.degraded;

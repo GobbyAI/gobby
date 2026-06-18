@@ -37,6 +37,7 @@ pub(crate) fn build_curated_navigation_docs(
     modules: &[ModuleDoc],
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
 ) -> Vec<BuiltDoc> {
@@ -72,7 +73,15 @@ pub(crate) fn build_curated_navigation_docs(
         Generation::Skipped => fallback_plan(files, modules),
     };
 
-    render_curated_navigation_docs(files, modules, plan, degraded, leading_chunks, generate)
+    render_curated_navigation_docs(
+        files,
+        modules,
+        plan,
+        degraded,
+        leading_chunks,
+        generate,
+        verify,
+    )
 }
 
 #[cfg(test)]

@@ -58,6 +58,7 @@ pub(crate) fn curated_page_body(
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     spans: &[SourceSpan],
     generate: &mut Option<&mut TextGenerator<'_>>,
+    verify: &mut Option<&mut TextVerifier<'_>>,
 ) -> CuratedBody {
     let members = member_evidence_rows(member_modules, member_files, module_lookup, file_lookup);
     let symbols = symbol_evidence_rows(member_files, file_lookup);
@@ -92,6 +93,20 @@ pub(crate) fn curated_page_body(
 
     match maybe_generate(generate, &prompt, system, PromptTier::Aggregate) {
         Generation::Generated(text) => {
+            // Grounded verification: strip blocks the verifier finds unsupported
+            // by the cited source before the page is grounded and rendered. An
+            // unavailable verifier proceeds undegraded; an unusable verdict (or a
+            // page stripped to nothing) falls back to the structural body.
+            let (text, verify_degraded) = match verify_and_strip(verify, &text, &sources) {
+                VerifyOutcome::Skipped => (text, false),
+                VerifyOutcome::Verified { text, degraded } => (text, degraded),
+                VerifyOutcome::Unusable => {
+                    return CuratedBody {
+                        body: Some(structural_body(kind, title, &members, &symbols)),
+                        degraded: true,
+                    };
+                }
+            };
             let grounded = ground_text(&text, spans, None);
             if grounded.trim().is_empty() {
                 CuratedBody {
@@ -101,7 +116,7 @@ pub(crate) fn curated_page_body(
             } else {
                 CuratedBody {
                     body: Some(grounded),
-                    degraded: false,
+                    degraded: verify_degraded,
                 }
             }
         }

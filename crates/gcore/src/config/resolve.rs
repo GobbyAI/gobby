@@ -313,6 +313,24 @@ fn resolve_base_capability_binding(
             }
             _ => None,
         },
+        verify_profile: match capability {
+            AiCapability::TextGenerate => {
+                resolve_ai_config_value(source, ai_keys::TEXT_GENERATE_VERIFY_PROFILE)
+            }
+            _ => None,
+        },
+        verify_model: match capability {
+            AiCapability::TextGenerate => {
+                resolve_ai_config_value(source, ai_keys::TEXT_GENERATE_VERIFY_MODEL)
+            }
+            _ => None,
+        },
+        verify_api_key: match capability {
+            AiCapability::TextGenerate => {
+                resolve_ai_config_value(source, ai_keys::TEXT_GENERATE_VERIFY_API_KEY)
+            }
+            _ => None,
+        },
     }
 }
 
@@ -337,6 +355,9 @@ fn resolve_audio_translate_binding(source: &mut impl ConfigSource) -> Capability
         language: None,
         target_lang,
         profile: None,
+        verify_profile: None,
+        verify_model: None,
+        verify_api_key: None,
     }
 }
 

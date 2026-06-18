@@ -350,6 +350,9 @@ mod tests {
             language: None,
             target_lang: None,
             profile: None,
+            verify_profile: None,
+            verify_model: None,
+            verify_api_key: None,
         };
 
         gobby_core::ai_context::AiContext {

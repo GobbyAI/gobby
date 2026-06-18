@@ -11,12 +11,20 @@ const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
 const MAX_MERMAID_HOPS: usize = 2;
 const MAX_MERMAID_EDGES: usize = 20;
 const MAX_EDGE_LIMIT: usize = 100_000;
-const CODEWIKI_RENDER_VERSION: u32 = 4;
+/// Cache epoch for generated pages. Bumped 4 -> 5 so concept/narrative pages
+/// written before the grounded verification pass cannot be reused from disk
+/// without re-running generate -> verify.
+const CODEWIKI_RENDER_VERSION: u32 = 5;
 
 /// Default daemon feature profile for aggregate (module/repo/architecture)
 /// prose, which synthesizes 10k+-token grounded prompts; file and symbol
 /// docs stay on the daemon's default low-tier profile.
 pub(crate) const DEFAULT_AGGREGATE_PROFILE: &str = "feature_mid";
+
+/// Default daemon feature profile for the grounded verification pass. Verify is
+/// a cheaper "is this claim supported by the cited source?" judgment than
+/// generation, so it routes to a lighter tier than [`DEFAULT_AGGREGATE_PROFILE`].
+pub(crate) const DEFAULT_VERIFY_PROFILE: &str = "feature_low";
 
 mod build;
 mod cluster;
@@ -53,7 +61,7 @@ pub use generation::generate_hierarchical_docs;
 #[cfg(test)]
 pub(crate) use generation::{
     generate_hierarchical_docs_core, generate_hierarchical_docs_with_progress,
-    generate_hierarchical_docs_with_reuse,
+    generate_hierarchical_docs_with_reuse, generate_hierarchical_docs_with_verify,
 };
 pub(crate) use graph::fetch_codewiki_graph_edges;
 #[cfg(test)]
@@ -83,19 +91,20 @@ pub use run::run;
 pub(crate) use run::{load_symbols_for_codewiki, should_document_file, validate_edge_limit};
 // AI and structural text helpers.
 pub(crate) use text::{
-    Generation, append_curated_source_files, append_relevant_source_files, citation_list,
-    citation_markers, collect_link_spans, display_child_summary, frontmatter_with_degradation,
-    frontmatter_with_degradation_without_ranges, ground_text, maybe_generate,
-    neutralize_symbol_purpose_links, replace_citations_with_markers, resolve_text_generator,
-    structural_file_summary, structural_module_summary, structural_repo_summary,
-    structural_symbol_purpose, write_references, write_section,
+    Generation, VerifyOutcome, append_curated_source_files, append_relevant_source_files,
+    citation_list, citation_markers, collect_link_spans, display_child_summary,
+    frontmatter_with_degradation, frontmatter_with_degradation_without_ranges, ground_text,
+    maybe_generate, neutralize_symbol_purpose_links, replace_citations_with_markers,
+    resolve_text_generator, resolve_text_verifier, structural_file_summary,
+    structural_module_summary, structural_repo_summary, structural_symbol_purpose,
+    verify_and_strip, write_references, write_section,
 };
 #[cfg(test)]
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};
 pub use types::{
     AiDepth, CodewikiAiOptions, CodewikiGraphAvailability, CodewikiGraphEdge,
     CodewikiGraphEdgeKind, CodewikiInput, CodewikiRunSummary, LeadingChunk, PromptTier,
-    TextGenerator,
+    TextGenerator, TextVerifier,
 };
 pub(crate) use types::{
     ArchitectureDoc, ArchitectureSubsystem, BuiltDoc, CodewikiDocMeta, CodewikiFileSnapshot,

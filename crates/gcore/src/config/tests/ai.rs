@@ -40,6 +40,41 @@ fn ai_routing_per_capability_precedence() {
 }
 
 #[test]
+fn text_generate_resolves_verify_overrides() {
+    let _env = EnvGuard::new();
+    let mut source = TestSource::with_values([
+        (ai_keys::TEXT_GENERATE_MODEL, "generate-model"),
+        (ai_keys::TEXT_GENERATE_API_KEY, "generate-key"),
+        (ai_keys::TEXT_GENERATE_VERIFY_PROFILE, "feature_low"),
+        (ai_keys::TEXT_GENERATE_VERIFY_MODEL, "verify-model"),
+        (ai_keys::TEXT_GENERATE_VERIFY_API_KEY, "verify-key"),
+    ]);
+
+    let binding = resolve_capability_binding(&mut source, AiCapability::TextGenerate);
+    assert_eq!(binding.model.as_deref(), Some("generate-model"));
+    assert_eq!(binding.api_key.as_deref(), Some("generate-key"));
+    assert_eq!(binding.verify_profile.as_deref(), Some("feature_low"));
+    assert_eq!(binding.verify_model.as_deref(), Some("verify-model"));
+    assert_eq!(binding.verify_api_key.as_deref(), Some("verify-key"));
+
+    // Verify keys are TextGenerate-only; other capabilities never carry them.
+    let embed = resolve_capability_binding(&mut source, AiCapability::Embed);
+    assert_eq!(embed.verify_profile, None);
+    assert_eq!(embed.verify_model, None);
+    assert_eq!(embed.verify_api_key, None);
+}
+
+#[test]
+fn text_generate_verify_overrides_absent_by_default() {
+    let _env = EnvGuard::new();
+    let mut source = TestSource::with_values([(ai_keys::TEXT_GENERATE_MODEL, "generate-model")]);
+    let binding = resolve_capability_binding(&mut source, AiCapability::TextGenerate);
+    assert_eq!(binding.verify_profile, None);
+    assert_eq!(binding.verify_model, None);
+    assert_eq!(binding.verify_api_key, None);
+}
+
+#[test]
 fn ai_config_resolves_store_then_yaml_no_env() {
     let env = EnvGuard::new();
     env.set("GOBBY_TEST_PRESENT", "interpolated-text-model");

@@ -78,6 +78,12 @@ pub fn apply_text_generation_bootstrap(
     config.remove(ai_keys::TEXT_GENERATE_TRANSPORT);
     config.remove(ai_keys::TEXT_GENERATE_PROVIDER);
     config.remove(ai_keys::TEXT_GENERATE_PROFILE);
+    // Clear the daemon-only verify profile and any stale verify overrides so a
+    // fresh direct bootstrap lets the verify pass fall back to the model/api_key
+    // set above (see CapabilityBinding::verify_*).
+    config.remove(ai_keys::TEXT_GENERATE_VERIFY_PROFILE);
+    config.remove(ai_keys::TEXT_GENERATE_VERIFY_MODEL);
+    config.remove(ai_keys::TEXT_GENERATE_VERIFY_API_KEY);
     match text_generation.api_key.as_deref() {
         Some(api_key) => config.set(ai_keys::TEXT_GENERATE_API_KEY, api_key),
         None => config.remove(ai_keys::TEXT_GENERATE_API_KEY),

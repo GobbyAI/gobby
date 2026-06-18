@@ -14,6 +14,7 @@ pub const ARCHITECTURE_NARRATIVE_SYSTEM: &str = "You write architecture overview
 pub const CURATED_NAVIGATION_SYSTEM: &str = "You design a curated navigation layer for grounded code documentation. Return strict JSON only. Name user-facing concept modules, organize them into a hierarchy, and create short narrative tour pages. Use only supplied module and file identifiers, and link into reference pages instead of duplicating source detail. Order narrative_pages as a learning path: foundational subsystems first, then the layers that build on them, so the tour reads from chapter one onward.";
 pub const CONCEPT_PAGE_SYSTEM: &str = "You write a reference explainer page for one concept in a codebase, written for an engineer who is new to it. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown page with these sections, in order: '## Purpose' (what this concept is and the problem it solves), '## Covers / Does not cover' (the scope boundaries), '## Architecture' (how the pieces fit together; a diagram is injected separately, so describe the structure in prose), '## Data flow' (a numbered list tracing the real runtime flow), '## Key components' (a compact Markdown table of the most important symbols and their role), and '## Where to start' (which page or symbol to read first). Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
 pub const NARRATIVE_PAGE_SYSTEM: &str = "You write one chapter of a guided, beginner-friendly tour of a codebase, in the style of a progressive tutorial. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown chapter with these sections, in order: '## Why this matters' (the motivation and the problem this part of the system solves), '## How it works' (a numbered, step-by-step walkthrough of the real flow, grounded in the supplied symbols), '## Key components' (a compact Markdown table of the important symbols), and '## What to read next' (which chapter or reference page to read next). You may include at most one brief analogy if it is anchored to the supplied source; do not pad with long generic metaphors. Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
+pub const VERIFY_SYSTEM: &str = "You are a strict citation auditor for code documentation. You receive a draft explanation split into numbered blocks and the source excerpts the page is allowed to rely on. For each block, decide whether its specific technical claims (names, behaviors, control flow, data flow, relationships) are supported by the supplied source excerpts. A block is UNSUPPORTED when it states a concrete technical claim that the excerpts do not show, contradict, or that invents files, symbols, line numbers, or behavior. Treat section headings, navigational sentences, and generic framing as supported. Return ONLY a JSON array of the integer IDs of the unsupported blocks, e.g. [2,5]; return [] when every block is supported. Output nothing but the JSON array: no prose, no explanation, no code fences. Never rewrite the blocks.";
 
 pub fn symbol_prompt(symbol: &Symbol) -> String {
     let mut prompt = format!(
@@ -253,6 +254,22 @@ pub fn narrative_page_prompt(
     )
 }
 
+/// Build the verification prompt for a generated curated page: the draft prose
+/// split into numbered blocks, followed by the cited source excerpts that are
+/// the only evidence the auditor may rely on (pair with [`VERIFY_SYSTEM`]). The
+/// block IDs here are the 1-based positions the verifier returns and the caller
+/// strips, so numbering must stay in lockstep with the caller's block split.
+pub fn verify_prompt(blocks: &[String], sources: &[SourceExcerpt]) -> String {
+    let mut prompt = String::from(
+        "Audit each numbered draft block against the source excerpts below.\n\nDraft blocks:\n",
+    );
+    for (index, block) in blocks.iter().enumerate() {
+        let _ = writeln!(prompt, "[{}] {}", index + 1, bounded_excerpt(block.trim()));
+    }
+    append_source_excerpt_section_n(&mut prompt, sources, VERIFY_SOURCE_EXCERPTS);
+    prompt
+}
+
 fn build_curated_page_prompt(
     header: &str,
     title: &str,
@@ -391,6 +408,10 @@ pub(crate) const MAX_PROMPT_SOURCE_EXCERPTS: usize = 4;
 /// ([`MAX_PROMPT_SOURCE_EXCERPTS`] stays at 4).
 pub(crate) const CONCEPT_PAGE_SOURCE_EXCERPTS: usize = 8;
 pub(crate) const NARRATIVE_PAGE_SOURCE_EXCERPTS: usize = 8;
+/// Source-excerpt budget for the verification prompt: the auditor sees the same
+/// breadth of cited evidence the page was generated against, so a claim grounded
+/// in any fed excerpt is judged supported.
+pub(crate) const VERIFY_SOURCE_EXCERPTS: usize = 8;
 const ENUMERABLE_FACTS_GUIDANCE: &str = "When the supplied input exposes enumerable facts (CLI commands/flags, configuration keys, environment variables, or public API symbols), prefer compact Markdown tables beside the narrative instead of burying those facts in prose.";
 
 /// First paragraph of a child summary, flattened to one line and hard-capped

@@ -538,6 +538,11 @@ fn run() -> anyhow::Result<()> {
                     routing: ai.map(AiRouteArg::into),
                     depth: ai_depth.into(),
                     aggregate_profile: ai_aggregate_profile,
+                    // Verify config has no CLI flag; resolved from
+                    // `ai.text_generate.verify_*` inside the generator resolver.
+                    verify_profile: None,
+                    verify_model: None,
+                    verify_api_key: None,
                 },
                 edge_limit,
                 include_docs,
