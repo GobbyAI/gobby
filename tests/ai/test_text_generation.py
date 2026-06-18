@@ -828,7 +828,12 @@ async def test_text_generation_service_profile_only_uses_configured_profile_defa
         ai={
             "generation": {
                 "profile_defaults": {
-                    FeatureProfile.LOW: ["local:lm-studio/qwen-local"],
+                    FeatureProfile.LOW: [
+                        {
+                            "candidate": "local:lm-studio/qwen-local",
+                            "reasoning_effort": "auto",
+                        }
+                    ],
                 }
             }
         }

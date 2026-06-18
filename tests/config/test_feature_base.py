@@ -8,8 +8,13 @@ from pydantic import ValidationError
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import (
     DEFAULT_PROFILE_CANDIDATES,
+    FeatureCandidateConfig,
     FeatureDefaultConfig,
     FeatureProfile,
+    candidate_labels,
+    candidate_runtime_entries,
+    default_candidates_for_profile,
+    default_reasoning_for_profile,
     parse_feature_candidate,
 )
 
@@ -30,22 +35,52 @@ class TestFeatureProfile:
             assert DEFAULT_PROFILE_CANDIDATES[profile]
 
     def test_profile_candidate_ordering(self) -> None:
-        assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW] == (
+        assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW]) == (
+            "gemini/gemini-3.5-flash",
             "codex/gpt-5.4-mini",
             "claude/haiku",
         )
-        assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID] == (
-            "codex/gpt-5.4-mini",
-            "claude/sonnet",
+        assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID]) == (
             "gemini/gemini-3.5-flash",
+            "claude/sonnet",
+            "codex/gpt-5.5",
         )
-        assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH] == ("gemini/gemini-3.5-flash",)
+        assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]) == (
+            "codex/gpt-5.5",
+            "claude/opus",
+            "gemini/gemini-3.1-pro",
+        )
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
-            assert "claude/fable" not in candidates
+            assert "claude/fable" not in candidate_labels(candidates)
+
+    def test_profile_candidate_reasoning_pins(self) -> None:
+        high_candidates = DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]
+
+        assert [candidate.reasoning_effort for candidate in high_candidates] == [
+            "xhigh",
+            "high",
+            None,
+        ]
+        for profile in (FeatureProfile.LOW, FeatureProfile.MID):
+            assert all(
+                candidate.reasoning_effort is None
+                for candidate in DEFAULT_PROFILE_CANDIDATES[profile]
+            )
+
+    def test_default_candidates_for_profile_returns_labels(self) -> None:
+        assert default_candidates_for_profile(FeatureProfile.HIGH) == (
+            "codex/gpt-5.5",
+            "claude/opus",
+            "gemini/gemini-3.1-pro",
+        )
+
+    def test_default_reasoning_for_profile_is_auto_unset(self) -> None:
+        for profile in FeatureProfile:
+            assert default_reasoning_for_profile(profile) is None
 
     def test_profiles_use_cloud_only_candidates(self) -> None:
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
-            providers = {candidate.split("/", 1)[0] for candidate in candidates}
+            providers = {candidate.split("/", 1)[0] for candidate in candidate_labels(candidates)}
             assert providers <= {"codex", "claude", "gemini"}
 
 
@@ -53,18 +88,70 @@ class TestFeatureDefaultConfig:
     def test_defaults(self) -> None:
         cfg = FeatureDefaultConfig()
         assert cfg.profile == FeatureProfile.LOW
-        assert cfg.candidates == list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW])
+        assert cfg._candidates_omitted is True
+        assert candidate_labels(cfg.candidates) == default_candidates_for_profile(
+            FeatureProfile.LOW
+        )
 
     def test_profile_fills_matching_candidates(self) -> None:
         cfg = FeatureDefaultConfig(profile=FeatureProfile.MID)
-        assert cfg.candidates == list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID])
+        assert candidate_labels(cfg.candidates) == default_candidates_for_profile(
+            FeatureProfile.MID
+        )
 
     def test_custom_candidates(self) -> None:
         cfg = FeatureDefaultConfig(
             profile=FeatureProfile.HIGH,
             candidates=["qwen/qwen3-coder", "claude/opus"],
         )
-        assert cfg.candidates == ["qwen/qwen3-coder", "claude/opus"]
+        assert cfg._candidates_omitted is False
+        assert candidate_labels(cfg.candidates) == ("qwen/qwen3-coder", "claude/opus")
+
+    def test_structured_candidate_config_parses_reasoning_effort(self) -> None:
+        cfg = FeatureDefaultConfig(
+            candidates=[
+                {"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"},
+                FeatureCandidateConfig(candidate="claude/opus", reasoning_effort="HIGH"),
+            ],
+        )
+
+        assert candidate_labels(cfg.candidates) == ("codex/gpt-5.5", "claude/opus")
+        assert [candidate.reasoning_effort for candidate in cfg.candidates] == ["xhigh", "high"]
+
+    @pytest.mark.parametrize("reasoning_effort", ["auto", "", "  AUTO  ", None])
+    def test_auto_reasoning_effort_maps_to_unset(self, reasoning_effort: str | None) -> None:
+        cfg = FeatureDefaultConfig(
+            candidates=[
+                {"candidate": "codex/gpt-5.5", "reasoning_effort": reasoning_effort},
+            ],
+        )
+
+        assert cfg.candidates[0].reasoning_effort is None
+
+    def test_unknown_reasoning_effort_is_accepted_at_config_load(self) -> None:
+        cfg = FeatureDefaultConfig(
+            candidates=[
+                {"candidate": "codex/gpt-5.5", "reasoning_effort": "banana"},
+            ],
+        )
+
+        assert cfg.candidates[0].reasoning_effort == "banana"
+
+    def test_explicit_candidate_reasoning_overrides_profile_default(self) -> None:
+        entries = candidate_runtime_entries(
+            [{"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"}],
+            profile=FeatureProfile.HIGH,
+        )
+
+        assert entries[0].reasoning_effort == "xhigh"
+
+    def test_candidate_runtime_entries_resolve_auto_profile_default(self) -> None:
+        entries = candidate_runtime_entries(
+            [{"candidate": "codex/gpt-5.5", "reasoning_effort": "auto"}],
+            profile=FeatureProfile.HIGH,
+        )
+
+        assert entries[0].reasoning_effort is None
 
     def test_deduplicates_normalized_candidates_preserving_order(self) -> None:
         cfg = FeatureDefaultConfig(
@@ -75,7 +162,7 @@ class TestFeatureDefaultConfig:
             ],
         )
 
-        assert cfg.candidates == ["claude/haiku", "codex/gpt-5.5"]
+        assert candidate_labels(cfg.candidates) == ("claude/haiku", "codex/gpt-5.5")
 
     @pytest.mark.parametrize(
         ("candidate", "expected"),
@@ -92,7 +179,7 @@ class TestFeatureDefaultConfig:
     )
     def test_normalizes_claude_family_candidate_labels(self, candidate: str, expected: str) -> None:
         cfg = FeatureDefaultConfig(candidates=[candidate])
-        assert cfg.candidates == [expected]
+        assert candidate_labels(cfg.candidates) == (expected,)
 
     @pytest.mark.parametrize(
         "kwargs",
@@ -135,11 +222,11 @@ class TestGenerationProfileDefaults:
             }
         )
 
-        assert config.session_summary.candidates == [
+        assert candidate_labels(config.session_summary.candidates) == (
             "codex/gpt-5.4-mini",
             "claude/haiku",
             "local:lm-studio/google/gemma-4-26b-a4b-qat",
-        ]
+        )
 
     def test_daemon_config_keeps_explicit_feature_candidates_authoritative(self) -> None:
         config = DaemonConfig(
@@ -159,7 +246,7 @@ class TestGenerationProfileDefaults:
             },
         )
 
-        assert config.session_summary.candidates == ["codex/gpt-5.4-mini"]
+        assert candidate_labels(config.session_summary.candidates) == ("codex/gpt-5.4-mini",)
 
 
 class TestFeatureConfigInheritance:
@@ -180,7 +267,9 @@ class TestFeatureConfigInheritance:
         ):
             cfg = config_cls()
             assert cfg.profile == FeatureProfile.LOW
-            assert cfg.candidates == list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW])
+            assert candidate_labels(cfg.candidates) == default_candidates_for_profile(
+                FeatureProfile.LOW
+            )
 
     def test_mid_feature_configs(self) -> None:
         from gobby.config.features import MergeResolutionConfig, RecommendToolsConfig
@@ -195,7 +284,9 @@ class TestFeatureConfigInheritance:
         ):
             cfg = config_cls()
             assert cfg.profile == FeatureProfile.MID
-            assert cfg.candidates == list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID])
+            assert candidate_labels(cfg.candidates) == default_candidates_for_profile(
+                FeatureProfile.MID
+            )
 
     def test_high_feature_configs(self) -> None:
         from gobby.config.features import ChatConfig
@@ -204,7 +295,9 @@ class TestFeatureConfigInheritance:
         for config_cls in (ChatConfig, TaskExpansionConfig):
             cfg = config_cls()
             assert cfg.profile == FeatureProfile.HIGH
-            assert cfg.candidates == list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH])
+            assert candidate_labels(cfg.candidates) == default_candidates_for_profile(
+                FeatureProfile.HIGH
+            )
 
     def test_memory_dream_candidate_page_timeout_must_be_positive(self) -> None:
         from gobby.config.persistence import MemoryDreamConfig

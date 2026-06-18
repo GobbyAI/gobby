@@ -34,9 +34,10 @@ from gobby.ai.registry import (
     CapabilityUnavailableError,
 )
 from gobby.config.feature_base import (
+    DEFAULT_PROFILE_CANDIDATES,
+    FeatureCandidateConfig,
     FeatureProfile,
-    default_candidates_for_profile,
-    normalize_feature_candidate,
+    candidate_runtime_entries,
 )
 from gobby.llm.base import LLMProviderCancellation
 
@@ -77,7 +78,8 @@ class TextGenerationService:
         registry: AICapabilityRegistry,
         adapters: Mapping[str, TextGenerateAdapter] | None = None,
         adapter_factories: Mapping[str, TextGenerateAdapterFactory] | None = None,
-        profile_defaults: Mapping[FeatureProfile, Sequence[str]] | None = None,
+        profile_defaults: Mapping[FeatureProfile, Sequence[str | FeatureCandidateConfig]]
+        | None = None,
         *,
         candidate_timeout_seconds: float | None = None,
         cli_candidate_timeout_seconds: float | None = None,
@@ -88,9 +90,7 @@ class TextGenerationService:
         self._candidate_timeout_seconds = candidate_timeout_seconds
         self._cli_candidate_timeout_seconds = cli_candidate_timeout_seconds
         self._profile_defaults = {
-            FeatureProfile(profile): tuple(
-                normalize_feature_candidate(candidate) for candidate in candidates
-            )
+            FeatureProfile(profile): candidate_runtime_entries(candidates, profile=profile)
             for profile, candidates in (profile_defaults or {}).items()
         }
 
@@ -355,8 +355,11 @@ class TextGenerationService:
             return tuple(
                 replace(request, provider=provider, model=model)
                 for provider, model in (
-                    _parse_candidate(normalize_feature_candidate(candidate))
-                    for candidate in request.candidates
+                    _parse_candidate(candidate.candidate)
+                    for candidate in candidate_runtime_entries(
+                        request.candidates,
+                        profile=request.profile,
+                    )
                 )
             )
         has_provider = request.provider is not None
@@ -371,12 +374,12 @@ class TextGenerationService:
             profile = FeatureProfile(request.profile)
             candidates = self._profile_defaults.get(profile)
             if candidates is None:
-                candidates = default_candidates_for_profile(profile)
+                candidates = DEFAULT_PROFILE_CANDIDATES[profile]
             return tuple(
                 replace(request, provider=provider, model=model)
                 for provider, model in (
-                    _parse_candidate(normalize_feature_candidate(candidate))
-                    for candidate in candidates
+                    _parse_candidate(candidate.candidate)
+                    for candidate in candidate_runtime_entries(candidates, profile=profile)
                 )
             )
         return (request,)

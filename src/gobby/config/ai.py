@@ -8,7 +8,11 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
-from gobby.config.feature_base import FeatureProfile, validate_feature_candidates
+from gobby.config.feature_base import (
+    FeatureCandidateConfig,
+    FeatureProfile,
+    validate_feature_candidates,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,7 +113,7 @@ class GenerationConfig(BaseModel):
         default_factory=LocalGenerationConfig,
         description="Named local OpenAI-compatible generation endpoints.",
     )
-    profile_defaults: dict[FeatureProfile, list[str]] = Field(
+    profile_defaults: dict[FeatureProfile, list[FeatureCandidateConfig]] = Field(
         default_factory=dict,
         description="Profile default candidate overrides keyed by feature profile.",
     )
@@ -136,8 +140,8 @@ class GenerationConfig(BaseModel):
     @classmethod
     def validate_profile_defaults(
         cls,
-        defaults: dict[FeatureProfile, list[str]],
-    ) -> dict[FeatureProfile, list[str]]:
+        defaults: dict[FeatureProfile, list[FeatureCandidateConfig]],
+    ) -> dict[FeatureProfile, list[FeatureCandidateConfig]]:
         """Validate global feature profile candidate overrides."""
         return {
             profile: validate_feature_candidates(candidates)

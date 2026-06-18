@@ -42,7 +42,7 @@ from gobby.config.cron import CronConfig
 from gobby.config.daemon_sandbox import DaemonOwnedSandboxConfig
 from gobby.config.embedding_keys import storage_embedding_config_entries_to_runtime
 from gobby.config.extensions import HookExtensionsConfig
-from gobby.config.feature_base import iter_feature_default_configs
+from gobby.config.feature_base import iter_feature_default_configs, validate_feature_candidates
 from gobby.config.feature_candidate_defaults import delete_stale_default_feature_candidate_rows
 from gobby.config.features import (
     ChatConfig,
@@ -476,7 +476,7 @@ class DaemonConfig(BaseModel):
                 continue
             candidates = profile_defaults.get(feature_config.profile)
             if candidates is not None:
-                feature_config.candidates = list(candidates)
+                feature_config.candidates = validate_feature_candidates(candidates)
         return self
 
     @model_validator(mode="after")

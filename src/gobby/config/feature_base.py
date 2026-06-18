@@ -3,17 +3,23 @@
 import re
 from collections.abc import Iterable, Mapping, Sequence
 from enum import StrEnum
+from typing import Any
 
-from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import BaseModel, ConfigDict, Field, PrivateAttr, field_validator, model_validator
 
 __all__ = [
     "DEFAULT_PROFILE_CANDIDATES",
+    "FeatureCandidateConfig",
     "FeatureDefaultConfig",
     "FeatureProfile",
+    "candidate_labels",
+    "candidate_runtime_entries",
     "default_candidates_for_profile",
+    "default_reasoning_for_profile",
     "iter_feature_default_configs",
     "normalize_feature_candidate",
     "parse_feature_candidate",
+    "validate_feature_candidate",
     "validate_feature_candidates",
 ]
 
@@ -26,19 +32,86 @@ class FeatureProfile(StrEnum):
     HIGH = "feature_high"
 
 
+def _parse_feature_candidate_label(candidate: str) -> tuple[str, str]:
+    provider, separator, model = candidate.partition("/")
+    if not separator or not provider.strip() or not model.strip():
+        raise ValueError(f"feature candidate must use provider/model format: {candidate!r}")
+    return provider.strip(), model.strip()
+
+
+def _normalize_reasoning_effort(value: object) -> str | None:
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise ValueError("reasoning_effort must be a string, 'auto', or null")
+    normalized = value.strip().lower()
+    if not normalized or normalized == "auto":
+        return None
+    return normalized
+
+
+class FeatureCandidateConfig(BaseModel):
+    """One provider/model candidate plus an optional reasoning effort pin."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    candidate: str = Field(
+        description="Provider/model candidate label, for example 'codex/gpt-5.5'.",
+    )
+    reasoning_effort: str | None = Field(
+        default=None,
+        description="'auto'/unset or a provider-specific reasoning effort pin.",
+    )
+
+    @model_validator(mode="before")
+    @classmethod
+    def coerce_legacy_candidate(cls, value: Any) -> Any:
+        """Allow legacy string candidates where structured entries are accepted."""
+        if isinstance(value, str):
+            return {"candidate": value}
+        return value
+
+    @field_validator("candidate")
+    @classmethod
+    def validate_candidate_label(cls, value: str) -> str:
+        """Validate provider/model shape without checking model availability."""
+        provider, model = _parse_feature_candidate_label(value)
+        return f"{provider}/{model}"
+
+    @field_validator("reasoning_effort", mode="before")
+    @classmethod
+    def normalize_reasoning_effort(cls, value: object) -> str | None:
+        """Normalize auto/empty to unset and defer effort support checks to runtime."""
+        return _normalize_reasoning_effort(value)
+
+
+type FeatureCandidateInput = str | FeatureCandidateConfig
+
+
 # Built-in profiles stay cloud-only. Local fallback candidates are explicit
 # profile-default overrides using named local endpoints.
-DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
+DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, ...]] = {
     FeatureProfile.LOW: (
-        "codex/gpt-5.4-mini",
-        "claude/haiku",
+        FeatureCandidateConfig(candidate="gemini/gemini-3.5-flash"),
+        FeatureCandidateConfig(candidate="codex/gpt-5.4-mini"),
+        FeatureCandidateConfig(candidate="claude/haiku"),
     ),
     FeatureProfile.MID: (
-        "codex/gpt-5.4-mini",
-        "claude/sonnet",
-        "gemini/gemini-3.5-flash",
+        FeatureCandidateConfig(candidate="gemini/gemini-3.5-flash"),
+        FeatureCandidateConfig(candidate="claude/sonnet"),
+        FeatureCandidateConfig(candidate="codex/gpt-5.5"),
     ),
-    FeatureProfile.HIGH: ("gemini/gemini-3.5-flash",),
+    FeatureProfile.HIGH: (
+        FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+        FeatureCandidateConfig(candidate="claude/opus", reasoning_effort="high"),
+        FeatureCandidateConfig(candidate="gemini/gemini-3.1-pro"),
+    ),
+}
+
+_DEFAULT_PROFILE_REASONING: dict[FeatureProfile, str | None] = {
+    FeatureProfile.LOW: None,
+    FeatureProfile.MID: None,
+    FeatureProfile.HIGH: None,
 }
 
 
@@ -46,18 +119,30 @@ _CLAUDE_FAMILY_ALIASES = ("haiku", "sonnet", "opus", "fable")
 
 
 def default_candidates_for_profile(profile: FeatureProfile | str) -> tuple[str, ...]:
-    """Return default provider/model candidates for a feature profile."""
-    return DEFAULT_PROFILE_CANDIDATES[FeatureProfile(profile)]
+    """Return default provider/model candidate labels for a feature profile."""
+    return candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile(profile)])
 
 
-def normalize_feature_candidate(candidate: str) -> str:
+def default_reasoning_for_profile(profile: FeatureProfile | str) -> str | None:
+    """Return the default reasoning effort for a feature profile."""
+    return _DEFAULT_PROFILE_REASONING[FeatureProfile(profile)]
+
+
+def _candidate_label(candidate: FeatureCandidateInput) -> str:
+    if isinstance(candidate, FeatureCandidateConfig):
+        return candidate.candidate
+    return candidate
+
+
+def normalize_feature_candidate(candidate: FeatureCandidateInput) -> str:
     """Canonicalize provider-scoped feature candidate labels."""
+    candidate_label = _candidate_label(candidate)
     try:
-        provider, model = parse_feature_candidate(candidate)
+        provider, model = parse_feature_candidate(candidate_label)
     except ValueError:
-        return candidate
+        return candidate_label
     if provider != "claude":
-        return candidate
+        return candidate_label
     model_label = model.strip().lower()
     if model_label in _CLAUDE_FAMILY_ALIASES:
         return f"{provider}/{model_label}"
@@ -65,42 +150,75 @@ def normalize_feature_candidate(candidate: str) -> str:
         for token in re.split(r"[-_]", model_label)[1:]:
             if token in _CLAUDE_FAMILY_ALIASES:
                 return f"{provider}/{token}"
-    return candidate
+    return candidate_label
 
 
-def parse_feature_candidate(candidate: str) -> tuple[str, str]:
+def parse_feature_candidate(candidate: FeatureCandidateInput) -> tuple[str, str]:
     """Return provider and model from a provider/model candidate label."""
-    provider, separator, model = candidate.partition("/")
-    if not separator or not provider.strip() or not model.strip():
-        raise ValueError(f"feature candidate must use provider/model format: {candidate!r}")
-    return provider.strip(), model.strip()
+    return _parse_feature_candidate_label(_candidate_label(candidate))
 
 
-def _dedupe_normalized_candidates(candidates: list[str]) -> list[str]:
+def _dedupe_normalized_candidates(
+    candidates: list[FeatureCandidateConfig],
+) -> list[FeatureCandidateConfig]:
     """Normalize candidates and preserve the first occurrence of each value."""
     seen: set[str] = set()
-    normalized_candidates: list[str] = []
+    normalized_candidates: list[FeatureCandidateConfig] = []
     for candidate in candidates:
-        normalized = normalize_feature_candidate(candidate)
+        normalized = normalize_feature_candidate(candidate.candidate)
         if normalized in seen:
             continue
         seen.add(normalized)
-        normalized_candidates.append(normalized)
+        normalized_candidates.append(candidate.model_copy(update={"candidate": normalized}))
     return normalized_candidates
 
 
-def validate_feature_candidates(candidates: Sequence[str]) -> list[str]:
+def validate_feature_candidate(candidate: FeatureCandidateInput) -> FeatureCandidateConfig:
+    """Validate one feature candidate entry without checking runtime support."""
+    return FeatureCandidateConfig.model_validate(candidate)
+
+
+def validate_feature_candidates(
+    candidates: Sequence[FeatureCandidateInput],
+) -> list[FeatureCandidateConfig]:
     """Validate and deduplicate provider-scoped feature candidates."""
-    invalid = []
+    invalid: list[FeatureCandidateInput] = []
+    parsed: list[FeatureCandidateConfig] = []
     for candidate in candidates:
         try:
-            parse_feature_candidate(candidate)
+            parsed.append(validate_feature_candidate(candidate))
         except ValueError:
             invalid.append(candidate)
     if invalid:
         joined = ", ".join(repr(candidate) for candidate in invalid)
         raise ValueError(f"feature candidates must use provider/model format: {joined}")
-    return _dedupe_normalized_candidates(list(candidates))
+    return _dedupe_normalized_candidates(parsed)
+
+
+def candidate_labels(candidates: Sequence[FeatureCandidateInput]) -> tuple[str, ...]:
+    """Return normalized provider/model labels for feature candidates."""
+    return tuple(candidate.candidate for candidate in validate_feature_candidates(candidates))
+
+
+def candidate_runtime_entries(
+    candidates: Sequence[FeatureCandidateInput],
+    *,
+    profile: FeatureProfile | str | None = None,
+) -> tuple[FeatureCandidateConfig, ...]:
+    """Return normalized candidates with profile-default reasoning fallback applied."""
+    default_reasoning = default_reasoning_for_profile(profile) if profile is not None else None
+    return tuple(
+        candidate.model_copy(
+            update={
+                "reasoning_effort": (
+                    candidate.reasoning_effort
+                    if candidate.reasoning_effort is not None
+                    else default_reasoning
+                )
+            }
+        )
+        for candidate in validate_feature_candidates(candidates)
+    )
 
 
 class FeatureDefaultConfig(BaseModel):
@@ -113,12 +231,12 @@ class FeatureDefaultConfig(BaseModel):
         default=FeatureProfile.LOW,
         description="Provider-agnostic capability profile requested by this feature.",
     )
-    candidates: list[str] = Field(
+    candidates: list[FeatureCandidateConfig] = Field(
         default_factory=list,
         description=(
-            "Ordered provider/model candidates, for example "
-            "['codex/gpt-5.4-mini', 'claude/haiku', "
-            "'local:lm-studio/google/gemma-4-26b-a4b-qat']."
+            "Ordered provider/model candidates with optional reasoning pins, for example "
+            "[{'candidate': 'codex/gpt-5.5', 'reasoning_effort': 'xhigh'}, "
+            "{'candidate': 'claude/haiku'}]."
         ),
     )
 
@@ -127,7 +245,7 @@ class FeatureDefaultConfig(BaseModel):
         """Fill profile defaults and validate provider-scoped candidate labels."""
         self._candidates_omitted = "candidates" not in self.model_fields_set
         if not self.candidates:
-            self.candidates = list(default_candidates_for_profile(self.profile))
+            self.candidates = list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile(self.profile)])
         self.candidates = validate_feature_candidates(self.candidates)
         return self
 
