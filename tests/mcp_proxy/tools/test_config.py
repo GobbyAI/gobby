@@ -16,7 +16,7 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_MODEL_KEY,
     EMBEDDING_API_KEY_SECRET_NAME,
 )
-from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
+from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile, candidate_labels
 from gobby.mcp_proxy.tools.config import create_config_registry
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.storage.config_store import ConfigStore, config_key_to_secret_name, is_secret_key_name
@@ -228,6 +228,25 @@ class TestSetConfig:
         assert result["success"] is True
         assert config_store.get("telemetry.log_level") == "debug"
         assert config_state["config"].telemetry.log_level == "debug"
+
+    def test_set_config_accepts_structured_profile_default_candidates(
+        self, config_registry, config_store: ConfigStore, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Profile-default overrides are stored as native candidate objects."""
+        candidates = [
+            {"candidate": "codex/gpt-5.4-mini", "reasoning_effort": "high"},
+            {"candidate": "claude/haiku", "reasoning_effort": "auto"},
+        ]
+        tool = config_registry.get_tool("set_config")
+        result = tool(key="ai.generation.profile_defaults.feature_mid", value=candidates)
+
+        assert result["success"] is True
+        assert result["value"] == candidates
+        assert config_store.get("ai.generation.profile_defaults.feature_mid") == candidates
+        profile_defaults = config_state["config"].ai.generation.profile_defaults[FeatureProfile.MID]
+        assert candidate_labels(profile_defaults) == ("codex/gpt-5.4-mini", "claude/haiku")
+        assert profile_defaults[0].reasoning_effort == "high"
+        assert profile_defaults[1].reasoning_effort is None
 
     def test_set_config_accepts_canonical_embedding_key(
         self, config_registry, config_store: ConfigStore, config_state: dict[str, DaemonConfig]
@@ -697,6 +716,33 @@ class TestSetConfigBatch:
         endpoint = config_state["config"].ai.generation.local.endpoints["lm-studio"]
         assert endpoint.api_base == "http://localhost:1234/v1"
         assert endpoint.model == "qwen2.5-coder-7b"
+
+    def test_batch_set_accepts_structured_profile_default_candidates(
+        self, config_registry, config_store: ConfigStore, config_state: dict[str, DaemonConfig]
+    ) -> None:
+        """Batch config writes allow profile-default candidate object lists."""
+        candidates = [
+            {"candidate": "local:lm-studio/qwen-local", "reasoning_effort": "low"},
+            "codex/gpt-5.4-mini",
+        ]
+        tool = config_registry.get_tool("set_config_batch")
+        result = tool(
+            entries=[
+                {"key": "ai.generation.profile_defaults.feature_low", "value": candidates},
+                {"key": "digest.profile", "value": "feature_low"},
+            ]
+        )
+
+        assert result["success"] is True
+        assert result["count"] == 2
+        assert config_store.get("ai.generation.profile_defaults.feature_low") == candidates
+        profile_defaults = config_state["config"].ai.generation.profile_defaults[FeatureProfile.LOW]
+        assert candidate_labels(profile_defaults) == (
+            "local:lm-studio/qwen-local",
+            "codex/gpt-5.4-mini",
+        )
+        assert profile_defaults[0].reasoning_effort == "low"
+        assert profile_defaults[1].reasoning_effort is None
 
     def test_batch_set_reports_original_canonical_embedding_keys(
         self, config_registry, config_store: ConfigStore

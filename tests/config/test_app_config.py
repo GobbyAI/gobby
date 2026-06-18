@@ -713,6 +713,33 @@ class TestLoadConfig:
             "claude/sonnet",
         )
 
+    def test_load_config_profile_defaults_accept_native_structured_candidate_rows(
+        self, temp_dir: Path
+    ) -> None:
+        """Config-store profile defaults round-trip native candidate objects."""
+        profile_candidates = [
+            {"candidate": "codex/gpt-5.4-mini", "reasoning_effort": "high"},
+            {"candidate": "claude/haiku", "reasoning_effort": "auto"},
+        ]
+
+        class DummyConfigStore:
+            def get_all(self) -> dict[str, object]:
+                return {"ai.generation.profile_defaults.feature_mid": profile_candidates}
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        profile_defaults = config.ai.generation.profile_defaults[FeatureProfile.MID]
+        assert candidate_labels(profile_defaults) == ("codex/gpt-5.4-mini", "claude/haiku")
+        assert profile_defaults[0].reasoning_effort == "high"
+        assert profile_defaults[1].reasoning_effort is None
+        assert candidate_labels(config.memory.dream.candidates) == (
+            "codex/gpt-5.4-mini",
+            "claude/haiku",
+        )
+
     def test_load_config_deletes_seeded_claude_only_feature_candidates(
         self, temp_dir: Path
     ) -> None:

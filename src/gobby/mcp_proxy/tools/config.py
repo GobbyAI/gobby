@@ -49,6 +49,7 @@ _FALKOR_RESTART_HINT = (
     "Run `gobby restart` for the new FalkorDB password to take effect on the running container."
 )
 _UNEXPECTED_CONFIG_ERROR = "Internal config error"
+_GENERATION_PROFILE_DEFAULTS_PREFIX = "ai.generation.profile_defaults."
 
 
 def _mask_secret_value(key: str, value: Any) -> Any:
@@ -63,6 +64,18 @@ def _validate_falkordb_secret(key: str, value: Any) -> None:
     from gobby.config.persistence import validate_falkordb_password
 
     validate_falkordb_password(str(value))
+
+
+def _reject_unsupported_structured_value(key: str, value: Any) -> dict[str, Any] | None:
+    if not isinstance(value, dict | list):
+        return None
+    if key.startswith(_GENERATION_PROFILE_DEFAULTS_PREFIX) and isinstance(value, list):
+        return None
+    return {
+        "success": False,
+        "error": f"Cannot set '{key}' to a {type(value).__name__}. "
+        "Use dotted keys to set nested values (e.g. 'section.key').",
+    }
 
 
 def _falkor_password_value(config: DaemonConfig) -> str | None:
@@ -198,12 +211,9 @@ def create_config_registry(
         If ``is_secret`` is True, the value is encrypted via SecretStore and
         a ``$secret:`` reference is stored in config_store.
         """
-        if isinstance(value, dict | list):
-            return {
-                "success": False,
-                "error": f"Cannot set '{key}' to a {type(value).__name__}. "
-                "Use dotted keys to set nested values (e.g. 'section.key').",
-            }
+        unsupported_value = _reject_unsupported_structured_value(key, value)
+        if unsupported_value is not None:
+            return unsupported_value
 
         from gobby.config.app import DaemonConfig as DaemonConfigCls
         from gobby.config.app import deep_merge
@@ -282,7 +292,7 @@ def create_config_registry(
     def set_config_batch(entries: list[dict[str, Any]]) -> dict[str, Any]:
         """Set multiple config values in one validated, atomic operation.
 
-        Each entry is ``{"key": "dotted.key", "value": <any scalar>}``.
+        Each entry is ``{"key": "dotted.key", "value": <native JSON value>}``.
         All entries are merged, validated via DaemonConfig once, then
         persisted together via ``config_store.set_many()``.
         """
@@ -303,12 +313,9 @@ def create_config_registry(
                 value = entry.get("value")
                 if not key or not isinstance(key, str):
                     return {"success": False, "error": f"Invalid entry — 'key' required: {entry}"}
-                if isinstance(value, dict | list):
-                    return {
-                        "success": False,
-                        "error": f"Cannot set '{key}' to a {type(value).__name__}. "
-                        "Use dotted keys for nested values.",
-                    }
+                unsupported_value = _reject_unsupported_structured_value(key, value)
+                if unsupported_value is not None:
+                    return unsupported_value
                 original_keys.add(key)
                 runtime_key = external_embedding_config_key_to_runtime_key(key)
                 flat_updates[runtime_key] = value
