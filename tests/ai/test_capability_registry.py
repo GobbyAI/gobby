@@ -210,14 +210,14 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
 
     claude = registry.binding(AICapability.TEXT_GENERATE, "claude")
     assert claude is not None
-    assert claude.models == ("haiku", "opus", "sonnet")
+    assert claude.models == ("haiku", "sonnet")
     assert "fable" not in claude.models
     assert "default_model" not in claude.metadata
     assert "auth_mode" not in claude.metadata
 
     codex = registry.binding(AICapability.TEXT_GENERATE, "codex")
     assert codex is not None
-    assert codex.models == ("gpt-5.4-mini", "gpt-5.5")
+    assert codex.models == ("gpt-5.4-mini",)
     assert "default_model" not in codex.metadata
     assert "auth_mode" not in codex.metadata
 
@@ -243,9 +243,9 @@ def test_daemon_registry_matches_configured_claude_model_aliases() -> None:
     assert haiku.provider == "claude"
     assert full_model.provider == "claude"
     assert provider_scoped.provider == "claude"
-    assert haiku.models == ("haiku", "opus", "sonnet")
-    assert full_model.models == ("haiku", "opus", "sonnet")
-    assert provider_scoped.models == ("haiku", "opus", "sonnet")
+    assert haiku.models == ("haiku", "sonnet")
+    assert full_model.models == ("haiku", "sonnet")
+    assert provider_scoped.models == ("haiku", "sonnet")
     assert "fable" not in haiku.models
     assert "default_model" not in haiku.metadata
 
@@ -263,9 +263,9 @@ def test_daemon_registry_applies_feature_models_to_provider_capabilities() -> No
     assert vision is not None
     assert agent is not None
     assert web is not None
-    assert vision.models == ("haiku", "opus", "sonnet")
-    assert agent.models == ("haiku", "opus", "sonnet")
-    assert web.models == ("haiku", "opus", "sonnet")
+    assert vision.models == ("haiku", "sonnet")
+    assert agent.models == ("haiku", "sonnet")
+    assert web.models == ("haiku", "sonnet")
     assert "fable" not in vision.models
 
 
