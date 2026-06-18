@@ -98,6 +98,56 @@ async def test_repair_loop_repairs_one_best_session_per_tmux_pane() -> None:
 
 
 @pytest.mark.asyncio
+async def test_repair_loop_scopes_missing_socket_to_effective_default() -> None:
+    """Root and agent default tmux sockets are distinct, but agent depths share one socket."""
+    root = SimpleNamespace(
+        agent_depth=0,
+        external_id="root-session",
+        terminal_context={"tmux_pane": "%72"},
+        transcript_path="/tmp/root.jsonl",
+        message_count=1,
+        turn_count=0,
+        tool_call_count=0,
+        ref="#7600",
+    )
+    shallow_agent = SimpleNamespace(
+        agent_depth=1,
+        external_id="",
+        terminal_context={"tmux_pane": "%72"},
+        transcript_path=None,
+        message_count=0,
+        turn_count=0,
+        tool_call_count=0,
+        ref="#7601",
+    )
+    nested_agent = SimpleNamespace(
+        agent_depth=3,
+        external_id="nested-agent-session",
+        terminal_context={"tmux_pane": "%72"},
+        transcript_path="/tmp/nested.jsonl",
+        message_count=1,
+        turn_count=0,
+        tool_call_count=0,
+        ref="#7602",
+    )
+    session_manager = _SessionManager([root, shallow_agent, nested_agent])
+
+    title_repair = AsyncMock(return_value=None)
+    enforce = AsyncMock(return_value=True)
+    with (
+        patch("gobby.runner_maintenance.repair_missing_session_title", title_repair),
+        patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce),
+    ):
+        await tmux_window_name_repair_loop(session_manager, lambda: True)
+
+    assert title_repair.await_args_list == [
+        call(session_manager, root),
+        call(session_manager, nested_agent),
+    ]
+    assert enforce.await_args_list == [call(root), call(nested_agent)]
+
+
+@pytest.mark.asyncio
 async def test_repair_loop_uses_configured_session_list_limit() -> None:
     """The repair sweep honors the configured session list limit."""
     session_manager = _SessionManager([])

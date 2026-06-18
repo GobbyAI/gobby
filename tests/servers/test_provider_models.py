@@ -67,6 +67,25 @@ class TestProviderModelCatalog:
         }
 
     @pytest.mark.asyncio
+    async def test_probe_claude_model_reports_malformed_final_json(self, temp_dir: Path) -> None:
+        """Claude probe failures should include the malformed final output line."""
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+        process = AsyncMock()
+        process.communicate = AsyncMock(return_value=(b"warning\nnot-json\n", b""))
+        process.returncode = 0
+
+        with (
+            patch("asyncio.create_subprocess_exec", return_value=process),
+            pytest.raises(RuntimeError) as exc_info,
+        ):
+            await catalog._probe_claude_model("sonnet", "Sonnet")
+
+        message = str(exc_info.value)
+        assert "Claude sonnet" in message
+        assert "not-json" in message
+        assert "Expecting value" in message
+
+    @pytest.mark.asyncio
     async def test_probe_claude_fable_model_records_context(self, temp_dir: Path) -> None:
         """Claude Fable probes should preserve the alias and report 1M context."""
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")

@@ -78,6 +78,10 @@ def _tmux_repair_pane_key(session: Any) -> tuple[str, str] | None:
         if isinstance(value, str) and value:
             socket = value
             break
+    else:
+        agent_depth = getattr(session, "agent_depth", 0)
+        if isinstance(agent_depth, int) and agent_depth > 0:
+            socket = "gobby"
 
     return socket, pane
 

@@ -278,6 +278,9 @@ class CronRunStorageMixin:
 
     def cleanup_old_runs(self, days: int) -> int:
         """Delete runs older than the given number of days."""
+        if not isinstance(days, int) or isinstance(days, bool) or days <= 0:
+            raise ValueError("days must be a positive integer")
+
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         cursor = self.db.execute(
             "DELETE FROM cron_runs WHERE created_at < %s",

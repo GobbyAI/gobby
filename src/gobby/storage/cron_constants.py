@@ -1,3 +1,3 @@
 """Shared cron storage constants."""
 
-MIN_CRON_INTERVAL_SECONDS = 60
+MIN_CRON_INTERVAL_SECONDS: int = 60

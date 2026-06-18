@@ -429,7 +429,13 @@ async def probe_claude_model(
     if not lines:
         raise RuntimeError(f"Claude {alias}: empty response")
 
-    payload = json.loads(lines[-1])
+    final_line = lines[-1]
+    try:
+        payload = json.loads(final_line)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(
+            f"Claude {alias}: failed to parse final JSON line {final_line!r}: {exc}"
+        ) from exc
     model_usage = payload.get("modelUsage")
     if not isinstance(model_usage, dict) or not model_usage:
         raise RuntimeError(f"Claude {alias}: missing modelUsage")

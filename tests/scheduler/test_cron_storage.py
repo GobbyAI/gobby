@@ -756,6 +756,33 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     assert len(cron_storage.list_runs(job.id)) == 1
 
 
+@pytest.mark.parametrize("days", [0, -1, True, 1.5, "7"])
+def test_cleanup_old_runs_rejects_invalid_days_before_delete(
+    cron_storage: CronJobStorage,
+    days: object,
+) -> None:
+    """cleanup_old_runs validates the retention window before deleting rows."""
+    job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Cleanup invalid days",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
+    old_time = (datetime.now(UTC) - timedelta(days=60)).isoformat()
+    cron_storage.db.execute(
+        """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
+        VALUES (%s, %s, %s, 'completed', %s)""",
+        (f"cr-invalid-{days!r}", job.id, old_time, old_time),
+    )
+
+    with pytest.raises(ValueError, match="days must be a positive integer"):
+        cron_storage.cleanup_old_runs(days)
+
+    assert len(cron_storage.list_runs(job.id)) == 1
+
+
 # --- compute_next_run tests (#7622) ---
 
 

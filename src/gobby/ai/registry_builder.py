@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai.local_endpoints import local_endpoint_provider
+
+# This builder is an internal split of gobby.ai.registry; reuse registry-private
+# normalization so binding comparisons keep the same semantics without a public API.
 from gobby.ai.registry import (
     AIAdapterStyle,
     AICapability,
@@ -232,8 +236,6 @@ def _audio_bindings(
         for binding in _openai_compatible_audio_bindings(binding_config):
             key = (binding.capability, binding.provider)
             if key in seen:
-                import logging
-
                 logging.getLogger("gobby.ai.registry").warning(
                     "Skipping duplicate OpenAI-compatible audio binding for %s provider %r",
                     binding.capability.value,
