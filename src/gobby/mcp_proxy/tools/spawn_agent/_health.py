@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from typing import Any
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 
@@ -57,3 +58,59 @@ async def _check_tmux_session_alive(
         raise
     except Exception:
         return True  # If check itself fails, don't false-positive
+
+
+async def _deferred_tmux_health_check(
+    runner: Any,
+    run_id: str,
+    tmux_session_name: str,
+    socket_name: str | None,
+    socket_path: str | None,
+    delay: float,
+) -> None:
+    try:
+        await asyncio.sleep(delay)
+        alive = await _check_tmux_session_alive(
+            tmux_session_name,
+            socket_name=socket_name,
+            socket_path=socket_path,
+        )
+        if not alive:
+            logger.error(
+                f"Agent {run_id} tmux session '{tmux_session_name}' exited immediately after spawn"
+            )
+            try:
+                runner.run_storage.fail(
+                    run_id,
+                    error="Agent process exited immediately after spawn",
+                )
+            except Exception as e:
+                logger.warning(f"Failed to mark agent_run {run_id} as failed: {e}")
+    except asyncio.CancelledError:
+        pass
+    except Exception as e:
+        logger.warning(f"Deferred health check for {run_id} failed: {e}")
+
+
+def schedule_tmux_health_check(
+    runner: Any,
+    run_id: str,
+    tmux_session_name: str,
+    socket_name: str | None,
+    socket_path: str | None,
+    delay: float = TMUX_HEALTH_CHECK_DELAY,
+) -> None:
+    """Schedule a post-spawn tmux liveness check."""
+    health_task = asyncio.create_task(
+        _deferred_tmux_health_check(
+            runner,
+            run_id,
+            tmux_session_name,
+            socket_name,
+            socket_path,
+            delay,
+        ),
+        name=f"tmux-health-{run_id}",
+    )
+    _health_check_tasks.add(health_task)
+    health_task.add_done_callback(_health_check_tasks.discard)

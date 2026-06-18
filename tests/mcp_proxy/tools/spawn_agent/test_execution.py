@@ -649,11 +649,17 @@ class TestSpawnAgentPreRegistration:
             )
 
             assert result["success"] is False
+            assert result["error"] == "Terminal not found"
+            assert result["reasoning"]["status"] == "not_requested"
             # DB should mark the run as failed
             mock_runner.run_storage.fail.assert_called_once_with(
                 ANY,
                 error="Terminal not found",
             )
+            failed_run_id = mock_runner.run_storage.fail.call_args.args[0]
+            assert isinstance(failed_run_id, str)
+            assert failed_run_id.startswith("run-")
+            mock_execute.assert_awaited_once()
 
     @pytest.mark.asyncio
     async def test_spawn_exception_fails_run_and_cleans_child_session(
@@ -1057,7 +1063,7 @@ class TestSpawnAgentPreRegistration:
                 return_value=True,
             ) as mock_health,
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.asyncio.create_task",
+                "gobby.mcp_proxy.tools.spawn_agent._health.asyncio.create_task",
                 return_value=health_task,
             ),
         ):
@@ -1130,7 +1136,7 @@ class TestSpawnAgentPreRegistration:
                 return_value=True,
             ),
             patch(
-                "gobby.mcp_proxy.tools.spawn_agent._implementation.asyncio.create_task",
+                "gobby.mcp_proxy.tools.spawn_agent._health.asyncio.create_task",
                 return_value=health_task,
             ),
         ):

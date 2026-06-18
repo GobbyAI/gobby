@@ -6,10 +6,8 @@ the spawn_agent MCP tool and direct callers.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
-from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, cast
 
@@ -37,9 +35,16 @@ from ._code_index import (
     without_code_index_skill,
 )
 from ._failure_cleanup import cleanup_created_isolation, cleanup_failed_spawn, start_run_or_cleanup
-from ._health import TMUX_HEALTH_CHECK_DELAY, _check_tmux_session_alive, _health_check_tasks
+from ._health import _check_tmux_session_alive, schedule_tmux_health_check
 from ._idempotency import non_actionable_task_spawn_response
 from ._provider_resolution import defaulted_provider, provider_prefixed_model
+from ._runtime import (
+    _build_spawn_success_response,
+    _normalize_optional_model,
+    _normalize_string_list,
+    _persist_spawn_runtime,
+    _tmux_runtime_metadata,
+)
 from ._spawn_guards import (
     TaskSpawnLease,
     active_task_response_if_blocked,
@@ -52,19 +57,6 @@ if TYPE_CHECKING:
     from gobby.storage.tasks import LocalTaskManager
 
 logger = logging.getLogger(__name__)
-
-
-def _normalize_string_list(value: Any) -> list[str]:
-    if not isinstance(value, Iterable) or isinstance(value, str | bytes | dict):
-        return []
-    return [item for item in value if isinstance(item, str)]
-
-
-def _normalize_optional_model(value: str | None) -> str | None:
-    if value is None:
-        return None
-    value = value.strip()
-    return value or None
 
 
 def _transition_condition_met(condition: str | None, variables: dict[str, Any]) -> bool:
@@ -156,34 +148,6 @@ def _initial_step_state_for_spawn(
     current_step = _advance_initial_step(agent_body, current_step, step_variables)
 
     return current_step, step_variables
-
-
-def _persist_spawn_runtime(
-    runner: Any,
-    run_id: str,
-    spawn_result: Any,
-    *,
-    tmux_session_name: str | None,
-    worktree_id: str | None,
-    clone_id: str | None,
-) -> None:
-    child_session_id = getattr(spawn_result, "child_session_id", None)
-    if child_session_id is not None:
-        try:
-            runner.run_storage.update_child_session(run_id, child_session_id)
-        except Exception as e:
-            logger.warning(f"Failed to update child_session_id for {run_id}: {e}")
-
-    try:
-        runner.run_storage.update_runtime(
-            run_id,
-            pid=getattr(spawn_result, "pid", None),
-            tmux_session_name=tmux_session_name,
-            worktree_id=worktree_id,
-            clone_id=clone_id,
-        )
-    except Exception as e:
-        logger.warning(f"Failed to persist runtime state for {run_id}: {e}")
 
 
 async def spawn_agent_impl(
@@ -744,15 +708,7 @@ async def spawn_agent_impl(
                     "error": error,
                     "run_id": run_id,
                 }
-    tmux_session_name = getattr(spawn_result, "tmux_session_name", None)
-    if not isinstance(tmux_session_name, str):
-        tmux_session_name = None
-    tmux_socket_name = getattr(spawn_result, "tmux_socket_name", None)
-    if not isinstance(tmux_socket_name, str):
-        tmux_socket_name = None
-    tmux_socket_path = getattr(spawn_result, "tmux_socket_path", None)
-    if not isinstance(tmux_socket_path, str):
-        tmux_socket_path = None
+    tmux_session_name, tmux_socket_name, tmux_socket_path = _tmux_runtime_metadata(spawn_result)
 
     tmux_spawn = bool(
         spawn_result.success and spawn_result.terminal_type == "tmux" and tmux_session_name
@@ -911,50 +867,13 @@ async def spawn_agent_impl(
 
         # Post-spawn health check: verify tmux session is still alive.
         if spawn_result.terminal_type == "tmux" and tmux_session_name:
-
-            async def _deferred_health_check(
-                _run_id: str,
-                _tmux_name: str,
-                _socket_name: str | None,
-                _socket_path: str | None,
-                _delay: float,
-            ) -> None:
-                try:
-                    await asyncio.sleep(_delay)
-                    alive = await _check_tmux_session_alive(
-                        _tmux_name,
-                        socket_name=_socket_name,
-                        socket_path=_socket_path,
-                    )
-                    if not alive:
-                        logger.error(
-                            f"Agent {_run_id} tmux session '{_tmux_name}' "
-                            f"exited immediately after spawn"
-                        )
-                        try:
-                            runner.run_storage.fail(
-                                _run_id,
-                                error="Agent process exited immediately after spawn",
-                            )
-                        except Exception as e:
-                            logger.warning(f"Failed to mark agent_run {_run_id} as failed: {e}")
-                except asyncio.CancelledError:
-                    pass
-                except Exception as e:
-                    logger.warning(f"Deferred health check for {_run_id} failed: {e}")
-
-            health_task = asyncio.create_task(
-                _deferred_health_check(
-                    run_id,
-                    tmux_session_name,
-                    tmux_socket_name,
-                    tmux_socket_path,
-                    TMUX_HEALTH_CHECK_DELAY,
-                ),
-                name=f"tmux-health-{run_id}",
+            schedule_tmux_health_check(
+                runner,
+                run_id,
+                tmux_session_name,
+                tmux_socket_name,
+                tmux_socket_path,
             )
-            _health_check_tasks.add(health_task)
-            health_task.add_done_callback(_health_check_tasks.discard)
     else:
         task_spawn_lease.release_unattached()
         await cleanup_failed_spawn(
@@ -975,25 +894,15 @@ async def spawn_agent_impl(
             "reasoning": reasoning.to_dict(),
         }
 
-    response = {
-        "success": True,
-        "run_id": run_id,
-        "child_session_id": spawn_result.child_session_id,
-        "status": spawn_result.status,
-        "isolation": effective_isolation,
-        "branch_name": isolation_ctx.branch_name,
-        "worktree_id": isolation_ctx.worktree_id,
-        "worktree_path": isolation_ctx.cwd if effective_isolation == "worktree" else None,
-        "clone_id": isolation_ctx.clone_id,
-        "clone_path": isolation_ctx.cwd if effective_isolation == "clone" else None,
-        "base_commit_sha": base_commit_sha if isinstance(base_commit_sha, str) else None,
-        "pid": spawn_result.pid,
-        "tmux_session_name": tmux_session_name,
-        "tmux_socket_name": tmux_socket_name,
-        "tmux_socket_path": tmux_socket_path,
-        "message": spawn_result.message,
-        "reasoning": reasoning.to_dict(),
-    }
-    if code_index_preflight_warning is not None:
-        response["warnings"] = [code_index_preflight_warning]
-    return response
+    return _build_spawn_success_response(
+        run_id=run_id,
+        spawn_result=spawn_result,
+        effective_isolation=effective_isolation,
+        isolation_ctx=isolation_ctx,
+        base_commit_sha=base_commit_sha,
+        tmux_session_name=tmux_session_name,
+        tmux_socket_name=tmux_socket_name,
+        tmux_socket_path=tmux_socket_path,
+        code_index_preflight_warning=code_index_preflight_warning,
+        reasoning=reasoning,
+    )
