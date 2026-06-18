@@ -18,6 +18,18 @@ vi.mock('../Markdown', () => ({
 const here = dirname(fileURLToPath(import.meta.url))
 const webSrc = join(here, '..', '..', '..')
 
+function readCss(rel: string, seen = new Set<string>()): string {
+  if (seen.has(rel)) return ''
+  seen.add(rel)
+
+  const source = readFileSync(join(webSrc, rel), 'utf8')
+  const baseDir = dirname(rel)
+  return source.replace(
+    /^@import\s+['"]([^'"]+)['"];\s*$/gm,
+    (_statement: string, specifier: string) => readCss(join(baseDir, specifier), seen),
+  )
+}
+
 function makePlan(): Artifact {
   return {
     id: 'plan-1',
@@ -99,7 +111,7 @@ describe('plan-approval design fixes (#15637)', () => {
   })
 
   it('status bars share --activity-panel-bar-height and never redeclare it on an inner scope', () => {
-    const inputCss = readFileSync(join(webSrc, 'components/chat/styles/input.css'), 'utf8')
+    const inputCss = readCss('components/chat/styles/input.css')
     const layoutCss = readFileSync(join(webSrc, 'components/chat/styles/layout.css'), 'utf8')
     const activityCss = readFileSync(join(webSrc, 'components/chat/styles/activity-panel.css'), 'utf8')
 
@@ -114,7 +126,7 @@ describe('plan-approval design fixes (#15637)', () => {
   })
 
   it('in-bar plan controls are pinned to --status-bar-control-height so they cannot stretch the bar', () => {
-    const inputCss = readFileSync(join(webSrc, 'components/chat/styles/input.css'), 'utf8')
+    const inputCss = readCss('components/chat/styles/input.css')
     expect(inputCss).toMatch(
       /\.agent-status-bar__plan button\s*\{[^}]*height:\s*var\(--status-bar-control-height/,
     )

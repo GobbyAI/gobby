@@ -57,7 +57,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
-    chunkSizeWarningLimit: 1300, // Largest chunks: KnowledgeGraph (1.2MB Three.js, lazy-loaded), vendor-syntax (632KB), vendor-codemirror (586KB) — all irreducible
+    // Largest chunks are intentional lazy/vendor bundles; keep this just above
+    // the current main bundle so future growth still warns.
+    chunkSizeWarningLimit: 1600,
     rollupOptions: {
       output: {
         manualChunks(id) {

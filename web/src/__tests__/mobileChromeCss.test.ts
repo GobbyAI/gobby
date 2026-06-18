@@ -33,6 +33,18 @@ function readSource(rel: string): string {
   return readFileSync(join(webPackageRoot, rel), 'utf8')
 }
 
+function readCssSource(rel: string, seen = new Set<string>()): string {
+  if (seen.has(rel)) return ''
+  seen.add(rel)
+
+  const source = readSource(rel)
+  const baseDir = dirname(rel)
+  return source.replace(
+    /^@import\s+['"]([^'"]+)['"];\s*$/gm,
+    (_statement: string, specifier: string) => readCssSource(join(baseDir, specifier), seen),
+  )
+}
+
 function importSpecifiers(source: string): string[] {
   const sourceFile = ts.createSourceFile(
     'main.tsx',
@@ -129,7 +141,7 @@ function expectStringAttribute(source: string, attrName: string, value: string):
 }
 
 function parseCss(rel: string): Root {
-  return postcss.parse(readSource(rel), { from: rel })
+  return postcss.parse(readCssSource(rel), { from: rel })
 }
 
 function hasMediaAncestor(rule: Rule, media: string): boolean {
