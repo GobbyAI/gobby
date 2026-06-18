@@ -6,7 +6,8 @@ mod structural;
 mod verify;
 
 pub(crate) use citations::{
-    citation_list, citation_markers, ground_text, replace_citations_with_markers, write_references,
+    CitationResolver, citation_list, citation_markers, ground_text, reanchor_citations,
+    replace_citations_with_markers, write_references,
 };
 pub(crate) use frontmatter::{
     append_curated_source_files, append_relevant_source_files, frontmatter_with_degradation,

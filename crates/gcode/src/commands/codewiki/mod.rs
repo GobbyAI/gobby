@@ -38,6 +38,7 @@ mod paths;
 mod progress;
 mod prompts;
 mod render;
+mod repair;
 mod reuse;
 mod run;
 mod text;
@@ -91,12 +92,16 @@ pub(crate) use reuse::{ReusePlan, span_files};
 pub use run::run;
 #[cfg(test)]
 pub(crate) use run::{load_symbols_for_codewiki, should_document_file, validate_edge_limit};
+// Citation repair: re-anchor on-disk citations against the current index with
+// no regeneration. Public so a later leaf's `--repair-citations` flag drives it.
+pub use repair::{CitationRepairSummary, repair_citations};
 // AI and structural text helpers.
 pub(crate) use text::{
-    Generation, VerifyOutcome, append_curated_source_files, append_relevant_source_files,
-    citation_list, citation_markers, collect_link_spans, display_child_summary,
-    frontmatter_with_degradation, frontmatter_with_degradation_without_ranges, ground_text,
-    maybe_generate, neutralize_symbol_purpose_links, replace_citations_with_markers,
+    CitationResolver, Generation, VerifyOutcome, append_curated_source_files,
+    append_relevant_source_files, citation_list, citation_markers, collect_link_spans,
+    display_child_summary, frontmatter_with_degradation,
+    frontmatter_with_degradation_without_ranges, ground_text, maybe_generate,
+    neutralize_symbol_purpose_links, reanchor_citations, replace_citations_with_markers,
     resolve_text_generator, resolve_text_verifier, structural_file_summary,
     structural_module_summary, structural_repo_summary, structural_symbol_purpose,
     verify_and_strip, write_references, write_section,

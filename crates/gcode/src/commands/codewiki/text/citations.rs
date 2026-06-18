@@ -257,3 +257,104 @@ fn citation_parts(value: &str) -> Option<(&str, usize, usize)> {
     };
     (line_start > 0 && line_start <= line_end).then_some((file, line_start, line_end))
 }
+
+/// Inner text of a `[file:line]` / `[file:start-end]` citation, without the
+/// surrounding brackets. Mirrors [`SourceSpan::citation`] so a re-anchored
+/// citation reads identically to a freshly generated one.
+fn citation_inner(file: &str, line_start: usize, line_end: usize) -> String {
+    if line_start == line_end {
+        format!("{file}:{line_start}")
+    } else {
+        format!("{file}:{line_start}-{line_end}")
+    }
+}
+
+/// Resolves on-disk `[file:line]` citations against the current index so a
+/// page's citations can be re-anchored without regenerating it. Implemented by
+/// the repair driver over the live symbol set plus the persisted index
+/// snapshot; tests supply fakes, so [`reanchor_citations`] is provably free of
+/// any generator or LLM call.
+pub(crate) trait CitationResolver {
+    /// Whether `(file, line_start, line_end)` still falls inside a current
+    /// symbol span, meaning the citation is already accurate and must be left
+    /// byte-for-byte untouched.
+    fn is_current(&self, file: &str, line_start: usize, line_end: usize) -> bool;
+
+    /// The current `(line_start, line_end)` of the symbol that a stale citation
+    /// anchored at `(file, line_start)` named, or `None` when no such symbol
+    /// survives in the current index.
+    fn resolve(&self, file: &str, line_start: usize) -> Option<(usize, usize)>;
+}
+
+/// Outcome of re-anchoring one page's citations: the rewritten text plus the
+/// number of citations moved to a new span and the number left in place
+/// because they could not be resolved.
+pub(crate) struct ReanchorResult {
+    pub(crate) text: String,
+    pub(crate) repaired: usize,
+    pub(crate) unresolved: usize,
+}
+
+/// Re-anchors every `[file:line]` / `[file:start-end]` citation in `text`
+/// against `resolver`. A citation that still matches the current index is kept
+/// verbatim; a stale citation whose symbol is still resolvable is rewritten to
+/// the symbol's current span (counted as repaired); a stale citation that
+/// cannot be resolved is left in place (counted as unresolved). Non-citation
+/// bracketed text (e.g. `[1]` reference markers) is preserved unchanged. Pure
+/// and deterministic — no generation, no LLM.
+pub(crate) fn reanchor_citations(text: &str, resolver: &dyn CitationResolver) -> ReanchorResult {
+    let mut out = String::with_capacity(text.len());
+    let mut rest = text;
+    let mut repaired = 0;
+    let mut unresolved = 0;
+    while let Some(open) = rest.find('[') {
+        let (before, after_open) = rest.split_at(open);
+        out.push_str(before);
+        let after_open = &after_open[1..];
+        let Some(close) = after_open.find(']') else {
+            out.push('[');
+            out.push_str(after_open);
+            return ReanchorResult {
+                text: out,
+                repaired,
+                unresolved,
+            };
+        };
+        let candidate = &after_open[..close];
+        let replacement = match citation_parts(candidate) {
+            Some((file, line_start, line_end))
+                if !resolver.is_current(file, line_start, line_end) =>
+            {
+                match resolver.resolve(file, line_start) {
+                    Some((new_start, new_end))
+                        if (new_start, new_end) != (line_start, line_end) =>
+                    {
+                        repaired += 1;
+                        Some(citation_inner(file, new_start, new_end))
+                    }
+                    // Resolves to the same span (degenerate) — leave it.
+                    Some(_) => None,
+                    None => {
+                        unresolved += 1;
+                        None
+                    }
+                }
+            }
+            // Not a citation, or already accurate — keep verbatim.
+            _ => None,
+        };
+        out.push('[');
+        match replacement {
+            Some(inner) => out.push_str(&inner),
+            None => out.push_str(candidate),
+        }
+        out.push(']');
+        rest = &after_open[close + 1..];
+    }
+    out.push_str(rest);
+    ReanchorResult {
+        text: out,
+        repaired,
+        unresolved,
+    }
+}
