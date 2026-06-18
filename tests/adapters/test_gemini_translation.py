@@ -352,7 +352,7 @@ class TestTranslateFromHookResponse:
         assert "hookSpecificOutput" not in result
 
     def test_deny_decision_with_reason(self, adapter) -> None:
-        """Translates deny decision with reason."""
+        """Unknown/no-hook-type deny decisions remain hard stops."""
         response = HookResponse(decision="deny", reason="Policy violation")
 
         result = adapter.translate_from_hook_response(response)
@@ -362,7 +362,7 @@ class TestTranslateFromHookResponse:
         assert result["reason"] == "Policy violation"
 
     def test_block_decision(self, adapter) -> None:
-        """Translates block decision."""
+        """Unknown/no-hook-type block decisions remain hard stops."""
         response = HookResponse(decision="block", reason="Blocked by workflow")
 
         result = adapter.translate_from_hook_response(response)
@@ -370,6 +370,43 @@ class TestTranslateFromHookResponse:
         assert result["decision"] == "block"
         assert result["continue"] is False
         assert result["reason"] == "Blocked by workflow"
+
+    def test_before_tool_block_decision_is_recoverable(self, adapter) -> None:
+        """BeforeTool blocks deny only the tool call, not the agent loop."""
+        reason = (
+            "Rule enforced by Gobby: [require-code-index-skill]\n"
+            'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ '
+            "progressive discovery"
+        )
+        response = HookResponse(decision="block", reason=reason)
+
+        result = adapter.translate_from_hook_response(response, hook_type="BeforeTool")
+
+        assert result == {
+            "decision": "block",
+            "continue": True,
+            "reason": reason,
+        }
+
+    def test_after_tool_deny_decision_is_recoverable(self, adapter) -> None:
+        """AfterTool denials report reason without stopping the agent loop."""
+        response = HookResponse(decision="deny", reason="Post-tool gate failed")
+
+        result = adapter.translate_from_hook_response(response, hook_type="AfterTool")
+
+        assert result["decision"] == "deny"
+        assert result["continue"] is True
+        assert result["reason"] == "Post-tool gate failed"
+
+    def test_unknown_hook_block_decision_hard_stops(self, adapter) -> None:
+        """Denied responses for unsupported hooks keep the hard-stop fallback."""
+        response = HookResponse(decision="block", reason="Unsupported hook")
+
+        result = adapter.translate_from_hook_response(response, hook_type="FutureHook")
+
+        assert result["decision"] == "block"
+        assert result["continue"] is False
+        assert result["reason"] == "Unsupported hook"
 
     def test_context_injection(self, adapter) -> None:
         """Translates context to hookSpecificOutput.additionalContext."""

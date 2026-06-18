@@ -114,6 +114,7 @@ class TestHandleNative:
         result = adapter.handle_native(native_event, mock_hook_manager)
 
         assert result["decision"] == "deny"
+        assert result["continue"] is True
         assert result["reason"] == "Task not claimed"
 
     def test_handle_native_with_context_injection(self, adapter, mock_hook_manager) -> None:
@@ -399,5 +400,6 @@ class TestIntegration:
         result = adapter.handle_native(native_event, mock_hook_manager)
 
         assert result["decision"] == "deny"
+        assert result["continue"] is True
         assert "No task claimed" in result["reason"]
         assert result["systemMessage"] == "File modifications blocked: claim a task first."

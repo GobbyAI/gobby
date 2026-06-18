@@ -186,6 +186,31 @@ def test_claude_reason_compaction_records_degradation(
     assert any(call["kind"] == "reason_compacted" for call in calls)
 
 
+def test_gemini_tool_block_preserves_native_recoverable_reason(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    calls = _capture_degradations(monkeypatch)
+    reason = (
+        "Rule enforced by Gobby: [require-code-index-skill]\n"
+        'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ '
+        "progressive discovery"
+    )
+
+    result = GeminiAdapter().translate_from_hook_response(
+        HookResponse(decision="block", reason=reason),
+        hook_type="BeforeTool",
+    )
+
+    assert result == {
+        "decision": "block",
+        "continue": True,
+        "reason": reason,
+    }
+    assert "permissionDecision" not in result
+    assert "permissionDecisionReason" not in result
+    assert calls == []
+
+
 def test_empty_block_sentinel_records_degradation(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -303,7 +303,7 @@ class ACPHookAdapter(BaseAdapter):
         Gemini CLI expects responses in this format:
         {
             "decision": "allow" | "deny" | "block",
-            "continue": True/False,            # False for deny/block decisions
+            "continue": True/False,            # False only for hard-stop denials
             "reason": "...",                   # Optional reason for decision
             "hookSpecificOutput": {            # Hook-specific response data
                 "additionalContext": "...",    # Context to inject
@@ -313,8 +313,9 @@ class ACPHookAdapter(BaseAdapter):
         }
 
         Exit codes: always 0 — Gemini CLI treats non-zero as "hook failed".
-        Block decisions are conveyed via decision="block" and continue=false
-        in the JSON body.
+        Recoverable tool-hook denials are conveyed via top-level
+        decision/reason with continue=true so Gemini skips only the tool call.
+        Unknown/no-capability denials remain hard stops with continue=false.
 
         Args:
             response: Unified HookResponse from HookManager.
@@ -324,10 +325,16 @@ class ACPHookAdapter(BaseAdapter):
         Returns:
             Dict in Gemini CLI's expected format.
         """
-        is_denied = response.decision in ("deny", "block")
-        should_continue = not is_denied
         capabilities = get_provider_capabilities(self.source)
         capability = capabilities.get_hook(hook_type)
+        hook_event_name = self._response_hook_event_name(hook_type)
+        resolved_hook_type = hook_event_name or hook_type
+        is_denied = response.decision in ("deny", "block")
+        recoverable_denial_hook = capability is not None and resolved_hook_type in {
+            "BeforeTool",
+            "AfterTool",
+        }
+        should_continue = not is_denied or recoverable_denial_hook
         event_logger = self._event_logger()
         record_unsupported_response_fields(
             response,
@@ -351,8 +358,6 @@ class ACPHookAdapter(BaseAdapter):
         if normalized_reason:
             result["reason"] = normalized_reason
 
-        hook_event_name = self._response_hook_event_name(hook_type)
-        resolved_hook_type = hook_event_name or hook_type
         session_start_hook = resolved_hook_type in {"SessionStart", "session_start"}
         context_channel = (
             capability.context_channel if capability else ContextChannel.ADDITIONAL_CONTEXT
