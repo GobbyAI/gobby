@@ -145,10 +145,17 @@ def _reset_agent_context_injection(handler: Any, session_id: str | None) -> None
 def handle_session_start(handler: Any, event: HookEvent) -> HookResponse:
     """Handle SESSION_START event."""
     _t0 = time.monotonic()
-    external_id = event.session_id
     input_data = event.data
-    transcript_path = input_data.get("transcript_path")
     cli_source = event.source.value
+    external_id = str(event.session_id or "").strip()
+    if not external_id:
+        handler.logger.warning(
+            "Skipping SESSION_START without external session id",
+            extra={"cli": cli_source},
+        )
+        return HookResponse(decision="allow")
+
+    transcript_path = input_data.get("transcript_path")
     cwd = hook_cwd(input_data, event.cwd)
 
     if not transcript_path:

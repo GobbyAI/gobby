@@ -784,6 +784,31 @@ class TestSessionStartNewSession:
             call_kwargs[1].get("parent_session_id") is None if call_kwargs[1] else True
         )
 
+    def test_blank_external_id_returns_allow_without_registration(
+        self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
+    ) -> None:
+        """Malformed SessionStart hooks without an external id are ignored."""
+        handlers = EventHandlers(**mock_dependencies)
+        event = make_event(
+            HookEventType.SESSION_START,
+            session_id="  ",
+            data={
+                "source": "startup",
+                "cwd": "/some/dir",
+                "transcript_path": "/path/to/transcript.jsonl",
+            },
+            metadata={},
+        )
+
+        response = handlers.handle_session_start(event)
+
+        assert response.decision == "allow"
+        mock_dependencies["session_storage"].get.assert_not_called()
+        mock_dependencies["session_storage"].find_parent.assert_not_called()
+        mock_dependencies["session_manager"].register_session.assert_not_called()
+        mock_dependencies["session_coordinator"].register_session.assert_not_called()
+        mock_dependencies["message_processor"].register_session.assert_not_called()
+
     def test_handoff_db_error_still_returns_session_banner(
         self, mock_dependencies: dict[str, Any], mock_empty_session_variable_manager: MagicMock
     ) -> None:

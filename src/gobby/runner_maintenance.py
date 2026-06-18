@@ -63,6 +63,53 @@ async def _run_db(
     return await runner(func, *args, **kwargs)
 
 
+def _tmux_repair_pane_key(session: Any) -> tuple[str, str] | None:
+    tc = getattr(session, "terminal_context", None)
+    if not isinstance(tc, dict):
+        return None
+
+    pane = tc.get("tmux_pane")
+    if not isinstance(pane, str) or not pane:
+        return None
+
+    socket = ""
+    for key in ("tmux_socket_path", "tmux_socket_name", "tmux_socket"):
+        value = tc.get(key)
+        if isinstance(value, str) and value:
+            socket = value
+            break
+
+    return socket, pane
+
+
+def _tmux_repair_candidate_score(session: Any) -> tuple[int, int]:
+    external_id = str(getattr(session, "external_id", "") or "").strip()
+    has_identity = int(bool(external_id))
+    has_activity = int(
+        bool(str(getattr(session, "transcript_path", "") or "").strip())
+        or bool(getattr(session, "message_count", 0) or 0)
+        or bool(getattr(session, "turn_count", 0) or 0)
+        or bool(getattr(session, "tool_call_count", 0) or 0)
+    )
+    return has_identity, has_activity
+
+
+def _select_tmux_repair_sessions(sessions: Sequence[Any]) -> list[Any]:
+    selected: dict[tuple[str, str], tuple[tuple[int, int], Any]] = {}
+
+    for session in sessions:
+        key = _tmux_repair_pane_key(session)
+        if key is None:
+            continue
+
+        score = _tmux_repair_candidate_score(session)
+        current = selected.get(key)
+        if current is None or score > current[0]:
+            selected[key] = (score, session)
+
+    return [session for _, session in selected.values()]
+
+
 async def _sleep_until_next_bin_freshness_cycle(
     duration: float,
     *,
@@ -325,10 +372,7 @@ async def tmux_window_name_repair_loop(
             logger.warning(f"tmux window repair: failed to list sessions: {e}")
             return
         renamed = 0
-        for session in sessions:
-            tc = getattr(session, "terminal_context", None)
-            if not isinstance(tc, dict) or not tc.get("tmux_pane"):
-                continue
+        for session in _select_tmux_repair_sessions(sessions):
             try:
                 # Land a transcript-derived title first for title-less sessions
                 # with turns; persisting it schedules the window rename via the

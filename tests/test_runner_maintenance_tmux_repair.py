@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from types import SimpleNamespace
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
@@ -47,6 +47,54 @@ async def test_repair_loop_enforces_only_paned_sessions() -> None:
 
     assert session_manager.calls == [(["active", "paused"], 200)]
     enforce.assert_awaited_once_with(paned)
+
+
+@pytest.mark.asyncio
+async def test_repair_loop_repairs_one_best_session_per_tmux_pane() -> None:
+    """Duplicate records for one pane cannot fight over the tmux window title."""
+    stale = SimpleNamespace(
+        external_id="",
+        terminal_context={"tmux_pane": "%72", "tmux_socket_path": "/tmp/tmux"},
+        transcript_path=None,
+        message_count=0,
+        turn_count=0,
+        tool_call_count=0,
+        ref="#7460",
+    )
+    grok = SimpleNamespace(
+        external_id="grok-session-123",
+        terminal_context={"tmux_pane": "%72", "tmux_socket_path": "/tmp/tmux"},
+        transcript_path="/tmp/grok.jsonl",
+        message_count=1,
+        turn_count=0,
+        tool_call_count=0,
+        ref="#7514",
+    )
+    other = SimpleNamespace(
+        external_id="other-session",
+        terminal_context={"tmux_pane": "%73", "tmux_socket_path": "/tmp/tmux"},
+        transcript_path=None,
+        message_count=0,
+        turn_count=0,
+        tool_call_count=0,
+        ref="#7515",
+    )
+    session_manager = _SessionManager([stale, grok, other])
+
+    title_repair = AsyncMock(return_value=None)
+    enforce = AsyncMock(return_value=True)
+    with (
+        patch("gobby.runner_maintenance.repair_missing_session_title", title_repair),
+        patch("gobby.runner_maintenance.enforce_window_name_if_unmanaged", enforce),
+    ):
+        await tmux_window_name_repair_loop(session_manager, lambda: True)
+
+    assert session_manager.calls == [(["active", "paused"], 200)]
+    assert title_repair.await_args_list == [
+        call(session_manager, grok),
+        call(session_manager, other),
+    ]
+    assert enforce.await_args_list == [call(grok), call(other)]
 
 
 @pytest.mark.asyncio
