@@ -206,7 +206,7 @@ class ChatSession(ChatSessionPermissionsMixin):
         if selection is None:
             return requested_model or self._default_model
 
-        endpoint = selection.endpoint
+        endpoint = selection.endpoint_with_selected_model()
 
         env["ANTHROPIC_BASE_URL"] = endpoint.api_base
         if endpoint.api_key:

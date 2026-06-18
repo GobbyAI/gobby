@@ -324,6 +324,7 @@ async def spawn_agent_impl(
             api_token=effective_api_token,
             daemon_config=daemon_config,
             run_manager=runner.run_storage,
+            runtime_provider=effective_provider,
         )
     except ValueError as e:
         return {"success": False, "error": str(e)}
@@ -644,6 +645,7 @@ async def spawn_agent_impl(
         machine_id=get_machine_id() or "unknown",
         model=effective_model,
         is_local=is_local_run,
+        codex_oss_provider=local_resolution.codex_oss_provider,
         api_base=effective_api_base,
         api_token=effective_api_token,
         requested_reasoning_effort=reasoning.requested_effort,

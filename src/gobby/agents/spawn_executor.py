@@ -829,6 +829,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
         auto_approve=True,
         working_directory=request.cwd,
         model=request.model,
+        codex_oss_provider=request.codex_oss_provider,
         reasoning_effort=request.effective_reasoning_effort,
         sandbox_args=sandbox_args or None,
         config_overrides=config_overrides,

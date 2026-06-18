@@ -17,10 +17,16 @@ def _config() -> DaemonConfig:
                 "local": {
                     "endpoints": {
                         "lm-studio": {
+                            "provider": "lmstudio",
                             "api_base": "http://localhost:1234/v1",
                             "model": "qwen-coder-32b",
                             "api_key": "endpoint-token",
-                        }
+                        },
+                        "ollama": {
+                            "provider": "ollama",
+                            "api_base": "http://localhost:11434",
+                            "model": "llama3.2:latest",
+                        },
                     }
                 }
             }
@@ -49,6 +55,51 @@ async def test_resolve_spawn_local_endpoint_uses_named_generation_endpoint() -> 
     assert resolution.is_local is True
     ensure_local_model.assert_awaited_once()
     assert ensure_local_model.await_args.kwargs == {"run_manager": run_manager}
+    assert ensure_local_model.await_args.args[0].model == "qwen-coder-32b"
+
+
+@pytest.mark.asyncio
+async def test_resolve_spawn_local_endpoint_uses_selected_model_override() -> None:
+    with patch(
+        "gobby.agents.local_model.ensure_local_model",
+        new=AsyncMock(return_value="google/gemma-4-26b-a4b-qat"),
+    ) as ensure_local_model:
+        resolution = await resolve_spawn_local_endpoint(
+            model="local:lm-studio/google/gemma-4-26b-a4b-qat",
+            api_base=None,
+            api_token=None,
+            daemon_config=_config(),
+            run_manager=None,
+        )
+
+    assert resolution.model == "google/gemma-4-26b-a4b-qat"
+    assert resolution.api_base == "http://localhost:1234/v1"
+    assert resolution.api_token == "endpoint-token"
+    assert resolution.is_local is True
+    assert ensure_local_model.await_args.args[0].model == "google/gemma-4-26b-a4b-qat"
+
+
+@pytest.mark.asyncio
+async def test_resolve_spawn_local_endpoint_routes_codex_through_oss() -> None:
+    with patch(
+        "gobby.agents.local_model.ensure_local_model",
+        new=AsyncMock(return_value="ollama/qwen3-coder"),
+    ) as ensure_local_model:
+        resolution = await resolve_spawn_local_endpoint(
+            model="local:ollama/ollama/qwen3-coder",
+            api_base=None,
+            api_token=None,
+            daemon_config=_config(),
+            run_manager=None,
+            runtime_provider="codex",
+        )
+
+    assert resolution.model == "ollama/qwen3-coder"
+    assert resolution.api_base is None
+    assert resolution.api_token is None
+    assert resolution.is_local is True
+    assert resolution.codex_oss_provider == "ollama"
+    assert ensure_local_model.await_args.args[0].model == "ollama/qwen3-coder"
 
 
 @pytest.mark.asyncio

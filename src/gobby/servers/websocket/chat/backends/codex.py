@@ -19,6 +19,7 @@ from gobby.adapters.codex_impl.item_normalization import (
     parse_mcp_arguments,
 )
 from gobby.agents.sandbox import CodexSandboxResolver, SandboxConfig
+from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
 from gobby.servers.chat_session_helpers import (
     _BASH_WRITE_PATTERNS,
@@ -317,11 +318,13 @@ class CodexWebChatBackend:
         self,
         *,
         client: CodexAppServerClient | None = None,
+        local_endpoint: LocalGenerationEndpointConfig | None = None,
         transcript_retry_attempts: int = _CODEX_TRANSCRIPT_RETRY_ATTEMPTS,
         transcript_retry_delay_seconds: float = _CODEX_TRANSCRIPT_RETRY_DELAY_SECONDS,
         sandbox_config: SandboxConfig | None = None,
     ) -> None:
         self._client = client
+        self._local_endpoint = local_endpoint
         self._sandbox_config = sandbox_config
         self._health = ProviderBackendHealth(
             provider=self.provider,
@@ -411,6 +414,14 @@ class CodexWebChatBackend:
         await self.start()
         if not self._health.available or self._client is None:
             raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
+
+        if self._local_endpoint is not None:
+            from gobby.agents.local_model import ensure_local_model
+
+            local_endpoint = self._local_endpoint
+            if session._model:
+                local_endpoint = local_endpoint.model_copy(update={"model": session._model})
+            session._model = await ensure_local_model(local_endpoint, run_manager=None)
 
         if session._thread_id:
             thread = await self._client.resume_thread(session._thread_id)

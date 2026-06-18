@@ -5,12 +5,14 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
+from gobby.agents.codex_oss import codex_oss_config_overrides, codex_oss_provider_for_local_endpoint
 from gobby.agents.sandbox import (
     SandboxConfig,
     web_chat_policy_mismatch_message,
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
+from gobby.ai.local_endpoints import parse_local_endpoint_model_selector
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
@@ -45,12 +47,12 @@ class WebChatRuntimeManager:
     ) -> None:
         self._sandbox_config = web_chat_sandbox_config(daemon_config)
         self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
-        local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] = {}
+        self._local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] = {}
         if daemon_config is not None:
             ai_config = getattr(daemon_config, "ai", None)
             generation_config = getattr(ai_config, "generation", None)
             local_config = getattr(generation_config, "local", None)
-            local_generation_endpoints = getattr(local_config, "endpoints", {}) or {}
+            self._local_generation_endpoints = getattr(local_config, "endpoints", {}) or {}
         self._claude_backend = ClaudeWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
@@ -60,6 +62,24 @@ class WebChatRuntimeManager:
             transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
             sandbox_config=self._sandbox_config.model_copy(deep=True),
         )
+        self._codex_local_backends: dict[str, CodexWebChatBackend] = {}
+        for endpoint_name, endpoint in self._local_generation_endpoints.items():
+            try:
+                oss_provider = codex_oss_provider_for_local_endpoint(endpoint)
+            except ValueError:
+                continue
+            local_client = (
+                CodexAppServerClient(config_overrides=codex_oss_config_overrides(oss_provider))
+                if codex_client is not None
+                else None
+            )
+            self._codex_local_backends[endpoint_name] = CodexWebChatBackend(
+                client=local_client,
+                local_endpoint=endpoint,
+                transcript_retry_attempts=codex_transcript_retry_attempts,
+                transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
+                sandbox_config=self._sandbox_config.model_copy(deep=True),
+            )
         self._gemini_backend = GeminiWebChatBackend(
             default_model=gemini_default_model,
             sandbox_config=self._sandbox_config.model_copy(deep=True),
@@ -69,7 +89,7 @@ class WebChatRuntimeManager:
         )
         self._qwen_backend = QwenWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True),
-            local_generation_endpoints=local_generation_endpoints,
+            local_generation_endpoints=self._local_generation_endpoints,
         )
         self._droid_backend = DroidWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
@@ -131,6 +151,8 @@ class WebChatRuntimeManager:
         await self._qwen_backend.stop()
         await self._grok_backend.stop()
         await self._gemini_backend.stop()
+        for backend in self._codex_local_backends.values():
+            await backend.stop()
         await self._codex_backend.stop()
 
     def health(self, provider: str) -> ProviderBackendHealth:
@@ -200,13 +222,14 @@ class WebChatRuntimeManager:
         if provider == "agy":
             raise RuntimeError("AGY has no documented machine transport for live web chat yet")
         if provider == "codex":
+            codex_backend, resolved_model = self._codex_backend_for_model(model)
             return CodexManagedChatSession(
                 conversation_id=conversation_id,
-                _backend=self._codex_backend,
-                _model=model,
+                _backend=codex_backend,
+                _model=resolved_model,
                 reasoning_effort=reasoning_effort,
-                _transcript_retry_attempts=self._codex_backend.transcript_retry_attempts,
-                _transcript_retry_delay_seconds=self._codex_backend.transcript_retry_delay_seconds,
+                _transcript_retry_attempts=codex_backend.transcript_retry_attempts,
+                _transcript_retry_delay_seconds=codex_backend.transcript_retry_delay_seconds,
             )
         if provider == "droid":
             return DroidManagedChatSession(
@@ -222,3 +245,17 @@ class WebChatRuntimeManager:
         if isinstance(session, ChatSession):
             session.reasoning_effort = reasoning_effort
         return session
+
+    def _codex_backend_for_model(self, model: str | None) -> tuple[CodexWebChatBackend, str | None]:
+        selector = parse_local_endpoint_model_selector(model)
+        if selector is None:
+            return self._codex_backend, model
+        endpoint = self._local_generation_endpoints.get(selector.endpoint_name)
+        if endpoint is None:
+            raise RuntimeError(f"Unknown local generation endpoint: {selector.endpoint_name}")
+        backend = self._codex_local_backends.get(selector.endpoint_name)
+        if backend is None:
+            raise RuntimeError(
+                "Codex OSS local web chat supports provider=lmstudio or provider=ollama"
+            )
+        return backend, selector.model or endpoint.model

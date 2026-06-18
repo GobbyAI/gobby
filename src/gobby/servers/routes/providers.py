@@ -9,6 +9,11 @@ from typing import TYPE_CHECKING, Any
 from fastapi import APIRouter
 
 from gobby.providers import provider_metadata
+from gobby.servers.local_provider_models import (
+    LocalEndpointModelGroup,
+    codex_mirror_models,
+    discover_local_endpoint_model_group,
+)
 from gobby.servers.provider_models import (
     DROID_MODEL_CATALOG,
     GEMINI_MODEL_CATALOG,
@@ -161,20 +166,33 @@ def _build_model_catalog(
     return catalog
 
 
-def _local_generation_provider_entries(server: HTTPServer | None) -> list[dict[str, Any]]:
+async def _local_generation_model_groups(
+    server: HTTPServer | None,
+) -> list[LocalEndpointModelGroup]:
     config = getattr(getattr(server, "services", None), "config", None)
     ai_cfg = getattr(config, "ai", None) if config is not None else None
     generation_cfg = getattr(ai_cfg, "generation", None)
     local_cfg = getattr(generation_cfg, "local", None)
     endpoints = getattr(local_cfg, "endpoints", {})
+    if not isinstance(endpoints, dict):
+        return []
+    return [
+        await discover_local_endpoint_model_group(name, endpoint)
+        for name, endpoint in endpoints.items()
+    ]
+
+
+def _local_generation_provider_entries(
+    groups: list[LocalEndpointModelGroup],
+) -> list[dict[str, Any]]:
     return [
         {
-            "provider": f"local:{name}",
+            "provider": group.provider,
             "available": True,
-            "models": [{"value": endpoint.model, "label": endpoint.model}],
-            "source": "config",
-            "startup_error": None,
-            "display_name": f"Local ({name})",
+            "models": group.models,
+            "source": group.source,
+            "startup_error": group.error,
+            "display_name": group.display_name,
             "installed": True,
             "deprecated": False,
             "deprecation_message": None,
@@ -182,7 +200,7 @@ def _local_generation_provider_entries(server: HTTPServer | None) -> list[dict[s
             "supports_agent_spawn": False,
             "unavailable_reason": None,
         }
-        for name, endpoint in endpoints.items()
+        for group in groups
     ]
 
 
@@ -272,6 +290,10 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
         """
         probed = await _probe_providers()
         model_catalog = _build_model_catalog(server)
+        local_model_groups = await _local_generation_model_groups(server)
+        codex_local_models = [
+            model for group in local_model_groups for model in codex_mirror_models(group)
+        ]
         fallback_entry: tuple[list[dict[str, Any]], str] = (
             [{"value": "default", "label": "Default"}],
             "static",
@@ -281,6 +303,8 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
             available, startup_error = _provider_health(server, name, path)
             models, source = model_catalog.get(name, fallback_entry)
             filtered_models = _filter_models_for_web_chat(name, models)
+            if name == "codex" and codex_local_models:
+                filtered_models = [*filtered_models, *codex_local_models]
             result.append(
                 {
                     "provider": name,
@@ -291,7 +315,7 @@ def create_providers_router(server: HTTPServer | None = None) -> APIRouter:
                     **_provider_metadata_fields(name, path),
                 }
             )
-        result.extend(_local_generation_provider_entries(server))
+        result.extend(_local_generation_provider_entries(local_model_groups))
         return {"providers": result}
 
     return router

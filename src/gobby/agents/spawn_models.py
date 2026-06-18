@@ -40,6 +40,7 @@ class SpawnRequest:
     machine_id: str | None = None
     model: str | None = None
     is_local: bool = False
+    codex_oss_provider: str | None = None
     api_base: str | None = None
     api_token: str | None = None
     requested_reasoning_effort: str | None = None

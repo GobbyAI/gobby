@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
+from gobby.servers.local_provider_models import LocalEndpointModelGroup
 from gobby.servers.routes.providers import create_providers_router
 
 pytestmark = pytest.mark.unit
@@ -437,10 +438,82 @@ class TestProviderModelsRoute:
 
         assert "local" not in providers
         assert local["available"] is True
-        assert local["display_name"] == "Local (lm-studio)"
+        assert local["display_name"] == "Local: OpenAI Compatible"
         assert local["source"] == "config"
         assert local["supports_web_chat"] is False
-        assert local["models"] == [{"value": "qwen-coder-32b", "label": "qwen-coder-32b"}]
+        assert local["models"] == [
+            {
+                "value": "local:lm-studio",
+                "label": "Default (qwen-coder-32b)",
+                "canonical_id": "qwen-coder-32b",
+                "is_default": True,
+            }
+        ]
+
+    def test_local_generation_entries_are_mirrored_under_codex(self) -> None:
+        app = FastAPI()
+        config = DaemonConfig(
+            ai=AIConfig(
+                generation=GenerationConfig(
+                    local=LocalGenerationConfig(
+                        endpoints={
+                            "ollama-cloud": {
+                                "provider": "ollama",
+                                "api_base": "http://localhost:11434",
+                                "model": "llama3.2:latest",
+                            }
+                        }
+                    )
+                )
+            ),
+        )
+        server = SimpleNamespace(services=SimpleNamespace(config=config))
+        app.include_router(create_providers_router(server))
+        client = TestClient(app)
+
+        async def fake_discover(_name: str, _endpoint: object) -> LocalEndpointModelGroup:
+            return LocalEndpointModelGroup(
+                endpoint_name="ollama-cloud",
+                provider_label="Ollama",
+                source="live",
+                models=[
+                    {
+                        "value": "local:ollama-cloud",
+                        "label": "Default (llama3.2:latest)",
+                        "canonical_id": "llama3.2:latest",
+                        "is_default": True,
+                    },
+                    {
+                        "value": "local:ollama-cloud/ollama/qwen3-coder",
+                        "label": "Qwen3 Coder",
+                        "canonical_id": "ollama/qwen3-coder",
+                        "context_length": 65536,
+                        "context_length_source": "provider_reported",
+                    },
+                ],
+            )
+
+        with patch(
+            "gobby.servers.routes.providers.discover_local_endpoint_model_group",
+            side_effect=fake_discover,
+        ):
+            response = client.get("/api/providers/models")
+
+        providers = {p["provider"]: p for p in response.json()["providers"]}
+        local = providers["local:ollama-cloud"]
+        codex_models = {m["value"]: m for m in providers["codex"]["models"]}
+
+        assert local["display_name"] == "Local: Ollama"
+        assert local["source"] == "live"
+        assert local["supports_web_chat"] is False
+        assert local["models"][1]["value"] == "local:ollama-cloud/ollama/qwen3-coder"
+        assert codex_models["local:ollama-cloud"]["label"] == ("Ollama: Default (llama3.2:latest)")
+        assert codex_models["local:ollama-cloud/ollama/qwen3-coder"]["label"] == (
+            "Ollama: Qwen3 Coder"
+        )
+        assert codex_models["local:ollama-cloud/ollama/qwen3-coder"]["local_provider"] == (
+            "local:ollama-cloud"
+        )
 
     def test_current_catalog_uses_static_catalog_without_provider_config(self) -> None:
         """Provider model lists come from the catalog without daemon provider config."""

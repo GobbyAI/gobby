@@ -206,6 +206,70 @@ describe("ProviderPicker", () => {
     expect(onSwitchProvider).toHaveBeenCalledWith("codex");
   });
 
+  it("sends Codex provider with local selector when picking a mirrored local model", async () => {
+    const onModelChange = vi.fn();
+    const onProviderChange = vi.fn();
+    const onSwitchProvider = vi.fn();
+    global.fetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        providers: [
+          ...buildCatalog().providers.filter(
+            (entry) => entry.provider !== "codex",
+          ),
+          {
+            provider: "codex",
+            available: true,
+            models: [
+              {
+                value: "local:ollama-cloud/ollama/qwen3-coder",
+                label: "Ollama: Qwen3 Coder",
+              },
+            ],
+            source: "live",
+          },
+          {
+            provider: "local:ollama-cloud",
+            available: true,
+            models: [
+              {
+                value: "local:ollama-cloud/ollama/qwen3-coder",
+                label: "Qwen3 Coder",
+              },
+            ],
+            source: "live",
+            display_name: "Local: Ollama",
+            supports_web_chat: false,
+          },
+        ],
+      }),
+    }) as typeof fetch;
+
+    render(
+      <ProviderPicker
+        open={true}
+        onClose={vi.fn()}
+        currentProvider="claude"
+        currentModel="opus"
+        availableProviders={["claude", "codex"]}
+        onModelChange={onModelChange}
+        onProviderChange={onProviderChange}
+        onSwitchProvider={onSwitchProvider}
+        hasMessages={false}
+      />,
+    );
+
+    await userEvent.click(await screen.findByText("Ollama: Qwen3 Coder"));
+
+    expect(onProviderChange).toHaveBeenCalledWith("codex");
+    expect(onModelChange).toHaveBeenCalledWith(
+      "local:ollama-cloud/ollama/qwen3-coder",
+    );
+    expect(onSwitchProvider).toHaveBeenCalledWith("codex");
+    expect(screen.getByText("Local: Ollama")).toBeTruthy();
+    expect(screen.getByText("unavailable")).toBeTruthy();
+  });
+
   it("falls back to a default model entry for Qwen when the catalog is empty", async () => {
     const onModelChange = vi.fn();
     const onProviderChange = vi.fn();

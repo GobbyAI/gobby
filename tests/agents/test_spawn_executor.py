@@ -562,6 +562,62 @@ class TestExecuteSpawn:
             assert result.child_session_id == "gobby-sess-123"
             assert result.codex_session_id is None  # late-linked via SessionStart hook
 
+    async def test_codex_terminal_spawn_local_oss_model(self) -> None:
+        mock_session_manager = MagicMock()
+        request = SpawnRequest(
+            prompt="Test",
+            cwd="/path",
+            provider="codex",
+            session_id="sess",
+            run_id="run",
+            parent_session_id="parent",
+            project_id="proj",
+            project_path="/main/repo",
+            agent_run_id="run-local123456",
+            session_manager=mock_session_manager,
+            model="ollama/qwen3-coder",
+            is_local=True,
+            codex_oss_provider="ollama",
+        )
+        spawn_context = MagicMock(
+            session_id="gobby-sess-local",
+            agent_run_id="run-local123456",
+            env_vars={"GOBBY_SESSION_ID": "gobby-sess-local"},
+        )
+        mock_spawner = MagicMock()
+        mock_spawner.spawn.return_value = MagicMock(
+            success=True,
+            pid=12345,
+            terminal_type="tmux",
+            tmux_session_name="agent-run-local123456",
+        )
+
+        with (
+            patch(
+                "gobby.agents.spawn_executor.prepare_terminal_spawn",
+                return_value=spawn_context,
+            ) as mock_prepare,
+            patch(
+                "gobby.agents.spawn_executor.TmuxSpawner",
+                return_value=mock_spawner,
+            ),
+            patch("gobby.agents.spawn_executor.pre_approve_directory"),
+        ):
+            result = await execute_spawn(request)
+
+        mock_prepare.assert_called_once()
+        assert mock_prepare.call_args.kwargs["is_local"] is True
+        command = mock_spawner.spawn.call_args.kwargs["command"]
+        assert command[:6] == [
+            "codex",
+            "--oss",
+            "--local-provider",
+            "ollama",
+            "-m",
+            "ollama/qwen3-coder",
+        ]
+        assert result.success is True
+
     @pytest.mark.asyncio
     async def test_codex_preapprove_runs_after_command_and_env_setup(self) -> None:
         """Workspace trust is seeded after Codex command and environment setup."""

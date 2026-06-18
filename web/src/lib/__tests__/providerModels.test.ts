@@ -201,6 +201,39 @@ describe("providerModels", () => {
     );
   });
 
+  it("preserves Codex local selector mirror labels", () => {
+    const localCatalog: ProviderModelEntry[] = [
+      {
+        provider: "codex",
+        available: true,
+        source: "live",
+        models: [
+          {
+            value: "local:ollama-cloud/ollama/qwen3-coder",
+            label: "Ollama: Qwen3 Coder",
+          },
+        ],
+      },
+    ];
+
+    expect(getModelsForProvider(localCatalog, "codex")).toEqual([
+      {
+        value: "local:ollama-cloud/ollama/qwen3-coder",
+        label: "Ollama: Qwen3 Coder",
+        match_identifiers: ["local:ollama-cloud/ollama/qwen3-coder"],
+        _parsed: {
+          displayLabel: "Ollama: Qwen3 Coder",
+          strengthRank: 0,
+          versionParts: [],
+          releaseDate: null,
+        },
+      },
+    ]);
+    expect(
+      getModelLabel(localCatalog, "codex", "local:ollama-cloud/ollama/qwen3-coder"),
+    ).toBe("Ollama: Qwen3 Coder");
+  });
+
   it("labels and sorts known providers alphabetically by display name", () => {
     expect(getProviderDisplayName("droid")).toBe("Droid");
     expect(

@@ -80,6 +80,34 @@ class TestWebChatRuntimeManager:
         assert droid_session.provider == "droid"
         assert droid_session._provider_label() == "droid"
 
+    def test_create_session_routes_codex_local_selector_to_oss_backend(self) -> None:
+        config = DaemonConfig(
+            ai={
+                "generation": {
+                    "local": {
+                        "endpoints": {
+                            "ollama": {
+                                "provider": "ollama",
+                                "api_base": "http://localhost:11434",
+                                "model": "llama3.2:latest",
+                            }
+                        }
+                    }
+                }
+            }
+        )
+        manager = WebChatRuntimeManager(codex_client=MagicMock(), daemon_config=config)
+
+        session = manager.create_session(
+            provider="codex",
+            conversation_id="conv-codex-local",
+            model="local:ollama/ollama/qwen3-coder",
+        )
+
+        assert isinstance(session, CodexManagedChatSession)
+        assert session._model == "ollama/qwen3-coder"
+        assert session._backend is manager._codex_local_backends["ollama"]
+
     def test_create_session_applies_codex_transcript_retry_config(self) -> None:
         manager = WebChatRuntimeManager(
             codex_client=None,
@@ -714,6 +742,47 @@ class TestCodexBackend:
         )
         assert client.start_thread.await_count == 1
         assert client.start_thread.await_args is not None
+
+    @pytest.mark.asyncio
+    async def test_attach_session_preflights_local_codex_model(self) -> None:
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.start_thread = AsyncMock(
+            return_value=SimpleNamespace(id="thread-1", path="/tmp/codex.jsonl")
+        )
+        endpoint = LocalGenerationEndpointConfig(
+            provider="ollama",
+            api_base="http://localhost:11434",
+            model="llama3.2:latest",
+        )
+
+        backend = CodexWebChatBackend(client=client, local_endpoint=endpoint)
+        await backend.start()
+
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        with patch(
+            "gobby.agents.local_model.ensure_local_model",
+            new=AsyncMock(return_value="ollama/qwen3-coder"),
+        ) as ensure_local_model:
+            await session.start(model="ollama/qwen3-coder")
+
+        ensure_local_model.assert_awaited_once()
+        assert ensure_local_model.await_args.args[0].model == "ollama/qwen3-coder"
+        assert ensure_local_model.await_args.args[0].api_base == "http://localhost:11434"
+        assert ensure_local_model.await_args.kwargs == {"run_manager": None}
+        client.start_thread.assert_awaited_once_with(
+            cwd="/tmp/project",
+            model="ollama/qwen3-coder",
+            approval_policy="on-request",
+            sandbox=None,
+            terminal_context=None,
+        )
+        assert session.sdk_session_id == "thread-1"
+        assert session._thread_id == "thread-1"
+        assert session._transcript_path == "/tmp/codex.jsonl"
 
     @pytest.mark.asyncio
     async def test_managed_session_delegates_send_message(self) -> None:

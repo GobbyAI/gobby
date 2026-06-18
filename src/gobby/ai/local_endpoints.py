@@ -16,10 +16,28 @@ class LocalGenerationEndpointSelection:
 
     name: str
     endpoint: LocalGenerationEndpointConfig
+    model: str | None = None
 
     @property
     def provider(self) -> str:
         return local_endpoint_provider(self.name)
+
+    @property
+    def selected_model(self) -> str:
+        return self.model or self.endpoint.model
+
+    def endpoint_with_selected_model(self) -> LocalGenerationEndpointConfig:
+        if self.model is None:
+            return self.endpoint
+        return self.endpoint.model_copy(update={"model": self.model})
+
+
+@dataclass(frozen=True)
+class LocalEndpointSelector:
+    """Parsed local endpoint selector."""
+
+    endpoint_name: str
+    model: str | None = None
 
 
 def local_endpoint_provider(name: str) -> str:
@@ -29,15 +47,27 @@ def local_endpoint_provider(name: str) -> str:
 
 def parse_local_endpoint_selector(value: str | None) -> str | None:
     """Return endpoint name from a local:<endpoint> selector, if present."""
+    parsed = parse_local_endpoint_model_selector(value)
+    return parsed.endpoint_name if parsed is not None else None
+
+
+def parse_local_endpoint_model_selector(value: str | None) -> LocalEndpointSelector | None:
+    """Parse local:<endpoint>[/<model-id>] selectors while preserving model slashes."""
     if not isinstance(value, str):
         return None
     selector = value.strip()
     if not selector.startswith(LOCAL_ENDPOINT_PROVIDER_PREFIX):
         return None
-    endpoint_name = selector.removeprefix(LOCAL_ENDPOINT_PROVIDER_PREFIX).strip()
-    if not endpoint_name or "/" in endpoint_name:
-        raise ValueError(f"local endpoint selectors must use local:<endpoint>; got {value!r}")
-    return endpoint_name
+    body = selector.removeprefix(LOCAL_ENDPOINT_PROVIDER_PREFIX).strip()
+    endpoint_name, separator, model = body.partition("/")
+    endpoint_name = endpoint_name.strip()
+    model = model.strip()
+    if not endpoint_name or (separator and not model):
+        raise ValueError(
+            "local endpoint selectors must use local:<endpoint> or "
+            f"local:<endpoint>/<model-id>; got {value!r}"
+        )
+    return LocalEndpointSelector(endpoint_name=endpoint_name, model=model if separator else None)
 
 
 def resolve_local_generation_endpoint(
@@ -57,12 +87,13 @@ def resolve_local_generation_endpoint_selector(
     selector: str | None,
 ) -> LocalGenerationEndpointSelection | None:
     """Resolve local:<endpoint> into endpoint config, or None for non-local values."""
-    endpoint_name = parse_local_endpoint_selector(selector)
-    if endpoint_name is None:
+    parsed = parse_local_endpoint_model_selector(selector)
+    if parsed is None:
         return None
     return LocalGenerationEndpointSelection(
-        name=endpoint_name,
-        endpoint=resolve_local_generation_endpoint(config, endpoint_name),
+        name=parsed.endpoint_name,
+        endpoint=resolve_local_generation_endpoint(config, parsed.endpoint_name),
+        model=parsed.model,
     )
 
 

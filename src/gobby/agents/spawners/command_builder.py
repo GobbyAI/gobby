@@ -24,6 +24,7 @@ def build_cli_command(
     env_overrides: dict[str, str] | None = None,
     config_overrides: list[str] | None = None,
     disallowed_tools: list[str] | None = None,
+    codex_oss_provider: str | None = None,
 ) -> tuple[list[str], dict[str, str]]:
     """
     Build the CLI command and env for any provider.
@@ -66,6 +67,7 @@ def build_cli_command(
             support `-c key=value` flags. Currently used by Codex.
         disallowed_tools: Provider-native tool names to remove from the toolset.
             Currently supported for Claude.
+        codex_oss_provider: Optional Codex OSS local provider (lmstudio or ollama).
 
     Returns:
         Tuple of (command list, env dict) for subprocess execution
@@ -137,7 +139,11 @@ def build_cli_command(
         # Codex CLI flags
         if resume_session_id:
             command.append("resume")
-        if model:
+        if codex_oss_provider:
+            command.extend(["--oss", "--local-provider", codex_oss_provider])
+            if model:
+                command.extend(["-m", model])
+        elif model:
             command.extend(["--model", model])
         if reasoning_effort and reasoning_flag == "codex-config":
             command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])

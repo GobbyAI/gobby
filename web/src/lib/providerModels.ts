@@ -22,7 +22,7 @@ export interface ProviderModelEntry {
   provider: string;
   available: boolean;
   models: ProviderModelOption[];
-  source: "static" | "live" | "cache" | "failed" | "unsupported";
+  source: "static" | "live" | "cache" | "config" | "failed" | "unsupported";
   display_name?: string;
   installed?: boolean;
   deprecated?: boolean;
@@ -419,6 +419,9 @@ function parseClaudeModelInfo(model: ProviderModelOption): ParsedModelInfo {
 
 function parseCodexModelInfo(model: ProviderModelOption): ParsedModelInfo {
   const normalized = normalizeModelIdentifier(model.value) ?? "";
+  if (normalized.startsWith("local:")) {
+    return parseGenericModelInfo(model);
+  }
   const tokens = tokenizeModel(normalized);
   const versionParts = extractVersionParts(tokens, "gpt");
   const isMini = tokens.includes("mini");

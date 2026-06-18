@@ -1,0 +1,312 @@
+"""Model discovery for configured local generation endpoints."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Any
+
+import httpx
+
+from gobby.ai.local_endpoints import LOCAL_ENDPOINT_PROVIDER_PREFIX
+from gobby.config.ai import LocalGenerationEndpointConfig
+
+LOCAL_PROVIDER_LABELS: dict[str, str] = {
+    "lmstudio": "LM Studio",
+    "ollama": "Ollama",
+    "openai-compatible": "OpenAI Compatible",
+}
+
+
+@dataclass(frozen=True)
+class LocalEndpointModelGroup:
+    """Discovered model rows for one configured local endpoint."""
+
+    endpoint_name: str
+    provider_label: str
+    models: list[dict[str, Any]]
+    source: str
+    error: str | None = None
+
+    @property
+    def provider(self) -> str:
+        return f"{LOCAL_ENDPOINT_PROVIDER_PREFIX}{self.endpoint_name}"
+
+    @property
+    def display_name(self) -> str:
+        return f"Local: {self.provider_label}"
+
+
+async def discover_local_endpoint_model_group(
+    endpoint_name: str,
+    endpoint: LocalGenerationEndpointConfig,
+) -> LocalEndpointModelGroup:
+    """Discover selectable models for one configured local generation endpoint."""
+    provider_label = local_provider_display_label(endpoint.provider)
+    try:
+        if endpoint.provider == "lmstudio":
+            discovered = await _discover_lmstudio_models(endpoint_name, endpoint)
+        elif endpoint.provider == "ollama":
+            discovered = await _discover_ollama_models(endpoint_name, endpoint)
+        else:
+            discovered = []
+        source = "live" if discovered else "config"
+        models = _merge_default_model(endpoint_name, endpoint, discovered)
+        return LocalEndpointModelGroup(
+            endpoint_name=endpoint_name,
+            provider_label=provider_label,
+            models=models,
+            source=source,
+        )
+    except Exception as exc:
+        return LocalEndpointModelGroup(
+            endpoint_name=endpoint_name,
+            provider_label=provider_label,
+            models=_merge_default_model(endpoint_name, endpoint, []),
+            source="config",
+            error=_short_error(exc),
+        )
+
+
+def local_provider_display_label(provider: str) -> str:
+    normalized = provider.strip().lower()
+    return LOCAL_PROVIDER_LABELS.get(normalized, provider.strip() or "Local")
+
+
+def codex_mirror_models(group: LocalEndpointModelGroup) -> list[dict[str, Any]]:
+    """Return local model rows mirrored into the Codex provider group."""
+    mirrored: list[dict[str, Any]] = []
+    for model in group.models:
+        entry = dict(model)
+        entry["label"] = f"{group.provider_label}: {model.get('label') or model['value']}"
+        entry["local_provider"] = group.provider
+        mirrored.append(entry)
+    return mirrored
+
+
+def _merge_default_model(
+    endpoint_name: str,
+    endpoint: LocalGenerationEndpointConfig,
+    discovered: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    entries = [
+        {
+            "value": f"{LOCAL_ENDPOINT_PROVIDER_PREFIX}{endpoint_name}",
+            "label": f"Default ({endpoint.model})",
+            "canonical_id": endpoint.model,
+            "is_default": True,
+        }
+    ]
+    entries.extend(discovered)
+    deduped: dict[str, dict[str, Any]] = {}
+    for entry in entries:
+        value = str(entry.get("value") or "").strip()
+        if value and value not in deduped:
+            deduped[value] = entry
+    return list(deduped.values())
+
+
+async def _discover_lmstudio_models(
+    endpoint_name: str,
+    endpoint: LocalGenerationEndpointConfig,
+) -> list[dict[str, Any]]:
+    async with httpx.AsyncClient() as client:
+        response = await client.get(
+            f"{_origin(endpoint.api_base)}/api/v1/models",
+            headers=_headers(endpoint.api_key),
+            timeout=10.0,
+        )
+        response.raise_for_status()
+        payload = response.json()
+    models = _model_list(payload)
+    entries: list[dict[str, Any]] = []
+    for model in models:
+        if not _is_lmstudio_llm(model):
+            continue
+        model_id = _first_string(model, "id", "key", "model")
+        if model_id is None:
+            continue
+        entries.append(
+            _local_model_entry(
+                endpoint_name,
+                model_id,
+                label=_first_string(model, "display_name", "name", "id", "key") or model_id,
+                context_length=_context_length(model),
+                capabilities=_capabilities(model),
+            )
+        )
+    return entries
+
+
+async def _discover_ollama_models(
+    endpoint_name: str,
+    endpoint: LocalGenerationEndpointConfig,
+) -> list[dict[str, Any]]:
+    async with httpx.AsyncClient() as client:
+        native_models = await _ollama_native_models(client, endpoint)
+        if native_models:
+            return [
+                _local_model_entry(
+                    endpoint_name,
+                    model_id,
+                    label=_ollama_label(model, model_id),
+                    context_length=_context_length(model),
+                    capabilities=_ollama_capabilities(model),
+                )
+                for model, model_id in native_models
+            ]
+        return await _openai_compatible_models(client, endpoint_name, endpoint)
+
+
+async def _ollama_native_models(
+    client: httpx.AsyncClient,
+    endpoint: LocalGenerationEndpointConfig,
+) -> list[tuple[dict[str, Any], str]]:
+    models_by_id: dict[str, dict[str, Any]] = {}
+    for path in ("/api/tags", "/api/ps"):
+        try:
+            response = await client.get(
+                f"{_origin(endpoint.api_base)}{path}",
+                headers=_headers(endpoint.api_key),
+                timeout=10.0,
+            )
+            response.raise_for_status()
+        except httpx.HTTPError:
+            continue
+        for model in _model_list(response.json()):
+            model_id = _first_string(model, "model", "name")
+            if model_id:
+                models_by_id.setdefault(model_id, model)
+    return [(model, model_id) for model_id, model in models_by_id.items()]
+
+
+async def _openai_compatible_models(
+    client: httpx.AsyncClient,
+    endpoint_name: str,
+    endpoint: LocalGenerationEndpointConfig,
+) -> list[dict[str, Any]]:
+    response = await client.get(
+        f"{_origin(endpoint.api_base)}/v1/models",
+        headers=_headers(endpoint.api_key),
+        timeout=10.0,
+    )
+    response.raise_for_status()
+    entries: list[dict[str, Any]] = []
+    for model in _model_list(response.json()):
+        model_id = _first_string(model, "id", "model", "name")
+        if model_id:
+            entries.append(
+                _local_model_entry(
+                    endpoint_name,
+                    model_id,
+                    label=_first_string(model, "label", "name", "id") or model_id,
+                    context_length=_context_length(model),
+                    capabilities=_capabilities(model),
+                )
+            )
+    return entries
+
+
+def _local_model_entry(
+    endpoint_name: str,
+    model_id: str,
+    *,
+    label: str,
+    context_length: int | None,
+    capabilities: Any | None,
+) -> dict[str, Any]:
+    entry: dict[str, Any] = {
+        "value": f"{LOCAL_ENDPOINT_PROVIDER_PREFIX}{endpoint_name}/{model_id}",
+        "label": label,
+        "canonical_id": model_id,
+    }
+    if context_length is not None:
+        entry["context_length"] = context_length
+        entry["context_length_source"] = "provider_reported"
+    if capabilities is not None:
+        entry["capabilities"] = capabilities
+    return entry
+
+
+def _model_list(payload: Any) -> list[dict[str, Any]]:
+    if not isinstance(payload, dict):
+        return []
+    models = payload.get("models")
+    if not isinstance(models, list):
+        models = payload.get("data")
+    if not isinstance(models, list):
+        return []
+    return [model for model in models if isinstance(model, dict)]
+
+
+def _is_lmstudio_llm(model: dict[str, Any]) -> bool:
+    kind = _first_string(model, "type", "model_type", "compatibility_type")
+    if kind is None:
+        return True
+    normalized = kind.lower()
+    if any(token in normalized for token in ("embedding", "rerank", "tts", "vision")):
+        return False
+    return "llm" in normalized or "language" in normalized or normalized in {"gguf", "mlx"}
+
+
+def _ollama_label(model: dict[str, Any], model_id: str) -> str:
+    return _first_string(model, "name", "model") or model_id
+
+
+def _context_length(model: dict[str, Any]) -> int | None:
+    for key in (
+        "context_length",
+        "max_context_length",
+        "context_window",
+        "max_context_window",
+        "ctx_length",
+        "num_ctx",
+    ):
+        value = model.get(key)
+        if isinstance(value, int) and value > 0:
+            return value
+        if isinstance(value, str) and value.isdigit():
+            return int(value)
+    return None
+
+
+def _capabilities(model: dict[str, Any]) -> Any | None:
+    value = model.get("capabilities")
+    return value if isinstance(value, list | dict) else None
+
+
+def _ollama_capabilities(model: dict[str, Any]) -> dict[str, Any] | None:
+    details = model.get("details")
+    if not isinstance(details, dict):
+        return None
+    result = {
+        key: details[key]
+        for key in ("family", "families", "parameter_size", "quantization_level")
+        if key in details
+    }
+    return result or None
+
+
+def _first_string(model: dict[str, Any], *keys: str) -> str | None:
+    for key in keys:
+        value = model.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return None
+
+
+def _origin(api_base: str) -> str:
+    base = api_base.rstrip("/")
+    if base.endswith("/v1"):
+        return base[:-3]
+    return base
+
+
+def _headers(api_key: str | None) -> dict[str, str]:
+    if not api_key:
+        return {}
+    return {"Authorization": f"Bearer {api_key}"}
+
+
+def _short_error(exc: BaseException) -> str:
+    message = str(exc).strip()
+    return message or exc.__class__.__name__

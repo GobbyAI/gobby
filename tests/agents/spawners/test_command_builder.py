@@ -108,6 +108,23 @@ class TestBuildCliCommand:
         cmd, _env = build_cli_command("codex", model="gpt-4", prompt="hello")
         assert cmd == ["codex", "--model", "gpt-4", "hello"]
 
+    def test_codex_with_oss_local_provider(self) -> None:
+        cmd, _env = build_cli_command(
+            "codex",
+            model="ollama/qwen3-coder",
+            codex_oss_provider="ollama",
+            prompt="hello",
+        )
+        assert cmd == [
+            "codex",
+            "--oss",
+            "--local-provider",
+            "ollama",
+            "-m",
+            "ollama/qwen3-coder",
+            "hello",
+        ]
+
     def test_codex_with_reasoning_effort(self) -> None:
         cmd, _env = build_cli_command("codex", reasoning_effort="xhigh", prompt="hello")
         assert cmd == ["codex", "-c", 'model_reasoning_effort="xhigh"', "hello"]
