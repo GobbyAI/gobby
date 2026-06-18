@@ -12,12 +12,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from gobby.search.embeddings import (
+from gobby.ai.embeddings import (
     _REACHABILITY_CACHE_MAX_SIZE,
     _clear_reachability_cache,
     _reachability_cache,
-    is_embedding_configured,
-    is_embedding_reachable,
+)
+from gobby.ai.embeddings import (
+    _is_embedding_configured as is_embedding_configured,
+)
+from gobby.ai.embeddings import (
+    _is_embedding_reachable as is_embedding_reachable,
 )
 
 pytestmark = pytest.mark.unit
@@ -70,7 +74,7 @@ def _mock_httpx_client(
     """Build a patch target that stands in for ``httpx.AsyncClient(...)``.
 
     The returned MagicMock is used as the new value of
-    ``gobby.search.embeddings.httpx.AsyncClient`` — calling it returns an
+    ``gobby.ai.embeddings.httpx.AsyncClient`` — calling it returns an
     async context manager whose ``get`` either raises or yields a
     response with the given status.
     """
@@ -115,8 +119,8 @@ class TestIsEmbeddingReachable:
         factory, _client = _mock_httpx_client(status=200)
 
         with (
-            patch("gobby.search.embeddings._get_lock", return_value=lock),
-            patch("gobby.search.embeddings.httpx.AsyncClient", factory),
+            patch("gobby.ai.embeddings._get_lock", return_value=lock),
+            patch("gobby.ai.embeddings.httpx.AsyncClient", factory),
         ):
             assert await is_embedding_reachable(api_base="http://localhost:11434/v1") is True
 
@@ -137,7 +141,7 @@ class TestIsEmbeddingReachable:
         lock = CountingMutex()
         _reachability_cache[("http://localhost:11434/v1", False)] = MagicMock()
 
-        with patch("gobby.search.embeddings._get_lock", return_value=lock):
+        with patch("gobby.ai.embeddings._get_lock", return_value=lock):
             _clear_reachability_cache()
 
         assert lock.enter_count == 1
@@ -147,7 +151,7 @@ class TestIsEmbeddingReachable:
     async def test_not_configured_short_circuits(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             assert await is_embedding_reachable() is False
         assert client.get.await_count == 0
 
@@ -155,7 +159,7 @@ class TestIsEmbeddingReachable:
     async def test_reachable_200(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             assert await is_embedding_reachable(api_base="http://localhost:11434/v1") is True
         client.get.assert_awaited_once()
         called_url = client.get.await_args.args[0]
@@ -167,7 +171,7 @@ class TestIsEmbeddingReachable:
     ) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             await is_embedding_reachable(api_base="http://localhost:11434/v1/")
         assert client.get.await_args.args[0] == "http://localhost:11434/v1/models"
 
@@ -175,28 +179,28 @@ class TestIsEmbeddingReachable:
     async def test_non_2xx_is_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, _ = _mock_httpx_client(status=500)
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             assert await is_embedding_reachable(api_base="http://localhost:11434/v1") is False
 
     @pytest.mark.asyncio
     async def test_connect_error_is_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, _ = _mock_httpx_client(raise_exc=httpx.ConnectError("refused"))
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             assert await is_embedding_reachable(api_base="http://127.0.0.1:1") is False
 
     @pytest.mark.asyncio
     async def test_timeout_is_unreachable(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, _ = _mock_httpx_client(raise_exc=httpx.ReadTimeout("slow"))
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             assert await is_embedding_reachable(api_base="http://localhost:11434/v1") is False
 
     @pytest.mark.asyncio
     async def test_api_key_sent_as_bearer(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             await is_embedding_reachable(
                 model="text-embedding-3-small",
                 api_key="sk-secret",
@@ -209,7 +213,7 @@ class TestIsEmbeddingReachable:
         """No api_base + key present → probes OpenAI cloud."""
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             await is_embedding_reachable(
                 model="text-embedding-3-small",
                 api_key="sk-test",
@@ -220,7 +224,7 @@ class TestIsEmbeddingReachable:
     async def test_cache_hit_skips_probe(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             a = await is_embedding_reachable(api_base="http://localhost:11434/v1")
             b = await is_embedding_reachable(api_base="http://localhost:11434/v1")
         assert a is True and b is True
@@ -231,7 +235,7 @@ class TestIsEmbeddingReachable:
     async def test_cache_expires_after_ttl(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             await is_embedding_reachable(api_base="http://localhost:11434/v1", cache_ttl=0.0)
             await is_embedding_reachable(api_base="http://localhost:11434/v1", cache_ttl=0.0)
         # cache_ttl=0 forces re-probe each time.
@@ -241,7 +245,7 @@ class TestIsEmbeddingReachable:
     async def test_cache_key_distinguishes_endpoints(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(status=200)
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             await is_embedding_reachable(api_base="http://a:1234/v1")
             await is_embedding_reachable(api_base="http://b:1234/v1")
         assert client.get.await_count == 2
@@ -251,7 +255,7 @@ class TestIsEmbeddingReachable:
         """A negative probe shouldn't be re-fired within the TTL."""
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, client = _mock_httpx_client(raise_exc=httpx.ConnectError("refused"))
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             a = await is_embedding_reachable(api_base="http://127.0.0.1:1")
             b = await is_embedding_reachable(api_base="http://127.0.0.1:1")
         assert a is False and b is False
@@ -264,7 +268,7 @@ class TestIsEmbeddingReachable:
         monkeypatch.delenv("OPENAI_API_KEY", raising=False)
         factory, _client = _mock_httpx_client(status=200)
 
-        with patch("gobby.search.embeddings.httpx.AsyncClient", factory):
+        with patch("gobby.ai.embeddings.httpx.AsyncClient", factory):
             for index in range(_REACHABILITY_CACHE_MAX_SIZE + 5):
                 await is_embedding_reachable(api_base=f"http://host-{index}:11434/v1")
 

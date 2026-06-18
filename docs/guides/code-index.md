@@ -208,11 +208,13 @@ code_index:
   embedding_enabled: true
   graph_enabled: true
   qdrant_collection_prefix: code_symbols_
-  summary_enabled: true
-  summary_profile: feature_low
-  summary_candidates: []
-  summary_max_concurrency: 2
-  summary_batch_size: 20
+  symbol_summary:
+    enabled: true
+    profile: feature_low
+    candidates: []
+    max_concurrency: 2
+    max_tokens: 100
+    batch_size: 20
   sync_worker_interval_seconds: 5.0
   sync_worker_batch_size: 50
   languages:
@@ -276,7 +278,7 @@ The maintenance loop checks indexed projects on the configured interval and
 uses `gcode index --project <root> --quiet` for refresh. The sync worker can
 then update Qdrant vectors and call `gcode graph sync-file --file <file>
 --project <root>` for graph projection sync. Summary generation runs from
-maintenance when `code_index.summary_enabled` is true and the daemon has an LLM
+maintenance when `code_index.symbol_summary.enabled` is true and the daemon has an LLM
 service.
 
 ## HTTP Endpoints

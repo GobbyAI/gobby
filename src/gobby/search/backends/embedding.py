@@ -9,6 +9,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any
 
+from gobby.ai.embeddings import EmbeddingService
 from gobby.search.similarity import cosine_similarity
 
 if TYPE_CHECKING:
@@ -60,6 +61,12 @@ class EmbeddingBackend:
         self._api_base = api_base
         self._api_key = api_key
         self._dim = dim
+        self._embedding_service = EmbeddingService(
+            model=model,
+            api_base=api_base,
+            api_key=api_key,
+            dim=dim,
+        )
 
         # Item storage
         self._item_ids: list[str] = []
@@ -105,8 +112,6 @@ class EmbeddingBackend:
             logger.debug("Embedding index cleared (no items)")
             return
 
-        from gobby.search.embeddings import generate_embeddings
-
         # Store contents for potential reindexing
         self._item_ids = [item_id for item_id, _ in items]
         self._item_contents = dict(items)
@@ -114,13 +119,7 @@ class EmbeddingBackend:
 
         # Generate embeddings in batch
         try:
-            self._item_embeddings = await generate_embeddings(
-                texts=contents,
-                model=self._model,
-                api_base=self._api_base,
-                api_key=self._api_key,
-                expected_dim=self._dim,
-            )
+            self._item_embeddings = await self._embedding_service.generate_embeddings(contents)
             self._fitted = True
             self._needs_refit = False
             logger.info(f"Embedding index built with {len(items)} items")
@@ -158,17 +157,11 @@ class EmbeddingBackend:
         if not self._fitted or not self._item_embeddings:
             return []
 
-        from gobby.search.embeddings import generate_embedding
-
         # Generate query embedding
         try:
-            query_embedding = await generate_embedding(
-                text=query,
-                model=self._model,
-                api_base=self._api_base,
-                api_key=self._api_key,
+            query_embedding = await self._embedding_service.generate_embedding(
+                query,
                 is_query=True,
-                expected_dim=self._dim,
             )
         except Exception as e:
             logger.error(f"Failed to embed query: {e}")

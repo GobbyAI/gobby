@@ -6,6 +6,7 @@ import logging
 from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any
 
+from gobby.ai.embeddings import EmbeddingService
 from gobby.ai.local_endpoints import local_endpoint_provider
 
 # This builder is an internal split of gobby.ai.registry; reuse registry-private
@@ -24,7 +25,6 @@ from gobby.config.feature_base import (
     parse_feature_candidate,
 )
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
-from gobby.search.embeddings import is_embedding_configured
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -119,11 +119,7 @@ def _embedding_binding(config: DaemonConfig | None) -> CapabilityBinding:
         )
 
     embeddings = config.embeddings
-    configured = is_embedding_configured(
-        model=embeddings.model,
-        api_key=embeddings.api_key,
-        api_base=embeddings.api_base,
-    )
+    configured = EmbeddingService.from_config(embeddings).is_configured()
     metadata = {
         "api_base_configured": bool(embeddings.api_base),
         "dim": embeddings.dim,

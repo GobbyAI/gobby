@@ -503,49 +503,6 @@ class ClaudeLLMProvider:
             result = result[: max_tokens * 4]
         return LLMTextResult(text=result, usage=captured_usage)
 
-    async def generate_with_tools(
-        self,
-        prompt: str,
-        system_prompt: str,
-        allowed_tools: list[str],
-        max_turns: int = 3,
-        model: str | None = None,
-    ) -> str:
-        """Generate text using Claude with specific built-in tools enabled.
-
-        For multi-turn SDK calls that need tool use (e.g. WebFetch, WebSearch)
-        but should remain invisible to the session/hook system.
-        """
-        cli_path = await self._verify_cli_path()
-        if not cli_path:
-            raise RuntimeError("Generation unavailable (Claude CLI not found)")
-
-        options = ClaudeAgentOptions(
-            system_prompt=system_prompt,
-            max_turns=max_turns,
-            model=model or self._default_model,
-            allowed_tools=allowed_tools,
-            mcp_servers={},
-            permission_mode="default",
-            cli_path=cli_path,
-        )
-
-        async def _run_query() -> str:
-            result_text = ""
-            async for message in query(prompt=prompt, options=options):
-                if isinstance(message, AssistantMessage):
-                    for block in message.content:
-                        if isinstance(block, TextBlock):
-                            result_text += block.text
-                elif isinstance(message, ResultMessage) and message.result:
-                    result_text = message.result
-            return result_text
-
-        result: str = await self._execute_sdk_query(
-            "generate_with_tools", _run_query, options, max_retries=1
-        )
-        return result
-
     async def generate_json(
         self,
         prompt: str,

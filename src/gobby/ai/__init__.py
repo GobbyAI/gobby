@@ -12,6 +12,7 @@ from gobby.ai.audio import (
     WhisperAudioAdapter,
     build_daemon_audio_service,
 )
+from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
 from gobby.ai.registry import (
     CANONICAL_AI_CAPABILITIES,
     AIAdapterStyle,
@@ -62,6 +63,8 @@ __all__ = [
     "ClaudeVisionExtractAdapter",
     "CodexCLITextGenerateAdapter",
     "DroidCLITextGenerateAdapter",
+    "EmbeddingGenerationError",
+    "EmbeddingService",
     "LocalTextGenerateAdapter",
     "LocalVisionExtractAdapter",
     "OpenAICompatibleAudioAdapter",

@@ -26,11 +26,8 @@ import logging
 from collections.abc import Callable
 from typing import Any
 
+from gobby.ai.embeddings import EmbeddingService
 from gobby.search.backends import AsyncSearchBackend, EmbeddingBackend
-from gobby.search.embeddings import (
-    is_embedding_configured,
-    is_embedding_reachable,
-)
 from gobby.search.keyword import KeywordAsyncSearchBackend, keyword_table_for_fts_table
 from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
 
@@ -228,6 +225,12 @@ class UnifiedSearcher:
         self._fitted = False
         self._fitted_mode = None
         mode = self._config.get_mode_enum()
+        embedding_service = EmbeddingService(
+            model=self._embedding_model,
+            api_base=self._embedding_api_base,
+            api_key=self._embedding_api_key,
+            dim=self._embedding_dim,
+        )
 
         if mode == SearchMode.KEYWORD:
             # Keyword only
@@ -241,21 +244,13 @@ class UnifiedSearcher:
             # Embedding only - fail if unavailable. Check config first so we
             # can distinguish "not configured" from "configured but unreachable"
             # in the error message; then actually probe the endpoint.
-            if not is_embedding_configured(
-                model=self._embedding_model,
-                api_key=self._embedding_api_key,
-                api_base=self._embedding_api_base,
-            ):
+            if not embedding_service.is_configured():
                 raise RuntimeError(
                     f"Embedding not configured for model {self._embedding_model}. "
                     "Set the appropriate API key or api_base, or use mode='auto' "
                     "for fallback."
                 )
-            if not await is_embedding_reachable(
-                model=self._embedding_model,
-                api_key=self._embedding_api_key,
-                api_base=self._embedding_api_base,
-            ):
+            if not await embedding_service.is_reachable():
                 endpoint = self._embedding_api_base or "OpenAI cloud"
                 raise RuntimeError(
                     f"Embedding endpoint unreachable ({endpoint}) for model "
@@ -273,11 +268,7 @@ class UnifiedSearcher:
             # Try embedding, fallback to keyword. Probe the endpoint so we
             # skip the expensive embedding call when the server is down
             # rather than waiting for it to fail.
-            if not await is_embedding_reachable(
-                model=self._embedding_model,
-                api_key=self._embedding_api_key,
-                api_base=self._embedding_api_base,
-            ):
+            if not await embedding_service.is_reachable():
                 # No embedding available - use keyword
                 await self._fallback_to_keyword(
                     f"Embedding unavailable (no reachable endpoint for {self._embedding_model})",
@@ -306,11 +297,7 @@ class UnifiedSearcher:
             # Hybrid already tolerates runtime failures (see except below),
             # so the cheap config-only check is sufficient here — no need
             # to spend a probe round-trip on every fit.
-            if is_embedding_configured(
-                model=self._embedding_model,
-                api_key=self._embedding_api_key,
-                api_base=self._embedding_api_base,
-            ):
+            if embedding_service.is_configured():
                 try:
                     embedding = self._get_embedding_backend()
                     await embedding.fit_async(items)

@@ -20,6 +20,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from gobby.config._loading import (
     _drop_legacy_embedding_config_store_keys,
     _drop_removed_config_store_keys,
+    _migrate_code_index_symbol_summary_config_store_keys,
     _migrate_default_ui_mode_config_store_row,
     _migrate_legacy_config,
     _reject_removed_file_config_sections,
@@ -547,6 +548,7 @@ def load_config(
         delete_stale_default_feature_candidate_rows(config_store)
         flat_db = config_store.get_all()
         flat_db = _drop_legacy_embedding_config_store_keys(flat_db, config_store)
+        flat_db = _migrate_code_index_symbol_summary_config_store_keys(flat_db, config_store)
         flat_db = _drop_removed_config_store_keys(flat_db, config_store)
         flat_db = _migrate_default_ui_mode_config_store_row(flat_db, config_store)
         if flat_db:

@@ -66,12 +66,12 @@ endpoints configured with `vision_extract: true`.
 | `gobby-tasks.expansion` | `gobby-tasks.expansion` | `feature_high` | `LLMService.call_feature(config.gobby_tasks.expansion, ...)` | `tasks.expansion.compile`: task expansion compilation |
 | `gobby-tasks.validation` | `gobby-tasks.validation` | `feature_mid` | `LLMService.call_feature(config.gobby_tasks.validation, ...)` | `tasks.validation`: task completion validation |
 | `chat` | `chat` | `feature_high` | Text-generation service receives `config.chat` candidates | Chat session generation defaults |
-| `code_index.summary_candidates` | `code_index.summary_candidates` | `feature_low` | `TextGenerationService.generate(...)` with `config.code_index.summary_candidates` | `code_index.symbol_summary`: symbol summaries |
+| `code_index.symbol_summary.candidates` | `code_index.symbol_summary` | `feature_low` | `TextGenerationService.generate(...)` with `config.code_index.symbol_summary.candidates` | `code_index.symbol_summary`: symbol summaries |
 
 ## Outside `call_feature`
 
 `code_index.symbol_summary` does not call `LLMService.call_feature`. `SymbolSummarizer`
-passes `code_index.summary_profile` and `code_index.summary_candidates` directly to
+passes `code_index.symbol_summary.profile` and `code_index.symbol_summary.candidates` directly to
 `TextGenerationService.generate(...)`.
 
 `vision_extract` is capability-registry routed. The `/api/llm/vision/extract` route builds

@@ -715,7 +715,7 @@ class TestLoadConfig:
             "tool_summarizer.candidates": ["claude/haiku"],
             "import_mcp_server.candidates": ["claude/haiku"],
             "skill_description.candidates": ["claude/haiku"],
-            "code_index.summary_candidates": ["claude/haiku"],
+            "code_index.symbol_summary.candidates": ["claude/haiku"],
             "memory.dream.candidates": [
                 "gemini/gemini-3.5-flash",
                 "codex/gpt-5.3-codex-spark",
@@ -792,7 +792,7 @@ class TestLoadConfig:
         assert config.tool_summarizer.candidates == low_candidates
         assert config.import_mcp_server.candidates == low_candidates
         assert config.skill_description.candidates == low_candidates
-        assert config.code_index.summary_candidates == low_candidates
+        assert config.code_index.symbol_summary.candidates == low_candidates
         assert config.memory.dream.candidates == mid_candidates
         assert config.recommend_tools.candidates == mid_candidates
         assert config.merge_resolution.candidates == mid_candidates
@@ -800,6 +800,58 @@ class TestLoadConfig:
         assert config.chat.candidates == high_candidates
         assert config.gobby_tasks.expansion.profile == FeatureProfile.HIGH
         assert config.gobby_tasks.expansion.candidates == high_candidates
+
+    def test_load_config_migrates_code_index_symbol_summary_rows(self, temp_dir: Path) -> None:
+        """Old persisted code-index summary rows are copied to symbol_summary and deleted."""
+
+        values: dict[str, object] = {
+            "code_index.summary_enabled": False,
+            "code_index.summary_batch_size": 7,
+            "code_index.summary_profile": "feature_mid",
+            "code_index.summary_candidates": ["claude/sonnet"],
+            "code_index.summary_max_concurrency": 3,
+        }
+        writes: dict[str, object] = {}
+        deleted: list[str] = []
+
+        class DummyConfigStore:
+            db = None
+
+            def get_all(self) -> dict[str, object]:
+                return dict(values)
+
+            def set(self, key: str, value: object, source: str = "user") -> None:
+                writes[key] = value
+                values[key] = value
+
+            def delete(self, key: str) -> bool:
+                deleted.append(key)
+                return values.pop(key, None) is not None
+
+        config = load_config(
+            config_file=str(temp_dir / "bootstrap.yaml"),
+            config_store=DummyConfigStore(),
+        )
+
+        assert config.code_index.symbol_summary.enabled is False
+        assert config.code_index.symbol_summary.batch_size == 7
+        assert config.code_index.symbol_summary.profile == FeatureProfile.MID
+        assert config.code_index.symbol_summary.candidates == ["claude/sonnet"]
+        assert config.code_index.symbol_summary.max_concurrency == 3
+        assert writes == {
+            "code_index.symbol_summary.enabled": False,
+            "code_index.symbol_summary.batch_size": 7,
+            "code_index.symbol_summary.profile": "feature_mid",
+            "code_index.symbol_summary.candidates": ["claude/sonnet"],
+            "code_index.symbol_summary.max_concurrency": 3,
+        }
+        assert deleted == [
+            "code_index.summary_batch_size",
+            "code_index.summary_candidates",
+            "code_index.summary_enabled",
+            "code_index.summary_max_concurrency",
+            "code_index.summary_profile",
+        ]
 
     def test_load_config_preserves_user_and_non_legacy_feature_candidates(
         self, temp_dir: Path

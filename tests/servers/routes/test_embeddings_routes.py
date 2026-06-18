@@ -90,12 +90,25 @@ def test_embeddings_post_treats_single_input_as_one_item_batch(
 ) -> None:
     calls: list[dict[str, Any]] = []
 
-    async def fake_generate_embeddings(texts: list[str], **kwargs: Any) -> list[list[float]]:
-        calls.append({"texts": texts, **kwargs})
+    async def fake_generate_embeddings(
+        service: embeddings_routes.EmbeddingService,
+        texts: list[str],
+        **kwargs: Any,
+    ) -> list[list[float]]:
+        calls.append(
+            {
+                "texts": texts,
+                "model": service.model,
+                "api_base": service.api_base,
+                "api_key": service.api_key,
+                "dim": service.dim,
+                **kwargs,
+            }
+        )
         return [[0.1, 0.2, 0.3]]
 
     monkeypatch.setattr(
-        embeddings_routes.embeddings_module,
+        embeddings_routes.EmbeddingService,
         "generate_embeddings",
         fake_generate_embeddings,
     )
@@ -118,8 +131,8 @@ def test_embeddings_post_treats_single_input_as_one_item_batch(
             "model": "custom-embed",
             "api_base": "http://embeddings.local/v1",
             "api_key": "secret",
+            "dim": 3,
             "is_query": False,
-            "expected_dim": 3,
         }
     ]
 
@@ -129,12 +142,16 @@ def test_embeddings_post_preserves_batch_order_and_passes_is_query(
 ) -> None:
     calls: list[dict[str, Any]] = []
 
-    async def fake_generate_embeddings(texts: list[str], **kwargs: Any) -> list[list[float]]:
-        calls.append({"texts": texts, **kwargs})
+    async def fake_generate_embeddings(
+        service: embeddings_routes.EmbeddingService,
+        texts: list[str],
+        **kwargs: Any,
+    ) -> list[list[float]]:
+        calls.append({"texts": texts, "dim": service.dim, **kwargs})
         return [[1.0], [2.0]]
 
     monkeypatch.setattr(
-        embeddings_routes.embeddings_module,
+        embeddings_routes.EmbeddingService,
         "generate_embeddings",
         fake_generate_embeddings,
     )
@@ -149,7 +166,7 @@ def test_embeddings_post_preserves_batch_order_and_passes_is_query(
     assert response.json()["embeddings"] == [[1.0], [2.0]]
     assert calls[0]["texts"] == ["first", "second"]
     assert calls[0]["is_query"] is True
-    assert calls[0]["expected_dim"] == 1
+    assert calls[0]["dim"] == 1
 
 
 def test_embeddings_doctor_returns_endpoint_model_and_dim() -> None:

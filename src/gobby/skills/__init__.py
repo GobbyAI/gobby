@@ -8,13 +8,6 @@ This module provides:
 - Skill updates from source
 """
 
-# Embedding utilities are now in gobby.search
-from gobby.search import (
-    generate_embedding,
-    generate_embeddings,
-    is_embedding_configured,
-    is_embedding_reachable,
-)
 from gobby.skills.loader import (
     GitHubRef,
     SkillLoader,
@@ -53,11 +46,6 @@ from gobby.skills.validator import (
 )
 
 __all__ = [
-    # Embeddings (from gobby.search)
-    "generate_embedding",
-    "generate_embeddings",
-    "is_embedding_configured",
-    "is_embedding_reachable",
     # Loader
     "GitHubRef",
     "SkillLoadError",

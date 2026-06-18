@@ -14,6 +14,8 @@ import shutil
 import subprocess
 from typing import Any
 
+from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
+
 logger = logging.getLogger(__name__)
 
 _DEFAULT_EMBEDDING_DIM = 768
@@ -390,15 +392,12 @@ def _probe_embedding_dim(
     Used to auto-detect the dim when the user supplied a custom model or
     endpoint without passing ``--embedding-dim``.
     """
-    from gobby.search.embeddings import EmbeddingGenerationError, generate_embedding
 
     async def _probe() -> int | None:
         try:
-            result = await generate_embedding(
+            service = EmbeddingService(model=model, api_base=api_base, api_key=api_key)
+            result = await service.generate_embedding(
                 "x",
-                model=model,
-                api_base=api_base,
-                api_key=api_key,
                 max_retries=1,
             )
             if not result:
@@ -423,17 +422,18 @@ def _health_check_embedding(
     expected_dim: int | None = None,
 ) -> bool:
     """Fire a single test embedding. Returns True on success."""
-    from gobby.search.embeddings import generate_embedding
 
     async def _check() -> bool:
         try:
-            result = await generate_embedding(
-                "gobby health check",
+            service = EmbeddingService(
                 model=model,
                 api_base=api_base,
                 api_key=api_key,
+                dim=expected_dim,
+            )
+            result = await service.generate_embedding(
+                "gobby health check",
                 max_retries=1,
-                expected_dim=expected_dim,
             )
             return len(result) > 0
         except Exception as e:

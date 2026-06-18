@@ -8,13 +8,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai import build_daemon_text_generation_service
+from gobby.ai.embeddings import EmbeddingService
 from gobby.config.embedding_keys import EMBEDDING_API_KEY_SECRET_NAME
 from gobby.config.persistence import EmbeddingsConfig, is_falkordb_enabled
 from gobby.llm import create_llm_service
 from gobby.mcp_proxy.manager import MCPClientManager
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
-from gobby.search.embeddings import generate_embedding, is_embedding_configured
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.storage.clones import LocalCloneManager
 from gobby.storage.mcp import LocalMCPManager
@@ -63,11 +63,13 @@ def _validate_memory_embedding_config(
     *,
     api_key: str | None = None,
 ) -> None:
-    if is_embedding_configured(
+    service = EmbeddingService(
         model=emb_cfg.model,
-        api_key=api_key if api_key is not None else emb_cfg.api_key,
         api_base=emb_cfg.api_base,
-    ):
+        api_key=api_key if api_key is not None else emb_cfg.api_key,
+        dim=emb_cfg.dim,
+    )
+    if service.is_configured():
         return
     raise ValueError(
         "Embedding configuration is incomplete for memory embeddings: set "
@@ -107,19 +109,13 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
             )
             embed_fn: Callable[..., Any] | None = None
             if runner.llm_service:
-                from functools import partial
-
-                _mem_embed_kwargs: dict[str, Any] = {
-                    "model": emb_cfg.model,
-                    "api_key": embedding_api_key,
-                }
-                if emb_cfg.api_base:
-                    _mem_embed_kwargs["api_base"] = emb_cfg.api_base
-                embed_fn = partial(
-                    generate_embedding,
-                    **_mem_embed_kwargs,
-                    expected_dim=emb_cfg.dim,
+                embedding_service = EmbeddingService(
+                    model=emb_cfg.model,
+                    api_base=emb_cfg.api_base,
+                    api_key=embedding_api_key,
+                    dim=emb_cfg.dim,
                 )
+                embed_fn = embedding_service.generate_embedding
 
             falkor_cfg = db_cfg.falkordb if is_falkordb_enabled(db_cfg) else None
             runner.memory_manager = MemoryManager(

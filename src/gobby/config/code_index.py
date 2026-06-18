@@ -2,7 +2,31 @@
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from gobby.config.feature_base import FeatureProfile, default_candidates_for_profile
+from gobby.config.feature_base import FeatureDefaultConfig
+
+
+class CodeIndexSymbolSummaryConfig(FeatureDefaultConfig):
+    """Configuration for LLM-generated code-index symbol summaries."""
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable LLM-generated symbol summaries",
+    )
+    batch_size: int = Field(
+        default=20,
+        ge=1,
+        description="Max symbols to summarize per maintenance pass",
+    )
+    max_concurrency: int = Field(
+        default=2,
+        ge=1,
+        description="Maximum concurrent symbol summary LLM calls",
+    )
+    max_tokens: int = Field(
+        default=100,
+        ge=1,
+        description="Maximum tokens for each symbol summary generation",
+    )
 
 
 class CodeIndexConfig(BaseModel):
@@ -85,26 +109,9 @@ class CodeIndexConfig(BaseModel):
         ],
         description="Languages to index",
     )
-    summary_enabled: bool = Field(
-        default=True,
-        description="Enable LLM-generated symbol summaries",
-    )
-    summary_batch_size: int = Field(
-        default=20,
-        description="Max symbols to summarize per maintenance pass",
-    )
-    summary_profile: FeatureProfile = Field(
-        default=FeatureProfile.LOW,
-        description="Capability profile for symbol summary generation",
-    )
-    summary_candidates: list[str] = Field(
-        default_factory=list,
-        description="Ordered provider/model candidates for symbol summary generation",
-    )
-    summary_max_concurrency: int = Field(
-        default=2,
-        ge=1,
-        description="Maximum concurrent symbol summary LLM calls",
+    symbol_summary: CodeIndexSymbolSummaryConfig = Field(
+        default_factory=CodeIndexSymbolSummaryConfig,
+        description="LLM-generated symbol summary configuration",
     )
     sync_worker_interval_seconds: float = Field(
         default=5.0,
@@ -148,14 +155,3 @@ class CodeIndexConfig(BaseModel):
             updated.pop("sync_worker_vector_batch_size", None)
             return updated
         return data
-
-    @model_validator(mode="after")
-    def populate_summary_candidates(self) -> "CodeIndexConfig":
-        """Fill default summary candidates from the summary profile."""
-        if not self.summary_candidates:
-            self.summary_candidates = list(default_candidates_for_profile(self.summary_profile))
-        invalid = [candidate for candidate in self.summary_candidates if "/" not in candidate]
-        if invalid:
-            joined = ", ".join(repr(candidate) for candidate in invalid)
-            raise ValueError(f"summary_candidates must use provider/model format: {joined}")
-        return self

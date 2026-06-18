@@ -422,11 +422,12 @@ Total rows: 377 (22 manual frontend/route rows plus 355 generated backend schema
 | code_index.graph_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
 | code_index.qdrant_collection_prefix | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text/password input | live | keep | runtime-infrastructure |  |
 | code_index.languages | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
-| code_index.summary_enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
-| code_index.summary_batch_size | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
-| code_index.summary_profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | runtime-infrastructure |  |
-| code_index.summary_candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
-| code_index.summary_max_concurrency | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
+| code_index.symbol_summary.enabled | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField toggle | live | keep | runtime-infrastructure |  |
+| code_index.symbol_summary.batch_size | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
+| code_index.symbol_summary.profile | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField select | live | keep | runtime-infrastructure |  |
+| code_index.symbol_summary.candidates | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> string list | live | keep | runtime-infrastructure | array items=string |
+| code_index.symbol_summary.max_concurrency | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
+| code_index.symbol_summary.max_tokens | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.sync_worker_interval_seconds | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.sync_worker_batch_size | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField number input | live | keep | runtime-infrastructure |  |
 | code_index.content_extensions | DaemonConfig schema via /api/config/schema; save via /api/config/values | ConfigFormTab -> SchemaField text input fallback for array | mismatched-type | fix | runtime-infrastructure | array items=string map= |
@@ -496,7 +497,7 @@ These are the rows that P13 must either fix before/while building the overlay or
 | context_window_overrides | ConfigFormTab -> SchemaField text input fallback for map/object | providers-models |
 | code_index.exclude_patterns | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
 | code_index.languages | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
-| code_index.summary_candidates | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
+| code_index.symbol_summary.candidates | ConfigFormTab -> string list | runtime-infrastructure |
 | code_index.content_extensions | ConfigFormTab -> SchemaField text input fallback for array | runtime-infrastructure |
 | wiki.roots | ConfigFormTab -> SchemaField text input fallback for array | memory-knowledge |
 | wiki.ignore_globs | ConfigFormTab -> SchemaField text input fallback for array | memory-knowledge |

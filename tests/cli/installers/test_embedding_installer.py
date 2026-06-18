@@ -9,6 +9,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.ai.embeddings import EmbeddingGenerationError
 from gobby.cli.installers.embedding import (
     _PROVIDER_CONFIG,
     _probe_embedding_dim,
@@ -23,7 +24,6 @@ from gobby.config.embedding_keys import (
     AI_EMBEDDING_MODEL_KEY,
     EMBEDDING_API_KEY_SECRET_NAME,
 )
-from gobby.search.embeddings import EmbeddingGenerationError
 from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = [pytest.mark.unit]
@@ -364,14 +364,18 @@ class TestProbeEmbeddingDim:
     def test_expected_embedding_failure_returns_none(self) -> None:
         mock_generate = AsyncMock(side_effect=EmbeddingGenerationError("offline"))
 
-        with patch("gobby.search.embeddings.generate_embedding", mock_generate):
+        with patch(
+            "gobby.cli.installers.embedding.EmbeddingService.generate_embedding", mock_generate
+        ):
             assert _probe_embedding_dim(model="m", api_base="http://localhost:1234/v1") is None
 
     def test_unexpected_probe_exception_propagates(self) -> None:
         mock_generate = AsyncMock(side_effect=ValueError("bug"))
 
         with (
-            patch("gobby.search.embeddings.generate_embedding", mock_generate),
+            patch(
+                "gobby.cli.installers.embedding.EmbeddingService.generate_embedding", mock_generate
+            ),
             pytest.raises(ValueError, match="bug"),
         ):
             _probe_embedding_dim(model="m", api_base="http://localhost:1234/v1")
@@ -380,7 +384,9 @@ class TestProbeEmbeddingDim:
     async def test__probe_embedding_dim_returns_none_when_event_loop_running(self) -> None:
         mock_generate = AsyncMock()
 
-        with patch("gobby.search.embeddings.generate_embedding", mock_generate):
+        with patch(
+            "gobby.cli.installers.embedding.EmbeddingService.generate_embedding", mock_generate
+        ):
             result = _probe_embedding_dim(model="m", api_base="http://localhost:1234/v1")
 
         assert result is None
@@ -751,6 +757,8 @@ class TestHealthCheck:
         from gobby.cli.installers.embedding import _health_check_embedding
 
         mock_generate = AsyncMock()
-        with patch("gobby.search.embeddings.generate_embedding", mock_generate):
+        with patch(
+            "gobby.cli.installers.embedding.EmbeddingService.generate_embedding", mock_generate
+        ):
             assert _health_check_embedding("model", "http://x/v1") is False
         mock_generate.assert_not_called()

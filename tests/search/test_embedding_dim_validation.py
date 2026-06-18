@@ -7,8 +7,16 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-import gobby.search.embeddings as embeddings_mod
-from gobby.search.embeddings import EmbeddingGenerationError, clear_cache, generate_embedding
+import gobby.ai.embeddings as embeddings_mod
+from gobby.ai.embeddings import (
+    EmbeddingGenerationError,
+)
+from gobby.ai.embeddings import (
+    _clear_embedding_cache as clear_cache,
+)
+from gobby.ai.embeddings import (
+    _generate_embedding as generate_embedding,
+)
 
 pytestmark = pytest.mark.unit
 LOCAL_API_BASE = "http://localhost:1234/v1"

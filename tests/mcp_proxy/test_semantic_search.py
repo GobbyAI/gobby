@@ -127,19 +127,16 @@ class TestSemanticToolSearchApiBase:
         )
 
         with patch(
-            "gobby.search.embeddings.generate_embedding",
+            "gobby.mcp_proxy.semantic_search.EmbeddingService.generate_embedding",
             new_callable=AsyncMock,
             return_value=[0.1, 0.2, 0.3],
         ) as mock_embed:
             result = await search.embed_text("test text")
-            mock_embed.assert_called_once_with(
-                text="test text",
-                model="text-embedding-3-small",
-                api_base="http://localhost:11434/v1",
-                api_key="sk-test",
-                is_query=False,
-                expected_dim=1536,
-            )
+            mock_embed.assert_called_once_with("test text", is_query=False)
+            assert search._embedding_service.model == "text-embedding-3-small"
+            assert search._embedding_service.api_base == "http://localhost:11434/v1"
+            assert search._embedding_service.api_key == "sk-test"
+            assert search._embedding_service.dim == 1536
             assert result == [0.1, 0.2, 0.3]
 
     @pytest.mark.asyncio
@@ -148,19 +145,16 @@ class TestSemanticToolSearchApiBase:
         search = SemanticToolSearch(temp_db)
 
         with patch(
-            "gobby.search.embeddings.generate_embedding",
+            "gobby.mcp_proxy.semantic_search.EmbeddingService.generate_embedding",
             new_callable=AsyncMock,
             return_value=[0.1] * 768,
         ) as mock_embed:
             result = await search.embed_text("test text")
-            mock_embed.assert_called_once_with(
-                text="test text",
-                model=DEFAULT_EMBEDDING_MODEL,
-                api_base=None,
-                api_key=None,
-                is_query=False,
-                expected_dim=DEFAULT_EMBEDDING_DIM,
-            )
+            mock_embed.assert_called_once_with("test text", is_query=False)
+            assert search._embedding_service.model == DEFAULT_EMBEDDING_MODEL
+            assert search._embedding_service.api_base is None
+            assert search._embedding_service.api_key is None
+            assert search._embedding_service.dim == DEFAULT_EMBEDDING_DIM
             assert len(result) == 768
 
     @pytest.mark.asyncio
@@ -169,19 +163,14 @@ class TestSemanticToolSearchApiBase:
         search = SemanticToolSearch(temp_db)
 
         with patch(
-            "gobby.search.embeddings.generate_embedding",
+            "gobby.mcp_proxy.semantic_search.EmbeddingService.generate_embedding",
             new_callable=AsyncMock,
             return_value=[0.1] * 768,
         ) as mock_embed:
             result = await search.embed_text("search query", is_query=True)
-            mock_embed.assert_called_once_with(
-                text="search query",
-                model=DEFAULT_EMBEDDING_MODEL,
-                api_base=None,
-                api_key=None,
-                is_query=True,
-                expected_dim=DEFAULT_EMBEDDING_DIM,
-            )
+            mock_embed.assert_called_once_with("search query", is_query=True)
+            assert search._embedding_service.model == DEFAULT_EMBEDDING_MODEL
+            assert search._embedding_service.dim == DEFAULT_EMBEDDING_DIM
             assert len(result) == 768
 
     def test_compute_text_hash(self) -> None:
@@ -295,7 +284,7 @@ class TestEmbeddingGeneration:
     ):
         """Test generating embedding for text delegates to shared router."""
         with patch(
-            "gobby.search.embeddings.generate_embedding",
+            "gobby.mcp_proxy.semantic_search.EmbeddingService.generate_embedding",
             new_callable=AsyncMock,
             return_value=[0.1] * 768,
         ) as mock_embed:
@@ -311,7 +300,7 @@ class TestEmbeddingGeneration:
     ):
         """Test embed_text raises RuntimeError on failure."""
         with patch(
-            "gobby.search.embeddings.generate_embedding",
+            "gobby.mcp_proxy.semantic_search.EmbeddingService.generate_embedding",
             new_callable=AsyncMock,
             side_effect=RuntimeError("Embedding generation failed"),
         ):

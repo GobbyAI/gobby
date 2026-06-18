@@ -6,14 +6,20 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.search.embeddings import (
+from gobby.ai.embeddings import (
     _CACHE_TTL,
     EmbeddingGenerationError,
     _cache,
     _cache_key,
-    clear_cache,
-    generate_embedding,
-    generate_embeddings,
+)
+from gobby.ai.embeddings import (
+    _clear_embedding_cache as clear_cache,
+)
+from gobby.ai.embeddings import (
+    _generate_embedding as generate_embedding,
+)
+from gobby.ai.embeddings import (
+    _generate_embeddings as generate_embeddings,
 )
 
 pytestmark = pytest.mark.unit
@@ -173,7 +179,7 @@ async def test_ttl_expiry() -> None:
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
-        patch("gobby.search.embeddings.time") as mock_time,
+        patch("gobby.ai.embeddings.time") as mock_time,
     ):
         mock_time.monotonic.return_value = 1000.0
         await generate_embedding("hello", model="test-model", api_base=LOCAL_API_BASE)
@@ -294,7 +300,7 @@ async def test_max_size_eviction() -> None:
 
     with (
         patch("openai.AsyncOpenAI", return_value=mock_client),
-        patch("gobby.search.embeddings._CACHE_MAX_SIZE", 5),
+        patch("gobby.ai.embeddings._CACHE_MAX_SIZE", 5),
     ):
         # Fill cache with 5 entries
         for i in range(5):

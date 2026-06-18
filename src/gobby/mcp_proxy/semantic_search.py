@@ -14,6 +14,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, TypeVar
 
+from gobby.ai.embeddings import EmbeddingService
 from gobby.search.similarity import cosine_similarity
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -124,6 +125,12 @@ class SemanticToolSearch:
         self.embedding_dim = embedding_dim
         self._embedding_api_key = embedding_api_key
         self._api_base = api_base
+        self._embedding_service = EmbeddingService(
+            model=embedding_model,
+            api_base=api_base,
+            api_key=embedding_api_key,
+            dim=embedding_dim,
+        )
         self._vector_store = vector_store
 
     @staticmethod
@@ -336,16 +343,7 @@ class SemanticToolSearch:
         Raises:
             RuntimeError: If embedding generation fails
         """
-        from gobby.search.embeddings import generate_embedding
-
-        return await generate_embedding(
-            text=text,
-            model=self.embedding_model,
-            api_base=self._api_base,
-            api_key=self._embedding_api_key,
-            is_query=is_query,
-            expected_dim=self.embedding_dim,
-        )
+        return await self._embedding_service.generate_embedding(text, is_query=is_query)
 
     async def embed_tool(
         self,

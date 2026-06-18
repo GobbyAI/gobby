@@ -56,11 +56,12 @@ const OWNED_PATHS: readonly string[] = [
   'code_index.graph_enabled',
   'code_index.qdrant_collection_prefix',
   'code_index.languages',
-  'code_index.summary_enabled',
-  'code_index.summary_batch_size',
-  'code_index.summary_profile',
-  'code_index.summary_candidates',
-  'code_index.summary_max_concurrency',
+'code_index.symbol_summary.enabled',
+'code_index.symbol_summary.batch_size',
+'code_index.symbol_summary.profile',
+'code_index.symbol_summary.candidates',
+'code_index.symbol_summary.max_concurrency',
+'code_index.symbol_summary.max_tokens',
   'code_index.sync_worker_interval_seconds',
   'code_index.sync_worker_batch_size',
   'code_index.content_extensions',
@@ -346,25 +347,25 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
       />
       <SwitchConfigField
         fields={fields}
-        path="code_index.summary_enabled"
+        path="code_index.symbol_summary.enabled"
         label="Enable code summaries"
         ariaLabel="Enable code summaries"
       />
       <NumberConfigField
         fields={fields}
-        path="code_index.summary_batch_size"
+        path="code_index.symbol_summary.batch_size"
         label="Summary batch size"
         ariaLabel="Summary batch size"
       />
       <SchemaSelectField
         fields={fields}
-        path="code_index.summary_profile"
+        path="code_index.symbol_summary.profile"
         label="Summary capability profile"
         ariaLabel="Code summary capability profile"
       />
       <StringListConfigField
         fields={fields}
-        path="code_index.summary_candidates"
+        path="code_index.symbol_summary.candidates"
         label="Summary provider/model candidates"
         ariaLabel="Summary candidate"
         addLabel="Add summary candidate"
@@ -372,9 +373,15 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
       />
       <NumberConfigField
         fields={fields}
-        path="code_index.summary_max_concurrency"
+        path="code_index.symbol_summary.max_concurrency"
         label="Summary max concurrency"
         ariaLabel="Summary max concurrency"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="code_index.symbol_summary.max_tokens"
+        label="Summary max tokens"
+        ariaLabel="Summary max tokens"
       />
       <NumberConfigField
         fields={fields}

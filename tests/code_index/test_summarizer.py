@@ -25,9 +25,10 @@ pytestmark = pytest.mark.unit
 
 def _make_config(**overrides: object) -> MagicMock:
     cfg = MagicMock()
-    cfg.summary_profile = overrides.get("summary_profile", "feature_low")
-    cfg.summary_candidates = overrides.get("summary_candidates", ["claude/haiku"])
-    cfg.summary_max_concurrency = overrides.get("summary_max_concurrency", 2)
+    cfg.symbol_summary.profile = overrides.get("profile", "feature_low")
+    cfg.symbol_summary.candidates = overrides.get("candidates", ["claude/haiku"])
+    cfg.symbol_summary.max_concurrency = overrides.get("max_concurrency", 2)
+    cfg.symbol_summary.max_tokens = overrides.get("max_tokens", 100)
     return cfg
 
 
@@ -270,7 +271,7 @@ async def test_summarize_batch(summarizer: SymbolSummarizer) -> None:
 async def test_summarize_batch_limits_concurrent_generation() -> None:
     adapter = _SlowTextGenerateAdapter()
     service = _text_generation_service(adapter)
-    summarizer = SymbolSummarizer(service, _make_config(summary_max_concurrency=2))
+    summarizer = SymbolSummarizer(service, _make_config(max_concurrency=2))
     symbols = [_make_symbol(f"symbol_{index}") for index in range(5)]
     for index, symbol in enumerate(symbols):
         symbol.id = f"sym-{index}"

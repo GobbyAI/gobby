@@ -8,11 +8,17 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from gobby.search.embeddings import (
+from gobby.ai.embeddings import (
     EmbeddingGenerationError,
-    clear_cache,
-    generate_embedding,
-    is_embedding_configured,
+)
+from gobby.ai.embeddings import (
+    _clear_embedding_cache as clear_cache,
+)
+from gobby.ai.embeddings import (
+    _generate_embedding as generate_embedding,
+)
+from gobby.ai.embeddings import (
+    _is_embedding_configured as is_embedding_configured,
 )
 
 pytestmark = pytest.mark.unit

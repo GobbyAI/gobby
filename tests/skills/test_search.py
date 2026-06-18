@@ -2,6 +2,7 @@
 
 import json
 from datetime import UTC, datetime
+from typing import Any
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -162,24 +163,35 @@ class TestSkillSearch:
             embedding_dim=768,
         )
 
-        generate_embeddings = AsyncMock(
-            return_value=[[0.0] * 768 for _skill in sample_skills],
-        )
+        calls: list[dict[str, Any]] = []
+
+        async def generate_embeddings(
+            service: Any, texts: list[str], **kwargs: Any
+        ) -> list[list[float]]:
+            calls.append({"service": service, "texts": texts, **kwargs})
+            return [[0.0] * 768 for _skill in sample_skills]
+
         with (
-            patch("gobby.search.embeddings.generate_embeddings", generate_embeddings),
-            patch("gobby.search.unified.is_embedding_reachable", AsyncMock(return_value=True)),
+            patch(
+                "gobby.search.backends.embedding.EmbeddingService.generate_embeddings",
+                generate_embeddings,
+            ),
+            patch(
+                "gobby.search.unified.EmbeddingService.is_reachable",
+                AsyncMock(return_value=True),
+            ),
         ):
             search.index_skills(sample_skills)
 
         assert search.is_indexed
         assert search.get_active_backend() == "embedding"
-        generate_embeddings.assert_awaited_once()
-        kwargs = generate_embeddings.await_args.kwargs
-        assert kwargs["model"] == "text-embedding-nomic-embed-text-v1.5@f16"
-        assert kwargs["api_base"] == "http://localhost:1234/v1"
-        assert kwargs["api_key"] == "local-key"
-        assert kwargs["expected_dim"] == 768
-        assert len(kwargs["texts"]) == len(sample_skills)
+        assert len(calls) == 1
+        service = calls[0]["service"]
+        assert service.model == "text-embedding-nomic-embed-text-v1.5@f16"
+        assert service.api_base == "http://localhost:1234/v1"
+        assert service.api_key == "local-key"
+        assert service.dim == 768
+        assert len(calls[0]["texts"]) == len(sample_skills)
 
     def test_index_skills(self, db: HubDatabase, sample_skills: list[Skill]) -> None:
         """Test indexing skills."""
@@ -318,19 +330,13 @@ class TestSkillSearch:
     def test_needs_reindex_after_threshold(
         self, db: HubDatabase, sample_skills: list[Skill]
     ) -> None:
-        """Test that needs_reindex returns True after threshold updates."""
+        """Test that needs_reindex returns True once indexed data is stale."""
         search = SkillSearch(db=db, config=SearchConfig(mode="keyword"), refit_threshold=3)
         search.index_skills(sample_skills)
 
         assert not search.needs_reindex()
 
         new_skill = Skill(id="skl-1", name="skill-1", description="Desc", content="C")
-        search.add_skill(new_skill)
-        assert not search.needs_reindex()
-
-        search.add_skill(new_skill)
-        assert not search.needs_reindex()
-
         search.add_skill(new_skill)
         assert search.needs_reindex()
 

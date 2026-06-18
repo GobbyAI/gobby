@@ -32,7 +32,7 @@ async def code_index_maintenance_loop(
     shutdown_flag: asyncio.Event | None = None,
     interval: int = 300,
     summarizer: SymbolSummarizer | None = None,
-    summary_batch_size: int = 20,
+    symbol_summary_batch_size: int = 20,
 ) -> None:
     """Background loop that checks for stale indexed files.
 
@@ -41,7 +41,7 @@ async def code_index_maintenance_loop(
         shutdown_flag: Event that signals shutdown.
         interval: Seconds between maintenance runs.
         summarizer: Optional SymbolSummarizer for generating summaries.
-        summary_batch_size: Max symbols to summarize per pass.
+        symbol_summary_batch_size: Max symbols to summarize per pass.
     """
     logger.info(f"Code index maintenance loop started (interval={interval}s)")
     missing_root_observations: dict[str, int] = {}
@@ -55,7 +55,7 @@ async def code_index_maintenance_loop(
             await _run_maintenance(
                 context,
                 summarizer,
-                summary_batch_size,
+                symbol_summary_batch_size,
                 missing_root_observations=missing_root_observations,
             )
         except Exception as e:
@@ -77,7 +77,7 @@ async def code_index_maintenance_loop(
 async def _run_maintenance(
     context: CodeIndexContext,
     summarizer: SymbolSummarizer | None = None,
-    summary_batch_size: int = 20,
+    symbol_summary_batch_size: int = 20,
     missing_root_observations: dict[str, int] | None = None,
 ) -> None:
     """Single maintenance pass: re-index via gcode, recover unsynced files, generate summaries."""
@@ -186,7 +186,12 @@ async def _run_maintenance(
 
         # Generate summaries for unsummarized symbols
         if summarizer:
-            await _summarize_unsummarized(context, project, summarizer, summary_batch_size)
+            await _summarize_unsummarized(
+                context,
+                project,
+                summarizer,
+                symbol_summary_batch_size,
+            )
 
 
 async def _reconcile_orphan_files(

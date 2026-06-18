@@ -258,16 +258,18 @@ async def is_embedding_healthy(
     Sends a single short embedding request with max_retries=1. Returns False
     on any exception. Logs a warning on failure.
     """
-    from gobby.search.embeddings import generate_embedding
+    from gobby.ai.embeddings import EmbeddingService
 
     try:
-        result = await generate_embedding(
-            "health",
+        service = EmbeddingService(
             model=model,
             api_base=api_base,
             api_key=api_key,
+            dim=expected_dim,
+        )
+        result = await service.generate_embedding(
+            "health",
             max_retries=1,
-            expected_dim=expected_dim,
         )
         return len(result) > 0
     except Exception as e:

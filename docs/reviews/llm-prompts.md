@@ -25,10 +25,10 @@
 
 ### [BLOCKER] `generate_text` returns an empty string as success when the Claude SDK yields no text, halting fallback
 
-- **Where:** `src/gobby/llm/claude.py:484-488` (also `:533` `generate_with_tools`, `:746` `describe_image` inner query)
+- **Where:** `src/gobby/llm/claude.py:484-488` (also the `describe_image` inner query)
 - **Failure mode:** In `_run_query`, `message_count == 0` and "messages but no text content" are only `logger.warning`s; `result_text` (`""`) is returned as a normal result, so `generate_text` returns `LLMTextResult(text="")`. The fallback orchestrator treats any non-exception return as success and stops — no further candidate is tried, and the calling feature (title synthesis, summaries) receives empty text as a successful generation. `_generate_json_sdk` does this correctly (`:610` raises `ValueError` on empty), proving the intended contract is raise-on-empty.
 - **Why it matters:** A degraded SDK turn (max_turns exhausted with only tool-use blocks, or a swallowed stream error) silently produces empty output, defeats multi-provider fallback, and persists empty artifacts.
-- **Minimal fix:** In `_run_query` (and the `generate_with_tools`/`describe_image` equivalents) raise `RuntimeError`/`ClaudeSDKProviderFailure` when `message_count == 0` or `not result_text`, mirroring `_generate_json_sdk`; add a test for the zero-messages path.
+- **Minimal fix:** In `_run_query` and the `describe_image` equivalent, raise `RuntimeError`/`ClaudeSDKProviderFailure` when `message_count == 0` or `not result_text`, mirroring `_generate_json_sdk`; add a test for the zero-messages path.
 - **Confidence:** high — full path verified provider → adapter → fallback loop.
 
 ### [BLOCKER] `describe_image` converts every failure into a success string that reaches the HTTP API as a 200 "description"
@@ -252,7 +252,7 @@
 - **claude.py `max_tokens` emulated by char truncation** (`:492-494`) — `result[: max_tokens * 4]` chops mid-token after full generation with no marker; full spend still incurred, `usage` reflects the untruncated run.
 - **claude.py `captured_usage` can carry usage from a failed retry attempt** (`:457-483`) — nonlocal across attempts; reset to `None` at the top of `_run_query`.
 - **claude.py unbounded stderr accumulation per query** (`:325`) — `stderr_lines.append` grows without bound and is dumped wholesale into logs/exceptions; cap with a `deque(maxlen=...)`.
-- **claude.py `generate_with_tools` is production-dead with a wider tool surface** (`:497-538`) — zero callers/tests; omits `tools=[]`, leaving the default toolset auto-approved (`permission_mode="default"`), a prompt-injection surface if wired to web-facing tools. Delete or restrict before first use.
+- **claude.py dead tool-enabled generation path was removed** — no production caller remains for hidden Claude tool use.
 - **claude.py `ClaudeSDKProviderFailure` is a distinction nothing consumes** (`:102-103,368`) — raised once, never caught; the fallback loop catches bare `Exception`.
 - **claude.py redundant double `_verify_cli_path` per call** (`:420/441`, `:551/568`) — public then private re-verification doubles worst-case retry latency.
 - **local.py `__init__` swallows client construction failures** (`:134-137`) — `_client=None` leaves every later call raising a generic error instead of failing fast at construction where the factory would wrap it clearly.

@@ -24,22 +24,10 @@ Unified search (async with fallback):
         print(f"Using fallback: {searcher.get_fallback_reason()}")
 """
 
-# Async backends
-from gobby.search.backends import AsyncSearchBackend, EmbeddingBackend
+from typing import Any
 
-# Embedding utilities
-from gobby.search.embeddings import (
-    EmbeddingGenerationError,
-    generate_embedding,
-    generate_embeddings,
-    is_embedding_configured,
-    is_embedding_reachable,
-)
 from gobby.search.keyword import BM25SearchBackend, KeywordSearchBackend, SearchHit
 from gobby.search.models import FallbackEvent, SearchConfig, SearchMode
-
-# Unified search (async with fallback)
-from gobby.search.unified import UnifiedSearcher
 
 __all__ = [
     # Async backends
@@ -55,10 +43,20 @@ __all__ = [
     "FallbackEvent",
     # Unified searcher
     "UnifiedSearcher",
-    # Embedding utilities
-    "EmbeddingGenerationError",
-    "generate_embedding",
-    "generate_embeddings",
-    "is_embedding_configured",
-    "is_embedding_reachable",
 ]
+
+
+def __getattr__(name: str) -> Any:
+    """Load backend and unified search exports lazily to avoid config import cycles."""
+    if name == "UnifiedSearcher":
+        from gobby.search.unified import UnifiedSearcher
+
+        return UnifiedSearcher
+    if name in {"AsyncSearchBackend", "EmbeddingBackend"}:
+        from gobby.search.backends import AsyncSearchBackend, EmbeddingBackend
+
+        return {
+            "AsyncSearchBackend": AsyncSearchBackend,
+            "EmbeddingBackend": EmbeddingBackend,
+        }[name]
+    raise AttributeError(f"module 'gobby.search' has no attribute {name!r}")

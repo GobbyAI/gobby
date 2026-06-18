@@ -7,12 +7,16 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-import gobby.search.embeddings as embeddings_mod
-from gobby.search.embeddings import (
+import gobby.ai.embeddings as embeddings_mod
+from gobby.ai.embeddings import (
     _apply_prefix,
     _needs_nomic_prefix,
-    clear_cache,
-    generate_embedding,
+)
+from gobby.ai.embeddings import (
+    _clear_embedding_cache as clear_cache,
+)
+from gobby.ai.embeddings import (
+    _generate_embedding as generate_embedding,
 )
 
 pytestmark = pytest.mark.unit

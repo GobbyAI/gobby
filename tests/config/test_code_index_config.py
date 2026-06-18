@@ -6,6 +6,7 @@ import pytest
 from pydantic import ValidationError
 
 from gobby.config.code_index import CodeIndexConfig
+from gobby.config.feature_base import FeatureProfile
 
 pytestmark = pytest.mark.unit
 
@@ -20,6 +21,22 @@ def test_code_index_config_drops_deprecated_vector_batch_size() -> None:
 
     assert config.sync_worker_batch_size == 3
     assert "sync_worker_vector_batch_size" not in config.model_dump()
+
+
+def test_code_index_config_uses_nested_symbol_summary_defaults() -> None:
+    config = CodeIndexConfig()
+
+    assert config.symbol_summary.enabled is True
+    assert config.symbol_summary.batch_size == 20
+    assert config.symbol_summary.profile == FeatureProfile.LOW
+    assert config.symbol_summary.max_concurrency == 2
+    assert config.symbol_summary.max_tokens == 100
+    assert config.symbol_summary.candidates
+
+
+def test_code_index_config_rejects_legacy_flat_summary_fields() -> None:
+    with pytest.raises(ValidationError):
+        CodeIndexConfig.model_validate({"summary_enabled": False})
 
 
 def test_code_index_config_still_rejects_unknown_fields() -> None:

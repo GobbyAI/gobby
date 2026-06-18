@@ -405,7 +405,7 @@ def _infer_from_config_or_none(*, dim: Any, api_key: Any, model: Any, api_base: 
     if dim_int == 0:
         return "none"
     if normalized_api_base in (None, "") and normalized_api_key:
-        from gobby.search.embeddings import is_openai_cloud_embedding_model
+        from gobby.ai.embeddings import is_openai_cloud_embedding_model
 
         if isinstance(normalized_model, str) and is_openai_cloud_embedding_model(normalized_model):
             return "openai"

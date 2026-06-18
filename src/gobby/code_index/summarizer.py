@@ -45,9 +45,11 @@ class SymbolSummarizer:
         config: CodeIndexConfig,
     ) -> None:
         self._text_generation = text_generation
-        self._profile = str(config.summary_profile)
-        self._candidates = tuple(config.summary_candidates)
-        self._semaphore = asyncio.Semaphore(config.summary_max_concurrency)
+        summary_config = config.symbol_summary
+        self._profile = str(summary_config.profile)
+        self._candidates = tuple(summary_config.candidates)
+        self._max_tokens = summary_config.max_tokens
+        self._semaphore = asyncio.Semaphore(summary_config.max_concurrency)
 
     async def summarize_one(self, symbol: Symbol, source: str) -> str | None:
         """Generate a one-sentence summary for a single symbol.
@@ -74,7 +76,7 @@ class SymbolSummarizer:
                         prompt=prompt,
                         profile=self._profile,
                         candidates=self._candidates,
-                        max_tokens=100,
+                        max_tokens=self._max_tokens,
                         caller="code_index.symbol_summary",
                     )
                 )

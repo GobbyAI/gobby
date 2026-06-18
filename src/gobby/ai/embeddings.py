@@ -9,26 +9,24 @@ OpenAI-compatible endpoint: OpenAI cloud, Ollama, LM Studio, etc.
 | LM Studio  | nomic-embed-text              | api_base=http://localhost:1234/v1         |
 | OpenAI     | text-embedding-3-small        | api_key                                   |
 
-Availability helpers come in two flavors:
+``EmbeddingService`` exposes availability helpers in two flavors:
 
-- ``is_embedding_configured`` — cheap, synchronous; answers "do we have
+- ``is_configured`` — cheap, synchronous; answers "do we have
   enough config to *try*?". Does **not** probe the endpoint.
-- ``is_embedding_reachable`` — async; actually hits the endpoint's
+- ``is_reachable`` — async; actually hits the endpoint's
   ``/models`` route with a short timeout and a cached result. Use this
   before code paths that hard-fail on unavailability.
 
 Example usage:
-    from gobby.search.embeddings import (
-        generate_embeddings,
-        is_embedding_configured,
-        is_embedding_reachable,
-    )
+    from gobby.ai.embeddings import EmbeddingService
 
-    if await is_embedding_reachable("nomic-embed-text", api_base="http://localhost:1234/v1"):
-        embeddings = await generate_embeddings(
-            texts=["hello world", "foo bar"],
-            model="nomic-embed-text",
-            api_base="http://localhost:1234/v1",
+    service = EmbeddingService(
+        model="nomic-embed-text",
+        api_base="http://localhost:1234/v1",
+    )
+    if await service.is_reachable():
+        embeddings = await service.generate_embeddings(
+            ["hello world", "foo bar"],
         )
 """
 
@@ -41,9 +39,12 @@ import random
 import time
 from dataclasses import dataclass
 from threading import RLock
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
+
+if TYPE_CHECKING:
+    from gobby.config.persistence import EmbeddingsConfig
 
 logger = logging.getLogger(__name__)
 
@@ -223,7 +224,7 @@ def _enforce_max_size() -> None:
         del _cache[key]
 
 
-def clear_cache() -> None:
+def _clear_embedding_cache() -> None:
     """Clear the embedding cache. Useful for testing."""
     with _get_lock():
         _cache.clear()
@@ -248,7 +249,7 @@ def _apply_prefix(text: str, is_query: bool, model: str) -> str:
     return f"search_document: {text}"
 
 
-async def generate_embeddings(
+async def _generate_embeddings(
     texts: list[str],
     model: str = "nomic-embed-text",
     api_base: str | None = None,
@@ -672,7 +673,7 @@ async def _fetch_embeddings(
         await client.close()
 
 
-async def generate_embedding(
+async def _generate_embedding(
     text: str,
     model: str = "nomic-embed-text",
     api_base: str | None = None,
@@ -684,7 +685,7 @@ async def generate_embedding(
 ) -> list[float]:
     """Generate embedding for a single text.
 
-    Convenience wrapper around generate_embeddings for single texts.
+    Convenience wrapper around _generate_embeddings for single texts.
 
     Args:
         text: Text to embed
@@ -702,7 +703,7 @@ async def generate_embedding(
     Raises:
         EmbeddingGenerationError: If embedding provider generation fails
     """
-    embeddings = await generate_embeddings(
+    embeddings = await _generate_embeddings(
         texts=[text],
         model=model,
         api_base=api_base,
@@ -720,20 +721,20 @@ async def generate_embedding(
     return embeddings[0]
 
 
-def is_embedding_configured(
+def _is_embedding_configured(
     model: str = "nomic-embed-text",
     api_key: str | None = None,
     api_base: str | None = None,
 ) -> bool:
     """Check whether embedding *configuration* is present.
 
-    This is a pure configuration check — it does **not** probe the endpoint.
+    This is a pure configuration check; it does **not** probe the endpoint.
     Returns True if a local/custom ``api_base`` is set, or if the model names a
     supported OpenAI cloud embedding model and an explicit ``api_key`` is set.
 
     A True return only means "we have something to try"; it does not mean
     the endpoint is reachable or the model is loaded. Callers that need a
-    real health signal should use :func:`is_embedding_reachable` instead.
+    real health signal should use ``EmbeddingService.is_reachable`` instead.
 
     Args:
         model: Model name used to determine whether OpenAI cloud is explicit
@@ -797,7 +798,7 @@ def _prune_reachability_cache(now: float, cache_ttl: float, *, incoming: int = 0
         del _reachability_cache[key]
 
 
-async def is_embedding_reachable(
+async def _is_embedding_reachable(
     model: str = "nomic-embed-text",
     api_key: str | None = None,
     api_base: str | None = None,
@@ -806,7 +807,7 @@ async def is_embedding_reachable(
 ) -> bool:
     """Probe the embedding endpoint for actual reachability.
 
-    Short-circuits to False if :func:`is_embedding_configured` is False
+    Short-circuits to False if ``EmbeddingService.is_configured`` is False
     (no config, no probe). Otherwise performs a ``GET {base}/models``
     request with a short timeout. Results are cached per ``(api_base,
     has_key)`` for ``cache_ttl`` seconds to avoid hammering local
@@ -829,7 +830,7 @@ async def is_embedding_reachable(
         True if the endpoint answered with a 2xx within the timeout,
         False otherwise (including all exceptions).
     """
-    if not is_embedding_configured(model=model, api_key=api_key, api_base=api_base):
+    if not _is_embedding_configured(model=model, api_key=api_key, api_base=api_base):
         return False
 
     normalized_api_base = _normalize_api_base(api_base)
@@ -872,3 +873,109 @@ async def is_embedding_reachable(
             checked_at=checked_at,
         )
     return reachable
+
+
+@dataclass(frozen=True, slots=True)
+class EmbeddingService:
+    """Daemon embedding service backed by the configured embedding endpoint."""
+
+    model: str = "nomic-embed-text"
+    api_base: str | None = None
+    api_key: str | None = None
+    dim: int | None = None
+
+    @classmethod
+    def from_config(cls, config: EmbeddingsConfig) -> EmbeddingService:
+        """Build an embedding service from daemon embedding config."""
+        return cls(
+            model=config.model,
+            api_base=config.api_base,
+            api_key=config.api_key,
+            dim=config.dim,
+        )
+
+    def is_configured(self, *, model: str | None = None) -> bool:
+        """Return whether the service has enough config to attempt embedding."""
+        return _is_embedding_configured(
+            model=model or self.model,
+            api_key=self.api_key,
+            api_base=self.api_base,
+        )
+
+    async def is_reachable(
+        self,
+        *,
+        model: str | None = None,
+        timeout: float = _PROBE_TIMEOUT,
+        cache_ttl: float = _REACHABILITY_TTL,
+    ) -> bool:
+        """Probe endpoint reachability using the configured service settings."""
+        return await _is_embedding_reachable(
+            model=model or self.model,
+            api_key=self.api_key,
+            api_base=self.api_base,
+            timeout=timeout,
+            cache_ttl=cache_ttl,
+        )
+
+    async def health_check(self, *, model: str | None = None) -> bool:
+        """Generate one small embedding and report whether it succeeded."""
+        try:
+            result = await self.generate_embedding("health", model=model, max_retries=1)
+        except Exception as exc:
+            logger.warning(
+                "Embedding health check failed (model=%s, api_base=%s): %s: %s",
+                model or self.model,
+                self.api_base,
+                type(exc).__name__,
+                exc,
+            )
+            return False
+        return bool(result)
+
+    async def generate_embeddings(
+        self,
+        texts: list[str],
+        *,
+        model: str | None = None,
+        max_retries: int = _DEFAULT_MAX_RETRIES,
+        base_delay: float = _DEFAULT_BASE_DELAY,
+        is_query: bool = False,
+    ) -> list[list[float]]:
+        """Generate embeddings with retry, cache, prefixing, and dim validation."""
+        return await _generate_embeddings(
+            texts=texts,
+            model=model or self.model,
+            api_base=self.api_base,
+            api_key=self.api_key,
+            max_retries=max_retries,
+            base_delay=base_delay,
+            is_query=is_query,
+            expected_dim=self.dim,
+        )
+
+    async def generate_embedding(
+        self,
+        text: str,
+        *,
+        model: str | None = None,
+        max_retries: int = _DEFAULT_MAX_RETRIES,
+        base_delay: float = _DEFAULT_BASE_DELAY,
+        is_query: bool = False,
+    ) -> list[float]:
+        """Generate one embedding with daemon config."""
+        return await _generate_embedding(
+            text=text,
+            model=model or self.model,
+            api_base=self.api_base,
+            api_key=self.api_key,
+            max_retries=max_retries,
+            base_delay=base_delay,
+            is_query=is_query,
+            expected_dim=self.dim,
+        )
+
+    def clear_cache(self) -> None:
+        """Clear generated embedding and reachability caches."""
+        _clear_embedding_cache()
+        _clear_reachability_cache()

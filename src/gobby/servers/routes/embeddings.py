@@ -16,8 +16,7 @@ from gobby.ai import (
     CapabilityStatus,
     build_daemon_ai_capability_registry,
 )
-from gobby.search import EmbeddingGenerationError
-from gobby.search import embeddings as embeddings_module
+from gobby.ai.embeddings import EmbeddingGenerationError, EmbeddingService
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -35,6 +34,9 @@ class EmbeddingsPayload(BaseModel):
 
     input: str | list[str]
     is_query: bool = False
+    project_id: str | None = None
+    provider: str | None = None
+    model: str | None = None
 
     @property
     def batch(self) -> list[str]:
@@ -67,13 +69,13 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
             return JSONResponse(status_code=400, content=_embedding_unavailable_detail(status))
 
         try:
-            embeddings = await embeddings_module.generate_embeddings(
+            service = EmbeddingService.from_config(config.embeddings)
+            embedding_kwargs: dict[str, Any] = {"is_query": payload.is_query}
+            if payload.model:
+                embedding_kwargs["model"] = payload.model
+            embeddings = await service.generate_embeddings(
                 payload.batch,
-                model=config.embeddings.model,
-                api_base=config.embeddings.api_base,
-                api_key=config.embeddings.api_key,
-                is_query=payload.is_query,
-                expected_dim=config.embeddings.dim,
+                **embedding_kwargs,
             )
         except EmbeddingGenerationError as e:
             logger.info("Embedding generation failed: %s", e)
@@ -84,7 +86,7 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
 
         return {
             "embeddings": embeddings,
-            "model": config.embeddings.model,
+            "model": payload.model or config.embeddings.model,
             "dim": config.embeddings.dim,
         }
 

@@ -326,7 +326,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
         from gobby.code_index.maintenance import code_index_maintenance_loop
 
         summarizer = None
-        if runner.config.code_index.summary_enabled:
+        if runner.config.code_index.symbol_summary.enabled:
             from gobby.code_index.summarizer import SymbolSummarizer
 
             try:
@@ -348,7 +348,7 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
                 shutdown_flag=shutdown_event,
                 interval=runner.config.code_index.maintenance_interval_seconds,
                 summarizer=summarizer,
-                summary_batch_size=runner.config.code_index.summary_batch_size,
+                symbol_summary_batch_size=runner.config.code_index.symbol_summary.batch_size,
             ),
             name="code-index-maintenance",
         )

@@ -36,6 +36,7 @@ _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
     "gobby_tasks.validation.candidates": FeatureProfile.MID,
     "chat.candidates": FeatureProfile.HIGH,
     "code_index.summary_candidates": FeatureProfile.LOW,
+    "code_index.symbol_summary.candidates": FeatureProfile.LOW,
 }
 
 

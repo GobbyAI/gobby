@@ -35,6 +35,13 @@ _LEGACY_KEYS_TO_DROP = frozenset(
 _REMOVED_CONFIG_STORE_KEYS = frozenset({"databases.falkordb.requirepass"})
 _REMOVED_CONFIG_STORE_PREFIXES = ("local.",)
 _UI_MODE_CONFIG_KEY = "ui.mode"
+_CODE_INDEX_SYMBOL_SUMMARY_KEY_MIGRATIONS = {
+    "code_index.summary_enabled": "code_index.symbol_summary.enabled",
+    "code_index.summary_batch_size": "code_index.symbol_summary.batch_size",
+    "code_index.summary_profile": "code_index.symbol_summary.profile",
+    "code_index.summary_candidates": "code_index.symbol_summary.candidates",
+    "code_index.summary_max_concurrency": "code_index.symbol_summary.max_concurrency",
+}
 
 # Mapping from old logging.* field names to new telemetry.* field names
 _LOGGING_TO_TELEMETRY_FIELDS: dict[str, str] = {
@@ -331,6 +338,48 @@ def _drop_removed_config_store_keys(
                 delete(key)
             except Exception as exc:
                 logger.debug("Failed to delete removed config key %s: %s", key, exc)
+    return migrated
+
+
+def _migrate_code_index_symbol_summary_config_store_keys(
+    flat_config: dict[str, Any], config_store: Any | None
+) -> dict[str, Any]:
+    """Move persisted code-index summary rows into the nested feature config."""
+    old_keys = sorted(
+        key for key in flat_config if key in _CODE_INDEX_SYMBOL_SUMMARY_KEY_MIGRATIONS
+    )
+    if not old_keys:
+        return flat_config
+
+    migrated = dict(flat_config)
+    updates: dict[str, Any] = {}
+    for old_key in old_keys:
+        new_key = _CODE_INDEX_SYMBOL_SUMMARY_KEY_MIGRATIONS[old_key]
+        value = migrated.pop(old_key)
+        if new_key not in migrated:
+            migrated[new_key] = value
+            updates[new_key] = value
+
+    set_value = getattr(config_store, "set", None)
+    if updates and callable(set_value):
+        for key, value in updates.items():
+            try:
+                set_value(key, value, source="migration")
+            except Exception as exc:
+                logger.debug("Failed to persist migrated config key %s: %s", key, exc)
+
+    delete = getattr(config_store, "delete", None)
+    if callable(delete):
+        for key in old_keys:
+            try:
+                delete(key)
+            except Exception as exc:
+                logger.debug("Failed to delete migrated config key %s: %s", key, exc)
+
+    logger.info(
+        "Migrated code-index symbol summary config keys: %s",
+        ", ".join(old_keys),
+    )
     return migrated
 
 

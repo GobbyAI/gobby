@@ -20,8 +20,15 @@ const SCHEMA: Record<string, unknown> = {
     CodeIndexConfig: {
       type: 'object',
       properties: {
-        summary_profile: { $ref: '#/$defs/FeatureProfile' },
-        summary_max_concurrency: { type: 'integer', minimum: 1, maximum: 16 },
+        symbol_summary: { $ref: '#/$defs/CodeIndexSymbolSummaryConfig' },
+      },
+    },
+    CodeIndexSymbolSummaryConfig: {
+      type: 'object',
+      properties: {
+        profile: { $ref: '#/$defs/FeatureProfile' },
+        max_concurrency: { type: 'integer', minimum: 1, maximum: 16 },
+        max_tokens: { type: 'integer', minimum: 1, maximum: 1000 },
       },
     },
     DigestConfig: {
@@ -86,11 +93,14 @@ function makeConfigValues(): Record<string, unknown> {
       graph_enabled: true,
       qdrant_collection_prefix: 'gobby_code',
       languages: ['python', 'typescript'],
-      summary_enabled: false,
-      summary_batch_size: 16,
-      summary_profile: 'feature_low',
-      summary_candidates: ['anthropic/claude-haiku'],
-      summary_max_concurrency: 4,
+      symbol_summary: {
+        enabled: false,
+        batch_size: 16,
+        profile: 'feature_low',
+        candidates: ['anthropic/claude-haiku'],
+        max_concurrency: 4,
+        max_tokens: 100,
+      },
       sync_worker_interval_seconds: 30,
       sync_worker_batch_size: 50,
       content_extensions: ['.md', '.txt'],
