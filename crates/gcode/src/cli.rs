@@ -345,6 +345,12 @@ pub(crate) enum Command {
         /// narrative markdown belongs to gwiki.
         #[arg(long)]
         include_docs: bool,
+        /// Repair-only mode: re-anchor existing pages' `[file:line]` citations
+        /// against the current index and exit. No generation, no AI/LLM calls.
+        /// Ignores generation flags (`--ai`, `--scope`, `--ai-depth`, …); honors
+        /// `--out`/`--format`.
+        #[arg(long)]
+        repair_citations: bool,
     },
 
     // ── Dependency Graph (requires graph backend) ──────────────────────

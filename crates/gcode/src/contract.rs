@@ -5,7 +5,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
-        contract_version: 1,
+        contract_version: 2,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
             FlagContract::value("--project", "ROOT"),
@@ -155,6 +155,7 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--offset", "N"),
                     FlagContract::value("--language", "LANG"),
                 ],
+                daemon_consumed: true,
                 json_output_keys: search_keys(),
                 ..CommandContract::new(
                     "search-text",
@@ -175,6 +176,7 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--offset", "N"),
                     FlagContract::value("--language", "LANG"),
                 ],
+                daemon_consumed: true,
                 json_output_keys: search_keys(),
                 ..CommandContract::new(
                     "search-content",
@@ -199,15 +201,17 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                daemon_consumed: true,
                 positionals: vec![PositionalContract::required("FILE")],
                 flags: vec![FlagContract::switch("--summarize")],
-                json_output_keys: vec![],
+                json_output_keys: outline_keys(),
                 ..CommandContract::new("outline", "Show a hierarchical symbol tree for a file.")
             },
             CommandContract {
+                daemon_consumed: true,
                 positionals: vec![PositionalContract::required("ID")],
                 flags: vec![format_flag()],
-                json_output_keys: vec![],
+                json_output_keys: symbol_keys(),
                 ..CommandContract::new("symbol", "Fetch symbol source code by ID.")
             },
             CommandContract {
@@ -219,14 +223,16 @@ pub fn contract() -> CliContract {
                         repeatable: false,
                     },
                 ],
+                daemon_consumed: true,
                 flags: vec![format_flag()],
-                json_output_keys: vec![],
+                json_output_keys: symbol_at_keys(),
                 ..CommandContract::new("symbol-at", "Fetch symbol source code at a file location.")
             },
             CommandContract {
+                daemon_consumed: true,
                 positionals: vec![PositionalContract::repeatable("ID")],
                 flags: vec![format_flag()],
-                json_output_keys: vec![],
+                json_output_keys: symbol_record_keys(),
                 ..CommandContract::new("symbols", "Batch retrieve symbols by ID.")
             },
             CommandContract {
@@ -236,9 +242,10 @@ pub fn contract() -> CliContract {
                 ..CommandContract::new("kinds", "List distinct symbol kinds in the index.")
             },
             CommandContract {
+                daemon_consumed: true,
                 positionals: vec![],
                 flags: vec![format_flag()],
-                json_output_keys: vec![],
+                json_output_keys: tree_keys(),
                 ..CommandContract::new("tree", "Show file tree with symbol counts.")
             },
             CommandContract {
@@ -263,9 +270,10 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                daemon_consumed: true,
                 positionals: vec![PositionalContract::required("FILE")],
                 flags: vec![format_flag()],
-                json_output_keys: graph_read_keys(),
+                json_output_keys: paged_graph_keys(),
                 ..CommandContract::new("imports", "Show import graph for a file.")
             },
             CommandContract {
@@ -282,13 +290,14 @@ pub fn contract() -> CliContract {
                 )
             },
             CommandContract {
+                daemon_consumed: true,
                 positionals: vec![PositionalContract::required("SYMBOL")],
                 flags: vec![
                     FlagContract::value("--depth", "N"),
                     token_budget_flag(),
                     format_flag(),
                 ],
-                json_output_keys: graph_read_keys(),
+                json_output_keys: paged_graph_keys(),
                 ..CommandContract::new(
                     "blast-radius",
                     "Show transitive impact analysis for a symbol query.",
@@ -301,7 +310,12 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--out", "DIR"),
                     FlagContract::repeatable_value("--scope", "PATH"),
                     ai_flag(),
+                    FlagContract::switch("--repair-citations"),
                 ],
+                // Two JSON shapes: a generation run-summary, or — under
+                // `--repair-citations` — the no-LLM citation-repair summary
+                // (`pages_scanned`..`citations_unresolved`, frozen by the repair
+                // routine). The declared key set is their union.
                 json_output_keys: vec![
                     "command",
                     "project_id",
@@ -314,6 +328,10 @@ pub fn contract() -> CliContract {
                     "modules",
                     "symbols",
                     "ai_enabled",
+                    "pages_scanned",
+                    "pages_repaired",
+                    "citations_repaired",
+                    "citations_unresolved",
                 ],
                 ..CommandContract::new(
                     "codewiki",
@@ -557,6 +575,75 @@ fn graph_read_flags() -> Vec<FlagContract> {
         FlagContract::value("--limit", "N"),
         FlagContract::value("--offset", "N"),
         format_flag(),
+    ]
+}
+
+fn outline_keys() -> Vec<&'static str> {
+    vec!["id", "name", "kind", "line_start", "line_end", "signature"]
+}
+
+fn tree_keys() -> Vec<&'static str> {
+    vec!["file_path", "language", "symbol_count"]
+}
+
+/// The serialized fields of a stored symbol, shared by `symbol`, `symbol-at`,
+/// and `symbols`. `docstring`/`parent_symbol_id` are omitted: they serialize
+/// only when present, and the daemon-consumed surface relies on the AI
+/// `summary`, not the raw `docstring`.
+fn symbol_record_keys() -> Vec<&'static str> {
+    vec![
+        "id",
+        "project_id",
+        "file_path",
+        "name",
+        "qualified_name",
+        "kind",
+        "language",
+        "byte_start",
+        "byte_end",
+        "line_start",
+        "line_end",
+        "signature",
+        "content_hash",
+        "summary",
+        "created_at",
+        "updated_at",
+    ]
+}
+
+/// `symbol` wraps the record with the on-disk `source` snippet.
+fn symbol_keys() -> Vec<&'static str> {
+    let mut keys = symbol_record_keys();
+    keys.push("source");
+    keys
+}
+
+/// `symbol-at` adds a `lookup` block describing how the location resolved.
+fn symbol_at_keys() -> Vec<&'static str> {
+    let mut keys = symbol_keys();
+    keys.push("lookup");
+    keys
+}
+
+/// Paged graph-result envelope for `imports` and `blast-radius`. Kept distinct
+/// from [`graph_read_keys`] (callers/usages) so the two surfaces can diverge
+/// without coupling, even though they currently share the same key set.
+fn paged_graph_keys() -> Vec<&'static str> {
+    vec![
+        "project_id",
+        "total",
+        "offset",
+        "limit",
+        "results",
+        "id",
+        "name",
+        "file_path",
+        "line",
+        "confidence",
+        "relation",
+        "distance",
+        "metadata",
+        "hint",
     ]
 }
 

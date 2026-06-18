@@ -89,9 +89,9 @@ pub(crate) use render::{
 };
 // Reuse of unchanged docs without regeneration.
 pub(crate) use reuse::{ReusePlan, span_files};
-pub use run::run;
 #[cfg(test)]
 pub(crate) use run::{load_symbols_for_codewiki, should_document_file, validate_edge_limit};
+pub use run::{run, run_repair};
 // Citation repair: re-anchor on-disk citations against the current index with
 // no regeneration. Public so a later leaf's `--repair-citations` flag drives it.
 pub use repair::{CitationRepairSummary, repair_citations};

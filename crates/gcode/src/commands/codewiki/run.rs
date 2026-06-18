@@ -187,6 +187,33 @@ pub fn run(
     Ok(())
 }
 
+/// Repair-only entry for `codewiki --repair-citations`: re-anchors every
+/// generated page's `[file:line]` citations against the current index and
+/// rewrites only the pages whose citations changed. No generation, no AI/LLM
+/// calls. Loads the full visible symbol set (like [`run`]) so a citation to any
+/// indexed file can resolve, then prints the [`super::CitationRepairSummary`].
+pub fn run_repair(ctx: &Context, out: Option<String>, format: Format) -> anyhow::Result<()> {
+    let mut conn = db::connect_readonly(&ctx.database_url)?;
+    let files = visibility::visible_tree(&mut conn, ctx)?
+        .into_iter()
+        .map(|file| file.file_path)
+        .collect::<Vec<_>>();
+    let symbols = visibility::visible_symbols_for_files(&mut conn, ctx, &files)?;
+    let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
+    let summary = super::repair_citations(Path::new(&out_dir), &symbols)?;
+    match format {
+        Format::Json => output::print_json(&summary),
+        Format::Text => output::print_text(&format!(
+            "scanned {} pages; repaired {} pages, {} citations; {} unresolved",
+            summary.pages_scanned,
+            summary.pages_repaired,
+            summary.citations_repaired,
+            summary.citations_unresolved,
+        )),
+    }?;
+    Ok(())
+}
+
 pub(crate) fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
     if (1..=MAX_EDGE_LIMIT).contains(&edge_limit) {
         return Ok(());

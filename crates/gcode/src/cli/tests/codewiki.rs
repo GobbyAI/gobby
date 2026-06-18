@@ -49,6 +49,26 @@ fn parse_codewiki_edge_limit_flag() {
 }
 
 #[test]
+fn parse_codewiki_repair_citations_flag() {
+    let cli = Cli::try_parse_from(["gcode", "codewiki"]).expect("codewiki parses");
+    match cli.command {
+        Command::Codewiki {
+            repair_citations, ..
+        } => assert!(!repair_citations, "repair defaults off"),
+        _ => panic!("expected codewiki command"),
+    }
+
+    let cli = Cli::try_parse_from(["gcode", "codewiki", "--repair-citations"])
+        .expect("codewiki --repair-citations parses");
+    match cli.command {
+        Command::Codewiki {
+            repair_citations, ..
+        } => assert!(repair_citations),
+        _ => panic!("expected codewiki command"),
+    }
+}
+
+#[test]
 fn parse_setup_standalone() {
     let cli = Cli::try_parse_from([
         "gcode",

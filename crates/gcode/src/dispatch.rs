@@ -528,8 +528,12 @@ fn run() -> anyhow::Result<()> {
             ai_aggregate_profile,
             edge_limit,
             include_docs,
+            repair_citations,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
+            if repair_citations {
+                return commands::codewiki::run_repair(&ctx, out, format);
+            }
             commands::codewiki::run(
                 &ctx,
                 out,

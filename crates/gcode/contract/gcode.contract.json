@@ -1,6 +1,6 @@
 {
   "tool": "gcode",
-  "contract_version": 1,
+  "contract_version": 2,
   "summary": "Fast code index CLI for Gobby.",
   "global_flags": [
     {
@@ -476,7 +476,7 @@
     {
       "name": "search-text",
       "summary": "Search indexed symbol metadata with BM25 ranking.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [
         {
           "name": "QUERY",
@@ -536,7 +536,7 @@
     {
       "name": "search-content",
       "summary": "Search indexed file content chunks with BM25 ranking.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [
         {
           "name": "QUERY",
@@ -712,7 +712,7 @@
     {
       "name": "outline",
       "summary": "Show a hierarchical symbol tree for a file.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [
         {
           "name": "FILE",
@@ -730,12 +730,19 @@
           "repeatable": false
         }
       ],
-      "json_output_keys": []
+      "json_output_keys": [
+        "id",
+        "name",
+        "kind",
+        "line_start",
+        "line_end",
+        "signature"
+      ]
     },
     {
       "name": "symbol",
       "summary": "Fetch symbol source code by ID.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [
         {
           "name": "ID",
@@ -756,12 +763,30 @@
           "repeatable": false
         }
       ],
-      "json_output_keys": []
+      "json_output_keys": [
+        "id",
+        "project_id",
+        "file_path",
+        "name",
+        "qualified_name",
+        "kind",
+        "language",
+        "byte_start",
+        "byte_end",
+        "line_start",
+        "line_end",
+        "signature",
+        "content_hash",
+        "summary",
+        "created_at",
+        "updated_at",
+        "source"
+      ]
     },
     {
       "name": "symbol-at",
       "summary": "Fetch symbol source code at a file location.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [
         {
           "name": "PATH[:LINE[:COLUMN]]",
@@ -787,12 +812,31 @@
           "repeatable": false
         }
       ],
-      "json_output_keys": []
+      "json_output_keys": [
+        "id",
+        "project_id",
+        "file_path",
+        "name",
+        "qualified_name",
+        "kind",
+        "language",
+        "byte_start",
+        "byte_end",
+        "line_start",
+        "line_end",
+        "signature",
+        "content_hash",
+        "summary",
+        "created_at",
+        "updated_at",
+        "source",
+        "lookup"
+      ]
     },
     {
       "name": "symbols",
       "summary": "Batch retrieve symbols by ID.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [
         {
           "name": "ID",
@@ -813,7 +857,24 @@
           "repeatable": false
         }
       ],
-      "json_output_keys": []
+      "json_output_keys": [
+        "id",
+        "project_id",
+        "file_path",
+        "name",
+        "qualified_name",
+        "kind",
+        "language",
+        "byte_start",
+        "byte_end",
+        "line_start",
+        "line_end",
+        "signature",
+        "content_hash",
+        "summary",
+        "created_at",
+        "updated_at"
+      ]
     },
     {
       "name": "kinds",
@@ -838,7 +899,7 @@
     {
       "name": "tree",
       "summary": "Show file tree with symbol counts.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [],
       "flags": [
         {
@@ -853,7 +914,11 @@
           "repeatable": false
         }
       ],
-      "json_output_keys": []
+      "json_output_keys": [
+        "file_path",
+        "language",
+        "symbol_count"
+      ]
     },
     {
       "name": "callers",
@@ -980,7 +1045,7 @@
     {
       "name": "imports",
       "summary": "Show import graph for a file.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [
         {
           "name": "FILE",
@@ -1075,7 +1140,7 @@
     {
       "name": "blast-radius",
       "summary": "Show transitive impact analysis for a symbol query.",
-      "daemon_consumed": false,
+      "daemon_consumed": true,
       "positionals": [
         {
           "name": "SYMBOL",
@@ -1163,6 +1228,14 @@
           ],
           "required": false,
           "repeatable": false
+        },
+        {
+          "name": "--repair-citations",
+          "takes_value": false,
+          "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -1176,7 +1249,11 @@
         "files",
         "modules",
         "symbols",
-        "ai_enabled"
+        "ai_enabled",
+        "pages_scanned",
+        "pages_repaired",
+        "citations_repaired",
+        "citations_unresolved"
       ]
     },
     {

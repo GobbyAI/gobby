@@ -46,6 +46,127 @@ fn contract_command_emits_pinned_json() {
     assert_eq!(actual, pinned_contract());
 }
 
+fn command<'a>(contract: &'a Value, name: &str) -> &'a Value {
+    contract["commands"]
+        .as_array()
+        .expect("commands array")
+        .iter()
+        .find(|cmd| cmd["name"] == Value::String(name.to_string()))
+        .unwrap_or_else(|| panic!("command `{name}` missing from contract"))
+}
+
+fn output_keys(contract: &Value, name: &str) -> Vec<String> {
+    command(contract, name)["json_output_keys"]
+        .as_array()
+        .expect("json_output_keys array")
+        .iter()
+        .map(|key| key.as_str().expect("key string").to_string())
+        .collect()
+}
+
+#[test]
+fn contract_is_version_two() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+    assert_eq!(contract["contract_version"], serde_json::json!(2));
+}
+
+#[test]
+fn daemon_query_surface_is_consumed_with_keys() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+
+    // Every query surface promoted in v2 must be daemon_consumed and declare
+    // its JSON keys, so the daemon conformance check can see the stable shape.
+    for name in [
+        "outline",
+        "symbol",
+        "symbol-at",
+        "symbols",
+        "tree",
+        "imports",
+        "blast-radius",
+        "search-text",
+        "search-content",
+    ] {
+        assert_eq!(
+            command(&contract, name)["daemon_consumed"],
+            serde_json::json!(true),
+            "{name} must be daemon_consumed in v2"
+        );
+        assert!(
+            !output_keys(&contract, name).is_empty(),
+            "{name} must declare json_output_keys"
+        );
+    }
+
+    assert_eq!(
+        output_keys(&contract, "outline"),
+        ["id", "name", "kind", "line_start", "line_end", "signature"]
+    );
+    assert_eq!(
+        output_keys(&contract, "tree"),
+        ["file_path", "language", "symbol_count"]
+    );
+
+    // symbol = record + source; symbol-at adds lookup; symbols is record only.
+    // All three carry `summary`, never `docstring`.
+    let symbols = output_keys(&contract, "symbols");
+    assert!(symbols.contains(&"summary".to_string()));
+    assert!(!symbols.contains(&"docstring".to_string()));
+    assert!(!symbols.contains(&"source".to_string()));
+    assert!(output_keys(&contract, "symbol").contains(&"source".to_string()));
+    assert!(output_keys(&contract, "symbol-at").contains(&"lookup".to_string()));
+
+    // imports + blast-radius share the paged graph envelope, distinct from the
+    // callers/usages `graph_read_keys` surface.
+    for name in ["imports", "blast-radius"] {
+        let keys = output_keys(&contract, name);
+        for expected in [
+            "project_id",
+            "total",
+            "offset",
+            "limit",
+            "results",
+            "relation",
+            "distance",
+        ] {
+            assert!(
+                keys.contains(&expected.to_string()),
+                "{name} paged envelope missing {expected}"
+            );
+        }
+    }
+}
+
+#[test]
+fn codewiki_declares_repair_citations_flag() {
+    let contract = serde_json::to_value(gobby_code::contract::contract()).expect("contract json");
+    let codewiki = command(&contract, "codewiki");
+
+    let has_flag = codewiki["flags"]
+        .as_array()
+        .expect("flags array")
+        .iter()
+        .any(|flag| flag["name"] == Value::String("--repair-citations".to_string()));
+    assert!(
+        has_flag,
+        "codewiki must declare the --repair-citations flag"
+    );
+
+    // The no-LLM repair summary keys are frozen into codewiki's output surface.
+    let keys = output_keys(&contract, "codewiki");
+    for expected in [
+        "pages_scanned",
+        "pages_repaired",
+        "citations_repaired",
+        "citations_unresolved",
+    ] {
+        assert!(
+            keys.contains(&expected.to_string()),
+            "codewiki output surface missing {expected}"
+        );
+    }
+}
+
 #[test]
 fn code_graph_writer_matches_shared_schema_contract() {
     let docs = schema_node_identities(shared_graph_schema_doc());
