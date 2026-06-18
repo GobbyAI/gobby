@@ -361,10 +361,10 @@ class TestGenerateText:
     async def test_generate_text_sdk_passes_reasoning_effort(
         self, claude_config: DaemonConfig
     ) -> None:
-        captured_efforts: list[str | None] = []
+        captured_kwargs: list[dict[str, object]] = []
 
         async def mock_query(prompt: str, options: Any) -> object:
-            captured_efforts.append(options.effort)
+            captured_kwargs.append(options.kwargs)
             yield MockAssistantMessage([MockTextBlock("reply")])
 
         with mock_claude_sdk(mock_query):
@@ -374,7 +374,49 @@ class TestGenerateText:
             result = await provider._generate_text_sdk("Generate text", reasoning_effort="xhigh")
 
         assert result.text == "reply"
-        assert captured_efforts == ["xhigh"]
+        assert result.applied_reasoning_effort == "xhigh"
+        assert captured_kwargs[0]["effort"] == "xhigh"
+
+    @pytest.mark.asyncio
+    async def test_generate_text_sdk_omits_reasoning_effort_when_auto_or_unset(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        captured_kwargs: list[dict[str, object]] = []
+        replies = iter(["auto reply", "default reply"])
+
+        async def mock_query(prompt: str, options: Any) -> object:
+            captured_kwargs.append(options.kwargs)
+            yield MockAssistantMessage([MockTextBlock(next(replies))])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            auto_result = await provider._generate_text_sdk(
+                "Generate text",
+                reasoning_effort="auto",
+            )
+            unset_result = await provider._generate_text_sdk("Generate text")
+
+        assert auto_result.text == "auto reply"
+        assert unset_result.text == "default reply"
+        assert auto_result.applied_reasoning_effort is None
+        assert unset_result.applied_reasoning_effort is None
+        assert ["effort" in kwargs for kwargs in captured_kwargs] == [False, False]
+
+    @pytest.mark.asyncio
+    async def test_generate_text_sdk_rejects_unsupported_reasoning_effort(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        async def mock_query(prompt: str, options: object) -> object:
+            yield MockAssistantMessage([MockTextBlock("unused")])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            with pytest.raises(ValueError, match="Unsupported Claude reasoning effort"):
+                await provider._generate_text_sdk("Generate text", reasoning_effort="extreme")
 
 
 class TestGenerateJson:
@@ -468,6 +510,29 @@ class TestGenerateJson:
         assert captured["effort"] == "high"
         assert captured["output_format"] == {"type": "json_object"}
         assert captured["operation"] == "generate_json[memory.kg.extract_entities]"
+        assert "applied_reasoning_effort" not in result
+
+    @pytest.mark.asyncio
+    async def test_generate_json_sdk_omits_reasoning_effort_when_auto(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        captured_kwargs: list[dict[str, object]] = []
+
+        async def mock_query(prompt: str, options: Any) -> object:
+            captured_kwargs.append(options.kwargs)
+            yield MockAssistantMessage([MockTextBlock('{"ok": true}')])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider._generate_json_sdk(
+                "Generate JSON",
+                reasoning_effort="auto",
+            )
+
+        assert result == {"ok": True}
+        assert "effort" not in captured_kwargs[0]
 
     @pytest.mark.asyncio
     async def test_generate_json_sdk_invalid_json(self, claude_config: DaemonConfig) -> None:
@@ -581,6 +646,30 @@ class TestDescribeImage:
             provider = ClaudeLLMProvider(claude_config)
             result = await provider._describe_image_sdk("/path/to/image.png")
             assert "unavailable" in result.lower()
+
+    @pytest.mark.asyncio
+    async def test_describe_image_sdk_passes_reasoning_effort(
+        self, claude_config: DaemonConfig, tmp_path: Path
+    ) -> None:
+        captured_kwargs: list[dict[str, object]] = []
+        image_path = tmp_path / "image.png"
+        image_path.write_bytes(b"not-a-real-png")
+
+        async def mock_query(prompt: object, options: Any) -> object:
+            captured_kwargs.append(options.kwargs)
+            yield MockAssistantMessage([MockTextBlock("description")])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider._describe_image_sdk(
+                str(image_path),
+                reasoning_effort="medium",
+            )
+
+        assert result == "description"
+        assert captured_kwargs[0]["effort"] == "medium"
 
 
 # ─── generate_text no backend ────────────────────────────────────────────

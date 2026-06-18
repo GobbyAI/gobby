@@ -5,7 +5,7 @@ import json
 import logging
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -16,6 +16,8 @@ from claude_agent_sdk import (
     query,
 )
 
+from gobby.agents.provider_capabilities import provider_reasoning_efforts
+from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.config.app import DaemonConfig
 from gobby.llm.base import AuthMode, LLMProviderCancellation, LLMTextResult
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
@@ -27,6 +29,20 @@ _HEADLESS_SETTINGS = Path.home() / ".gobby" / "settings" / "headless.json"
 _DEFAULT_CLAUDE_MODEL = "claude-sonnet-4-6"
 
 logger = logging.getLogger(__name__)
+
+
+def _claude_reasoning_options(reasoning_effort: str | None) -> dict[str, Any]:
+    """Return SDK kwargs for a normalized, Claude-supported reasoning effort."""
+    normalized = normalize_reasoning_effort(reasoning_effort)
+    if normalized is None:
+        return {}
+    supported_efforts = provider_reasoning_efforts("claude")
+    if normalized not in supported_efforts:
+        supported = ", ".join(sorted(supported_efforts))
+        raise ValueError(
+            f"Unsupported Claude reasoning effort '{normalized}' (expected {supported})"
+        )
+    return {"effort": normalized}
 
 
 def _coerce_int(value: Any) -> int | None:
@@ -452,6 +468,8 @@ class ClaudeLLMProvider:
         # cwd is a neutral temp dir (never the project dir) so the spawned claude
         # CLI does not load project context/hooks and pay a variable startup tax.
         with neutral_textgen_cwd() as neutral_cwd:
+            reasoning_options = _claude_reasoning_options(reasoning_effort)
+            applied_reasoning_effort = reasoning_options.get("effort")
             options = ClaudeAgentOptions(
                 system_prompt=system_prompt or "You are a helpful assistant.",
                 max_turns=1,
@@ -461,8 +479,8 @@ class ClaudeLLMProvider:
                 mcp_servers={},
                 permission_mode="default",
                 cli_path=cli_path,
-                effort=cast(Any, reasoning_effort),
                 cwd=str(neutral_cwd),
+                **reasoning_options,
             )
 
             captured_usage: dict[str, int] | None = None
@@ -507,7 +525,11 @@ class ClaudeLLMProvider:
         # SDK doesn't support max_tokens directly; post-truncate if needed
         if max_tokens and len(result) > max_tokens * 4:
             result = result[: max_tokens * 4]
-        return LLMTextResult(text=result, usage=captured_usage)
+        return LLMTextResult(
+            text=result,
+            usage=captured_usage,
+            applied_reasoning_effort=applied_reasoning_effort,
+        )
 
     async def generate_json(
         self,
@@ -553,6 +575,13 @@ class ClaudeLLMProvider:
         # cwd is a neutral temp dir (never the project dir) so the spawned claude
         # CLI does not load project context/hooks and pay a variable startup tax.
         with neutral_textgen_cwd() as neutral_cwd:
+            reasoning_options = _claude_reasoning_options(reasoning_effort)
+            applied_reasoning_effort = reasoning_options.get("effort")
+            if applied_reasoning_effort is not None:
+                self.logger.debug(
+                    "generate_json using Claude reasoning_effort=%s",
+                    applied_reasoning_effort,
+                )
             options = ClaudeAgentOptions(
                 system_prompt=system_prompt or "You are a helpful assistant.",
                 max_turns=1,
@@ -562,9 +591,9 @@ class ClaudeLLMProvider:
                 mcp_servers={},
                 permission_mode="default",
                 cli_path=cli_path,
-                effort=cast(Any, reasoning_effort),
                 output_format={"type": "json_object"},
                 cwd=str(neutral_cwd),
+                **reasoning_options,
             )
 
             async def _run_query() -> str:
@@ -620,6 +649,8 @@ class ClaudeLLMProvider:
         image_path: str,
         context: str | None = None,
         model: str | None = None,
+        *,
+        reasoning_effort: str | None = None,
     ) -> str:
         """
         Generate a text description of an image using Claude's vision capabilities.
@@ -632,7 +663,12 @@ class ClaudeLLMProvider:
         Returns:
             Text description of the image
         """
-        return await self._describe_image_sdk(image_path, context, model)
+        return await self._describe_image_sdk(
+            image_path,
+            context,
+            model,
+            reasoning_effort=reasoning_effort,
+        )
 
     def _prepare_image_data(self, image_path: str) -> tuple[str, str] | str:
         """
@@ -673,6 +709,8 @@ class ClaudeLLMProvider:
         image_path: str,
         context: str | None = None,
         model: str | None = None,
+        *,
+        reasoning_effort: str | None = None,
     ) -> str:
         """Describe image using Claude Agent SDK (subscription mode)."""
         cli_path = await self._verify_cli_path()
@@ -700,6 +738,7 @@ class ClaudeLLMProvider:
             mcp_servers={},
             permission_mode="default",
             cli_path=cli_path,
+            **_claude_reasoning_options(reasoning_effort),
         )
 
         # Build async generator yielding structured message with image content

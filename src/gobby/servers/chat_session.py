@@ -142,7 +142,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
         candidates = getattr(chat_cfg, "candidates", ()) if chat_cfg else ()
         for candidate in candidates:
             try:
-                candidate_provider, candidate_model = parse_feature_candidate(str(candidate))
+                candidate_provider, candidate_model = parse_feature_candidate(candidate)
             except ValueError:
                 continue
             if candidate_provider == self.provider:
