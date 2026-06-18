@@ -35,13 +35,11 @@ class TestFeatureProfile:
             "claude/haiku",
         )
         assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID] == (
-            "gemini/gemini-3.5-flash",
+            "codex/gpt-5.4-mini",
             "claude/sonnet",
+            "gemini/gemini-3.5-flash",
         )
-        assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH] == (
-            "codex/gpt-5.5",
-            "claude/opus",
-        )
+        assert DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH] == ("gemini/gemini-3.5-flash",)
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
             assert "claude/fable" not in candidates
 

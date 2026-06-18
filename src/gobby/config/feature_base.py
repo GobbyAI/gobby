@@ -34,13 +34,11 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
         "claude/haiku",
     ),
     FeatureProfile.MID: (
-        "gemini/gemini-3.5-flash",
+        "codex/gpt-5.4-mini",
         "claude/sonnet",
+        "gemini/gemini-3.5-flash",
     ),
-    FeatureProfile.HIGH: (
-        "codex/gpt-5.5",
-        "claude/opus",
-    ),
+    FeatureProfile.HIGH: ("gemini/gemini-3.5-flash",),
 }
 
 

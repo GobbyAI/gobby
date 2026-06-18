@@ -178,8 +178,7 @@ class TestTaskExpansionConfigDefaults:
         config = TaskExpansionConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.HIGH
-        assert "codex/gpt-5.5" in config.candidates
-        assert "claude/opus" in config.candidates
+        assert config.candidates == ["gemini/gemini-3.5-flash"]
         assert config.prompt_path is None
         assert config.codebase_research_enabled is True
         assert config.research_model is None
@@ -259,8 +258,9 @@ class TestTaskValidationConfigDefaults:
         assert config.enabled is True
         assert config.profile == FeatureProfile.MID
         assert config.candidates == [
-            "gemini/gemini-3.5-flash",
+            "codex/gpt-5.4-mini",
             "claude/sonnet",
+            "gemini/gemini-3.5-flash",
         ]
         assert config.cli_candidate_timeout_seconds == 180.0
         assert config.prompt_path is None
