@@ -101,7 +101,6 @@ mod tests {
             source_spans: Vec::new(),
             direct_files: Vec::new(),
             child_modules: Vec::new(),
-            component_ids: Vec::new(),
             dependency_diagram: diagram.map(str::to_string),
             call_diagram: None,
             graph_availability: availability,

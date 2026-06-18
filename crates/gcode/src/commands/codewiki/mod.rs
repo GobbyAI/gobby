@@ -11,10 +11,12 @@ const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
 const MAX_MERMAID_HOPS: usize = 2;
 const MAX_MERMAID_EDGES: usize = 20;
 const MAX_EDGE_LIMIT: usize = 100_000;
-/// Cache epoch for generated pages. Bumped 4 -> 5 so concept/narrative pages
-/// written before the grounded verification pass cannot be reused from disk
-/// without re-running generate -> verify.
-const CODEWIKI_RENDER_VERSION: u32 = 5;
+/// Cache epoch for generated pages. Bumped 5 -> 6 so file and module pages
+/// written in the old symbol-dump shape (API Symbols / Component ID / Lines
+/// table, full-range `<details>` provenance) cannot be reused from disk: the
+/// new shape renders a verified narrative body plus a human Key components
+/// table. (5 was the grounded verification pass; 4 the pre-verify pages.)
+const CODEWIKI_RENDER_VERSION: u32 = 6;
 
 /// Default daemon feature profile for aggregate (module/repo/architecture)
 /// prose, which synthesizes 10k+-token grounded prompts; file and symbol

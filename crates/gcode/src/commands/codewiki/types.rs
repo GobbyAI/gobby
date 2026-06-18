@@ -138,7 +138,13 @@ pub enum CodewikiGraphAvailability {
 pub(crate) struct FileDoc {
     pub(crate) path: String,
     pub(crate) module: String,
+    /// One-line file purpose for parent module/repo prompts and index listings.
     pub(crate) summary: String,
+    /// The verified multi-section narrative body (`## Overview` + `## How it
+    /// fits`) rendered on the file page; the Key components table is appended by
+    /// the renderer. Empty when the doc was reused (the on-disk page is emitted
+    /// verbatim via `reused_page`).
+    pub(crate) body: String,
     pub(crate) source_spans: Vec<SourceSpan>,
     pub(crate) symbols: Vec<SymbolDoc>,
     pub(crate) component_ids: Vec<String>,
@@ -165,7 +171,6 @@ pub(crate) struct ModuleDoc {
     pub(crate) source_spans: Vec<SourceSpan>,
     pub(crate) direct_files: Vec<FileLink>,
     pub(crate) child_modules: Vec<ModuleLink>,
-    pub(crate) component_ids: Vec<String>,
     pub(crate) dependency_diagram: Option<String>,
     pub(crate) call_diagram: Option<String>,
     pub(crate) graph_availability: CodewikiGraphAvailability,

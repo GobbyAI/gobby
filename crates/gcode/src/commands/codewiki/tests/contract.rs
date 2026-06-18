@@ -34,8 +34,9 @@ fn generates_hierarchical_docs() {
     assert!(repo.contains("[[code/modules/src\\|src]]"));
     assert!(repo.contains("Repository Overview"));
     assert!(module.contains("[[code/files/src/lib.rs\\|src/lib.rs]]"));
-    assert!(file.contains("API Symbols"));
-    assert!(file.contains("pub struct Client {"));
+    assert!(file.contains("## Overview"));
+    assert!(file.contains("## Key components"));
+    assert!(!file.contains("## API Symbols"));
     assert!(file.contains("[[code/modules/src|src]]"));
 }
 
@@ -86,17 +87,14 @@ fn codewiki_unified_vault_emits_code_paths_frontmatter_and_wikilinks() {
     assert!(repo.contains("| Module | Summary |\n| --- | --- |\n"));
     assert!(repo.contains("| [[code/modules/src\\|src]] |"));
     assert!(file.contains("[[code/modules/src|src]]"));
-    assert!(
-        file.contains("| Symbol | Kind | Signature | Component | Component ID | Lines | Purpose |")
-    );
-    assert!(file.contains("| `Client` | class | `pub struct Client {` | `Client [class]` |"));
-    assert!(file.contains("<details>\n<summary>Relevant source files</summary>"));
-    assert!(file.contains("- [src/lib.rs:1](src/lib.rs#L1)"));
-    assert!(
-        file.find("</details>")
-            .expect("source details closes before body")
-            < file.find("# src/lib.rs").expect("file heading")
-    );
+    // Human Key components table: name + kind + hub purpose, no Signature /
+    // Component / Component ID / Lines columns (#871).
+    assert!(file.contains("| Symbol | Kind | Purpose |"));
+    assert!(file.contains("| `Client` | class |"));
+    assert!(!file.contains("Component ID"));
+    // The full-range `<details>` provenance wall is dropped from file pages; the
+    // repo overview still carries it.
+    assert!(!file.contains("<details>"));
     assert!(repo.contains("- [src/lib.rs:1](src/lib.rs#L1)"));
     assert_eq!(
         frontmatter
@@ -227,10 +225,107 @@ fn file_doc_purpose_neutralizes_summary_link_tokens() {
     let docs = generate_hierarchical_docs(&input, None);
     let file = rendered_doc(&docs, "code/files/src/lib.rs.md");
 
-    assert!(file.contains("| `wiki_link` | function | `fn wiki_link()` |"));
+    assert!(file.contains("| `wiki_link` | function |"));
     assert!(file.contains(
         "Quotes `[[relative_path\\|title]]` and `[exact](knowledge/topics/exact)`. [src/lib.rs:1]"
     ));
+}
+
+#[test]
+fn file_page_structural_fallback_is_multi_section_without_symbol_dump() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client {",
+        )],
+    };
+
+    let docs = generate_hierarchical_docs(&input, None);
+    let file = rendered_doc(&docs, "code/files/src/lib.rs.md");
+
+    // Overview + How it fits (body) + Key components (rendered) = three sections,
+    // even with AI off — the page is narrative structure, not a bare summary.
+    assert!(
+        file.matches("\n## ").count() >= 3,
+        "expected >=3 sections, got: {file}"
+    );
+    assert!(file.contains("## Overview"));
+    assert!(file.contains("## How it fits"));
+    assert!(file.contains("## Key components"));
+    assert!(file.contains("| Symbol | Kind | Purpose |"));
+    // None of the old machine surface: no UUID component IDs, no symbol-table
+    // header, no full-range `<details>` provenance wall.
+    assert!(!file.contains("Component ID"));
+    assert!(!file.contains("## API Symbols"));
+    assert!(!file.contains("<details>"));
+}
+
+#[test]
+fn file_page_verify_strips_unsupported_block() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client {",
+        )],
+    };
+
+    // Generator emits a multi-section file body with one planted fabrication.
+    let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        (system == prompts::FILE_SYSTEM).then(|| {
+            "## Overview\n\nThe file defines the client [src/lib.rs:1].\n\n\
+             Fabricated: it also mines bitcoin at midnight [src/lib.rs:1].\n\n\
+             ## How it fits\n\nIt anchors the module [src/lib.rs:1]."
+                .to_string()
+        })
+    };
+    // Verifier returns the 1-based id of the block carrying the planted marker.
+    let mut verifier = |prompt: &str, _system: &str| {
+        let id = prompt
+            .lines()
+            .find_map(|line| {
+                let (num, body) = line.strip_prefix('[')?.split_once("] ")?;
+                body.contains("Fabricated").then(|| num.to_string())
+            })
+            .expect("planted block is numbered in the verify prompt");
+        Some(format!("[{id}]"))
+    };
+
+    let docs = generate_hierarchical_docs_with_verify(
+        &input,
+        Some(&mut generator),
+        Some(&mut verifier),
+        AiDepth::Files,
+    );
+    let file = docs
+        .iter()
+        .find(|doc| doc.path == "code/files/src/lib.rs.md")
+        .expect("file doc");
+
+    assert!(
+        file.content.contains("The file defines the client"),
+        "{}",
+        file.content
+    );
+    assert!(!file.content.contains("Fabricated"), "{}", file.content);
+    assert!(!file.content.contains("mines bitcoin"), "{}", file.content);
+    assert!(
+        file.degraded,
+        "stripping an unsupported block degrades the file page"
+    );
 }
 
 fn repo_marker_input() -> CodewikiInput {

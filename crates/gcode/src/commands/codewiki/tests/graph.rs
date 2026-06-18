@@ -91,21 +91,11 @@ fn clusters_modules_from_graph() {
         .expect("same-root cluster module is documented");
     assert!(api.contains("[[code/files/src/api/handler.rs\\|src/api/handler.rs]]"));
     assert!(api.contains("[[code/files/src/api/inner/router.rs\\|src/api/inner/router.rs]]"));
-    assert!(api.contains(&test_component_id(
-        "src/api/handler.rs",
-        "handle",
-        "function"
-    )));
 
     let domain = docs_by_path
         .get("code/modules/src/domain.md")
         .expect("cross-root file keeps its own module");
     assert!(domain.contains("[[code/files/src/domain/service.rs\\|src/domain/service.rs]]"));
-    assert!(domain.contains(&test_component_id(
-        "src/domain/service.rs",
-        "Service",
-        "class"
-    )));
 
     assert!(!docs_by_path.contains_key("code/files/tests/domain/service_test.rs.md"));
     assert!(!docs_by_path.contains_key("code/files/vendor/generated/client.rs.md"));
@@ -202,6 +192,7 @@ fn mermaid_labels_escape_label_metacharacters() {
             path: "src/api.rs".to_string(),
             module: "src/api[edge]".to_string(),
             summary: String::new(),
+            body: String::new(),
             source_spans: Vec::new(),
             symbols: Vec::new(),
             component_ids: vec!["api".to_string()],
@@ -212,6 +203,7 @@ fn mermaid_labels_escape_label_metacharacters() {
             path: "src/domain.rs".to_string(),
             module: "src/domain{core}|v1".to_string(),
             summary: String::new(),
+            body: String::new(),
             source_spans: Vec::new(),
             symbols: Vec::new(),
             component_ids: vec!["domain".to_string()],
@@ -340,31 +332,19 @@ fn clusters_without_falkordb() {
         docs_by_path
             .get("code/files/src/api/handler.rs.md")
             .expect("handler file doc")
-            .contains(&test_component_id(
-                "src/api/handler.rs",
-                "handle",
-                "function"
-            ))
+            .contains("| `handle` | function |")
     );
     assert!(
         docs_by_path
             .get("code/files/src/domain/service.rs.md")
             .expect("service file doc")
-            .contains(&test_component_id(
-                "src/domain/service.rs",
-                "Service",
-                "class"
-            ))
+            .contains("| `Service` | class |")
     );
     assert!(
         docs_by_path
             .get("code/files/src/domain/service.rs.md")
             .expect("service file doc")
-            .contains(&test_component_id(
-                "src/domain/service.rs",
-                "new",
-                "function"
-            ))
+            .contains("| `Service::new` | function |")
     );
     assert!(
         !docs_by_path
@@ -489,8 +469,11 @@ fn mermaid_degrades_without_falkordb() {
         .expect("file doc still renders");
 
     assert!(module.contains("degraded: graph-unavailable"));
-    assert!(file.contains("API Symbols"));
-    assert!(file.contains(&test_component_id(
+    // File pages render a human Key components table keyed by symbol name, not a
+    // UUID component-id dump (#871).
+    assert!(file.contains("## Key components"));
+    assert!(file.contains("| `handle` | function |"));
+    assert!(!file.contains(&test_component_id(
         "src/api/handler.rs",
         "handle",
         "function"

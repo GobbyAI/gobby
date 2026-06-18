@@ -2,8 +2,9 @@ use std::collections::BTreeSet;
 
 use super::super::{
     AiDepth, CodewikiProgress, FileDoc, Generation, LeadingChunk, PromptTier, ReusePlan,
-    SourceSpan, SymbolDoc, TextGenerator, citation_list, component_label, file_doc_path,
-    ground_text, maybe_generate, prompts, structural_file_summary, structural_symbol_purpose,
+    SourceSpan, SymbolDoc, TextGenerator, TextVerifier, VerifyOutcome, citation_list,
+    component_label, file_doc_path, ground_text, maybe_generate, prompts, structural_file_summary,
+    structural_symbol_purpose, verify_and_strip, write_section,
 };
 use crate::models::Symbol;
 
@@ -21,6 +22,7 @@ pub(crate) fn build_file_doc(
     symbols: Vec<Symbol>,
     leading_chunk: Option<&LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     ai_depth: AiDepth,
     progress: &mut CodewikiProgress,
@@ -124,32 +126,25 @@ pub(crate) fn build_file_doc(
         .iter()
         .map(|symbol| symbol.component_id.clone())
         .collect::<Vec<_>>();
-    let fallback = structural_file_summary(file, &symbol_docs);
-    let (summary, reused_page) = match reused {
-        Some((page, summary)) => (summary, Some(page)),
+    let (summary, body, reused_page) = match reused {
+        Some((page, summary)) => (summary, String::new(), Some(page)),
         None => {
-            let generated = if ai_depth.includes_files() {
-                // Non-code files have no symbols to summarize; their purpose
-                // comes from the leading content instead. The structural
-                // fallback is unchanged either way.
-                let (prompt, system) = match (&prompt_symbols[..], &source_excerpt) {
-                    ([], Some(excerpt)) => (
-                        prompts::content_file_prompt(file, excerpt),
-                        prompts::CONTENT_FILE_SYSTEM,
-                    ),
-                    _ => (
-                        prompts::file_prompt(file, &prompt_symbols, source_excerpt.as_slice()),
-                        prompts::FILE_SYSTEM,
-                    ),
-                };
-                maybe_generate(generate, &prompt, system, PromptTier::Standard)
-            } else {
-                Generation::Skipped
-            }
-            .unwrap_or_record(fallback, &mut degraded);
-            let citations = citation_list(&source_spans, &generated);
-            let summary = ground_text(&generated, &source_spans, Some(&citations));
-            (summary, None)
+            // One aggregate-tier pass produces the file's multi-section
+            // narrative body; the one-line summary is derived from it for parent
+            // prompts, so a file costs one generation, not two.
+            let body = build_file_body(
+                file,
+                &prompt_symbols,
+                source_excerpt.as_slice(),
+                &source_spans,
+                &symbol_docs,
+                generate,
+                verify,
+                ai_depth,
+                &mut degraded,
+            );
+            let summary = file_summary_from_body(&body, file, &symbol_docs);
+            (summary, body, None)
         }
     };
 
@@ -157,10 +152,113 @@ pub(crate) fn build_file_doc(
         path: file.to_string(),
         module,
         summary,
+        body,
         source_spans,
         symbols: symbol_docs,
         component_ids,
         degraded,
         reused_page,
     }
+}
+
+/// Generate the file page's multi-section narrative body (`## Overview` +
+/// `## How it fits`) at the aggregate tier, run it through the grounded
+/// verification pass, and anchor its citations. Falls back to a deterministic
+/// multi-section structural body when generation is off, fails, or yields an
+/// unverifiable / empty result; the Key components table is appended by the
+/// renderer, not here. A verifier strip degrades the page; an unavailable
+/// verifier proceeds undegraded (mirrors the curated-page contract).
+#[expect(clippy::too_many_arguments)]
+fn build_file_body(
+    file: &str,
+    prompt_symbols: &[prompts::SymbolSummary],
+    sources: &[prompts::SourceExcerpt],
+    source_spans: &[SourceSpan],
+    symbol_docs: &[SymbolDoc],
+    generate: &mut Option<&mut TextGenerator<'_>>,
+    verify: &mut Option<&mut TextVerifier<'_>>,
+    ai_depth: AiDepth,
+    degraded: &mut bool,
+) -> String {
+    let generated = if ai_depth.includes_files() {
+        // Non-code files (no indexed symbols) derive their page from leading
+        // content; code files derive it from their symbol evidence. Both render
+        // the same multi-section narrative shape at the aggregate tier.
+        let (prompt, system) = match (prompt_symbols.is_empty(), sources.first()) {
+            (true, Some(excerpt)) => (
+                prompts::content_file_prompt(file, excerpt),
+                prompts::CONTENT_FILE_SYSTEM,
+            ),
+            _ => (
+                prompts::file_prompt(file, prompt_symbols, sources),
+                prompts::FILE_SYSTEM,
+            ),
+        };
+        maybe_generate(generate, &prompt, system, PromptTier::Aggregate)
+    } else {
+        Generation::Skipped
+    };
+    let text = match generated {
+        Generation::Generated(text) => text,
+        Generation::Failed => {
+            *degraded = true;
+            return structural_file_body(file, symbol_docs);
+        }
+        Generation::Skipped => return structural_file_body(file, symbol_docs),
+    };
+    let text = match verify_and_strip(verify, &text, sources) {
+        VerifyOutcome::Skipped => text,
+        VerifyOutcome::Verified {
+            text,
+            degraded: verify_degraded,
+        } => {
+            *degraded = *degraded || verify_degraded;
+            text
+        }
+        VerifyOutcome::Unusable => {
+            *degraded = true;
+            return structural_file_body(file, symbol_docs);
+        }
+    };
+    let citations = citation_list(source_spans, &text);
+    let grounded = ground_text(&text, source_spans, Some(&citations));
+    if grounded.trim().is_empty() {
+        *degraded = true;
+        return structural_file_body(file, symbol_docs);
+    }
+    grounded
+}
+
+/// Deterministic multi-section file body for `--ai off`, generation failure, or
+/// an unverifiable draft: a real `## Overview` and `## How it fits` so the page
+/// keeps narrative structure even without a model. The Key components table is
+/// appended by the renderer, so two sections here render as three on the page.
+fn structural_file_body(file: &str, symbols: &[SymbolDoc]) -> String {
+    let mut body = String::new();
+    write_section(
+        &mut body,
+        "Overview",
+        &structural_file_summary(file, symbols),
+    );
+    write_section(
+        &mut body,
+        "How it fits",
+        &format!(
+            "`{file}` is documented from its indexed symbols; see the Key components below \
+             and the module page for how it connects to sibling files."
+        ),
+    );
+    body
+}
+
+/// Derive the one-line file summary from the body's first prose paragraph
+/// (skipping `#` headings), so parent module/repo prompts and index listings get
+/// a real purpose without a second per-file generation call. Falls back to the
+/// structural summary when the body carries no prose.
+fn file_summary_from_body(body: &str, file: &str, symbols: &[SymbolDoc]) -> String {
+    body.split("\n\n")
+        .map(str::trim)
+        .find(|block| !block.is_empty() && !block.starts_with('#'))
+        .map(str::to_string)
+        .unwrap_or_else(|| structural_file_summary(file, symbols))
 }

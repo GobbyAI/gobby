@@ -149,7 +149,7 @@ fn repo_front_page_drops_no_symbol_filler_for_root_files() {
 }
 
 #[test]
-fn aggregate_docs_use_heavier_prompt_tier_than_file_docs() {
+fn aggregate_docs_use_heavier_prompt_tier_than_symbol_docs() {
     let input = depth_probe_input();
     let mut tiers = Vec::new();
     let mut generator = |_prompt: &str, system: &str, tier: PromptTier| {
@@ -173,6 +173,7 @@ fn aggregate_docs_use_heavier_prompt_tier_than_file_docs() {
             .collect::<Vec<_>>()
     };
     for aggregate in [
+        prompts::FILE_SYSTEM,
         prompts::MODULE_SYSTEM,
         prompts::REPO_SYSTEM,
         prompts::ARCHITECTURE_SYSTEM,
@@ -184,14 +185,16 @@ fn aggregate_docs_use_heavier_prompt_tier_than_file_docs() {
             "{aggregate} routes to the aggregate tier"
         );
     }
-    for standard in [prompts::FILE_SYSTEM, prompts::SYMBOL_SYSTEM] {
-        let seen = tier_for(standard);
-        assert!(!seen.is_empty(), "{standard} generates");
-        assert!(
-            seen.iter().all(|tier| *tier == PromptTier::Standard),
-            "{standard} stays on the standard tier"
-        );
-    }
+    // File pages now synthesize a multi-section narrative, so the file system
+    // prompt joins the aggregate tier; only per-symbol purposes stay standard.
+    let symbol_tiers = tier_for(prompts::SYMBOL_SYSTEM);
+    assert!(!symbol_tiers.is_empty(), "symbol purposes generate");
+    assert!(
+        symbol_tiers
+            .iter()
+            .all(|tier| *tier == PromptTier::Standard),
+        "symbol purposes stay on the standard tier"
+    );
 }
 
 #[test]

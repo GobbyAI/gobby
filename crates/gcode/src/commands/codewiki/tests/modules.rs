@@ -6,6 +6,7 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
         path: "src/commands/mod.rs".to_string(),
         module: "src/commands/codewiki".to_string(),
         summary: "command dispatcher".to_string(),
+        body: String::new(),
         source_spans: Vec::new(),
         symbols: Vec::new(),
         component_ids: Vec::new(),
@@ -38,7 +39,7 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
 }
 
 #[test]
-fn module_components_only_render_direct_file_symbols() {
+fn module_page_drops_component_id_dump_keeps_navigation() {
     let files = vec![
         file_doc_with_symbol("src/lib.rs", "src", "direct-component"),
         file_doc_with_symbol("src/commands/mod.rs", "src/commands", "child-component"),
@@ -62,20 +63,18 @@ fn module_components_only_render_direct_file_symbols() {
         .iter()
         .find(|doc| doc.module == "src")
         .expect("parent module is documented");
-    let child = docs
-        .iter()
-        .find(|doc| doc.module == "src/commands")
-        .expect("child module is documented");
 
     let parent_rendered = render_module_doc(parent);
-    let child_rendered = render_module_doc(child);
-
-    assert!(parent_rendered.contains("| Component ID |\n| --- |\n"));
-    assert!(parent_rendered.contains("`direct-component`"));
+    // The UUID component-id dump is gone from the human module page (#871): no
+    // `Component ID` heading/column, no raw component ids.
+    assert!(!parent_rendered.contains("Component ID"));
+    assert!(!parent_rendered.contains("## Components"));
+    assert!(!parent_rendered.contains("direct-component"));
     assert!(!parent_rendered.contains("child-component"));
-    assert!(!parent_rendered.contains("leaf-component"));
-    assert!(child_rendered.contains("`child-component`"));
-    assert!(child_rendered.contains("`leaf-component`"));
+    // Navigation to direct files and child modules is retained as the module's
+    // key components.
+    assert!(parent_rendered.contains("## Files"));
+    assert!(parent_rendered.contains("[[code/modules/src/commands\\|src/commands]]"));
 }
 
 #[test]
@@ -106,6 +105,7 @@ fn file_doc(path: &str, module: &str, component_id: &str) -> FileDoc {
         path: path.to_string(),
         module: module.to_string(),
         summary: String::new(),
+        body: String::new(),
         source_spans: Vec::new(),
         symbols: Vec::new(),
         component_ids: vec![component_id.to_string()],
@@ -139,6 +139,7 @@ fn file_doc_with_symbol(path: &str, module: &str, component_id: &str) -> FileDoc
         path: path.to_string(),
         module: module.to_string(),
         summary: String::new(),
+        body: String::new(),
         source_spans: Vec::new(),
         symbols: vec![SymbolDoc {
             purpose: String::new(),

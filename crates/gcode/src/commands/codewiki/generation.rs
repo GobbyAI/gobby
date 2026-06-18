@@ -212,6 +212,7 @@ pub(crate) fn generate_hierarchical_docs_core(
             symbols_by_file.remove(file).unwrap_or_default(),
             input.leading_chunks.get(file),
             generate,
+            verify,
             reuse,
             ai_depth,
             progress,

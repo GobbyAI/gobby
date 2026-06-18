@@ -5,10 +5,10 @@ use crate::models::Symbol;
 use super::{write_markdown_table_header, write_markdown_table_row};
 
 pub const SYMBOL_SYSTEM: &str = "You write concise API reference notes. Return one sentence describing the symbol's purpose. Do not include markdown fences.";
-pub const FILE_SYSTEM: &str = "You write concise file-level code documentation. Return a short purpose summary grounded only in the supplied symbol summaries and source excerpt: what the file does and how its pieces work together. Do not include markdown fences.";
-pub const CONTENT_FILE_SYSTEM: &str = "You write concise documentation for non-code repository files. Return a short purpose summary describing what the file contains and what it is for, grounded only in the supplied leading content. Do not include markdown fences.";
-pub const MODULE_SYSTEM: &str = "You write module documentation briefs. Using only the supplied file summaries, child module summaries, component table, and source excerpts, write one to two short paragraphs covering the module's responsibilities, key flows, and collaboration points. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
-pub const REPO_SYSTEM: &str = "You write repository overview briefs. Using only the supplied module summaries, root-file summaries, and source excerpts, write one to two short paragraphs covering what the system is, how the major pieces fit together, and where a reader should start. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
+pub const FILE_SYSTEM: &str = "You write a narrative explainer page for one source file, for an engineer reading it for the first time. Using only the supplied symbols and source excerpt, write a multi-section Markdown page with exactly these sections, in order: '## Overview' (what this file does and the role it plays) and '## How it fits' (how the file connects to its module and the surrounding data flow). A 'Key components' table is injected separately, so do not write a key-components section or a symbol table. Use short paragraphs. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
+pub const CONTENT_FILE_SYSTEM: &str = "You write a narrative explainer page for one non-code repository file (markdown, config, data), for an engineer reading it for the first time. Using only the supplied leading content, write a multi-section Markdown page with exactly these sections, in order: '## Overview' (what this file contains and what it is for) and '## How it fits' (how it relates to the surrounding project). Use short paragraphs. Cite supporting file:line anchors that appear in the supplied input. Do not invent content or line numbers. No markdown fences.";
+pub const MODULE_SYSTEM: &str = "You write module documentation briefs. Using only the supplied file summaries, child module summaries, component table, and source excerpts, write two to four short paragraphs covering the module's responsibilities, key flows, and collaboration points. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
+pub const REPO_SYSTEM: &str = "You write repository overview briefs. Using only the supplied module summaries, root-file summaries, and source excerpts, write two to four short paragraphs covering what the system is, how the major pieces fit together, and where a reader should start. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
 pub const ARCHITECTURE_SYSTEM: &str = "You write concise architecture documentation. Using only the supplied summaries, component table, and source excerpts, return a short responsibility summary plus compact Markdown tables for enumerable facts such as public API symbols, CLI commands or flags, configuration keys, and environment variables. No markdown fences.";
 pub const ARCHITECTURE_NARRATIVE_SYSTEM: &str = "You write architecture overviews. Using only the supplied subsystem responsibilities and dependency edges, write two to three short paragraphs describing the system in layers: which subsystems sit at the foundation, which build on them, and how the layers interact. Plain paragraphs only - no headings, no lists, no markdown fences.";
 pub const CURATED_NAVIGATION_SYSTEM: &str = "You design a curated navigation layer for grounded code documentation. Return strict JSON only. Name user-facing concept modules, organize them into a hierarchy, and create short narrative tour pages. Use only supplied module and file identifiers, and link into reference pages instead of duplicating source detail. Order narrative_pages as a learning path: foundational subsystems first, then the layers that build on them, so the tour reads from chapter one onward.";
@@ -41,8 +41,9 @@ pub fn symbol_prompt(symbol: &Symbol) -> String {
 }
 
 pub fn file_prompt(file: &str, symbols: &[SymbolSummary], sources: &[SourceExcerpt]) -> String {
-    let mut prompt =
-        format!("Summarize this file once from its AST symbols.\n\nFile: {file}\n\nSymbols:\n");
+    let mut prompt = format!(
+        "Write a narrative explainer page for this source file from its AST symbols and source excerpt.\n\nFile: {file}\n\nSymbols:\n"
+    );
     if symbols.is_empty() {
         prompt.push_str("- No indexed symbols.\n");
     } else {
@@ -76,11 +77,12 @@ pub fn file_prompt(file: &str, symbols: &[SymbolSummary], sources: &[SourceExcer
 }
 
 /// Prompt for files without indexed AST symbols (markdown, config, data):
-/// the model derives a purpose from the file's leading content instead of
-/// an empty symbol list.
+/// the model derives a narrative page from the file's leading content instead
+/// of an empty symbol list.
 pub fn content_file_prompt(file: &str, source: &SourceExcerpt) -> String {
-    let mut prompt =
-        format!("Summarize this repository file once from its leading content.\n\nFile: {file}\n");
+    let mut prompt = format!(
+        "Write a narrative explainer page for this repository file from its leading content.\n\nFile: {file}\n"
+    );
     append_source_excerpt_section(&mut prompt, std::slice::from_ref(source));
     prompt
 }

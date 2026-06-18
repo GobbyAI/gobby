@@ -94,7 +94,6 @@ pub(crate) fn build_module_docs_with_filter(
                 summary: module.summary.clone(),
             })
             .collect::<Vec<_>>();
-        let component_ids = direct_component_ids_for_module(files, &module);
         let prompt_component_ids = prompt_component_ids_for_module(files, &module);
         let graph_truncated = graph_availability == CodewikiGraphAvailability::Truncated;
         let dependency_diagram =
@@ -161,7 +160,6 @@ pub(crate) fn build_module_docs_with_filter(
             source_spans,
             direct_files,
             child_modules,
-            component_ids,
             dependency_diagram,
             call_diagram,
             graph_availability,
@@ -174,19 +172,6 @@ pub(crate) fn build_module_docs_with_filter(
 
     docs.sort_by(|a, b| a.module.cmp(&b.module));
     Ok(docs)
-}
-
-fn direct_component_ids_for_module(files: &[FileDoc], module: &str) -> Vec<String> {
-    let mut seen = BTreeSet::new();
-    files
-        .iter()
-        .filter(|file| file_is_direct_module_member(file, module))
-        .flat_map(|file| &file.symbols)
-        .filter_map(|symbol| {
-            let component_id = symbol.component_id.clone();
-            seen.insert(component_id.clone()).then_some(component_id)
-        })
-        .collect()
 }
 
 fn file_is_direct_module_member(file: &FileDoc, module: &str) -> bool {
