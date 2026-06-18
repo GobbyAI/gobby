@@ -16,6 +16,7 @@ class LLMTextResult:
     provider: str | None = None
     model: str | None = None
     profile: str | None = None
+    applied_reasoning_effort: str | None = None
 
 
 class LLMProviderCancellation(RuntimeError):

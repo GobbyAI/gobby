@@ -354,6 +354,29 @@ class TestPrepareImageData:
 # ─── generate_json tests ────────────────────────────────────────────────
 
 
+class TestGenerateText:
+    """Tests for text-generation SDK option plumbing."""
+
+    @pytest.mark.asyncio
+    async def test_generate_text_sdk_passes_reasoning_effort(
+        self, claude_config: DaemonConfig
+    ) -> None:
+        captured_efforts: list[str | None] = []
+
+        async def mock_query(prompt: str, options: Any) -> object:
+            captured_efforts.append(options.effort)
+            yield MockAssistantMessage([MockTextBlock("reply")])
+
+        with mock_claude_sdk(mock_query):
+            from gobby.llm.claude import ClaudeLLMProvider
+
+            provider = ClaudeLLMProvider(claude_config)
+            result = await provider._generate_text_sdk("Generate text", reasoning_effort="xhigh")
+
+        assert result.text == "reply"
+        assert captured_efforts == ["xhigh"]
+
+
 class TestGenerateJson:
     """Tests for generate_json method."""
 
@@ -413,6 +436,7 @@ class TestGenerateJson:
         async def mock_query(prompt: str, options: Any) -> object:
             captured["prompt"] = prompt
             captured["system_prompt"] = options.system_prompt
+            captured["effort"] = options.effort
             captured["output_format"] = options.output_format
             yield MockAssistantMessage([MockTextBlock('{"entities": []}')])
 
@@ -434,12 +458,14 @@ class TestGenerateJson:
                     "rendered entity extraction prompt",
                     "strict entity extraction system prompt",
                     "haiku",
+                    reasoning_effort="high",
                     caller="memory.kg.extract_entities",
                 )
 
         assert result == {"entities": []}
         assert captured["prompt"] == "rendered entity extraction prompt"
         assert captured["system_prompt"] == "strict entity extraction system prompt"
+        assert captured["effort"] == "high"
         assert captured["output_format"] == {"type": "json_object"}
         assert captured["operation"] == "generate_json[memory.kg.extract_entities]"
 

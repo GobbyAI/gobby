@@ -124,6 +124,7 @@ class LocalLLMProvider:
         model: str | None = None,
         max_tokens: int | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> str:
         return (
@@ -132,6 +133,7 @@ class LocalLLMProvider:
                 system_prompt=system_prompt,
                 model=model,
                 max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
                 caller=caller,
             )
         ).text
@@ -143,6 +145,7 @@ class LocalLLMProvider:
         model: str | None = None,
         max_tokens: int | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> LLMTextResult:
         if caller:
@@ -153,6 +156,7 @@ class LocalLLMProvider:
             system_prompt=system_prompt,
             model=resolved,
             max_tokens=max_tokens,
+            reasoning_effort=reasoning_effort,
         )
 
     async def generate_json(
@@ -161,6 +165,7 @@ class LocalLLMProvider:
         system_prompt: str | None = None,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> dict[str, Any]:
         if caller:
@@ -170,6 +175,7 @@ class LocalLLMProvider:
             prompt,
             system_prompt=system_prompt,
             model=resolved,
+            reasoning_effort=reasoning_effort,
         )
 
     async def describe_image(

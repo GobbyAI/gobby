@@ -232,6 +232,7 @@ class TextGenerationService:
                         provider=binding.provider,
                         model=candidate.model or next(iter(binding.models), None),
                         profile=candidate.profile,
+                        applied_reasoning_effort=candidate.reasoning_effort,
                     ),
                     None,
                 )
@@ -353,13 +354,10 @@ class TextGenerationService:
     ) -> tuple[TextGenerationRequest, ...]:
         if request.candidates:
             return tuple(
-                replace(request, provider=provider, model=model)
-                for provider, model in (
-                    _parse_candidate(candidate.candidate)
-                    for candidate in candidate_runtime_entries(
-                        request.candidates,
-                        profile=request.profile,
-                    )
+                self._candidate_request(request, candidate)
+                for candidate in candidate_runtime_entries(
+                    request.candidates,
+                    profile=request.profile,
                 )
             )
         has_provider = request.provider is not None
@@ -376,13 +374,28 @@ class TextGenerationService:
             if candidates is None:
                 candidates = DEFAULT_PROFILE_CANDIDATES[profile]
             return tuple(
-                replace(request, provider=provider, model=model)
-                for provider, model in (
-                    _parse_candidate(candidate.candidate)
-                    for candidate in candidate_runtime_entries(candidates, profile=profile)
-                )
+                self._candidate_request(request, candidate)
+                for candidate in candidate_runtime_entries(candidates, profile=profile)
             )
         return (request,)
+
+    @staticmethod
+    def _candidate_request(
+        request: TextGenerationRequest,
+        candidate: FeatureCandidateConfig,
+    ) -> TextGenerationRequest:
+        provider, model = _parse_candidate(candidate.candidate)
+        reasoning_effort = (
+            request.reasoning_effort
+            if request.reasoning_effort is not None
+            else candidate.reasoning_effort
+        )
+        return replace(
+            request,
+            provider=provider,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
 
     def _select_binding(self, request: TextGenerationRequest) -> CapabilityBinding:
         return self._registry.select(
@@ -442,5 +455,6 @@ class TextGenerationService:
                 "success": success,
                 "error": str(error) if error else None,
                 "json_parse_outcome": json_parse_outcome,
+                "reasoning_effort": request.reasoning_effort,
             },
         )

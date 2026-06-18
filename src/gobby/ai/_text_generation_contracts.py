@@ -6,6 +6,8 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Protocol
 
+from gobby.config.feature_base import FeatureCandidateInput
+
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
 
@@ -17,10 +19,11 @@ class TextGenerationRequest:
     prompt: str
     provider: str | None = None
     profile: str | None = None
-    candidates: tuple[str, ...] = ()
+    candidates: tuple[FeatureCandidateInput, ...] = ()
     system_prompt: str | None = None
     model: str | None = None
     max_tokens: int | None = None
+    reasoning_effort: str | None = None
     caller: str | None = None
     cwd: str | None = None
     candidate_timeout_seconds: float | None = None

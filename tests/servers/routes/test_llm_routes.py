@@ -24,6 +24,7 @@ from gobby.ai import (
 )
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
+from gobby.config.feature_base import FeatureCandidateConfig
 from gobby.llm.base import LLMTextResult
 from gobby.servers.routes.llm import create_llm_router
 
@@ -494,6 +495,56 @@ def test_generate_candidates_override_partial_top_level_provider(
             provider="local:lm-studio",
             candidates=("local:lm-studio/Qwen3-Coder-30B-A3B-Instruct",),
             model="Qwen3-Coder-30B-A3B-Instruct",
+            caller="llm-generate-route",
+        )
+    ]
+
+
+def test_generate_accepts_structured_candidates_and_returns_applied_reasoning_effort(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    codex = _FakeTextAdapter()
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.5",),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {"codex": codex})
+    server_with_llm.services.text_generation_service = service
+
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "candidates": [{"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"}],
+            "reasoning_effort": "low",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "text": "Generated text",
+        "capability": "text_generate",
+        "provider": "codex",
+        "model": "gpt-5.5",
+        "applied_reasoning_effort": "low",
+    }
+    assert codex.requests == [
+        TextGenerationRequest(
+            prompt="Summarize this",
+            provider="codex",
+            candidates=(
+                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+            ),
+            model="gpt-5.5",
+            reasoning_effort="low",
             caller="llm-generate-route",
         )
     ]

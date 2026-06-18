@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from types import TracebackType
+from types import SimpleNamespace, TracebackType
 from typing import Any
 from unittest.mock import patch
 
@@ -73,6 +73,19 @@ class _FakeAsyncClient:
         return self._next_response("POST", url)
 
 
+class _FakeOpenAICompletions:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, Any]] = []
+
+    async def create(self, **kwargs: Any) -> Any:
+        self.calls.append(kwargs)
+        content = '{"ok": true}' if kwargs.get("response_format") else "local reply"
+        return SimpleNamespace(
+            choices=[SimpleNamespace(message=SimpleNamespace(content=content))],
+            usage={"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7},
+        )
+
+
 def test_openai_compatible_adapter_uses_openai_sdk() -> None:
     endpoint = LocalGenerationEndpointConfig(
         provider="openai-compatible",
@@ -89,6 +102,42 @@ def test_openai_compatible_adapter_uses_openai_sdk() -> None:
         base_url="http://localhost:8000/v1",
         api_key="test-key",
     )
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_adapter_forwards_reasoning_effort() -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+        api_key="test-key",
+    )
+    completions = _FakeOpenAICompletions()
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    text_result = await adapter.generate_text_result(
+        "hello",
+        system_prompt="system",
+        model="local-model",
+        max_tokens=42,
+        reasoning_effort="high",
+    )
+    json_result = await adapter.generate_json(
+        "json",
+        system_prompt="system",
+        model="local-model",
+        reasoning_effort="low",
+    )
+
+    assert text_result.text == "local reply"
+    assert text_result.usage == {"prompt_tokens": 3, "completion_tokens": 4, "total_tokens": 7}
+    assert json_result == {"ok": True}
+    assert completions.calls[0]["reasoning_effort"] == "high"
+    assert completions.calls[1]["reasoning_effort"] == "low"
+    assert completions.calls[1]["response_format"] == {"type": "json_object"}
 
 
 @pytest.mark.asyncio

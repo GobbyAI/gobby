@@ -5,7 +5,7 @@ import json
 import logging
 from collections.abc import Iterator
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 from claude_agent_sdk import (
     AssistantMessage,
@@ -390,6 +390,7 @@ class ClaudeLLMProvider:
         model: str | None = None,
         max_tokens: int | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> str:
         """
@@ -403,6 +404,7 @@ class ClaudeLLMProvider:
                 system_prompt=system_prompt,
                 model=model,
                 max_tokens=max_tokens,
+                reasoning_effort=reasoning_effort,
                 caller=caller,
             )
         ).text
@@ -414,6 +416,7 @@ class ClaudeLLMProvider:
         model: str | None = None,
         max_tokens: int | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> LLMTextResult:
         """Generate text and surface Anthropic token usage when available."""
@@ -424,6 +427,7 @@ class ClaudeLLMProvider:
                 system_prompt,
                 model,
                 max_tokens,
+                reasoning_effort=reasoning_effort,
                 caller=caller,
             )
         raise RuntimeError("Generation unavailable (Claude CLI not found)")
@@ -435,6 +439,7 @@ class ClaudeLLMProvider:
         model: str | None = None,
         max_tokens: int | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> LLMTextResult:
         """Generate text using Claude Agent SDK (subscription mode)."""
@@ -456,6 +461,7 @@ class ClaudeLLMProvider:
                 mcp_servers={},
                 permission_mode="default",
                 cli_path=cli_path,
+                effort=cast(Any, reasoning_effort),
                 cwd=str(neutral_cwd),
             )
 
@@ -509,6 +515,7 @@ class ClaudeLLMProvider:
         system_prompt: str | None = None,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> dict[str, Any]:
         """
@@ -520,7 +527,13 @@ class ClaudeLLMProvider:
         """
         cli_path = await self._verify_cli_path()
         if cli_path:
-            return await self._generate_json_sdk(prompt, system_prompt, model, caller=caller)
+            return await self._generate_json_sdk(
+                prompt,
+                system_prompt,
+                model,
+                reasoning_effort=reasoning_effort,
+                caller=caller,
+            )
         raise RuntimeError("Generation unavailable (Claude CLI not found)")
 
     async def _generate_json_sdk(
@@ -529,6 +542,7 @@ class ClaudeLLMProvider:
         system_prompt: str | None = None,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> dict[str, Any]:
         """Generate JSON using Claude Agent SDK with output_format constraint."""
@@ -548,6 +562,7 @@ class ClaudeLLMProvider:
                 mcp_servers={},
                 permission_mode="default",
                 cli_path=cli_path,
+                effort=cast(Any, reasoning_effort),
                 output_format={"type": "json_object"},
                 cwd=str(neutral_cwd),
             )

@@ -40,6 +40,7 @@ class LocalProviderAdapter(Protocol):
         system_prompt: str | None,
         model: str,
         max_tokens: int | None,
+        reasoning_effort: str | None = None,
     ) -> LLMTextResult:
         """Generate text with usage metadata."""
 
@@ -49,6 +50,7 @@ class LocalProviderAdapter(Protocol):
         *,
         system_prompt: str | None,
         model: str,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Generate and parse JSON."""
 
@@ -215,21 +217,25 @@ class OpenAICompatibleLocalProviderAdapter:
         system_prompt: str | None,
         model: str,
         max_tokens: int | None,
+        reasoning_effort: str | None = None,
     ) -> LLMTextResult:
         if not self._client:
             raise RuntimeError("Local LLM client not initialised")
 
-        response = await self._client.chat.completions.create(
-            model=model,
-            messages=[
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": [
                 {
                     "role": "system",
                     "content": system_prompt or "You are a helpful assistant.",
                 },
                 {"role": "user", "content": prompt},
             ],
-            max_tokens=max_tokens or 8000,
-        )
+            "max_tokens": max_tokens or 8000,
+        }
+        if reasoning_effort is not None:
+            request["reasoning_effort"] = reasoning_effort
+        response = await self._client.chat.completions.create(**request)
         return LLMTextResult(
             text=response.choices[0].message.content or "",
             usage=_usage_dict(getattr(response, "usage", None)),
@@ -241,41 +247,38 @@ class OpenAICompatibleLocalProviderAdapter:
         *,
         system_prompt: str | None,
         model: str,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         if not self._client:
             raise RuntimeError("Local LLM client not initialised")
 
+        request: dict[str, Any] = {
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": system_prompt
+                    or "You are a helpful assistant. Respond with valid JSON.",
+                },
+                {"role": "user", "content": prompt},
+            ],
+            "max_tokens": 8000,
+            "response_format": {"type": "json_object"},
+        }
+        if reasoning_effort is not None:
+            request["reasoning_effort"] = reasoning_effort
         try:
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                        or "You are a helpful assistant. Respond with valid JSON.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=8000,
-                response_format={"type": "json_object"},
-            )
+            response = await self._client.chat.completions.create(**request)
         except Exception as json_mode_err:
             logger.debug(
                 "json_object mode rejected (%s), retrying without response_format",
                 json_mode_err,
             )
-            response = await self._client.chat.completions.create(
-                model=model,
-                messages=[
-                    {
-                        "role": "system",
-                        "content": system_prompt
-                        or "You are a helpful assistant. Respond with valid JSON only.",
-                    },
-                    {"role": "user", "content": prompt},
-                ],
-                max_tokens=8000,
+            request.pop("response_format", None)
+            request["messages"][0]["content"] = (
+                system_prompt or "You are a helpful assistant. Respond with valid JSON only."
             )
+            response = await self._client.chat.completions.create(**request)
 
         return _parse_json_response(response.choices[0].message.content)
 
@@ -335,6 +338,7 @@ class LMStudioLocalProviderAdapter:
         system_prompt: str | None,
         model: str,
         max_tokens: int | None,
+        reasoning_effort: str | None = None,
     ) -> LLMTextResult:
         payload: dict[str, Any] = {
             "model": model,
@@ -353,6 +357,7 @@ class LMStudioLocalProviderAdapter:
         *,
         system_prompt: str | None,
         model: str,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         result = await self.generate_text_result(
             prompt,
@@ -360,6 +365,7 @@ class LMStudioLocalProviderAdapter:
             or "You are a helpful assistant. Respond with valid JSON only.",
             model=model,
             max_tokens=8000,
+            reasoning_effort=reasoning_effort,
         )
         return _parse_json_response(result.text)
 
@@ -420,6 +426,7 @@ class OllamaLocalProviderAdapter:
         system_prompt: str | None,
         model: str,
         max_tokens: int | None,
+        reasoning_effort: str | None = None,
     ) -> LLMTextResult:
         payload = _ollama_chat_payload(
             prompt,
@@ -436,6 +443,7 @@ class OllamaLocalProviderAdapter:
         *,
         system_prompt: str | None,
         model: str,
+        reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         payload = _ollama_chat_payload(
             prompt,

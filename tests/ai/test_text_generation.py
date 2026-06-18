@@ -33,7 +33,7 @@ from gobby.ai.text_generation import (
     is_feature_generation_infrastructure_error,
 )
 from gobby.config.app import DaemonConfig
-from gobby.config.feature_base import FeatureProfile
+from gobby.config.feature_base import FeatureCandidateConfig, FeatureProfile
 from gobby.llm.base import LLMProviderCancellation, LLMTextResult
 
 pytestmark = pytest.mark.unit
@@ -864,6 +864,114 @@ async def test_text_generation_service_profile_only_uses_configured_profile_defa
     ]
 
 
+async def test_text_generation_service_applies_candidate_reasoning_effort_to_text_result() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.5",),
+            ),
+        ]
+    )
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"codex": codex})
+
+    result = await service.generate_result(
+        TextGenerationRequest(prompt="summarize", profile=FeatureProfile.HIGH.value)
+    )
+
+    assert result.applied_reasoning_effort == "xhigh"
+    assert codex.requests == [
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="codex",
+            profile=FeatureProfile.HIGH.value,
+            model="gpt-5.5",
+            reasoning_effort="xhigh",
+        )
+    ]
+
+
+async def test_text_generation_service_request_reasoning_effort_overrides_candidate() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.5",),
+            ),
+        ]
+    )
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"codex": codex})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=(
+                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+            ),
+            reasoning_effort="low",
+        )
+    )
+
+    assert result.applied_reasoning_effort == "low"
+    assert codex.requests == [
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="codex",
+            candidates=(
+                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+            ),
+            model="gpt-5.5",
+            reasoning_effort="low",
+        )
+    ]
+
+
+async def test_text_generation_service_json_applies_effort_without_wrapping_result() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.5",),
+            ),
+        ]
+    )
+    codex = JSONAdapter("codex")
+    service = TextGenerationService(registry, {"codex": codex})
+
+    result = await service.generate_json(
+        TextGenerationRequest(
+            prompt="classify",
+            candidates=(
+                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+            ),
+        )
+    )
+
+    assert result == {"provider": "codex", "model": "gpt-5.5"}
+    assert codex.requests == [
+        TextGenerationRequest(
+            prompt="classify",
+            provider="codex",
+            candidates=(
+                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+            ),
+            model="gpt-5.5",
+            reasoning_effort="xhigh",
+        )
+    ]
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_candidate_list_is_exhaustive_for_unavailable_override() -> (
     None
@@ -1358,8 +1466,10 @@ class FakeNativeTextProvider:
     def __init__(self, config: DaemonConfig, endpoint_name: str | None = None) -> None:
         self.config = config
         self.endpoint_name = endpoint_name
-        self.text_calls: list[tuple[str, str | None, str | None, int | None, str | None]] = []
-        self.json_calls: list[tuple[str, str | None, str | None, str | None]] = []
+        self.text_calls: list[
+            tuple[str, str | None, str | None, int | None, str | None, str | None]
+        ] = []
+        self.json_calls: list[tuple[str, str | None, str | None, str | None, str | None]] = []
         self.__class__.last_instance = self
 
     async def generate_text_result(
@@ -1369,11 +1479,12 @@ class FakeNativeTextProvider:
         model: str | None = None,
         max_tokens: int | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> LLMTextResult:
-        self.text_calls.append((prompt, system_prompt, model, max_tokens, caller))
+        self.text_calls.append((prompt, system_prompt, model, max_tokens, reasoning_effort, caller))
         return LLMTextResult(
-            text=f"{system_prompt}:{prompt}:{model}:{max_tokens}:{caller}",
+            text=f"{system_prompt}:{prompt}:{model}:{max_tokens}:{reasoning_effort}:{caller}",
             usage={"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15},
         )
 
@@ -1383,13 +1494,15 @@ class FakeNativeTextProvider:
         system_prompt: str | None = None,
         model: str | None = None,
         *,
+        reasoning_effort: str | None = None,
         caller: str | None = None,
     ) -> dict[str, Any]:
-        self.json_calls.append((prompt, system_prompt, model, caller))
+        self.json_calls.append((prompt, system_prompt, model, reasoning_effort, caller))
         return {
             "prompt": prompt,
             "system_prompt": system_prompt,
             "model": model,
+            "reasoning_effort": reasoning_effort,
             "caller": caller,
         }
 
@@ -1409,6 +1522,7 @@ async def test_claude_text_generate_adapter_forwards_usage_and_max_tokens(
             system_prompt="system",
             model="model-a",
             max_tokens=42,
+            reasoning_effort="xhigh",
             caller="test",
         )
     )
@@ -1416,8 +1530,8 @@ async def test_claude_text_generate_adapter_forwards_usage_and_max_tokens(
     provider = FakeNativeTextProvider.last_instance
     assert provider is not None
     assert provider.config is config
-    assert provider.text_calls == [("hello", "system", "model-a", 42, "test")]
-    assert response.text == "system:hello:model-a:42:test"
+    assert provider.text_calls == [("hello", "system", "model-a", 42, "xhigh", "test")]
+    assert response.text == "system:hello:model-a:42:xhigh:test"
     assert response.usage == {"prompt_tokens": 11, "completion_tokens": 4, "total_tokens": 15}
 
 
@@ -1435,6 +1549,7 @@ async def test_local_text_generate_adapter_forwards_json_request(
             prompt="json please",
             system_prompt="system",
             model="model-b",
+            reasoning_effort="high",
             caller="test",
         )
     )
@@ -1443,11 +1558,12 @@ async def test_local_text_generate_adapter_forwards_json_request(
     assert provider is not None
     assert provider.config is config
     assert provider.endpoint_name == "lm-studio"
-    assert provider.json_calls == [("json please", "system", "model-b", "test")]
+    assert provider.json_calls == [("json please", "system", "model-b", "high", "test")]
     assert response == {
         "prompt": "json please",
         "system_prompt": "system",
         "model": "model-b",
+        "reasoning_effort": "high",
         "caller": "test",
     }
 
@@ -1647,6 +1763,7 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
             prompt="user prompt",
             system_prompt="system prompt",
             model="gpt-5.4-mini",
+            reasoning_effort="xhigh",
             cwd="/tmp/project",
         )
     )
@@ -1680,6 +1797,7 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
     assert "--skip-git-repo-check" in command
     assert "--output-last-message" in command
     assert command[command.index("--model") + 1] == "gpt-5.4-mini"
+    assert command[command.index("-c") + 1] == 'model_reasoning_effort="xhigh"'
     # request.cwd must NOT leak into the command as --cd.
     assert "--cd" not in command
     assert command[-1] == f"system prompt\n\n{ONE_SHOT_DIRECTIVE}\n\nuser prompt"
@@ -2514,6 +2632,7 @@ async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
             prompt="explain",
             system_prompt="system",
             model="grok-4",
+            reasoning_effort="high",
             cwd="/tmp/project",
         )
     )
@@ -2540,6 +2659,7 @@ async def test_grok_cli_text_generate_adapter_uses_non_session_headless_command(
         "--model",
         "grok-4",
     )
+    assert command[command.index("--reasoning-effort") + 1] == "high"
     assert command[-2:] == ("--single", f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain")
     assert {"--acp", "--session-id", "--resume", "--continue", "-r", "-c"}.isdisjoint(command)
     assert leader_socket_parent_exists == [True]
@@ -2580,6 +2700,7 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
             prompt="explain",
             system_prompt="system",
             model="claude-opus-4-7",
+            reasoning_effort="high",
             cwd="/tmp/project",
         )
     )
@@ -2593,6 +2714,8 @@ async def test_droid_cli_text_generate_adapter_executes_noninteractive_command(
         "text",
         "--model",
         "claude-opus-4-7",
+        "--reasoning-effort",
+        "high",
         "system\n\nexplain",
     )
     # One-shot generation runs in a neutral temp dir, never the request's project cwd.

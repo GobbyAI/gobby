@@ -24,7 +24,7 @@ from gobby.ai import (
     build_daemon_ai_capability_registry,
     build_daemon_vision_extract_service,
 )
-from gobby.config.feature_base import FeatureProfile
+from gobby.config.feature_base import FeatureCandidateInput, FeatureProfile
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -44,13 +44,14 @@ class TextGeneratePayload(BaseModel):
     prompt: str = Field(min_length=1)
     provider: str | None = None
     profile: str | None = None
-    candidates: tuple[str, ...] = ()
+    candidates: tuple[FeatureCandidateInput, ...] = ()
     system_prompt: str | None = Field(
         default=None,
         validation_alias=AliasChoices("system_prompt", "system"),
     )
     model: str | None = None
     max_tokens: int | None = Field(default=None, gt=0)
+    reasoning_effort: str | None = None
     cwd: str | None = None
 
     @property
@@ -91,6 +92,7 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     system_prompt=payload.system_prompt,
                     model=payload.model,
                     max_tokens=payload.max_tokens,
+                    reasoning_effort=payload.reasoning_effort,
                     caller="llm-generate-route",
                     cwd=payload.cwd,
                 )
@@ -103,6 +105,8 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
             }
             if result.usage is not None:
                 response["usage"] = result.usage
+            if result.applied_reasoning_effort is not None:
+                response["applied_reasoning_effort"] = result.applied_reasoning_effort
             return response
         except CapabilityUnavailableError as e:
             logger.info("Text generation capability unavailable: %s", e)

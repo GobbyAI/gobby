@@ -15,6 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+from gobby.agents.provider_capabilities import provider_reasoning_flag
 from gobby.ai._text_generation_contracts import TextGenerateAdapter, TextGenerationRequest
 from gobby.ai._text_generation_helpers import (
     _compose_prompt,
@@ -60,6 +61,20 @@ _DROID_FACTORY_ALLOWED_FILE_KEYWORDS = frozenset(
 )
 
 
+def _extend_reasoning_args(command: list[str], provider: str, reasoning_effort: str | None) -> None:
+    if not reasoning_effort:
+        return
+    match provider_reasoning_flag(provider):
+        case "codex-config":
+            command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
+        case "reasoning-effort":
+            command.extend(["--reasoning-effort", reasoning_effort])
+        case "claude-effort":
+            command.extend(["--effort", reasoning_effort])
+        case None:
+            return
+
+
 @dataclass(frozen=True)
 class _QwenOpenAIEndpoint:
     """OpenAI-compatible endpoint settings used to isolate Qwen feature calls."""
@@ -83,6 +98,7 @@ class ClaudeTextGenerateAdapter:
             system_prompt=request.system_prompt,
             model=request.model,
             max_tokens=request.max_tokens,
+            reasoning_effort=request.reasoning_effort,
             caller=request.caller,
         )
 
@@ -91,6 +107,7 @@ class ClaudeTextGenerateAdapter:
             request.prompt,
             system_prompt=request.system_prompt,
             model=request.model,
+            reasoning_effort=request.reasoning_effort,
             caller=request.caller,
         )
 
@@ -109,6 +126,7 @@ class LocalTextGenerateAdapter:
             system_prompt=request.system_prompt,
             model=request.model,
             max_tokens=request.max_tokens,
+            reasoning_effort=request.reasoning_effort,
             caller=request.caller,
         )
 
@@ -117,6 +135,7 @@ class LocalTextGenerateAdapter:
             request.prompt,
             system_prompt=request.system_prompt,
             model=request.model,
+            reasoning_effort=request.reasoning_effort,
             caller=request.caller,
         )
 
@@ -458,6 +477,7 @@ class _GrokCLITextGenerateAdapter:
         ]
         if request.model:
             command.extend(["--model", request.model])
+        _extend_reasoning_args(command, "grok", request.reasoning_effort)
         command.extend(["--single", _compose_prompt(request)])
         return command
 
@@ -513,6 +533,7 @@ class CodexCLITextGenerateAdapter:
         ]
         if request.model:
             command.extend(["--model", request.model])
+        _extend_reasoning_args(command, "codex", request.reasoning_effort)
         # Intentionally no ``--cd``: one-shot generation runs in a neutral temp dir,
         # never the project directory (avoids the project-context startup tax).
         command.append(_compose_prompt(request))
@@ -652,6 +673,7 @@ class DroidCLITextGenerateAdapter:
         command = [path, "exec", "--output-format", "text"]
         if request.model:
             command.extend(["--model", request.model])
+        _extend_reasoning_args(command, "droid", request.reasoning_effort)
         command.append(_compose_prompt(request))
         return command
 
