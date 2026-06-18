@@ -8,7 +8,6 @@ import json
 import logging
 import os
 import shutil
-from collections import Counter
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -29,7 +28,36 @@ from gobby.llm.context_windows import (
 from gobby.providers import provider_metadata
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
 from gobby.servers.provider_model_defaults import GEMINI_MODEL_CATALOG as _GEMINI_MODEL_CATALOG
-from gobby.servers.provider_models_grok import models_from_acp_session as grok_models_from_acp
+from gobby.servers.provider_model_discovery import (
+    discover_acp_models as _discover_acp_models_impl,
+)
+from gobby.servers.provider_model_discovery import (
+    discover_claude_models as _discover_claude_models_impl,
+)
+from gobby.servers.provider_model_discovery import (
+    discover_codex_models as _discover_codex_models_impl,
+)
+from gobby.servers.provider_model_discovery import (
+    discover_grok_models_with_source as _discover_grok_models_with_source_impl,
+)
+from gobby.servers.provider_model_discovery import (
+    discover_qwen_configured_models as _discover_qwen_configured_models_impl,
+)
+from gobby.servers.provider_model_discovery import (
+    discover_qwen_models as _discover_qwen_models_impl,
+)
+from gobby.servers.provider_model_discovery import (
+    get_cli_version as _get_cli_version_impl,
+)
+from gobby.servers.provider_model_discovery import (
+    load_qwen_settings as _load_qwen_settings_impl,
+)
+from gobby.servers.provider_model_discovery import (
+    normalize_qwen_model_labels as _normalize_qwen_model_labels_impl,
+)
+from gobby.servers.provider_model_discovery import (
+    probe_claude_model as _probe_claude_model_impl,
+)
 from gobby.servers.provider_models_grok import models_from_cache as grok_models_from_cache
 from gobby.servers.provider_models_grok import static_models as grok_static_models
 
@@ -43,15 +71,6 @@ _PROVIDERS = tuple(_PROVIDER_METADATA)
 _CACHE_VERSION = 5
 _DEFAULT_CACHE_FILE = "provider-model-catalog.json"
 _MODEL_DISCOVERY_CWD_NAME = "provider-model-discovery"
-_MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS = 90.0
-_CLAUDE_ALIASES = (
-    ("haiku", "Haiku"),
-    ("sonnet", "Sonnet"),
-    ("opus", "Opus"),
-    ("fable", "Fable"),
-)
-_CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
-_QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})
 
 
 def context_length_for_model(provider: str | None, model: str | None) -> int | None:
@@ -170,71 +189,6 @@ async def _model_discovery_cwd(provider: str) -> tuple[Path, bool]:
 def _short_error(exc: BaseException) -> str:
     message = str(exc).strip() or exc.__class__.__name__
     return message[:240]
-
-
-def _extract_reasoning(model: dict[str, Any]) -> dict[str, Any] | None:
-    supported: list[str] = []
-
-    supported_reasoning = model.get("supportedReasoningEfforts")
-    if isinstance(supported_reasoning, list):
-        supported = [
-            str(item.get("reasoningEffort"))
-            for item in supported_reasoning
-            if isinstance(item, dict) and item.get("reasoningEffort")
-        ]
-    elif isinstance(model.get("reasoningEfforts"), list):
-        supported = [str(item) for item in model["reasoningEfforts"] if item]
-
-    default_effort = model.get("defaultReasoningEffort") or model.get("defaultReasoningMode")
-    if default_effort is None and not supported:
-        return None
-
-    result: dict[str, Any] = {"supported_efforts": supported}
-    if default_effort is not None:
-        result["default_effort"] = str(default_effort)
-    return result
-
-
-def _format_qwen_model_value(model_id: str, auth_type: str | None) -> str:
-    if not auth_type:
-        return model_id
-    return f"{model_id}({auth_type})"
-
-
-def _split_qwen_model_value(value: str) -> tuple[str, str | None]:
-    trimmed = value.strip()
-    close_idx = trimmed.rfind(")")
-    open_idx = trimmed.rfind("(")
-    if open_idx >= 0 and close_idx == len(trimmed) - 1 and open_idx < close_idx:
-        model_id = trimmed[:open_idx].strip()
-        auth_type = trimmed[open_idx + 1 : close_idx].strip()
-        if model_id and auth_type in _QWEN_AUTH_TYPES:
-            return model_id, auth_type
-    return trimmed, None
-
-
-def _merge_models(
-    primary: list[dict[str, Any]],
-    secondary: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    by_value: dict[str, dict[str, Any]] = {}
-
-    for item in [*primary, *secondary]:
-        value = str(item.get("value") or "").strip()
-        if not value:
-            continue
-        if value in by_value:
-            existing = by_value[value]
-            for key, field_value in item.items():
-                if key not in existing:
-                    existing[key] = copy.deepcopy(field_value)
-            continue
-        entry = copy.deepcopy(item)
-        by_value[value] = entry
-        merged.append(entry)
-
-    return merged
 
 
 def create_provider_model_catalog(
@@ -583,46 +537,7 @@ class ProviderModelCatalog:
         *,
         codex_client: CodexAppServerClient | None = None,
     ) -> list[dict[str, Any]]:
-        if not shutil.which("codex"):
-            raise FileNotFoundError("codex CLI not found in PATH")
-
-        client = codex_client
-        owns_client = False
-        if client is None or not client.is_connected:
-            from gobby.adapters.codex_impl.client import CodexAppServerClient
-
-            client = CodexAppServerClient()
-            owns_client = True
-            await client.start()
-
-        assert client is not None
-        try:
-            raw_models = await client.list_models(include_hidden=True)
-        finally:
-            if owns_client:
-                await client.stop()
-
-        models: list[dict[str, Any]] = []
-        for item in raw_models:
-            model_id = str(item.get("model") or item.get("id") or "").strip()
-            if not model_id:
-                continue
-            entry: dict[str, Any] = {
-                "value": model_id,
-                "label": str(item.get("displayName") or model_id),
-                "hidden": bool(item.get("hidden", False)),
-                "is_default": bool(item.get("isDefault", False)),
-            }
-            context = extract_context_length_candidate(item, source_if_missing="provider_reported")
-            if context is not None:
-                entry["context_length"] = context.value
-                entry[CONTEXT_LENGTH_SOURCE_KEY] = context.source
-            reasoning = _extract_reasoning(item)
-            if reasoning:
-                entry["reasoning"] = reasoning
-            models.append(entry)
-
-        return models
+        return await _discover_codex_models_impl(codex_client=codex_client, which=shutil.which)
 
     async def _discover_gemini_models(self) -> list[dict[str, Any]]:
         from gobby.adapters.gemini_acp_client import GeminiACPClient
@@ -636,285 +551,67 @@ class ProviderModelCatalog:
     async def _discover_grok_models_with_source(self) -> tuple[list[dict[str, Any]], str]:
         from gobby.adapters.grok_acp_client import GrokACPClient
 
-        if not shutil.which(GrokACPClient.cli_name):
-            try:
-                cached = grok_models_from_cache()
-            except Exception:
-                cached = []
-            if cached:
-                return cached, "cache"
-            return grok_static_models(), "static"
-
-        acp_error: Exception | None = None
-        try:
-            return await self._discover_acp_models(client_cls=GrokACPClient), "live"
-        except Exception as exc:
-            acp_error = exc
-
-        try:
-            cached = grok_models_from_cache()
-        except Exception:
-            cached = []
-        if cached:
-            return cached, "cache"
-        if acp_error is not None:
-            logger.debug("Grok ACP model discovery failed; using static fallback: %s", acp_error)
-        return grok_static_models(), "static"
+        return await _discover_grok_models_with_source_impl(
+            client_cls=GrokACPClient,
+            acp_discoverer=lambda client_cls: self._discover_acp_models(client_cls=client_cls),
+            which=shutil.which,
+            models_from_cache=grok_models_from_cache,
+            static_models=grok_static_models,
+            logger=logger,
+        )
 
     async def _discover_qwen_models(self) -> list[dict[str, Any]]:
         from gobby.adapters.qwen_acp_client import QwenACPClient
 
-        if not shutil.which(QwenACPClient.cli_name):
-            raise FileNotFoundError("qwen CLI not found in PATH")
-
-        acp_error: Exception | None = None
-        try:
-            acp_models = await self._discover_acp_models(client_cls=QwenACPClient)
-        except Exception as exc:
-            acp_models = []
-            acp_error = exc
-
-        models = _merge_models(acp_models, self._discover_qwen_configured_models())
-        if models:
-            return self._normalize_qwen_model_labels(models)
-        if acp_error is not None:
-            raise acp_error
-        return []
+        return await _discover_qwen_models_impl(
+            client_cls=QwenACPClient,
+            acp_discoverer=lambda client_cls: self._discover_acp_models(client_cls=client_cls),
+            configured_model_discoverer=self._discover_qwen_configured_models,
+            label_normalizer=self._normalize_qwen_model_labels,
+            which=shutil.which,
+        )
 
     def _discover_qwen_configured_models(self) -> list[dict[str, Any]]:
-        settings = self._load_qwen_settings()
-        model_providers = settings.get("modelProviders")
-        if not isinstance(model_providers, dict):
-            return []
-
-        models: list[dict[str, Any]] = []
-        for auth_type, configured_models in model_providers.items():
-            if auth_type not in _QWEN_AUTH_TYPES or auth_type == "qwen-oauth":
-                continue
-            if not isinstance(configured_models, list):
-                continue
-            for configured_model in configured_models:
-                if not isinstance(configured_model, dict):
-                    continue
-                model_id = str(configured_model.get("id") or "").strip()
-                if not model_id:
-                    continue
-                entry: dict[str, Any] = {
-                    "value": _format_qwen_model_value(model_id, auth_type),
-                    "label": str(configured_model.get("name") or model_id),
-                }
-                description = configured_model.get("description")
-                if isinstance(description, str) and description.strip():
-                    entry["description"] = description.strip()
-                models.append(entry)
-        return models
+        return _discover_qwen_configured_models_impl(self._load_qwen_settings())
 
     def _load_qwen_settings(self) -> dict[str, Any]:
-        merged: dict[str, Any] = {}
-        seen_paths: set[Path] = set()
-        settings_paths = [
-            Path.home() / ".qwen" / "settings.json",
-            Path.cwd() / ".qwen" / "settings.json",
-        ]
-
-        for settings_path in settings_paths:
-            if settings_path in seen_paths or not settings_path.exists():
-                continue
-            seen_paths.add(settings_path)
-            try:
-                payload = json.loads(settings_path.read_text(encoding="utf-8"))
-            except (OSError, json.JSONDecodeError) as exc:
-                logger.warning("Failed to read Qwen settings from %s: %s", settings_path, exc)
-                continue
-            if not isinstance(payload, dict):
-                continue
-            deep_merge(merged, payload)
-
-        return merged
+        return _load_qwen_settings_impl(deep_merge=deep_merge, logger=logger)
 
     def _normalize_qwen_model_labels(
         self,
         models: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        base_id_counts = Counter(
-            model_id
-            for model in models
-            if (model_id := _split_qwen_model_value(str(model.get("value") or ""))[0])
-        )
-        if not any(count > 1 for count in base_id_counts.values()):
-            return models
-
-        normalized: list[dict[str, Any]] = []
-        for model in models:
-            entry = copy.deepcopy(model)
-            value = str(entry.get("value") or "")
-            model_id, auth_type = _split_qwen_model_value(value)
-            if not auth_type or base_id_counts[model_id] <= 1:
-                normalized.append(entry)
-                continue
-            label = str(entry.get("label") or value)
-            if f"({auth_type})" not in label:
-                entry["label"] = f"{label} ({auth_type})"
-            normalized.append(entry)
-        return normalized
+        return _normalize_qwen_model_labels_impl(models)
 
     async def _discover_acp_models(
         self,
         *,
         client_cls: type[ACPClient],
     ) -> list[dict[str, Any]]:
-        if not shutil.which(client_cls.cli_name):
-            raise FileNotFoundError(f"{client_cls.cli_name} CLI not found in PATH")
-
-        cwd, created_cwd = await _model_discovery_cwd(client_cls.cli_name)
-        try:
-            await authorize_model_discovery_trust(client_cls.cli_name, cwd)
-        except Exception:
-            if created_cwd:
-                try:
-                    await asyncio.to_thread(shutil.rmtree, cwd)
-                except Exception as cleanup_exc:
-                    logger.error(
-                        "Failed to remove %s model-discovery cwd %s after authorization "
-                        "failure: %s",
-                        client_cls.cli_name,
-                        cwd,
-                        cleanup_exc,
-                        exc_info=True,
-                    )
-            raise
-        client = client_cls(
-            cwd=os.fspath(cwd),
-            purpose="model-discovery",
-            request_timeout=_MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS,
+        return await _discover_acp_models_impl(
+            client_cls=client_cls,
+            which=shutil.which,
+            model_discovery_cwd=_model_discovery_cwd,
+            authorize_trust=authorize_model_discovery_trust,
+            cleanup_tree=shutil.rmtree,
+            logger=logger,
         )
-        await client.start()
-        try:
-            session_info = client.session_info
-        finally:
-            await client.stop()
-
-        if client_cls.cli_name == "grok" and isinstance(session_info, dict):
-            return grok_models_from_acp(session_info)
-
-        raw_models = (
-            session_info.get("models", {}).get("availableModels", [])
-            if isinstance(session_info, dict)
-            else []
-        )
-        models: list[dict[str, Any]] = []
-        for item in raw_models:
-            if not isinstance(item, dict):
-                continue
-            model_id = str(item.get("modelId") or "").strip()
-            if not model_id:
-                continue
-            entry: dict[str, Any] = {
-                "value": model_id,
-                "label": str(item.get("name") or model_id),
-            }
-            context = extract_context_length_candidate(item, source_if_missing="provider_reported")
-            if context is not None:
-                entry["context_length"] = context.value
-                entry[CONTEXT_LENGTH_SOURCE_KEY] = context.source
-            reasoning = _extract_reasoning(item)
-            if reasoning:
-                entry["reasoning"] = reasoning
-            models.append(entry)
-        return models
 
     async def _discover_claude_models(self) -> list[dict[str, Any]]:
         if not shutil.which("claude"):
             raise FileNotFoundError("claude CLI not found in PATH")
 
-        probes = await asyncio.gather(
-            *[self._probe_claude_model(alias, label) for alias, label in _CLAUDE_ALIASES],
-            return_exceptions=True,
+        return await _discover_claude_models_impl(
+            probe_model=self._probe_claude_model,
+            short_error=_short_error,
         )
-
-        models: list[dict[str, Any]] = []
-        errors: list[str] = []
-        for probe in probes:
-            if isinstance(probe, Exception):
-                errors.append(_short_error(probe))
-                continue
-            if isinstance(probe, dict):
-                models.append(probe)
-
-        if not models:
-            raise RuntimeError("; ".join(errors) or "Claude model probes failed")
-        return models
 
     async def _probe_claude_model(self, alias: str, label: str) -> dict[str, Any]:
-        env = os.environ.copy()
-        env["GOBBY_HOOKS_DISABLED"] = "1"
-        proc = await asyncio.create_subprocess_exec(
-            "claude",
-            "--print",
-            "--output-format",
-            "json",
-            "--model",
+        return await _probe_claude_model_impl(
             alias,
-            "reply with ok",
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=env,
+            label,
+            context_length_resolver=context_length_for_model,
         )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45.0)
-        except TimeoutError as exc:
-            proc.kill()
-            await proc.wait()
-            raise TimeoutError(f"Claude probe timed out for {alias}") from exc
-
-        if proc.returncode != 0:
-            error = stderr.decode().strip() or stdout.decode().strip() or "probe failed"
-            raise RuntimeError(f"Claude {alias}: {error}")
-
-        lines = [line for line in stdout.decode().splitlines() if line.strip()]
-        if not lines:
-            raise RuntimeError(f"Claude {alias}: empty response")
-
-        payload = json.loads(lines[-1])
-        model_usage = payload.get("modelUsage")
-        if not isinstance(model_usage, dict) or not model_usage:
-            raise RuntimeError(f"Claude {alias}: missing modelUsage")
-
-        canonical_id = next(iter(model_usage))
-        return {
-            "value": alias,
-            "label": label,
-            "canonical_id": str(canonical_id),
-            "context_length": context_length_for_model("claude", str(canonical_id)),
-            "context_length_source": "static_default",
-            "reasoning": {"supported_efforts": list(_CLAUDE_REASONING_EFFORTS)},
-        }
 
     async def _get_cli_version(self, provider: str) -> str | None:
-        if not shutil.which(provider):
-            return None
-
-        if provider == "grok":
-            args = [provider, "version"]
-        else:
-            args = [provider, "--version"]
-
-        proc = await asyncio.create_subprocess_exec(
-            *args,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            env=os.environ.copy(),
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
-        except TimeoutError:
-            proc.kill()
-            await proc.wait()
-            return None
-
-        if proc.returncode != 0:
-            return None
-        output = stdout.decode().strip() or stderr.decode().strip()
-        return output or None
+        return await _get_cli_version_impl(provider, which=shutil.which)
