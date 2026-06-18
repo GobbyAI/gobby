@@ -14,7 +14,7 @@ pub const ARCHITECTURE_NARRATIVE_SYSTEM: &str = "You write architecture overview
 pub const CURATED_NAVIGATION_SYSTEM: &str = "You design a curated navigation layer for grounded code documentation. Return strict JSON only. Name user-facing concept modules, organize them into a hierarchy, and create short narrative tour pages. Use only supplied module and file identifiers, and link into reference pages instead of duplicating source detail. Order narrative_pages as a learning path: foundational subsystems first, then the layers that build on them, so the tour reads from chapter one onward.";
 pub const CONCEPT_PAGE_SYSTEM: &str = "You write a reference explainer page for one concept in a codebase, written for an engineer who is new to it. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown page with these sections, in order: '## Purpose' (what this concept is and the problem it solves), '## Covers / Does not cover' (the scope boundaries), '## Architecture' (how the pieces fit together; a diagram is injected separately, so describe the structure in prose), '## Data flow' (a numbered list tracing the real runtime flow), '## Key components' (a compact Markdown table of the most important symbols and their role), and '## Where to start' (which page or symbol to read first). Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
 pub const NARRATIVE_PAGE_SYSTEM: &str = "You write one chapter of a guided, beginner-friendly tour of a codebase, in the style of a progressive tutorial. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown chapter with these sections, in order: '## Why this matters' (the motivation and the problem this part of the system solves), '## How it works' (a numbered, step-by-step walkthrough of the real flow, grounded in the supplied symbols), '## Key components' (a compact Markdown table of the important symbols), and '## What to read next' (which chapter or reference page to read next). You may include at most one brief analogy if it is anchored to the supplied source; do not pad with long generic metaphors. Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
-pub const VERIFY_SYSTEM: &str = "You are a strict citation auditor for code documentation. You receive a draft explanation split into numbered blocks and the source excerpts the page is allowed to rely on. For each block, decide whether its specific technical claims (names, behaviors, control flow, data flow, relationships) are supported by the supplied source excerpts. A block is UNSUPPORTED when it states a concrete technical claim that the excerpts do not show, contradict, or that invents files, symbols, line numbers, or behavior. Treat section headings, navigational sentences, and generic framing as supported. Return ONLY a JSON array of the integer IDs of the unsupported blocks, e.g. [2,5]; return [] when every block is supported. Output nothing but the JSON array: no prose, no explanation, no code fences. Never rewrite the blocks.";
+pub const VERIFY_SYSTEM: &str = "You are a strict citation auditor for code documentation. You receive a draft explanation split into numbered blocks, optional Symbols evidence, and the source excerpts the page is allowed to rely on. For each block, decide whether its specific technical claims (names, behaviors, control flow, data flow, relationships) are supported by the supplied evidence. Treat Symbols evidence as authoritative for symbol names, kinds, components, line ranges, and purposes when present; when it is absent, rely on source excerpts only. A block is UNSUPPORTED when it states a concrete technical claim that the evidence does not show, contradicts, or that invents files, symbols, line numbers, or behavior. Treat section headings, navigational sentences, and generic framing as supported. Return ONLY a JSON array of the integer IDs of the unsupported blocks, e.g. [2,5]; return [] when every block is supported. Output nothing but the JSON array: no prose, no explanation, no code fences. Never rewrite the blocks.";
 
 pub fn symbol_prompt(symbol: &Symbol) -> String {
     let mut prompt = format!(
@@ -44,34 +44,7 @@ pub fn file_prompt(file: &str, symbols: &[SymbolSummary], sources: &[SourceExcer
     let mut prompt = format!(
         "Write a narrative explainer page for this source file from its AST symbols and source excerpt.\n\nFile: {file}\n\nSymbols:\n"
     );
-    if symbols.is_empty() {
-        prompt.push_str("- No indexed symbols.\n");
-    } else {
-        write_markdown_table_header(
-            &mut prompt,
-            &[
-                "Symbol",
-                "Kind",
-                "Component",
-                "Component ID",
-                "Lines",
-                "Purpose",
-            ],
-        );
-        for symbol in symbols {
-            write_markdown_table_row(
-                &mut prompt,
-                [
-                    symbol.name.clone(),
-                    symbol.kind.clone(),
-                    symbol.component_label.clone(),
-                    symbol.component_id.clone(),
-                    format!("{}-{}", symbol.line_start, symbol.line_end),
-                    symbol.purpose.clone(),
-                ],
-            );
-        }
-    }
+    append_symbol_summary_table(&mut prompt, symbols);
     append_source_excerpt_section(&mut prompt, sources);
     prompt
 }
@@ -256,17 +229,33 @@ pub fn narrative_page_prompt(
     )
 }
 
-/// Build the verification prompt for a generated curated page: the draft prose
-/// split into numbered blocks, followed by the cited source excerpts that are
-/// the only evidence the auditor may rely on (pair with [`VERIFY_SYSTEM`]). The
-/// block IDs here are the 1-based positions the verifier returns and the caller
-/// strips, so numbering must stay in lockstep with the caller's block split.
-pub fn verify_prompt(blocks: &[String], sources: &[SourceExcerpt]) -> String {
-    let mut prompt = String::from(
-        "Audit each numbered draft block against the source excerpts below.\n\nDraft blocks:\n",
-    );
+/// Build the verification prompt for a generated page: the draft prose split
+/// into numbered blocks, followed by the evidence the auditor may rely on (pair
+/// with [`VERIFY_SYSTEM`]). Symbol-bearing file pages include the same table
+/// used for generation; content files with no indexed symbols stay source-only.
+/// The block IDs here are the 1-based positions the verifier returns and the
+/// caller strips, so numbering must stay in lockstep with the caller's block
+/// split.
+pub fn verify_prompt(
+    blocks: &[String],
+    symbols: &[SymbolSummary],
+    sources: &[SourceExcerpt],
+) -> String {
+    let mut prompt = if symbols.is_empty() {
+        String::from(
+            "Audit each numbered draft block against the source excerpts below.\n\nDraft blocks:\n",
+        )
+    } else {
+        String::from(
+            "Audit each numbered draft block against the Symbols table and source excerpts below.\n\nDraft blocks:\n",
+        )
+    };
     for (index, block) in blocks.iter().enumerate() {
         let _ = writeln!(prompt, "[{}] {}", index + 1, bounded_excerpt(block.trim()));
+    }
+    if !symbols.is_empty() {
+        prompt.push_str("\nSymbols:\n");
+        append_symbol_summary_table(&mut prompt, symbols);
     }
     append_source_excerpt_section_n(&mut prompt, sources, VERIFY_SOURCE_EXCERPTS);
     prompt
@@ -320,6 +309,38 @@ fn append_evidence_table(prompt: &mut String, headers: &[&str; 4], rows: &[PageE
                 row.kind.clone(),
                 row.citation.clone(),
                 summary_excerpt(&row.summary),
+            ],
+        );
+    }
+}
+
+fn append_symbol_summary_table(prompt: &mut String, symbols: &[SymbolSummary]) {
+    if symbols.is_empty() {
+        prompt.push_str("- No indexed symbols.\n");
+        return;
+    }
+
+    write_markdown_table_header(
+        prompt,
+        &[
+            "Symbol",
+            "Kind",
+            "Component",
+            "Component ID",
+            "Lines",
+            "Purpose",
+        ],
+    );
+    for symbol in symbols {
+        write_markdown_table_row(
+            prompt,
+            [
+                symbol.name.clone(),
+                symbol.kind.clone(),
+                symbol.component_label.clone(),
+                symbol.component_id.clone(),
+                format!("{}-{}", symbol.line_start, symbol.line_end),
+                symbol.purpose.clone(),
             ],
         );
     }
@@ -594,6 +615,41 @@ mod tests {
 
         assert!(prompt.contains("| Symbol | Kind | Component | Component ID | Lines | Purpose |"));
         assert!(prompt.contains("| run\\|cli | function | run [function] | component\\|id | 7-9 | Handles command dispatch. |"));
+    }
+
+    #[test]
+    fn verify_prompt_includes_symbols_as_authoritative_evidence() {
+        let symbol = SymbolSummary {
+            name: "run|cli".to_string(),
+            kind: "function".to_string(),
+            component_id: "component|id".to_string(),
+            component_label: "run [function]".to_string(),
+            line_start: 7,
+            line_end: 9,
+            purpose: "Handles command dispatch.".to_string(),
+        };
+        let blocks = vec!["The run symbol handles command dispatch.".to_string()];
+
+        let prompt = verify_prompt(&blocks, &[symbol], &[]);
+
+        assert!(prompt.contains("Symbols:\n"));
+        assert!(prompt.contains("| Symbol | Kind | Component | Component ID | Lines | Purpose |"));
+        assert!(prompt.contains("| run\\|cli | function | run [function] | component\\|id | 7-9 | Handles command dispatch. |"));
+    }
+
+    #[test]
+    fn verify_prompt_without_symbols_stays_source_only() {
+        let blocks = vec!["Grounded claim.".to_string()];
+
+        let prompt = verify_prompt(&blocks, &[], &[]);
+
+        assert!(
+            prompt
+                .starts_with("Audit each numbered draft block against the source excerpts below.")
+        );
+        assert!(!prompt.contains("Symbols:"));
+        assert!(!prompt.contains("No indexed symbols"));
+        assert!(prompt.contains("Source excerpts:\n- No source excerpts.\n"));
     }
 
     fn excerpt(path: &str, content: &str) -> SourceExcerpt {

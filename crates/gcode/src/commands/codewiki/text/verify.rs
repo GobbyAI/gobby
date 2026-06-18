@@ -10,7 +10,7 @@
 //! [`super::resolve_text_verifier`] closure is just the model call.
 
 use crate::commands::codewiki::TextVerifier;
-use crate::commands::codewiki::prompts::{self, SourceExcerpt};
+use crate::commands::codewiki::prompts::{self, SourceExcerpt, SymbolSummary};
 
 /// Outcome of one verification pass over generated prose.
 pub(crate) enum VerifyOutcome {
@@ -36,6 +36,7 @@ pub(crate) enum VerifyOutcome {
 pub(crate) fn verify_and_strip(
     verify: &mut Option<&mut TextVerifier<'_>>,
     text: &str,
+    symbols: &[SymbolSummary],
     sources: &[SourceExcerpt],
 ) -> VerifyOutcome {
     let Some(verify) = verify.as_deref_mut() else {
@@ -45,7 +46,7 @@ pub(crate) fn verify_and_strip(
     if blocks.is_empty() {
         return VerifyOutcome::Skipped;
     }
-    let prompt = prompts::verify_prompt(&blocks, sources);
+    let prompt = prompts::verify_prompt(&blocks, symbols, sources);
     let Some(response) = verify(&prompt, prompts::VERIFY_SYSTEM) else {
         // Verifier unavailable (routed off / transport failure): skip, undegraded.
         return VerifyOutcome::Skipped;
@@ -125,6 +126,18 @@ mod tests {
         }]
     }
 
+    fn symbols() -> Vec<SymbolSummary> {
+        vec![SymbolSummary {
+            name: "run|cli".to_string(),
+            kind: "function".to_string(),
+            component_id: "component|id".to_string(),
+            component_label: "run [function]".to_string(),
+            line_start: 7,
+            line_end: 9,
+            purpose: "Handles command dispatch.".to_string(),
+        }]
+    }
+
     #[test]
     fn split_blocks_separates_on_blank_lines() {
         let blocks = split_blocks("## Purpose\n\nFirst para.\n\nSecond para.\n");
@@ -161,7 +174,7 @@ mod tests {
         // Verifier flags block 3 (the planted hallucination).
         let mut verifier = |_prompt: &str, _system: &str| Some("[3]".to_string());
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
-        match verify_and_strip(&mut verify, text, &sources()) {
+        match verify_and_strip(&mut verify, text, &[], &sources()) {
             VerifyOutcome::Verified { text, degraded } => {
                 assert!(degraded, "stripping a block degrades the page");
                 assert!(text.contains("Grounded claim."), "{text}");
@@ -176,7 +189,7 @@ mod tests {
         let text = "## Purpose\n\nGrounded claim.";
         let mut verifier = |_prompt: &str, _system: &str| Some("[]".to_string());
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
-        match verify_and_strip(&mut verify, text, &sources()) {
+        match verify_and_strip(&mut verify, text, &[], &sources()) {
             VerifyOutcome::Verified {
                 text: out,
                 degraded,
@@ -189,13 +202,41 @@ mod tests {
     }
 
     #[test]
+    fn verify_forwards_symbol_evidence_to_prompt() {
+        let text = "## Purpose\n\nThe run symbol handles command dispatch.";
+        let mut captured_prompt = String::new();
+        {
+            let mut verifier = |prompt: &str, _system: &str| {
+                captured_prompt = prompt.to_string();
+                Some("[]".to_string())
+            };
+            let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
+            assert!(matches!(
+                verify_and_strip(&mut verify, text, &symbols(), &sources()),
+                VerifyOutcome::Verified {
+                    text: _,
+                    degraded: false
+                }
+            ));
+        }
+
+        assert!(captured_prompt.contains("Symbols:\n"), "{captured_prompt}");
+        assert!(
+            captured_prompt.contains(
+                "| run\\|cli | function | run [function] | component\\|id | 7-9 | Handles command dispatch. |"
+            ),
+            "{captured_prompt}"
+        );
+    }
+
+    #[test]
     fn verify_skips_when_verifier_unavailable() {
         let text = "## Purpose\n\nGrounded claim.";
         // Closure returns None: verifier ran but the model call failed.
         let mut verifier = |_prompt: &str, _system: &str| None;
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
         assert!(matches!(
-            verify_and_strip(&mut verify, text, &sources()),
+            verify_and_strip(&mut verify, text, &[], &sources()),
             VerifyOutcome::Skipped
         ));
     }
@@ -205,7 +246,7 @@ mod tests {
         let text = "## Purpose\n\nGrounded claim.";
         let mut verify: Option<&mut TextVerifier<'_>> = None;
         assert!(matches!(
-            verify_and_strip(&mut verify, text, &sources()),
+            verify_and_strip(&mut verify, text, &[], &sources()),
             VerifyOutcome::Skipped
         ));
     }
@@ -216,7 +257,7 @@ mod tests {
         let mut verifier = |_prompt: &str, _system: &str| Some("the page looks fine".to_string());
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
         assert!(matches!(
-            verify_and_strip(&mut verify, text, &sources()),
+            verify_and_strip(&mut verify, text, &[], &sources()),
             VerifyOutcome::Unusable
         ));
     }
@@ -228,7 +269,7 @@ mod tests {
         let mut verifier = |_prompt: &str, _system: &str| Some("[1, 2]".to_string());
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
         assert!(matches!(
-            verify_and_strip(&mut verify, text, &sources()),
+            verify_and_strip(&mut verify, text, &[], &sources()),
             VerifyOutcome::Unusable
         ));
     }

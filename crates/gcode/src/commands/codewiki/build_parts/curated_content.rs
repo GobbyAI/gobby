@@ -97,7 +97,7 @@ pub(crate) fn curated_page_body(
             // by the cited source before the page is grounded and rendered. An
             // unavailable verifier proceeds undegraded; an unusable verdict (or a
             // page stripped to nothing) falls back to the structural body.
-            let (text, verify_degraded) = match verify_and_strip(verify, &text, &sources) {
+            let (text, verify_degraded) = match verify_and_strip(verify, &text, &[], &sources) {
                 VerifyOutcome::Skipped => (text, false),
                 VerifyOutcome::Verified { text, degraded } => (text, degraded),
                 VerifyOutcome::Unusable => {

@@ -206,7 +206,7 @@ fn build_file_body(
         }
         Generation::Skipped => return structural_file_body(file, symbol_docs),
     };
-    let text = match verify_and_strip(verify, &text, sources) {
+    let text = match verify_and_strip(verify, &text, prompt_symbols, sources) {
         VerifyOutcome::Skipped => text,
         VerifyOutcome::Verified {
             text,

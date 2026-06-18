@@ -328,6 +328,66 @@ fn file_page_verify_strips_unsupported_block() {
     );
 }
 
+#[test]
+fn file_page_verify_uses_symbol_table_as_evidence() {
+    let input = CodewikiInput {
+        leading_chunks: std::collections::BTreeMap::new(),
+        files: vec!["src/lib.rs".to_string()],
+        graph_edges: Vec::new(),
+        graph_availability: CodewikiGraphAvailability::Available,
+        symbols: vec![test_symbol(
+            "src/lib.rs",
+            "Client",
+            "class",
+            1,
+            "pub struct Client {",
+        )],
+    };
+
+    let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        (system == prompts::FILE_SYSTEM).then(|| {
+            "## Overview\n\nThe Client symbol is a class in this file [src/lib.rs:1].\n\n\
+             ## How it fits\n\nIt anchors the module [src/lib.rs:1]."
+                .to_string()
+        })
+    };
+    let mut saw_symbols = false;
+    let docs = {
+        let mut verifier = |prompt: &str, _system: &str| {
+            saw_symbols = prompt.contains("Symbols:\n")
+                && prompt
+                    .contains("| Symbol | Kind | Component | Component ID | Lines | Purpose |")
+                && prompt.contains("| Client | class | Client [class] |");
+            Some(if saw_symbols { "[]" } else { "[2]" }.to_string())
+        };
+
+        generate_hierarchical_docs_with_verify(
+            &input,
+            Some(&mut generator),
+            Some(&mut verifier),
+            AiDepth::Files,
+        )
+    };
+    let file = docs
+        .iter()
+        .find(|doc| doc.path == "code/files/src/lib.rs.md")
+        .expect("file doc");
+
+    assert!(
+        saw_symbols,
+        "verifier prompt should include symbol evidence"
+    );
+    assert!(
+        file.content.contains("The Client symbol is a class"),
+        "{}",
+        file.content
+    );
+    assert!(
+        !file.degraded,
+        "symbol-supported file claim should survive verification"
+    );
+}
+
 fn repo_marker_input() -> CodewikiInput {
     let files = [
         "alpha.rs",
