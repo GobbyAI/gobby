@@ -14,6 +14,8 @@ import pytest
 from gobby.config.sessions import DigestConfig
 from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
+    _build_title_synthesis_prompt,
+    _build_turn_record_prompt,
     _get_next_turn_number,
     _parse_turn_record_response,
     _read_last_turn_from_transcript,
@@ -25,7 +27,11 @@ from gobby.memory.digest import (
     memory_sync_export,
     memory_sync_import,
 )
-from gobby.memory.title_heuristics import build_heuristic_title, heuristic_title_from_transcript
+from gobby.memory.title_heuristics import (
+    build_heuristic_title,
+    heuristic_title_from_transcript,
+    normalize_title_candidate,
+)
 from tests._timing import wait_forever
 
 pytestmark = pytest.mark.unit
@@ -164,6 +170,8 @@ class TestBuildHeuristicTitle:
         assert build_heuristic_title("   ") is None
         assert build_heuristic_title("/clear") is None
         assert build_heuristic_title("/gobby plan") is None
+        assert build_heuristic_title("/gobby coderabbit") is None
+        assert build_heuristic_title("$gobby coderabbit") is None
 
     def test_returns_none_for_interrupt_control_marker(self) -> None:
         assert build_heuristic_title("[Request interrupted by user]") is None
@@ -243,8 +251,14 @@ class TestBuildHeuristicTitle:
         )
         assert title == "Why aren't tmux titles updating in claude"
 
+        assert (
+            build_heuristic_title("$gobby coderabbit fix review comments") == "Fix review comments"
+        )
+
     def test_strips_non_gobby_slash_command(self) -> None:
         assert build_heuristic_title("/loop check the deploy") == "Check the deploy"
+        assert build_heuristic_title("$skill do thing") == "Do thing"
+        assert build_heuristic_title("/skill do thing") == "Do thing"
 
     def test_strips_single_slash_command_with_no_args(self) -> None:
         assert build_heuristic_title("/help") is None
@@ -252,6 +266,41 @@ class TestBuildHeuristicTitle:
 
     def test_plain_prompt_unaffected_by_slash_stripping(self) -> None:
         assert build_heuristic_title("hello world") == "Hello world"
+
+
+class TestNormalizeTitleCandidate:
+    """Tests for LLM title candidate cleanup."""
+
+    @pytest.mark.parametrize(
+        "candidate",
+        [
+            "/gobby coderabbit",
+            "$gobby coderabbit",
+            "/help",
+            "$skill",
+        ],
+    )
+    def test_rejects_command_only_candidates(self, candidate: str) -> None:
+        assert normalize_title_candidate(candidate) is None
+
+    @pytest.mark.parametrize(
+        ("candidate", "expected"),
+        [
+            ("/gobby coderabbit fix review comments", "Fix review comments"),
+            ("$gobby coderabbit fix review comments", "Fix review comments"),
+            ("/skill do thing", "Do thing"),
+            ("$skill do thing", "Do thing"),
+        ],
+    )
+    def test_strips_command_prefix_from_candidates(
+        self,
+        candidate: str,
+        expected: str,
+    ) -> None:
+        assert normalize_title_candidate(candidate) == expected
+
+    def test_preserves_plain_candidate(self) -> None:
+        assert normalize_title_candidate("Digest JSON Titles") == "Digest JSON Titles"
 
 
 class TestShouldUpdateDigestTitle:
@@ -480,6 +529,21 @@ class TestHeuristicTitleFromTranscript:
         assert title == "Fix the actual user request"
 
     @pytest.mark.asyncio
+    async def test_skips_command_only_router_prompts(self, tmp_path: Path) -> None:
+        import json
+
+        transcript = tmp_path / "transcript.jsonl"
+        records = [
+            _claude_user_record("$gobby coderabbit", idx=1),
+            _claude_user_record("/gobby coderabbit", idx=2),
+            _claude_user_record("$gobby coderabbit fix review comments", idx=3),
+        ]
+        transcript.write_text("\n".join(json.dumps(r) for r in records))
+
+        title = await heuristic_title_from_transcript(str(transcript), "claude")
+        assert title == "Fix review comments"
+
+    @pytest.mark.asyncio
     async def test_opening_prompt_wins_on_long_transcript(self, tmp_path: Path) -> None:
         """The opening prompt wins even with a mid-session /clear, an
         assistant-heavy tail, tool_result user records, and >200 later turns —
@@ -636,6 +700,18 @@ class TestBuildTurnAndDigest:
             ]
         )
         return service
+
+    def test_fallback_prompts_instruct_titles_to_ignore_router_commands(self) -> None:
+        turn_prompt = _build_turn_record_prompt("$gobby coderabbit fix comments", "Done")
+        title_prompt = _build_title_synthesis_prompt("### Turn 1\nUser ran /help.")
+
+        for prompt in (turn_prompt, title_prompt):
+            assert "/gobby coderabbit" in prompt
+            assert "$gobby coderabbit" in prompt
+            assert "/help" in prompt
+            assert "$skill" in prompt
+            assert "Never" in prompt
+            assert "`/` or `$`" in prompt
 
     @pytest.mark.asyncio
     async def test_returns_none_when_disabled(self, mock_session_manager, mock_llm_service):

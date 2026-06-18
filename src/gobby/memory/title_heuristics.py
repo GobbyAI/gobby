@@ -25,6 +25,8 @@ _TITLE_LEADING_PHRASE_RE = re.compile(
     re.IGNORECASE,
 )
 _TITLE_BREAK_RE = re.compile(r"(?<=[.!?])\s+|[:;]\s+|\s+[/-]\s+")
+_TITLE_COMMAND_PREFIXES = ("/", "$")
+_TITLE_ROUTER_COMMANDS = {"/gobby", "$gobby"}
 _TITLE_SUBCOMMAND_RE = re.compile(r"^[a-z][a-z0-9-]{0,15}$")
 _TITLE_ORCHESTRATION_BOILERPLATE_RE = re.compile(
     r"^a previous agent produced the plan below\b",
@@ -105,30 +107,35 @@ def _extract_markdown_h1_title(text: str) -> str | None:
             continue
         candidate = _TITLE_LINK_RE.sub(r"\1", line[2:]).replace("`", " ")
         candidate = re.sub(r"\s+", " ", candidate).strip(" \t\r\n.,:;!?-")
-        if not candidate or candidate.startswith("/"):
+        if not candidate or _has_command_prefix(candidate):
             return None
         return _truncate_title(candidate)
     return None
 
 
-def _strip_slash_command_prefix(candidate: str) -> str:
-    """Strip leading slash-command tokens from a title candidate.
+def _has_command_prefix(value: str) -> bool:
+    """Return whether a value starts with user-facing command syntax."""
+    return value.startswith(_TITLE_COMMAND_PREFIXES)
 
-    Slash-prefixed first prompts (``/gobby plan ...``, ``/loop check ...``)
-    would otherwise yield empty or garbage titles. Strip the command token so
-    the user's actual intent surfaces. ``/gobby`` is the namespace prefix used
-    by every Gobby slash command, so when it leads, the next short lowercase
-    token is the subcommand and also gets stripped, leaving the args (if any)
-    as the title source. A bare ``/gobby plan`` therefore strips to empty,
-    falling back to the digest path later.
+
+def _strip_command_prefix(candidate: str) -> str:
+    """Strip leading slash/dollar command tokens from a title candidate.
+
+    Command-prefixed first prompts (``/gobby plan ...``, ``$gobby coderabbit ...``,
+    ``/loop check ...``) would otherwise yield empty or garbage titles. Strip the
+    command token so the user's actual intent surfaces. ``/gobby`` and ``$gobby``
+    are router prefixes, so when either leads, the next short lowercase token is
+    treated as the skill/subcommand and also gets stripped, leaving the args (if
+    any) as the title source. A bare ``$gobby coderabbit`` therefore strips to
+    empty, falling back to digest synthesis later.
     """
     parts = candidate.split()
-    if not parts or not parts[0].startswith("/"):
+    if not parts or not _has_command_prefix(parts[0]):
         return candidate
     leading = parts.pop(0)
-    if leading.lower() == "/gobby" and parts and _TITLE_SUBCOMMAND_RE.match(parts[0]):
+    if leading.lower() in _TITLE_ROUTER_COMMANDS and parts and _TITLE_SUBCOMMAND_RE.match(parts[0]):
         parts.pop(0)
-    while parts and parts[0].startswith("/"):
+    while parts and _has_command_prefix(parts[0]):
         parts.pop(0)
     return " ".join(parts)
 
@@ -170,8 +177,8 @@ def build_heuristic_title(prompt_text: Any) -> str | None:
     candidate = re.sub(r"\s+", " ", lines[0]).strip()
     if not candidate:
         return None
-    if candidate.startswith("/"):
-        candidate = _strip_slash_command_prefix(candidate)
+    if _has_command_prefix(candidate):
+        candidate = _strip_command_prefix(candidate)
         if not candidate:
             return None
 
@@ -262,10 +269,17 @@ def normalize_title_candidate(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
     title = value.strip().strip('"').strip("'")
+    command_prefixed = _has_command_prefix(title)
+    if command_prefixed:
+        title = _strip_command_prefix(title)
     title = _truncate_title(title)
     if is_template_placeholder(title):
         return None
-    return title or None
+    if not title:
+        return None
+    if command_prefixed:
+        return title[0].upper() + title[1:]
+    return title
 
 
 def is_template_placeholder(value: str) -> bool:

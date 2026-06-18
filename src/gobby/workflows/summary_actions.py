@@ -14,10 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal
 
 import aiofiles
 
-if TYPE_CHECKING:
-    from gobby.config.sessions import SessionSummaryConfig
-    from gobby.sessions.analyzer import HandoffContext
-
+from gobby.memory.title_heuristics import normalize_title_candidate
 from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
 from gobby.workflows.git_utils import (
     get_file_changes,
@@ -25,6 +22,10 @@ from gobby.workflows.git_utils import (
     get_git_status,
     get_recent_git_commits,
 )
+
+if TYPE_CHECKING:
+    from gobby.config.sessions import SessionSummaryConfig
+    from gobby.sessions.analyzer import HandoffContext
 
 logger = logging.getLogger(__name__)
 
@@ -396,14 +397,16 @@ def _resolve_window_title(session: Any, terminal_context: dict[str, Any], title:
     if not title or _contains_unresolved_session_ref(title):
         title = _synthesize_fallback_title(session, terminal_context)
     title = _strip_window_ref_prefix(str(title), ref)
-    if not title:
-        title = _strip_window_ref_prefix(
+    resolved_title = normalize_title_candidate(title)
+    if not resolved_title:
+        fallback_title = _strip_window_ref_prefix(
             _synthesize_fallback_title(session, terminal_context),
             ref,
         )
+        resolved_title = normalize_title_candidate(fallback_title) or ""
     if ref:
-        return f"{ref}: {title}"
-    return title
+        return f"{ref}: {resolved_title}"
+    return resolved_title
 
 
 def _tmux_manager_for_session(session: Any, terminal_context: dict[str, Any]) -> Any:

@@ -17,6 +17,12 @@ Return only valid JSON with exactly these string fields:
 - `turn_markdown`: non-empty markdown record of this turn in chronological order
 - `title_candidate`: concise 3-5 word session title candidate
 
+The `title_candidate` must describe the actual work, not command syntax. If the
+user prompt begins with a router or skill command such as `/gobby coderabbit`,
+`$gobby coderabbit`, `/help`, or `$skill`, ignore that command prefix and title
+the trailing task text or the work the agent performed. Never return a title
+that starts with `/` or `$`.
+
 `turn_markdown` must cover:
 - What the user asked or requested
 - What the agent found, decided, or accomplished

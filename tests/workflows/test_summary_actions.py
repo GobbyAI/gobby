@@ -436,6 +436,20 @@ class TestRenameTmuxWindow:
         assert _resolve_window_title(session, {}, "#99 codex") == "#99: codex"
         assert _resolve_window_title(session, {}, "#99: #99 codex") == "#99: codex"
 
+    def test_resolve_window_title_sanitizes_command_titles(self) -> None:
+        from gobby.workflows.summary_actions import _resolve_window_title
+
+        session = MagicMock()
+        session.ref = "#99"
+        session.source = "codex"
+
+        assert _resolve_window_title(session, {}, "$gobby coderabbit") == "#99: codex"
+        assert _resolve_window_title(session, {}, "/gobby coderabbit") == "#99: codex"
+        assert (
+            _resolve_window_title(session, {}, "#99: $gobby coderabbit fix review comments")
+            == "#99: Fix review comments"
+        )
+
     @pytest.mark.asyncio
     async def test_unresolved_title_falls_back_before_prefixing(self) -> None:
         """A stored placeholder title is replaced with the source fallback."""
@@ -948,6 +962,26 @@ class TestRepairMissingSessionTitle:
         session.title = ""
         session.title_source = None
         session.turn_count = 3
+        session.transcript_path = str(transcript)
+
+        manager = MagicMock()
+
+        assert await repair_missing_session_title(manager, session) is None
+        manager.update_title.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_does_not_persist_command_only_transcript_prompt(self, tmp_path) -> None:
+        from gobby.workflows.summary_actions import repair_missing_session_title
+
+        transcript = tmp_path / "transcript.jsonl"
+        self._write_claude_transcript(transcript, opening="$gobby coderabbit")
+
+        session = MagicMock()
+        session.id = "sess-1"
+        session.source = "claude"
+        session.title = ""
+        session.title_source = None
+        session.turn_count = 1
         session.transcript_path = str(transcript)
 
         manager = MagicMock()

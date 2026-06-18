@@ -317,6 +317,11 @@ def _build_turn_record_prompt(prompt_text: str, response_text: str) -> str:
         "Return only valid JSON with exactly these string fields:\n"
         "- turn_markdown: non-empty markdown record of this turn in chronological order\n"
         "- title_candidate: concise 3-5 word session title candidate\n\n"
+        "The title_candidate must describe the actual work, not command syntax. "
+        "If the user prompt begins with a router or skill command such as "
+        "`/gobby coderabbit`, `$gobby coderabbit`, `/help`, or `$skill`, ignore "
+        "that command prefix and title the trailing task text or the work the "
+        "agent performed. Never return a title that starts with `/` or `$`.\n\n"
         "turn_markdown must cover:\n"
         "- What the user asked or requested\n"
         "- What the agent found, decided, or accomplished\n"
@@ -335,7 +340,10 @@ def _build_title_synthesis_prompt(digest_markdown: str) -> str:
     """Build the title synthesis prompt inline (fallback when DB prompts unavailable)."""
     return (
         "Given a session's turn-by-turn digest, produce a 3-5 word title\n"
-        "reflecting the current focus of the session.\n\n"
+        "reflecting the current focus of the session. Ignore leading router or\n"
+        "skill command syntax such as `/gobby coderabbit`, `$gobby coderabbit`,\n"
+        "`/help`, or `$skill`; title the actual task or work instead. Never\n"
+        "output a title that starts with `/` or `$`.\n\n"
         f"## Session Digest\n{digest_markdown}\n\n"
         "Output only the title, nothing else."
     )
