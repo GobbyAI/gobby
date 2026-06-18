@@ -479,9 +479,9 @@ class TestEnsureDefaults:
         assert result["success"] is True
         assert "gobby-tasks.validation.candidates" in result["keys_inserted"]
         assert "gobby_tasks.validation.candidates" not in result["keys_inserted"]
-        assert config_store.get("gobby-tasks.validation.candidates")[0] == (
-            "gemini/gemini-3.5-flash"
-        )
+        stored_candidate = config_store.get("gobby-tasks.validation.candidates")[0]
+        expected_candidate = DaemonConfig().gobby_tasks.validation.candidates[0].candidate
+        assert stored_candidate["candidate"] == expected_candidate
         assert config_store.get("gobby_tasks.validation.candidates") is None
 
 
@@ -969,7 +969,10 @@ class TestDeleteConfig:
         config_state: dict[str, DaemonConfig],
     ) -> None:
         """Deleting related feature overrides should not retain derived candidates."""
-        mid_candidates = list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID])
+        mid_candidates = [
+            candidate.model_dump(mode="json")
+            for candidate in DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID]
+        ]
         config_store.set("session_summary.candidates", mid_candidates)
         config_store.set("session_summary.profile", FeatureProfile.MID.value)
         config_state["config"] = DaemonConfig(
@@ -989,7 +992,10 @@ class TestDeleteConfig:
         assert "session_summary.candidates" not in config_store.list_keys()
         assert "session_summary.profile" in config_store.list_keys()
         assert config_state["config"].session_summary.profile == FeatureProfile.MID
-        assert config_state["config"].session_summary.candidates == mid_candidates
+        assert [
+            candidate.model_dump(mode="json")
+            for candidate in config_state["config"].session_summary.candidates
+        ] == mid_candidates
 
         result = delete_tool(key="session_summary.profile")
 
