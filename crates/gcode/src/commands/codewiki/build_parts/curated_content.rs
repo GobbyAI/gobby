@@ -40,6 +40,7 @@ pub(crate) struct CuratedBody {
     /// hidden behind fallback prose (review #1). `false` for `--ai off` skips,
     /// where the structural body is the intended, non-degraded output.
     pub(crate) degraded: bool,
+    pub(crate) verify_notes: Vec<VerifyNote>,
 }
 
 /// Run the content pass for one curated page.
@@ -66,6 +67,7 @@ pub(crate) fn curated_page_body(
         return CuratedBody {
             body: None,
             degraded: false,
+            verify_notes: Vec::new(),
         };
     }
 
@@ -93,40 +95,36 @@ pub(crate) fn curated_page_body(
 
     match maybe_generate(generate, &prompt, system, PromptTier::Aggregate) {
         Generation::Generated(text) => {
-            // Grounded verification: strip blocks the verifier finds unsupported
-            // by the cited source before the page is grounded and rendered. An
-            // unavailable verifier proceeds undegraded; an unusable verdict (or a
-            // page stripped to nothing) falls back to the structural body.
-            let (text, verify_degraded) = match verify_and_strip(verify, &text, &[], &sources) {
-                VerifyOutcome::Skipped => (text, false),
-                VerifyOutcome::Verified { text, degraded } => (text, degraded),
-                VerifyOutcome::Unusable => {
-                    return CuratedBody {
-                        body: Some(structural_body(kind, title, &members, &symbols)),
-                        degraded: true,
-                    };
-                }
+            // Grounded verification leaves prose intact and records unsupported
+            // claims as frontmatter-only notes.
+            let (text, verify_notes) = match verify_with_notes(verify, &text, &[], &sources) {
+                VerifyOutcome::Skipped => (text, Vec::new()),
+                VerifyOutcome::Verified { text, notes } => (text, notes),
             };
             let grounded = ground_text(&text, spans, None);
             if grounded.trim().is_empty() {
                 CuratedBody {
                     body: Some(structural_body(kind, title, &members, &symbols)),
-                    degraded: true,
+                    degraded: false,
+                    verify_notes: Vec::new(),
                 }
             } else {
                 CuratedBody {
                     body: Some(grounded),
-                    degraded: verify_degraded,
+                    degraded: false,
+                    verify_notes,
                 }
             }
         }
         Generation::Failed => CuratedBody {
             body: Some(structural_body(kind, title, &members, &symbols)),
             degraded: true,
+            verify_notes: Vec::new(),
         },
         Generation::Skipped => CuratedBody {
             body: Some(structural_body(kind, title, &members, &symbols)),
             degraded: false,
+            verify_notes: Vec::new(),
         },
     }
 }

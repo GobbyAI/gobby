@@ -105,6 +105,8 @@ mod tests {
             call_diagram: None,
             graph_availability: availability,
             degraded: false,
+            degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
             reused_page: None,
         }
     }

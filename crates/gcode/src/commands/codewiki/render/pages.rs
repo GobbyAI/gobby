@@ -1,16 +1,16 @@
 use std::fmt::Write as _;
 
 use super::super::*;
-use super::model_degraded_sources;
 
 pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
     // Range-free frontmatter and no `<details>` provenance wall: module pages
     // are navigation + narrative, not a per-line source surface (#871).
-    let mut doc = frontmatter_with_degradation_without_ranges(
+    let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
         &module.module,
         "code_module",
         &module.source_spans,
-        &model_degraded_sources(module.degraded),
+        &module.degraded_sources,
+        &module.verify_notes,
     );
     let _ = writeln!(doc, "# {}\n", module.module);
     match parent_module(&module.module) {
@@ -70,11 +70,12 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
 pub(crate) fn render_file_doc(file: &FileDoc) -> String {
     // Range-free frontmatter and no `<details>` provenance wall: the file page
     // leads with a verified narrative body, not a machine source surface (#871).
-    let mut doc = frontmatter_with_degradation_without_ranges(
+    let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
         &file.path,
         "code_file",
         &file.source_spans,
-        &model_degraded_sources(file.degraded),
+        &file.degraded_sources,
+        &file.verify_notes,
     );
     let _ = writeln!(doc, "# {}\n", file.path);
     if file.module.is_empty() {

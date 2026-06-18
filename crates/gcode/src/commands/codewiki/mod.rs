@@ -11,12 +11,14 @@ const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
 const MAX_MERMAID_HOPS: usize = 2;
 const MAX_MERMAID_EDGES: usize = 20;
 const MAX_EDGE_LIMIT: usize = 100_000;
-/// Cache epoch for generated pages. Bumped 5 -> 6 so file and module pages
-/// written in the old symbol-dump shape (API Symbols / Component ID / Lines
-/// table, full-range `<details>` provenance) cannot be reused from disk: the
-/// new shape renders a verified narrative body plus a human Key components
-/// table. (5 was the grounded verification pass; 4 the pre-verify pages.)
-const CODEWIKI_RENDER_VERSION: u32 = 6;
+/// Cache epoch for generated pages. Bumped 6 -> 7 so verifier audit notes
+/// appear in frontmatter even when source hashes are unchanged. Bumped 5 -> 6
+/// so file and module pages written in the old symbol-dump shape (API Symbols /
+/// Component ID / Lines table, full-range `<details>` provenance) cannot be
+/// reused from disk: the new shape renders a verified narrative body plus a
+/// human Key components table. (5 was the grounded verification pass; 4 the
+/// pre-verify pages.)
+const CODEWIKI_RENDER_VERSION: u32 = 7;
 
 /// Default daemon feature profile for aggregate (module/repo/architecture)
 /// prose, which synthesizes 10k+-token grounded prompts; file and symbol
@@ -100,11 +102,12 @@ pub(crate) use text::{
     CitationResolver, Generation, VerifyOutcome, append_curated_source_files,
     append_relevant_source_files, citation_list, citation_markers, collect_link_spans,
     display_child_summary, frontmatter_with_degradation,
+    frontmatter_with_degradation_and_verify_notes_without_ranges,
     frontmatter_with_degradation_without_ranges, ground_text, maybe_generate,
     neutralize_symbol_purpose_links, reanchor_citations, replace_citations_with_markers,
     resolve_text_generator, resolve_text_verifier, structural_file_summary,
     structural_module_summary, structural_repo_summary, structural_symbol_purpose,
-    verify_and_strip, write_references, write_section,
+    verify_with_notes, write_references, write_section,
 };
 #[cfg(test)]
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};
@@ -117,8 +120,8 @@ pub(crate) use types::{
     ArchitectureDoc, ArchitectureSubsystem, BuiltDoc, CodewikiDocMeta, CodewikiFileSnapshot,
     CodewikiGraph, CodewikiIndexSnapshot, CodewikiMeta, CodewikiSymbolSnapshot, FileDoc, FileLink,
     HotspotFinding, HotspotNode, HotspotsDoc, ModuleDoc, ModuleLink, OnboardingDoc,
-    OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc, ranked_source_excerpts,
-    source_excerpt_for_file,
+    OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc, VerifyNote,
+    ranked_source_excerpts, source_excerpt_for_file,
 };
 
 #[cfg(test)]

@@ -59,6 +59,7 @@ pub(super) fn render_curated_navigation_docs(
         );
         concept.body = result.body;
         concept.body_degraded = result.degraded;
+        concept.verify_notes = result.verify_notes;
     }
     for page in &mut narrative_pages {
         let (member_modules, member_files) = narrative_members(page, &concepts);
@@ -78,6 +79,7 @@ pub(super) fn render_curated_navigation_docs(
         );
         page.body = result.body;
         page.body_degraded = result.degraded;
+        page.verify_notes = result.verify_notes;
     }
 
     let concept_titles = concepts
@@ -198,11 +200,12 @@ fn render_concept_page(
 ) -> String {
     let degraded = degraded || concept.body_degraded;
     let degraded_sources = degraded_sources(degraded);
-    let mut doc = frontmatter_with_degradation_without_ranges(
+    let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
         &concept.title,
         "code_concept",
         spans,
         &degraded_sources,
+        &concept.verify_notes,
     );
     append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", concept.title));
@@ -228,11 +231,12 @@ fn render_narrative_page(
 ) -> String {
     let degraded = degraded || page.body_degraded;
     let degraded_sources = degraded_sources(degraded);
-    let mut doc = frontmatter_with_degradation_without_ranges(
+    let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
         &page.title,
         "code_narrative",
         spans,
         &degraded_sources,
+        &page.verify_notes,
     );
     append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", page.title));

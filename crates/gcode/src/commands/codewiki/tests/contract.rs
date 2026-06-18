@@ -268,7 +268,7 @@ fn file_page_structural_fallback_is_multi_section_without_symbol_dump() {
 }
 
 #[test]
-fn file_page_verify_strips_unsupported_block() {
+fn file_page_verify_records_unsupported_block_notes() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
@@ -292,7 +292,7 @@ fn file_page_verify_strips_unsupported_block() {
                 .to_string()
         })
     };
-    // Verifier returns the 1-based id of the block carrying the planted marker.
+    // Verifier returns a note for the block carrying the planted marker.
     let mut verifier = |prompt: &str, _system: &str| {
         let id = prompt
             .lines()
@@ -301,7 +301,9 @@ fn file_page_verify_strips_unsupported_block() {
                 body.contains("Fabricated").then(|| num.to_string())
             })
             .expect("planted block is numbered in the verify prompt");
-        Some(format!("[{id}]"))
+        Some(format!(
+            r#"[{{"id":{id},"reason":"Fabricated claim lacks source support."}}]"#
+        ))
     };
 
     let docs = generate_hierarchical_docs_with_verify(
@@ -320,11 +322,23 @@ fn file_page_verify_strips_unsupported_block() {
         "{}",
         file.content
     );
-    assert!(!file.content.contains("Fabricated"), "{}", file.content);
-    assert!(!file.content.contains("mines bitcoin"), "{}", file.content);
+    assert!(file.content.contains("Fabricated"), "{}", file.content);
+    assert!(file.content.contains("mines bitcoin"), "{}", file.content);
+    assert!(file.content.contains("verify_notes:"), "{}", file.content);
     assert!(
-        file.degraded,
-        "stripping an unsupported block degrades the file page"
+        file.content
+            .contains("reason: Fabricated claim lacks source support."),
+        "{}",
+        file.content
+    );
+    assert!(
+        !file.degraded,
+        "verifier notes do not degrade the file page"
+    );
+    assert!(
+        !file.content.contains("model-unavailable"),
+        "{}",
+        file.content
     );
 }
 
@@ -358,7 +372,14 @@ fn file_page_verify_uses_symbol_table_as_evidence() {
                 && prompt
                     .contains("| Symbol | Kind | Component | Component ID | Lines | Purpose |")
                 && prompt.contains("| Client | class | Client [class] |");
-            Some(if saw_symbols { "[]" } else { "[2]" }.to_string())
+            Some(
+                if saw_symbols {
+                    "[]"
+                } else {
+                    r#"[{"id":2,"reason":"Missing symbol evidence."}]"#
+                }
+                .to_string(),
+            )
         };
 
         generate_hierarchical_docs_with_verify(
@@ -385,6 +406,10 @@ fn file_page_verify_uses_symbol_table_as_evidence() {
     assert!(
         !file.degraded,
         "symbol-supported file claim should survive verification"
+    );
+    assert!(
+        !file.content.contains("verify_notes:"),
+        "supported file claim should not record verifier notes"
     );
 }
 

@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::commands::codewiki::SourceSpan;
+use crate::commands::codewiki::{SourceSpan, VerifyNote};
 
 #[derive(serde::Serialize)]
 struct Frontmatter<'a> {
@@ -18,6 +18,8 @@ struct Frontmatter<'a> {
     degraded: Option<bool>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     degraded_sources: Vec<&'a str>,
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    verify_notes: Vec<FrontmatterVerifyNote<'a>>,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -25,6 +27,12 @@ struct FrontmatterSourceFile<'a> {
     file: &'a str,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     ranges: Vec<String>,
+}
+
+#[derive(serde::Serialize)]
+struct FrontmatterVerifyNote<'a> {
+    id: usize,
+    reason: &'a str,
 }
 
 /// Cap on the number of provenance files listed in page frontmatter; pages
@@ -45,7 +53,7 @@ pub(crate) fn frontmatter_with_degradation(
     source_spans: &[SourceSpan],
     degraded_sources: &[String],
 ) -> String {
-    frontmatter_with_options(title, kind, source_spans, degraded_sources, true)
+    frontmatter_with_options(title, kind, source_spans, degraded_sources, true, &[])
 }
 
 pub(crate) fn frontmatter_with_degradation_without_ranges(
@@ -54,7 +62,24 @@ pub(crate) fn frontmatter_with_degradation_without_ranges(
     source_spans: &[SourceSpan],
     degraded_sources: &[String],
 ) -> String {
-    frontmatter_with_options(title, kind, source_spans, degraded_sources, false)
+    frontmatter_with_options(title, kind, source_spans, degraded_sources, false, &[])
+}
+
+pub(crate) fn frontmatter_with_degradation_and_verify_notes_without_ranges(
+    title: &str,
+    kind: &str,
+    source_spans: &[SourceSpan],
+    degraded_sources: &[String],
+    verify_notes: &[VerifyNote],
+) -> String {
+    frontmatter_with_options(
+        title,
+        kind,
+        source_spans,
+        degraded_sources,
+        false,
+        verify_notes,
+    )
 }
 
 fn frontmatter_with_options(
@@ -63,6 +88,7 @@ fn frontmatter_with_options(
     source_spans: &[SourceSpan],
     degraded_sources: &[String],
     include_ranges: bool,
+    verify_notes: &[VerifyNote],
 ) -> String {
     let (source_files, provenance_truncated) =
         frontmatter_source_files(source_spans, include_ranges);
@@ -76,6 +102,13 @@ fn frontmatter_with_options(
         freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,
         degraded: (!degraded_sources.is_empty()).then_some(true),
         degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
+        verify_notes: verify_notes
+            .iter()
+            .map(|note| FrontmatterVerifyNote {
+                id: note.id,
+                reason: note.reason.as_str(),
+            })
+            .collect(),
     };
     let yaml = serde_yaml::to_string(&data)
         .expect("codewiki frontmatter only contains YAML-serializable data");
@@ -262,4 +295,55 @@ fn escape_markdown_link_label(value: &str) -> String {
         .replace('\\', "\\\\")
         .replace('[', "\\[")
         .replace(']', "\\]")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn spans() -> Vec<SourceSpan> {
+        vec![SourceSpan {
+            file: "src/lib.rs".to_string(),
+            line_start: 1,
+            line_end: 4,
+        }]
+    }
+
+    #[test]
+    fn verify_notes_are_omitted_when_empty() {
+        let doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
+            "src/lib.rs",
+            "code_file",
+            &spans(),
+            &[],
+            &[],
+        );
+
+        assert!(!doc.contains("verify_notes:"));
+    }
+
+    #[test]
+    fn verify_notes_render_as_yaml_list() {
+        let notes = vec![VerifyNote::new(2, " unsupported claim ")];
+        let doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
+            "src/lib.rs",
+            "code_file",
+            &spans(),
+            &[],
+            &notes,
+        );
+        let yaml = doc
+            .strip_prefix("---\n")
+            .and_then(|doc| doc.split_once("---\n\n").map(|(yaml, _)| yaml))
+            .expect("frontmatter delimiters");
+        let frontmatter: serde_yaml::Value =
+            serde_yaml::from_str(yaml).expect("frontmatter parses");
+        let notes = frontmatter["verify_notes"]
+            .as_sequence()
+            .expect("verify_notes is a list");
+
+        assert_eq!(notes.len(), 1);
+        assert_eq!(notes[0]["id"].as_i64(), Some(2));
+        assert_eq!(notes[0]["reason"].as_str(), Some("unsupported claim"));
+    }
 }

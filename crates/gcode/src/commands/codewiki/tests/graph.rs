@@ -197,6 +197,8 @@ fn mermaid_labels_escape_label_metacharacters() {
             symbols: Vec::new(),
             component_ids: vec!["api".to_string()],
             degraded: false,
+            degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
             reused_page: None,
         },
         FileDoc {
@@ -208,6 +210,8 @@ fn mermaid_labels_escape_label_metacharacters() {
             symbols: Vec::new(),
             component_ids: vec!["domain".to_string()],
             degraded: false,
+            degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
             reused_page: None,
         },
     ];

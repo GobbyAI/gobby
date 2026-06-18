@@ -3,37 +3,39 @@
 //! Generation can drift from the cited source. This module runs an optional
 //! second pass over a generated page body: split the prose into numbered
 //! blocks, ask the verifier which blocks are unsupported by the cited source
-//! excerpts, and strip those original blocks. The verifier only ever returns
-//! block IDs — it never rewrites prose — so a verifier cannot launder a
-//! hallucination into the page. The deterministic block split, response parse,
-//! and strip live here (no AI dependency) so they are unit-testable, and the
+//! excerpts, and keep those findings as frontmatter-only notes. The verifier
+//! never rewrites prose, so it cannot launder a hallucination into the page.
+//! The deterministic block split and response parse live here (no AI
+//! dependency) so they are unit-testable, and the
 //! [`super::resolve_text_verifier`] closure is just the model call.
 
-use crate::commands::codewiki::TextVerifier;
+use serde::Deserialize;
+
 use crate::commands::codewiki::prompts::{self, SourceExcerpt, SymbolSummary};
+use crate::commands::codewiki::{TextVerifier, VerifyNote};
 
 /// Outcome of one verification pass over generated prose.
+#[derive(Debug, PartialEq, Eq)]
 pub(crate) enum VerifyOutcome {
     /// No verifier ran (not configured, unavailable, or nothing to verify):
     /// proceed with the original text, undegraded.
     Skipped,
-    /// The verifier ran and the page survives. `text` is the surviving prose
-    /// (the full original when nothing was stripped); `degraded` is true when
-    /// one or more unsupported blocks were removed.
-    Verified { text: String, degraded: bool },
-    /// The verifier ran but its output was unusable (no parseable verdict), or
-    /// stripping removed every block: the caller falls back to the structural
-    /// body and records degraded.
-    Unusable,
+    /// The verifier ran and the page survives. `text` is the full original
+    /// prose; `notes` is the frontmatter-only audit trail for unsupported
+    /// blocks.
+    Verified {
+        text: String,
+        notes: Vec<VerifyNote>,
+    },
 }
 
 /// Run the optional verification pass over `text`, grounding it against
 /// `sources`. Failure-rule mapping:
 /// - no verifier / verifier unavailable / nothing to verify -> [`VerifyOutcome::Skipped`]
-/// - all blocks supported -> `Verified { degraded: false }`
-/// - some blocks stripped (survivors remain) -> `Verified { degraded: true }`
-/// - garbage verdict, or every block stripped -> [`VerifyOutcome::Unusable`]
-pub(crate) fn verify_and_strip(
+/// - all blocks supported -> `Verified { notes: [] }`
+/// - unsupported blocks -> `Verified { notes }` with the original text intact
+/// - malformed verdict -> [`VerifyOutcome::Skipped`]
+pub(crate) fn verify_with_notes(
     verify: &mut Option<&mut TextVerifier<'_>>,
     text: &str,
     symbols: &[SymbolSummary],
@@ -48,32 +50,22 @@ pub(crate) fn verify_and_strip(
     }
     let prompt = prompts::verify_prompt(&blocks, symbols, sources);
     let Some(response) = verify(&prompt, prompts::VERIFY_SYSTEM) else {
-        // Verifier unavailable (routed off / transport failure): skip, undegraded.
+        // Verifier unavailable (routed off / transport failure): skip.
         return VerifyOutcome::Skipped;
     };
-    let Some(unsupported) = parse_unsupported_ids(&response, blocks.len()) else {
-        // Empty/garbage verifier response: structural fallback + degraded.
-        return VerifyOutcome::Unusable;
+    let Some(notes) = parse_verify_notes(&response, blocks.len()) else {
+        // A malformed verifier response should not make a generated page worse.
+        return VerifyOutcome::Skipped;
     };
-    if unsupported.is_empty() {
-        return VerifyOutcome::Verified {
-            text: text.to_string(),
-            degraded: false,
-        };
-    }
-    let survivors = strip_blocks(&blocks, &unsupported);
-    if survivors.trim().is_empty() {
-        return VerifyOutcome::Unusable;
-    }
     VerifyOutcome::Verified {
-        text: survivors,
-        degraded: true,
+        text: text.to_string(),
+        notes,
     }
 }
 
 /// Split generated markdown into blank-line-separated blocks. Each block is the
-/// unit the verifier numbers and the caller may strip, so this split and the
-/// numbering in [`prompts::verify_prompt`] must stay in lockstep.
+/// unit the verifier numbers, so this split and the numbering in
+/// [`prompts::verify_prompt`] must stay in lockstep.
 pub(crate) fn split_blocks(text: &str) -> Vec<String> {
     text.split("\n\n")
         .map(str::trim)
@@ -82,34 +74,25 @@ pub(crate) fn split_blocks(text: &str) -> Vec<String> {
         .collect()
 }
 
-/// Parse the verifier's JSON-array response into the 1-based block IDs to strip.
-/// Returns `None` when no JSON array is present (garbage/empty response),
-/// `Some(vec![])` when the array is empty (every block supported). Out-of-range
-/// and duplicate IDs are dropped.
-pub(crate) fn parse_unsupported_ids(response: &str, block_count: usize) -> Option<Vec<usize>> {
-    let start = response.find('[')?;
-    let end = response[start..].find(']')? + start;
-    let ids = serde_json::from_str::<Vec<i64>>(&response[start..=end]).ok()?;
-    let mut filtered = ids
-        .into_iter()
-        .filter_map(|id| usize::try_from(id).ok())
-        .filter(|id| (1..=block_count).contains(id))
-        .collect::<Vec<_>>();
-    filtered.sort_unstable();
-    filtered.dedup();
-    Some(filtered)
+#[derive(Deserialize)]
+struct VerifyNoteResponse {
+    id: usize,
+    reason: String,
 }
 
-/// Rejoin the blocks whose 1-based index is not in `unsupported`, preserving
-/// order and blank-line separation.
-pub(crate) fn strip_blocks(blocks: &[String], unsupported: &[usize]) -> String {
-    blocks
-        .iter()
-        .enumerate()
-        .filter(|(index, _)| !unsupported.contains(&(index + 1)))
-        .map(|(_, block)| block.as_str())
-        .collect::<Vec<_>>()
-        .join("\n\n")
+/// Parse the verifier's JSON-array response into 1-based unsupported-block
+/// notes. Returns `None` when no object array is present, and `Some(vec![])`
+/// when every block is supported. Out-of-range and duplicate IDs are dropped.
+pub(crate) fn parse_verify_notes(response: &str, block_count: usize) -> Option<Vec<VerifyNote>> {
+    let notes = serde_json::from_str::<Vec<VerifyNoteResponse>>(response.trim()).ok()?;
+    let mut filtered = notes
+        .into_iter()
+        .filter(|note| (1..=block_count).contains(&note.id))
+        .map(|note| VerifyNote::new(note.id, note.reason))
+        .collect::<Vec<_>>();
+    filtered.sort_by_key(|note| note.id);
+    filtered.dedup_by_key(|note| note.id);
+    Some(filtered)
 }
 
 #[cfg(test)]
@@ -145,59 +128,82 @@ mod tests {
     }
 
     #[test]
-    fn parse_unsupported_ids_reads_json_array() {
-        assert_eq!(parse_unsupported_ids("[2, 3]", 5), Some(vec![2, 3]));
-        assert_eq!(parse_unsupported_ids("[]", 5), Some(vec![]));
-        // Surrounding prose is tolerated; only the array is read.
-        assert_eq!(parse_unsupported_ids("Unsupported: [1]", 5), Some(vec![1]));
+    fn parse_verify_notes_reads_json_array() {
+        assert_eq!(
+            parse_verify_notes(
+                r#"[{"id":2,"reason":" unsupported "},{"id":3,"reason":"Invented behavior."}]"#,
+                5,
+            ),
+            Some(vec![
+                VerifyNote::new(2, "unsupported"),
+                VerifyNote::new(3, "Invented behavior.")
+            ])
+        );
+        assert_eq!(parse_verify_notes("[]", 5), Some(vec![]));
         // Out-of-range and duplicate IDs are dropped.
-        assert_eq!(parse_unsupported_ids("[0, 2, 2, 9]", 3), Some(vec![2]));
+        assert_eq!(
+            parse_verify_notes(
+                r#"[{"id":0,"reason":"bad"},{"id":2,"reason":"kept"},{"id":2,"reason":"duplicate"},{"id":9,"reason":"bad"}]"#,
+                3,
+            ),
+            Some(vec![VerifyNote::new(2, "kept")])
+        );
     }
 
     #[test]
-    fn parse_unsupported_ids_rejects_garbage() {
-        assert_eq!(parse_unsupported_ids("all good", 5), None);
-        assert_eq!(parse_unsupported_ids("", 5), None);
-        assert_eq!(parse_unsupported_ids("[1, 2", 5), None);
+    fn parse_verify_notes_rejects_garbage() {
+        assert_eq!(parse_verify_notes("all good", 5), None);
+        assert_eq!(parse_verify_notes("", 5), None);
+        assert_eq!(
+            parse_verify_notes(r#"[{"id":1,"reason":"missing close"}"#, 5),
+            None
+        );
+        assert_eq!(parse_verify_notes("[1, 2]", 5), None);
     }
 
     #[test]
-    fn strip_blocks_drops_only_listed_ids() {
-        let blocks = split_blocks("A\n\nB\n\nC");
-        assert_eq!(strip_blocks(&blocks, &[2]), "A\n\nC");
-        assert_eq!(strip_blocks(&blocks, &[]), "A\n\nB\n\nC");
+    fn parse_verify_notes_trims_and_caps_reason() {
+        let long = format!(" {} ", "x".repeat(250));
+        let note = VerifyNote::new(1, long);
+        assert_eq!(note.reason.len(), 200);
+        assert!(note.reason.ends_with("..."));
     }
 
     #[test]
-    fn verify_strips_planted_unsupported_block() {
+    fn verify_records_planted_unsupported_block_without_stripping() {
         let text = "## Purpose\n\nGrounded claim.\n\nHallucinated claim.";
-        // Verifier flags block 3 (the planted hallucination).
-        let mut verifier = |_prompt: &str, _system: &str| Some("[3]".to_string());
+        let mut verifier = |_prompt: &str, _system: &str| {
+            Some(r#"[{"id":3,"reason":"The evidence never mentions this claim."}]"#.to_string())
+        };
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
-        match verify_and_strip(&mut verify, text, &[], &sources()) {
-            VerifyOutcome::Verified { text, degraded } => {
-                assert!(degraded, "stripping a block degrades the page");
-                assert!(text.contains("Grounded claim."), "{text}");
-                assert!(!text.contains("Hallucinated claim."), "{text}");
+        match verify_with_notes(&mut verify, text, &[], &sources()) {
+            VerifyOutcome::Verified { text: out, notes } => {
+                assert_eq!(out, text);
+                assert!(out.contains("Grounded claim."), "{out}");
+                assert!(out.contains("Hallucinated claim."), "{out}");
+                assert_eq!(
+                    notes,
+                    vec![VerifyNote::new(
+                        3,
+                        "The evidence never mentions this claim."
+                    )]
+                );
             }
-            _ => panic!("expected Verified with a stripped block"),
+            _ => panic!("expected Verified with an audit note"),
         }
     }
 
     #[test]
-    fn verify_keeps_fully_supported_page_undegraded() {
+    fn verify_keeps_fully_supported_page_without_notes() {
         let text = "## Purpose\n\nGrounded claim.";
         let mut verifier = |_prompt: &str, _system: &str| Some("[]".to_string());
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
-        match verify_and_strip(&mut verify, text, &[], &sources()) {
-            VerifyOutcome::Verified {
-                text: out,
-                degraded,
-            } => {
-                assert!(!degraded, "no strip means no degradation");
+        match verify_with_notes(&mut verify, text, &[], &sources()) {
+            VerifyOutcome::Verified { text: out, notes } => {
                 assert_eq!(out, text);
+                assert!(notes.is_empty());
             }
-            _ => panic!("expected Verified, undegraded"),
+            _ => panic!("expected Verified without notes"),
         }
     }
 
@@ -212,11 +218,8 @@ mod tests {
             };
             let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
             assert!(matches!(
-                verify_and_strip(&mut verify, text, &symbols(), &sources()),
-                VerifyOutcome::Verified {
-                    text: _,
-                    degraded: false
-                }
+                verify_with_notes(&mut verify, text, &symbols(), &sources()),
+                VerifyOutcome::Verified { text: _, notes: _ }
             ));
         }
 
@@ -236,7 +239,7 @@ mod tests {
         let mut verifier = |_prompt: &str, _system: &str| None;
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
         assert!(matches!(
-            verify_and_strip(&mut verify, text, &[], &sources()),
+            verify_with_notes(&mut verify, text, &[], &sources()),
             VerifyOutcome::Skipped
         ));
     }
@@ -246,31 +249,44 @@ mod tests {
         let text = "## Purpose\n\nGrounded claim.";
         let mut verify: Option<&mut TextVerifier<'_>> = None;
         assert!(matches!(
-            verify_and_strip(&mut verify, text, &[], &sources()),
+            verify_with_notes(&mut verify, text, &[], &sources()),
             VerifyOutcome::Skipped
         ));
     }
 
     #[test]
-    fn verify_reports_garbage_verdict_as_unusable() {
+    fn verify_skips_garbage_verdict() {
         let text = "## Purpose\n\nGrounded claim.";
         let mut verifier = |_prompt: &str, _system: &str| Some("the page looks fine".to_string());
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
         assert!(matches!(
-            verify_and_strip(&mut verify, text, &[], &sources()),
-            VerifyOutcome::Unusable
+            verify_with_notes(&mut verify, text, &[], &sources()),
+            VerifyOutcome::Skipped
         ));
     }
 
     #[test]
-    fn verify_reports_total_strip_as_unusable() {
+    fn verify_records_total_flag_as_notes() {
         let text = "Only claim one.\n\nOnly claim two.";
-        // Every block flagged -> nothing survives.
-        let mut verifier = |_prompt: &str, _system: &str| Some("[1, 2]".to_string());
+        let mut verifier = |_prompt: &str, _system: &str| {
+            Some(
+                r#"[{"id":1,"reason":"Unsupported one."},{"id":2,"reason":"Unsupported two."}]"#
+                    .to_string(),
+            )
+        };
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
-        assert!(matches!(
-            verify_and_strip(&mut verify, text, &[], &sources()),
-            VerifyOutcome::Unusable
-        ));
+        match verify_with_notes(&mut verify, text, &[], &sources()) {
+            VerifyOutcome::Verified { text: out, notes } => {
+                assert_eq!(out, text);
+                assert_eq!(
+                    notes,
+                    vec![
+                        VerifyNote::new(1, "Unsupported one."),
+                        VerifyNote::new(2, "Unsupported two.")
+                    ]
+                );
+            }
+            _ => panic!("expected Verified with notes"),
+        }
     }
 }

@@ -11,6 +11,7 @@ pub(crate) use citations::{
 };
 pub(crate) use frontmatter::{
     append_curated_source_files, append_relevant_source_files, frontmatter_with_degradation,
+    frontmatter_with_degradation_and_verify_notes_without_ranges,
     frontmatter_with_degradation_without_ranges,
 };
 pub(crate) use generation::{
@@ -21,7 +22,7 @@ pub(crate) use structural::{
     collect_link_spans, display_child_summary, structural_file_summary, structural_module_summary,
     structural_repo_summary, structural_symbol_purpose, write_section,
 };
-pub(crate) use verify::{VerifyOutcome, verify_and_strip};
+pub(crate) use verify::{VerifyOutcome, verify_with_notes};
 
 #[cfg(test)]
 pub(crate) use citations::MAX_FALLBACK_CITATIONS;

@@ -250,7 +250,7 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
 }
 
 #[test]
-fn verify_pass_strips_unsupported_block_from_curated_page() {
+fn verify_pass_records_notes_without_stripping_curated_page() {
     // Generator: the structure pass plus a concept body carrying one planted,
     // unsupported "Fabricated" block among grounded blocks.
     let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
@@ -295,7 +295,9 @@ fn verify_pass_strips_unsupported_block_from_curated_page() {
             let trimmed = line.trim_start();
             if trimmed.starts_with('[') && trimmed.contains("Fabricated") {
                 let id = trimmed[1..].split(']').next().unwrap_or_default().trim();
-                return Some(format!("[{id}]"));
+                return Some(format!(
+                    r#"[{{"id":{id},"reason":"Fabricated claim lacks evidence."}}]"#
+                ));
             }
         }
         Some("[]".to_string())
@@ -314,12 +316,17 @@ fn verify_pass_strips_unsupported_block_from_curated_page() {
         .map(|doc| doc.content.as_str())
         .expect("concept page");
 
-    // The grounded block survives; the planted unsupported block is stripped.
+    // The grounded block and planted block both survive; verifier findings are
+    // frontmatter-only audit metadata.
     assert!(
         concept.contains("resolves requests into repository answers"),
         "{concept}"
     );
-    assert!(!concept.contains("Fabricated"), "{concept}");
-    // Stripping an unsupported block marks the page degraded.
-    assert!(concept.contains("degraded: true"), "{concept}");
+    assert!(concept.contains("Fabricated"), "{concept}");
+    assert!(concept.contains("verify_notes:"), "{concept}");
+    assert!(
+        concept.contains("reason: Fabricated claim lacks evidence."),
+        "{concept}"
+    );
+    assert!(!concept.contains("degraded: true"), "{concept}");
 }

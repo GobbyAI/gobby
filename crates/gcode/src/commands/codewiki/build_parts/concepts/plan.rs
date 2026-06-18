@@ -86,6 +86,7 @@ pub(super) fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> Curated
                 .collect(),
             body: None,
             body_degraded: false,
+            verify_notes: Vec::new(),
         })
         .collect::<Vec<_>>();
 
@@ -125,30 +126,33 @@ pub(super) fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> Curated
                 summary: "Start with the highest-level modules, then follow the concept pages into source-backed reference pages.".to_string(),
                 concepts: concept_titles.clone(),
                 modules: root_modules.clone(),
-                files: representative_files.clone(),
-                body: None,
-                body_degraded: false,
-            },
-            NarrativePage {
-                slug: "architecture".to_string(),
+            files: representative_files.clone(),
+            body: None,
+            body_degraded: false,
+            verify_notes: Vec::new(),
+        },
+        NarrativePage {
+            slug: "architecture".to_string(),
                 title: "Architecture".to_string(),
                 summary: "Read across the major module boundaries and use the linked reference modules for grounded implementation detail.".to_string(),
                 concepts: concept_titles.clone(),
                 modules: root_modules,
-                files: representative_files.clone(),
-                body: None,
-                body_degraded: false,
-            },
-            NarrativePage {
-                slug: "data-flow".to_string(),
+            files: representative_files.clone(),
+            body: None,
+            body_degraded: false,
+            verify_notes: Vec::new(),
+        },
+        NarrativePage {
+            slug: "data-flow".to_string(),
                 title: "Data Flow".to_string(),
                 summary: "Follow the representative files and modules that connect data entry, transformation, and output paths.".to_string(),
                 concepts: concept_titles,
                 modules: Vec::new(),
-                files: representative_files,
-                body: None,
-                body_degraded: false,
-            },
+            files: representative_files,
+            body: None,
+            body_degraded: false,
+            verify_notes: Vec::new(),
+        },
         ],
     }
 }
@@ -313,6 +317,7 @@ pub(super) fn normalize_narrative_pages(
                 files: Vec::new(),
                 body: None,
                 body_degraded: false,
+                verify_notes: Vec::new(),
             });
         }
     }

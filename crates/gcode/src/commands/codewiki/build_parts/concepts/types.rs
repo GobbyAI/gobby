@@ -1,5 +1,7 @@
 use serde::Deserialize;
 
+use super::super::super::VerifyNote;
+
 #[derive(Debug, Deserialize)]
 pub(super) struct CuratedNavigationPlan {
     #[serde(default)]
@@ -30,6 +32,8 @@ pub(super) struct ConceptModule {
     /// body, so the page records the degradation honestly (review #1).
     #[serde(skip)]
     pub(super) body_degraded: bool,
+    #[serde(skip)]
+    pub(super) verify_notes: Vec<VerifyNote>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -60,4 +64,6 @@ pub(super) struct NarrativePage {
     pub(super) body: Option<String>,
     #[serde(skip)]
     pub(super) body_degraded: bool,
+    #[serde(skip)]
+    pub(super) verify_notes: Vec<VerifyNote>,
 }

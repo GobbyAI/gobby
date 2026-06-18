@@ -154,6 +154,19 @@ pub(crate) fn build_module_docs_with_filter(
 
         module_summaries.insert(module.clone(), summary.clone());
         module_sources.insert(module.clone(), source_spans.clone());
+        let mut degraded_sources = BTreeSet::new();
+        if degraded {
+            degraded_sources.insert("model-unavailable".to_string());
+        }
+        match graph_availability {
+            CodewikiGraphAvailability::Available => {}
+            CodewikiGraphAvailability::Truncated => {
+                degraded_sources.insert("graph-truncated".to_string());
+            }
+            CodewikiGraphAvailability::Unavailable => {
+                degraded_sources.insert("graph-unavailable".to_string());
+            }
+        }
         let doc = ModuleDoc {
             module,
             summary,
@@ -164,6 +177,8 @@ pub(crate) fn build_module_docs_with_filter(
             call_diagram,
             graph_availability,
             degraded,
+            degraded_sources: degraded_sources.into_iter().collect(),
+            verify_notes: Vec::new(),
             reused_page,
         };
         emit(&doc)?;

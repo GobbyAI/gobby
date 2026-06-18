@@ -2,9 +2,9 @@ use std::collections::BTreeSet;
 
 use super::super::{
     AiDepth, CodewikiProgress, FileDoc, Generation, LeadingChunk, PromptTier, ReusePlan,
-    SourceSpan, SymbolDoc, TextGenerator, TextVerifier, VerifyOutcome, citation_list,
+    SourceSpan, SymbolDoc, TextGenerator, TextVerifier, VerifyNote, VerifyOutcome, citation_list,
     component_label, file_doc_path, ground_text, maybe_generate, prompts, structural_file_summary,
-    structural_symbol_purpose, verify_and_strip, write_section,
+    structural_symbol_purpose, verify_with_notes, write_section,
 };
 use crate::models::Symbol;
 
@@ -47,7 +47,9 @@ pub(crate) fn build_file_doc(
         position.index, position.total, file
     ));
     let symbol_total = symbols.len();
-    let mut degraded = false;
+    let mut model_degraded = false;
+    let mut degraded_sources = BTreeSet::new();
+    let mut verify_notes = Vec::new();
     let symbol_docs = symbols
         .into_iter()
         .enumerate()
@@ -71,7 +73,7 @@ pub(crate) fn build_file_doc(
             } else {
                 Generation::Skipped
             }
-            .unwrap_or_record(fallback, &mut degraded);
+            .unwrap_or_record(fallback, &mut model_degraded);
             let component_id = symbol.id.clone();
             let component_label = component_label(&symbol);
             let source_span = SourceSpan::from_symbol(&symbol);
@@ -89,6 +91,9 @@ pub(crate) fn build_file_doc(
             }
         })
         .collect::<Vec<_>>();
+    if model_degraded {
+        degraded_sources.insert("model-unavailable".to_string());
+    }
     let source_excerpt = leading_chunk.map(|chunk| prompts::SourceExcerpt {
         path: file.to_string(),
         line_start: chunk.line_start.max(1),
@@ -141,7 +146,8 @@ pub(crate) fn build_file_doc(
                 generate,
                 verify,
                 ai_depth,
-                &mut degraded,
+                &mut degraded_sources,
+                &mut verify_notes,
             );
             let summary = file_summary_from_body(&body, file, &symbol_docs);
             (summary, body, None)
@@ -156,7 +162,9 @@ pub(crate) fn build_file_doc(
         source_spans,
         symbols: symbol_docs,
         component_ids,
-        degraded,
+        degraded: !degraded_sources.is_empty(),
+        degraded_sources: degraded_sources.into_iter().collect(),
+        verify_notes,
         reused_page,
     }
 }
@@ -178,7 +186,8 @@ fn build_file_body(
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
-    degraded: &mut bool,
+    degraded_sources: &mut BTreeSet<String>,
+    verify_notes: &mut Vec<VerifyNote>,
 ) -> String {
     let generated = if ai_depth.includes_files() {
         // Non-code files (no indexed symbols) derive their page from leading
@@ -201,29 +210,22 @@ fn build_file_body(
     let text = match generated {
         Generation::Generated(text) => text,
         Generation::Failed => {
-            *degraded = true;
+            degraded_sources.insert("model-unavailable".to_string());
             return structural_file_body(file, symbol_docs);
         }
         Generation::Skipped => return structural_file_body(file, symbol_docs),
     };
-    let text = match verify_and_strip(verify, &text, prompt_symbols, sources) {
+    let text = match verify_with_notes(verify, &text, prompt_symbols, sources) {
         VerifyOutcome::Skipped => text,
-        VerifyOutcome::Verified {
-            text,
-            degraded: verify_degraded,
-        } => {
-            *degraded = *degraded || verify_degraded;
+        VerifyOutcome::Verified { text, notes } => {
+            verify_notes.extend(notes);
             text
-        }
-        VerifyOutcome::Unusable => {
-            *degraded = true;
-            return structural_file_body(file, symbol_docs);
         }
     };
     let citations = citation_list(source_spans, &text);
     let grounded = ground_text(&text, source_spans, Some(&citations));
     if grounded.trim().is_empty() {
-        *degraded = true;
+        degraded_sources.insert("grounding-empty".to_string());
         return structural_file_body(file, symbol_docs);
     }
     grounded

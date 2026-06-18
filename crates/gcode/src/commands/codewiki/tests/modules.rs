@@ -11,6 +11,8 @@ fn module_docs_include_physical_direct_files_for_ancestor_modules() {
         symbols: Vec::new(),
         component_ids: Vec::new(),
         degraded: false,
+        degraded_sources: Vec::new(),
+        verify_notes: Vec::new(),
         reused_page: None,
     }];
     let mut generate = None;
@@ -110,6 +112,8 @@ fn file_doc(path: &str, module: &str, component_id: &str) -> FileDoc {
         symbols: Vec::new(),
         component_ids: vec![component_id.to_string()],
         degraded: false,
+        degraded_sources: Vec::new(),
+        verify_notes: Vec::new(),
         reused_page: None,
     }
 }
@@ -154,6 +158,8 @@ fn file_doc_with_symbol(path: &str, module: &str, component_id: &str) -> FileDoc
         }],
         component_ids: vec![component_id.to_string()],
         degraded: false,
+        degraded_sources: Vec::new(),
+        verify_notes: Vec::new(),
         reused_page: None,
     }
 }

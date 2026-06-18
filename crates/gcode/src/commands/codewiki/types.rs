@@ -150,6 +150,8 @@ pub(crate) struct FileDoc {
     pub(crate) component_ids: Vec<String>,
     /// True when AI generation was attempted for this doc and failed.
     pub(crate) degraded: bool,
+    pub(crate) degraded_sources: Vec<String>,
+    pub(crate) verify_notes: Vec<VerifyNote>,
     /// The on-disk page when the doc was reused without regeneration (#681);
     /// emitting disk content verbatim keeps a forced rewrite lossless.
     pub(crate) reused_page: Option<String>,
@@ -176,6 +178,8 @@ pub(crate) struct ModuleDoc {
     pub(crate) graph_availability: CodewikiGraphAvailability,
     /// True when AI generation was attempted for this doc and failed.
     pub(crate) degraded: bool,
+    pub(crate) degraded_sources: Vec<String>,
+    pub(crate) verify_notes: Vec<VerifyNote>,
     /// The on-disk page when the doc was reused without regeneration (#681);
     /// emitting disk content verbatim keeps a forced rewrite lossless.
     pub(crate) reused_page: Option<String>,
@@ -268,6 +272,36 @@ pub(crate) struct SourceSpan {
     pub(crate) file: String,
     pub(crate) line_start: usize,
     pub(crate) line_end: usize,
+}
+
+const VERIFY_NOTE_REASON_LIMIT: usize = 200;
+const VERIFY_NOTE_TRUNCATION: &str = "...";
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub(crate) struct VerifyNote {
+    pub(crate) id: usize,
+    pub(crate) reason: String,
+}
+
+impl VerifyNote {
+    pub(crate) fn new(id: usize, reason: impl AsRef<str>) -> Self {
+        Self {
+            id,
+            reason: normalize_verify_note_reason(reason.as_ref()),
+        }
+    }
+}
+
+fn normalize_verify_note_reason(reason: &str) -> String {
+    let reason = reason.trim();
+    if reason.chars().count() <= VERIFY_NOTE_REASON_LIMIT {
+        return reason.to_string();
+    }
+
+    let keep = VERIFY_NOTE_REASON_LIMIT.saturating_sub(VERIFY_NOTE_TRUNCATION.len());
+    let mut truncated = reason.chars().take(keep).collect::<String>();
+    truncated.push_str(VERIFY_NOTE_TRUNCATION);
+    truncated
 }
 
 #[derive(Debug, Clone, Serialize)]
