@@ -8,6 +8,7 @@ import pytest
 
 from gobby.ai import AIAdapterStyle, AICapability, AICapabilityRegistry, CapabilityBinding
 from gobby.config.app import DaemonConfig
+from gobby.config.persistence import MemoryKnowledgeGraphConfig
 from gobby.config.sessions import DigestConfig
 from gobby.config.tasks import TaskValidationConfig
 from gobby.llm import create_llm_service
@@ -86,7 +87,9 @@ async def test_call_feature_delegates_to_text_generation(llm_config: DaemonConfi
     assert request.prompt == "prompt"
     assert request.system_prompt == "system"
     assert request.profile == "feature_low"
-    assert request.candidates == ("claude/haiku",)
+    assert len(request.candidates) == 1
+    assert request.candidates[0].candidate == "claude/haiku"
+    assert request.candidates[0].reasoning_effort is None
     assert request.caller == "test"
     assert request.cwd == "/tmp/project"
 
@@ -107,10 +110,32 @@ async def test_call_json_feature_delegates_to_text_generation(llm_config: Daemon
     assert result == {"ok": True}
     request = fake_generation.requests[0]
     assert request.profile == "feature_mid"
-    assert request.candidates == ("claude/haiku",)
+    assert len(request.candidates) == 1
+    assert request.candidates[0].candidate == "claude/haiku"
+    assert request.candidates[0].reasoning_effort is None
     assert request.cwd == "/tmp/project"
     assert request.candidate_timeout_seconds is None
     assert request.cli_candidate_timeout_seconds == 180.0
+
+
+@pytest.mark.asyncio
+async def test_call_json_feature_preserves_structured_candidate_reasoning(
+    llm_config: DaemonConfig,
+) -> None:
+    fake_generation = FakeTextGeneration()
+    service = LLMService(llm_config, text_generation=fake_generation)
+    config = MemoryKnowledgeGraphConfig(
+        candidates=[{"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"}],
+    )
+
+    result = await service.call_json_feature(config, "prompt")
+
+    assert result == {"ok": True}
+    request = fake_generation.requests[0]
+    assert len(request.candidates) == 1
+    candidate = request.candidates[0]
+    assert candidate.candidate == "codex/gpt-5.5"
+    assert candidate.reasoning_effort == "xhigh"
 
 
 def test_enabled_providers_reflects_text_generation_registry(llm_config: DaemonConfig) -> None:

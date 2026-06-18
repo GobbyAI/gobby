@@ -104,7 +104,7 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, .
     FeatureProfile.HIGH: (
         FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
         FeatureCandidateConfig(candidate="claude/opus", reasoning_effort="high"),
-        FeatureCandidateConfig(candidate="gemini/gemini-3.1-pro"),
+        FeatureCandidateConfig(candidate="gemini/gemini-3.1-pro-preview"),
     ),
 }
 

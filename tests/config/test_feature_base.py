@@ -48,7 +48,7 @@ class TestFeatureProfile:
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]) == (
             "codex/gpt-5.5",
             "claude/opus",
-            "gemini/gemini-3.1-pro",
+            "gemini/gemini-3.1-pro-preview",
         )
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
             assert "claude/fable" not in candidate_labels(candidates)
@@ -71,7 +71,7 @@ class TestFeatureProfile:
         assert default_candidates_for_profile(FeatureProfile.HIGH) == (
             "codex/gpt-5.5",
             "claude/opus",
-            "gemini/gemini-3.1-pro",
+            "gemini/gemini-3.1-pro-preview",
         )
 
     def test_default_reasoning_for_profile_is_auto_unset(self) -> None:

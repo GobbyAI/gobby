@@ -31,6 +31,7 @@ EXTENDED_TIMEOUT_TOOL_NAMES = (
     "suggest_next_task",
     "compact_self",
     "recall_review_context",
+    "rebuild_knowledge_graph",
 )
 CLIENT_GUARDED_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)
 HEARTBEAT_TOOL_NAMES = (*WAIT_TOOL_NAMES, *EXTENDED_TIMEOUT_TOOL_NAMES)

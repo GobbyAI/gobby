@@ -39,6 +39,7 @@ def test_extended_timeout_tools_excludes_stale_apply_tdd() -> None:
         "suggest_next_task",
         "compact_self",
         "recall_review_context",
+        "rebuild_knowledge_graph",
     )
 
 
@@ -891,6 +892,34 @@ class TestDaemonProxy:
                     "POST",
                     "/api/mcp/gobby-review-learning/tools/recall_review_context",
                     json={"findings": [{"id": "finding-one", "body": "slow batch"}]},
+                    timeout=300.0,
+                    preflight=True,
+                )
+
+    @pytest.mark.asyncio
+    async def test_call_tool_uses_extended_timeout_for_rebuild_knowledge_graph(self) -> None:
+        """KG rebuild can exceed the default 30s timeout due to LLM extraction."""
+        from gobby.mcp_proxy.stdio import DaemonProxy
+
+        proxy = DaemonProxy(60887)
+        with patch("gobby.mcp_proxy.stdio.load_config") as mock_config:
+            mock_config.return_value = MagicMock(mcp_client_proxy=MagicMock(tool_timeouts={}))
+            with patch.object(proxy, "_request", new_callable=AsyncMock) as mock_request:
+                mock_request.return_value = {"success": True}
+
+                result = await proxy.call_tool(
+                    "gobby-memory",
+                    "rebuild_knowledge_graph",
+                    {"limit": 1},
+                )
+
+                assert result == {"success": True}
+                assert result["success"] is True
+                assert mock_request.await_count == 1
+                mock_request.assert_called_once_with(
+                    "POST",
+                    "/api/mcp/gobby-memory/tools/rebuild_knowledge_graph",
+                    json={"limit": 1},
                     timeout=300.0,
                     preflight=True,
                 )
