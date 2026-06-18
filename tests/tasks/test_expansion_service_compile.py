@@ -4,13 +4,17 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.config.feature_base import candidate_labels
+from gobby.config.tasks import TaskExpansionConfig
 from gobby.plans.parser import Kind, PlanDocument, parse_plan
 from gobby.storage.tasks import LocalTaskManager, Task
+from gobby.tasks.expansion._compile import _expansion_feature_config
 from gobby.tasks.expansion_service import ExpansionService
 
 pytestmark = pytest.mark.unit
@@ -39,6 +43,27 @@ def _regression_plan_doc() -> PlanDocument:
 
 def _deps_for(spec: dict[str, Any], task_id: str) -> set[str]:
     return {edge["depends_on"] for edge in spec["dependencies"] if edge["task_id"] == task_id}
+
+
+def test_expansion_feature_config_resolves_structured_candidate_overrides() -> None:
+    expansion_config = TaskExpansionConfig(
+        candidates=[
+            {"candidate": "claude/sonnet", "reasoning_effort": "high"},
+            {"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"},
+        ]
+    )
+
+    provider_only = _expansion_feature_config(
+        expansion_config,
+        SimpleNamespace(provider="codex", model=None),
+    )
+    model_only = _expansion_feature_config(
+        expansion_config,
+        SimpleNamespace(provider=None, model="opus"),
+    )
+
+    assert candidate_labels(provider_only.candidates) == ("codex/gpt-5.5",)
+    assert candidate_labels(model_only.candidates) == ("claude/opus",)
 
 
 def test_compile_contract_plan_emits_tdd_leaves_by_phase(

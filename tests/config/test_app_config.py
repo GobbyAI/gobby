@@ -34,7 +34,11 @@ from gobby.config.extensions import (
     WebhooksConfig,
     WebSocketBroadcastConfig,
 )
-from gobby.config.feature_base import FeatureProfile
+from gobby.config.feature_base import (
+    FeatureProfile,
+    candidate_labels,
+    default_candidates_for_profile,
+)
 from gobby.config.features import (
     ChatConfig,
     ImportMCPServerConfig,
@@ -294,7 +298,7 @@ class TestSessionSummaryConfig:
         config = SessionSummaryConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.LOW
-        assert "claude/haiku" in config.candidates
+        assert "claude/haiku" in candidate_labels(config.candidates)
         # prompt now has a default template with placeholders
         assert config.prompt is not None
         assert "Generate a concise session summary" in config.prompt
@@ -309,7 +313,7 @@ class TestSessionSummaryConfig:
         )
         assert config.enabled is False
         assert config.profile == FeatureProfile.MID
-        assert config.candidates == ["gemini/gemini-2.0-flash"]
+        assert candidate_labels(config.candidates) == ("gemini/gemini-2.0-flash",)
         assert config.prompt == "Custom prompt"
 
 
@@ -681,7 +685,9 @@ class TestLoadConfig:
         )
 
         assert config.memory.kg.profile == FeatureProfile.LOW
-        assert config.memory.kg.candidates[0] == "codex/gpt-5.4-mini"
+        assert candidate_labels(config.memory.kg.candidates) == default_candidates_for_profile(
+            FeatureProfile.LOW
+        )
 
     def test_load_config_normalizes_persisted_claude_feature_candidates(
         self, temp_dir: Path
@@ -702,7 +708,10 @@ class TestLoadConfig:
             config_store=DummyConfigStore(),
         )
 
-        assert config.session_summary.candidates == ["claude/haiku", "claude/sonnet"]
+        assert candidate_labels(config.session_summary.candidates) == (
+            "claude/haiku",
+            "claude/sonnet",
+        )
 
     def test_load_config_deletes_seeded_claude_only_feature_candidates(
         self, temp_dir: Path
@@ -777,29 +786,25 @@ class TestLoadConfig:
             config_store=store,
         )
 
-        low_candidates = ["codex/gpt-5.4-mini", "claude/haiku"]
-        mid_candidates = [
-            "codex/gpt-5.4-mini",
-            "claude/sonnet",
-            "gemini/gemini-3.5-flash",
-        ]
-        high_candidates = ["gemini/gemini-3.5-flash"]
+        low_candidates = default_candidates_for_profile(FeatureProfile.LOW)
+        mid_candidates = default_candidates_for_profile(FeatureProfile.MID)
+        high_candidates = default_candidates_for_profile(FeatureProfile.HIGH)
 
         assert store.db.params == ("defaults", "one-off-0.5.0-migration")
         assert deleted == expected_deleted
-        assert config.digest.candidates == low_candidates
-        assert config.memory.kg.candidates == low_candidates
-        assert config.tool_summarizer.candidates == low_candidates
-        assert config.import_mcp_server.candidates == low_candidates
-        assert config.skill_description.candidates == low_candidates
-        assert config.code_index.symbol_summary.candidates == low_candidates
-        assert config.memory.dream.candidates == mid_candidates
-        assert config.recommend_tools.candidates == mid_candidates
-        assert config.merge_resolution.candidates == mid_candidates
-        assert config.gobby_tasks.validation.candidates == mid_candidates
-        assert config.chat.candidates == high_candidates
+        assert candidate_labels(config.digest.candidates) == low_candidates
+        assert candidate_labels(config.memory.kg.candidates) == low_candidates
+        assert candidate_labels(config.tool_summarizer.candidates) == low_candidates
+        assert candidate_labels(config.import_mcp_server.candidates) == low_candidates
+        assert candidate_labels(config.skill_description.candidates) == low_candidates
+        assert candidate_labels(config.code_index.symbol_summary.candidates) == low_candidates
+        assert candidate_labels(config.memory.dream.candidates) == mid_candidates
+        assert candidate_labels(config.recommend_tools.candidates) == mid_candidates
+        assert candidate_labels(config.merge_resolution.candidates) == mid_candidates
+        assert candidate_labels(config.gobby_tasks.validation.candidates) == mid_candidates
+        assert candidate_labels(config.chat.candidates) == high_candidates
         assert config.gobby_tasks.expansion.profile == FeatureProfile.HIGH
-        assert config.gobby_tasks.expansion.candidates == high_candidates
+        assert candidate_labels(config.gobby_tasks.expansion.candidates) == high_candidates
 
     def test_load_config_migrates_code_index_symbol_summary_rows(self, temp_dir: Path) -> None:
         """Old persisted code-index summary rows are copied to symbol_summary and deleted."""
@@ -836,7 +841,7 @@ class TestLoadConfig:
         assert config.code_index.symbol_summary.enabled is False
         assert config.code_index.symbol_summary.batch_size == 7
         assert config.code_index.symbol_summary.profile == FeatureProfile.MID
-        assert config.code_index.symbol_summary.candidates == ["claude/sonnet"]
+        assert candidate_labels(config.code_index.symbol_summary.candidates) == ("claude/sonnet",)
         assert config.code_index.symbol_summary.max_concurrency == 3
         assert writes == {
             "code_index.symbol_summary.enabled": False,
@@ -927,17 +932,20 @@ class TestLoadConfig:
         )
 
         assert deleted == []
-        assert config.session_summary.candidates == ["claude/haiku"]
-        assert config.digest.candidates == ["claude/haiku", "codex/gpt-5.4-mini"]
-        assert config.chat.candidates == ["claude/fable"]
-        assert config.tool_summarizer.candidates == [
+        assert candidate_labels(config.session_summary.candidates) == ("claude/haiku",)
+        assert candidate_labels(config.digest.candidates) == (
+            "claude/haiku",
+            "codex/gpt-5.4-mini",
+        )
+        assert candidate_labels(config.chat.candidates) == ("claude/fable",)
+        assert candidate_labels(config.tool_summarizer.candidates) == (
             "claude/haiku",
             "local:lm-studio/google/gemma-4-26b-a4b-qat",
-        ]
-        assert config.recommend_tools.candidates == [
+        )
+        assert candidate_labels(config.recommend_tools.candidates) == (
             "codex/gpt-5.3-codex-spark",
             "claude/sonnet",
-        ]
+        )
         assert config.gobby_tasks.expansion.profile == FeatureProfile.HIGH
 
     def test_ai_embeddings_normalized_at_load(self, temp_dir: Path) -> None:
@@ -1390,7 +1398,7 @@ class TestRecommendToolsConfig:
         config = RecommendToolsConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.MID
-        assert "claude/sonnet" in config.candidates
+        assert "claude/sonnet" in candidate_labels(config.candidates)
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 
@@ -1402,7 +1410,7 @@ class TestImportMCPServerConfig:
         config = ImportMCPServerConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.LOW
-        assert "claude/haiku" in config.candidates
+        assert "claude/haiku" in candidate_labels(config.candidates)
         assert config.prompt_path is None  # Uses DEFAULT_IMPORT_MCP_SERVER_PROMPT
 
 
@@ -1433,7 +1441,9 @@ class TestProjectVerificationSynthesisConfig:
 
         assert config.profile == FeatureProfile.MID
         assert config.confidence_threshold == 0.75
-        assert config.candidates
+        assert candidate_labels(config.candidates) == default_candidates_for_profile(
+            FeatureProfile.MID
+        )
 
 
 class TestDigestConfig:
@@ -1444,7 +1454,7 @@ class TestDigestConfig:
         config = DigestConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.LOW
-        assert "claude/haiku" in config.candidates
+        assert "claude/haiku" in candidate_labels(config.candidates)
         assert config.timeout == 30
 
     def test_timeout_validation(self) -> None:
@@ -1486,7 +1496,9 @@ class TestTaskExpansionConfig:
         config = TaskExpansionConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.HIGH
-        assert config.candidates == ["gemini/gemini-3.5-flash"]
+        assert candidate_labels(config.candidates) == default_candidates_for_profile(
+            FeatureProfile.HIGH
+        )
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 
@@ -1498,7 +1510,7 @@ class TestTaskValidationConfig:
         config = TaskValidationConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.MID
-        assert "claude/sonnet" in config.candidates
+        assert "claude/sonnet" in candidate_labels(config.candidates)
         assert config.cli_candidate_timeout_seconds == 180.0
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
@@ -1566,7 +1578,7 @@ class TestMemoryConfig:
         assert config.crossref_threshold == 0.3
         assert config.access_debounce_seconds == 60
         assert config.kg.profile == FeatureProfile.LOW
-        assert "claude/haiku" in config.kg.candidates
+        assert "claude/haiku" in candidate_labels(config.kg.candidates)
 
     def test_crossref_threshold_validation(self) -> None:
         """Test crossref_threshold validation."""
@@ -1628,7 +1640,7 @@ class TestToolSummarizerConfig:
         config = ToolSummarizerConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.LOW
-        assert "claude/haiku" in config.candidates
+        assert "claude/haiku" in candidate_labels(config.candidates)
         assert config.prompt_path is None  # Uses default prompt from prompts/
 
 

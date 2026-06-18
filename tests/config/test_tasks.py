@@ -10,6 +10,8 @@ import unittest.mock
 import pytest
 from pydantic import ValidationError
 
+from gobby.config.feature_base import candidate_labels, default_candidates_for_profile
+
 pytestmark = pytest.mark.unit
 
 # =============================================================================
@@ -178,7 +180,9 @@ class TestTaskExpansionConfigDefaults:
         config = TaskExpansionConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.HIGH
-        assert config.candidates == ["gemini/gemini-3.5-flash"]
+        assert candidate_labels(config.candidates) == default_candidates_for_profile(
+            FeatureProfile.HIGH
+        )
         assert config.prompt_path is None
         assert config.codebase_research_enabled is True
         assert config.research_model is None
@@ -204,14 +208,14 @@ class TestTaskExpansionConfigCustom:
         from gobby.config.tasks import TaskExpansionConfig
 
         config = TaskExpansionConfig(candidates=["claude/claude-sonnet-4-5"])
-        assert config.candidates == ["claude/sonnet"]
+        assert candidate_labels(config.candidates) == ("claude/sonnet",)
 
     def test_custom_candidate_provider(self) -> None:
         """Test setting custom candidate provider."""
         from gobby.config.tasks import TaskExpansionConfig
 
         config = TaskExpansionConfig(candidates=["gemini/gemini-2.0-flash"])
-        assert config.candidates == ["gemini/gemini-2.0-flash"]
+        assert candidate_labels(config.candidates) == ("gemini/gemini-2.0-flash",)
 
     def category_options(self) -> None:
         """Test different strategy options."""
@@ -257,11 +261,9 @@ class TestTaskValidationConfigDefaults:
         config = TaskValidationConfig()
         assert config.enabled is True
         assert config.profile == FeatureProfile.MID
-        assert config.candidates == [
-            "codex/gpt-5.4-mini",
-            "claude/sonnet",
-            "gemini/gemini-3.5-flash",
-        ]
+        assert candidate_labels(config.candidates) == default_candidates_for_profile(
+            FeatureProfile.MID
+        )
         assert config.cli_candidate_timeout_seconds == 180.0
         assert config.prompt_path is None
         assert config.max_iterations == 10
@@ -418,7 +420,7 @@ class TestGobbyTasksConfigCustom:
 
         expansion = TaskExpansionConfig(candidates=["claude/claude-sonnet-4-5"])
         config = GobbyTasksConfig(expansion=expansion)
-        assert config.expansion.candidates == ["claude/sonnet"]
+        assert candidate_labels(config.expansion.candidates) == ("claude/sonnet",)
 
     def test_custom_validation_config(self) -> None:
         """Test custom validation config."""

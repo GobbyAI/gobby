@@ -18,6 +18,7 @@ from gobby.code_index.summary_safety import (
     sanitize_source_for_summary_prompt,
     sanitize_symbol_summary,
 )
+from gobby.config.feature_base import candidate_labels
 
 if TYPE_CHECKING:
     from gobby.ai.text_generation import TextGenerationService
@@ -47,7 +48,7 @@ class SymbolSummarizer:
         self._text_generation = text_generation
         summary_config = config.symbol_summary
         self._profile = str(summary_config.profile)
-        self._candidates = tuple(summary_config.candidates)
+        self._candidates = candidate_labels(summary_config.candidates)
         self._max_tokens = summary_config.max_tokens
         self._semaphore = asyncio.Semaphore(summary_config.max_concurrency)
 

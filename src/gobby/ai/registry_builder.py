@@ -20,8 +20,8 @@ from gobby.ai.registry import (
     _normalize_provider,
 )
 from gobby.config.feature_base import (
+    candidate_labels,
     iter_feature_default_configs,
-    normalize_feature_candidate,
     parse_feature_candidate,
 )
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
@@ -96,9 +96,9 @@ def _feature_candidate_models_by_provider(
         return {}
     models_by_provider: dict[str, list[str]] = {}
     for feature_config in iter_feature_default_configs(config):
-        for candidate in feature_config.candidates:
+        for candidate in candidate_labels(feature_config.candidates):
             try:
-                provider, model = parse_feature_candidate(normalize_feature_candidate(candidate))
+                provider, model = parse_feature_candidate(candidate)
             except ValueError:
                 continue
             normalized_provider = _normalize_provider(provider)

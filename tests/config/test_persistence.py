@@ -6,7 +6,11 @@ from pathlib import Path
 import pytest
 from pydantic import ValidationError
 
-from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
+from gobby.config.feature_base import (
+    FeatureProfile,
+    candidate_labels,
+    default_candidates_for_profile,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -55,7 +59,9 @@ class TestMemoryConfigDefaults:
         assert config.access_debounce_seconds == 60
         assert config.crossref_threshold == 0.3
         assert config.kg.profile == FeatureProfile.LOW
-        assert config.kg.candidates == list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW])
+        assert candidate_labels(config.kg.candidates) == default_candidates_for_profile(
+            FeatureProfile.LOW
+        )
         assert config.dream.prompt_path == "memory/dream"
         assert config.dream.schedule_cron == "0 3 * * *"
         assert config.dream.scan_limit == 500

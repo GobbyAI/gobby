@@ -6,7 +6,7 @@ import pytest
 import yaml
 
 from gobby.config.app import DaemonConfig, load_yaml
-from gobby.config.feature_base import FeatureProfile
+from gobby.config.feature_base import FeatureProfile, candidate_labels
 from gobby.config.sessions import MemoryRecallConfig
 
 pytestmark = pytest.mark.unit
@@ -28,7 +28,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     cfg = MemoryRecallConfig()
     assert cfg.enabled is True
     assert cfg.profile == FeatureProfile.LOW
-    assert "claude/haiku" in cfg.candidates
+    assert "claude/haiku" in candidate_labels(cfg.candidates)
     assert cfg.timeout == 60
     assert cfg.candidate_limit == 8
     assert cfg.selected_limit == 3
@@ -59,7 +59,7 @@ def test_memory_recall_config_shape(temp_dir: Path) -> None:
     )
     disabled_config = DaemonConfig(**load_yaml(str(disabled_config_file)))
     assert disabled_config.memory_recall.enabled is False
-    assert disabled_config.memory_recall.candidates == ["local:lm-studio/llama"]
+    assert candidate_labels(disabled_config.memory_recall.candidates) == ("local:lm-studio/llama",)
     assert disabled_config.memory_recall.timeout == 12
     assert disabled_config.memory_recall.candidate_limit == 5
     assert disabled_config.memory_recall.selected_limit == 2

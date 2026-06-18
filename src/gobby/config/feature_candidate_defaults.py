@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from gobby.config.feature_base import FeatureProfile, normalize_feature_candidate
+from gobby.config.feature_base import FeatureProfile, candidate_labels
 
 logger = logging.getLogger(__name__)
 
@@ -105,12 +105,10 @@ def _get_stale_candidate_key(row: Any) -> str | None:
 def _normalized_candidate_list(value: Any) -> list[str] | None:
     if not isinstance(value, (list, tuple)):
         return None
-    normalized = []
-    for candidate in value:
-        if not isinstance(candidate, str):
-            return None
-        normalized.append(normalize_feature_candidate(candidate))
-    return normalized
+    try:
+        return list(candidate_labels(value))
+    except (TypeError, ValueError):
+        return None
 
 
 def _row_value(row: Any, key: str, index: int) -> Any:

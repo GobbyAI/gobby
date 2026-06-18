@@ -7,6 +7,7 @@ from gobby.ai.text_generation import (
     TextGenerationRequest,
     build_daemon_text_generation_service,
 )
+from gobby.config.feature_base import candidate_labels
 
 if TYPE_CHECKING:
     from gobby.config.app import (
@@ -44,7 +45,7 @@ def _feature_request(
     caller: str | None,
     cwd: str | None = None,
 ) -> TextGenerationRequest:
-    candidates = tuple(getattr(feature_config, "candidates", ()) or ())
+    candidates = candidate_labels(getattr(feature_config, "candidates", ()) or ())
     profile = getattr(feature_config, "profile", None)
     candidate_timeout_seconds = getattr(feature_config, "candidate_timeout_seconds", None)
     cli_candidate_timeout_seconds = getattr(feature_config, "cli_candidate_timeout_seconds", None)

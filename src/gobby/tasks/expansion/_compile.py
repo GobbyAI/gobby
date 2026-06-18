@@ -5,9 +5,15 @@ from __future__ import annotations
 import json
 import logging
 from collections import defaultdict
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any, cast
 
+from gobby.config.feature_base import (
+    FeatureCandidateInput,
+    candidate_labels,
+    parse_feature_candidate,
+)
 from gobby.config.tasks import TaskExpansionConfig
 from gobby.plans.parser import Kind
 from gobby.storage.expansion_runs import ExpansionRun
@@ -42,17 +48,18 @@ def _expansion_feature_config(expansion_config: Any, run: ExpansionRun) -> Any:
 
     provider = run.provider
     model = run.model
+    candidates = candidate_labels(expansion_config.candidates)
     if provider is None:
-        provider, _separator, _model = expansion_config.candidates[0].partition("/")
+        provider, _model = parse_feature_candidate(candidates[0])
     if model is None:
-        model = _model_for_provider(expansion_config.candidates, provider)
+        model = _model_for_provider(candidates, provider)
     return expansion_config.model_copy(update={"candidates": [f"{provider}/{model}"]})
 
 
-def _model_for_provider(candidates: list[str], provider: str) -> str:
+def _model_for_provider(candidates: Sequence[FeatureCandidateInput], provider: str) -> str:
     """Return the first model suffix for provider, or raise ValueError if absent."""
     prefix = f"{provider}/"
-    for candidate in candidates:
+    for candidate in candidate_labels(candidates):
         if candidate.startswith(prefix):
             return candidate.removeprefix(prefix)
     raise ValueError(f"No expansion candidate configured for provider {provider!r}")

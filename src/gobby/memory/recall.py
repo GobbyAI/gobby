@@ -12,7 +12,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from gobby.config.feature_base import FeatureProfile, default_candidates_for_profile
+from gobby.config.feature_base import DEFAULT_PROFILE_CANDIDATES, FeatureProfile
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.memory.synthetic_prompts import synthetic_prompt_reason
 from gobby.prompts.loader import PromptLoader
@@ -492,7 +492,7 @@ class MemoryRecallRunner:
         return self.config.model_copy(
             update={
                 "profile": FeatureProfile.LOW,
-                "candidates": list(default_candidates_for_profile(FeatureProfile.LOW)),
+                "candidates": list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW]),
             }
         )
 
