@@ -174,7 +174,7 @@ class TestDefaultModelResolution:
     def test_prefers_chat_model_when_provider_matches(self) -> None:
         session = ChatSession(conversation_id="chat-default", provider="claude")
         session._config = DaemonConfig(
-            chat=ChatConfig(provider="claude", model="sonnet"),
+            chat=ChatConfig(candidates=["claude/sonnet"]),
         )
 
         assert session._default_model == "sonnet"
@@ -182,7 +182,7 @@ class TestDefaultModelResolution:
     def test_returns_none_when_chat_provider_mismatch(self) -> None:
         session = ChatSession(conversation_id="chat-default", provider="claude")
         session._config = DaemonConfig(
-            chat=ChatConfig(provider="codex", model="gpt-5"),
+            chat=ChatConfig(candidates=["codex/gpt-5"]),
         )
 
         assert session._default_model is None

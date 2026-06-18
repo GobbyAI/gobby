@@ -1,0 +1,287 @@
+"""SDK hook construction for ChatSession."""
+
+import logging
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
+
+from claude_agent_sdk import HookContext, HookMatcher, PermissionResultDeny
+from claude_agent_sdk.types import HookInput as SDKHookInput
+from claude_agent_sdk.types import SyncHookJSONOutput, UserPromptSubmitHookSpecificOutput
+
+from gobby.llm.sdk_utils import ADDITIONAL_CONTEXT_LIMIT as _ADDITIONAL_CONTEXT_LIMIT
+from gobby.servers.chat_session_helpers import (
+    _PLAN_FILE_PATTERN,
+    _response_to_compact_output,
+    _response_to_post_tool_output,
+    _response_to_pre_tool_output,
+    _response_to_prompt_output,
+    _response_to_stop_output,
+    _response_to_subagent_output,
+)
+
+logger = logging.getLogger(__name__)
+
+
+class ChatSessionHooksMixin:
+    """Build Claude SDK hooks from ChatSession lifecycle callbacks."""
+
+    conversation_id: str
+    db_session_id: str | None
+    chat_mode: str
+    _needs_history_injection: bool
+    _plan_approved: bool
+    _plan_broadcast_sent: bool
+    _preapproved_tool_use_ids: set[str]
+    _session_manager_ref: Any | None
+    _transcript_path_captured: bool
+    _on_before_agent: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
+    _on_pre_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
+    _on_post_tool: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
+    _on_pre_compact: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
+    _on_stop: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
+    _on_subagent_start: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
+    _on_subagent_stop: Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]] | None
+    _on_plan_ready: Callable[[str | None, dict[str, Any]], Awaitable[None]] | None
+
+    def _build_sdk_hooks(self) -> dict[str, list[HookMatcher]] | None:
+        """Build SDK hook matchers from lifecycle callbacks."""
+        hooks: dict[str, list[HookMatcher]] = {}
+
+        if self._on_before_agent:
+            cb = self._on_before_agent
+
+            async def _prompt_hook(
+                inp: SDKHookInput,
+                tool_use_id: str | None,
+                ctx: HookContext,
+            ) -> SyncHookJSONOutput:
+                # Capture transcript_path on first invocation.
+                if not self._transcript_path_captured and self._session_manager_ref:
+                    transcript_path = inp.get("transcript_path")
+                    if transcript_path and self.db_session_id:
+                        try:
+                            self._session_manager_ref.update(
+                                self.db_session_id, transcript_path=str(transcript_path)
+                            )
+                            self._transcript_path_captured = True
+                            logger.debug(
+                                "Captured transcript_path for session %s: %s",
+                                self.db_session_id[:8],
+                                transcript_path,
+                            )
+                        except Exception as e:
+                            logger.warning(f"Failed to capture transcript_path: {e}")
+
+                data = {"prompt": inp.get("prompt", ""), "source": "claude"}
+                resp = await cb(data)
+                output = _response_to_prompt_output(resp)
+
+                context_parts = []
+
+                hook_specific = output.get("hookSpecificOutput")
+                if hook_specific and isinstance(hook_specific, dict):
+                    existing = hook_specific.get("additionalContext")
+                    if existing:
+                        context_parts.append(str(existing))
+
+                plan_ctx = getattr(self, "_consume_plan_mode_context", lambda: None)()
+                if plan_ctx:
+                    context_parts.append(plan_ctx)
+
+                if context_parts:
+                    output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
+                        hookEventName="UserPromptSubmit",
+                        additionalContext="\n\n".join(context_parts).strip(),
+                    )
+
+                # Inject conversation history on first prompt of a recreated session.
+                if self._needs_history_injection:
+                    self._needs_history_injection = False
+                    existing = ""
+                    hook_specific = output.get("hookSpecificOutput")
+                    if hook_specific and isinstance(hook_specific, dict):
+                        existing = str(hook_specific.get("additionalContext", "") or "")
+                    history_budget = _ADDITIONAL_CONTEXT_LIMIT - len(existing) - 4
+                    if history_budget > 500:
+                        history_ctx = await cast(Any, self)._load_history_context(
+                            max_total_chars=history_budget
+                        )
+                        if history_ctx:
+                            combined = (
+                                (existing + "\n\n" + history_ctx).strip()
+                                if existing
+                                else history_ctx
+                            )
+                            output["hookSpecificOutput"] = UserPromptSubmitHookSpecificOutput(
+                                hookEventName="UserPromptSubmit",
+                                additionalContext=combined,
+                            )
+
+                return output
+
+            hooks["UserPromptSubmit"] = [HookMatcher(matcher=None, hooks=[_prompt_hook])]
+
+        if self._on_pre_tool:
+            cb_pre = self._on_pre_tool
+
+            async def _pre_tool_hook(
+                inp: SDKHookInput,
+                tool_use_id: str | None,
+                ctx: HookContext,
+            ) -> SyncHookJSONOutput:
+                raw_tool_name = inp.get("tool_name", "")
+                tool_name = raw_tool_name if isinstance(raw_tool_name, str) else ""
+                tool_input = inp.get("tool_input", {})
+                if not isinstance(tool_input, dict):
+                    tool_input = {}
+                data = {
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                }
+                resp = await cb_pre(data)
+                if resp and resp.get("decision") == "block":
+                    return _response_to_pre_tool_output(resp)
+
+                effective_input = tool_input
+                modified_input = resp.get("modified_input") if isinstance(resp, dict) else None
+                if isinstance(modified_input, dict):
+                    effective_input = modified_input
+
+                session = cast(Any, self)
+                approval_required = session._needs_tool_approval(tool_name, effective_input)
+                permission = await session._resolve_tool_permission(
+                    tool_name,
+                    effective_input,
+                    invoke_pre_tool_callback=False,
+                )
+
+                if isinstance(permission, PermissionResultDeny):
+                    deny_resp = dict(resp or {})
+                    deny_resp["decision"] = "block"
+                    deny_resp["reason"] = permission.message
+                    return _response_to_pre_tool_output(deny_resp)
+
+                allow_resp = dict(resp or {})
+                updated_input = permission.updated_input
+                if isinstance(updated_input, dict) and updated_input != tool_input:
+                    allow_resp["modified_input"] = updated_input
+                if approval_required:
+                    allow_resp["auto_approve"] = True
+                    if isinstance(tool_use_id, str) and tool_use_id:
+                        self._preapproved_tool_use_ids.add(tool_use_id)
+                return _response_to_pre_tool_output(allow_resp)
+
+            hooks["PreToolUse"] = [HookMatcher(matcher=None, hooks=[_pre_tool_hook])]
+
+        if self._on_post_tool:
+            cb_post = self._on_post_tool
+
+            async def _post_tool_hook(
+                inp: SDKHookInput,
+                tool_use_id: str | None,
+                ctx: HookContext,
+            ) -> SyncHookJSONOutput:
+                tool_name = inp.get("tool_name", "")
+                tool_input = inp.get("tool_input", {})
+
+                # Detect plan file writes/reads in plan mode and broadcast to frontend.
+                if (
+                    tool_name in ("Write", "Edit", "Read")
+                    and self.chat_mode == "plan"
+                    and not self._plan_approved
+                    and isinstance(tool_input, dict)
+                ):
+                    file_path = tool_input.get("file_path", "")
+                    if _PLAN_FILE_PATTERN.match(file_path):
+                        session = cast(Any, self)
+                        plan_content = session._read_plan_file()
+                        session._reset_plan_broadcast_if_revised(plan_content)
+                        if plan_content and self._on_plan_ready and not self._plan_broadcast_sent:
+                            session._remember_plan_artifact(
+                                file_path=file_path,
+                                content=plan_content,
+                                allowed_prompts=tool_input.get("allowedPrompts"),
+                            )
+                            await self._on_plan_ready(plan_content, tool_input)
+                            self._plan_broadcast_sent = True
+                            logger.info(
+                                "Plan file %s, broadcast plan_pending_approval for %s",
+                                "read" if tool_name == "Read" else "written",
+                                self.conversation_id[:8],
+                            )
+
+                data = {
+                    "tool_name": tool_name,
+                    "tool_input": tool_input,
+                    "tool_response": inp.get("tool_response"),
+                }
+                resp = await cb_post(data)
+                return _response_to_post_tool_output(resp)
+
+            hooks["PostToolUse"] = [HookMatcher(matcher=None, hooks=[_post_tool_hook])]
+
+        if self._on_stop:
+            cb_stop = self._on_stop
+
+            async def _stop_hook(
+                inp: SDKHookInput,
+                tool_use_id: str | None,
+                ctx: HookContext,
+            ) -> SyncHookJSONOutput:
+                data = {"stop_hook_active": inp.get("stop_hook_active", False)}
+                resp = await cb_stop(data)
+                return _response_to_stop_output(resp)
+
+            hooks["Stop"] = [HookMatcher(matcher=None, hooks=[_stop_hook])]
+
+        if self._on_pre_compact:
+            cb_compact = self._on_pre_compact
+
+            async def _compact_hook(
+                inp: SDKHookInput,
+                tool_use_id: str | None,
+                ctx: HookContext,
+            ) -> SyncHookJSONOutput:
+                data = {
+                    "trigger": inp.get("trigger", "auto"),
+                }
+                resp = await cb_compact(data)
+                return _response_to_compact_output(resp)
+
+            hooks["PreCompact"] = [HookMatcher(matcher=None, hooks=[_compact_hook])]
+
+        if self._on_subagent_start:
+            cb_sub_start = self._on_subagent_start
+
+            async def _subagent_start_hook(
+                inp: SDKHookInput,
+                tool_use_id: str | None,
+                ctx: HookContext,
+            ) -> SyncHookJSONOutput:
+                data = {
+                    "session_id": inp.get("session_id", ""),
+                    "source": "claude",
+                }
+                resp = await cb_sub_start(data)
+                return _response_to_subagent_output(resp, "SubagentStart")
+
+            hooks["SubagentStart"] = [HookMatcher(matcher=None, hooks=[_subagent_start_hook])]
+
+        if self._on_subagent_stop:
+            cb_sub_stop = self._on_subagent_stop
+
+            async def _subagent_stop_hook(
+                inp: SDKHookInput,
+                tool_use_id: str | None,
+                ctx: HookContext,
+            ) -> SyncHookJSONOutput:
+                data = {
+                    "session_id": inp.get("session_id", ""),
+                    "source": "claude",
+                }
+                resp = await cb_sub_stop(data)
+                return _response_to_subagent_output(resp, "SubagentStop")
+
+            hooks["SubagentStop"] = [HookMatcher(matcher=None, hooks=[_subagent_stop_hook])]
+
+        return hooks if hooks else None
