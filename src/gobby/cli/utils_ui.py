@@ -108,9 +108,7 @@ def spawn_ui_server(
         if not bool(
             deps.wait_for_port_available(port, host="0.0.0.0", timeout=5.0)  # nosec B104
         ):
-            deps.logger.error(
-                f"Port {port} still in use after cleanup - aborting UI server spawn"
-            )
+            deps.logger.error(f"Port {port} still in use after cleanup - aborting UI server spawn")
             return None
 
     node_modules = web_dir / "node_modules"

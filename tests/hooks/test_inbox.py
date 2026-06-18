@@ -121,7 +121,9 @@ async def test_drain_hook_inbox_replays_full_envelope_with_promoted_headers(tmp_
 
 
 @pytest.mark.asyncio
-async def test_drain_hook_inbox_skips_already_processed_envelope(tmp_path: Path) -> None:
+async def test_drain_hook_inbox_skips_already_processed_envelope(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     inbox_dir = tmp_path / "hooks" / "inbox"
     inbox_dir.mkdir(parents=True)
     envelope = {
@@ -145,11 +147,15 @@ async def test_drain_hook_inbox_skips_already_processed_envelope(tmp_path: Path)
     mock_client.__aenter__ = AsyncMock(return_value=mock_client)
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
-    with patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client):
+    with (
+        caplog.at_level(logging.INFO, logger="gobby.hooks.inbox"),
+        patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client),
+    ):
         replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
 
     assert replayed == 0
     assert not envelope_path.exists()
+    assert "Skipping already-processed hook inbox envelope" not in caplog.text
     mock_client.post.assert_not_awaited()
 
 

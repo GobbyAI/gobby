@@ -130,6 +130,9 @@ class SessionEndReason(str, Enum):
     PROMPT_INPUT_EXIT = "prompt_input_exit"
     """User exited from prompt input"""
 
+    EXIT = "exit"
+    """Session exited normally"""
+
     OTHER = "other"
     """Other/unspecified reason"""
 

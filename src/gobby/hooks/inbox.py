@@ -174,7 +174,7 @@ async def drain_hook_inbox_once(app: Any, inbox_dir: Path | None = None) -> int:
     for path in _iter_inbox_files(pending_dir):
         envelope_id = envelope_id_from_inbox_path(path)
         if envelope_id and is_envelope_processed(envelope_id, processed_dir=processed_dir):
-            logger.info("Skipping already-processed hook inbox envelope %s", path.name)
+            logger.debug("Skipping already-processed hook inbox envelope %s", path.name)
             path.unlink(missing_ok=True)
             continue
 
@@ -249,7 +249,7 @@ async def drain_hook_inbox_loop(
     try:
         replayed = await drain_hook_inbox_once(app)
         if replayed > 0:
-            logger.info("Hook inbox replayed %s pending envelope(s)", replayed)
+            logger.debug("Hook inbox replayed %s pending envelope(s)", replayed)
     except asyncio.CancelledError:
         raise
     except Exception as exc:
@@ -261,7 +261,7 @@ async def drain_hook_inbox_loop(
             await asyncio.sleep(sleep_seconds)
             replayed = await drain_hook_inbox_once(app)
             if replayed > 0:
-                logger.info("Hook inbox replayed %s pending envelope(s)", replayed)
+                logger.debug("Hook inbox replayed %s pending envelope(s)", replayed)
         except asyncio.CancelledError:
             break
         except Exception as exc:

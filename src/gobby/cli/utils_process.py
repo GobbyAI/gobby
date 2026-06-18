@@ -111,10 +111,7 @@ def kill_all_gobby_daemons() -> int:
 
             is_gobby_daemon = (
                 "python" in cmdline_str.lower()
-                and (
-                    "gobby.runner" in cmdline_str
-                    or "gobby_client.runner" in cmdline_str
-                )
+                and ("gobby.runner" in cmdline_str or "gobby_client.runner" in cmdline_str)
                 and "gobby.cli" not in cmdline_str
                 and "gobby_client.cli" not in cmdline_str
             )

@@ -49,7 +49,7 @@ def _log_session_start_lifecycle(
         parts.append(f"parent={parent_session_id}")
     if pre_created:
         parts.append("pre_created=true")
-    handler.logger.info(" ".join(parts))
+    handler.logger.debug(" ".join(parts))
 
 
 def _log_session_start_timing(
@@ -110,7 +110,7 @@ def _schedule_tmux_window_rename_for_session(handler: Any, session: Any) -> None
         return
 
     title = getattr(session, "title", None) or ""
-    handler.logger.info(
+    handler.logger.debug(
         "Scheduling tmux window rename for %s pane=%s",
         getattr(session, "ref", "?"),
         pane,

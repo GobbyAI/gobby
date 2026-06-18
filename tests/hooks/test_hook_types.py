@@ -127,7 +127,15 @@ class TestSessionEndReasonEnum:
 
     def test_all_reasons_defined(self) -> None:
         """Test that all session end reasons are defined."""
-        expected = {"CLEAR", "RESUME", "COMPACT", "LOGOUT", "PROMPT_INPUT_EXIT", "OTHER"}
+        expected = {
+            "CLEAR",
+            "RESUME",
+            "COMPACT",
+            "LOGOUT",
+            "PROMPT_INPUT_EXIT",
+            "EXIT",
+            "OTHER",
+        }
         actual = {r.name for r in SessionEndReason}
         assert actual == expected
 
@@ -263,6 +271,11 @@ class TestSessionEndInput:
         """Test runtime compact reason emitted for handoff-preserving exits."""
         input_data = SessionEndInput(external_id="key", reason="compact")
         assert input_data.reason == SessionEndReason.COMPACT
+
+    def test_runtime_exit_reason(self) -> None:
+        """Test runtime exit reason emitted by Gemini session lifecycle events."""
+        input_data = SessionEndInput(external_id="key", reason="exit")
+        assert input_data.reason == SessionEndReason.EXIT
 
 
 class TestUserPromptSubmitInput:
