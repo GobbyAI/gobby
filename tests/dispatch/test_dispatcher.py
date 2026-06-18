@@ -1849,7 +1849,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
         return {"success": True, "run_id": run.id, "isolation": "worktree"}
 
     monkeypatch.setattr(
-        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        "gobby.dispatch.spawn_artifacts.ensure_epic_integration_workspaces",
         unexpected_prepare,
     )
     monkeypatch.setattr(
@@ -1948,7 +1948,7 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
         )
         return {"success": True, "run_id": run.id, "isolation": "worktree"}
 
-    monkeypatch.setattr("gobby.dispatch.spawn._artifact_ref_resolves", fake_ref_resolves)
+    monkeypatch.setattr("gobby.dispatch.spawn_artifacts._artifact_ref_resolves", fake_ref_resolves)
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         fake_spawn_agent_impl,
@@ -2033,7 +2033,7 @@ async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
     async def unexpected_spawn_agent_impl(**_kwargs: object) -> dict[str, object]:
         raise AssertionError("merge-ready contaminated branch must fail before spawn")
 
-    monkeypatch.setattr("gobby.dispatch.spawn._artifact_ref_sha", fake_ref_sha)
+    monkeypatch.setattr("gobby.dispatch.spawn_artifacts._artifact_ref_sha", fake_ref_sha)
     monkeypatch.setattr(
         "gobby.mcp_proxy.tools.spawn_agent._implementation.spawn_agent_impl",
         unexpected_spawn_agent_impl,
@@ -2112,7 +2112,7 @@ async def test_epic_holistic_spawn_refreshes_and_reuses_integration_workspace(
         }
 
     monkeypatch.setattr(
-        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        "gobby.dispatch.spawn_artifacts.ensure_epic_integration_workspaces",
         fake_prepare,
     )
     monkeypatch.setattr(
@@ -2214,7 +2214,7 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
         }
 
     monkeypatch.setattr(
-        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        "gobby.dispatch.spawn_artifacts.ensure_epic_integration_workspaces",
         fake_prepare,
     )
     monkeypatch.setattr(
@@ -2300,7 +2300,7 @@ async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
         return {"success": True, "run_id": run.id, "isolation": "worktree"}
 
     monkeypatch.setattr(
-        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        "gobby.dispatch.spawn_artifacts.ensure_epic_integration_workspaces",
         fake_prepare,
     )
     monkeypatch.setattr(
@@ -2387,7 +2387,7 @@ async def test_epic_holistic_workspace_conflict_rolls_back_without_heartbeat_err
         raise AssertionError("spawn should not run after workspace preparation failure")
 
     monkeypatch.setattr(
-        "gobby.dispatch.spawn.ensure_epic_integration_workspaces",
+        "gobby.dispatch.spawn_artifacts.ensure_epic_integration_workspaces",
         fail_prepare,
     )
     monkeypatch.setattr(
@@ -3427,7 +3427,7 @@ async def test_dispatch_spawn_tolerates_build_coordinator_subscription_failure(
         fake_spawn_agent_impl,
     )
     monkeypatch.setattr(
-        "gobby.dispatch.spawn.subscribe_agent_completion",
+        "gobby.dispatch.spawn_completion.subscribe_agent_completion",
         MagicMock(side_effect=RuntimeError("subscriber store unavailable")),
     )
     services = SimpleNamespace(
