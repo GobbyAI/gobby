@@ -313,6 +313,18 @@ fn resolve_base_capability_binding(
             }
             _ => None,
         },
+        candidates: match capability {
+            AiCapability::TextGenerate => {
+                resolve_feature_candidates(source, ai_keys::TEXT_GENERATE_CANDIDATES)
+            }
+            _ => None,
+        },
+        reasoning_effort: match capability {
+            AiCapability::TextGenerate => {
+                resolve_ai_config_value(source, ai_keys::TEXT_GENERATE_REASONING_EFFORT)
+            }
+            _ => None,
+        },
         verify_profile: match capability {
             AiCapability::TextGenerate => {
                 resolve_ai_config_value(source, ai_keys::TEXT_GENERATE_VERIFY_PROFILE)
@@ -355,6 +367,8 @@ fn resolve_audio_translate_binding(source: &mut impl ConfigSource) -> Capability
         language: None,
         target_lang,
         profile: None,
+        candidates: None,
+        reasoning_effort: None,
         verify_profile: None,
         verify_model: None,
         verify_api_key: None,
@@ -368,6 +382,21 @@ fn resolve_ai_routing_value(source: &mut impl ConfigSource, config_key: &str) ->
 fn resolve_ai_config_value(source: &mut impl ConfigSource, config_key: &str) -> Option<String> {
     let value = source.config_value(config_key)?;
     resolve_ai_non_empty(source, config_key, &value)
+}
+
+fn resolve_feature_candidates(
+    source: &mut impl ConfigSource,
+    config_key: &str,
+) -> Option<Vec<FeatureCandidate>> {
+    let raw = resolve_ai_config_value(source, config_key)?;
+    match serde_json::from_str::<Vec<FeatureCandidate>>(&raw) {
+        Ok(candidates) if candidates.is_empty() => None,
+        Ok(candidates) => Some(candidates),
+        Err(error) => {
+            log::warn!("invalid feature candidates for config key {config_key:?}: {error}");
+            None
+        }
+    }
 }
 
 fn resolve_config_bool(

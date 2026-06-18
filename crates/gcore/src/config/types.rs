@@ -1,3 +1,5 @@
+use serde::{Deserialize, Deserializer, Serialize};
+
 /// FalkorDB connection configuration.
 ///
 /// Graph name selection is consumer-owned.
@@ -202,6 +204,46 @@ impl std::fmt::Display for ParseAiCapabilityError {
 
 impl std::error::Error for ParseAiCapabilityError {}
 
+/// One text-generation provider/model candidate plus an optional reasoning pin.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FeatureCandidate {
+    pub candidate: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning_effort: Option<String>,
+}
+
+impl<'de> Deserialize<'de> for FeatureCandidate {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        #[derive(Deserialize)]
+        #[serde(untagged)]
+        enum WireFeatureCandidate {
+            Label(String),
+            Structured {
+                candidate: String,
+                #[serde(default)]
+                reasoning_effort: Option<String>,
+            },
+        }
+
+        match WireFeatureCandidate::deserialize(deserializer)? {
+            WireFeatureCandidate::Label(candidate) => Ok(Self {
+                candidate,
+                reasoning_effort: None,
+            }),
+            WireFeatureCandidate::Structured {
+                candidate,
+                reasoning_effort,
+            } => Ok(Self {
+                candidate,
+                reasoning_effort,
+            }),
+        }
+    }
+}
+
 /// Per-capability AI endpoint binding.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CapabilityBinding {
@@ -217,6 +259,11 @@ pub struct CapabilityBinding {
     /// Daemon feature profile (text_generate only); ignored when an explicit
     /// provider/model pair routes the call.
     pub profile: Option<String>,
+    /// Ordered daemon feature candidates (text_generate only). This is parsed
+    /// from the JSON string stored at `ai.text_generate.candidates`.
+    pub candidates: Option<Vec<FeatureCandidate>>,
+    /// Top-level reasoning effort hint for text-generation requests.
+    pub reasoning_effort: Option<String>,
     /// Daemon feature profile for the grounded verification pass (text_generate
     /// only). `None` lets the consumer pick its default verify profile.
     pub verify_profile: Option<String>,
@@ -301,6 +348,8 @@ pub mod ai_keys {
     pub const TEXT_GENERATE_MODEL: &str = "ai.text_generate.model";
     pub const TEXT_GENERATE_PROVIDER: &str = "ai.text_generate.provider";
     pub const TEXT_GENERATE_PROFILE: &str = "ai.text_generate.profile";
+    pub const TEXT_GENERATE_CANDIDATES: &str = "ai.text_generate.candidates";
+    pub const TEXT_GENERATE_REASONING_EFFORT: &str = "ai.text_generate.reasoning_effort";
     pub const TEXT_GENERATE_VERIFY_PROFILE: &str = "ai.text_generate.verify_profile";
     pub const TEXT_GENERATE_VERIFY_MODEL: &str = "ai.text_generate.verify_model";
     pub const TEXT_GENERATE_VERIFY_API_KEY: &str = "ai.text_generate.verify_api_key";
@@ -346,6 +395,8 @@ pub mod ai_keys {
         TEXT_GENERATE_MODEL,
         TEXT_GENERATE_PROVIDER,
         TEXT_GENERATE_PROFILE,
+        TEXT_GENERATE_CANDIDATES,
+        TEXT_GENERATE_REASONING_EFFORT,
         TEXT_GENERATE_VERIFY_PROFILE,
         TEXT_GENERATE_VERIFY_MODEL,
         TEXT_GENERATE_VERIFY_API_KEY,

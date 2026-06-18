@@ -29,6 +29,7 @@ pub fn generate_text_with_max_tokens(
     Ok(TextResult {
         text: super::chat_completion_content(&value)?,
         model: super::chat_completion_model(&value),
+        applied_reasoning_effort: None,
         usage: chat_completion_usage(&value),
         metadata: BTreeMap::new(),
     })
@@ -182,6 +183,8 @@ mod tests {
             language: None,
             target_lang: None,
             profile: None,
+            candidates: None,
+            reasoning_effort: None,
             verify_profile: None,
             verify_model: None,
             verify_api_key: None,

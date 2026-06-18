@@ -19,8 +19,8 @@ pub use resolve::{
 };
 pub use types::{
     AiCapability, AiRouting, AiTuning, CapabilityBinding, EmbeddingConfig,
-    EmbeddingConfigResolution, FalkorConfig, IndexingConfig, ParseAiCapabilityError,
-    ParseAiRoutingError, QdrantConfig, ai_keys, embedding_keys,
+    EmbeddingConfigResolution, FalkorConfig, FeatureCandidate, IndexingConfig,
+    ParseAiCapabilityError, ParseAiRoutingError, QdrantConfig, ai_keys, embedding_keys,
 };
 
 #[cfg(test)]

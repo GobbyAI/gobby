@@ -1,5 +1,5 @@
 use super::*;
-use crate::config::TEST_ENV_LOCK;
+use crate::config::{AiCapability, FeatureCandidate, TEST_ENV_LOCK, resolve_capability_binding};
 use std::sync::MutexGuard;
 
 struct EnvGuard {
@@ -120,6 +120,35 @@ ai.text_generate.model: text-model
     );
     assert_eq!(config.get(ai_keys::TEXT_GENERATE_MODEL), Some("text-model"));
     assert_eq!(config.get(ai_keys::TEXT_GENERATE_API_KEY), None);
+}
+
+#[test]
+fn gcore_yaml_text_generate_candidates_resolve_from_json_string() {
+    let mut config = StandaloneConfig::from_yaml_str(
+        r#"
+ai:
+  text_generate:
+    routing: daemon
+    candidates: '[{"candidate":"codex/gpt-5.5","reasoning_effort":"high"}]'
+    reasoning_effort: medium
+"#,
+    )
+    .expect("parse config");
+
+    assert_eq!(
+        config.get(ai_keys::TEXT_GENERATE_CANDIDATES),
+        Some(r#"[{"candidate":"codex/gpt-5.5","reasoning_effort":"high"}]"#)
+    );
+
+    let binding = resolve_capability_binding(&mut config, AiCapability::TextGenerate);
+    assert_eq!(
+        binding.candidates,
+        Some(vec![FeatureCandidate {
+            candidate: "codex/gpt-5.5".to_string(),
+            reasoning_effort: Some("high".to_string()),
+        }])
+    );
+    assert_eq!(binding.reasoning_effort.as_deref(), Some("medium"));
 }
 
 #[test]

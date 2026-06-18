@@ -4,7 +4,7 @@ use serde_json::{Map, Value};
 use std::io::Cursor;
 
 use crate::ai_types::AiError;
-use crate::config::AiCapability;
+use crate::config::{AiCapability, FeatureCandidate};
 
 const TEXT_GENERATE_DEFAULT_PROFILE: &str = "feature_low";
 
@@ -51,28 +51,54 @@ pub(super) fn add_optional_text(
     }
 }
 
+pub(super) struct TextRequestOptions<'a> {
+    pub provider: Option<&'a str>,
+    pub model: Option<&'a str>,
+    pub project_id: Option<&'a str>,
+    pub max_tokens: Option<usize>,
+    pub profile: Option<&'a str>,
+    pub candidates: Option<&'a [FeatureCandidate]>,
+    pub reasoning_effort: Option<&'a str>,
+}
+
 pub(super) fn text_request_body(
     prompt: &str,
     system: Option<&str>,
-    provider: Option<&str>,
-    model: Option<&str>,
-    project_id: Option<&str>,
-    max_tokens: Option<usize>,
-    profile: Option<&str>,
+    options: TextRequestOptions<'_>,
 ) -> Value {
     let mut body = Map::new();
-    let provider = non_empty(provider);
-    let model = non_empty(model);
+    let provider = non_empty(options.provider);
+    let model = non_empty(options.model);
+    let candidates = options
+        .candidates
+        .filter(|candidates| !candidates.is_empty());
     body.insert("prompt".to_string(), Value::String(prompt.to_string()));
     insert_optional(&mut body, "system_prompt", system);
     insert_optional(&mut body, "provider", provider);
     insert_optional(&mut body, "model", model);
     if provider.is_none() && model.is_none() {
-        let profile = non_empty(profile).unwrap_or(TEXT_GENERATE_DEFAULT_PROFILE);
-        body.insert("profile".to_string(), Value::String(profile.to_string()));
+        match (non_empty(options.profile), candidates.is_some()) {
+            (Some(profile), _) => {
+                body.insert("profile".to_string(), Value::String(profile.to_string()));
+            }
+            (None, false) => {
+                body.insert(
+                    "profile".to_string(),
+                    Value::String(TEXT_GENERATE_DEFAULT_PROFILE.to_string()),
+                );
+            }
+            (None, true) => {}
+        }
     }
-    insert_optional(&mut body, "project_id", project_id);
-    if let Some(max_tokens) = max_tokens.filter(|value| *value > 0) {
+    if let Some(candidates) = candidates {
+        body.insert(
+            "candidates".to_string(),
+            serde_json::to_value(candidates).expect("feature candidates serialize"),
+        );
+    }
+    insert_optional(&mut body, "reasoning_effort", options.reasoning_effort);
+    insert_optional(&mut body, "project_id", options.project_id);
+    if let Some(max_tokens) = options.max_tokens.filter(|value| *value > 0) {
         body.insert("max_tokens".to_string(), Value::from(max_tokens));
     }
     Value::Object(body)

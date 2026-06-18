@@ -1,4 +1,5 @@
 use super::*;
+use crate::config::FeatureCandidate;
 
 #[test]
 fn forwards_provider_model_and_optional_project_id() {
@@ -94,6 +95,45 @@ fn configured_binding_profile_replaces_feature_low_default() {
     assert_eq!(body["profile"], "feature_high");
     assert!(body.get("provider").is_none());
     assert!(body.get("model").is_none());
+}
+
+#[test]
+fn forwards_candidates_and_reasoning_effort_from_binding() {
+    let (port, request) = spawn_server(r#"{"text":"ok","applied_reasoning_effort":"high"}"#);
+    let home = temp_home();
+    let _env = EnvGuard::set_home(home.path());
+    write_daemon_files(home.path(), port, "text-token");
+    let mut cfg = test_context(None);
+    cfg.bindings.text_generate.provider = None;
+    cfg.bindings.text_generate.model = None;
+    cfg.bindings.text_generate.candidates = Some(vec![
+        FeatureCandidate {
+            candidate: "codex/gpt-5.5".to_string(),
+            reasoning_effort: Some("high".to_string()),
+        },
+        FeatureCandidate {
+            candidate: "droid/qwen3.6".to_string(),
+            reasoning_effort: None,
+        },
+    ]);
+    cfg.bindings.text_generate.reasoning_effort = Some("medium".to_string());
+
+    let result =
+        generate_via_daemon_with_max_tokens(&cfg, "Use candidates", None, None, None).unwrap();
+    let request = request.join().unwrap().unwrap();
+    let body = request_body_json(&request);
+
+    assert_eq!(body["prompt"], "Use candidates");
+    assert!(body.get("profile").is_none());
+    assert_eq!(body["reasoning_effort"], "medium");
+    assert_eq!(
+        body["candidates"],
+        serde_json::json!([
+            {"candidate":"codex/gpt-5.5","reasoning_effort":"high"},
+            {"candidate":"droid/qwen3.6"}
+        ])
+    );
+    assert_eq!(result.applied_reasoning_effort.as_deref(), Some("high"));
 }
 
 #[test]

@@ -56,6 +56,8 @@ pub struct TextResult {
     pub text: String,
     pub model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub applied_reasoning_effort: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub usage: Option<TokenUsage>,
     /// Provider-specific metadata preserved for diagnostics and callers that
     /// need backend details without depending on a transport-specific schema.
@@ -338,6 +340,27 @@ mod tests {
 
         assert_eq!(complete.token_count(), Some(42));
         assert_eq!(partial.token_count(), None);
+    }
+
+    #[test]
+    fn text_result_deserializes_applied_reasoning_effort_as_typed_field() {
+        let result = TextResult::from_wire_json(serde_json::json!({
+            "text": "ok",
+            "model": "codex/gpt-5.5",
+            "applied_reasoning_effort": "high",
+            "metadata": {
+                "provider": "codex"
+            }
+        }))
+        .expect("text result");
+
+        assert_eq!(result.text, "ok");
+        assert_eq!(result.model.as_deref(), Some("codex/gpt-5.5"));
+        assert_eq!(result.applied_reasoning_effort.as_deref(), Some("high"));
+        assert_eq!(
+            result.metadata.get("provider").map(String::as_str),
+            Some("codex")
+        );
     }
 
     #[test]

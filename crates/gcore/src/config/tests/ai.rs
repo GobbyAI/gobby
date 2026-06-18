@@ -65,6 +65,34 @@ fn text_generate_resolves_verify_overrides() {
 }
 
 #[test]
+fn text_generate_resolves_candidates_and_reasoning_effort() {
+    let _env = EnvGuard::new();
+    let mut source = TestSource::with_values([
+        (
+            ai_keys::TEXT_GENERATE_CANDIDATES,
+            r#"[
+                {"candidate":"codex/gpt-5.5","reasoning_effort":"high"},
+                "droid/qwen3.6"
+            ]"#,
+        ),
+        (ai_keys::TEXT_GENERATE_REASONING_EFFORT, "medium"),
+    ]);
+
+    let binding = resolve_capability_binding(&mut source, AiCapability::TextGenerate);
+    let candidates = binding.candidates.expect("candidates resolved");
+    assert_eq!(candidates.len(), 2);
+    assert_eq!(candidates[0].candidate, "codex/gpt-5.5");
+    assert_eq!(candidates[0].reasoning_effort.as_deref(), Some("high"));
+    assert_eq!(candidates[1].candidate, "droid/qwen3.6");
+    assert_eq!(candidates[1].reasoning_effort, None);
+    assert_eq!(binding.reasoning_effort.as_deref(), Some("medium"));
+
+    let embed = resolve_capability_binding(&mut source, AiCapability::Embed);
+    assert_eq!(embed.candidates, None);
+    assert_eq!(embed.reasoning_effort, None);
+}
+
+#[test]
 fn text_generate_verify_overrides_absent_by_default() {
     let _env = EnvGuard::new();
     let mut source = TestSource::with_values([(ai_keys::TEXT_GENERATE_MODEL, "generate-model")]);
@@ -226,6 +254,8 @@ fn provider_and_translation_fields_resolve() {
     assert!(ai_keys::all().contains(&ai_keys::EMBEDDINGS_QUERY_PREFIX));
     assert!(ai_keys::all().contains(&ai_keys::EMBEDDINGS_DIM));
     assert!(ai_keys::all().contains(&ai_keys::EMBEDDINGS_TIMEOUT_SECONDS));
+    assert!(ai_keys::all().contains(&ai_keys::TEXT_GENERATE_CANDIDATES));
+    assert!(ai_keys::all().contains(&ai_keys::TEXT_GENERATE_REASONING_EFFORT));
 }
 
 #[test]

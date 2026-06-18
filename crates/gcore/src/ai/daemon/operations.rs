@@ -5,8 +5,8 @@ use crate::ai_types::{AiError, TextResult, TranscriptionResult, VisionResult};
 use crate::config::AiCapability;
 
 use super::request::{
-    add_optional_text, audio_capability, embeddings_request_body, multipart_form_with_file,
-    text_request_body,
+    TextRequestOptions, add_optional_text, audio_capability, embeddings_request_body,
+    multipart_form_with_file, text_request_body,
 };
 use super::response::{parse_daemon_embeddings, parse_daemon_transcription};
 use super::transport::{daemon_client, daemon_url, read_local_cli_token, with_local_token};
@@ -137,11 +137,15 @@ pub fn generate_via_daemon_with_max_tokens(
     let body = text_request_body(
         prompt,
         system,
-        binding.provider.as_deref(),
-        binding.model.as_deref(),
-        cfg.project_id.as_deref(),
-        max_tokens,
-        profile.or(binding.profile.as_deref()),
+        TextRequestOptions {
+            provider: binding.provider.as_deref(),
+            model: binding.model.as_deref(),
+            project_id: cfg.project_id.as_deref(),
+            max_tokens,
+            profile: profile.or(binding.profile.as_deref()),
+            candidates: binding.candidates.as_deref(),
+            reasoning_effort: binding.reasoning_effort.as_deref(),
+        },
     );
     let _permit = cfg.limiter.acquire();
 
