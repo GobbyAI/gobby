@@ -169,7 +169,7 @@ class TestExpandEnvVars:
         env = os.environ.copy()
         env.pop("MISSING_VAR", None)
         with patch.dict(os.environ, env, clear=True):
-            with patch("gobby.config.app.logger") as mock_logger:
+            with patch("gobby.config._loading.logger") as mock_logger:
                 result = expand_env_vars("key: ${MISSING_VAR}", secret_resolver=resolver)
                 assert result == "key: ${MISSING_VAR}"
                 mock_logger.warning.assert_called_once()
@@ -190,7 +190,7 @@ class TestExpandEnvVars:
         env = os.environ.copy()
         env.pop("NOPE", None)
         with patch.dict(os.environ, env, clear=True):
-            with patch("gobby.config.app.logger") as mock_logger:
+            with patch("gobby.config._loading.logger") as mock_logger:
                 result = expand_env_vars("key: ${NOPE}")
                 assert result == "key: ${NOPE}"
                 mock_logger.warning.assert_called_once()
@@ -211,7 +211,7 @@ class TestExpandEnvVars:
             return None
 
         with patch.dict(os.environ, {"API_KEY": "env_value"}):
-            with patch("gobby.config.app.logger"):
+            with patch("gobby.config._loading.logger"):
                 result = expand_env_vars("key: $secret:API_KEY", secret_resolver=resolver)
                 assert result == "key: $secret:API_KEY"  # Left unchanged, no env fallback
 
@@ -226,7 +226,7 @@ class TestExpandEnvVars:
         def resolver(name: str) -> str | None:
             return None
 
-        with patch("gobby.config.app.logger") as mock_logger:
+        with patch("gobby.config._loading.logger") as mock_logger:
             result = expand_env_vars("key: $secret:MISSING", secret_resolver=resolver)
             assert result == "key: $secret:MISSING"
             mock_logger.warning.assert_called_once()
