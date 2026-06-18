@@ -26,7 +26,7 @@ from gobby.ai import (
     build_daemon_text_generation_service,
 )
 from gobby.ai._text_generation_builder import _daemon_text_generation_adapter_factories
-from gobby.ai._text_generation_helpers import _CandidateTimeoutError
+from gobby.ai._text_generation_helpers import _CandidateTimeoutError, _coerce_text_result
 from gobby.ai.text_generation import (
     ONE_SHOT_DIRECTIVE,
     FeatureGenerationUnavailableError,
@@ -973,6 +973,183 @@ async def test_text_generation_service_json_applies_effort_without_wrapping_resu
 
 
 @pytest.mark.asyncio
+async def test_text_generation_service_normalizes_auto_reasoning_effort_to_unset() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("gpt-5.5",),
+            ),
+        ]
+    )
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"codex": codex})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=(
+                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+            ),
+            reasoning_effort=" AUTO ",
+        )
+    )
+
+    assert result.applied_reasoning_effort is None
+    assert codex.requests == [
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="codex",
+            candidates=(
+                FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+            ),
+            model="gpt-5.5",
+            reasoning_effort=None,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_accepts_valid_effort_for_emit_nothing_provider() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-pro",),
+            ),
+        ]
+    )
+    gemini = RecordingAdapter("gemini")
+    service = TextGenerationService(registry, {"gemini": gemini})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=(
+                FeatureCandidateConfig(candidate="gemini/gemini-pro", reasoning_effort="max"),
+            ),
+        )
+    )
+
+    assert result.provider == "gemini"
+    assert result.applied_reasoning_effort == "max"
+    assert gemini.requests[0].reasoning_effort == "max"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_skips_unknown_reasoning_effort_even_without_emit_flag(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen-model",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-pro",),
+            ),
+        ]
+    )
+    qwen = RecordingAdapter("qwen")
+    gemini = RecordingAdapter("gemini")
+    service = TextGenerationService(registry, {"qwen": qwen, "gemini": gemini})
+    caplog.set_level(logging.WARNING, logger=TEXT_GENERATION_LOGGER)
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=(
+                FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="banana"),
+                FeatureCandidateConfig(candidate="gemini/gemini-pro", reasoning_effort="high"),
+            ),
+        )
+    )
+
+    assert result.provider == "gemini"
+    assert qwen.requests == []
+    assert gemini.requests[0].reasoning_effort == "high"
+    assert "Unknown reasoning_effort 'banana'" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_skips_provider_unsupported_reasoning_effort(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="droid",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("claude-opus-4-7",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="grok",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("grok-4",),
+            ),
+        ]
+    )
+    droid = RecordingAdapter("droid")
+    grok = RecordingAdapter("grok")
+    service = TextGenerationService(registry, {"droid": droid, "grok": grok})
+    caplog.set_level(logging.WARNING, logger=TEXT_GENERATION_LOGGER)
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=(
+                FeatureCandidateConfig(
+                    candidate="droid/claude-opus-4-7",
+                    reasoning_effort="xhigh",
+                ),
+                FeatureCandidateConfig(candidate="grok/grok-4", reasoning_effort="high"),
+            ),
+        )
+    )
+
+    assert result.provider == "grok"
+    assert droid.requests == []
+    assert grok.requests[0].reasoning_effort == "high"
+    assert "Unsupported reasoning_effort 'xhigh' for provider 'droid'" in caplog.text
+
+
+def test_coerce_text_result_applies_reasoning_effort_to_raw_string() -> None:
+    result = _coerce_text_result("Generated text", applied_reasoning_effort="high")
+
+    assert result.text == "Generated text"
+    assert result.applied_reasoning_effort == "high"
+
+
+def test_coerce_text_result_applies_reasoning_effort_to_text_result() -> None:
+    result = _coerce_text_result(
+        LLMTextResult(text="Generated text", usage={"total_tokens": 3}),
+        applied_reasoning_effort="high",
+    )
+
+    assert result.text == "Generated text"
+    assert result.usage == {"total_tokens": 3}
+    assert result.applied_reasoning_effort == "high"
+
+
+@pytest.mark.asyncio
 async def test_text_generation_service_candidate_list_is_exhaustive_for_unavailable_override() -> (
     None
 ):
@@ -1801,6 +1978,39 @@ async def test_codex_cli_text_generate_adapter_runs_one_shot_exec(
     # request.cwd must NOT leak into the command as --cd.
     assert "--cd" not in command
     assert command[-1] == f"system prompt\n\n{ONE_SHOT_DIRECTIVE}\n\nuser prompt"
+
+
+def test_cli_text_generate_adapters_treat_auto_reasoning_effort_as_unset() -> None:
+    codex = CodexCLITextGenerateAdapter(command_path="/bin/codex")
+    droid = DroidCLITextGenerateAdapter(command_path="/bin/droid")
+    grok = text_generation_adapters._GrokCLITextGenerateAdapter(command_path="/bin/grok")
+    request = TextGenerationRequest(prompt="prompt", reasoning_effort="auto")
+
+    codex_command = codex.build_command(request, output_path=Path("/tmp/last-message.txt"))
+    droid_command = droid.build_command(request)
+    grok_command = grok.build_command(request, leader_socket=Path("/tmp/leader.sock"))
+
+    assert "model_reasoning_effort" not in " ".join(codex_command)
+    assert "--reasoning-effort" not in droid_command
+    assert "--reasoning-effort" not in grok_command
+
+
+def test_emit_nothing_cli_text_generate_adapters_ignore_reasoning_effort() -> None:
+    gemini = text_generation_adapters._GeminiCLITextGenerateAdapter(command_path="/bin/gemini")
+    qwen = text_generation_adapters._QwenCLITextGenerateAdapter(command_path="/bin/qwen")
+    request = TextGenerationRequest(
+        prompt="prompt",
+        model="model-a",
+        reasoning_effort="high",
+    )
+
+    gemini_command = gemini.build_command(request)
+    qwen_command = qwen.build_command(request)
+
+    assert "--reasoning-effort" not in gemini_command
+    assert "--reasoning-effort" not in qwen_command
+    assert "model_reasoning_effort" not in " ".join(gemini_command)
+    assert "model_reasoning_effort" not in " ".join(qwen_command)
 
 
 @pytest.mark.asyncio

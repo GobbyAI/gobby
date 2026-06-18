@@ -71,11 +71,20 @@ def _llm_text_result_type() -> type[LLMTextResult]:
     return LLMTextResult
 
 
-def _coerce_text_result(result: str | LLMTextResult) -> LLMTextResult:
+def _coerce_text_result(
+    result: str | LLMTextResult,
+    *,
+    applied_reasoning_effort: str | None = None,
+) -> LLMTextResult:
     text_result_type = _llm_text_result_type()
     if isinstance(result, text_result_type):
-        return result
-    return text_result_type(text=cast(str, result))
+        if result.applied_reasoning_effort == applied_reasoning_effort:
+            return result
+        return replace(result, applied_reasoning_effort=applied_reasoning_effort)
+    return text_result_type(
+        text=cast(str, result),
+        applied_reasoning_effort=applied_reasoning_effort,
+    )
 
 
 def _validate_text_generation_output(request: TextGenerationRequest, text: str) -> None:

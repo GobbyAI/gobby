@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.provider_capabilities import provider_reasoning_flag
+from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.ai._text_generation_contracts import TextGenerateAdapter, TextGenerationRequest
 from gobby.ai._text_generation_helpers import (
     _compose_prompt,
@@ -62,6 +63,7 @@ _DROID_FACTORY_ALLOWED_FILE_KEYWORDS = frozenset(
 
 
 def _extend_reasoning_args(command: list[str], provider: str, reasoning_effort: str | None) -> None:
+    reasoning_effort = normalize_reasoning_effort(reasoning_effort)
     if not reasoning_effort:
         return
     match provider_reasoning_flag(provider):

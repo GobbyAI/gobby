@@ -59,6 +59,12 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
     ),
 }
 
+KNOWN_REASONING_EFFORTS = frozenset(
+    effort
+    for capabilities in PROVIDER_CAPABILITIES.values()
+    for effort in capabilities.fallback_reasoning_efforts
+)
+
 
 def provider_capabilities(provider: str) -> ProviderCapabilities:
     """Return terminal-agent capabilities for a provider."""

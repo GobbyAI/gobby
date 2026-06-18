@@ -10,6 +10,12 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
 
+from gobby.agents.provider_capabilities import (
+    KNOWN_REASONING_EFFORTS,
+    provider_reasoning_efforts,
+    provider_reasoning_flag,
+)
+from gobby.agents.reasoning import normalize_reasoning_effort
 from gobby.ai._text_generation_contracts import (
     TextGenerateAdapter,
     TextGenerateAdapterFactory,
@@ -60,6 +66,10 @@ _SPAWN_COLD_ADAPTER_STYLES: frozenset[AIAdapterStyle] = frozenset(
 )
 
 
+class _ReasoningEffortRejectedError(ValueError):
+    """Raised when a candidate's reasoning effort must fail before adapter execution."""
+
+
 def _json_parse_failure(raw: str, exc: Exception) -> ValueError:
     preview = raw[:240].replace("\n", "\\n").replace("\r", "\\r")
     if not preview:
@@ -68,6 +78,41 @@ def _json_parse_failure(raw: str, exc: Exception) -> ValueError:
         f"Generated JSON parse failed: {type(exc).__name__}: {exc}; "
         f"raw_len={len(raw)}; raw_preview={preview!r}"
     )
+
+
+def _gate_reasoning_effort(
+    request: TextGenerationRequest,
+    *,
+    binding: CapabilityBinding,
+) -> TextGenerationRequest:
+    normalized = normalize_reasoning_effort(request.reasoning_effort)
+    if normalized is None:
+        if request.reasoning_effort is None:
+            return request
+        return replace(request, reasoning_effort=None)
+
+    if normalized not in KNOWN_REASONING_EFFORTS:
+        raise _ReasoningEffortRejectedError(
+            f"Unknown reasoning_effort {request.reasoning_effort!r} for "
+            f"{binding.provider}/{request.model or next(iter(binding.models), None)}"
+        )
+
+    if provider_reasoning_flag(binding.provider) is None:
+        if normalized == request.reasoning_effort:
+            return request
+        return replace(request, reasoning_effort=normalized)
+
+    accepted_efforts = provider_reasoning_efforts(binding.provider)
+    if normalized not in accepted_efforts:
+        accepted = ", ".join(sorted(accepted_efforts)) or "<none>"
+        raise _ReasoningEffortRejectedError(
+            f"Unsupported reasoning_effort {normalized!r} for provider "
+            f"{binding.provider!r}; accepted: {accepted}"
+        )
+
+    if normalized == request.reasoning_effort:
+        return request
+    return replace(request, reasoning_effort=normalized)
 
 
 class TextGenerationService:
@@ -214,11 +259,15 @@ class TextGenerationService:
             binding: CapabilityBinding | None = None
             try:
                 binding = self._select_binding(candidate)
+                candidate = _gate_reasoning_effort(candidate, binding=binding)
                 adapter = self._adapter_for_provider(binding.provider)
                 result = await self._await_candidate(
                     adapter.generate(candidate), request=candidate, binding=binding
                 )
-                text_result = _coerce_text_result(result)
+                text_result = _coerce_text_result(
+                    result,
+                    applied_reasoning_effort=candidate.reasoning_effort,
+                )
                 _validate_text_generation_output(candidate, text_result.text)
                 self._log_generation_event(
                     request=candidate,
@@ -232,12 +281,17 @@ class TextGenerationService:
                         provider=binding.provider,
                         model=candidate.model or next(iter(binding.models), None),
                         profile=candidate.profile,
-                        applied_reasoning_effort=candidate.reasoning_effort,
+                        applied_reasoning_effort=text_result.applied_reasoning_effort,
                     ),
                     None,
                 )
             except LLMProviderCancellation:
                 raise
+            except _ReasoningEffortRejectedError as exc:
+                last_error = exc
+                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                logger.warning("Skipping text generation candidate: %s", exc)
+                continue
             except Exception as exc:
                 last_error = exc
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
@@ -272,6 +326,7 @@ class TextGenerationService:
             parse_outcome = "not_attempted"
             try:
                 binding = self._select_binding(candidate)
+                candidate = _gate_reasoning_effort(candidate, binding=binding)
                 adapter = self._adapter_for_provider(binding.provider)
                 json_adapter = getattr(adapter, "generate_json", None)
                 if callable(json_adapter):
@@ -306,6 +361,11 @@ class TextGenerationService:
                 return result, None
             except LLMProviderCancellation:
                 raise
+            except _ReasoningEffortRejectedError as exc:
+                last_error = exc
+                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                logger.warning("Skipping JSON generation candidate: %s", exc)
+                continue
             except Exception as exc:
                 last_error = exc
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
