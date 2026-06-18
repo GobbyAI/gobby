@@ -1,0 +1,140 @@
+"""MCP storage row models."""
+
+import json
+from collections.abc import Mapping
+from dataclasses import dataclass
+from typing import Any
+
+
+@dataclass
+class MCPServer:
+    """MCP server configuration model."""
+
+    id: str
+    name: str
+    transport: str
+    url: str | None
+    command: str | None
+    args: list[str] | None
+    env: dict[str, str] | None
+    headers: dict[str, str] | None
+    enabled: bool
+    description: str | None
+    requires_oauth: bool
+    oauth_provider: str | None
+    connect_timeout: float
+    created_at: str
+    updated_at: str
+    project_id: str  # Required - all servers must belong to a project
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> "MCPServer":
+        """Create MCPServer from database row."""
+        return cls(
+            id=row["id"],
+            name=row["name"],
+            transport=row["transport"],
+            url=row["url"],
+            command=row["command"],
+            args=json.loads(row["args"]) if row["args"] else None,
+            env=json.loads(row["env"]) if row["env"] else None,
+            headers=json.loads(row["headers"]) if row["headers"] else None,
+            enabled=bool(row["enabled"]),
+            description=row["description"],
+            requires_oauth=bool(row.get("requires_oauth", False)),
+            oauth_provider=row.get("oauth_provider"),
+            connect_timeout=(
+                float(connect_timeout)
+                if (connect_timeout := row.get("connect_timeout")) is not None
+                else 30.0
+            ),
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+            project_id=row["project_id"],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "id": self.id,
+            "name": self.name,
+            "project_id": self.project_id,
+            "transport": self.transport,
+            "url": self.url,
+            "command": self.command,
+            "args": self.args,
+            "env": self.env,
+            "headers": self.headers,
+            "enabled": self.enabled,
+            "description": self.description,
+            "requires_oauth": self.requires_oauth,
+            "oauth_provider": self.oauth_provider,
+            "connect_timeout": self.connect_timeout,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
+
+    def to_config(self) -> dict[str, Any]:
+        """Convert to MCP config format."""
+        config: dict[str, Any] = {
+            "name": self.name,
+            "transport": self.transport,
+            "enabled": self.enabled,
+        }
+        if self.project_id:
+            config["project_id"] = self.project_id
+        if self.url:
+            config["url"] = self.url
+        if self.command:
+            config["command"] = self.command
+        if self.args:
+            config["args"] = self.args
+        if self.env:
+            config["env"] = self.env
+        if self.headers:
+            config["headers"] = self.headers
+        if self.description:
+            config["description"] = self.description
+        config["requires_oauth"] = self.requires_oauth
+        if self.oauth_provider:
+            config["oauth_provider"] = self.oauth_provider
+        config["connect_timeout"] = self.connect_timeout
+        return config
+
+
+@dataclass
+class Tool:
+    """MCP tool model."""
+
+    id: str
+    mcp_server_id: str
+    name: str
+    description: str | None
+    input_schema: dict[str, Any] | None
+    created_at: str
+    updated_at: str
+
+    @classmethod
+    def from_row(cls, row: Mapping[str, Any]) -> "Tool":
+        """Create Tool from database row."""
+        return cls(
+            id=row["id"],
+            mcp_server_id=row["mcp_server_id"],
+            name=row["name"],
+            description=row["description"],
+            input_schema=json.loads(row["input_schema"]) if row["input_schema"] else None,
+            created_at=row["created_at"],
+            updated_at=row["updated_at"],
+        )
+
+    def to_dict(self) -> dict[str, Any]:
+        """Convert to dictionary."""
+        return {
+            "id": self.id,
+            "mcp_server_id": self.mcp_server_id,
+            "name": self.name,
+            "description": self.description,
+            "input_schema": self.input_schema,
+            "created_at": self.created_at,
+            "updated_at": self.updated_at,
+        }
