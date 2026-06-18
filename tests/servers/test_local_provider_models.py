@@ -176,6 +176,94 @@ async def test_ollama_falls_back_to_openai_compatible_models(
 
 
 @pytest.mark.asyncio
+async def test_discovers_openai_compatible_models(monkeypatch: pytest.MonkeyPatch) -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="configured-model",
+        api_key="token",
+    )
+    fake_client = _FakeAsyncClient(
+        {
+            "http://localhost:8000/v1/models": _FakeResponse(
+                "http://localhost:8000/v1/models",
+                {
+                    "data": [
+                        {
+                            "id": "qwen/qwen3-coder",
+                            "name": "Qwen Coder",
+                            "context_length": "32768",
+                            "capabilities": ["chat"],
+                        }
+                    ]
+                },
+            )
+        }
+    )
+    monkeypatch.setattr(
+        "gobby.servers.local_provider_models.httpx.AsyncClient",
+        lambda: fake_client,
+    )
+
+    group = await discover_local_endpoint_model_group("local-openai", endpoint)
+
+    assert fake_client.urls == ["http://localhost:8000/v1/models"]
+    assert group.source == "live"
+    assert group.models == [
+        {
+            "value": "local:local-openai",
+            "label": "Default (configured-model)",
+            "canonical_id": "configured-model",
+            "is_default": True,
+        },
+        {
+            "value": "local:local-openai/qwen/qwen3-coder",
+            "label": "Qwen Coder",
+            "canonical_id": "qwen/qwen3-coder",
+            "context_length": 32768,
+            "context_length_source": "provider_reported",
+            "capabilities": ["chat"],
+        },
+    ]
+
+
+@pytest.mark.asyncio
+async def test_openai_compatible_empty_discovery_uses_config_fallback(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="configured-model",
+    )
+    fake_client = _FakeAsyncClient(
+        {
+            "http://localhost:8000/v1/models": _FakeResponse(
+                "http://localhost:8000/v1/models",
+                {"data": []},
+            )
+        }
+    )
+    monkeypatch.setattr(
+        "gobby.servers.local_provider_models.httpx.AsyncClient",
+        lambda: fake_client,
+    )
+
+    group = await discover_local_endpoint_model_group("local-openai", endpoint)
+
+    assert group.source == "config"
+    assert group.error is None
+    assert group.models == [
+        {
+            "value": "local:local-openai",
+            "label": "Default (configured-model)",
+            "canonical_id": "configured-model",
+            "is_default": True,
+        }
+    ]
+
+
+@pytest.mark.asyncio
 async def test_discovery_failure_falls_back_to_configured_default(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

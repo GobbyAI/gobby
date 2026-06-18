@@ -562,6 +562,7 @@ class TestExecuteSpawn:
             assert result.child_session_id == "gobby-sess-123"
             assert result.codex_session_id is None  # late-linked via SessionStart hook
 
+    @pytest.mark.asyncio
     async def test_codex_terminal_spawn_local_oss_model(self) -> None:
         mock_session_manager = MagicMock()
         request = SpawnRequest(

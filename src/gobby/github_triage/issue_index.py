@@ -26,7 +26,13 @@ SearchResult = tuple[str, float, dict[str, Any]]
 class VectorStoreProtocol(Protocol):
     """Vector store methods used by GitHub issue indexing."""
 
-    async def ensure_collection(self, collection_name: str) -> None:
+    async def ensure_collection(
+        self,
+        collection_name: str,
+        embedding_dim: int | None = None,
+        *,
+        recreate_on_mismatch: bool = False,
+    ) -> None:
         """Ensure the target vector collection exists."""
         ...
 
@@ -179,7 +185,10 @@ class GitHubIssueIndexer:
             return None
 
         point_id = issue_point_id(issue.project_id, issue.repo, issue.issue_number)
-        await self.vector_store.ensure_collection(GITHUB_ISSUE_COLLECTION)
+        await self.vector_store.ensure_collection(
+            GITHUB_ISSUE_COLLECTION,
+            recreate_on_mismatch=True,
+        )
         embedding = await self.embed_fn(build_issue_content(issue))
         await self.vector_store.upsert(
             point_id,
@@ -210,7 +219,10 @@ class GitHubIssueIndexer:
             return []
 
         try:
-            await self.vector_store.ensure_collection(GITHUB_ISSUE_COLLECTION)
+            await self.vector_store.ensure_collection(
+                GITHUB_ISSUE_COLLECTION,
+                recreate_on_mismatch=True,
+            )
             embedding = await self.embed_fn(build_issue_content(issue))
             results = await self.vector_store.search_with_payload(
                 embedding,

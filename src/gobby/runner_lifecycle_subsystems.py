@@ -164,6 +164,8 @@ async def _initialize_vector_store(
         await runner.vector_store.initialize()
         from gobby.mcp_proxy.semantic_search import SemanticToolSearch
 
+        # tool_embeddings is derived index data. Recreate only this collection on
+        # mismatch; search/discovery and explicit embedding routes repopulate it lazily.
         await runner.vector_store.ensure_collection(
             SemanticToolSearch.TOOL_COLLECTION,
             runner.config.embeddings.dim,

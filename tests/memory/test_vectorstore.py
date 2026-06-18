@@ -16,6 +16,7 @@ from qdrant_client.models import Distance, VectorParams
 from gobby.memory import vectorstore as vectorstore_module
 from gobby.memory.vectorstore import (
     VectorStore,
+    VectorStoreCollectionDimensionError,
     VectorStoreUnavailableError,
     is_recoverable_vector_store_error,
     memory_project_scope_filter,
@@ -535,9 +536,15 @@ async def test_ensure_collection_dimension_mismatch_fails_without_recreate() -> 
     client.get_collection.return_value = _collection_info(3)
     store._client = client
 
-    with pytest.raises(RuntimeError, match="expected_dim=4, observed_dim=3"):
+    with pytest.raises(VectorStoreCollectionDimensionError) as exc_info:
         await store.ensure_collection("mock_memories", embedding_dim=4)
 
+    message = str(exc_info.value)
+    assert "expected_dim=4, observed_dim=3" in message
+    assert "Rebuild or migrate the collection" in message
+    assert "Local/default nomic embeddings are usually 768 dimensions" in message
+    assert "text-embedding-3-small" in message
+    assert "embedding_dim=1536" in message
     client.delete_collection.assert_not_called()
     client.create_collection.assert_not_called()
 

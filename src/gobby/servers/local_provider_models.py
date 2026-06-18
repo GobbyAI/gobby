@@ -48,7 +48,8 @@ async def discover_local_endpoint_model_group(
         elif endpoint.provider == "ollama":
             discovered = await _discover_ollama_models(endpoint_name, endpoint)
         else:
-            discovered = []
+            async with httpx.AsyncClient() as client:
+                discovered = await _openai_compatible_models(client, endpoint_name, endpoint)
         source = "live" if discovered else "config"
         models = _merge_default_model(endpoint_name, endpoint, discovered)
         return LocalEndpointModelGroup(

@@ -57,6 +57,8 @@ async def resolve_spawn_local_endpoint(
         raise ValueError(f"Local model pre-flight failed: {exc}") from exc
 
     if runtime_provider == "codex":
+        # Codex OSS receives local routing through CLI flags while other runtimes
+        # connect directly to the endpoint credentials returned below.
         return SpawnLocalEndpointResolution(
             model=resolved_model,
             api_base=api_base,

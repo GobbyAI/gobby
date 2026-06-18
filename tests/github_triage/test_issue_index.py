@@ -78,7 +78,10 @@ async def test_upsert_uses_dedicated_collection_and_payload() -> None:
     point_id = await indexer.upsert(issue, task_id="task-1")
 
     assert point_id == issue_point_id("project-1", "owner/repo", 42)
-    vector_store.ensure_collection.assert_awaited_once_with(GITHUB_ISSUE_COLLECTION)
+    vector_store.ensure_collection.assert_awaited_once_with(
+        GITHUB_ISSUE_COLLECTION,
+        recreate_on_mismatch=True,
+    )
     vector_store.upsert.assert_awaited_once()
     args, kwargs = vector_store.upsert.await_args
     assert args[0] == point_id
@@ -114,6 +117,10 @@ async def test_find_duplicates_is_project_scoped_and_skips_self() -> None:
 
     duplicates = await indexer.find_duplicates(_issue())
 
+    vector_store.ensure_collection.assert_awaited_once_with(
+        GITHUB_ISSUE_COLLECTION,
+        recreate_on_mismatch=True,
+    )
     vector_store.search_with_payload.assert_awaited_once()
     _, kwargs = vector_store.search_with_payload.await_args
     assert kwargs["filters"] == {"project_id": "project-1"}

@@ -421,7 +421,15 @@ class CodexWebChatBackend:
             local_endpoint = self._local_endpoint
             if session._model:
                 local_endpoint = local_endpoint.model_copy(update={"model": session._model})
-            session._model = await ensure_local_model(local_endpoint, run_manager=None)
+            try:
+                session._model = await ensure_local_model(local_endpoint, run_manager=None)
+            except Exception as exc:
+                raise RuntimeError(
+                    "Codex local model pre-flight failed "
+                    f"(provider={local_endpoint.provider}, "
+                    f"api_base={local_endpoint.api_base}, "
+                    f"model={local_endpoint.model}): {exc}"
+                ) from exc
 
         if session._thread_id:
             thread = await self._client.resume_thread(session._thread_id)

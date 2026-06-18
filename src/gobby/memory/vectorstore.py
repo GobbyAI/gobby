@@ -634,7 +634,11 @@ class VectorStore:
                             )
                             raise VectorStoreCollectionDimensionError(
                                 f"Qdrant collection '{collection_name}' dimension mismatch "
-                                f"(expected_dim={dim}, observed_dim={existing_dim})"
+                                f"(expected_dim={dim}, observed_dim={existing_dim}). "
+                                "Rebuild or migrate the collection to the configured embedding "
+                                "dimension. Local/default nomic embeddings are usually 768 "
+                                "dimensions; when intentionally using OpenAI "
+                                "text-embedding-3-small, configure or pass embedding_dim=1536."
                             )
                         await asyncio.to_thread(
                             client.delete_collection,

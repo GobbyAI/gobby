@@ -785,6 +785,47 @@ class TestCodexBackend:
         assert session._transcript_path == "/tmp/codex.jsonl"
 
     @pytest.mark.asyncio
+    async def test_attach_session_wraps_local_codex_preflight_failure_context(self) -> None:
+        client = MagicMock()
+        client.is_connected = True
+        client.start = AsyncMock()
+        client.stop = AsyncMock()
+        client.start_thread = AsyncMock(
+            return_value=SimpleNamespace(id="thread-1", path="/tmp/codex.jsonl")
+        )
+        endpoint = LocalGenerationEndpointConfig(
+            provider="ollama",
+            api_base="http://localhost:11434",
+            model="llama3.2:latest",
+            api_key="secret-token",
+        )
+        backend = CodexWebChatBackend(client=client, local_endpoint=endpoint)
+        await backend.start()
+        session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
+        session.project_path = "/tmp/project"
+        failure = RuntimeError("model not loaded")
+
+        with (
+            patch(
+                "gobby.agents.local_model.ensure_local_model",
+                new=AsyncMock(side_effect=failure),
+            ) as ensure_local_model,
+            pytest.raises(RuntimeError) as exc_info,
+        ):
+            await session.start(model="ollama/qwen3-coder")
+
+        ensure_local_model.assert_awaited_once()
+        message = str(exc_info.value)
+        assert "provider=ollama" in message
+        assert "api_base=http://localhost:11434" in message
+        assert "model=ollama/qwen3-coder" in message
+        assert "model not loaded" in message
+        assert "secret-token" not in message
+        assert "api_key" not in message
+        assert exc_info.value.__cause__ is failure
+        client.start_thread.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_managed_session_delegates_send_message(self) -> None:
         backend = MagicMock()
         backend.attach_session = AsyncMock()

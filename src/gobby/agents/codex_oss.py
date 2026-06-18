@@ -10,6 +10,8 @@ CODEX_OSS_LOCAL_PROVIDERS = frozenset({"lmstudio", "ollama"})
 def codex_oss_provider_for_local_endpoint(endpoint: Any) -> str:
     """Return Codex OSS local provider name for a local generation endpoint."""
     provider = str(getattr(endpoint, "provider", "") or "").strip().lower()
+    if not provider:
+        raise ValueError("Codex OSS local routing requires provider=lmstudio or provider=ollama")
     if provider not in CODEX_OSS_LOCAL_PROVIDERS:
         raise ValueError(
             "Codex OSS local routing supports provider=lmstudio or provider=ollama; "
