@@ -80,7 +80,7 @@ fn codewiki_onboarding_ranks_modules_from_graph_analytics() {
 }
 
 #[test]
-fn codewiki_onboarding_degrades_to_structural_entry_points_without_graph_analytics() {
+fn codewiki_onboarding_keeps_entry_points_without_degrading_when_graph_analytics_unavailable() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/main.rs".to_string(), "src/lib.rs".to_string()],
@@ -99,8 +99,11 @@ fn codewiki_onboarding_degrades_to_structural_entry_points_without_graph_analyti
         .get("code/_onboarding.md")
         .expect("onboarding page renders");
 
-    assert!(onboarding.contains("degraded: true"));
-    assert!(onboarding.contains("- graph-analytics-unavailable"));
+    // Graph availability is informational only: the reading order is omitted
+    // when analytics can't run, but Entry Points remain and the page does not
+    // degrade.
+    assert!(!onboarding.contains("degraded: true"));
+    assert!(!onboarding.contains("graph-analytics-unavailable"));
     assert!(onboarding.contains("## Entry Points"));
     assert!(!onboarding.contains("## Structural Start Points"));
     assert!(!onboarding.contains("## Recommended Reading Order"));

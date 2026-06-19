@@ -173,9 +173,6 @@ pub(crate) struct ModuleDoc {
     pub(crate) source_spans: Vec<SourceSpan>,
     pub(crate) direct_files: Vec<FileLink>,
     pub(crate) child_modules: Vec<ModuleLink>,
-    pub(crate) dependency_diagram: Option<String>,
-    pub(crate) call_diagram: Option<String>,
-    pub(crate) graph_availability: CodewikiGraphAvailability,
     /// True when AI generation was attempted for this doc and failed.
     pub(crate) degraded: bool,
     pub(crate) degraded_sources: Vec<String>,
@@ -190,7 +187,6 @@ pub(crate) struct ArchitectureDoc {
     pub(crate) source_spans: Vec<SourceSpan>,
     pub(crate) subsystems: Vec<ArchitectureSubsystem>,
     pub(crate) narrative: Option<String>,
-    pub(crate) dependency_diagram: Option<String>,
     pub(crate) degraded_sources: Vec<String>,
 }
 

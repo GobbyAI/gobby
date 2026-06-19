@@ -7,22 +7,18 @@ pub(crate) fn build_hotspots_doc(
     graph_edges: &[CodewikiGraphEdge],
     graph_availability: CodewikiGraphAvailability,
 ) -> HotspotsDoc {
-    let mut degraded_sources = BTreeSet::new();
-    match graph_availability {
-        CodewikiGraphAvailability::Available => {}
-        CodewikiGraphAvailability::Truncated => {
-            degraded_sources.insert("graph-truncated".to_string());
-        }
-        CodewikiGraphAvailability::Unavailable => {
-            degraded_sources.insert("graph-analytics-unavailable".to_string());
-            return HotspotsDoc {
-                source_spans: Vec::new(),
-                hotspots: Vec::new(),
-                god_nodes: Vec::new(),
-                bridges: Vec::new(),
-                degraded_sources: degraded_sources.into_iter().collect(),
-            };
-        }
+    // Graph availability is informational only and never degrades the hotspots
+    // page. When the graph is unavailable the centrality analytics simply
+    // cannot run, so the page omits its findings (the renderer prints a plain
+    // "no hotspots" note) without setting `degraded`.
+    if graph_availability == CodewikiGraphAvailability::Unavailable {
+        return HotspotsDoc {
+            source_spans: Vec::new(),
+            hotspots: Vec::new(),
+            god_nodes: Vec::new(),
+            bridges: Vec::new(),
+            degraded_sources: Vec::new(),
+        };
     }
 
     let nodes = hotspot_nodes(files);
@@ -129,7 +125,7 @@ pub(crate) fn build_hotspots_doc(
         hotspots,
         god_nodes,
         bridges,
-        degraded_sources: degraded_sources.into_iter().collect(),
+        degraded_sources: Vec::new(),
     }
 }
 

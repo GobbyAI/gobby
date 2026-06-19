@@ -59,7 +59,7 @@ fn codewiki_hotspots_page_surfaces_analytics_rankings() {
 }
 
 #[test]
-fn codewiki_hotspots_page_degrades_when_analytics_unavailable() {
+fn codewiki_hotspots_page_does_not_degrade_when_analytics_unavailable() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/lib.rs".to_string()],
@@ -82,20 +82,17 @@ fn codewiki_hotspots_page_degrades_when_analytics_unavailable() {
         .expect("hotspots doc");
     let frontmatter = hotspots_frontmatter(hotspots);
 
+    // Graph availability is informational only: the analytics simply can't run,
+    // so the page omits its findings with a plain note and never degrades.
     assert_eq!(
         frontmatter
             .get("degraded")
             .and_then(serde_yaml::Value::as_bool),
-        Some(true)
+        None
     );
-    assert!(
-        frontmatter["degraded_sources"]
-            .as_sequence()
-            .expect("degraded sources")
-            .iter()
-            .any(|value| value.as_str() == Some("graph-analytics-unavailable"))
-    );
-    assert!(hotspots.contains("analytics unavailable"));
+    assert!(frontmatter.get("degraded_sources").is_none());
+    assert!(!hotspots.contains("graph-analytics-unavailable"));
+    assert!(hotspots.contains("No graph hotspots were identified from the current code index."));
     assert!(!hotspots.contains("frequency 3"));
 }
 

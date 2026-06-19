@@ -11,25 +11,16 @@ pub(crate) fn build_onboarding_doc(
     graph_availability: CodewikiGraphAvailability,
 ) -> OnboardingDoc {
     let entry_points = onboarding_entry_points(files);
-    let mut degraded_sources = BTreeSet::new();
-    let mut fallback_to_unavailable = false;
+    // Graph availability is informational only and never degrades the
+    // onboarding page. When the graph is unavailable the centrality-ranked
+    // reading order simply cannot be computed, so the page keeps its Entry
+    // Points and omits the reading order without setting `degraded`.
     let reading_order = match graph_availability {
-        CodewikiGraphAvailability::Unavailable => {
-            degraded_sources.insert("graph-analytics-unavailable".to_string());
-            Vec::new()
-        }
-        CodewikiGraphAvailability::Truncated => {
-            degraded_sources.insert("graph-truncated".to_string());
-            fallback_to_unavailable = true;
-            ranked_onboarding_steps(files, modules, graph_edges)
-        }
-        CodewikiGraphAvailability::Available => {
+        CodewikiGraphAvailability::Unavailable => Vec::new(),
+        CodewikiGraphAvailability::Truncated | CodewikiGraphAvailability::Available => {
             ranked_onboarding_steps(files, modules, graph_edges)
         }
     };
-    if fallback_to_unavailable && reading_order.is_empty() {
-        degraded_sources.insert("graph-analytics-unavailable".to_string());
-    }
 
     let source_spans = entry_points
         .iter()
@@ -47,7 +38,7 @@ pub(crate) fn build_onboarding_doc(
         source_spans,
         entry_points,
         reading_order,
-        degraded_sources: degraded_sources.into_iter().collect(),
+        degraded_sources: Vec::new(),
     }
 }
 

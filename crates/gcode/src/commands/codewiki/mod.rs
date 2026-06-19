@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use crate::graph::typed_query;
@@ -8,17 +8,19 @@ use crate::models::Symbol;
 const DEFAULT_OUT_DIR: &str = "codewiki";
 const CODEWIKI_META_PATH: &str = "_meta/codewiki.json";
 const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
-const MAX_MERMAID_HOPS: usize = 2;
-const MAX_MERMAID_EDGES: usize = 20;
 const MAX_EDGE_LIMIT: usize = 100_000;
-/// Cache epoch for generated pages. Bumped 6 -> 7 so verifier audit notes
-/// appear in frontmatter even when source hashes are unchanged. Bumped 5 -> 6
-/// so file and module pages written in the old symbol-dump shape (API Symbols /
-/// Component ID / Lines table, full-range `<details>` provenance) cannot be
-/// reused from disk: the new shape renders a verified narrative body plus a
-/// human Key components table. (5 was the grounded verification pass; 4 the
-/// pre-verify pages.)
-const CODEWIKI_RENDER_VERSION: u32 = 7;
+/// Cache epoch for generated pages. Bumped 7 -> 8 so reused pages regenerate
+/// without the auto-generated mermaid code-graph diagrams (per-module
+/// dependency/call diagrams, repo/architecture subsystem maps), which were the
+/// sole source of `graph-truncated`/`graph-unavailable` page degradation; graph
+/// availability is now informational only and never marks a page degraded.
+/// Bumped 6 -> 7 so verifier audit notes appear in frontmatter even when source
+/// hashes are unchanged. Bumped 5 -> 6 so file and module pages written in the
+/// old symbol-dump shape (API Symbols / Component ID / Lines table, full-range
+/// `<details>` provenance) cannot be reused from disk: the new shape renders a
+/// verified narrative body plus a human Key components table. (5 was the
+/// grounded verification pass; 4 the pre-verify pages.)
+const CODEWIKI_RENDER_VERSION: u32 = 8;
 
 /// Default daemon feature profile for aggregate (module/repo/architecture)
 /// prose, which synthesizes 10k+-token grounded prompts; file and symbol
@@ -82,12 +84,10 @@ pub(crate) use paths::{
     module_is_ancestor, module_wikilink, parent_module, plural, write_markdown_table_header,
     write_markdown_table_row,
 };
-// Rendered markdown and graph diagrams.
+// Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
-    build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,
-    render_architecture_structure_mermaid, render_file_doc, render_hotspots_doc,
-    render_module_call_mermaid, render_module_dependency_mermaid, render_module_doc,
-    render_onboarding_doc, render_subsystem_dependency_mermaid,
+    build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc, render_file_doc,
+    render_hotspots_doc, render_module_doc, render_onboarding_doc,
 };
 // Reuse of unchanged docs without regeneration.
 pub(crate) use reuse::{ReusePlan, span_files};

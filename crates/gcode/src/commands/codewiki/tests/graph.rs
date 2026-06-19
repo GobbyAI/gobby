@@ -186,46 +186,6 @@ fn import_targets_match_exact_path_or_module_components() {
 }
 
 #[test]
-fn mermaid_labels_escape_label_metacharacters() {
-    let files = vec![
-        FileDoc {
-            path: "src/api.rs".to_string(),
-            module: "src/api[edge]".to_string(),
-            summary: String::new(),
-            body: String::new(),
-            source_spans: Vec::new(),
-            symbols: Vec::new(),
-            component_ids: vec!["api".to_string()],
-            degraded: false,
-            degraded_sources: Vec::new(),
-            verify_notes: Vec::new(),
-            reused_page: None,
-        },
-        FileDoc {
-            path: "src/domain.rs".to_string(),
-            module: "src/domain{core}|v1".to_string(),
-            summary: String::new(),
-            body: String::new(),
-            source_spans: Vec::new(),
-            symbols: Vec::new(),
-            component_ids: vec!["domain".to_string()],
-            degraded: false,
-            degraded_sources: Vec::new(),
-            verify_notes: Vec::new(),
-            reused_page: None,
-        },
-    ];
-    let graph = vec![CodewikiGraphEdge::import("api", "domain")];
-
-    let diagram = render_module_dependency_mermaid("src/api[edge]", &files, &graph, false)
-        .expect("dependency diagram");
-
-    assert!(diagram.contains("src/api&#91;edge&#93;"));
-    assert!(diagram.contains("src/domain&#123;core&#125;&#124;v1"));
-    assert!(!diagram.contains("src/api[edge]"));
-}
-
-#[test]
 fn graph_queries_use_requested_edge_limit() {
     let (call_query, _) = codewiki_call_edges_query("project-1", 17);
     let (import_query, _) = codewiki_import_edges_query("project-1", 17);
@@ -359,7 +319,7 @@ fn clusters_without_falkordb() {
 }
 
 #[test]
-fn emits_bounded_mermaid() {
+fn module_pages_no_longer_emit_mermaid_diagrams() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
@@ -421,34 +381,17 @@ fn emits_bounded_mermaid() {
         .get("code/modules/src/api.md")
         .expect("api module doc");
 
-    assert!(rendered.contains("```mermaid"));
-    assert!(rendered.contains("graph LR"));
-    assert!(rendered.contains("m_src_api[\"src/api\"] --> m_src_domain[\"src/domain\"]"));
-    assert!(rendered.contains("m_src_domain[\"src/domain\"] --> m_src_storage[\"src/storage\"]"));
-    assert!(
-        !rendered.contains("m_src_unrelated[\"src/unrelated\"] --> m_src_storage[\"src/storage\"]")
-    );
+    // The auto-generated code-graph diagrams are gone; graph availability is
+    // informational only and never degrades the page.
+    assert!(!rendered.contains("```mermaid"));
+    assert!(!rendered.contains("## Dependency Diagram"));
+    assert!(!rendered.contains("## Call Diagram"));
+    assert!(!rendered.contains("graph-truncated"));
+    assert!(!rendered.contains("graph-unavailable"));
 }
 
 #[test]
-fn bounded_component_edges_prefers_edges_nearest_seed() {
-    let seed_components = BTreeSet::from(["seed".to_string()]);
-    let edges = BTreeSet::from([
-        ("a1".to_string(), "a2".to_string()),
-        ("seed".to_string(), "a2".to_string()),
-        ("seed".to_string(), "z1".to_string()),
-    ]);
-
-    let bounded = render::bounded_component_edges(&seed_components, &edges, 2, 1);
-
-    assert_eq!(
-        bounded,
-        BTreeSet::from([("seed".to_string(), "a2".to_string())])
-    );
-}
-
-#[test]
-fn mermaid_degrades_without_falkordb() {
+fn module_page_does_not_degrade_without_falkordb() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
         files: vec!["src/api/handler.rs".to_string()],
@@ -472,7 +415,11 @@ fn mermaid_degrades_without_falkordb() {
         .get("code/files/src/api/handler.rs.md")
         .expect("file doc still renders");
 
-    assert!(module.contains("degraded: graph-unavailable"));
+    // Graph unavailability is informational only: it never marks a module page
+    // degraded and never emits a diagram section.
+    assert!(!module.contains("degraded: graph-unavailable"));
+    assert!(!module.contains("graph-unavailable"));
+    assert!(!module.contains("```mermaid"));
     // File pages render a human Key components table keyed by symbol name, not a
     // UUID component-id dump (#871).
     assert!(file.contains("## Key components"));
@@ -510,7 +457,7 @@ fn empty_available_graph_does_not_emit_degradation_marker() {
 }
 
 #[test]
-fn truncated_graph_emits_degradation_marker_with_partial_diagram() {
+fn truncated_graph_does_not_degrade_module_or_emit_diagram() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
@@ -546,10 +493,10 @@ fn truncated_graph_emits_degradation_marker_with_partial_diagram() {
         .get("code/modules/src/api.md")
         .expect("module doc still renders");
 
-    assert!(module.contains("degraded: graph-truncated"));
-    assert!(module.contains(
-        "Simplified diagram: showing top 1 of 1 available module dependency edge(s); source graph was truncated."
-    ));
-    assert!(module.contains("```mermaid"));
-    assert!(module.contains("m_src_api[\"src/api\"] --> m_src_domain[\"src/domain\"]"));
+    // A truncated graph is informational only: the page is not degraded and no
+    // diagram (or "simplified diagram" note) is emitted.
+    assert!(!module.contains("graph-truncated"));
+    assert!(!module.contains("Simplified diagram"));
+    assert!(!module.contains("```mermaid"));
+    assert!(!module.contains("## Dependency Diagram"));
 }

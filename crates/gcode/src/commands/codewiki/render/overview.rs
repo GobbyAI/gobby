@@ -14,11 +14,6 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
     if let Some(narrative) = &architecture.narrative {
         write_section(&mut doc, "Overview", narrative);
     }
-    if let Some(diagram) = &architecture.dependency_diagram {
-        doc.push_str("## Subsystem Map\n\n");
-        doc.push_str(diagram);
-        doc.push('\n');
-    }
     if !architecture.subsystems.is_empty() {
         doc.push_str("## Subsystems\n\n");
         write_markdown_table_header(&mut doc, &["Subsystem", "Responsibility", "Child modules"]);
@@ -95,15 +90,6 @@ pub(crate) fn render_hotspots_doc(hotspots: &HotspotsDoc) -> String {
     );
     append_relevant_source_files(&mut doc, &hotspots.source_spans);
     doc.push_str("# Hotspots\n\n");
-
-    if hotspots
-        .degraded_sources
-        .iter()
-        .any(|source| source == "graph-analytics-unavailable")
-    {
-        doc.push_str("analytics unavailable: graph analytics could not be computed.\n\n");
-        return doc;
-    }
 
     let hotspot_ids = hotspots
         .hotspots

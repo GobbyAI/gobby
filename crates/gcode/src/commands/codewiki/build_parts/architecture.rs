@@ -6,30 +6,22 @@ pub(crate) fn build_architecture_doc(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     graph_edges: &[CodewikiGraphEdge],
-    graph_availability: CodewikiGraphAvailability,
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     progress: &mut CodewikiProgress,
 ) -> ArchitectureDoc {
     // Decomposition starts at meaningful units — the subsystem roots (a
     // workspace's individual crates), not the directory container above
-    // them — so subsystems, narrative, and the cross-subsystem diagram all
-    // describe the same level.
+    // them — so subsystems and the layered narrative describe the same level.
     let file_paths = files
         .iter()
         .map(|file| file.path.clone())
         .collect::<Vec<_>>();
     let subsystem_names = cluster::subsystem_roots(&file_paths);
+    // Graph availability is informational only and never degrades the
+    // architecture page; the sole content-gap degradation is a failed
+    // generation, recorded below.
     let mut degraded_sources = BTreeSet::new();
-    match graph_availability {
-        CodewikiGraphAvailability::Available => {}
-        CodewikiGraphAvailability::Truncated => {
-            degraded_sources.insert("graph-truncated".to_string());
-        }
-        CodewikiGraphAvailability::Unavailable => {
-            degraded_sources.insert("graph-unavailable".to_string());
-        }
-    }
 
     let mut subsystems = Vec::new();
     let subsystem_modules = modules
@@ -151,19 +143,10 @@ pub(crate) fn build_architecture_doc(
         }
     };
 
-    let dependency_diagram = match graph_availability {
-        CodewikiGraphAvailability::Unavailable => None,
-        CodewikiGraphAvailability::Available | CodewikiGraphAvailability::Truncated => {
-            render_subsystem_dependency_mermaid(&subsystem_names, files, graph_edges)
-        }
-    }
-    .or_else(|| render_architecture_structure_mermaid(&subsystems));
-
     ArchitectureDoc {
         source_spans,
         subsystems,
         narrative,
-        dependency_diagram,
         degraded_sources: degraded_sources.into_iter().collect(),
     }
 }

@@ -235,8 +235,6 @@ pub(crate) fn generate_hierarchical_docs_core(
     progress.emit("generating module docs");
     let module_docs = build_module_docs_with_filter(
         &file_docs,
-        &input.graph_edges,
-        input.graph_availability,
         &input.leading_chunks,
         generate,
         reuse,
@@ -271,7 +269,6 @@ pub(crate) fn generate_hierarchical_docs_core(
     let (repo_doc, repo_degraded) = build_repo_doc(
         &file_docs,
         &module_docs,
-        &input.graph_edges,
         &input.leading_chunks,
         generate,
         reuse,
@@ -308,7 +305,6 @@ pub(crate) fn generate_hierarchical_docs_core(
                 &file_docs,
                 &module_docs,
                 &input.graph_edges,
-                input.graph_availability,
                 &input.leading_chunks,
                 generate,
                 progress,

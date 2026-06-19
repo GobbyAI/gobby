@@ -56,30 +56,21 @@ pub(crate) fn build_codewiki_index_snapshot(
         })
         .collect::<BTreeMap<_, _>>();
 
-    let mut degraded_sources = Vec::new();
+    // Graph availability decides only whether neighborhood fingerprints can be
+    // computed (used for incremental change detection); it is informational and
+    // never degrades the changes page, so no graph marker is recorded here.
     let graph_neighborhoods = match input.graph_availability {
-        CodewikiGraphAvailability::Available => Some(graph_neighborhood_fingerprints(
-            &symbols,
-            &input.graph_edges,
-        )),
-        CodewikiGraphAvailability::Truncated => {
-            degraded_sources.push("graph-truncated".to_string());
-            Some(graph_neighborhood_fingerprints(
-                &symbols,
-                &input.graph_edges,
-            ))
-        }
-        CodewikiGraphAvailability::Unavailable => {
-            degraded_sources.push("graph-unavailable".to_string());
-            None
-        }
+        CodewikiGraphAvailability::Available | CodewikiGraphAvailability::Truncated => Some(
+            graph_neighborhood_fingerprints(&symbols, &input.graph_edges),
+        ),
+        CodewikiGraphAvailability::Unavailable => None,
     };
 
     Ok(CodewikiIndexSnapshot {
         files: file_snapshots,
         symbols,
         graph_neighborhoods,
-        degraded_sources,
+        degraded_sources: Vec::new(),
     })
 }
 

@@ -1,8 +1,6 @@
 use super::super::super::*;
 use super::super::curated_content::{self, CuratedPageKind};
-use super::plan::{
-    largest_member_module, normalize_concepts, normalize_narrative_pages, normalize_sections,
-};
+use super::plan::{normalize_concepts, normalize_narrative_pages, normalize_sections};
 use super::spans::{all_input_spans, item_spans, narrative_spans};
 use super::support::{concept_doc_path, concept_doc_stem, degraded_sources, narrative_doc_path};
 use super::types::*;
@@ -102,10 +100,9 @@ pub(super) fn render_curated_navigation_docs(
             &module_lookup,
             &file_lookup,
         );
-        let diagram_module = largest_member_module(&concept.modules, &module_lookup);
         docs.push(BuiltDoc {
             path: concept_doc_path(&concept.slug),
-            content: render_concept_page(concept, &spans, degraded, diagram_module),
+            content: render_concept_page(concept, &spans, degraded),
             degraded,
             summary: Some(concept.summary.clone()),
         });
@@ -113,8 +110,6 @@ pub(super) fn render_curated_navigation_docs(
 
     for (index, page) in narrative_pages.iter().enumerate() {
         let spans = narrative_spans(page, &concepts, &module_lookup, &file_lookup);
-        let (member_modules, _) = narrative_members(page, &concepts);
-        let diagram_module = largest_member_module(&member_modules, &module_lookup);
         // Reciprocal neighbors in the ordered tour drive the Previous/Next nav.
         let prev = index
             .checked_sub(1)
@@ -127,7 +122,6 @@ pub(super) fn render_curated_navigation_docs(
                 &spans,
                 &concept_titles,
                 degraded,
-                diagram_module,
                 prev,
                 next,
             ),
@@ -192,12 +186,7 @@ fn render_concept_tree(
     doc
 }
 
-fn render_concept_page(
-    concept: &ConceptModule,
-    spans: &[SourceSpan],
-    degraded: bool,
-    diagram_module: Option<&ModuleDoc>,
-) -> String {
+fn render_concept_page(concept: &ConceptModule, spans: &[SourceSpan], degraded: bool) -> String {
     let degraded = degraded || concept.body_degraded;
     let degraded_sources = degraded_sources(degraded);
     let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
@@ -215,7 +204,6 @@ fn render_concept_page(
         "Overview",
         &ground_text(&concept.summary, spans, None),
     );
-    append_dependency_diagram(&mut doc, diagram_module);
     append_explore_section(&mut doc, &concept.modules, &concept.files);
     doc
 }
@@ -225,7 +213,6 @@ fn render_narrative_page(
     spans: &[SourceSpan],
     concept_titles: &std::collections::BTreeMap<&str, &str>,
     degraded: bool,
-    diagram_module: Option<&ModuleDoc>,
     prev: Option<(&str, &str)>,
     next: Option<(&str, &str)>,
 ) -> String {
@@ -260,7 +247,6 @@ fn render_narrative_page(
         }
         doc.push('\n');
     }
-    append_dependency_diagram(&mut doc, diagram_module);
     append_explore_section(&mut doc, &page.modules, &[]);
     curated_content::append_tour_nav(&mut doc, prev, next);
     doc
@@ -335,26 +321,4 @@ fn narrative_members(
     files.sort();
     files.dedup();
     (modules, files)
-}
-
-/// Inject a member module's already-bounded dependency diagram onto a curated
-/// page. Honest about graph truncation (`graph-truncated` marker) and never
-/// fabricates edges; emits nothing when the graph is unavailable or no diagram
-/// was computed.
-pub(super) fn append_dependency_diagram(doc: &mut String, module: Option<&ModuleDoc>) {
-    let Some(module) = module else {
-        return;
-    };
-    let Some(diagram) = &module.dependency_diagram else {
-        return;
-    };
-    if module.graph_availability == CodewikiGraphAvailability::Unavailable {
-        return;
-    }
-    doc.push_str("## Architecture diagram\n\n");
-    if module.graph_availability == CodewikiGraphAvailability::Truncated {
-        doc.push_str("`degraded: graph-truncated`\n\n");
-    }
-    doc.push_str(diagram);
-    doc.push('\n');
 }

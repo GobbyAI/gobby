@@ -69,10 +69,12 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
 
     assert!(rendered.contains("generated_by: gcode-codewiki"));
     assert!(rendered.contains("type: code_architecture"));
+    // The failing generator is the only content gap: the page degrades on
+    // `model-unavailable`, never on graph availability (truncated here).
     assert!(rendered.contains("degraded: true"));
     assert!(rendered.contains("degraded_sources:"));
     assert!(rendered.contains("- model-unavailable"));
-    assert!(rendered.contains("- graph-truncated"));
+    assert!(!rendered.contains("graph-truncated"));
     assert!(rendered.contains("| Subsystem | Responsibility | Child modules |"));
     assert!(rendered.contains("[[code/modules/src/api\\|src/api]]"));
     assert!(rendered.contains("[[code/modules/src/domain\\|src/domain]]"));
@@ -91,9 +93,9 @@ fn codewiki_architecture_overview_page_uses_subsystems_and_degradation_metadata(
     {
         assert_eq!(inline_marker_count(line), 0);
     }
-    assert!(rendered.contains("```mermaid"));
-    assert!(rendered.contains("m_src_api[\"src/api\"] --> m_src_domain[\"src/domain\"]"));
-    assert!(rendered.contains("m_src_domain[\"src/domain\"] --> m_src_storage[\"src/storage\"]"));
+    // The auto-generated subsystem-map mermaid diagram is gone.
+    assert!(!rendered.contains("```mermaid"));
+    assert!(!rendered.contains("## Subsystem Map"));
 }
 
 #[test]
@@ -228,11 +230,10 @@ fn architecture_page_renders_layered_narrative_and_child_module_levels() {
         rendered.contains("The api layer sits atop domain"),
         "{rendered}"
     );
-    assert!(rendered.contains("## Subsystem Map"), "{rendered}");
-    assert!(
-        rendered.contains("m_src_api[\"src/api\"] --> m_src_domain[\"src/domain\"]"),
-        "{rendered}"
-    );
+    // The subsystem-map mermaid diagram is gone; the narrative still draws on the
+    // cross-subsystem dependency edges (asserted via the narrative prompt below).
+    assert!(!rendered.contains("## Subsystem Map"), "{rendered}");
+    assert!(!rendered.contains("```mermaid"), "{rendered}");
     // One module level is enumerated in the subsystem table.
     assert!(
         rendered.contains("[[code/modules/src/storage/backend\\|src/storage/backend]]"),
@@ -253,7 +254,7 @@ fn architecture_page_renders_layered_narrative_and_child_module_levels() {
 }
 
 #[test]
-fn architecture_page_has_structural_diagram_and_range_free_frontmatter_without_graph_edges() {
+fn architecture_page_has_no_diagram_and_range_free_frontmatter_without_graph_edges() {
     let input = CodewikiInput {
         leading_chunks: std::collections::BTreeMap::new(),
         files: vec![
@@ -296,17 +297,11 @@ fn architecture_page_has_structural_diagram_and_range_free_frontmatter_without_g
         .and_then(serde_yaml::Value::as_sequence)
         .expect("provenance entries");
 
-    assert!(rendered.contains("## Subsystem Map"), "{rendered}");
-    assert!(rendered.contains("```mermaid"), "{rendered}");
-    assert!(rendered.contains("graph TD"), "{rendered}");
-    assert!(
-        rendered.contains("m_[\"repo\"] --> m_crates_gcode[\"crates/gcode\"]"),
-        "{rendered}"
-    );
-    assert!(
-        rendered.contains("m_[\"repo\"] --> m_crates_gcore[\"crates/gcore\"]"),
-        "{rendered}"
-    );
+    // No mermaid diagram is emitted (the structural fallback diagram is gone),
+    // and graph unavailability does not degrade the page.
+    assert!(!rendered.contains("## Subsystem Map"), "{rendered}");
+    assert!(!rendered.contains("```mermaid"), "{rendered}");
+    assert!(!rendered.contains("graph-unavailable"), "{rendered}");
     assert!(provenance.iter().all(|entry| entry.get("file").is_some()));
     assert!(provenance.iter().all(|entry| entry.get("ranges").is_none()));
 }

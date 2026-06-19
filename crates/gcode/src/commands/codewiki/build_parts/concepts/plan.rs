@@ -3,26 +3,6 @@ use super::support::{concept_title, slugify};
 use super::types::*;
 use super::{MAX_CONCEPT_LINKS, MAX_CONCEPT_MODULES, MAX_EXTRA_NARRATIVE_PAGES};
 
-/// The most substantial member module that already has a bounded dependency
-/// diagram, ranked by file + submodule count then name (stable). Curated pages
-/// reuse the precomputed `ModuleDoc.dependency_diagram` - no new graph work and
-/// no fabricated edges.
-pub(super) fn largest_member_module<'a>(
-    modules: &[String],
-    module_lookup: &std::collections::BTreeMap<&str, &'a ModuleDoc>,
-) -> Option<&'a ModuleDoc> {
-    modules
-        .iter()
-        .filter_map(|module| module_lookup.get(module.as_str()).copied())
-        .filter(|module| module.dependency_diagram.is_some())
-        .max_by_key(|module| {
-            (
-                module.direct_files.len() + module.child_modules.len(),
-                std::cmp::Reverse(module.module.clone()),
-            )
-        })
-}
-
 pub(super) fn curated_navigation_prompt(files: &[FileDoc], modules: &[ModuleDoc]) -> String {
     let mut prompt = String::from(
         "Build a curated codewiki navigation layer over the existing grounded reference.\n\

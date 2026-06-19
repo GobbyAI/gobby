@@ -1,11 +1,9 @@
 use super::super::*;
 use super::model_degraded_sources;
-use super::render_subsystem_dependency_mermaid;
 
 pub(crate) fn build_repo_doc(
     files: &[FileDoc],
     modules: &[ModuleDoc],
-    graph_edges: &[CodewikiGraphEdge],
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
@@ -72,18 +70,10 @@ pub(crate) fn build_repo_doc(
         Generation::Failed | Generation::Skipped => ground_text(&fallback, &source_spans, None),
     };
 
-    let roots = cluster::subsystem_roots(
-        &files
-            .iter()
-            .map(|file| file.path.clone())
-            .collect::<Vec<_>>(),
-    );
-    let module_map = render_subsystem_dependency_mermaid(&roots, files, graph_edges);
     let doc = render_repo_doc(
         &summary,
         &top_modules,
         &root_files,
-        module_map.as_deref(),
         &source_spans,
         degraded,
     );
@@ -119,7 +109,6 @@ pub(crate) fn render_repo_doc(
     summary: &str,
     modules: &[ModuleLink],
     files: &[FileLink],
-    module_map: Option<&str>,
     source_spans: &[SourceSpan],
     degraded: bool,
 ) -> String {
@@ -152,14 +141,9 @@ pub(crate) fn render_repo_doc(
         "Ask questions across this vault with `gwiki ask \"...\"`, or find pages with `gwiki search \"...\"`.\n\n",
     );
     write_section(&mut doc, "Overview", &summary);
-    let has_appendix = module_map.is_some() || !modules.is_empty() || !files.is_empty();
+    let has_appendix = !modules.is_empty() || !files.is_empty();
     if has_appendix {
         doc.push_str("## Reference appendix\n\n");
-    }
-    if let Some(diagram) = module_map {
-        doc.push_str("### Module Map\n\n");
-        doc.push_str(diagram);
-        doc.push('\n');
     }
     if !modules.is_empty() {
         doc.push_str("### Modules\n\n");

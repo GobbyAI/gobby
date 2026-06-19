@@ -5,8 +5,6 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(test)]
 pub(crate) fn build_module_docs(
     files: &[FileDoc],
-    graph_edges: &[CodewikiGraphEdge],
-    graph_availability: CodewikiGraphAvailability,
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
@@ -15,8 +13,6 @@ pub(crate) fn build_module_docs(
 ) -> anyhow::Result<Vec<ModuleDoc>> {
     build_module_docs_with_filter(
         files,
-        graph_edges,
-        graph_availability,
         leading_chunks,
         generate,
         reuse,
@@ -29,8 +25,6 @@ pub(crate) fn build_module_docs(
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn build_module_docs_with_filter(
     files: &[FileDoc],
-    graph_edges: &[CodewikiGraphEdge],
-    graph_availability: CodewikiGraphAvailability,
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
@@ -95,10 +89,6 @@ pub(crate) fn build_module_docs_with_filter(
             })
             .collect::<Vec<_>>();
         let prompt_component_ids = prompt_component_ids_for_module(files, &module);
-        let graph_truncated = graph_availability == CodewikiGraphAvailability::Truncated;
-        let dependency_diagram =
-            render_module_dependency_mermaid(&module, files, graph_edges, graph_truncated);
-        let call_diagram = render_module_call_mermaid(&module, files, graph_edges, graph_truncated);
         let fallback = structural_module_summary(&module, &direct_files, &child_modules);
         let source_spans = collect_link_spans(&direct_files, &child_modules);
         // A module's provenance rolls up every file under it (child spans
@@ -154,18 +144,11 @@ pub(crate) fn build_module_docs_with_filter(
 
         module_summaries.insert(module.clone(), summary.clone());
         module_sources.insert(module.clone(), source_spans.clone());
+        // Graph availability is informational only and never degrades a module
+        // page; the sole content-gap degradation here is a failed generation.
         let mut degraded_sources = BTreeSet::new();
         if degraded {
             degraded_sources.insert("model-unavailable".to_string());
-        }
-        match graph_availability {
-            CodewikiGraphAvailability::Available => {}
-            CodewikiGraphAvailability::Truncated => {
-                degraded_sources.insert("graph-truncated".to_string());
-            }
-            CodewikiGraphAvailability::Unavailable => {
-                degraded_sources.insert("graph-unavailable".to_string());
-            }
         }
         let doc = ModuleDoc {
             module,
@@ -173,9 +156,6 @@ pub(crate) fn build_module_docs_with_filter(
             source_spans,
             direct_files,
             child_modules,
-            dependency_diagram,
-            call_diagram,
-            graph_availability,
             degraded,
             degraded_sources: degraded_sources.into_iter().collect(),
             verify_notes: Vec::new(),

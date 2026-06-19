@@ -2,7 +2,7 @@ use super::support::*;
 use super::*;
 
 #[test]
-fn codewiki_changes_baseline_persists_snapshot_and_degrades_without_graph() {
+fn codewiki_changes_baseline_persists_snapshot_without_degrading_on_missing_graph() {
     let project = tempfile::tempdir().expect("project tempdir");
     std::fs::create_dir_all(project.path().join("src")).expect("source dir");
     std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
@@ -24,8 +24,11 @@ fn codewiki_changes_baseline_persists_snapshot_and_degrades_without_graph() {
     let snapshot = build_codewiki_index_snapshot(project.path(), &input).expect("snapshot");
     let changes = build_codewiki_changes_doc(None, &snapshot).expect("changes doc");
     assert!(changes.contains("baseline: true"));
-    assert!(changes.contains("degraded: true"));
-    assert!(changes.contains("graph-unavailable"));
+    // Graph availability is informational only: a missing graph never degrades
+    // the changes page, though neighborhood computation is still skipped.
+    assert!(!changes.contains("degraded: true"));
+    assert!(!changes.contains("graph-unavailable"));
+    assert!(changes.contains("- Graph neighborhoods: unavailable"));
     assert!(changes.contains("No previous index snapshot was available."));
     assert!(!changes.contains("## Changed Graph Neighborhoods"));
 
