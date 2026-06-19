@@ -32,6 +32,7 @@ pub(crate) const DEFAULT_AGGREGATE_PROFILE: &str = "feature_mid";
 /// generation, so it routes to a lighter tier than [`DEFAULT_AGGREGATE_PROFILE`].
 pub(crate) const DEFAULT_VERIFY_PROFILE: &str = "feature_low";
 
+mod architecture_diagrams;
 mod build;
 mod cluster;
 mod generation;
@@ -89,10 +90,14 @@ pub(crate) use paths::{
 // Cross-file relationship facts threaded into narrative prompts (#885).
 pub(crate) use relationship_facts::{RelationshipFacts, relationship_facts_for_file};
 // Deterministic, no-LLM workspace system model (#887, epic #886). Consumed by
-// later diagram/infra leaves; not yet wired into the generation pipeline.
+// the architecture diagram leaf (#891) below to seed model-derived diagrams.
 pub use system_model::{
     Crate, Edge, RuntimeMode, ServiceBoundary, ServiceKind, SystemModel, build_system_model,
 };
+// Model-seeded architectural Mermaid diagrams for the architecture page (#891).
+#[cfg(test)]
+pub(crate) use architecture_diagrams::is_valid_mermaid;
+pub(crate) use architecture_diagrams::render_architecture_diagrams;
 // Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc, render_file_doc,

@@ -5,7 +5,7 @@ use crate::models::Symbol;
 
 use super::{
     AiDepth, BuiltDoc, CodewikiInput, CodewikiProgress, DocPruneScope, FileDocPosition,
-    OwnershipMeta, OwnershipOptions, ReusePlan, TextGenerator, TextVerifier,
+    OwnershipMeta, OwnershipOptions, ReusePlan, SystemModel, TextGenerator, TextVerifier,
     build_architecture_doc, build_curated_navigation_docs, build_file_doc, build_hotspots_doc,
     build_module_docs_with_filter, build_onboarding_doc, build_ownership_doc, build_repo_doc,
     cluster, cluster_file_modules, file_doc_path, is_core_file, module_doc_path, module_for_file,
@@ -33,6 +33,7 @@ fn generate_hierarchical_docs_with_graph_availability(
     if let Err(error) = generate_hierarchical_docs_core(
         input,
         None,
+        None,
         &mut generate,
         &mut None,
         AiDepth::Symbols,
@@ -54,6 +55,7 @@ fn generate_hierarchical_docs_with_graph_availability(
 pub(crate) fn generate_hierarchical_docs_with_ownership(
     input: &CodewikiInput,
     ownership: Option<(&Path, &mut OwnershipMeta)>,
+    system_model: Option<&SystemModel>,
     mut generate: Option<&mut TextGenerator<'_>>,
     mut verify: Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
@@ -65,6 +67,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
     generate_hierarchical_docs_core(
         input,
         ownership,
+        system_model,
         &mut generate,
         &mut verify,
         ai_depth,
@@ -98,6 +101,7 @@ pub(crate) fn generate_hierarchical_docs_with_reuse(
     let mut docs = Vec::new();
     if let Err(error) = generate_hierarchical_docs_core(
         input,
+        None,
         None,
         &mut generate,
         &mut None,
@@ -134,6 +138,7 @@ pub(crate) fn generate_hierarchical_docs_with_verify(
     if let Err(error) = generate_hierarchical_docs_core(
         input,
         None,
+        None,
         &mut generate,
         &mut verify,
         ai_depth,
@@ -158,6 +163,11 @@ pub(crate) fn generate_hierarchical_docs_with_verify(
 pub(crate) fn generate_hierarchical_docs_core(
     input: &CodewikiInput,
     ownership: Option<(&Path, &mut OwnershipMeta)>,
+    // Deterministic workspace system model (#891). Seeds the architecture
+    // page's model-derived Mermaid diagrams. The CLI runtime passes the real
+    // model built from the project root; test/AI-off entry points pass `None`
+    // to omit the diagram section.
+    system_model: Option<&SystemModel>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
@@ -325,6 +335,7 @@ pub(crate) fn generate_hierarchical_docs_core(
                 &module_docs,
                 &input.graph_edges,
                 &input.leading_chunks,
+                system_model,
                 generate,
                 progress,
             );

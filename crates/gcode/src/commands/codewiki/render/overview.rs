@@ -14,6 +14,15 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
     if let Some(narrative) = &architecture.narrative {
         write_section(&mut doc, "Overview", narrative);
     }
+    // Model-seeded architectural diagrams (#891). The section string is already
+    // built from validated Mermaid fences by the diagram renderer, so it is
+    // emitted verbatim; its absence is normal and never marks the page degraded.
+    if let Some(diagrams) = &architecture.diagrams {
+        doc.push_str(diagrams);
+        if !doc.ends_with('\n') {
+            doc.push('\n');
+        }
+    }
     if !architecture.subsystems.is_empty() {
         doc.push_str("## Subsystems\n\n");
         write_markdown_table_header(&mut doc, &["Subsystem", "Responsibility", "Child modules"]);

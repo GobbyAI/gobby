@@ -7,6 +7,11 @@ pub(crate) fn build_architecture_doc(
     modules: &[ModuleDoc],
     graph_edges: &[CodewikiGraphEdge],
     leading_chunks: &BTreeMap<String, LeadingChunk>,
+    // Deterministic workspace system model (#891). When supplied, seeds the
+    // model-derived topology / runtime-flow Mermaid diagrams; `None` (e.g. the
+    // AI-off / test entry points) omits the diagram section entirely. The model
+    // is the sole source for diagrams — they never read the code graph.
+    system_model: Option<&SystemModel>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     progress: &mut CodewikiProgress,
 ) -> ArchitectureDoc {
@@ -143,10 +148,17 @@ pub(crate) fn build_architecture_doc(
         }
     };
 
+    // Model-seeded architectural diagrams (#891). Rendered deterministically
+    // from the workspace SystemModel and pre-validated by the renderer's
+    // valid-Mermaid gate; a sparse model or an invalid block yields `None`,
+    // which is normal and never touches `degraded_sources`.
+    let diagrams = system_model.and_then(render_architecture_diagrams);
+
     ArchitectureDoc {
         source_spans,
         subsystems,
         narrative,
+        diagrams,
         degraded_sources: degraded_sources.into_iter().collect(),
     }
 }

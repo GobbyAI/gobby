@@ -187,6 +187,11 @@ pub(crate) struct ArchitectureDoc {
     pub(crate) source_spans: Vec<SourceSpan>,
     pub(crate) subsystems: Vec<ArchitectureSubsystem>,
     pub(crate) narrative: Option<String>,
+    /// Pre-rendered, already-validated architectural Mermaid diagram section
+    /// seeded from the deterministic workspace [`super::SystemModel`] (#891).
+    /// `None` when no model was supplied or the model was too sparse to draw —
+    /// a missing diagram is normal and never marks the page degraded.
+    pub(crate) diagrams: Option<String>,
     pub(crate) degraded_sources: Vec<String>,
 }
 

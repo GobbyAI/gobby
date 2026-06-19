@@ -8,6 +8,7 @@ fn generate_docs_for_scope(input: &CodewikiInput, doc_scope: &DocPruneScope) -> 
     generate_hierarchical_docs_core(
         input,
         None,
+        None,
         &mut generate,
         &mut None,
         AiDepth::Symbols,

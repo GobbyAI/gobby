@@ -11,9 +11,9 @@ use crate::visibility;
 use super::{
     BuiltDoc, CodewikiAiOptions, CodewikiInput, CodewikiProgress, CodewikiRunSummary,
     DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT, ReusePlan,
-    build_codewiki_changes_doc, build_codewiki_index_snapshot, fetch_codewiki_graph_edges,
-    generation, in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator,
-    resolve_text_verifier, write_ownership_meta,
+    build_codewiki_changes_doc, build_codewiki_index_snapshot, build_system_model,
+    fetch_codewiki_graph_edges, generation, in_scope, io, is_core_file, read_ownership_meta,
+    resolve_text_generator, resolve_text_verifier, write_ownership_meta,
 };
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
@@ -67,6 +67,10 @@ pub fn run(
         symbols,
         leading_chunks,
     };
+    // Deterministic workspace model (#891), read straight off the project's
+    // Cargo manifests. Seeds the architecture page's model-derived Mermaid
+    // diagrams. A partial/empty model simply omits diagrams — never an error.
+    let system_model = build_system_model(&ctx.project_root);
     let mut generator = resolve_text_generator(ctx, &ai);
     let mut verifier = resolve_text_verifier(ctx, &ai);
     let ai_enabled = generator.is_some();
@@ -123,6 +127,7 @@ pub fn run(
         ownership_meta
             .as_mut()
             .map(|meta| (ctx.project_root.as_path(), meta)),
+        Some(&system_model),
         generator.as_deref_mut(),
         verifier.as_deref_mut(),
         ai_depth,
