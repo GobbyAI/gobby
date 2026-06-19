@@ -7,6 +7,7 @@ expansion helpers are tested against real os.environ.
 
 from __future__ import annotations
 
+import asyncio
 import os
 import sys
 from pathlib import Path
@@ -623,6 +624,94 @@ class TestStdioConnectCleanupErrors:
             await conn.connect()
 
         assert conn.state == ConnectionState.FAILED
+
+
+# ===========================================================================
+# connect() - cancellation cleanup
+# ===========================================================================
+
+
+class TestStdioConnectCancellation:
+    @pytest.mark.asyncio
+    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
+    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
+    async def test_session_entry_cancellation_cleans_transport(
+        self,
+        mock_stdio_client: MagicMock,
+        mock_client_session_cls: MagicMock,
+        conn: StdioTransportConnection,
+    ) -> None:
+        events: list[str] = []
+
+        async def transport_exit(*_args: Any) -> None:
+            events.append("transport")
+
+        mock_transport_ctx = AsyncMock()
+        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=transport_exit)
+        mock_stdio_client.return_value = mock_transport_ctx
+
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(side_effect=asyncio.CancelledError())
+        mock_session_ctx.__aexit__ = AsyncMock(return_value=False)
+        mock_client_session_cls.return_value = mock_session_ctx
+
+        with pytest.raises(asyncio.CancelledError):
+            await conn.connect()
+
+        assert events == ["transport"]
+        mock_session_ctx.__aexit__.assert_not_awaited()
+        assert conn.state == ConnectionState.DISCONNECTED
+        assert conn._session is None
+        assert conn._session_context is None
+        assert conn._transport_context is None
+
+    @pytest.mark.asyncio
+    @patch("gobby.mcp_proxy.transports.stdio.ClientSession")
+    @patch("gobby.mcp_proxy.transports.stdio.stdio_client")
+    async def test_initialize_cancellation_cleans_session_then_transport(
+        self,
+        mock_stdio_client: MagicMock,
+        mock_client_session_cls: MagicMock,
+        config: MCPServerConfig,
+        tmp_path: Path,
+    ) -> None:
+        events: list[str] = []
+        connection = StdioTransportConnection(
+            config,
+            stdio_errlog_path=str(tmp_path / "mcp-client.log"),
+        )
+
+        async def session_exit(*_args: Any) -> None:
+            events.append("session")
+
+        async def transport_exit(*_args: Any) -> None:
+            events.append("transport")
+
+        mock_transport_ctx = AsyncMock()
+        mock_transport_ctx.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        mock_transport_ctx.__aexit__ = AsyncMock(side_effect=transport_exit)
+        mock_stdio_client.return_value = mock_transport_ctx
+
+        mock_session = _mock_session()
+        mock_session.initialize = AsyncMock(side_effect=asyncio.CancelledError())
+
+        mock_session_ctx = AsyncMock()
+        mock_session_ctx.__aenter__ = AsyncMock(return_value=mock_session)
+        mock_session_ctx.__aexit__ = AsyncMock(side_effect=session_exit)
+        mock_client_session_cls.return_value = mock_session_ctx
+
+        with pytest.raises(asyncio.CancelledError):
+            await connection.connect()
+
+        assert events == ["session", "transport"]
+        errlog = mock_stdio_client.call_args.kwargs["errlog"]
+        assert errlog.closed is True
+        assert connection.state == ConnectionState.DISCONNECTED
+        assert connection._session is None
+        assert connection._session_context is None
+        assert connection._transport_context is None
+        assert connection._stdio_errlog_handle is None
 
 
 # ===========================================================================

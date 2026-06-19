@@ -120,6 +120,39 @@ class StdioTransportConnection(BaseTransportConnection):
             except Exception as exc:
                 logger.warning("Error closing stdio errlog for %s: %s", self.config.name, exc)
 
+    async def _cleanup_connect_attempt(
+        self,
+        *,
+        session_entered: bool,
+        transport_entered: bool,
+    ) -> None:
+        session_ctx = self._session_context
+        if session_entered and session_ctx is not None:
+            try:
+                await session_ctx.__aexit__(None, None, None)
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Error during session cleanup for %s: %s",
+                    self.config.name,
+                    cleanup_error,
+                )
+
+        transport_ctx = self._transport_context
+        if transport_entered and transport_ctx is not None:
+            try:
+                await transport_ctx.__aexit__(None, None, None)
+            except Exception as cleanup_error:
+                logger.warning(
+                    "Error during transport cleanup for %s: %s",
+                    self.config.name,
+                    cleanup_error,
+                )
+
+        self._session = None
+        self._session_context = None
+        self._transport_context = None
+        self._close_stdio_errlog()
+
     async def connect(self) -> Any:
         """Connect via stdio transport."""
         if self._state == ConnectionState.CONNECTED:
@@ -168,35 +201,22 @@ class StdioTransportConnection(BaseTransportConnection):
 
             return self._session
 
+        except asyncio.CancelledError:
+            await self._cleanup_connect_attempt(
+                session_entered=session_entered,
+                transport_entered=transport_entered,
+            )
+            self._state = ConnectionState.DISCONNECTED
+            raise
         except Exception as e:
-            # Handle exceptions with empty str() (EndOfStream, ClosedResourceError, CancelledError)
+            # Handle exceptions with empty str() (EndOfStream, ClosedResourceError)
             error_msg = str(e) if str(e) else f"{type(e).__name__}: Connection closed or timed out"
             logger.error(f"Failed to connect to stdio server '{self.config.name}': {error_msg}")
 
-            # Cleanup in reverse order - session first, then transport
-            session_ctx = self._session_context
-            if session_entered and session_ctx is not None:
-                try:
-                    await session_ctx.__aexit__(None, None, None)
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"Error during session cleanup for {self.config.name}: {cleanup_error}"
-                    )
-
-            transport_ctx = self._transport_context
-            if transport_entered and transport_ctx is not None:
-                try:
-                    await transport_ctx.__aexit__(None, None, None)
-                except Exception as cleanup_error:
-                    logger.warning(
-                        f"Error during transport cleanup for {self.config.name}: {cleanup_error}"
-                    )
-
-            # Reset state before raising
-            self._session = None
-            self._session_context = None
-            self._transport_context = None
-            self._close_stdio_errlog()
+            await self._cleanup_connect_attempt(
+                session_entered=session_entered,
+                transport_entered=transport_entered,
+            )
             self._state = ConnectionState.FAILED
 
             # Re-raise wrapped in MCPError (don't double-wrap)

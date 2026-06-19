@@ -173,6 +173,9 @@ class TestMCPDiscoveryRoutes:
         config = MagicMock()
         config.enabled = True
         mock_server.mcp_manager._configs = {"slow-server": config}
+        connection = MagicMock()
+        connection.disconnect = AsyncMock()
+        mock_server.mcp_manager.connections = {"slow-server": connection}
 
         async def slow_connect(server_name: str) -> MagicMock:
             assert server_name == "slow-server"
@@ -188,6 +191,8 @@ class TestMCPDiscoveryRoutes:
         data = response.json()
         assert data["success"] is True
         assert data["tools"]["slow-server"] == []
+        connection.disconnect.assert_awaited_once()
+        assert mock_server.mcp_manager.connections == {}
         assert "Timed out listing tools from MCP server slow-server" in caplog.text
 
     def test_list_tools_with_server_filter_external_unhealthy_cached_tools(
