@@ -106,6 +106,12 @@ pub(crate) struct DocSink<'a> {
     generated_docs: Vec<String>,
     previous_snapshot: Option<CodewikiIndexSnapshot>,
     prune_scope: DocPruneScope,
+    /// Files git reported as possibly-changed since the `--since` ref (Leaf H,
+    /// #893). When `Some`, a source-provenance page whose own sources and
+    /// neighbors are all outside the diff is left exactly as it is on disk —
+    /// not rewritten — so the rewrite set stays scoped to the change set plus
+    /// dependents. `None` is the full-scan default.
+    since: Option<BTreeSet<String>>,
 }
 
 impl<'a> DocSink<'a> {
@@ -139,33 +145,73 @@ impl<'a> DocSink<'a> {
             generated_docs: Vec::new(),
             previous_snapshot: previous.index_snapshot,
             prune_scope,
+            since: None,
         })
+    }
+
+    /// Scopes the sink's rewrite decisions to a `--since` change set: a
+    /// source-provenance page whose sources and neighbors are all outside the
+    /// set is left untouched (Leaf H, #893). `None` keeps the full-scan default.
+    pub(crate) fn with_since(mut self, since: Option<BTreeSet<String>>) -> Self {
+        self.since = since;
+        self
     }
 
     /// Write one doc unless it is provably unchanged, then flush the meta log
     /// so what is on disk always matches what the meta records.
     pub(crate) fn persist(&mut self, doc: &BuiltDoc) -> anyhow::Result<bool> {
         let source_hashes = source_hashes_for_doc(self.project_root, &doc.content)?;
+        let neighbor_hashes = neighbor_hashes_for_doc(self.project_root, &doc.neighbors)?;
         let target = safe_doc_path(self.out_dir, &doc.path)?;
         let previous_meta = self.previous_docs.get(&doc.path);
-        // Docs without provenance frontmatter have no source hashes to compare,
-        // so hash equality is vacuous; always rewrite them so generator changes
-        // propagate (e.g. code/_ownership.md). A doc recorded degraded is also
-        // always rewritten: hash equality cannot see generation failures, and
-        // skipping would preserve the degraded page forever (#687). A doc that
-        // should carry a reusable summary but has none recorded is rewritten
-        // once to backfill it (metas written before #681). Doc content depends
-        // on the AI generation mode, which source hashes cannot capture; a
-        // mode change invalidates the doc.
+        // Two invalidation models share this gate (Leaf H, #893):
+        //
+        // * A *derived aggregate page* (architecture/infrastructure/feature
+        //   catalog/audit) carries an `invalidation_key` — a SystemModel /
+        //   contract / deprecation digest. It is unchanged exactly when that
+        //   digest still matches, so a model-irrelevant edit (a function body)
+        //   leaves it alone while a manifest/contract change rebuilds it. The
+        //   page usually has no provenance frontmatter, so the source-hash
+        //   comparison would be vacuous and is skipped for it.
+        // * A *source-file page* has no key. It is unchanged when its own
+        //   sources AND its cross-file neighbors (#885) all still hash to the
+        //   recorded values. Docs without provenance frontmatter have no source
+        //   hashes to compare (e.g. code/_ownership.md), so they are always
+        //   rewritten. A degraded doc is always rewritten (#687); a summary that
+        //   should be recorded but is missing forces a one-time rewrite (#681);
+        //   an AI-mode or render-version change invalidates content hashes
+        //   cannot see.
         let unchanged = target.exists()
-            && !source_hashes.is_empty()
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
                     && meta.ai_mode == self.ai_mode
                     && meta.render_version == CODEWIKI_RENDER_VERSION
-                    && meta.source_hashes == source_hashes
-                    && (doc.summary.is_none() || meta.summary.is_some())
+                    && match &doc.invalidation_key {
+                        Some(key) => meta.invalidation_key.as_deref() == Some(key.as_str()),
+                        None => {
+                            !source_hashes.is_empty()
+                                && meta.source_hashes == source_hashes
+                                && meta.neighbor_hashes == neighbor_hashes
+                                && (doc.summary.is_none() || meta.summary.is_some())
+                        }
+                    }
             });
+        // `--since` leaves a source-provenance page untouched when none of its
+        // own sources or neighbors are in the diff — even if it would otherwise
+        // re-hash differently — so a run is scoped to the change set plus
+        // dependents. Keyed aggregates and provenance-less pages keep their
+        // normal logic above, so a manifest/contract change still rebuilds them.
+        let since_unchanged = doc.invalidation_key.is_none()
+            && !source_hashes.is_empty()
+            && target.exists()
+            && previous_meta.is_some()
+            && self.since.as_ref().is_some_and(|since| {
+                source_hashes
+                    .keys()
+                    .chain(neighbor_hashes.keys())
+                    .all(|file| !since.contains(file))
+            });
+        let unchanged = unchanged || since_unchanged;
 
         let entry = if unchanged {
             // A skip keeps the previous healthy content on disk, so the meta
@@ -188,6 +234,8 @@ impl<'a> DocSink<'a> {
                 },
                 ai_mode: self.ai_mode.clone(),
                 render_version: CODEWIKI_RENDER_VERSION,
+                neighbor_hashes,
+                invalidation_key: doc.invalidation_key.clone(),
             }
         };
         self.next_docs.insert(doc.path.clone(), entry);
@@ -364,6 +412,35 @@ pub(crate) fn source_hashes_for_doc(
         let hash = hasher::file_content_hash(&canonical_source)
             .map_err(|err| anyhow::anyhow!("failed to hash codewiki source file {file}: {err}"))?;
         hashes.insert(file, hash);
+    }
+    Ok(hashes)
+}
+
+/// Content hashes of a page's cross-file neighbor files (#885, Leaf H). Unlike
+/// [`source_hashes_for_doc`], a neighbor that no longer resolves inside the
+/// project is dropped rather than erroring: a vanished neighbor is itself a
+/// change, surfaced when the recorded set no longer matches on the next compare.
+pub(crate) fn neighbor_hashes_for_doc(
+    project_root: &Path,
+    neighbors: &BTreeSet<String>,
+) -> anyhow::Result<BTreeMap<String, String>> {
+    if neighbors.is_empty() {
+        return Ok(BTreeMap::new());
+    }
+    let canonical_root = project_root
+        .canonicalize()
+        .map_err(|err| anyhow::anyhow!("failed to resolve codewiki project root: {err}"))?;
+    let mut hashes = BTreeMap::new();
+    for file in neighbors {
+        let Ok(canonical_source) = project_root.join(file).canonicalize() else {
+            continue;
+        };
+        if !canonical_source.starts_with(&canonical_root) {
+            continue;
+        }
+        if let Ok(hash) = hasher::file_content_hash(&canonical_source) {
+            hashes.insert(file.clone(), hash);
+        }
     }
     Ok(hashes)
 }

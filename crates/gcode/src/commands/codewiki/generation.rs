@@ -1,6 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
+use crate::index::hasher;
 use crate::models::Symbol;
 
 use super::{
@@ -274,15 +275,22 @@ pub(crate) fn generate_hierarchical_docs_core(
                 total: file_total,
             },
         );
-        emit(BuiltDoc {
-            path: file_doc_path(&file_doc.path),
-            content: file_doc
-                .reused_page
-                .clone()
-                .unwrap_or_else(|| render_file_doc(&file_doc)),
-            degraded: file_doc.degraded,
-            summary: Some(file_doc.summary.clone()),
-        })?;
+        emit(
+            BuiltDoc {
+                path: file_doc_path(&file_doc.path),
+                content: file_doc
+                    .reused_page
+                    .clone()
+                    .unwrap_or_else(|| render_file_doc(&file_doc)),
+                degraded: file_doc.degraded,
+                summary: Some(file_doc.summary.clone()),
+                neighbors: BTreeSet::new(),
+                invalidation_key: None,
+            }
+            // Record the cross-file neighbor set so a caller/import-target edit
+            // invalidates this page on the next run (#885, Leaf H).
+            .with_neighbors(relationships.neighbor_files(file)),
+        )?;
         file_docs.push(file_doc);
     }
     progress.emit("generating module docs");
@@ -303,6 +311,11 @@ pub(crate) fn generate_hierarchical_docs_core(
                     .unwrap_or_else(|| render_module_doc(module)),
                 degraded: module.degraded,
                 summary: Some(module.summary.clone()),
+                // A module aggregate invalidates through its member files'
+                // source hashes (member-set + members hash), recorded as the
+                // page's provenance — no separate key or neighbor set needed.
+                neighbors: BTreeSet::new(),
+                invalidation_key: None,
             })
         },
     )?;
@@ -333,11 +346,17 @@ pub(crate) fn generate_hierarchical_docs_core(
         content: repo_doc,
         degraded: repo_degraded,
         summary: None,
+        neighbors: BTreeSet::new(),
+        invalidation_key: None,
     })?;
     progress.emit("generating architecture docs");
-    // Architecture provenance covers every subsystem source, so the page is
-    // reusable only when nothing changed at all — then the per-subsystem
-    // generation loop is skipped entirely and the on-disk page kept.
+    // Architecture and infrastructure invalidate on the SystemModel digest, not
+    // their source-file set (Leaf H, #893): a function-body edit leaves the
+    // model — crates, edges, service boundaries, runtime modes, features —
+    // unchanged, so the page is kept; a Cargo.toml dependency or feature change
+    // shifts the digest and rebuilds it. Test/AI-off entry points pass no model
+    // and fall back to the old full source-set reuse.
+    let system_model_key = system_model.map(|model| model.digest());
     let subsystem_names = cluster::subsystem_roots(&files);
     let architecture_sources = span_files(
         &module_docs
@@ -346,13 +365,21 @@ pub(crate) fn generate_hierarchical_docs_core(
             .flat_map(|module| module.source_spans.iter().cloned())
             .collect::<Vec<_>>(),
     );
-    let reused_architecture = reuse
-        .as_deref_mut()
-        .and_then(|plan| plan.reusable_page("code/_architecture.md", &architecture_sources));
+    let reused_architecture = match system_model_key.as_deref() {
+        Some(key) => reuse
+            .as_deref_mut()
+            .and_then(|plan| plan.reusable_page_keyed("code/_architecture.md", key)),
+        None => reuse
+            .as_deref_mut()
+            .and_then(|plan| plan.reusable_page("code/_architecture.md", &architecture_sources)),
+    };
     let architecture_built = match reused_architecture {
         Some(page) => {
-            progress.emit("reusing architecture docs (sources unchanged)");
-            BuiltDoc::healthy("code/_architecture.md", page)
+            progress.emit("reusing architecture docs (system model unchanged)");
+            match system_model_key.clone() {
+                Some(key) => BuiltDoc::derived("code/_architecture.md", page, key),
+                None => BuiltDoc::healthy("code/_architecture.md", page),
+            }
         }
         None => {
             let architecture_doc = build_architecture_doc(
@@ -372,6 +399,8 @@ pub(crate) fn generate_hierarchical_docs_core(
                     .iter()
                     .any(|source| source == "model-unavailable"),
                 summary: None,
+                neighbors: BTreeSet::new(),
+                invalidation_key: system_model_key.clone(),
             }
         }
     };
@@ -382,11 +411,10 @@ pub(crate) fn generate_hierarchical_docs_core(
     // architecture diagrams.
     progress.emit("generating infrastructure docs");
     if let Some(infrastructure_doc) = build_infrastructure_doc(system_model) {
-        emit(BuiltDoc {
-            path: "code/infrastructure.md".to_string(),
-            content: render_infrastructure_doc(&infrastructure_doc),
-            degraded: false,
-            summary: None,
+        let content = render_infrastructure_doc(&infrastructure_doc);
+        emit(match system_model_key.clone() {
+            Some(key) => BuiltDoc::derived("code/infrastructure.md", content, key),
+            None => BuiltDoc::healthy("code/infrastructure.md", content),
         })?;
     }
     // Deterministic feature catalog page (#888). Built straight from the pinned
@@ -395,12 +423,13 @@ pub(crate) fn generate_hierarchical_docs_core(
     // the architecture diagrams and the infrastructure stack page.
     progress.emit("generating feature catalog");
     if let Some(catalog) = feature_catalog {
-        emit(BuiltDoc {
-            path: "code/features.md".to_string(),
-            content: render_feature_catalog_doc(catalog),
-            degraded: false,
-            summary: None,
-        })?;
+        let content = render_feature_catalog_doc(catalog);
+        // Faithful "contract hash" (Leaf H, #893): the feature catalog render is
+        // a pure, deterministic projection of the pinned CLI contract, so a
+        // digest of its output changes exactly when the contract surface does —
+        // a function-body edit leaves it untouched.
+        let key = hasher::content_hash(content.as_bytes());
+        emit(BuiltDoc::derived("code/features.md", content, key))?;
     }
     // Deterministic audit pages (#889): deprecation aggregate + dead-code
     // candidates. Built straight from the source scan + Call graph edges — no
@@ -408,20 +437,27 @@ pub(crate) fn generate_hierarchical_docs_core(
     // graph was unavailable). Omitted when no audit context was supplied
     // (AI-off / test entry points), exactly like the feature catalog.
     if let Some(audit) = audit {
+        // Faithful "deprecation-set + graph-edge hash" (Leaf H, #893): both
+        // audit pages are deterministic projections of the deprecation scan and
+        // the Call graph, so a digest of their rendered output invalidates
+        // exactly on those input changes.
         progress.emit("generating deprecations docs");
-        emit(BuiltDoc {
-            path: "code/deprecations.md".to_string(),
-            content: render_deprecations_doc(&build_deprecations_doc(input, &audit.deprecations)),
-            degraded: false,
-            summary: None,
-        })?;
+        let deprecations =
+            render_deprecations_doc(&build_deprecations_doc(input, &audit.deprecations));
+        let deprecations_key = hasher::content_hash(deprecations.as_bytes());
+        emit(BuiltDoc::derived(
+            "code/deprecations.md",
+            deprecations,
+            deprecations_key,
+        ))?;
         progress.emit("generating dead-code candidate docs");
-        emit(BuiltDoc {
-            path: "code/dead-code-candidates.md".to_string(),
-            content: render_dead_code_doc(&build_dead_code_doc(input, audit)),
-            degraded: false,
-            summary: None,
-        })?;
+        let dead_code = render_dead_code_doc(&build_dead_code_doc(input, audit));
+        let dead_code_key = hasher::content_hash(dead_code.as_bytes());
+        emit(BuiltDoc::derived(
+            "code/dead-code-candidates.md",
+            dead_code,
+            dead_code_key,
+        ))?;
     }
     progress.emit("generating onboarding docs");
     let onboarding_doc = build_onboarding_doc(

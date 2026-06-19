@@ -77,6 +77,19 @@ impl RelationshipFacts {
             .map(|relation| relation.span.clone())
             .collect()
     }
+
+    /// The distinct cross-file neighbor files this file's narrative depends on
+    /// (#885, Leaf H), excluding `own_file`. Recorded so a caller/callee or
+    /// import-target edit invalidates this file's page even though the page's
+    /// own provenance — kept deliberately narrow (see [`Self::endpoint_spans`])
+    /// — did not change.
+    pub(crate) fn neighbor_files(&self, own_file: &str) -> std::collections::BTreeSet<String> {
+        self.endpoint_spans()
+            .into_iter()
+            .map(|span| span.file)
+            .filter(|file| file != own_file)
+            .collect()
+    }
 }
 
 /// Resolve the project-wide graph edges into cross-file relationship facts for

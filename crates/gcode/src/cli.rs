@@ -393,6 +393,13 @@ pub(crate) enum Command {
         /// narrative markdown belongs to gwiki.
         #[arg(long)]
         include_docs: bool,
+        /// Incremental driver: regenerate only pages whose sources or cross-file
+        /// neighbors changed since this git ref, plus aggregate pages whose model
+        /// digest changed. `git diff --name-only <ref>` selects the change set;
+        /// omitting it runs a full content-hash scan. Out-of-scope pages and
+        /// `_meta` are preserved either way.
+        #[arg(long, value_name = "GIT_REF")]
+        since: Option<String>,
         /// Repair-only mode: re-anchor existing pages' `[file:line]` citations
         /// against the current index and exit. No generation, no AI/LLM calls.
         /// Ignores generation flags (`--ai`, `--scope`, `--ai-depth`, …); honors

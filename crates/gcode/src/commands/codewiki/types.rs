@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 use gobby_core::config::AiRouting;
 use serde::{Deserialize, Serialize};
@@ -475,6 +475,20 @@ pub(crate) struct CodewikiDocMeta {
     /// generation. Missing versions force a one-time rewrite on upgrade.
     #[serde(default)]
     pub(crate) render_version: u32,
+    /// Cross-file neighbor source hashes (#885, Leaf H). A source-file page
+    /// regenerates when a neighbor's content hash changes even if its own
+    /// sources did not, so a caller edit refreshes the callee's relationship
+    /// narrative. Empty for pages with no recorded cross-file neighbors.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub(crate) neighbor_hashes: BTreeMap<String, String>,
+    /// Page-type invalidation digest for derived aggregate pages whose content
+    /// is a function of a model rather than a source-file set (Leaf H): the
+    /// `SystemModel` hash for architecture/infrastructure, and the rendered
+    /// contract/deprecation digest for the feature catalog and audit pages. A
+    /// function-body edit that does not change the model leaves the digest —
+    /// and the page — unchanged. `None` for source-file pages.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) invalidation_key: Option<String>,
 }
 
 /// One rendered doc plus the degradation outcome of its generation, carried
@@ -487,6 +501,14 @@ pub(crate) struct BuiltDoc {
     /// Grounded summary persisted to the doc meta so a later run can feed it
     /// into parent prompts without regenerating this doc (#681).
     pub(crate) summary: Option<String>,
+    /// Cross-file neighbor files whose content this page's narrative depends on
+    /// (#885, Leaf H). The sink hashes them into `neighbor_hashes` so a
+    /// neighbor change invalidates this page even when its own sources are
+    /// unchanged. Empty for pages with no cross-file dependencies.
+    pub(crate) neighbors: BTreeSet<String>,
+    /// Page-type invalidation digest for derived aggregate pages (Leaf H).
+    /// `None` for source-file pages that invalidate on source/neighbor hashes.
+    pub(crate) invalidation_key: Option<String>,
 }
 
 impl BuiltDoc {
@@ -496,7 +518,33 @@ impl BuiltDoc {
             content,
             degraded: false,
             summary: None,
+            neighbors: BTreeSet::new(),
+            invalidation_key: None,
         }
+    }
+
+    /// A deterministic derived page (architecture, infrastructure, feature
+    /// catalog, audit) keyed on `invalidation_key` rather than a source-file
+    /// set: it is rewritten only when the digest changes (Leaf H).
+    pub(crate) fn derived(
+        path: impl Into<String>,
+        content: String,
+        invalidation_key: String,
+    ) -> Self {
+        Self {
+            path: path.into(),
+            content,
+            degraded: false,
+            summary: None,
+            neighbors: BTreeSet::new(),
+            invalidation_key: Some(invalidation_key),
+        }
+    }
+
+    /// Records the cross-file neighbor files this page depends on, builder-style.
+    pub(crate) fn with_neighbors(mut self, neighbors: BTreeSet<String>) -> Self {
+        self.neighbors = neighbors;
+        self
     }
 }
 

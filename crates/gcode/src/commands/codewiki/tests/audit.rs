@@ -1,7 +1,7 @@
 //! Tests for the deterministic codewiki audit pages (#889): deprecation markers
-//! + badge, and dead-code candidates. Fixtures are built directly (symbols +
-//! Call edges + a tiny tempdir source file for the scan) so the assertions are
-//! decoupled from the real workspace.
+//! and badge, plus dead-code candidates. Fixtures are built directly (symbols,
+//! Call edges, and a tiny tempdir source file for the scan) so the assertions
+//! are decoupled from the real workspace.
 
 use super::support::{test_component_id, test_symbol};
 use super::*;

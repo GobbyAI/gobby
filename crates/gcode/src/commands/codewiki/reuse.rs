@@ -16,17 +16,47 @@ pub(crate) struct ReusePlan {
     /// Lazy current-content hashes; `None` records an unhashable file so a
     /// missing source is probed once and never reused.
     current_hashes: BTreeMap<String, Option<String>>,
+    /// Files git reported as possibly-changed since the `--since` ref (Leaf H,
+    /// #893). When `Some`, a file outside this set keeps its recorded hash
+    /// without a disk read, so an unchanged page reuses without a re-hash;
+    /// dependents fall out naturally because a page is reused only when every
+    /// one of its own sources and neighbors hashes as recorded. `None` runs a
+    /// full content-hash scan (the from-scratch default).
+    since: Option<BTreeSet<String>>,
+    /// File → recorded content hash from the previous run's metadata, used to
+    /// answer `current_hash` for `--since`-unchanged files without disk I/O.
+    recorded_hashes: BTreeMap<String, String>,
 }
 
 impl ReusePlan {
+    #[cfg(test)]
     pub(crate) fn load(project_root: &Path, out_dir: &Path, ai_mode: &str) -> anyhow::Result<Self> {
+        Self::load_with_since(project_root, out_dir, ai_mode, None)
+    }
+
+    /// Like [`ReusePlan::load`] but scoping the change set to the files git
+    /// reports changed since a ref. `None` is the full-scan default (Leaf H).
+    pub(crate) fn load_with_since(
+        project_root: &Path,
+        out_dir: &Path,
+        ai_mode: &str,
+        since: Option<BTreeSet<String>>,
+    ) -> anyhow::Result<Self> {
         let previous = read_codewiki_meta(out_dir)?;
+        let mut recorded_hashes = BTreeMap::new();
+        for meta in previous.docs.values() {
+            for (file, hash) in meta.source_hashes.iter().chain(meta.neighbor_hashes.iter()) {
+                recorded_hashes.insert(file.clone(), hash.clone());
+            }
+        }
         Ok(Self {
             project_root: project_root.to_path_buf(),
             out_dir: out_dir.to_path_buf(),
             ai_mode: ai_mode.to_string(),
             docs: previous.docs,
             current_hashes: BTreeMap::new(),
+            since,
+            recorded_hashes,
         })
     }
 
@@ -38,10 +68,35 @@ impl ReusePlan {
         doc_path: &str,
         sources: &BTreeSet<String>,
     ) -> Option<String> {
-        if !self.reusable(doc_path, sources) {
+        if !self.reusable(doc_path, sources, &BTreeSet::new()) {
             return None;
         }
         let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
+        std::fs::read_to_string(target).ok()
+    }
+
+    /// The on-disk page of a derived aggregate page (architecture,
+    /// infrastructure, …) keyed on a page-type invalidation digest rather than
+    /// a source-file set (Leaf H, #893). Reused only when the recorded digest
+    /// matches `invalidation_key` — so a model-irrelevant edit (a function body)
+    /// keeps the page even though source files changed.
+    pub(crate) fn reusable_page_keyed(
+        &mut self,
+        doc_path: &str,
+        invalidation_key: &str,
+    ) -> Option<String> {
+        let entry = self.docs.get(doc_path)?;
+        if entry.degraded
+            || entry.ai_mode != self.ai_mode
+            || entry.render_version != CODEWIKI_RENDER_VERSION
+            || entry.invalidation_key.as_deref() != Some(invalidation_key)
+        {
+            return None;
+        }
+        let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
+        if !target.exists() {
+            return None;
+        }
         std::fs::read_to_string(target).ok()
     }
 
@@ -51,8 +106,25 @@ impl ReusePlan {
         doc_path: &str,
         sources: &BTreeSet<String>,
     ) -> Option<(String, String)> {
+        self.reusable_page_with_summary_and_neighbors(doc_path, sources, &BTreeSet::new())
+    }
+
+    /// Like [`ReusePlan::reusable_page_with_summary`] but also invalidating the
+    /// page when a cross-file neighbor's content changed even though the page's
+    /// own sources did not (#885, Leaf H) — so a caller edit refreshes the
+    /// callee's relationship narrative.
+    pub(crate) fn reusable_page_with_summary_and_neighbors(
+        &mut self,
+        doc_path: &str,
+        sources: &BTreeSet<String>,
+        neighbors: &BTreeSet<String>,
+    ) -> Option<(String, String)> {
         let summary = self.docs.get(doc_path)?.summary.clone()?;
-        let page = self.reusable_page(doc_path, sources)?;
+        if !self.reusable(doc_path, sources, neighbors) {
+            return None;
+        }
+        let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
+        let page = std::fs::read_to_string(target).ok()?;
         Some((page, summary))
     }
 
@@ -81,13 +153,20 @@ impl ReusePlan {
                 content,
                 degraded: false,
                 summary,
+                neighbors: BTreeSet::new(),
+                invalidation_key: None,
             });
         }
         docs.sort_by(|left, right| left.path.cmp(&right.path));
         Some(docs)
     }
 
-    fn reusable(&mut self, doc_path: &str, sources: &BTreeSet<String>) -> bool {
+    fn reusable(
+        &mut self,
+        doc_path: &str,
+        sources: &BTreeSet<String>,
+        neighbors: &BTreeSet<String>,
+    ) -> bool {
         let Some(entry) = self.docs.get(doc_path) else {
             return false;
         };
@@ -102,15 +181,20 @@ impl ReusePlan {
         {
             return false;
         }
-        if entry.source_hashes.len() != sources.len()
-            || !entry
-                .source_hashes
-                .keys()
-                .all(|file| sources.contains(file))
+        // The recorded source set and the recorded cross-file neighbor set must
+        // both still match exactly — a new or dropped source/neighbor (e.g. an
+        // added caller, #885) is itself a change even before any hash differs.
+        if !set_matches(&entry.source_hashes, sources)
+            || !set_matches(&entry.neighbor_hashes, neighbors)
         {
             return false;
         }
-        let expected = entry.source_hashes.clone();
+        let expected = entry
+            .source_hashes
+            .clone()
+            .into_iter()
+            .chain(entry.neighbor_hashes.clone())
+            .collect::<BTreeMap<_, _>>();
         for (file, expected_hash) in &expected {
             if self.current_hash(file).as_deref() != Some(expected_hash.as_str()) {
                 return false;
@@ -129,7 +213,18 @@ impl ReusePlan {
         if let Some(hash) = self.current_hashes.get(file) {
             return hash.clone();
         }
-        let hash = hasher::file_content_hash(&self.project_root.join(file)).ok();
+        // Under `--since`, a file git did not report changed keeps its recorded
+        // hash without a disk read, so an unchanged page reuses without a
+        // re-hash and the rewrite set stays scoped to the diff + dependents.
+        let hash = if self
+            .since
+            .as_ref()
+            .is_some_and(|since| !since.contains(file))
+        {
+            self.recorded_hashes.get(file).cloned()
+        } else {
+            hasher::file_content_hash(&self.project_root.join(file)).ok()
+        };
         self.current_hashes.insert(file.to_string(), hash.clone());
         hash
     }
@@ -139,4 +234,10 @@ impl ReusePlan {
 /// hashes decide reuse.
 pub(crate) fn span_files(spans: &[SourceSpan]) -> BTreeSet<String> {
     spans.iter().map(|span| span.file.clone()).collect()
+}
+
+/// True when the recorded hash map covers exactly the current file set — same
+/// size and same keys — so an added or dropped file fails the match.
+fn set_matches(recorded: &BTreeMap<String, String>, current: &BTreeSet<String>) -> bool {
+    recorded.len() == current.len() && recorded.keys().all(|file| current.contains(file))
 }

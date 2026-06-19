@@ -19,6 +19,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
+use crate::index::hasher;
+
 /// Package name of the shared foundation crate whose `[features]` table
 /// defines the adapter feature gates the rest of the workspace opts into.
 const CORE_PACKAGE: &str = "gobby-core";
@@ -121,6 +123,21 @@ pub struct SystemModel {
     /// member `Cargo.toml` that could not be read or parsed). Empty for a
     /// fully-resolved workspace.
     pub notes: Vec<String>,
+}
+
+impl SystemModel {
+    /// Stable content digest of the whole model, used as the per-page-type
+    /// invalidation key for the architecture and infrastructure pages (Leaf H,
+    /// #893). All fields are deterministically ordered (sorted vecs, a
+    /// `BTreeMap`), so the canonical JSON encoding is reproducible and the
+    /// digest changes only on a structural workspace change — a crate, edge,
+    /// service boundary, runtime mode, or feature shift — not a function-body
+    /// edit. Serialization cannot realistically fail for this owned, plain-data
+    /// model; an empty encoding (and thus a stable digest) is the safe fallback.
+    pub(crate) fn digest(&self) -> String {
+        let encoded = serde_json::to_vec(self).unwrap_or_default();
+        hasher::content_hash(&encoded)
+    }
 }
 
 /// Build a [`SystemModel`] from the workspace rooted at `repo_root`.

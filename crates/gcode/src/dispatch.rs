@@ -551,6 +551,7 @@ fn run() -> anyhow::Result<()> {
             ai_register,
             edge_limit,
             include_docs,
+            since,
             repair_citations,
         } => {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
@@ -571,6 +572,7 @@ fn run() -> anyhow::Result<()> {
                 ),
                 edge_limit,
                 include_docs,
+                since,
                 format,
                 cli.verbose,
             )

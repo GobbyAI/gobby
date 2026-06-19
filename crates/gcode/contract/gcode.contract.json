@@ -1217,6 +1217,14 @@
           "repeatable": true
         },
         {
+          "name": "--since",
+          "takes_value": true,
+          "value_name": "GIT_REF",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--ai",
           "takes_value": true,
           "value_name": "auto|daemon|direct|off",

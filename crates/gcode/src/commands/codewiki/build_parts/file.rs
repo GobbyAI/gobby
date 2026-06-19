@@ -36,12 +36,15 @@ pub(crate) fn build_file_doc(
     position: FileDocPosition,
 ) -> FileDoc {
     // A file doc's provenance cites only its own file, so reuse is decided by
-    // that single hash. Reuse skips every symbol and file LLM call; the
+    // that single hash plus its cross-file neighbor hashes (#885, Leaf H): a
+    // caller/callee or import-target edit invalidates the page even though its
+    // own source is unchanged. Reuse skips every symbol and file LLM call; the
     // recorded summary still feeds module prompts and pages.
     let sources = BTreeSet::from([file.to_string()]);
-    let reused = reuse
-        .as_deref_mut()
-        .and_then(|plan| plan.reusable_page_with_summary(&file_doc_path(file), &sources));
+    let neighbors = relationships.neighbor_files(file);
+    let reused = reuse.as_deref_mut().and_then(|plan| {
+        plan.reusable_page_with_summary_and_neighbors(&file_doc_path(file), &sources, &neighbors)
+    });
     let file_verb = if reused.is_some() {
         "reusing"
     } else if ai_depth.includes_files() {

@@ -91,6 +91,8 @@ pub(super) fn render_curated_navigation_docs(
         content: render_concept_tree(&sections, &concepts, &narrative_pages, &all_spans, degraded),
         degraded,
         summary: Some("Curated concept navigation over the code reference.".to_string()),
+        neighbors: std::collections::BTreeSet::new(),
+        invalidation_key: None,
     });
 
     for concept in &concepts {
@@ -105,6 +107,8 @@ pub(super) fn render_curated_navigation_docs(
             content: render_concept_page(concept, &spans, degraded),
             degraded,
             summary: Some(concept.summary.clone()),
+            neighbors: std::collections::BTreeSet::new(),
+            invalidation_key: None,
         });
     }
 
@@ -120,6 +124,8 @@ pub(super) fn render_curated_navigation_docs(
             content: render_narrative_page(page, &spans, &concept_titles, degraded, prev, next),
             degraded,
             summary: Some(page.summary.clone()),
+            neighbors: std::collections::BTreeSet::new(),
+            invalidation_key: None,
         });
     }
 

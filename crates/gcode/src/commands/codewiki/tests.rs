@@ -17,6 +17,7 @@ mod graph;
 mod hotspots;
 mod incremental;
 mod infrastructure;
+mod invalidation;
 mod io_safety;
 mod modules;
 mod onboarding;

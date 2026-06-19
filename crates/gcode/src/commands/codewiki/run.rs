@@ -27,6 +27,7 @@ pub fn run(
     ai: CodewikiAiOptions,
     edge_limit: usize,
     include_docs: bool,
+    since: Option<String>,
     format: Format,
     verbose: bool,
 ) -> anyhow::Result<()> {
@@ -94,6 +95,19 @@ pub fn run(
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
     let out_path = Path::new(&out_dir);
     let doc_scope = DocPruneScope::from_scopes(&scopes);
+    // `--since <ref>` scopes regeneration to the files git reports changed since
+    // the ref plus their dependents, instead of a full content-hash scan of
+    // every page (Leaf H, #893). A source page whose own sources and neighbors
+    // are all unchanged-since-ref is left exactly as it is; keyed aggregate
+    // pages (architecture/infrastructure/features/audit) still re-check their
+    // model digest, so a manifest/contract change rebuilds them even here.
+    let since_changed = match since.as_deref() {
+        Some(since_ref) => {
+            progress.emit(format!("scoping to git changes since {since_ref}"));
+            Some(git_changed_files(&ctx.project_root, since_ref)?)
+        }
+        None => None,
+    };
     if doc_scope.is_unscoped() {
         progress.emit("reading metadata and hashing snapshot");
     } else {
@@ -114,10 +128,12 @@ pub fn run(
     } else {
         None
     };
-    let mut reuse_plan = ReusePlan::load(&ctx.project_root, out_path, ai_mode)?;
+    let mut reuse_plan =
+        ReusePlan::load_with_since(&ctx.project_root, out_path, ai_mode, since_changed.clone())?;
     let mut reuse = Some(&mut reuse_plan);
     let mut sink =
-        DocSink::open_with_prune_scope(&ctx.project_root, out_path, ai_mode, doc_scope.clone())?;
+        DocSink::open_with_prune_scope(&ctx.project_root, out_path, ai_mode, doc_scope.clone())?
+            .with_since(since_changed);
     let mut generated_pages = 0_usize;
     let mut module_count = 0_usize;
     let mut file_count = 0_usize;
@@ -238,6 +254,34 @@ pub(crate) fn validate_edge_limit(edge_limit: usize) -> anyhow::Result<()> {
         return Ok(());
     }
     anyhow::bail!("codewiki --edge-limit must be between 1 and {MAX_EDGE_LIMIT}, got {edge_limit}")
+}
+
+/// Repo-relative paths git reports changed between `since_ref` and the working
+/// tree — the change set that drives `--since` incremental regeneration (Leaf H,
+/// #893). An invalid ref or a missing git binary is surfaced as an error rather
+/// than silently falling back to a full scan, so a typo'd `--since` fails loudly.
+pub(crate) fn git_changed_files(
+    project_root: &Path,
+    since_ref: &str,
+) -> anyhow::Result<std::collections::BTreeSet<String>> {
+    let output = std::process::Command::new("git")
+        .arg("-C")
+        .arg(project_root)
+        .args(["diff", "--name-only", since_ref])
+        .output()
+        .map_err(|err| anyhow::anyhow!("failed to run git diff for --since {since_ref}: {err}"))?;
+    if !output.status.success() {
+        anyhow::bail!(
+            "git diff --name-only {since_ref} failed: {}",
+            String::from_utf8_lossy(&output.stderr).trim()
+        );
+    }
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::trim)
+        .filter(|line| !line.is_empty())
+        .map(str::to_string)
+        .collect())
 }
 
 /// codewiki documents code and structured config — any file the indexer
