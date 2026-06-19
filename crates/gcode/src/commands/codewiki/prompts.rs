@@ -7,7 +7,7 @@ use super::{RelationshipFacts, write_markdown_table_header, write_markdown_table
 pub const SYMBOL_SYSTEM: &str = "You write concise API reference notes. Return one sentence describing the symbol's purpose. Do not include markdown fences.";
 pub const FILE_SYSTEM: &str = "You write a narrative explainer page for one source file, for an engineer reading it for the first time. Using only the supplied symbols, source excerpt, and cross-file relationships, write a multi-section Markdown page with exactly these sections, in order: '## Overview' (what this file does and the role it plays) and '## How it fits' (how the file connects to its module and the surrounding data flow). When cross-file relationships are supplied, use '## How it fits' to explain the concrete external callers of this file, the external symbols it calls, and the files it imports, citing the supplied file:line anchors. A 'Key components' table is injected separately, so do not write a key-components section or a symbol table. Use short paragraphs. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
 pub const CONTENT_FILE_SYSTEM: &str = "You write a narrative explainer page for one non-code repository file (markdown, config, data), for an engineer reading it for the first time. Using only the supplied leading content, write a multi-section Markdown page with exactly these sections, in order: '## Overview' (what this file contains and what it is for) and '## How it fits' (how it relates to the surrounding project). Use short paragraphs. Cite supporting file:line anchors that appear in the supplied input. Do not invent content or line numbers. No markdown fences.";
-pub const MODULE_SYSTEM: &str = "You write module documentation briefs. Using only the supplied file summaries, child module summaries, component table, and source excerpts, write two to four short paragraphs covering the module's responsibilities, key flows, and collaboration points. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
+pub const MODULE_SYSTEM: &str = "You write module documentation briefs. Using only the supplied file summaries, child module summaries, component table, source excerpts, and cross-file relationships, write two to four short paragraphs covering the module's responsibilities, key flows, and collaboration points. When cross-file relationships are supplied, describe how this module fits into the wider system — which external code calls into it, what it calls out to, and what it imports — citing the supplied file:line anchors. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
 pub const REPO_SYSTEM: &str = "You write repository overview briefs. Using only the supplied module summaries, root-file summaries, and source excerpts, write two to four short paragraphs covering what the system is, how the major pieces fit together, and where a reader should start. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
 pub const ARCHITECTURE_SYSTEM: &str = "You write concise architecture documentation. Using only the supplied summaries, component table, and source excerpts, return a short responsibility summary plus compact Markdown tables for enumerable facts such as public API symbols, CLI commands or flags, configuration keys, and environment variables. No markdown fences.";
 pub const ARCHITECTURE_NARRATIVE_SYSTEM: &str = "You write architecture overviews. Using only the supplied subsystem responsibilities and dependency edges, write two to three short paragraphs describing the system in layers: which subsystems sit at the foundation, which build on them, and how the layers interact. Plain paragraphs only - no headings, no lists, no markdown fences.";
@@ -72,15 +72,17 @@ pub fn module_prompt(
     modules: &[ChildSummary],
     components: &[String],
     sources: &[SourceExcerpt],
+    relationships: &RelationshipFacts,
 ) -> String {
     build_entity_prompt(
-        "Write a documentation brief for this module from its file summaries, child module summaries, and source excerpts.",
+        "Write a documentation brief for this module from its file summaries, child module summaries, source excerpts, and cross-file relationships.",
         "Module",
         module,
         files,
         modules,
         components,
         sources,
+        relationships,
     )
 }
 
@@ -147,6 +149,7 @@ pub fn architecture_prompt(
         modules,
         components,
         sources,
+        &RelationshipFacts::default(),
     )
 }
 
@@ -403,6 +406,7 @@ fn append_relationship_section(prompt: &mut String, relationships: &Relationship
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn build_entity_prompt(
     header: &str,
     entity_label: &str,
@@ -411,11 +415,13 @@ fn build_entity_prompt(
     modules: &[ChildSummary],
     components: &[String],
     sources: &[SourceExcerpt],
+    relationships: &RelationshipFacts,
 ) -> String {
     let mut prompt = format!("{header}\n\n{entity_label}: {entity}\n\n");
     append_table_guidance(&mut prompt);
     prompt.push_str("Files:\n");
     append_child_summary_sections(&mut prompt, files, modules, components);
+    append_relationship_section(&mut prompt, relationships);
     append_source_excerpt_section(&mut prompt, sources);
     prompt
 }
@@ -586,7 +592,14 @@ mod tests {
             .collect::<Vec<_>>();
 
         for prompt in [
-            module_prompt("src", &children, &children, &[], &[]),
+            module_prompt(
+                "src",
+                &children,
+                &children,
+                &[],
+                &[],
+                &RelationshipFacts::default(),
+            ),
             architecture_prompt("src", &children, &children, &[], &[]),
             repo_prompt(&children, &children, &[]),
         ] {
@@ -608,7 +621,14 @@ mod tests {
             name: "src/lib.rs".to_string(),
             summary: "Concise healthy summary.".to_string(),
         };
-        let prompt = module_prompt("src", &[child], &[], &[], &[]);
+        let prompt = module_prompt(
+            "src",
+            &[child],
+            &[],
+            &[],
+            &[],
+            &RelationshipFacts::default(),
+        );
         assert!(prompt.contains("| src/lib.rs | Concise healthy summary. |\n"));
     }
 
@@ -632,7 +652,14 @@ mod tests {
             name: "src/lib.rs".to_string(),
             summary: "First line.\nSecond line of the same paragraph.".to_string(),
         };
-        let prompt = module_prompt("src", &[child], &[], &[], &[]);
+        let prompt = module_prompt(
+            "src",
+            &[child],
+            &[],
+            &[],
+            &[],
+            &RelationshipFacts::default(),
+        );
         assert!(
             prompt.contains("| src/lib.rs | First line. Second line of the same paragraph. |\n")
         );
@@ -705,6 +732,40 @@ mod tests {
     }
 
     #[test]
+    fn module_prompt_includes_cross_module_relationships() {
+        use super::super::SourceSpan;
+        use super::super::relationship_facts::SymbolRelation;
+
+        let relationships = RelationshipFacts {
+            inbound_calls: vec![SymbolRelation {
+                other_name: "sibling::caller".to_string(),
+                other_kind: "function".to_string(),
+                local_name: Some("module_fn".to_string()),
+                span: SourceSpan {
+                    file: "src/other_mod/api.rs".to_string(),
+                    line_start: 12,
+                    line_end: 20,
+                },
+            }],
+            outbound_calls: Vec::new(),
+            imports: Vec::new(),
+        };
+        let child = ChildSummary {
+            name: "src/search/fts.rs".to_string(),
+            summary: "FTS layer.".to_string(),
+        };
+
+        let prompt = module_prompt("src/search", &[child], &[], &[], &[], &relationships);
+
+        assert!(prompt.contains("Cross-file relationships"), "{prompt}");
+        assert!(
+            prompt.contains("Called by (external symbols that call into this file):"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("[src/other_mod/api.rs:12-20]"), "{prompt}");
+    }
+
+    #[test]
     fn verify_prompt_includes_symbols_as_authoritative_evidence() {
         let symbol = SymbolSummary {
             name: "run|cli".to_string(),
@@ -755,7 +816,14 @@ mod tests {
             .map(|index| excerpt(&format!("src/file_{index}.rs"), &oversized))
             .collect::<Vec<_>>();
 
-        let prompt = module_prompt("src", &[], &[], &[], &sources);
+        let prompt = module_prompt(
+            "src",
+            &[],
+            &[],
+            &[],
+            &sources,
+            &RelationshipFacts::default(),
+        );
 
         let headers = prompt
             .lines()

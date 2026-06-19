@@ -250,6 +250,7 @@ mod tests {
             &[],
             &[],
             &[],
+            &crate::commands::codewiki::RelationshipFacts::default(),
         );
 
         let mut echoing = |prompt: &str, _system: &str, _tier: PromptTier| Some(prompt.to_string());

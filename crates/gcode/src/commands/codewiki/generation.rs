@@ -254,6 +254,7 @@ pub(crate) fn generate_hierarchical_docs_core(
     let module_docs = build_module_docs_with_filter(
         &file_docs,
         &input.leading_chunks,
+        &input.graph_edges,
         generate,
         reuse,
         progress,
