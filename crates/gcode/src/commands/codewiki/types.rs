@@ -227,6 +227,38 @@ pub(crate) struct InfrastructureDoc {
     pub(crate) degraded_sources: Vec<String>,
 }
 
+/// One CLI subcommand row on the deterministic feature catalog page (#888):
+/// the contract command name, its contract summary, the contract flag names,
+/// a representative handler entry symbol, and the repo-relative handler file
+/// the catalog wikilinks to as the explaining page. Built straight from the
+/// pinned CLI contract JSON plus a curated dispatch resolver — no LLM.
+#[derive(Debug, Clone)]
+pub(crate) struct FeatureEntry {
+    pub(crate) command: String,
+    pub(crate) summary: String,
+    pub(crate) key_flags: Vec<String>,
+    pub(crate) entry_symbol: String,
+    pub(crate) handler_file: String,
+}
+
+/// One binary's section on the feature catalog page: every subcommand the
+/// binary's pinned contract declares, in contract order.
+#[derive(Debug, Clone)]
+pub(crate) struct FeatureBinarySection {
+    pub(crate) binary: String,
+    pub(crate) entries: Vec<FeatureEntry>,
+}
+
+/// The deterministic feature catalog page (#888), one [`FeatureBinarySection`]
+/// per binary with a pinned contract. `degraded_sources` is always empty: the
+/// page is derived from the contract JSONs + dispatch wiring and never marks
+/// itself degraded.
+#[derive(Debug, Clone)]
+pub(crate) struct FeatureCatalogDoc {
+    pub(crate) sections: Vec<FeatureBinarySection>,
+    pub(crate) degraded_sources: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct OnboardingDoc {
     pub(crate) source_spans: Vec<SourceSpan>,

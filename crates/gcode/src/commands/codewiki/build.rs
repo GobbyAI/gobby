@@ -6,6 +6,8 @@ mod changes;
 mod concepts;
 #[path = "build_parts/curated_content.rs"]
 mod curated_content;
+#[path = "build_parts/features.rs"]
+mod features;
 #[path = "build_parts/file.rs"]
 mod file;
 #[path = "build_parts/hotspots.rs"]
@@ -22,6 +24,7 @@ mod snapshot;
 pub(crate) use architecture::build_architecture_doc;
 pub(crate) use changes::build_codewiki_changes_doc;
 pub(crate) use concepts::build_curated_navigation_docs;
+pub(crate) use features::build_feature_catalog_doc;
 pub(crate) use file::{FileDocPosition, build_file_doc};
 pub(crate) use hotspots::build_hotspots_doc;
 pub(crate) use infrastructure::build_infrastructure_doc;

@@ -4,14 +4,14 @@ use std::path::Path;
 use crate::models::Symbol;
 
 use super::{
-    AiDepth, BuiltDoc, CodewikiInput, CodewikiProgress, DocPruneScope, FileDocPosition,
-    OwnershipMeta, OwnershipOptions, ReusePlan, SystemModel, TextGenerator, TextVerifier,
-    build_architecture_doc, build_curated_navigation_docs, build_file_doc, build_hotspots_doc,
-    build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
-    build_ownership_doc, build_repo_doc, cluster, cluster_file_modules, file_doc_path,
-    is_core_file, module_doc_path, module_for_file, relationship_facts_for_file,
-    render_architecture_doc, render_file_doc, render_hotspots_doc, render_infrastructure_doc,
-    render_module_doc, render_onboarding_doc, span_files,
+    AiDepth, BuiltDoc, CodewikiInput, CodewikiProgress, DocPruneScope, FeatureCatalogDoc,
+    FileDocPosition, OwnershipMeta, OwnershipOptions, ReusePlan, SystemModel, TextGenerator,
+    TextVerifier, build_architecture_doc, build_curated_navigation_docs, build_file_doc,
+    build_hotspots_doc, build_infrastructure_doc, build_module_docs_with_filter,
+    build_onboarding_doc, build_ownership_doc, build_repo_doc, cluster, cluster_file_modules,
+    file_doc_path, is_core_file, module_doc_path, module_for_file, relationship_facts_for_file,
+    render_architecture_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,
+    render_infrastructure_doc, render_module_doc, render_onboarding_doc, span_files,
 };
 
 pub fn generate_hierarchical_docs(
@@ -33,6 +33,7 @@ fn generate_hierarchical_docs_with_graph_availability(
     let mut docs = Vec::new();
     if let Err(error) = generate_hierarchical_docs_core(
         input,
+        None,
         None,
         None,
         &mut generate,
@@ -57,6 +58,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
     input: &CodewikiInput,
     ownership: Option<(&Path, &mut OwnershipMeta)>,
     system_model: Option<&SystemModel>,
+    feature_catalog: Option<&FeatureCatalogDoc>,
     mut generate: Option<&mut TextGenerator<'_>>,
     mut verify: Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
@@ -69,6 +71,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
         input,
         ownership,
         system_model,
+        feature_catalog,
         &mut generate,
         &mut verify,
         ai_depth,
@@ -102,6 +105,7 @@ pub(crate) fn generate_hierarchical_docs_with_reuse(
     let mut docs = Vec::new();
     if let Err(error) = generate_hierarchical_docs_core(
         input,
+        None,
         None,
         None,
         &mut generate,
@@ -140,6 +144,7 @@ pub(crate) fn generate_hierarchical_docs_with_verify(
         input,
         None,
         None,
+        None,
         &mut generate,
         &mut verify,
         ai_depth,
@@ -169,6 +174,11 @@ pub(crate) fn generate_hierarchical_docs_core(
     // model built from the project root; test/AI-off entry points pass `None`
     // to omit the diagram section.
     system_model: Option<&SystemModel>,
+    // Deterministic feature catalog (#888), built from the pinned CLI contract
+    // JSONs + dispatch resolver. The CLI runtime passes the real catalog; the
+    // test/AI-off entry points pass `None` to omit the catalog page, exactly
+    // like `system_model`.
+    feature_catalog: Option<&FeatureCatalogDoc>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
@@ -361,6 +371,19 @@ pub(crate) fn generate_hierarchical_docs_core(
         emit(BuiltDoc {
             path: "code/infrastructure.md".to_string(),
             content: render_infrastructure_doc(&infrastructure_doc),
+            degraded: false,
+            summary: None,
+        })?;
+    }
+    // Deterministic feature catalog page (#888). Built straight from the pinned
+    // CLI contract JSONs + dispatch resolver — no LLM, never degraded. Omitted
+    // when no catalog was supplied (AI-off / test entry points), exactly like
+    // the architecture diagrams and the infrastructure stack page.
+    progress.emit("generating feature catalog");
+    if let Some(catalog) = feature_catalog {
+        emit(BuiltDoc {
+            path: "code/features.md".to_string(),
+            content: render_feature_catalog_doc(catalog),
             degraded: false,
             summary: None,
         })?;

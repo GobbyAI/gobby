@@ -345,6 +345,7 @@ fn interrupted_run_resumes_from_persisted_docs() {
         &input,
         None,
         None,
+        None,
         &mut generate,
         &mut None,
         AiDepth::Symbols,
@@ -382,6 +383,7 @@ fn interrupted_run_resumes_from_persisted_docs() {
     };
     generate_hierarchical_docs_core(
         &input,
+        None,
         None,
         None,
         &mut generate,

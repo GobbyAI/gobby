@@ -11,6 +11,7 @@ mod architecture;
 mod changes;
 mod concepts;
 mod contract;
+mod features;
 mod graph;
 mod hotspots;
 mod incremental;

@@ -421,6 +421,7 @@ fn build_architecture_page(model: Option<&SystemModel>) -> BuiltDoc {
         &input,
         None,
         model,
+        None,
         &mut generate,
         &mut None,
         AiDepth::Symbols,
