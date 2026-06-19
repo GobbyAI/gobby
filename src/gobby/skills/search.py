@@ -15,8 +15,9 @@ import logging
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any
 
-from gobby.search import SearchConfig, UnifiedSearcher
 from gobby.search.keyword import pick_search_backend
+from gobby.search.models import SearchConfig
+from gobby.search.unified import UnifiedSearcher
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase

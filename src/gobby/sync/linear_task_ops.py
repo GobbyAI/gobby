@@ -1,0 +1,432 @@
+"""Task import, push, pull, and bidirectional Linear sync operations."""
+
+from __future__ import annotations
+
+from datetime import UTC, datetime
+from typing import Any, cast
+
+import httpx
+
+from gobby.integrations.linear_graphql import LinearGraphQLError
+from gobby.sync.linear_project_ops import LinearProjectOpsMixin
+from gobby.sync.linear_support import (
+    LinearSyncError,
+    _gobby_seq_from_linear_title,
+    _linear_fetch_failure_limiter,
+    _local_title_from_linear,
+    logger,
+    project_gobby_state_for_linear,
+)
+from gobby.sync.linear_support import (
+    map_gobby_state_to_linear as _map_gobby_state_to_linear,
+)
+from gobby.sync.linear_support import (
+    map_linear_state_to_gobby as _map_linear_state_to_gobby,
+)
+
+
+class LinearTaskOpsMixin(LinearProjectOpsMixin):
+    """Task-level Linear import, push, pull, and sync operations."""
+
+    async def import_linear_issues(
+        self,
+        team_id: str | None = None,
+        state: str | None = None,
+        labels: list[str] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Import Linear issues as gobby tasks with dedup."""
+        self.linear.require_available()
+
+        effective_team_id = team_id or self.linear_team_id
+        if not effective_team_id:
+            raise ValueError("No team_id provided and no default linear_team_id configured.")
+
+        args = self._issue_list_args(effective_team_id, state=state, labels=labels)
+
+        try:
+            if not self._linear_mcp_has_tool("list_issues"):
+                raise LinearSyncError("Linear MCP server does not expose list_issues.")
+            result = await self.mcp_manager.call_tool(
+                server_name="linear",
+                tool_name="list_issues",
+                arguments=args,
+            )
+            issues = result.get("issues", [])
+        except Exception:
+            client = await self._get_graphql_client()
+            if not client:
+                raise
+            issues = await client.list_issues(
+                team_id=effective_team_id,
+                project_id=self._get_linear_project_id(),
+                state=state,
+                labels=labels,
+            )
+        result_tasks: list[dict[str, Any]] = []
+
+        for issue in issues:
+            issue_id = issue.get("id")
+            if not issue_id:
+                continue
+
+            existing = self.task_manager.db.fetchone(
+                "SELECT id FROM tasks WHERE linear_issue_id = %s AND project_id = %s",
+                (issue_id, self.project_id),
+            )
+
+            title = issue.get("title", "Untitled Issue")
+            local_title = _local_title_from_linear(title)
+            description = issue.get("description", "")
+            priority_val = issue.get("priority", 2)
+
+            if not existing:
+                ref_seq = _gobby_seq_from_linear_title(title)
+                if ref_seq is not None:
+                    existing = self.task_manager.db.fetchone(
+                        "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s",
+                        (self.project_id, ref_seq),
+                    )
+                    if existing:
+                        self.task_manager.update_task(
+                            existing["id"],
+                            linear_issue_id=issue_id,
+                            linear_team_id=effective_team_id,
+                        )
+
+            if existing:
+                self.task_manager.reconcile_task_state(
+                    existing["id"],
+                    title=local_title,
+                    description=description,
+                    priority=priority_val,
+                )
+                task = self.task_manager.get_task(existing["id"])
+                result_tasks.append(task.to_dict())
+            else:
+                task = self.task_manager.create_task(
+                    project_id=self.project_id,
+                    title=local_title,
+                    description=description,
+                    linear_issue_id=issue_id,
+                    linear_team_id=effective_team_id,
+                    priority=priority_val,
+                )
+                result_tasks.append(task.to_dict())
+
+        logger.info("Imported %d issues from Linear team %s", len(result_tasks), effective_team_id)
+        return result_tasks
+
+    async def sync_task_to_linear(self, task_id: str) -> dict[str, Any]:
+        """Sync a gobby task to its linked Linear issue."""
+        self.linear.require_available()
+
+        task = self.task_manager.get_task(task_id)
+        if not task.linear_issue_id:
+            raise ValueError(
+                f"Task {task_id} has no linked Linear issue. Set linear_issue_id to sync."
+            )
+
+        linear_state = self.map_gobby_state_to_linear(self._project_gobby_state_for_linear(task))
+        issue_title = self._linear_issue_title(task)
+        client = await self._get_graphql_client()
+        if client:
+            effective_team_id = task.linear_team_id or self.linear_team_id
+            state_id = await self._linear_state_id_for_name(
+                client,
+                effective_team_id,
+                linear_state,
+            )
+            result = await client.update_issue(
+                issue_id=task.linear_issue_id,
+                title=issue_title,
+                description=task.description or "",
+                priority=task.priority,
+                state_id=state_id,
+            )
+            logger.info("Synced task %s to Linear issue %s", task_id, task.linear_issue_id)
+            return result
+
+        update_args: dict[str, Any] = {
+            "id": task.linear_issue_id,
+            "issueId": task.linear_issue_id,
+            "title": issue_title,
+            "description": task.description or "",
+            "priority": task.priority,
+        }
+        if linear_state:
+            update_args["status"] = linear_state
+
+        result = await self.mcp_manager.call_tool(
+            server_name="linear",
+            tool_name="update_issue",
+            arguments=update_args,
+        )
+
+        if result is None or not isinstance(result, dict):
+            raise LinearSyncError(
+                f"Invalid response from Linear MCP when updating issue "
+                f"{task.linear_issue_id}: expected dict, got {type(result).__name__}"
+            )
+
+        logger.info("Synced task %s to Linear issue %s", task_id, task.linear_issue_id)
+        return cast(dict[str, Any], result)
+
+    async def create_issue_for_task(
+        self,
+        task_id: str,
+        team_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Create a Linear issue from a gobby task."""
+        self.linear.require_available()
+
+        task = self.task_manager.get_task(task_id)
+        effective_team_id = team_id or task.linear_team_id or self.linear_team_id
+        if not effective_team_id:
+            raise ValueError(f"Task {task_id} has no linear_team_id set and no default configured.")
+
+        linear_project_id = await self.ensure_project_binding(effective_team_id)
+        title = self._linear_issue_title(task)
+
+        client = await self._get_graphql_client()
+        if client:
+            result_dict = await client.create_issue(
+                team_id=effective_team_id,
+                title=title,
+                description=task.description or "",
+                priority=task.priority,
+                project_id=linear_project_id,
+            )
+            issue_id = result_dict.get("id")
+            if issue_id:
+                self.task_manager.update_task(
+                    task_id,
+                    linear_issue_id=issue_id,
+                    linear_team_id=effective_team_id,
+                )
+                logger.info("Registered %s in Linear issue %s", self._task_ref(task), issue_id)
+            return self._decorate_issue_result(
+                result_dict,
+                task,
+                team_id=effective_team_id,
+                project_id=linear_project_id,
+            )
+
+        arguments: dict[str, Any] = {
+            "teamId": effective_team_id,
+            "title": title,
+            "description": task.description or "",
+            "priority": task.priority,
+        }
+        if linear_project_id:
+            arguments["projectId"] = linear_project_id
+
+        result = await self.mcp_manager.call_tool(
+            server_name="linear",
+            tool_name="create_issue",
+            arguments=arguments,
+        )
+
+        result_dict = cast(dict[str, Any], result)
+        issue_id = result_dict.get("id")
+        if issue_id:
+            self.task_manager.update_task(
+                task_id,
+                linear_issue_id=issue_id,
+                linear_team_id=effective_team_id,
+            )
+            logger.info("Registered %s in Linear issue %s", self._task_ref(task), issue_id)
+
+        return self._decorate_issue_result(
+            result_dict,
+            task,
+            team_id=effective_team_id,
+            project_id=linear_project_id,
+        )
+
+    async def create_missing_issues(self, team_id: str | None = None) -> list[dict[str, Any]]:
+        """Create Linear issues for active non-closed Gobby tasks not linked yet."""
+        effective_team_id = team_id or self.linear_team_id
+        if not effective_team_id:
+            raise ValueError("No team_id provided and no default linear_team_id configured.")
+
+        rows = self.task_manager.db.fetchall(
+            "SELECT id FROM tasks "
+            "WHERE project_id = %s AND linear_issue_id IS NULL AND closed_at IS NULL",
+            (self.project_id,),
+        )
+
+        created: list[dict[str, Any]] = []
+        for row in rows:
+            created.append(await self.create_issue_for_task(row["id"], team_id=effective_team_id))
+        return created
+
+    async def _push_task_rows(self, rows: list[Any]) -> dict[str, int]:
+        stats = {"pushed": 0, "skipped": 0, "errors": 0}
+        for row in rows:
+            try:
+                await self.sync_task_to_linear(row["id"])
+                stats["pushed"] += 1
+            except Exception as e:
+                logger.warning("Failed to push task %s to Linear: %s", row["id"], e)
+                stats["errors"] += 1
+        return stats
+
+    async def push_active_tasks(self) -> dict[str, int]:
+        """Push all linked active non-closed Gobby tasks to Linear."""
+        self.linear.require_available()
+        rows = self.task_manager.db.fetchall(
+            "SELECT id FROM tasks "
+            "WHERE project_id = %s AND linear_issue_id IS NOT NULL AND closed_at IS NULL",
+            (self.project_id,),
+        )
+        return await self._push_task_rows(rows)
+
+    async def sync_active_forward(self, team_id: str | None = None) -> dict[str, Any]:
+        """Forward-only initial sync from active Gobby tasks into Linear."""
+        effective_team_id = team_id or self.linear_team_id
+        if not effective_team_id:
+            raise ValueError("No team_id provided and no default linear_team_id configured.")
+
+        created_issues = await self.create_missing_issues(team_id=effective_team_id)
+        push_stats = await self.push_active_tasks()
+
+        synced_at = datetime.now(UTC).isoformat()
+        self._update_synced_at(synced_at)
+
+        return {
+            "mode": "forward_active",
+            "created_count": len(created_issues),
+            "created_issues": created_issues,
+            "push": push_stats,
+            "synced_at": synced_at,
+        }
+
+    async def pull_linear_updates(self, team_id: str | None = None) -> dict[str, int]:
+        """Pull updates from Linear for all linked tasks."""
+        self.linear.require_available()
+
+        effective_team_id = team_id or self.linear_team_id
+        if not effective_team_id:
+            raise ValueError("No team_id provided and no default linear_team_id configured.")
+
+        synced_at = self._get_project_synced_at()
+        stats = {"updated": 0, "skipped": 0, "errors": 0}
+
+        rows = self.task_manager.db.fetchall(
+            "SELECT id, linear_issue_id FROM tasks "
+            "WHERE project_id = %s AND linear_issue_id IS NOT NULL",
+            (self.project_id,),
+        )
+        if not rows:
+            return stats
+
+        try:
+            if not self._linear_mcp_has_tool("list_issues"):
+                raise LinearSyncError("Linear MCP server does not expose list_issues.")
+            result = await self.mcp_manager.call_tool(
+                server_name="linear",
+                tool_name="list_issues",
+                arguments=self._issue_list_args(effective_team_id),
+            )
+            issues = result.get("issues", [])
+        except Exception as e:
+            client = await self._get_graphql_client()
+            if not client:
+                _linear_fetch_failure_limiter.log_failure(logger, e)
+                stats["errors"] = len(rows)
+                return stats
+            try:
+                issues = await client.list_issues(
+                    team_id=effective_team_id,
+                    project_id=self._get_linear_project_id(),
+                )
+            except (LinearGraphQLError, httpx.HTTPError) as graphql_error:
+                _linear_fetch_failure_limiter.log_failure(logger, graphql_error)
+                stats["errors"] = len(rows)
+                return stats
+
+        _linear_fetch_failure_limiter.log_success(logger)
+        issue_map = {issue.get("id"): issue for issue in issues if issue.get("id")}
+
+        for row in rows:
+            task_id = row["id"]
+            linear_id = row["linear_issue_id"]
+            issue = issue_map.get(linear_id)
+            if not issue:
+                stats["skipped"] += 1
+                continue
+
+            try:
+                linear_updated = issue.get("updatedAt", "")
+                if synced_at and linear_updated and linear_updated <= synced_at:
+                    stats["skipped"] += 1
+                    continue
+
+                priority_val = issue.get("priority", 2)
+                self.task_manager.reconcile_task_state(
+                    task_id,
+                    title=_local_title_from_linear(issue.get("title", "")),
+                    description=issue.get("description", ""),
+                    priority=priority_val,
+                )
+                stats["updated"] += 1
+            except Exception as e:
+                logger.warning("Failed to update task %s from Linear: %s", task_id, e)
+                stats["errors"] += 1
+
+        return stats
+
+    async def push_dirty_tasks(self) -> dict[str, int]:
+        """Push gobby tasks that changed since last sync to Linear."""
+        self.linear.require_available()
+
+        synced_at = self._get_project_synced_at()
+        if synced_at:
+            rows = self.task_manager.db.fetchall(
+                "SELECT id FROM tasks "
+                "WHERE project_id = %s AND linear_issue_id IS NOT NULL "
+                "AND updated_at > %s",
+                (self.project_id, synced_at),
+            )
+        else:
+            rows = self.task_manager.db.fetchall(
+                "SELECT id FROM tasks WHERE project_id = %s AND linear_issue_id IS NOT NULL",
+                (self.project_id,),
+            )
+
+        return await self._push_task_rows(rows)
+
+    async def sync_all(self, team_id: str | None = None) -> dict[str, Any]:
+        """Full bidirectional sync: pull first, then push."""
+        effective_team_id = team_id or self.linear_team_id
+
+        pull_stats = await self.pull_linear_updates(team_id=effective_team_id)
+        push_stats = await self.push_dirty_tasks()
+
+        pull_errors = int(pull_stats.get("errors", 0))
+        push_errors = int(push_stats.get("errors", 0))
+        cursor_updated = pull_errors == 0 and push_errors == 0
+        synced_at: str | None
+        if cursor_updated:
+            synced_at = datetime.now(UTC).isoformat()
+            self._update_synced_at(synced_at)
+        else:
+            synced_at = self._get_project_synced_at()
+
+        return {
+            "pull": pull_stats,
+            "push": push_stats,
+            "cursor_updated": cursor_updated,
+            "synced_at": synced_at,
+        }
+
+    def map_gobby_state_to_linear(self, gobby_state: str) -> str:
+        """Map gobby task state to Linear issue state name."""
+        return _map_gobby_state_to_linear(gobby_state)
+
+    def _project_gobby_state_for_linear(self, task: Any) -> str:
+        return project_gobby_state_for_linear(task)
+
+    def map_linear_state_to_gobby(self, linear_state: str) -> str:
+        """Map Linear issue state to gobby task state."""
+        return _map_linear_state_to_gobby(linear_state)

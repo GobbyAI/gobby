@@ -19,6 +19,7 @@ from typing import Any, Protocol
 
 import aiofiles
 
+from gobby.config.feature_base import FeatureCandidateInput
 from gobby.sessions.summary_refresh import (
     choose_summary_refresh,
     digest_turn_count,
@@ -69,7 +70,7 @@ class FeatureConfigProtocol(Protocol):
     def profile(self) -> Any: ...
 
     @property
-    def candidates(self) -> Sequence[str]: ...
+    def candidates(self) -> Sequence[FeatureCandidateInput]: ...
 
 
 class SessionSummaryConfigProtocol(FeatureConfigProtocol, Protocol):
