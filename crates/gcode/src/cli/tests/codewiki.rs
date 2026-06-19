@@ -30,6 +30,58 @@ fn parse_codewiki_ai_verify_profile_flag() {
 }
 
 #[test]
+fn parse_codewiki_prose_depth_flag() {
+    let cli = Cli::try_parse_from(["gcode", "codewiki"]).expect("codewiki parses");
+    match cli.command {
+        Command::Codewiki { ai_prose_depth, .. } => {
+            assert_eq!(
+                ai_prose_depth,
+                AiProseDepthArg::Standard,
+                "default is standard"
+            )
+        }
+        _ => panic!("expected codewiki command"),
+    }
+
+    for (raw, expected) in [
+        ("brief", AiProseDepthArg::Brief),
+        ("standard", AiProseDepthArg::Standard),
+        ("deep", AiProseDepthArg::Deep),
+    ] {
+        let cli = Cli::try_parse_from(["gcode", "codewiki", "--ai-prose-depth", raw])
+            .expect("codewiki --ai-prose-depth parses");
+        match cli.command {
+            Command::Codewiki { ai_prose_depth, .. } => assert_eq!(ai_prose_depth, expected),
+            _ => panic!("expected codewiki command"),
+        }
+    }
+}
+
+#[test]
+fn parse_codewiki_register_flag() {
+    let cli = Cli::try_parse_from(["gcode", "codewiki"]).expect("codewiki parses");
+    match cli.command {
+        Command::Codewiki { ai_register, .. } => {
+            assert_eq!(ai_register, None, "register defaults off")
+        }
+        _ => panic!("expected codewiki command"),
+    }
+
+    for (raw, expected) in [
+        ("newcomer", AiRegisterArg::Newcomer),
+        ("maintainer", AiRegisterArg::Maintainer),
+        ("agent", AiRegisterArg::Agent),
+    ] {
+        let cli = Cli::try_parse_from(["gcode", "codewiki", "--ai-register", raw])
+            .expect("codewiki --ai-register parses");
+        match cli.command {
+            Command::Codewiki { ai_register, .. } => assert_eq!(ai_register, Some(expected)),
+            _ => panic!("expected codewiki command"),
+        }
+    }
+}
+
+#[test]
 fn parse_codewiki_edge_limit_flag() {
     let cli = Cli::try_parse_from(["gcode", "codewiki"]).expect("codewiki parses");
     match cli.command {

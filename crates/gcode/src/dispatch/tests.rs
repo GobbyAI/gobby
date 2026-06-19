@@ -119,6 +119,8 @@ fn codewiki_ai_options_routes_verify_profile_override() {
     let options = codewiki_ai_options(
         Some(AiRouteArg::Daemon),
         cli::AiDepthArg::Files,
+        cli::AiProseDepthArg::Deep,
+        Some(cli::AiRegisterArg::Newcomer),
         Some("aggregate_profile".to_string()),
         Some("feature_mid".to_string()),
     );
@@ -128,4 +130,12 @@ fn codewiki_ai_options_routes_verify_profile_override() {
         Some("aggregate_profile")
     );
     assert_eq!(options.verify_profile.as_deref(), Some("feature_mid"));
+    assert_eq!(
+        options.prose_depth,
+        gobby_code::commands::codewiki::ProseDepth::Deep
+    );
+    assert_eq!(
+        options.register,
+        Some(gobby_code::commands::codewiki::ProseRegister::Newcomer)
+    );
 }

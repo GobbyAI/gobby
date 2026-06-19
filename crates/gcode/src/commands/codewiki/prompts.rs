@@ -2,7 +2,9 @@ use std::fmt::Write as _;
 
 use crate::models::Symbol;
 
-use super::{RelationshipFacts, write_markdown_table_header, write_markdown_table_row};
+use super::{
+    ProseRegister, RelationshipFacts, write_markdown_table_header, write_markdown_table_row,
+};
 
 pub const SYMBOL_SYSTEM: &str = "You write concise API reference notes. Return one sentence describing the symbol's purpose. Do not include markdown fences.";
 pub const FILE_SYSTEM: &str = "You write a narrative explainer page for one source file, for an engineer reading it for the first time. Using only the supplied symbols, source excerpt, and cross-file relationships, write a multi-section Markdown page with exactly these sections, in order: '## Overview' (what this file does and the role it plays) and '## How it fits' (how the file connects to its module and the surrounding data flow). When cross-file relationships are supplied, use '## How it fits' to explain the concrete external callers of this file, the external symbols it calls, and the files it imports, citing the supplied file:line anchors. A 'Key components' table is injected separately, so do not write a key-components section or a symbol table. Use short paragraphs. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
@@ -15,6 +17,38 @@ pub const CURATED_NAVIGATION_SYSTEM: &str = "You design a curated navigation lay
 pub const CONCEPT_PAGE_SYSTEM: &str = "You write a reference explainer page for one concept in a codebase, written for an engineer who is new to it. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown page with these sections, in order: '## Purpose' (what this concept is and the problem it solves), '## Covers / Does not cover' (the scope boundaries), '## Architecture' (how the pieces fit together; a diagram is injected separately, so describe the structure in prose), '## Data flow' (a numbered list tracing the real runtime flow), '## Key components' (a compact Markdown table of the most important symbols and their role), and '## Where to start' (which page or symbol to read first). Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
 pub const NARRATIVE_PAGE_SYSTEM: &str = "You write one chapter of a guided, beginner-friendly tour of a codebase, in the style of a progressive tutorial. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown chapter with these sections, in order: '## Why this matters' (the motivation and the problem this part of the system solves), '## How it works' (a numbered, step-by-step walkthrough of the real flow, grounded in the supplied symbols), '## Key components' (a compact Markdown table of the important symbols), and '## What to read next' (which chapter or reference page to read next). You may include at most one brief analogy if it is anchored to the supplied source; do not pad with long generic metaphors. Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
 pub const VERIFY_SYSTEM: &str = "You are a strict citation auditor for code documentation. You receive a draft explanation split into numbered blocks, optional Symbols evidence, optional cross-file relationship evidence, and the source excerpts the page is allowed to rely on. For each block, decide whether its specific technical claims (names, behaviors, control flow, data flow, relationships) are supported by the supplied evidence. Treat Symbols evidence as authoritative for symbol names, kinds, components, line ranges, and purposes, and treat cross-file relationship evidence as authoritative for which external symbols call into or out of this file and which files it imports, when present; when they are absent, rely on source excerpts only. A block is UNSUPPORTED when it states a concrete technical claim that the evidence does not show, contradicts, or invents files, symbols, line numbers, or behavior. Treat section headings, navigational sentences, and generic framing as supported. Return ONLY a JSON array of unsupported block notes, e.g. [{\"id\":2,\"reason\":\"Names behavior not shown in evidence.\"}]; return [] when every block is supported. Keep each reason short and evidence-focused. Output nothing but the JSON array: no prose, no explanation, no code fences. Never rewrite the blocks.";
+
+/// Newcomer / ELI5 register guidance, layered onto a base system prompt by
+/// [`with_register`]. Re-affirms the grounding contract so the plainer voice
+/// never licenses invention.
+pub(crate) const NEWCOMER_REGISTER_GUIDANCE: &str = "Register: write for a newcomer who has never seen this codebase. Lead with the problem this code solves before explaining how it works. Define every domain term or acronym in plain language the first time it appears. Use short sentences in the active voice and present tense, address the reader as \"you\", and keep to one idea per sentence. Place any example after the explanation it supports, never before. You may use at most one brief analogy, and only if it maps to the supplied symbols. Do not include time or effort estimates. Grounding still holds: cite only the supplied file:line anchors and never invent files, symbols, or line numbers.";
+
+/// Maintainer register guidance (why-first, trade-off-aware).
+pub(crate) const MAINTAINER_REGISTER_GUIDANCE: &str = "Register: write for a maintainer who already knows the domain. Lead with why the code is shaped this way and surface the non-obvious trade-offs and open questions. Use the active voice and present tense. Do not include time or effort estimates. Grounding still holds: cite only the supplied file:line anchors and never invent files, symbols, or line numbers.";
+
+/// Agent / build-substrate register guidance (terse, decisions and structure).
+pub(crate) const AGENT_REGISTER_GUIDANCE: &str = "Register: write for an automated agent consuming this as build substrate. Be terse — state decisions, invariants, and structure with minimal connective prose, and prefer compact tables and lists over paragraphs. Omit motivation and analogies. Do not include time or effort estimates. Grounding still holds: cite only the supplied file:line anchors and never invent files, symbols, or line numbers.";
+
+/// Layer an audience register onto a base system prompt. `None` returns the base
+/// prompt unchanged (a borrowed `Cow`) so default runs are byte-identical; a
+/// register appends its voice guidance while leaving the base section and
+/// grounding contract intact.
+pub(crate) fn with_register(
+    system: &str,
+    register: Option<ProseRegister>,
+) -> std::borrow::Cow<'_, str> {
+    match register {
+        None => std::borrow::Cow::Borrowed(system),
+        Some(register) => {
+            let guidance = match register {
+                ProseRegister::Newcomer => NEWCOMER_REGISTER_GUIDANCE,
+                ProseRegister::Maintainer => MAINTAINER_REGISTER_GUIDANCE,
+                ProseRegister::Agent => AGENT_REGISTER_GUIDANCE,
+            };
+            std::borrow::Cow::Owned(format!("{system}\n\n{guidance}"))
+        }
+    }
+}
 
 pub fn symbol_prompt(symbol: &Symbol) -> String {
     let mut prompt = format!(
@@ -573,6 +607,45 @@ pub struct SourceExcerpt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn with_register_none_is_borrowed_and_unchanged() {
+        let out = with_register(FILE_SYSTEM, None);
+        assert_eq!(out.as_ref(), FILE_SYSTEM);
+        assert!(matches!(out, std::borrow::Cow::Borrowed(_)));
+    }
+
+    #[test]
+    fn with_register_appends_grounded_voice() {
+        for register in [
+            ProseRegister::Newcomer,
+            ProseRegister::Maintainer,
+            ProseRegister::Agent,
+        ] {
+            let out = with_register(FILE_SYSTEM, Some(register));
+            assert!(out.starts_with(FILE_SYSTEM), "base prompt preserved");
+            assert!(
+                out.contains("file:line") && out.contains("never invent"),
+                "grounding reaffirmed for {register:?}"
+            );
+            assert!(
+                out.contains("time or effort estimates"),
+                "no-time-estimate guardrail present for {register:?}"
+            );
+        }
+        let newcomer = with_register(FILE_SYSTEM, Some(ProseRegister::Newcomer));
+        assert!(newcomer.contains("plain language"));
+        assert!(newcomer.contains("problem this code solves"));
+    }
+
+    #[test]
+    fn prose_depth_standard_defers_to_default() {
+        use crate::commands::codewiki::ProseDepth;
+        assert_eq!(ProseDepth::Standard.max_tokens(), None);
+        let brief = ProseDepth::Brief.max_tokens().expect("brief pins a budget");
+        let deep = ProseDepth::Deep.max_tokens().expect("deep pins a budget");
+        assert!(deep > brief, "deep raises the budget above brief");
+    }
 
     fn oversized_child(name: &str) -> ChildSummary {
         let citation_wall = (0..2_000)

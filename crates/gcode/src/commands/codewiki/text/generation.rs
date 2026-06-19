@@ -1,7 +1,9 @@
 use std::time::Duration;
 
 use gobby_core::ai::{
-    daemon::generate_via_daemon_with_max_tokens, effective_route, text::generate_text,
+    daemon::generate_via_daemon_with_max_tokens,
+    effective_route,
+    text::{generate_text, generate_text_with_max_tokens},
 };
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
 use gobby_core::ai_types::AiError;
@@ -9,7 +11,7 @@ use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::commands::codewiki::{
     CodewikiAiOptions, DEFAULT_AGGREGATE_PROFILE, DEFAULT_VERIFY_PROFILE, PromptTier,
-    TextGenerator, TextVerifier,
+    TextGenerator, TextVerifier, prompts,
 };
 use crate::config::{self, Context};
 use crate::{db, secrets};
@@ -32,6 +34,8 @@ pub(crate) fn resolve_text_generator(
         .aggregate_profile
         .clone()
         .unwrap_or_else(|| DEFAULT_AGGREGATE_PROFILE.to_string());
+    let max_tokens = ai.prose_depth.max_tokens();
+    let register = ai.register;
     let mut warned = false;
     let quiet = ctx.quiet;
     Some(Box::new(move |prompt, system, tier| {
@@ -39,15 +43,21 @@ pub(crate) fn resolve_text_generator(
             PromptTier::Aggregate => Some(aggregate_profile.as_str()),
             PromptTier::Standard => None,
         };
+        let system = prompts::with_register(system, register);
         let result = generate_with_bounded_retry(|| match route {
             AiRouting::Daemon => generate_via_daemon_with_max_tokens(
                 &ai_context,
                 prompt,
-                Some(system),
-                None,
+                Some(system.as_ref()),
+                max_tokens,
                 profile,
             ),
-            AiRouting::Direct => generate_text(&ai_context, prompt, Some(system)),
+            AiRouting::Direct => generate_text_with_max_tokens(
+                &ai_context,
+                prompt,
+                Some(system.as_ref()),
+                max_tokens,
+            ),
             AiRouting::Off | AiRouting::Auto => {
                 unreachable!("non-generating routes returned above")
             }

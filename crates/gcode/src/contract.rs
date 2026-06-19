@@ -314,6 +314,8 @@ pub fn contract() -> CliContract {
                     ai_depth_flag(),
                     FlagContract::value("--ai-aggregate-profile", "PROFILE"),
                     FlagContract::value("--ai-verify-profile", "PROFILE"),
+                    ai_prose_depth_flag(),
+                    ai_register_flag(),
                     FlagContract::switch("--repair-citations"),
                 ],
                 // Two JSON shapes: a generation run-summary, or — under
@@ -550,6 +552,19 @@ fn ai_flag() -> FlagContract {
 fn ai_depth_flag() -> FlagContract {
     FlagContract::value("--ai-depth", "sections|files|symbols")
         .allowed(vec!["sections", "files", "symbols"])
+}
+
+fn ai_prose_depth_flag() -> FlagContract {
+    FlagContract::value("--ai-prose-depth", "brief|standard|deep")
+        .allowed(vec!["brief", "standard", "deep"])
+}
+
+fn ai_register_flag() -> FlagContract {
+    FlagContract::value("--ai-register", "newcomer|maintainer|agent").allowed(vec![
+        "newcomer",
+        "maintainer",
+        "agent",
+    ])
 }
 
 fn token_budget_flag() -> FlagContract {

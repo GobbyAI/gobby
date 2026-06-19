@@ -577,10 +577,58 @@ impl AiDepth {
     }
 }
 
+/// Output verbosity for AI prose, orthogonal to [`AiDepth`] (which page tiers
+/// reach the LLM) and to the audience register. Maps to a per-page output token
+/// budget; [`ProseDepth::Standard`] defers to the provider/profile default so a
+/// run without the flag is byte-identical to before this control existed.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ProseDepth {
+    /// Tighter pages: cap output low so prose stays terse.
+    Brief,
+    /// Provider/profile default budget (unchanged behavior).
+    #[default]
+    Standard,
+    /// Richer pages: raise the output budget for longer explanations.
+    Deep,
+}
+
+impl ProseDepth {
+    /// Per-page output token budget, or `None` to defer to the provider/profile
+    /// default. `Standard` returns `None` so the default run is unchanged;
+    /// `Brief`/`Deep` pin a lower/higher ceiling.
+    pub(crate) fn max_tokens(self) -> Option<usize> {
+        match self {
+            ProseDepth::Brief => Some(640),
+            ProseDepth::Standard => None,
+            ProseDepth::Deep => Some(2_400),
+        }
+    }
+}
+
+/// Audience register for AI prose, orthogonal to depth. Every register projects
+/// the same grounded facts and only changes voice; `None` (the default) leaves
+/// the base system prompts untouched so default runs are unchanged.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProseRegister {
+    /// ELI5: plain language, defines jargon on first use, leads with the
+    /// problem the code solves.
+    Newcomer,
+    /// Maintainer: leads with why the code is shaped this way and the
+    /// non-obvious trade-offs.
+    Maintainer,
+    /// Build substrate: terse decisions and structure, minimal connective prose.
+    Agent,
+}
+
 #[derive(Clone, Debug, Default)]
 pub struct CodewikiAiOptions {
     pub routing: Option<AiRouting>,
     pub depth: AiDepth,
+    /// Output verbosity (per-page token budget). Default keeps prior behavior.
+    pub prose_depth: ProseDepth,
+    /// Audience register layered onto generation prompts. `None` keeps the base
+    /// voice; grounding rules hold in every register.
+    pub register: Option<ProseRegister>,
     /// Daemon feature profile for aggregate docs; `None` means
     /// [`super::DEFAULT_AGGREGATE_PROFILE`].
     pub aggregate_profile: Option<String>,

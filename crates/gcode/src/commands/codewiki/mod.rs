@@ -130,8 +130,8 @@ pub(crate) use text::{
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};
 pub use types::{
     AiDepth, CodewikiAiOptions, CodewikiGraphAvailability, CodewikiGraphEdge,
-    CodewikiGraphEdgeKind, CodewikiInput, CodewikiRunSummary, LeadingChunk, PromptTier,
-    TextGenerator, TextVerifier,
+    CodewikiGraphEdgeKind, CodewikiInput, CodewikiRunSummary, LeadingChunk, PromptTier, ProseDepth,
+    ProseRegister, TextGenerator, TextVerifier,
 };
 pub(crate) use types::{
     ArchitectureDoc, ArchitectureSubsystem, BuiltDoc, CodewikiDocMeta, CodewikiFileSnapshot,

@@ -82,6 +82,41 @@ impl From<AiDepthArg> for gobby_code::commands::codewiki::AiDepth {
     }
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, ValueEnum)]
+pub(crate) enum AiProseDepthArg {
+    Brief,
+    #[default]
+    Standard,
+    Deep,
+}
+
+impl From<AiProseDepthArg> for gobby_code::commands::codewiki::ProseDepth {
+    fn from(value: AiProseDepthArg) -> Self {
+        match value {
+            AiProseDepthArg::Brief => Self::Brief,
+            AiProseDepthArg::Standard => Self::Standard,
+            AiProseDepthArg::Deep => Self::Deep,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum AiRegisterArg {
+    Newcomer,
+    Maintainer,
+    Agent,
+}
+
+impl From<AiRegisterArg> for gobby_code::commands::codewiki::ProseRegister {
+    fn from(value: AiRegisterArg) -> Self {
+        match value {
+            AiRegisterArg::Newcomer => Self::Newcomer,
+            AiRegisterArg::Maintainer => Self::Maintainer,
+            AiRegisterArg::Agent => Self::Agent,
+        }
+    }
+}
+
 #[derive(Subcommand)]
 pub(crate) enum Command {
     /// Emit the CLI contract for daemon conformance tests
@@ -341,6 +376,15 @@ pub(crate) enum Command {
         /// [default: feature_low]
         #[arg(long, value_name = "PROFILE")]
         ai_verify_profile: Option<String>,
+        /// Prose verbosity: brief (terser), standard (default), or deep (longer,
+        /// richer). Orthogonal to --ai-depth; raises the per-page token budget.
+        #[arg(long, value_enum, default_value_t = AiProseDepthArg::Standard)]
+        ai_prose_depth: AiProseDepthArg,
+        /// Audience register for generated prose: newcomer (ELI5, plain
+        /// language), maintainer (why + trade-offs), or agent (terse build
+        /// substrate). Omit to keep the base voice. Grounding holds in all.
+        #[arg(long, value_enum)]
+        ai_register: Option<AiRegisterArg>,
         /// Maximum graph edges to fetch from FalkorDB
         #[arg(long, default_value_t = DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT, value_parser = positive_usize)]
         edge_limit: usize,
