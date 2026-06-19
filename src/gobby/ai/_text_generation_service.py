@@ -9,6 +9,7 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
+from weakref import WeakKeyDictionary
 
 from gobby.agents.provider_capabilities import (
     KNOWN_REASONING_EFFORTS,
@@ -64,6 +65,19 @@ _SPAWN_COLD_ADAPTER_STYLES: frozenset[AIAdapterStyle] = frozenset(
         AIAdapterStyle.ACP,
     }
 )
+_SPAWN_COLD_GATES: WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[int, asyncio.Semaphore]] = (
+    WeakKeyDictionary()
+)
+
+
+def _spawn_cold_gate(max_concurrency: int) -> asyncio.Semaphore:
+    loop = asyncio.get_running_loop()
+    gate_entry = _SPAWN_COLD_GATES.get(loop)
+    if gate_entry is None or gate_entry[0] != max_concurrency:
+        gate = asyncio.Semaphore(max_concurrency)
+        _SPAWN_COLD_GATES[loop] = (max_concurrency, gate)
+        return gate
+    return gate_entry[1]
 
 
 class _ReasoningEffortRejectedError(ValueError):
@@ -128,12 +142,16 @@ class TextGenerationService:
         *,
         candidate_timeout_seconds: float | None = None,
         cli_candidate_timeout_seconds: float | None = None,
+        spawn_cold_max_concurrency: int = 3,
     ) -> None:
+        if spawn_cold_max_concurrency < 1:
+            raise ValueError("spawn_cold_max_concurrency must be >= 1")
         self._registry = registry
         self._adapters = dict(adapters or {})
         self._adapter_factories = dict(adapter_factories or {})
         self._candidate_timeout_seconds = candidate_timeout_seconds
         self._cli_candidate_timeout_seconds = cli_candidate_timeout_seconds
+        self._spawn_cold_max_concurrency = spawn_cold_max_concurrency
         self._profile_defaults = {
             FeatureProfile(profile): candidate_runtime_entries(candidates, profile=profile)
             for profile, candidates in (profile_defaults or {}).items()
@@ -174,6 +192,23 @@ class TextGenerationService:
             return await asyncio.wait_for(awaitable, timeout=timeout)
         except TimeoutError as exc:
             raise _CandidateTimeoutError(f"candidate timed out after {timeout:g}s") from exc
+
+    async def _await_admitted_candidate[T](
+        self,
+        awaitable_factory: Callable[[], Awaitable[T]],
+        *,
+        request: TextGenerationRequest,
+        binding: CapabilityBinding,
+    ) -> T:
+        if binding.adapter_style not in _SPAWN_COLD_ADAPTER_STYLES:
+            return await self._await_candidate(
+                awaitable_factory(), request=request, binding=binding
+            )
+
+        async with _spawn_cold_gate(self._spawn_cold_max_concurrency):
+            return await self._await_candidate(
+                awaitable_factory(), request=request, binding=binding
+            )
 
     @property
     def registry(self) -> AICapabilityRegistry:
@@ -261,8 +296,17 @@ class TextGenerationService:
                 binding = self._select_binding(candidate)
                 candidate = _gate_reasoning_effort(candidate, binding=binding)
                 adapter = self._adapter_for_provider(binding.provider)
-                result = await self._await_candidate(
-                    adapter.generate(candidate), request=candidate, binding=binding
+
+                def generate_candidate(
+                    adapter: TextGenerateAdapter = adapter,
+                    candidate: TextGenerationRequest = candidate,
+                ) -> Awaitable[str | LLMTextResult]:
+                    return adapter.generate(candidate)
+
+                result = await self._await_admitted_candidate(
+                    generate_candidate,
+                    request=candidate,
+                    binding=binding,
                 )
                 text_result = _coerce_text_result(
                     result,
@@ -334,14 +378,32 @@ class TextGenerationService:
                         Callable[[TextGenerationRequest], Awaitable[dict[str, Any]]],
                         json_adapter,
                     )
-                    result = await self._await_candidate(
-                        typed_json_adapter(candidate), request=candidate, binding=binding
+
+                    def generate_structured_json(
+                        typed_json_adapter: Callable[
+                            [TextGenerationRequest], Awaitable[dict[str, Any]]
+                        ] = typed_json_adapter,
+                        candidate: TextGenerationRequest = candidate,
+                    ) -> Awaitable[dict[str, Any]]:
+                        return typed_json_adapter(candidate)
+
+                    result = await self._await_admitted_candidate(
+                        generate_structured_json,
+                        request=candidate,
+                        binding=binding,
                     )
                     parse_outcome = "provider_structured"
                 else:
                     json_text_request = _json_request(candidate)
-                    text = await self._await_candidate(
-                        adapter.generate(json_text_request),
+
+                    def generate_json_text(
+                        adapter: TextGenerateAdapter = adapter,
+                        json_text_request: TextGenerationRequest = json_text_request,
+                    ) -> Awaitable[str | LLMTextResult]:
+                        return adapter.generate(json_text_request)
+
+                    text = await self._await_admitted_candidate(
+                        generate_json_text,
                         request=json_text_request,
                         binding=binding,
                     )
@@ -503,7 +565,7 @@ class TextGenerationService:
         elif terminal_failure:
             log_event = logger.error
         else:
-            log_event = logger.warning
+            log_event = logger.debug
         log_event(
             "feature_llm_call",
             extra={

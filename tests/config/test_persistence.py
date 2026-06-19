@@ -123,6 +123,32 @@ class TestMemoryConfigValidation:
             MemoryConfig(crossref_max_links=0)
 
 
+class TestMemoryKnowledgeGraphConfig:
+    """Test memory knowledge graph config fields."""
+
+    def test_max_rebuild_concurrency_default(self) -> None:
+        from gobby.config.persistence import MemoryKnowledgeGraphConfig
+
+        config = MemoryKnowledgeGraphConfig()
+
+        assert config.max_rebuild_concurrency == 2
+
+    def test_max_rebuild_concurrency_override(self) -> None:
+        from gobby.config.persistence import MemoryConfig
+
+        config = MemoryConfig(kg={"max_rebuild_concurrency": 1})
+
+        assert config.kg.max_rebuild_concurrency == 1
+
+    def test_max_rebuild_concurrency_validation(self) -> None:
+        from gobby.config.persistence import MemoryKnowledgeGraphConfig
+
+        with pytest.raises(ValidationError):
+            MemoryKnowledgeGraphConfig(max_rebuild_concurrency=0)
+        with pytest.raises(ValidationError):
+            MemoryKnowledgeGraphConfig(max_rebuild_concurrency=-1)
+
+
 # =============================================================================
 # MemoryDreamConfig Tests (dream GC: page/cooldown/purge/retention)
 # =============================================================================

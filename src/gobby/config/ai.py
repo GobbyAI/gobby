@@ -109,6 +109,11 @@ class GenerationConfig(BaseModel):
             "fast-lane candidate_timeout_seconds. Must stay below timeout_seconds."
         ),
     )
+    spawn_cold_max_concurrency: int = Field(
+        default=3,
+        ge=1,
+        description=("Host-wide maximum concurrent text-generation attempts on spawn-cold lanes."),
+    )
     local: LocalGenerationConfig = Field(
         default_factory=LocalGenerationConfig,
         description="Named local OpenAI-compatible generation endpoints.",

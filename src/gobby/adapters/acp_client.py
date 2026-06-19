@@ -461,7 +461,7 @@ class ACPClient:
 
                 if "id" in data:
                     if data.get("id") != request_id:
-                        logger.warning(
+                        logger.debug(
                             "Ignoring stale ACP %s response id=%r while waiting for id=%r",
                             method,
                             data.get("id"),
@@ -632,7 +632,7 @@ class ACPClient:
             # JSON-RPC response (has "id") = end of turn
             if "id" in data:
                 if data.get("id") != expected_response_id:
-                    logger.warning(
+                    logger.debug(
                         "Ignoring stale ACP session/prompt response id=%r while waiting for id=%r",
                         data.get("id"),
                         expected_response_id,

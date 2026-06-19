@@ -99,6 +99,61 @@ class SlowAdapter:
         return {"slow": True}
 
 
+class GateProbeState:
+    def __init__(self, expected_started: int) -> None:
+        self.expected_started = expected_started
+        self.release = asyncio.Event()
+        self.started_event = asyncio.Event()
+        self.over_expected_event = asyncio.Event()
+        self.lock = asyncio.Lock()
+        self.started: list[str] = []
+        self.active = 0
+        self.max_active = 0
+
+    async def enter(self, provider: str) -> None:
+        async with self.lock:
+            self.started.append(provider)
+            self.active += 1
+            self.max_active = max(self.max_active, self.active)
+            if len(self.started) >= self.expected_started:
+                self.started_event.set()
+            if self.active > self.expected_started:
+                self.over_expected_event.set()
+
+    async def exit(self) -> None:
+        async with self.lock:
+            self.active -= 1
+
+
+class GateProbeAdapter:
+    def __init__(
+        self,
+        state: GateProbeState,
+        *,
+        delays: dict[str, float] | None = None,
+        failures: set[str] | None = None,
+        wait_prompts: set[str] | None = None,
+    ) -> None:
+        self._state = state
+        self._delays = delays or {}
+        self._failures = failures or set()
+        self._wait_prompts = wait_prompts or set()
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        provider = request.provider or "unknown"
+        await self._state.enter(provider)
+        try:
+            if request.prompt in self._failures:
+                raise RuntimeError("boom")
+            if delay := self._delays.get(request.prompt):
+                await asyncio.sleep(delay)
+            if request.prompt in self._wait_prompts:
+                await self._state.release.wait()
+            return f"{provider}:{request.prompt}"
+        finally:
+            await self._state.exit()
+
+
 class ProviderFailureAdapter:
     def __init__(self, error: Exception) -> None:
         self.error = error
@@ -253,7 +308,7 @@ async def test_successful_text_generation_logs_feature_llm_call_at_debug(
 
 
 @pytest.mark.asyncio
-async def test_recoverable_candidate_failure_logs_feature_llm_call_at_warning(
+async def test_recoverable_candidate_failure_logs_feature_llm_call_at_debug(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     registry = AICapabilityRegistry(
@@ -292,7 +347,7 @@ async def test_recoverable_candidate_failure_logs_feature_llm_call_at_warning(
 
     assert result.provider == "local:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert [record.levelno for record in records] == [logging.WARNING, logging.DEBUG]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
     assert records[0].success is False
     assert records[1].success is True
 
@@ -2164,6 +2219,224 @@ def _two_candidate_registry(slow_provider: str, good_provider: str) -> AICapabil
     )
 
 
+def _registry_for_text_generation(
+    *bindings: tuple[str, AIAdapterStyle, str],
+) -> AICapabilityRegistry:
+    return AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider=provider,
+                adapter_style=adapter_style,
+                available=True,
+                models=(model,),
+            )
+            for provider, adapter_style, model in bindings
+        ]
+    )
+
+
+@pytest.mark.asyncio
+async def test_spawn_cold_same_provider_calls_respect_global_concurrency_cap() -> None:
+    prompts = {f"hold-{index}" for index in range(5)}
+    state = GateProbeState(expected_started=3)
+    service = TextGenerationService(
+        _registry_for_text_generation(("gemini", AIAdapterStyle.CLI, "gemini-pro")),
+        {"gemini": GateProbeAdapter(state, wait_prompts=prompts)},
+        spawn_cold_max_concurrency=3,
+    )
+    tasks = [
+        asyncio.create_task(
+            service.generate_result(
+                TextGenerationRequest(
+                    provider="gemini",
+                    model="gemini-pro",
+                    prompt=f"hold-{index}",
+                )
+            )
+        )
+        for index in range(5)
+    ]
+
+    try:
+        await asyncio.wait_for(state.started_event.wait(), timeout=1)
+        assert len(state.started) == 3
+        assert state.max_active == 3
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(state.over_expected_event.wait(), timeout=0.02)
+    finally:
+        state.release.set()
+
+    results = await asyncio.gather(*tasks)
+
+    assert len(results) == 5
+    assert len(state.started) == 5
+    assert state.max_active == 3
+
+
+@pytest.mark.asyncio
+async def test_spawn_cold_mixed_provider_calls_share_global_concurrency_cap() -> None:
+    requests = [
+        ("gemini", "gemini-pro", "hold-gemini-1"),
+        ("codex", "gpt-5", "hold-codex-1"),
+        ("gemini", "gemini-pro", "hold-gemini-2"),
+        ("codex", "gpt-5", "hold-codex-2"),
+        ("gemini", "gemini-pro", "hold-gemini-3"),
+    ]
+    state = GateProbeState(expected_started=3)
+    adapter = GateProbeAdapter(
+        state,
+        wait_prompts={prompt for _, _, prompt in requests},
+    )
+    service = TextGenerationService(
+        _registry_for_text_generation(
+            ("gemini", AIAdapterStyle.CLI, "gemini-pro"),
+            ("codex", AIAdapterStyle.DAEMON, "gpt-5"),
+        ),
+        {"gemini": adapter, "codex": adapter},
+        spawn_cold_max_concurrency=3,
+    )
+    tasks = [
+        asyncio.create_task(
+            service.generate_result(
+                TextGenerationRequest(provider=provider, model=model, prompt=prompt)
+            )
+        )
+        for provider, model, prompt in requests
+    ]
+
+    try:
+        await asyncio.wait_for(state.started_event.wait(), timeout=1)
+        assert len(state.started) == 3
+        assert set(state.started) == {"gemini", "codex"}
+        assert state.max_active == 3
+        with pytest.raises(TimeoutError):
+            await asyncio.wait_for(state.over_expected_event.wait(), timeout=0.02)
+    finally:
+        state.release.set()
+
+    await asyncio.gather(*tasks)
+
+    assert len(state.started) == 5
+    assert state.max_active == 3
+
+
+@pytest.mark.asyncio
+async def test_fast_generation_lanes_bypass_spawn_cold_gate() -> None:
+    prompts = {f"hold-{index}" for index in range(3)}
+    state = GateProbeState(expected_started=3)
+    service = TextGenerationService(
+        _registry_for_text_generation(
+            ("local:lm-studio", AIAdapterStyle.OPENAI_COMPATIBLE, "local-model")
+        ),
+        {"local:lm-studio": GateProbeAdapter(state, wait_prompts=prompts)},
+        spawn_cold_max_concurrency=1,
+    )
+    tasks = [
+        asyncio.create_task(
+            service.generate_result(
+                TextGenerationRequest(
+                    provider="local:lm-studio",
+                    model="local-model",
+                    prompt=f"hold-{index}",
+                )
+            )
+        )
+        for index in range(3)
+    ]
+
+    try:
+        await asyncio.wait_for(state.started_event.wait(), timeout=1)
+        assert len(state.started) == 3
+        assert state.max_active == 3
+    finally:
+        state.release.set()
+
+    await asyncio.gather(*tasks)
+
+
+@pytest.mark.asyncio
+async def test_spawn_cold_queue_wait_does_not_consume_candidate_timeout() -> None:
+    state = GateProbeState(expected_started=1)
+    service = TextGenerationService(
+        _registry_for_text_generation(("gemini", AIAdapterStyle.CLI, "gemini-pro")),
+        {"gemini": GateProbeAdapter(state, delays={"slow": 30.0, "fast": 0.02})},
+        cli_candidate_timeout_seconds=0.05,
+        spawn_cold_max_concurrency=1,
+    )
+    slow_task = asyncio.create_task(
+        service.generate_result(
+            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="slow")
+        )
+    )
+    await asyncio.wait_for(state.started_event.wait(), timeout=1)
+
+    started_waiting_at = asyncio.get_running_loop().time()
+    fast_task = asyncio.create_task(
+        service.generate_result(
+            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="fast")
+        )
+    )
+
+    with pytest.raises(RuntimeError, match="candidate timed out after 0.05s"):
+        await slow_task
+    result = await asyncio.wait_for(fast_task, timeout=1)
+
+    assert asyncio.get_running_loop().time() - started_waiting_at >= 0.05
+    assert result.text == "gemini:fast"
+
+
+@pytest.mark.asyncio
+async def test_spawn_cold_gate_releases_slot_after_provider_error() -> None:
+    state = GateProbeState(expected_started=1)
+    service = TextGenerationService(
+        _registry_for_text_generation(("gemini", AIAdapterStyle.CLI, "gemini-pro")),
+        {"gemini": GateProbeAdapter(state, failures={"error"})},
+        spawn_cold_max_concurrency=1,
+    )
+
+    with pytest.raises(RuntimeError, match="boom"):
+        await service.generate_result(
+            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="error")
+        )
+    result = await asyncio.wait_for(
+        service.generate_result(
+            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="success")
+        ),
+        timeout=1,
+    )
+
+    assert result.text == "gemini:success"
+
+
+@pytest.mark.asyncio
+async def test_spawn_cold_gate_releases_slot_after_cancellation() -> None:
+    state = GateProbeState(expected_started=1)
+    service = TextGenerationService(
+        _registry_for_text_generation(("gemini", AIAdapterStyle.CLI, "gemini-pro")),
+        {"gemini": GateProbeAdapter(state, wait_prompts={"wait"})},
+        spawn_cold_max_concurrency=1,
+    )
+    cancelled_task = asyncio.create_task(
+        service.generate_result(
+            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="wait")
+        )
+    )
+    await asyncio.wait_for(state.started_event.wait(), timeout=1)
+
+    cancelled_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cancelled_task
+    result = await asyncio.wait_for(
+        service.generate_result(
+            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="success")
+        ),
+        timeout=1,
+    )
+
+    assert result.text == "gemini:success"
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_times_out_slow_candidate_and_falls_back(
     caplog: pytest.LogCaptureFixture,
@@ -2184,7 +2457,7 @@ async def test_text_generation_service_times_out_slow_candidate_and_falls_back(
 
     assert result.provider == "local:good"
     records = [record for record in caplog.records if record.getMessage() == "feature_llm_call"]
-    assert [record.levelno for record in records] == [logging.WARNING, logging.DEBUG]
+    assert [record.levelno for record in records] == [logging.DEBUG, logging.DEBUG]
     assert records[0].success is False
     assert "candidate timed out after 0.01s" in records[0].error
 
@@ -2283,10 +2556,18 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     # The gemini binding is a spawn-cold CLI lane, so it is bounded by
     # cli_candidate_timeout_seconds (not the fast-lane candidate_timeout_seconds).
     service = build_daemon_text_generation_service(
-        DaemonConfig(ai={"generation": {"cli_candidate_timeout_seconds": 0.01}}),
+        DaemonConfig(
+            ai={
+                "generation": {
+                    "cli_candidate_timeout_seconds": 0.01,
+                    "spawn_cold_max_concurrency": 1,
+                }
+            }
+        ),
         registry=registry,
     )
 
+    assert service._spawn_cold_max_concurrency == 1
     with pytest.raises(RuntimeError, match="candidate timed out after 0.01s"):
         await service.generate(
             TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="never completes")

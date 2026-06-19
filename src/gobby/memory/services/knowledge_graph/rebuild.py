@@ -38,7 +38,10 @@ class KnowledgeGraphRebuildService:
         list_memories: Callable[..., list[Memory]],
         fetch_all_project_memories: Callable[[str], Awaitable[list[Memory]]],
         mark_graph_processed: Callable[[str], None],
+        max_rebuild_concurrency: int = 2,
     ) -> None:
+        if max_rebuild_concurrency < 1:
+            raise ValueError("max_rebuild_concurrency must be >= 1")
         self._storage_provider = storage_provider
         self._kg_service_provider = kg_service_provider
         self._falkor_client_provider = falkor_client_provider
@@ -46,6 +49,7 @@ class KnowledgeGraphRebuildService:
         self._list_memories = list_memories
         self._fetch_all_project_memories = fetch_all_project_memories
         self._mark_graph_processed = mark_graph_processed
+        self._max_rebuild_concurrency = max_rebuild_concurrency
 
     @property
     def storage(self) -> LocalMemoryManager:
@@ -99,7 +103,7 @@ class KnowledgeGraphRebuildService:
         processed = 0
         failed_memories: list[dict[str, Any]] = []
 
-        kg_worker_count = 5
+        kg_worker_count = min(self._max_rebuild_concurrency, len(all_memories))
         kg_done = 0
         kg_done_lock = asyncio.Lock()
 
@@ -162,8 +166,9 @@ class KnowledgeGraphRebuildService:
         queue: asyncio.Queue[Memory | None] = asyncio.Queue()
         for memory in all_memories:
             queue.put_nowait(memory)
-        for _ in range(kg_worker_count):
-            queue.put_nowait(None)
+        if kg_worker_count > 0:
+            for _ in range(kg_worker_count):
+                queue.put_nowait(None)
 
         async def _worker() -> None:
             while True:
@@ -177,7 +182,8 @@ class KnowledgeGraphRebuildService:
 
         workers = [asyncio.create_task(_worker()) for _ in range(kg_worker_count)]
         await queue.join()
-        await asyncio.gather(*workers)
+        if workers:
+            await asyncio.gather(*workers)
 
         logger.info(
             "KG rebuild complete for %s: %s",

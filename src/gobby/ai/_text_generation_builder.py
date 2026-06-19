@@ -21,6 +21,7 @@ def build_daemon_text_generation_service(
         profile_defaults=config.ai.generation.profile_defaults,
         candidate_timeout_seconds=config.ai.generation.candidate_timeout_seconds,
         cli_candidate_timeout_seconds=config.ai.generation.cli_candidate_timeout_seconds,
+        spawn_cold_max_concurrency=config.ai.generation.spawn_cold_max_concurrency,
     )
 
 

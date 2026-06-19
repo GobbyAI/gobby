@@ -236,6 +236,12 @@ class EmbeddingsConfig(BaseModel):
 class MemoryKnowledgeGraphConfig(FeatureDefaultConfig):
     """LLM configuration for memory knowledge-graph extraction."""
 
+    max_rebuild_concurrency: int = Field(
+        default=2,
+        ge=1,
+        description="Maximum concurrent add_to_graph calls during KG rebuild jobs.",
+    )
+
 
 class MemoryDreamConfig(FeatureDefaultConfig):
     """Configuration for scheduled memory dream maintenance."""

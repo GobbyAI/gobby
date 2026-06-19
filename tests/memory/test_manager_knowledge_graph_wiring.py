@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -418,6 +419,83 @@ class TestKnowledgeGraphRebuildService:
             memory_id="mem-1",
             project_id="proj-1",
         )
+
+    @pytest.mark.asyncio
+    async def test_rebuild_concurrency_one_prevents_overlapping_add_to_graph(self) -> None:
+        """Configured rebuild concurrency gates concurrent add_to_graph calls."""
+
+        class Storage:
+            def mark_pending_graph(self, memory_id: str) -> None:
+                pass
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        memories = [
+            Memory(
+                id=f"mem-{index}",
+                memory_type="fact",
+                content=f"Memory {index}",
+                created_at="",
+                updated_at="",
+                project_id="proj-1",
+            )
+            for index in range(3)
+        ]
+        active = 0
+        max_active = 0
+        lock = asyncio.Lock()
+        first_started = asyncio.Event()
+        second_started = asyncio.Event()
+        release_first = asyncio.Event()
+        processed: list[str] = []
+
+        async def add_to_graph(
+            _content: str,
+            *,
+            memory_id: str,
+            project_id: str | None,
+        ) -> KnowledgeGraphResult:
+            nonlocal active, max_active
+            assert memory_id.startswith("mem-")
+            assert project_id == "proj-1"
+            async with lock:
+                active += 1
+                max_active = max(max_active, active)
+            if memory_id == "mem-0":
+                first_started.set()
+                await release_first.wait()
+            else:
+                second_started.set()
+            async with lock:
+                active -= 1
+            return KnowledgeGraphResult(KnowledgeGraphStatus.SUCCESS)
+
+        kg_service = MagicMock()
+        kg_service.add_to_graph = AsyncMock(side_effect=add_to_graph)
+        service = KnowledgeGraphRebuildService(
+            storage_provider=Storage,
+            kg_service_provider=lambda: kg_service,
+            falkor_client_provider=lambda: None,
+            run_db=run_db,
+            list_memories=lambda *args: memories,
+            fetch_all_project_memories=AsyncMock(return_value=memories),
+            mark_graph_processed=processed.append,
+            max_rebuild_concurrency=1,
+        )
+
+        rebuild_task = asyncio.create_task(service.rebuild_knowledge_graph(project_id=None))
+        await asyncio.wait_for(first_started.wait(), timeout=1)
+        try:
+            with pytest.raises(TimeoutError):
+                await asyncio.wait_for(second_started.wait(), timeout=0.02)
+        finally:
+            release_first.set()
+        result = await rebuild_task
+
+        assert result["success"] is True
+        assert max_active == 1
+        assert processed == ["mem-0", "mem-1", "mem-2"]
 
 
 class TestGraphBackgroundTask:

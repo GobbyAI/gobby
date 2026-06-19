@@ -171,6 +171,7 @@ class MemoryManager(MemoryManagerFacadeMethods):
                 project_id
             ),
             mark_graph_processed=lambda memory_id: self.mark_graph_processed(memory_id),
+            max_rebuild_concurrency=config.kg.max_rebuild_concurrency,
         )
         self._project_repair_service = NullProjectMemoryRepairService(
             db=db,

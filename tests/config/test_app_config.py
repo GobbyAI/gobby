@@ -1804,12 +1804,24 @@ class TestGenerationConfig:
     def test_candidate_timeout_default(self) -> None:
         config = GenerationConfig()
         assert config.candidate_timeout_seconds == 60.0
+        assert config.spawn_cold_max_concurrency == 3
 
     def test_candidate_timeout_validation(self) -> None:
         with pytest.raises(ValidationError):
             GenerationConfig(candidate_timeout_seconds=0)
         with pytest.raises(ValidationError):
             GenerationConfig(candidate_timeout_seconds=-1)
+
+    def test_spawn_cold_max_concurrency_override(self) -> None:
+        config = DaemonConfig(ai={"generation": {"spawn_cold_max_concurrency": 4}})
+
+        assert config.ai.generation.spawn_cold_max_concurrency == 4
+
+    def test_spawn_cold_max_concurrency_validation(self) -> None:
+        with pytest.raises(ValidationError):
+            GenerationConfig(spawn_cold_max_concurrency=0)
+        with pytest.raises(ValidationError):
+            GenerationConfig(spawn_cold_max_concurrency=-1)
 
 
 # ==============================================================================

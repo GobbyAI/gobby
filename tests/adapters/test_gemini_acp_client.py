@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from collections.abc import Awaitable, Callable
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -190,6 +191,31 @@ class TestStart:
                 call_args = mock_exec.call_args
                 assert call_args[0][0] == "/usr/bin/gemini"
                 assert "--acp" in call_args[0]
+
+    async def test_start_skips_stale_skills_reload_response_without_warning(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        proc = _mock_process(
+            stdout_lines=_initialize_only_lines()
+            + [
+                json.dumps({"jsonrpc": "2.0", "id": "skills-reload", "result": {}}) + "\n",
+                json.dumps({"jsonrpc": "2.0", "id": 2, "result": {"sessionId": "sess-1"}}) + "\n",
+            ]
+        )
+        caplog.set_level(logging.WARNING, logger="gobby.adapters.acp_client")
+
+        with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/gemini"):
+            with patch(
+                "asyncio.create_subprocess_exec",
+                new_callable=AsyncMock,
+                return_value=proc,
+            ):
+                client = GeminiACPClient()
+                await client.start()
+
+        assert client.session_id == "sess-1"
+        assert "Ignoring stale ACP" not in caplog.text
 
     @pytest.mark.asyncio
     async def test_start_stores_session_info(self) -> None:
