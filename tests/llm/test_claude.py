@@ -647,30 +647,6 @@ class TestDescribeImage:
             result = await provider._describe_image_sdk("/path/to/image.png")
             assert "unavailable" in result.lower()
 
-    @pytest.mark.asyncio
-    async def test_describe_image_sdk_passes_reasoning_effort(
-        self, claude_config: DaemonConfig, tmp_path: Path
-    ) -> None:
-        captured_kwargs: list[dict[str, object]] = []
-        image_path = tmp_path / "image.png"
-        image_path.write_bytes(b"not-a-real-png")
-
-        async def mock_query(prompt: object, options: Any) -> object:
-            captured_kwargs.append(options.kwargs)
-            yield MockAssistantMessage([MockTextBlock("description")])
-
-        with mock_claude_sdk(mock_query):
-            from gobby.llm.claude import ClaudeLLMProvider
-
-            provider = ClaudeLLMProvider(claude_config)
-            result = await provider._describe_image_sdk(
-                str(image_path),
-                reasoning_effort="medium",
-            )
-
-        assert result == "description"
-        assert captured_kwargs[0]["effort"] == "medium"
-
 
 # ─── generate_text no backend ────────────────────────────────────────────
 

@@ -71,8 +71,6 @@ def _extend_reasoning_args(command: list[str], provider: str, reasoning_effort: 
             command.extend(["-c", f'model_reasoning_effort="{reasoning_effort}"'])
         case "reasoning-effort":
             command.extend(["--reasoning-effort", reasoning_effort])
-        case "claude-effort":
-            command.extend(["--effort", reasoning_effort])
         case None:
             return
 

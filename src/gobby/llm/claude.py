@@ -649,8 +649,6 @@ class ClaudeLLMProvider:
         image_path: str,
         context: str | None = None,
         model: str | None = None,
-        *,
-        reasoning_effort: str | None = None,
     ) -> str:
         """
         Generate a text description of an image using Claude's vision capabilities.
@@ -667,7 +665,6 @@ class ClaudeLLMProvider:
             image_path,
             context,
             model,
-            reasoning_effort=reasoning_effort,
         )
 
     def _prepare_image_data(self, image_path: str) -> tuple[str, str] | str:
@@ -709,8 +706,6 @@ class ClaudeLLMProvider:
         image_path: str,
         context: str | None = None,
         model: str | None = None,
-        *,
-        reasoning_effort: str | None = None,
     ) -> str:
         """Describe image using Claude Agent SDK (subscription mode)."""
         cli_path = await self._verify_cli_path()
@@ -738,7 +733,6 @@ class ClaudeLLMProvider:
             mcp_servers={},
             permission_mode="default",
             cli_path=cli_path,
-            **_claude_reasoning_options(reasoning_effort),
         )
 
         # Build async generator yielding structured message with image content
