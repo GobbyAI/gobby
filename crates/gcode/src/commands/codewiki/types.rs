@@ -203,6 +203,30 @@ pub(crate) struct ArchitectureSubsystem {
     pub(crate) source_spans: Vec<SourceSpan>,
 }
 
+/// One infrastructure boundary on the deterministic infra-stack page (#892):
+/// what the service is, what pulls it in, the adapter module that talks to it,
+/// and how the workspace behaves when it is unavailable. Built straight from a
+/// [`super::ServiceBoundary`] plus a curated descriptor — no LLM, never
+/// degrading.
+#[derive(Debug, Clone)]
+pub(crate) struct InfraSection {
+    pub(crate) service: String,
+    pub(crate) pulled_in_by: Vec<String>,
+    pub(crate) adapter_module: String,
+    pub(crate) summary: String,
+    pub(crate) degradation: String,
+}
+
+/// The deterministic infra-stack page (#892), one [`InfraSection`] per service
+/// boundary in the system model. `degraded_sources` is always empty: the page
+/// is derived from Cargo manifests + service boundaries and never marks itself
+/// degraded.
+#[derive(Debug, Clone)]
+pub(crate) struct InfrastructureDoc {
+    pub(crate) sections: Vec<InfraSection>,
+    pub(crate) degraded_sources: Vec<String>,
+}
+
 #[derive(Debug, Clone)]
 pub(crate) struct OnboardingDoc {
     pub(crate) source_spans: Vec<SourceSpan>,

@@ -57,7 +57,8 @@ pub(crate) use build::build_module_docs;
 pub(crate) use build::{
     FileDocPosition, build_architecture_doc, build_codewiki_changes_doc,
     build_codewiki_index_snapshot, build_curated_navigation_docs, build_file_doc,
-    build_hotspots_doc, build_module_docs_with_filter, build_onboarding_doc,
+    build_hotspots_doc, build_infrastructure_doc, build_module_docs_with_filter,
+    build_onboarding_doc,
 };
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
@@ -101,7 +102,7 @@ pub(crate) use architecture_diagrams::render_architecture_diagrams;
 // Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc, render_file_doc,
-    render_hotspots_doc, render_module_doc, render_onboarding_doc,
+    render_hotspots_doc, render_infrastructure_doc, render_module_doc, render_onboarding_doc,
 };
 // Reuse of unchanged docs without regeneration.
 pub(crate) use reuse::{ReusePlan, span_files};
@@ -133,9 +134,9 @@ pub use types::{
 pub(crate) use types::{
     ArchitectureDoc, ArchitectureSubsystem, BuiltDoc, CodewikiDocMeta, CodewikiFileSnapshot,
     CodewikiGraph, CodewikiIndexSnapshot, CodewikiMeta, CodewikiSymbolSnapshot, FileDoc, FileLink,
-    HotspotFinding, HotspotNode, HotspotsDoc, ModuleDoc, ModuleLink, OnboardingDoc,
-    OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc, VerifyNote,
-    ranked_source_excerpts, source_excerpt_for_file,
+    HotspotFinding, HotspotNode, HotspotsDoc, InfraSection, InfrastructureDoc, ModuleDoc,
+    ModuleLink, OnboardingDoc, OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc,
+    VerifyNote, ranked_source_excerpts, source_excerpt_for_file,
 };
 
 #[cfg(test)]

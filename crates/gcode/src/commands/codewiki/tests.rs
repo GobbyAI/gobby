@@ -14,6 +14,7 @@ mod contract;
 mod graph;
 mod hotspots;
 mod incremental;
+mod infrastructure;
 mod io_safety;
 mod modules;
 mod onboarding;

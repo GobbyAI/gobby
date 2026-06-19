@@ -303,6 +303,9 @@ fn service_node_id(kind: ServiceKind) -> &'static str {
         ServiceKind::EmbeddingApi => "svc_embedding",
         ServiceKind::Daemon => "svc_daemon",
         ServiceKind::GhookInbox => "svc_inbox",
+        ServiceKind::TreeSitter => "svc_treesitter",
+        ServiceKind::DocumentToolchain => "svc_documents",
+        ServiceKind::MediaToolchain => "svc_media",
     }
 }
 

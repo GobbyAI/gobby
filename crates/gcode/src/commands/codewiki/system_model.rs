@@ -64,6 +64,18 @@ pub enum ServiceKind {
     Daemon,
     /// `~/.gobby/hooks/inbox` enqueue path that `ghook` always writes to.
     GhookInbox,
+    /// tree-sitter grammars: the AST parsing toolchain pulled in by a member
+    /// that depends on `tree-sitter` plus its `tree-sitter-*` grammar crates.
+    /// Detected from Cargo dependency names, not a `gobby-core` feature gate.
+    TreeSitter,
+    /// Document/Office toolchain (PDF + spreadsheet extraction) pulled in by a
+    /// member exposing a `documents` feature or a `pdf-extract`/`pdfium-*`
+    /// dependency. A Cargo-visible toolchain, not a `gobby-core` feature gate.
+    DocumentToolchain,
+    /// Media toolchain (ffmpeg, a system binary reached via `PATH`). ffmpeg
+    /// leaves no Cargo signal, so this boundary is detected by probing for the
+    /// media-ingest source file (`crates/gwiki/src/media.rs`).
+    MediaToolchain,
 }
 
 /// One service boundary the workspace reaches, plus what pulls it in.
@@ -173,12 +185,18 @@ pub fn build_system_model(repo_root: &Path) -> SystemModel {
 
     let member_names: BTreeSet<String> = crates.iter().map(|c| c.name.clone()).collect();
 
-    // Second pass: dependency edges (workspace-internal only) and per-crate
-    // gobby-core feature sets.
+    // Second pass: dependency edges (workspace-internal only), per-crate
+    // gobby-core feature sets, and the raw dependency-name / feature-key sets
+    // the toolchain boundaries (tree-sitter / document / media) are detected
+    // from.
     let mut edges: Vec<Edge> = Vec::new();
     let mut features_by_crate: BTreeMap<String, Vec<String>> = BTreeMap::new();
     // package name -> features enabled on its gobby-core dependency.
     let mut core_features: BTreeMap<String, Vec<String>> = BTreeMap::new();
+    // package name -> every dependency name it declares (any dependency table).
+    let mut dep_names_by_crate: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    // package name -> the keys of its own `[features]` table.
+    let mut feature_keys_by_crate: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
 
     for (name, manifest) in &manifests {
         for (dep_name, dep_value) in dependency_entries(manifest) {
@@ -193,6 +211,14 @@ pub fn build_system_model(repo_root: &Path) -> SystemModel {
                 features_by_crate.insert(name.clone(), feats.clone());
                 core_features.insert(name.clone(), feats);
             }
+            dep_names_by_crate
+                .entry(name.clone())
+                .or_default()
+                .insert(dep_name);
+        }
+        let feature_keys = feature_table_keys(manifest);
+        if !feature_keys.is_empty() {
+            feature_keys_by_crate.insert(name.clone(), feature_keys);
         }
     }
 
@@ -200,7 +226,13 @@ pub fn build_system_model(repo_root: &Path) -> SystemModel {
     edges.dedup();
     crates.sort_by(|a, b| a.name.cmp(&b.name));
 
-    let services = service_boundaries(&core_features, &crates, repo_root);
+    let services = service_boundaries(
+        &core_features,
+        &dep_names_by_crate,
+        &feature_keys_by_crate,
+        &crates,
+        repo_root,
+    );
 
     SystemModel {
         crates,
@@ -304,6 +336,16 @@ fn dependency_features(dep_value: &toml::Value) -> Vec<String> {
     feats
 }
 
+/// Keys of a manifest's own `[features]` table (e.g. `documents`, `default`).
+/// Returns a sorted, de-duplicated set; an absent table yields an empty set.
+fn feature_table_keys(manifest: &toml::Value) -> BTreeSet<String> {
+    manifest
+        .get("features")
+        .and_then(|f| f.as_table())
+        .map(|table| table.keys().cloned().collect())
+        .unwrap_or_default()
+}
+
 /// Map a `gobby-core` adapter feature to the service boundaries it pulls in.
 /// Mirrors `crates/gcore/Cargo.toml` `[features]`: `ai` enables the AI
 /// transport, which can reach both the embedding API directly and the daemon.
@@ -326,6 +368,9 @@ fn service_name(kind: ServiceKind) -> &'static str {
         ServiceKind::EmbeddingApi => "Embedding API",
         ServiceKind::Daemon => "Gobby daemon",
         ServiceKind::GhookInbox => "ghook inbox",
+        ServiceKind::TreeSitter => "tree-sitter grammars",
+        ServiceKind::DocumentToolchain => "Document toolchain (PDF/Office)",
+        ServiceKind::MediaToolchain => "Media toolchain (ffmpeg)",
     }
 }
 
@@ -335,6 +380,8 @@ fn service_name(kind: ServiceKind) -> &'static str {
 /// `gobby_core::daemon_url`.
 fn service_boundaries(
     core_features: &BTreeMap<String, Vec<String>>,
+    dep_names_by_crate: &BTreeMap<String, BTreeSet<String>>,
+    feature_keys_by_crate: &BTreeMap<String, BTreeSet<String>>,
     crates: &[Crate],
     repo_root: &Path,
 ) -> Vec<ServiceBoundary> {
@@ -378,6 +425,16 @@ fn service_boundaries(
             .insert("workspace (gobby_core::daemon_url, always)".to_string());
     }
 
+    // Toolchain boundaries (tree-sitter / document / media) detected from real
+    // on-disk facts rather than gobby-core feature gates. Each contributes a
+    // provenance string keyed by kind, merged into the same map so the final
+    // sort/dedup keeps everything deterministic.
+    for (kind, provenance) in
+        toolchain_boundaries(dep_names_by_crate, feature_keys_by_crate, crates, repo_root)
+    {
+        by_kind.entry(kind).or_default().insert(provenance);
+    }
+
     let mut services: Vec<ServiceBoundary> = by_kind
         .into_iter()
         .map(|(kind, provenance)| ServiceBoundary {
@@ -388,6 +445,71 @@ fn service_boundaries(
         .collect();
     services.sort_by(|a, b| (a.kind, &a.name).cmp(&(b.kind, &b.name)));
     services
+}
+
+/// Detect the toolchain service boundaries the workspace reaches from real
+/// on-disk Cargo facts plus a file probe (ffmpeg leaves no Cargo signal):
+///
+/// - **tree-sitter**: any member that depends on a crate named exactly
+///   `tree-sitter`; provenance counts that crate's `tree-sitter-*` grammar
+///   dependencies.
+/// - **document toolchain**: any member exposing a `documents` feature or a
+///   `pdf-extract` / `pdfium-render` / `pdfium-auto` dependency.
+/// - **media toolchain**: the `crates/gwiki` member when its `src/media.rs`
+///   exists on disk (the same kind of probe the always-on daemon boundary
+///   uses for `crates/gcore/Cargo.toml`).
+///
+/// Returns `(kind, provenance)` pairs; an absent toolchain yields no pair, so
+/// the boundary is simply omitted from the model.
+fn toolchain_boundaries(
+    dep_names_by_crate: &BTreeMap<String, BTreeSet<String>>,
+    feature_keys_by_crate: &BTreeMap<String, BTreeSet<String>>,
+    crates: &[Crate],
+    repo_root: &Path,
+) -> Vec<(ServiceKind, String)> {
+    const PDF_DEPS: [&str; 3] = ["pdf-extract", "pdfium-render", "pdfium-auto"];
+    let mut out: Vec<(ServiceKind, String)> = Vec::new();
+
+    for (crate_name, deps) in dep_names_by_crate {
+        // tree-sitter: a `tree-sitter` dependency plus N `tree-sitter-*`
+        // grammar crates.
+        if deps.contains("tree-sitter") {
+            let grammar_count = deps
+                .iter()
+                .filter(|dep| dep.starts_with("tree-sitter-"))
+                .count();
+            out.push((
+                ServiceKind::TreeSitter,
+                format!("{crate_name} (deps: tree-sitter + {grammar_count} grammars)"),
+            ));
+        }
+
+        // Document toolchain: a `documents` feature key OR a PDF/Office dep.
+        let has_documents_feature = feature_keys_by_crate
+            .get(crate_name)
+            .is_some_and(|keys| keys.contains("documents"));
+        let has_pdf_dep = PDF_DEPS.iter().any(|dep| deps.contains(*dep));
+        if has_documents_feature || has_pdf_dep {
+            out.push((
+                ServiceKind::DocumentToolchain,
+                format!("{crate_name} (feature: documents)"),
+            ));
+        }
+    }
+
+    // Media toolchain: ffmpeg via PATH, detected by probing the gwiki crate's
+    // media-ingest source file. Derive the gwiki package name from the model
+    // by its workspace-relative crate path.
+    if let Some(gwiki) = crates.iter().find(|c| c.path == "crates/gwiki")
+        && repo_root.join(&gwiki.path).join("src/media.rs").is_file()
+    {
+        out.push((
+            ServiceKind::MediaToolchain,
+            format!("{} (src/media.rs, ffmpeg via PATH)", gwiki.name),
+        ));
+    }
+
+    out
 }
 
 #[cfg(test)]
@@ -624,6 +746,95 @@ mod tests {
         assert_eq!(
             model.runtime_modes,
             vec![RuntimeMode::Standalone, RuntimeMode::DaemonAttached]
+        );
+    }
+
+    #[test]
+    fn tree_sitter_dep_yields_tree_sitter_boundary_with_grammar_count() {
+        // A member that depends on `tree-sitter` plus two grammar crates pulls
+        // in the TreeSitter boundary; the provenance counts the grammars.
+        let manifest = "[package]\nname = \"parser-crate\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[dependencies]\ntree-sitter = \"0.25\"\ntree-sitter-rust = \"0.24\"\ntree-sitter-python = \"0.25\"\nserde = \"1\"\n";
+        let (_dir, root) = fixture_workspace(&[("crates/parser", manifest)]);
+
+        let model = build_system_model(&root);
+        assert!(
+            model.notes.is_empty(),
+            "unexpected notes: {:?}",
+            model.notes
+        );
+
+        let ts = model
+            .services
+            .iter()
+            .find(|s| s.kind == ServiceKind::TreeSitter)
+            .expect("TreeSitter boundary present");
+        assert_eq!(ts.name, "tree-sitter grammars");
+        assert_eq!(
+            ts.pulled_in_by,
+            vec!["parser-crate (deps: tree-sitter + 2 grammars)".to_string()]
+        );
+    }
+
+    #[test]
+    fn documents_feature_yields_document_toolchain_boundary() {
+        // A member exposing a `documents` feature pulls in the DocumentToolchain
+        // boundary even without any PDF dependency named explicitly.
+        let manifest = "[package]\nname = \"vault-crate\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[features]\ndefault = [\"documents\"]\ndocuments = [\"dep:pdf-extract\"]\n\n[dependencies]\npdf-extract = { version = \"0.10\", optional = true }\n";
+        let (_dir, root) = fixture_workspace(&[("crates/vault", manifest)]);
+
+        let model = build_system_model(&root);
+        assert!(
+            model.notes.is_empty(),
+            "unexpected notes: {:?}",
+            model.notes
+        );
+
+        let docs = model
+            .services
+            .iter()
+            .find(|s| s.kind == ServiceKind::DocumentToolchain)
+            .expect("DocumentToolchain boundary present");
+        assert_eq!(docs.name, "Document toolchain (PDF/Office)");
+        assert_eq!(
+            docs.pulled_in_by,
+            vec!["vault-crate (feature: documents)".to_string()]
+        );
+    }
+
+    #[test]
+    fn workspace_without_toolchains_omits_those_boundaries() {
+        // A plain lib crate with no tree-sitter dep, no documents feature, and
+        // no crates/gwiki member yields none of the toolchain boundaries.
+        let manifest = "[package]\nname = \"plain-crate\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[dependencies]\nserde = \"1\"\n";
+        let (_dir, root) = fixture_workspace(&[("crates/plain", manifest)]);
+
+        let model = build_system_model(&root);
+        assert!(
+            model.notes.is_empty(),
+            "unexpected notes: {:?}",
+            model.notes
+        );
+
+        assert!(
+            !model
+                .services
+                .iter()
+                .any(|s| s.kind == ServiceKind::TreeSitter),
+            "TreeSitter must be omitted when no tree-sitter dep exists"
+        );
+        assert!(
+            !model
+                .services
+                .iter()
+                .any(|s| s.kind == ServiceKind::DocumentToolchain),
+            "DocumentToolchain must be omitted with no documents feature / pdf dep"
+        );
+        assert!(
+            !model
+                .services
+                .iter()
+                .any(|s| s.kind == ServiceKind::MediaToolchain),
+            "MediaToolchain must be omitted without a crates/gwiki member"
         );
     }
 }

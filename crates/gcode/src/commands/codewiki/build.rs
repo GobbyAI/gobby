@@ -10,6 +10,8 @@ mod curated_content;
 mod file;
 #[path = "build_parts/hotspots.rs"]
 mod hotspots;
+#[path = "build_parts/infrastructure.rs"]
+mod infrastructure;
 #[path = "build_parts/modules.rs"]
 mod modules;
 #[path = "build_parts/onboarding.rs"]
@@ -22,6 +24,7 @@ pub(crate) use changes::build_codewiki_changes_doc;
 pub(crate) use concepts::build_curated_navigation_docs;
 pub(crate) use file::{FileDocPosition, build_file_doc};
 pub(crate) use hotspots::build_hotspots_doc;
+pub(crate) use infrastructure::build_infrastructure_doc;
 #[cfg(test)]
 pub(crate) use modules::build_module_docs;
 pub(crate) use modules::build_module_docs_with_filter;
