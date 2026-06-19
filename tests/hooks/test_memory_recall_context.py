@@ -9,7 +9,7 @@ from uuid import UUID
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.dispatchers.mcp import PROJECT_MEMORY_CLOSE_TAG, PROJECT_MEMORY_OPEN_TAG
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.hook_manager import HookManager
+from gobby.hooks.hook_manager import _MEMORY_RECALL_BRIDGE_TIMEOUT_BUFFER_SECONDS, HookManager
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import Memory
 from gobby.workflows.state_manager import SessionVariableManager
@@ -123,3 +123,40 @@ def test_turn_start_memory_recall_context_excludes_low_score_candidates(
     assert memory_manager.calls[0]["caller"] == "memory.recall"
     assert '"strong"' in llm_service.calls[0]["prompt"]
     assert '"weak"' not in llm_service.calls[0]["prompt"]
+
+
+def test_memory_recall_context_uses_labeled_buffered_bridge_timeout(
+    temp_db: HubDatabase,
+) -> None:
+    memory_recall = MemoryRecallConfig(timeout=12, candidate_limit=8, selected_limit=3)
+    manager = _make_manager(
+        temp_db,
+        FakeMemoryManager([]),
+        FakeLLMService({"memory_ids": []}),
+    )
+    manager._config.memory_recall = memory_recall
+    captured: dict[str, Any] = {}
+
+    def _run_coro_blocking(
+        coro: Any,
+        *,
+        label: str | None = None,
+        timeout_seconds: float = 30,
+    ) -> Any:
+        captured["label"] = label
+        captured["timeout_seconds"] = timeout_seconds
+        close = getattr(coro, "close", None)
+        if callable(close):
+            close()
+        return SimpleNamespace(memories=[])
+
+    manager._run_coro_blocking = _run_coro_blocking  # type: ignore[method-assign]
+
+    context = manager._append_memory_recall_context(_event(), "existing context")
+
+    assert context == "existing context"
+    assert captured["label"] == "before_agent:memory_recall"
+    assert (
+        captured["timeout_seconds"]
+        == memory_recall.timeout + _MEMORY_RECALL_BRIDGE_TIMEOUT_BUFFER_SECONDS
+    )

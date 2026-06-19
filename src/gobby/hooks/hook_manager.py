@@ -31,6 +31,8 @@ from gobby.servers.routes.sessions.statusline_activity import record_session_act
 from gobby.telemetry.tracing import create_span
 from gobby.utils.session_refs import try_resolve_session_field
 
+_MEMORY_RECALL_BRIDGE_TIMEOUT_BUFFER_SECONDS = 5.0
+
 if TYPE_CHECKING:
     from gobby.agents.runner import AgentRunner
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -477,7 +479,11 @@ class HookManager:
                 config=config,
                 log=self.logger,
             )
-            result = self._run_coro_blocking(runner.run(event, session_id, dict(variables)))
+            result = self._run_coro_blocking(
+                runner.run(event, session_id, dict(variables)),
+                label="before_agent:memory_recall",
+                timeout_seconds=config.timeout + _MEMORY_RECALL_BRIDGE_TIMEOUT_BUFFER_SECONDS,
+            )
             if result is None:
                 return workflow_context
             deduped = self._dedup_memory_results(
@@ -533,9 +539,21 @@ class HookManager:
             mcp_calls, event, self.tool_proxy_getter, self._loop, self.logger
         )
 
-    def _run_coro_blocking(self, coro: Any) -> Any:
+    def _run_coro_blocking(
+        self,
+        coro: Any,
+        *,
+        label: str | None = None,
+        timeout_seconds: float = 30,
+    ) -> Any:
         """Run a coroutine blocking, using the best available event loop strategy."""
-        return mcp_dispatcher.run_coro_blocking(coro, self._loop, self.logger)
+        return mcp_dispatcher.run_coro_blocking(
+            coro,
+            self._loop,
+            self.logger,
+            label=label,
+            timeout_seconds=timeout_seconds,
+        )
 
     async def _proxy_self_call(self, proxy: Any, tool: str, args: dict[str, Any]) -> dict[str, Any]:
         """Route _proxy/* tool calls to ToolProxyService methods directly."""

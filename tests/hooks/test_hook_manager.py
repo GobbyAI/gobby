@@ -1158,6 +1158,33 @@ class TestRunCoroBlocking:
         assert "RuntimeError: fail" in message
         assert manager.logger.error.call_args.kwargs["exc_info"] is True
 
+    def test_run_coro_blocking_forwards_label_and_timeout(
+        self,
+        manager_with_mocks: HookManager,
+    ) -> None:
+        """_run_coro_blocking forwards dispatcher diagnostics and timeout settings."""
+        manager = manager_with_mocks
+        coro = object()
+
+        with patch(
+            "gobby.hooks.hook_manager.mcp_dispatcher.run_coro_blocking",
+            return_value="result",
+        ) as run_coro:
+            result = manager._run_coro_blocking(
+                coro,
+                label="before_agent:memory_recall",
+                timeout_seconds=65,
+            )
+
+        assert result == "result"
+        run_coro.assert_called_once_with(
+            coro,
+            manager._loop,
+            manager.logger,
+            label="before_agent:memory_recall",
+            timeout_seconds=65,
+        )
+
     def test_run_coro_blocking_timeout_logs_label_and_cancels_future(self) -> None:
         """Thread-safe dispatch timeout should be labelled and cancel the scheduled work."""
         loop = asyncio.new_event_loop()
