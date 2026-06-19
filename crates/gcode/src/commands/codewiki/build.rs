@@ -1,5 +1,7 @@
 #[path = "build_parts/architecture.rs"]
 mod architecture;
+#[path = "build_parts/audit.rs"]
+mod audit;
 #[path = "build_parts/changes.rs"]
 mod changes;
 #[path = "build_parts/concepts.rs"]
@@ -22,6 +24,9 @@ mod onboarding;
 mod snapshot;
 
 pub(crate) use architecture::build_architecture_doc;
+pub(crate) use audit::{
+    AuditContext, build_audit_context, build_dead_code_doc, build_deprecations_doc,
+};
 pub(crate) use changes::build_codewiki_changes_doc;
 pub(crate) use concepts::build_curated_navigation_docs;
 pub(crate) use features::build_feature_catalog_doc;

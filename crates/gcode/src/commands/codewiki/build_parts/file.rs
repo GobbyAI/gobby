@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 
 use super::super::{
-    AiDepth, CodewikiProgress, FileDoc, Generation, LeadingChunk, PromptTier, RelationshipFacts,
-    ReusePlan, SourceSpan, SymbolDoc, TextGenerator, TextVerifier, VerifyNote, VerifyOutcome,
-    citation_list, component_label, file_doc_path, ground_text, maybe_generate, prompts,
-    structural_file_summary, structural_symbol_purpose, verify_with_notes, write_section,
+    AiDepth, CodewikiProgress, DeprecationIndex, FileDoc, Generation, LeadingChunk, PromptTier,
+    RelationshipFacts, ReusePlan, SourceSpan, SymbolDoc, TextGenerator, TextVerifier, VerifyNote,
+    VerifyOutcome, citation_list, component_label, file_doc_path, ground_text, maybe_generate,
+    prompts, structural_file_summary, structural_symbol_purpose, verify_with_notes, write_section,
 };
 use crate::models::Symbol;
 
@@ -22,6 +22,12 @@ pub(crate) fn build_file_doc(
     symbols: Vec<Symbol>,
     leading_chunk: Option<&LeadingChunk>,
     relationships: &RelationshipFacts,
+    // Deterministic deprecation markers (#889), keyed by `symbol.id`. The CLI
+    // runtime threads the real index in; the AI-off/test entry points pass
+    // `None`, exactly like `system_model`/`feature_catalog`. Stamps the per-symbol
+    // "deprecated" badge into each `SymbolDoc` for the file page's Key components
+    // table.
+    deprecations: Option<&DeprecationIndex>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
@@ -83,12 +89,16 @@ pub(crate) fn build_file_doc(
                 std::slice::from_ref(&source_span),
                 Some(&source_span.citation()),
             );
+            let deprecation = deprecations
+                .and_then(|index| index.get(&component_id))
+                .cloned();
             SymbolDoc {
                 symbol,
                 purpose,
                 component_id,
                 component_label,
                 source_span,
+                deprecation,
             }
         })
         .collect::<Vec<_>>();

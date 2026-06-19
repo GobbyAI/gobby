@@ -112,6 +112,7 @@ fn file_doc_with_symbol(path: &str, module: &str, component_id: &str) -> FileDoc
                 line_end: 1,
             },
             symbol,
+            deprecation: None,
         }],
         component_ids: vec![component_id.to_string()],
         degraded: false,

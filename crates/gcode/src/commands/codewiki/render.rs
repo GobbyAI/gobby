@@ -1,3 +1,4 @@
+mod audit;
 mod common;
 mod diagrams;
 mod features;
@@ -6,6 +7,7 @@ mod overview;
 mod pages;
 mod repo;
 
+pub(crate) use audit::{render_dead_code_doc, render_deprecations_doc};
 pub(crate) use common::model_degraded_sources;
 pub(crate) use diagrams::collect_subsystem_dependency_edges;
 pub(crate) use features::render_feature_catalog_doc;

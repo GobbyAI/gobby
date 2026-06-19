@@ -11,9 +11,10 @@ use crate::visibility;
 use super::{
     BuiltDoc, CodewikiAiOptions, CodewikiInput, CodewikiProgress, CodewikiRunSummary,
     DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT, ReusePlan,
-    build_codewiki_changes_doc, build_codewiki_index_snapshot, build_feature_catalog_doc,
-    build_system_model, fetch_codewiki_graph_edges, generation, in_scope, io, is_core_file,
-    read_ownership_meta, resolve_text_generator, resolve_text_verifier, write_ownership_meta,
+    build_audit_context, build_codewiki_changes_doc, build_codewiki_index_snapshot,
+    build_feature_catalog_doc, build_system_model, fetch_codewiki_graph_edges, generation,
+    in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
+    write_ownership_meta,
 };
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
@@ -75,6 +76,13 @@ pub fn run(
     // JSONs + dispatch resolver. Read straight off the project root; missing or
     // unparseable contracts simply omit that binary's section — never an error.
     let feature_catalog = build_feature_catalog_doc(&ctx.project_root, &input.files);
+    // Deterministic audit context (#889): scans the documented source for
+    // deprecation markers and derives the contract-handler entry-point set from
+    // the feature catalog. Drives the per-symbol deprecation badge plus the
+    // `code/deprecations.md` and `code/dead-code-candidates.md` pages. Read
+    // straight off the project root; unreadable files are skipped — never an
+    // error, never degrading.
+    let audit_context = build_audit_context(&ctx.project_root, &input, feature_catalog.as_ref());
     let mut generator = resolve_text_generator(ctx, &ai);
     let mut verifier = resolve_text_verifier(ctx, &ai);
     let ai_enabled = generator.is_some();
@@ -133,6 +141,7 @@ pub fn run(
             .map(|meta| (ctx.project_root.as_path(), meta)),
         Some(&system_model),
         feature_catalog.as_ref(),
+        Some(&audit_context),
         generator.as_deref_mut(),
         verifier.as_deref_mut(),
         ai_depth,

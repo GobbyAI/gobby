@@ -8,6 +8,7 @@ mod support;
 
 mod ai;
 mod architecture;
+mod audit;
 mod changes;
 mod concepts;
 mod contract;

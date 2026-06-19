@@ -76,13 +76,32 @@ pub(crate) fn render_file_doc(file: &FileDoc) -> String {
     }
     write_markdown_table_header(&mut doc, &["Symbol", "Kind", "Purpose"]);
     for symbol in &file.symbols {
+        // Deterministic deprecation badge (#889): a `Some` reason marks this
+        // symbol as deprecated. Surface a visible badge in the Symbol cell and
+        // carry the reason inline into the Purpose cell so the readable row keeps
+        // its 3-column shape.
+        let symbol_cell = match &symbol.deprecation {
+            Some(_) => format!(
+                "{} ⚠️ **deprecated**",
+                inline_code(&symbol.symbol.qualified_name)
+            ),
+            None => inline_code(&symbol.symbol.qualified_name),
+        };
+        let purpose_cell = match &symbol.deprecation {
+            Some(reason) if !reason.is_empty() => format!(
+                "⚠️ **deprecated** — {} {}",
+                reason,
+                neutralize_symbol_purpose_links(&symbol.purpose)
+            ),
+            Some(_) => format!(
+                "⚠️ **deprecated** {}",
+                neutralize_symbol_purpose_links(&symbol.purpose)
+            ),
+            None => neutralize_symbol_purpose_links(&symbol.purpose),
+        };
         write_markdown_table_row(
             &mut doc,
-            [
-                inline_code(&symbol.symbol.qualified_name),
-                symbol.symbol.kind.clone(),
-                neutralize_symbol_purpose_links(&symbol.purpose),
-            ],
+            [symbol_cell, symbol.symbol.kind.clone(), purpose_cell],
         );
     }
     doc.push('\n');

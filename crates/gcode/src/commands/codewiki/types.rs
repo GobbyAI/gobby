@@ -164,6 +164,13 @@ pub(crate) struct SymbolDoc {
     pub(crate) component_id: String,
     pub(crate) component_label: String,
     pub(crate) source_span: SourceSpan,
+    /// Deprecation reason for this symbol, detected by the codewiki source scan
+    /// (#889): `Some(reason)` when a `#[deprecated]` attribute or a `DEPRECATED`
+    /// doc-comment sits above its definition (or in its docstring). Drives the
+    /// visible "deprecated" badge in the file page's `## Key components` row.
+    /// `None` for the common, non-deprecated case. Deterministic, never
+    /// degrading.
+    pub(crate) deprecation: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -256,6 +263,67 @@ pub(crate) struct FeatureBinarySection {
 #[derive(Debug, Clone)]
 pub(crate) struct FeatureCatalogDoc {
     pub(crate) sections: Vec<FeatureBinarySection>,
+    pub(crate) degraded_sources: Vec<String>,
+}
+
+/// Map of `symbol.id -> deprecation reason`, built once per run by the
+/// deterministic source scan (#889) and threaded into `build_file_doc` (to
+/// stamp the per-symbol badge) and the `code/deprecations.md` aggregate page.
+/// A `BTreeMap` so the aggregate page lists symbols in a stable order. Empty
+/// when nothing is deprecated; the scan never panics and never degrades.
+pub(crate) type DeprecationIndex = BTreeMap<String, String>;
+
+/// One deprecated symbol on the deterministic `code/deprecations.md` page
+/// (#889): its name, kind, defining `file:line`, the detected reason, and the
+/// file it lives in (for grouping + a `file_wikilink`).
+#[derive(Debug, Clone)]
+pub(crate) struct DeprecatedSymbol {
+    pub(crate) file: String,
+    pub(crate) name: String,
+    pub(crate) kind: String,
+    pub(crate) line: usize,
+    pub(crate) reason: String,
+}
+
+/// The deterministic deprecations aggregate page (#889), every deprecated
+/// symbol grouped by file. `degraded_sources` is always empty: the page is
+/// derived from a source scan and never marks itself degraded — even when the
+/// list is empty (it still renders a clear "no deprecations" line).
+#[derive(Debug, Clone)]
+pub(crate) struct DeprecationsDoc {
+    pub(crate) symbols: Vec<DeprecatedSymbol>,
+    pub(crate) degraded_sources: Vec<String>,
+}
+
+/// One dead-code CANDIDATE (not a verdict) on the deterministic
+/// `code/dead-code-candidates.md` page (#889): a real definition with zero
+/// inbound Call edges that survived every exclusion (entry points, test-gated,
+/// trait impls/methods). Carries its defining `file:line` for the grouped list.
+#[derive(Debug, Clone)]
+pub(crate) struct DeadCodeCandidate {
+    pub(crate) file: String,
+    pub(crate) name: String,
+    pub(crate) kind: String,
+    pub(crate) line: usize,
+}
+
+/// The deterministic dead-code-candidates page (#889). When the code graph was
+/// unavailable, `skipped` is `true` and `candidates` is empty: the page renders
+/// only a skip note and is NEVER degraded. When the graph was truncated,
+/// `truncated` is `true` and the page adds an "may be incomplete" caveat.
+/// `degraded_sources` is always empty.
+#[derive(Debug, Clone)]
+pub(crate) struct DeadCodeDoc {
+    pub(crate) candidates: Vec<DeadCodeCandidate>,
+    /// True when the code graph was unavailable for this run; the page renders a
+    /// skip note instead of a candidate list. Never sets `degraded`.
+    pub(crate) skipped: bool,
+    /// True when the code graph was truncated; the candidate list may be
+    /// incomplete, so the page adds an explicit caveat.
+    pub(crate) truncated: bool,
+    /// True when the candidate list was capped at the bounded maximum; the page
+    /// notes the cap.
+    pub(crate) capped: bool,
     pub(crate) degraded_sources: Vec<String>,
 }
 
