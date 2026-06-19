@@ -12,7 +12,7 @@
 use serde::Deserialize;
 
 use crate::commands::codewiki::prompts::{self, SourceExcerpt, SymbolSummary};
-use crate::commands::codewiki::{TextVerifier, VerifyNote};
+use crate::commands::codewiki::{RelationshipFacts, TextVerifier, VerifyNote};
 
 /// Outcome of one verification pass over generated prose.
 #[derive(Debug, PartialEq, Eq)]
@@ -40,6 +40,7 @@ pub(crate) fn verify_with_notes(
     text: &str,
     symbols: &[SymbolSummary],
     sources: &[SourceExcerpt],
+    relationships: &RelationshipFacts,
 ) -> VerifyOutcome {
     let Some(verify) = verify.as_deref_mut() else {
         return VerifyOutcome::Skipped;
@@ -48,7 +49,7 @@ pub(crate) fn verify_with_notes(
     if blocks.is_empty() {
         return VerifyOutcome::Skipped;
     }
-    let prompt = prompts::verify_prompt(&blocks, symbols, sources);
+    let prompt = prompts::verify_prompt(&blocks, symbols, sources, relationships);
     let Some(response) = verify(&prompt, prompts::VERIFY_SYSTEM) else {
         // Verifier unavailable (routed off / transport failure): skip.
         return VerifyOutcome::Skipped;
@@ -176,7 +177,13 @@ mod tests {
             Some(r#"[{"id":3,"reason":"The evidence never mentions this claim."}]"#.to_string())
         };
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
-        match verify_with_notes(&mut verify, text, &[], &sources()) {
+        match verify_with_notes(
+            &mut verify,
+            text,
+            &[],
+            &sources(),
+            &RelationshipFacts::default(),
+        ) {
             VerifyOutcome::Verified { text: out, notes } => {
                 assert_eq!(out, text);
                 assert!(out.contains("Grounded claim."), "{out}");
@@ -198,7 +205,13 @@ mod tests {
         let text = "## Purpose\n\nGrounded claim.";
         let mut verifier = |_prompt: &str, _system: &str| Some("[]".to_string());
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
-        match verify_with_notes(&mut verify, text, &[], &sources()) {
+        match verify_with_notes(
+            &mut verify,
+            text,
+            &[],
+            &sources(),
+            &RelationshipFacts::default(),
+        ) {
             VerifyOutcome::Verified { text: out, notes } => {
                 assert_eq!(out, text);
                 assert!(notes.is_empty());
@@ -218,7 +231,13 @@ mod tests {
             };
             let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
             assert!(matches!(
-                verify_with_notes(&mut verify, text, &symbols(), &sources()),
+                verify_with_notes(
+                    &mut verify,
+                    text,
+                    &symbols(),
+                    &sources(),
+                    &RelationshipFacts::default()
+                ),
                 VerifyOutcome::Verified { text: _, notes: _ }
             ));
         }
@@ -239,7 +258,13 @@ mod tests {
         let mut verifier = |_prompt: &str, _system: &str| None;
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
         assert!(matches!(
-            verify_with_notes(&mut verify, text, &[], &sources()),
+            verify_with_notes(
+                &mut verify,
+                text,
+                &[],
+                &sources(),
+                &RelationshipFacts::default()
+            ),
             VerifyOutcome::Skipped
         ));
     }
@@ -249,7 +274,13 @@ mod tests {
         let text = "## Purpose\n\nGrounded claim.";
         let mut verify: Option<&mut TextVerifier<'_>> = None;
         assert!(matches!(
-            verify_with_notes(&mut verify, text, &[], &sources()),
+            verify_with_notes(
+                &mut verify,
+                text,
+                &[],
+                &sources(),
+                &RelationshipFacts::default()
+            ),
             VerifyOutcome::Skipped
         ));
     }
@@ -260,7 +291,13 @@ mod tests {
         let mut verifier = |_prompt: &str, _system: &str| Some("the page looks fine".to_string());
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
         assert!(matches!(
-            verify_with_notes(&mut verify, text, &[], &sources()),
+            verify_with_notes(
+                &mut verify,
+                text,
+                &[],
+                &sources(),
+                &RelationshipFacts::default()
+            ),
             VerifyOutcome::Skipped
         ));
     }
@@ -275,7 +312,13 @@ mod tests {
             )
         };
         let mut verify = Some::<&mut TextVerifier<'_>>(&mut verifier);
-        match verify_with_notes(&mut verify, text, &[], &sources()) {
+        match verify_with_notes(
+            &mut verify,
+            text,
+            &[],
+            &sources(),
+            &RelationshipFacts::default(),
+        ) {
             VerifyOutcome::Verified { text: out, notes } => {
                 assert_eq!(out, text);
                 assert_eq!(

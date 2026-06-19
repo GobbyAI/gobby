@@ -41,6 +41,7 @@ mod ownership;
 mod paths;
 mod progress;
 mod prompts;
+mod relationship_facts;
 mod render;
 mod repair;
 mod reuse;
@@ -84,6 +85,8 @@ pub(crate) use paths::{
     module_is_ancestor, module_wikilink, parent_module, plural, write_markdown_table_header,
     write_markdown_table_row,
 };
+// Cross-file relationship facts threaded into narrative prompts (#885).
+pub(crate) use relationship_facts::{RelationshipFacts, relationship_facts_for_file};
 // Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc, render_file_doc,

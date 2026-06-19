@@ -2,10 +2,10 @@ use std::fmt::Write as _;
 
 use crate::models::Symbol;
 
-use super::{write_markdown_table_header, write_markdown_table_row};
+use super::{RelationshipFacts, write_markdown_table_header, write_markdown_table_row};
 
 pub const SYMBOL_SYSTEM: &str = "You write concise API reference notes. Return one sentence describing the symbol's purpose. Do not include markdown fences.";
-pub const FILE_SYSTEM: &str = "You write a narrative explainer page for one source file, for an engineer reading it for the first time. Using only the supplied symbols and source excerpt, write a multi-section Markdown page with exactly these sections, in order: '## Overview' (what this file does and the role it plays) and '## How it fits' (how the file connects to its module and the surrounding data flow). A 'Key components' table is injected separately, so do not write a key-components section or a symbol table. Use short paragraphs. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
+pub const FILE_SYSTEM: &str = "You write a narrative explainer page for one source file, for an engineer reading it for the first time. Using only the supplied symbols, source excerpt, and cross-file relationships, write a multi-section Markdown page with exactly these sections, in order: '## Overview' (what this file does and the role it plays) and '## How it fits' (how the file connects to its module and the surrounding data flow). When cross-file relationships are supplied, use '## How it fits' to explain the concrete external callers of this file, the external symbols it calls, and the files it imports, citing the supplied file:line anchors. A 'Key components' table is injected separately, so do not write a key-components section or a symbol table. Use short paragraphs. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
 pub const CONTENT_FILE_SYSTEM: &str = "You write a narrative explainer page for one non-code repository file (markdown, config, data), for an engineer reading it for the first time. Using only the supplied leading content, write a multi-section Markdown page with exactly these sections, in order: '## Overview' (what this file contains and what it is for) and '## How it fits' (how it relates to the surrounding project). Use short paragraphs. Cite supporting file:line anchors that appear in the supplied input. Do not invent content or line numbers. No markdown fences.";
 pub const MODULE_SYSTEM: &str = "You write module documentation briefs. Using only the supplied file summaries, child module summaries, component table, and source excerpts, write two to four short paragraphs covering the module's responsibilities, key flows, and collaboration points. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
 pub const REPO_SYSTEM: &str = "You write repository overview briefs. Using only the supplied module summaries, root-file summaries, and source excerpts, write two to four short paragraphs covering what the system is, how the major pieces fit together, and where a reader should start. Add compact Markdown tables for enumerable facts such as CLI commands or flags, configuration keys, environment variables, and public API symbols. No markdown fences. Cite supporting file:line spans that appear in the supplied input.";
@@ -14,7 +14,7 @@ pub const ARCHITECTURE_NARRATIVE_SYSTEM: &str = "You write architecture overview
 pub const CURATED_NAVIGATION_SYSTEM: &str = "You design a curated navigation layer for grounded code documentation. Return strict JSON only. Name user-facing concept modules, organize them into a hierarchy, and create short narrative tour pages. Use only supplied module and file identifiers, and link into reference pages instead of duplicating source detail. Order narrative_pages as a learning path: foundational subsystems first, then the layers that build on them, so the tour reads from chapter one onward.";
 pub const CONCEPT_PAGE_SYSTEM: &str = "You write a reference explainer page for one concept in a codebase, written for an engineer who is new to it. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown page with these sections, in order: '## Purpose' (what this concept is and the problem it solves), '## Covers / Does not cover' (the scope boundaries), '## Architecture' (how the pieces fit together; a diagram is injected separately, so describe the structure in prose), '## Data flow' (a numbered list tracing the real runtime flow), '## Key components' (a compact Markdown table of the most important symbols and their role), and '## Where to start' (which page or symbol to read first). Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
 pub const NARRATIVE_PAGE_SYSTEM: &str = "You write one chapter of a guided, beginner-friendly tour of a codebase, in the style of a progressive tutorial. Using only the supplied member modules/files, key symbols, and source excerpts, write a multi-section Markdown chapter with these sections, in order: '## Why this matters' (the motivation and the problem this part of the system solves), '## How it works' (a numbered, step-by-step walkthrough of the real flow, grounded in the supplied symbols), '## Key components' (a compact Markdown table of the important symbols), and '## What to read next' (which chapter or reference page to read next). You may include at most one brief analogy if it is anchored to the supplied source; do not pad with long generic metaphors. Use headings, tables, and lists. Cite supporting file:line anchors that appear in the supplied input. Do not invent files, symbols, or line numbers. No markdown fences.";
-pub const VERIFY_SYSTEM: &str = "You are a strict citation auditor for code documentation. You receive a draft explanation split into numbered blocks, optional Symbols evidence, and the source excerpts the page is allowed to rely on. For each block, decide whether its specific technical claims (names, behaviors, control flow, data flow, relationships) are supported by the supplied evidence. Treat Symbols evidence as authoritative for symbol names, kinds, components, line ranges, and purposes when present; when it is absent, rely on source excerpts only. A block is UNSUPPORTED when it states a concrete technical claim that the evidence does not show, contradicts, or invents files, symbols, line numbers, or behavior. Treat section headings, navigational sentences, and generic framing as supported. Return ONLY a JSON array of unsupported block notes, e.g. [{\"id\":2,\"reason\":\"Names behavior not shown in evidence.\"}]; return [] when every block is supported. Keep each reason short and evidence-focused. Output nothing but the JSON array: no prose, no explanation, no code fences. Never rewrite the blocks.";
+pub const VERIFY_SYSTEM: &str = "You are a strict citation auditor for code documentation. You receive a draft explanation split into numbered blocks, optional Symbols evidence, optional cross-file relationship evidence, and the source excerpts the page is allowed to rely on. For each block, decide whether its specific technical claims (names, behaviors, control flow, data flow, relationships) are supported by the supplied evidence. Treat Symbols evidence as authoritative for symbol names, kinds, components, line ranges, and purposes, and treat cross-file relationship evidence as authoritative for which external symbols call into or out of this file and which files it imports, when present; when they are absent, rely on source excerpts only. A block is UNSUPPORTED when it states a concrete technical claim that the evidence does not show, contradicts, or invents files, symbols, line numbers, or behavior. Treat section headings, navigational sentences, and generic framing as supported. Return ONLY a JSON array of unsupported block notes, e.g. [{\"id\":2,\"reason\":\"Names behavior not shown in evidence.\"}]; return [] when every block is supported. Keep each reason short and evidence-focused. Output nothing but the JSON array: no prose, no explanation, no code fences. Never rewrite the blocks.";
 
 pub fn symbol_prompt(symbol: &Symbol) -> String {
     let mut prompt = format!(
@@ -40,11 +40,17 @@ pub fn symbol_prompt(symbol: &Symbol) -> String {
     prompt
 }
 
-pub fn file_prompt(file: &str, symbols: &[SymbolSummary], sources: &[SourceExcerpt]) -> String {
+pub fn file_prompt(
+    file: &str,
+    symbols: &[SymbolSummary],
+    sources: &[SourceExcerpt],
+    relationships: &RelationshipFacts,
+) -> String {
     let mut prompt = format!(
-        "Write a narrative explainer page for this source file from its AST symbols and source excerpt.\n\nFile: {file}\n\nSymbols:\n"
+        "Write a narrative explainer page for this source file from its AST symbols, source excerpt, and cross-file relationships.\n\nFile: {file}\n\nSymbols:\n"
     );
     append_symbol_summary_table(&mut prompt, symbols);
+    append_relationship_section(&mut prompt, relationships);
     append_source_excerpt_section(&mut prompt, sources);
     prompt
 }
@@ -240,16 +246,16 @@ pub fn verify_prompt(
     blocks: &[String],
     symbols: &[SymbolSummary],
     sources: &[SourceExcerpt],
+    relationships: &RelationshipFacts,
 ) -> String {
-    let mut prompt = if symbols.is_empty() {
-        String::from(
-            "Audit each numbered draft block against the source excerpts below.\n\nDraft blocks:\n",
-        )
-    } else {
-        String::from(
-            "Audit each numbered draft block against the Symbols table and source excerpts below.\n\nDraft blocks:\n",
-        )
+    let evidence = match (symbols.is_empty(), relationships.is_empty()) {
+        (true, true) => "the source excerpts",
+        (false, true) => "the Symbols table and source excerpts",
+        (true, false) => "the cross-file relationships and source excerpts",
+        (false, false) => "the Symbols table, cross-file relationships, and source excerpts",
     };
+    let mut prompt =
+        format!("Audit each numbered draft block against {evidence} below.\n\nDraft blocks:\n");
     for (index, block) in blocks.iter().enumerate() {
         let _ = writeln!(prompt, "[{}] {}", index + 1, bounded_excerpt(block.trim()));
     }
@@ -257,6 +263,7 @@ pub fn verify_prompt(
         prompt.push_str("\nSymbols:\n");
         append_symbol_summary_table(&mut prompt, symbols);
     }
+    append_relationship_section(&mut prompt, relationships);
     append_source_excerpt_section_n(&mut prompt, sources, VERIFY_SOURCE_EXCERPTS);
     prompt
 }
@@ -343,6 +350,56 @@ fn append_symbol_summary_table(prompt: &mut String, symbols: &[SymbolSummary]) {
                 symbol.purpose.clone(),
             ],
         );
+    }
+}
+
+/// Append the cross-file relationship evidence for a file page prompt or its
+/// verification prompt. Each row carries a `[file:line]` anchor the narrative
+/// must reproduce, so `## How it fits` can name concrete collaborators without
+/// inventing locations and the verifier treats those relationships as
+/// authoritative. Omitted entirely when the graph yielded no cross-file
+/// relationships (or was unavailable), so the section never appears empty.
+fn append_relationship_section(prompt: &mut String, relationships: &RelationshipFacts) {
+    if relationships.is_empty() {
+        return;
+    }
+    prompt.push_str("\nCross-file relationships (cite these file:line anchors):\n");
+    if !relationships.inbound_calls.is_empty() {
+        prompt.push_str("Called by (external symbols that call into this file):\n");
+        write_markdown_table_header(prompt, &["Caller", "Kind", "Calls", "Evidence"]);
+        for relation in &relationships.inbound_calls {
+            write_markdown_table_row(
+                prompt,
+                [
+                    relation.other_name.clone(),
+                    relation.other_kind.clone(),
+                    relation.local_name.clone().unwrap_or_default(),
+                    relation.citation(),
+                ],
+            );
+        }
+    }
+    if !relationships.outbound_calls.is_empty() {
+        prompt.push_str("Calls out to (external symbols this file calls):\n");
+        write_markdown_table_header(prompt, &["Caller", "Callee", "Kind", "Evidence"]);
+        for relation in &relationships.outbound_calls {
+            write_markdown_table_row(
+                prompt,
+                [
+                    relation.local_name.clone().unwrap_or_default(),
+                    relation.other_name.clone(),
+                    relation.other_kind.clone(),
+                    relation.citation(),
+                ],
+            );
+        }
+    }
+    if !relationships.imports.is_empty() {
+        prompt.push_str("Imports (files this file depends on):\n");
+        write_markdown_table_header(prompt, &["Imported file", "Evidence"]);
+        for relation in &relationships.imports {
+            write_markdown_table_row(prompt, [relation.other_name.clone(), relation.citation()]);
+        }
     }
 }
 
@@ -611,10 +668,40 @@ mod tests {
             purpose: "Handles command dispatch.".to_string(),
         };
 
-        let prompt = file_prompt("src/cli.rs", &[symbol], &[]);
+        let prompt = file_prompt("src/cli.rs", &[symbol], &[], &RelationshipFacts::default());
 
         assert!(prompt.contains("| Symbol | Kind | Component | Component ID | Lines | Purpose |"));
         assert!(prompt.contains("| run\\|cli | function | run [function] | component\\|id | 7-9 | Handles command dispatch. |"));
+    }
+
+    #[test]
+    fn file_prompt_includes_cross_file_relationships() {
+        use super::super::SourceSpan;
+        use super::super::relationship_facts::SymbolRelation;
+
+        let relationships = RelationshipFacts {
+            inbound_calls: vec![SymbolRelation {
+                other_name: "outer::caller".to_string(),
+                other_kind: "function".to_string(),
+                local_name: Some("local_fn".to_string()),
+                span: SourceSpan {
+                    file: "src/other.rs".to_string(),
+                    line_start: 5,
+                    line_end: 8,
+                },
+            }],
+            outbound_calls: Vec::new(),
+            imports: Vec::new(),
+        };
+
+        let prompt = file_prompt("src/cli.rs", &[], &[], &relationships);
+
+        assert!(prompt.contains("Cross-file relationships"), "{prompt}");
+        assert!(
+            prompt.contains("Called by (external symbols that call into this file):"),
+            "{prompt}"
+        );
+        assert!(prompt.contains("[src/other.rs:5-8]"), "{prompt}");
     }
 
     #[test]
@@ -630,7 +717,7 @@ mod tests {
         };
         let blocks = vec!["The run symbol handles command dispatch.".to_string()];
 
-        let prompt = verify_prompt(&blocks, &[symbol], &[]);
+        let prompt = verify_prompt(&blocks, &[symbol], &[], &RelationshipFacts::default());
 
         assert!(prompt.contains("Symbols:\n"));
         assert!(prompt.contains("| Symbol | Kind | Component | Component ID | Lines | Purpose |"));
@@ -641,7 +728,7 @@ mod tests {
     fn verify_prompt_without_symbols_stays_source_only() {
         let blocks = vec!["Grounded claim.".to_string()];
 
-        let prompt = verify_prompt(&blocks, &[], &[]);
+        let prompt = verify_prompt(&blocks, &[], &[], &RelationshipFacts::default());
 
         assert!(
             prompt

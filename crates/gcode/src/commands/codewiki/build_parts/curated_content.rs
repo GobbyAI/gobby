@@ -97,7 +97,15 @@ pub(crate) fn curated_page_body(
         Generation::Generated(text) => {
             // Grounded verification leaves prose intact and records unsupported
             // claims as frontmatter-only notes.
-            let (text, verify_notes) = match verify_with_notes(verify, &text, &[], &sources) {
+            // Curated pages carry no per-file relationship facts; the verifier
+            // audits them against members/symbols/source excerpts only.
+            let (text, verify_notes) = match verify_with_notes(
+                verify,
+                &text,
+                &[],
+                &sources,
+                &RelationshipFacts::default(),
+            ) {
                 VerifyOutcome::Skipped => (text, Vec::new()),
                 VerifyOutcome::Verified { text, notes } => (text, notes),
             };

@@ -1,10 +1,10 @@
 use std::collections::BTreeSet;
 
 use super::super::{
-    AiDepth, CodewikiProgress, FileDoc, Generation, LeadingChunk, PromptTier, ReusePlan,
-    SourceSpan, SymbolDoc, TextGenerator, TextVerifier, VerifyNote, VerifyOutcome, citation_list,
-    component_label, file_doc_path, ground_text, maybe_generate, prompts, structural_file_summary,
-    structural_symbol_purpose, verify_with_notes, write_section,
+    AiDepth, CodewikiProgress, FileDoc, Generation, LeadingChunk, PromptTier, RelationshipFacts,
+    ReusePlan, SourceSpan, SymbolDoc, TextGenerator, TextVerifier, VerifyNote, VerifyOutcome,
+    citation_list, component_label, file_doc_path, ground_text, maybe_generate, prompts,
+    structural_file_summary, structural_symbol_purpose, verify_with_notes, write_section,
 };
 use crate::models::Symbol;
 
@@ -21,6 +21,7 @@ pub(crate) fn build_file_doc(
     module: String,
     symbols: Vec<Symbol>,
     leading_chunk: Option<&LeadingChunk>,
+    relationships: &RelationshipFacts,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
@@ -142,6 +143,7 @@ pub(crate) fn build_file_doc(
                 &prompt_symbols,
                 source_excerpt.as_slice(),
                 &source_spans,
+                relationships,
                 &symbol_docs,
                 generate,
                 verify,
@@ -182,6 +184,7 @@ fn build_file_body(
     prompt_symbols: &[prompts::SymbolSummary],
     sources: &[prompts::SourceExcerpt],
     source_spans: &[SourceSpan],
+    relationships: &RelationshipFacts,
     symbol_docs: &[SymbolDoc],
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
@@ -199,7 +202,7 @@ fn build_file_body(
                 prompts::CONTENT_FILE_SYSTEM,
             ),
             _ => (
-                prompts::file_prompt(file, prompt_symbols, sources),
+                prompts::file_prompt(file, prompt_symbols, sources, relationships),
                 prompts::FILE_SYSTEM,
             ),
         };
@@ -215,15 +218,21 @@ fn build_file_body(
         }
         Generation::Skipped => return structural_file_body(file, symbol_docs),
     };
-    let text = match verify_with_notes(verify, &text, prompt_symbols, sources) {
+    let text = match verify_with_notes(verify, &text, prompt_symbols, sources, relationships) {
         VerifyOutcome::Skipped => text,
         VerifyOutcome::Verified { text, notes } => {
             verify_notes.extend(notes);
             text
         }
     };
-    let citations = citation_list(source_spans, &text);
-    let grounded = ground_text(&text, source_spans, Some(&citations));
+    // Cross-file relationship endpoints widen the grounding allow-list so the
+    // narrative's `[other_file:line]` citations survive `ground_text`; they are
+    // deliberately not added to the page's own `source_spans` provenance, which
+    // must stay scoped to the file for reuse hashing.
+    let mut grounding_spans = source_spans.to_vec();
+    grounding_spans.extend(relationships.endpoint_spans());
+    let citations = citation_list(&grounding_spans, &text);
+    let grounded = ground_text(&text, &grounding_spans, Some(&citations));
     if grounded.trim().is_empty() {
         degraded_sources.insert("grounding-empty".to_string());
         return structural_file_body(file, symbol_docs);

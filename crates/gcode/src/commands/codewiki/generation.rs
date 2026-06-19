@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::path::Path;
 
 use crate::models::Symbol;
@@ -9,8 +9,8 @@ use super::{
     build_architecture_doc, build_curated_navigation_docs, build_file_doc, build_hotspots_doc,
     build_module_docs_with_filter, build_onboarding_doc, build_ownership_doc, build_repo_doc,
     cluster, cluster_file_modules, file_doc_path, is_core_file, module_doc_path, module_for_file,
-    render_architecture_doc, render_file_doc, render_hotspots_doc, render_module_doc,
-    render_onboarding_doc, span_files,
+    relationship_facts_for_file, render_architecture_doc, render_file_doc, render_hotspots_doc,
+    render_module_doc, render_onboarding_doc, span_files,
 };
 
 pub fn generate_hierarchical_docs(
@@ -194,6 +194,13 @@ pub(crate) fn generate_hierarchical_docs_core(
     }
 
     let file_modules = cluster_file_modules(&files, &symbols_by_file, &input.graph_edges);
+    // Resolve graph-edge endpoints (symbol component ids) back to their symbols
+    // so each file's narrative can name concrete cross-file collaborators (#885).
+    let symbols_by_id = input
+        .symbols
+        .iter()
+        .map(|symbol| (symbol.id.as_str(), symbol))
+        .collect::<HashMap<&str, &Symbol>>();
     let file_verb = if ai_depth.includes_files() {
         "generating"
     } else {
@@ -203,14 +210,25 @@ pub(crate) fn generate_hierarchical_docs_core(
     let file_total = files.len();
     let mut file_docs = Vec::with_capacity(file_total);
     for (index, file) in files.iter().enumerate() {
+        let file_symbols = symbols_by_file.remove(file).unwrap_or_default();
+        // Cross-file relationships are derived before the symbols are moved into
+        // the file doc; the id set borrows them only within this block.
+        let relationships = {
+            let file_symbol_ids = file_symbols
+                .iter()
+                .map(|symbol| symbol.id.as_str())
+                .collect::<HashSet<&str>>();
+            relationship_facts_for_file(file, &file_symbol_ids, &symbols_by_id, &input.graph_edges)
+        };
         let file_doc = build_file_doc(
             file,
             file_modules
                 .get(file)
                 .cloned()
                 .unwrap_or_else(|| module_for_file(file)),
-            symbols_by_file.remove(file).unwrap_or_default(),
+            file_symbols,
             input.leading_chunks.get(file),
+            &relationships,
             generate,
             verify,
             reuse,
