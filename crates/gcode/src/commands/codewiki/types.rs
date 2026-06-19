@@ -459,11 +459,11 @@ pub struct CodewikiAiOptions {
     /// Daemon feature profile for aggregate docs; `None` means
     /// [`super::DEFAULT_AGGREGATE_PROFILE`].
     pub aggregate_profile: Option<String>,
-    /// Override seams for the grounded verification pass. There is no CLI flag
-    /// for these (verify is config-only): each `None` falls back to the resolved
-    /// `ai.text_generate.verify_*` config, then to the generate model/key and
-    /// [`super::DEFAULT_VERIFY_PROFILE`]. Kept here so the generator set is
-    /// resolved from one options value and the precedence is unit-testable.
+    /// Override seams for the grounded verification pass. Each `None` falls
+    /// back to the resolved `ai.text_generate.verify_*` config, then to the
+    /// generate model/key and [`super::DEFAULT_VERIFY_PROFILE`]. Kept here so
+    /// the generator set is resolved from one options value and the precedence
+    /// is unit-testable.
     pub verify_profile: Option<String>,
     pub verify_model: Option<String>,
     pub verify_api_key: Option<String>,

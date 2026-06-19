@@ -121,6 +121,22 @@ fn service_config_selection(command: &Command) -> config::ServiceConfigSelection
     }
 }
 
+fn codewiki_ai_options(
+    ai: Option<AiRouteArg>,
+    ai_depth: cli::AiDepthArg,
+    ai_aggregate_profile: Option<String>,
+    ai_verify_profile: Option<String>,
+) -> commands::codewiki::CodewikiAiOptions {
+    commands::codewiki::CodewikiAiOptions {
+        routing: ai.map(AiRouteArg::into),
+        depth: ai_depth.into(),
+        aggregate_profile: ai_aggregate_profile,
+        verify_profile: ai_verify_profile,
+        verify_model: None,
+        verify_api_key: None,
+    }
+}
+
 fn dispatch_early_command<F>(
     cli: &Cli,
     format: output::Format,
@@ -526,6 +542,7 @@ fn run() -> anyhow::Result<()> {
             ai,
             ai_depth,
             ai_aggregate_profile,
+            ai_verify_profile,
             edge_limit,
             include_docs,
             repair_citations,
@@ -538,16 +555,7 @@ fn run() -> anyhow::Result<()> {
                 &ctx,
                 out,
                 scope,
-                commands::codewiki::CodewikiAiOptions {
-                    routing: ai.map(AiRouteArg::into),
-                    depth: ai_depth.into(),
-                    aggregate_profile: ai_aggregate_profile,
-                    // Verify config has no CLI flag; resolved from
-                    // `ai.text_generate.verify_*` inside the generator resolver.
-                    verify_profile: None,
-                    verify_model: None,
-                    verify_api_key: None,
-                },
+                codewiki_ai_options(ai, ai_depth, ai_aggregate_profile, ai_verify_profile),
                 edge_limit,
                 include_docs,
                 format,

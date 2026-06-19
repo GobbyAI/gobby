@@ -337,6 +337,10 @@ pub(crate) enum Command {
         /// [default: feature_mid]
         #[arg(long, value_name = "PROFILE")]
         ai_aggregate_profile: Option<String>,
+        /// Daemon feature profile for grounded verification
+        /// [default: feature_low]
+        #[arg(long, value_name = "PROFILE")]
+        ai_verify_profile: Option<String>,
         /// Maximum graph edges to fetch from FalkorDB
         #[arg(long, default_value_t = DEFAULT_CODEWIKI_GRAPH_EDGE_LIMIT, value_parser = positive_usize)]
         edge_limit: usize,

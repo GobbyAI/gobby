@@ -113,3 +113,19 @@ fn graph_and_ai_commands_request_only_needed_services() {
         config::ServiceConfigSelection::vectors()
     );
 }
+
+#[test]
+fn codewiki_ai_options_routes_verify_profile_override() {
+    let options = codewiki_ai_options(
+        Some(AiRouteArg::Daemon),
+        cli::AiDepthArg::Files,
+        Some("aggregate_profile".to_string()),
+        Some("feature_mid".to_string()),
+    );
+
+    assert_eq!(
+        options.aggregate_profile.as_deref(),
+        Some("aggregate_profile")
+    );
+    assert_eq!(options.verify_profile.as_deref(), Some("feature_mid"));
+}

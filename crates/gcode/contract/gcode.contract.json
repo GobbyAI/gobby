@@ -1230,6 +1230,34 @@
           "repeatable": false
         },
         {
+          "name": "--ai-depth",
+          "takes_value": true,
+          "value_name": "sections|files|symbols",
+          "allowed_values": [
+            "sections",
+            "files",
+            "symbols"
+          ],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--ai-aggregate-profile",
+          "takes_value": true,
+          "value_name": "PROFILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--ai-verify-profile",
+          "takes_value": true,
+          "value_name": "PROFILE",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
           "name": "--repair-citations",
           "takes_value": false,
           "value_name": null,

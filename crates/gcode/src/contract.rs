@@ -5,6 +5,7 @@ use gobby_core::cli_contract::{
 pub fn contract() -> CliContract {
     CliContract {
         tool: "gcode",
+        // Additive optional flags are backward-compatible and do not bump this version.
         contract_version: 2,
         summary: "Fast code index CLI for Gobby.",
         global_flags: vec![
@@ -310,6 +311,9 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--out", "DIR"),
                     FlagContract::repeatable_value("--scope", "PATH"),
                     ai_flag(),
+                    ai_depth_flag(),
+                    FlagContract::value("--ai-aggregate-profile", "PROFILE"),
+                    FlagContract::value("--ai-verify-profile", "PROFILE"),
                     FlagContract::switch("--repair-citations"),
                 ],
                 // Two JSON shapes: a generation run-summary, or — under
@@ -541,6 +545,11 @@ fn format_flag() -> FlagContract {
 fn ai_flag() -> FlagContract {
     FlagContract::value("--ai", "auto|daemon|direct|off")
         .allowed(vec!["auto", "daemon", "direct", "off"])
+}
+
+fn ai_depth_flag() -> FlagContract {
+    FlagContract::value("--ai-depth", "sections|files|symbols")
+        .allowed(vec!["sections", "files", "symbols"])
 }
 
 fn token_budget_flag() -> FlagContract {

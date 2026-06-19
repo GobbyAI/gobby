@@ -18,6 +18,18 @@ fn parse_codewiki_ai_flag() {
 }
 
 #[test]
+fn parse_codewiki_ai_verify_profile_flag() {
+    let cli = Cli::try_parse_from(["gcode", "codewiki", "--ai-verify-profile", "feature_mid"])
+        .expect("codewiki --ai-verify-profile parses");
+    match cli.command {
+        Command::Codewiki {
+            ai_verify_profile, ..
+        } => assert_eq!(ai_verify_profile.as_deref(), Some("feature_mid")),
+        _ => panic!("expected codewiki command"),
+    }
+}
+
+#[test]
 fn parse_codewiki_edge_limit_flag() {
     let cli = Cli::try_parse_from(["gcode", "codewiki"]).expect("codewiki parses");
     match cli.command {
