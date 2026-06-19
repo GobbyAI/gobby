@@ -117,14 +117,7 @@ pub(super) fn render_curated_navigation_docs(
         let next = narrative_pages.get(index + 1).map(chapter_link);
         docs.push(BuiltDoc {
             path: narrative_doc_path(&page.slug),
-            content: render_narrative_page(
-                page,
-                &spans,
-                &concept_titles,
-                degraded,
-                prev,
-                next,
-            ),
+            content: render_narrative_page(page, &spans, &concept_titles, degraded, prev, next),
             degraded,
             summary: Some(page.summary.clone()),
         });

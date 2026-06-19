@@ -46,6 +46,7 @@ mod render;
 mod repair;
 mod reuse;
 mod run;
+mod system_model;
 mod text;
 mod types;
 
@@ -87,6 +88,11 @@ pub(crate) use paths::{
 };
 // Cross-file relationship facts threaded into narrative prompts (#885).
 pub(crate) use relationship_facts::{RelationshipFacts, relationship_facts_for_file};
+// Deterministic, no-LLM workspace system model (#887, epic #886). Consumed by
+// later diagram/infra leaves; not yet wired into the generation pipeline.
+pub use system_model::{
+    Crate, Edge, RuntimeMode, ServiceBoundary, ServiceKind, SystemModel, build_system_model,
+};
 // Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc, render_file_doc,

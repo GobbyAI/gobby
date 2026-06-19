@@ -70,13 +70,7 @@ pub(crate) fn build_repo_doc(
         Generation::Failed | Generation::Skipped => ground_text(&fallback, &source_spans, None),
     };
 
-    let doc = render_repo_doc(
-        &summary,
-        &top_modules,
-        &root_files,
-        &source_spans,
-        degraded,
-    );
+    let doc = render_repo_doc(&summary, &top_modules, &root_files, &source_spans, degraded);
     (doc, degraded)
 }
 
