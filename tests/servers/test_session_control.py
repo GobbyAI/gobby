@@ -235,6 +235,36 @@ class TestContinueInChatTerminalKill:
         return host
 
     @pytest.mark.asyncio
+    async def test_continue_in_chat_rejects_missing_source_session(self) -> None:
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=None)
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host._send_error = AsyncMock()
+        host._create_chat_session = AsyncMock()
+
+        await SessionControlMixin._handle_continue_in_chat(
+            host,
+            ws,
+            {
+                "source_session_id": "missing-source",
+                "conversation_id": "new-conv",
+            },
+        )
+
+        host._send_error.assert_awaited_once_with(
+            ws,
+            "Source session not found: missing-source",
+            code="NOT_FOUND",
+        )
+        host._create_chat_session.assert_not_awaited()
+
+    @pytest.mark.asyncio
     async def test_kills_terminal_when_no_agent_registered(self) -> None:
         """When no agent is in the registry, should try terminal kill."""
         from gobby.servers.websocket.session_control import SessionControlMixin
@@ -500,10 +530,12 @@ class TestContinueInChatTerminalKill:
                 {
                     "source_session_id": "source-uuid",
                     "conversation_id": "new-conv",
+                    "project_id": "client-proj",
                 },
             )
 
         assert captured["provider"] == "codex"
+        assert captured["project_id"] == "proj-1"
         session_manager.update.assert_any_call(
             "new-conv",
             source="codex",
@@ -519,6 +551,59 @@ class TestContinueInChatTerminalKill:
         )
         assert session_manager.update_parent_session_id.call_count == 1
         assert session_manager.update_parent_session_id.call_args is not None
+
+    @pytest.mark.asyncio
+    async def test_continue_in_chat_stops_when_terminal_release_fails(self) -> None:
+        from gobby.servers.websocket.session_control import SessionControlMixin
+
+        ws = MagicMock()
+        ws.send = AsyncMock()
+
+        source_session = MagicMock()
+        source_session.session_type = "terminal"
+        source_session.external_id = "cli-session-123"
+        source_session.project_id = "proj-1"
+        source_session.transcript_path = None
+        source_session.source = "codex"
+        source_session.terminal_context = {"parent_pid": "123"}
+
+        session_manager = MagicMock()
+        session_manager.get = MagicMock(return_value=source_session)
+
+        host = self._make_host()
+        host.session_manager = session_manager
+        host.agent_run_manager = None
+        host._send_error = AsyncMock()
+        host._create_chat_session = AsyncMock()
+
+        with (
+            patch(
+                "gobby.storage.agents.LocalAgentRunManager.get_by_session",
+                return_value=None,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.kill_terminal_session",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+            patch(
+                "gobby.servers.websocket.handlers.session_observe.check_resume_blocked",
+                new_callable=AsyncMock,
+                return_value=None,
+            ),
+        ):
+            await SessionControlMixin._handle_continue_in_chat(
+                host,
+                ws,
+                {
+                    "source_session_id": "source-uuid",
+                    "conversation_id": "new-conv",
+                },
+            )
+
+        host._send_error.assert_awaited_once()
+        assert "Failed to release source session" in host._send_error.await_args.args[1]
+        host._create_chat_session.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_continue_in_chat_reuses_terminal_session_identity(self) -> None:
@@ -1432,6 +1517,7 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.session_type = "terminal"
+        source_session.project_id = "proj-1"
         source_session.terminal_context = {
             "tmux_pane": "%7",
             "tmux_socket_path": "/tmp/tmux-1000/gobby",
@@ -1441,6 +1527,9 @@ class TestContinueInChatTerminalKill:
         session_manager = MagicMock()
         session_manager.get = MagicMock(return_value=source_session)
         session_manager.db = MagicMock()
+        origin_session = MagicMock()
+        origin_session.id = "web-origin-uuid"
+        session_manager.register = MagicMock(return_value=origin_session)
 
         inter_message = MagicMock()
         inter_message.id = "msg-1"
@@ -1473,6 +1562,18 @@ class TestContinueInChatTerminalKill:
 
         mock_get_tmux_manager.assert_called_once_with(source_session.terminal_context)
         tmux_manager.send_keys.assert_awaited_once_with("%7", "hello\n")
+        session_manager.register.assert_called_once_with(
+            external_id="web-origin:web-123",
+            machine_id="web-ui",
+            source="web_chat",
+            project_id="proj-1",
+            title="Web UI",
+            session_type="web_chat",
+            is_local=True,
+        )
+        assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == (
+            "web-origin-uuid"
+        )
         inter_msg_manager.mark_delivered.assert_called_once_with("msg-1")
         host._send_error.assert_not_awaited()
 
@@ -1500,12 +1601,16 @@ class TestContinueInChatTerminalKill:
         source_session = MagicMock()
         source_session.id = "source-uuid"
         source_session.session_type = "terminal"
+        source_session.project_id = "proj-1"
         source_session.terminal_context = {"tmux_pane": "%7"}
         source_session.metadata = None
 
         session_manager = MagicMock()
         session_manager.get = MagicMock(return_value=source_session)
         session_manager.db = MagicMock()
+        origin_session = MagicMock()
+        origin_session.id = "web-origin-uuid"
+        session_manager.register = MagicMock(return_value=origin_session)
 
         inter_message = MagicMock()
         inter_message.id = "msg-1"
@@ -1552,6 +1657,9 @@ class TestContinueInChatTerminalKill:
         attached_path = delivered_content.removesuffix("\n").splitlines()[-1]
         assert attached_path.endswith("_note.txt")
         assert (tmp_path / "attachments" / "attached-sessions" / "source-uuid").is_dir()
+        assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == (
+            "web-origin-uuid"
+        )
         assert inter_msg_manager.create_message.call_args.kwargs["content"].endswith(attached_path)
         assert host._send_error.await_count == 0
 

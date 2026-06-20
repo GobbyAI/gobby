@@ -304,7 +304,7 @@ async def _advance_cursor(
         return
     try:
         await asyncio.to_thread(memory_manager.mark_dreamed, memory_id, hidden_as=None, when=stamp)
-    except ValueError as exc:
+    except _EXPECTED_ACTION_ERRORS as exc:
         # Row vanished (e.g. concurrent delete); it drops out of the sweep naturally.
         logger.debug("Memory dream cursor advance skipped memory_id=%s: %s", memory_id, exc)
 

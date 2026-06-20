@@ -62,7 +62,6 @@ export function useDirtyGuardController(): DirtyGuardContextValue {
       await action();
     } catch (error) {
       console.error("Dirty-guard action failed", error);
-      throw error;
     }
   }, []);
 

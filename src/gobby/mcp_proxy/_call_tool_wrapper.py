@@ -140,15 +140,13 @@ def canonicalize_call_tool_wrapper(
                     canonical_arguments = raw_nested_arguments
                 break
 
-    if canonical_arguments is not None:
-        fields_to_strip = (
-            CALL_TOOL_WRAPPER_FIELDS
-            if wrapper_route_from_nested and not unwrapped_target_arguments
-            else ()
-        )
-        for field in fields_to_strip:
-            if isinstance(canonical_arguments, dict):
-                canonical_arguments.pop(field, None)
+    if (
+        isinstance(canonical_arguments, dict)
+        and wrapper_route_from_nested
+        and not unwrapped_target_arguments
+    ):
+        for field in CALL_TOOL_WRAPPER_FIELDS:
+            canonical_arguments.pop(field, None)
 
     return CanonicalCallToolWrapper(
         server_name=canonical_server_name,

@@ -13,6 +13,7 @@ The counter resets the moment validation produces a real verdict (``valid`` or
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -93,7 +94,7 @@ class TaskValidationBackoffStore:
                 "FROM task_validation_backoff WHERE task_id = %s",
                 (task_id,),
             ).fetchone()
-        if row is None:
+        if row is None or not isinstance(row, Mapping):
             return None
         return ValidationBackoffState(
             task_id=row["task_id"],

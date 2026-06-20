@@ -4,6 +4,7 @@ import { enqueuePendingProxyMessage } from "./pendingProxyMessages";
 import { saveConversationId, uuid } from "./conversationPersistence";
 import { normalizeReasoningEffort } from "./sessionRecords";
 import { attachmentPayload, userContentBlocks } from "./actionPayloads";
+import { chatLogger } from "./logger";
 import type { SendMessageAction, UseChatActionsParams } from "./actionTypes";
 
 export function useMessageAction(
@@ -75,7 +76,11 @@ export function useMessageAction(
             );
           })
           .catch((error) => {
-            console.error("Failed to create chat session before send:", error);
+            chatLogger.error("Failed to create chat session before send", {
+              error,
+              projectId: projectId ?? projectIdRef.current,
+              provider: selectedProviderRef.current,
+            });
             setMessages((prev) => [
               ...prev,
               {
@@ -90,7 +95,11 @@ export function useMessageAction(
       }
 
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
-        console.warn("WebSocket disconnected — queuing message for reconnect");
+        chatLogger.warn("WebSocket disconnected; queuing message for reconnect", {
+          hasFiles: Boolean(files?.length),
+          projectId: projectId ?? projectIdRef.current,
+          provider: selectedProviderRef.current,
+        });
         pendingMessagesRef.current.push({
           content,
           model,

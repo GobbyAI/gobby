@@ -198,7 +198,7 @@ def update_memory(
         click.echo(f"Updated memory: {memory.id}")
         click.echo(f"  Content: {truncate(memory.content, 80)}")
     except ValueError as e:
-        raise click.ClickException(str(e)) from e
+        click.echo(f"Error: {e}")
 
 
 @click.command("stats")

@@ -76,6 +76,8 @@ def _call_worktree_tool(
         ) from exc
     except httpx.HTTPError as exc:
         raise click.ClickException(str(exc)) from exc
+    except Exception as exc:
+        raise click.ClickException(str(exc)) from exc
 
     result = cast(dict[str, Any], response.json())
     inner_result = result.get("result")

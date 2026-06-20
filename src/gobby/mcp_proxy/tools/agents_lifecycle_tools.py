@@ -62,9 +62,9 @@ def register_agent_lifecycle_tools(
 
         cancelled: list[str] = []
         errors: list[dict[str, str]] = []
+        agents = facade()
         for run in stale:
             try:
-                agents = facade()
                 result = await stop_agent_run(
                     run_id=run.id,
                     runner=ctx.runner,
@@ -84,7 +84,7 @@ def register_agent_lifecycle_tools(
                     errors.append({"run_id": run.id, "error": str(result.get("error", "unknown"))})
             except Exception as e:  # noqa: BLE001 - best-effort cancellation
                 errors.append({"run_id": run.id, "error": str(e)})
-                facade().logger.warning("cancel_stale_helpers: failed to stop %s: %s", run.id, e)
+                agents.logger.warning("cancel_stale_helpers: failed to stop %s: %s", run.id, e)
 
         return {
             "success": True,

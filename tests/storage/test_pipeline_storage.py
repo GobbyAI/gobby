@@ -104,6 +104,17 @@ class TestGetExecution:
         result = manager.get_execution("nonexistent-id")
         assert result is None
 
+    def test_get_execution_is_project_scoped(self, db, manager) -> None:
+        """Executions from another project are hidden from exact lookups."""
+        db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            ("other-project", "Other Project"),
+        )
+        other_manager = LocalPipelineExecutionManager(db, project_id="other-project")
+        other_execution = other_manager.create_execution(pipeline_name="other-pipeline")
+
+        assert manager.get_execution(other_execution.id) is None
+
 
 class TestUpdateExecutionStatus:
     """Tests for update_execution_status method."""
@@ -115,6 +126,17 @@ class TestUpdateExecutionStatus:
 
         assert updated is not None
         assert updated.status == ExecutionStatus.RUNNING
+
+    def test_update_status_is_project_scoped(self, db, manager) -> None:
+        db.execute(
+            "INSERT INTO projects (id, name, created_at, updated_at) VALUES (%s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)",
+            ("other-project", "Other Project"),
+        )
+        other_manager = LocalPipelineExecutionManager(db, project_id="other-project")
+        other_execution = other_manager.create_execution(pipeline_name="other-pipeline")
+
+        assert manager.update_execution_status(other_execution.id, ExecutionStatus.RUNNING) is None
+        assert other_manager.get_execution(other_execution.id).status == ExecutionStatus.PENDING
 
     def test_update_status_to_waiting_approval(self, manager) -> None:
         """Test updating status to waiting_approval with resume token."""
@@ -469,9 +491,11 @@ class TestResolveExecutionReference:
 
             def fetchone(self, sql: str, params: tuple[str, ...]) -> dict[str, str] | None:
                 self.queries.append((sql, params))
-                if "LIKE" in sql:
-                    return {"id": "pe-global-execution"}
                 return None
+
+            def fetchall(self, sql: str, params: tuple[str, ...]) -> list[dict[str, str]]:
+                self.queries.append((sql, params))
+                return [{"id": "pe-global-execution"}]
 
         fake_db = FakeDB()
         manager = LocalPipelineExecutionManager(cast(HubDatabase, fake_db), project_id="unused")
@@ -483,6 +507,19 @@ class TestResolveExecutionReference:
         prefix_sql, prefix_params = fake_db.queries[-1]
         assert "project_id IS NULL" in prefix_sql
         assert prefix_params == ("pe-global%",)
+
+    def test_resolve_uuid_prefix_rejects_ambiguous_matches(self, manager) -> None:
+        manager.create_execution(pipeline_name="first-pipeline")
+        manager.create_execution(pipeline_name="second-pipeline")
+
+        with pytest.raises(ValueError, match="ambiguous"):
+            manager.resolve_execution_reference("pe-")
+
+    def test_resolve_uuid_prefix_escapes_like_wildcards(self, manager) -> None:
+        manager.create_execution(pipeline_name="test-pipeline")
+
+        with pytest.raises(ValueError, match="Cannot resolve"):
+            manager.resolve_execution_reference("pe-%")
 
     def test_resolve_invalid_reference(self, manager) -> None:
         """Test resolving invalid reference raises ValueError."""

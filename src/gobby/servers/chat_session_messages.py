@@ -128,7 +128,11 @@ class ChatSessionMessagesMixin:
                 + "\n</conversation-history>"
             )
         except Exception as e:
-            logger.warning(f"Failed to load history context for {self.conversation_id}: {e}")
+            logger.warning(
+                "Failed to load history context for %s: %s",
+                self.conversation_id,
+                e,
+            )
             return None
 
     async def send_message(self, content: str | list[dict[str, Any]]) -> AsyncIterator[ChatEvent]:
@@ -200,7 +204,8 @@ class ChatSessionMessagesMixin:
                         has_usage = isinstance(_raw_usage, dict)
                         if not has_usage:
                             logger.warning(
-                                f"ResultMessage missing usage for session {self.conversation_id[:8]}",
+                                "ResultMessage missing usage for session %s",
+                                self.conversation_id[:8],
                             )
                         usage: dict[str, Any] = (
                             cast(dict[str, Any], _raw_usage) if has_usage else {}
@@ -251,7 +256,7 @@ class ChatSessionMessagesMixin:
 
                     elif isinstance(message, AssistantMessage):
                         self._last_model = getattr(message, "model", None)
-                        logger.debug(f"AssistantMessage model={self._last_model}")
+                        logger.debug("AssistantMessage model=%s", self._last_model)
                         for block in message.content:
                             if isinstance(block, ThinkingBlock):
                                 yield ThinkingEvent(content=block.thinking)
@@ -310,7 +315,7 @@ class ChatSessionMessagesMixin:
                     context_window = self._resolve_context_window_fallback()
                 yield DoneEvent(tool_calls_count=tool_calls_count, context_window=context_window)
             except Exception as e:
-                logger.error(f"ChatSession {self.conversation_id} error: {e}", exc_info=True)
+                logger.error("ChatSession %s error: %s", self.conversation_id, e, exc_info=True)
                 yield TextChunk(content=f"Generation failed: {sanitize_error(e)}")
                 if context_window is None:
                     context_window = self._resolve_context_window_fallback()
@@ -331,7 +336,7 @@ class ChatSessionMessagesMixin:
             try:
                 await self._client.interrupt()
             except Exception as e:
-                logger.warning(f"ChatSession {self.conversation_id} interrupt error: {e}")
+                logger.warning("ChatSession %s interrupt error: %s", self.conversation_id, e)
 
     async def drain_pending_response(self) -> None:
         """Drain any buffered response events from the SDK after an interrupt.
@@ -349,6 +354,6 @@ class ChatSessionMessagesMixin:
                 async for _ in self._client.receive_response():
                     pass
         except TimeoutError:
-            logger.debug(f"ChatSession {self.conversation_id}: drain timed out (no stale events)")
+            logger.debug("ChatSession %s: drain timed out (no stale events)", self.conversation_id)
         except Exception as e:
-            logger.debug(f"ChatSession {self.conversation_id}: drain error (expected): {e}")
+            logger.debug("ChatSession %s: drain error (expected): %s", self.conversation_id, e)

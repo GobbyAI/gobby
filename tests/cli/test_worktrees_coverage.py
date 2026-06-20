@@ -85,6 +85,7 @@ class TestCreateWorktreeErrors:
     ) -> None:
         with patch("os.getcwd", return_value="/app"):
             result = runner.invoke(worktrees, ["create", "feat/x"])
+        assert result.exit_code != 0
         assert "Error: boom" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -113,7 +114,7 @@ class TestCreateWorktreeErrors:
         mock_post.return_value = resp
         with patch("os.getcwd", return_value="/app"):
             result = runner.invoke(worktrees, ["create", "feat/x"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Failed to create worktree" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -273,7 +274,7 @@ class TestDeleteWorktreeErrors:
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Failed to delete worktree" in result.output
 
     @patch("gobby.cli.worktrees.get_daemon_url", return_value="http://localhost:9876")
@@ -293,7 +294,7 @@ class TestDeleteWorktreeErrors:
         resp.raise_for_status.return_value = None
         mock_post.return_value = resp
         result = runner.invoke(worktrees, ["delete", "wt-123", "--yes"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Failed to delete worktree" in result.output
 
     @pytest.mark.parametrize("payload", [{}, {"result": {}}])

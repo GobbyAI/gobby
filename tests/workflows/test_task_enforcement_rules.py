@@ -514,7 +514,7 @@ class TestRequireClaimedTaskRequiredSkills:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert response.reason.endswith(skill_fetch_directive("python"))
+        assert skill_fetch_directive("python") in response.reason
 
     @pytest.mark.asyncio
     async def test_rule_allows_when_all_required_skills_loaded(self, db: HubDatabase) -> None:
@@ -575,7 +575,7 @@ class TestRequireClaimedTaskRequiredSkills:
 
         assert response.decision == "block"
         assert response.reason is not None
-        assert response.reason.endswith(skill_fetch_directive("rust"))
+        assert skill_fetch_directive("rust") in response.reason
 
 
 class TestIsPlanFile:

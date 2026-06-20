@@ -90,6 +90,47 @@ def _open_ui_log_handler(log_file: Path) -> RotatingFileHandler:
     return handler
 
 
+def _is_gobby_ui_process(proc: psutil.Process, *, web_dir: Path | None = None) -> bool:
+    try:
+        cmdline = proc.cmdline()
+        cwd = Path(proc.cwd()).resolve()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
+        return False
+
+    if web_dir is not None and cwd != web_dir.resolve():
+        return False
+
+    cmdline_lower = " ".join(cmdline).lower()
+    npm_dev = "npm" in cmdline_lower and "run" in cmdline_lower and "dev" in cmdline_lower
+    return npm_dev or "vite" in cmdline_lower
+
+
+def _find_gobby_ui_port_holder(port: int, web_dir: Path) -> psutil.Process | None:
+    for proc in psutil.process_iter(["pid", "name"]):
+        try:
+            if not _is_gobby_ui_process(proc, web_dir=web_dir):
+                continue
+            for conn in proc.net_connections(kind="inet"):
+                if (
+                    hasattr(conn, "laddr")
+                    and conn.laddr
+                    and conn.laddr.port == port
+                    and conn.status == psutil.CONN_LISTEN
+                ):
+                    return proc
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
+            continue
+    return None
+
+
+def _terminate_ui_process(proc: psutil.Process) -> None:
+    children = proc.children(recursive=True)
+    proc.terminate()
+    _, alive = psutil.wait_procs([proc] + children, timeout=3)
+    for process in alive:
+        process.kill()
+
+
 def spawn_ui_server(
     host: str,
     port: int,
@@ -104,7 +145,17 @@ def spawn_ui_server(
     deps.stop_ui_server(quiet=True)
 
     if not bool(deps.is_port_available(port, host="0.0.0.0")):  # nosec B104
-        deps._kill_port_holder(port)
+        port_holder = _find_gobby_ui_port_holder(port, web_dir)
+        if port_holder is None:
+            deps.logger.error(
+                "Port %s is in use by a non-Gobby UI process; aborting UI server spawn",
+                port,
+            )
+            return None
+        deps.logger.info(
+            "Stopping existing Gobby UI process on port %s: PID %s", port, port_holder.pid
+        )
+        _terminate_ui_process(port_holder)
         if not bool(
             deps.wait_for_port_available(port, host="0.0.0.0", timeout=5.0)  # nosec B104
         ):
@@ -171,7 +222,7 @@ def spawn_ui_server(
 
         return int(process.pid)
 
-    except Exception as exc:
+    except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
         deps.logger.error(f"Failed to spawn UI server: {exc}")
         return None
 
@@ -194,7 +245,7 @@ def stop_ui_server(quiet: bool = False) -> bool:
     try:
         with open(pid_file) as file:
             pid = int(file.read().strip())
-    except Exception as exc:
+    except (OSError, ValueError) as exc:
         if not quiet:
             deps.logger.debug(f"Error reading UI PID file: {exc}")
         pid_file.unlink(missing_ok=True)
@@ -208,6 +259,13 @@ def stop_ui_server(quiet: bool = False) -> bool:
 
     try:
         parent = psutil.Process(pid)
+        if not _is_gobby_ui_process(parent):
+            if not quiet:
+                deps.logger.warning(
+                    "Refusing to stop PID %s from ui.pid: process identity does not match Gobby UI",
+                    pid,
+                )
+            return False
         children = parent.children(recursive=True)
 
         os.kill(pid, signal.SIGTERM)
@@ -240,7 +298,7 @@ def stop_ui_server(quiet: bool = False) -> bool:
     except (ProcessLookupError, psutil.NoSuchProcess):
         pid_file.unlink(missing_ok=True)
         return True
-    except Exception as exc:
+    except (OSError, psutil.Error) as exc:
         if not quiet:
             deps.logger.debug(f"Error stopping UI server: {exc}")
         return False

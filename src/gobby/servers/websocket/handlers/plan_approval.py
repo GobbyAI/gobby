@@ -279,6 +279,17 @@ async def handle_attached_plan_approval(
     source = getattr(session, "source", None)
     decision = data.get("decision", "")
     raw_option_id = data.get("option_id")
+    if decision not in {"approve", "request_changes"} or (
+        decision == "approve" and not raw_option_id
+    ):
+        await mixin._send_error(
+            websocket,
+            f"Unrecognized plan decision/option for {source!r}: "
+            f"decision={decision!r} option_id={raw_option_id!r}",
+            code="INVALID_PLAN_DECISION",
+        )
+        return
+
     action_option_id = resolve_action_option_id(source, decision, raw_option_id)
     if action_option_id is None:
         await mixin._send_error(

@@ -7,6 +7,8 @@ import logging
 from collections.abc import Mapping
 from typing import TYPE_CHECKING
 
+import psycopg
+
 from gobby.agents.constants import ALL_TERMINAL_ENV_VARS
 from gobby.agents.resume_metadata import merge_resume_metadata_env
 from gobby.agents.sandbox import get_sandbox_resolver
@@ -105,7 +107,7 @@ def _record_resume_launch_details(
         from gobby.storage.agents import LocalAgentRunManager
 
         LocalAgentRunManager(db).update_resume_metadata(agent_run_id, metadata)
-    except Exception as exc:
+    except (ImportError, TypeError, ValueError, psycopg.Error) as exc:
         logger.warning("Failed to persist resume launch metadata: %s", exc)
 
 

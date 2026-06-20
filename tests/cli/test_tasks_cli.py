@@ -18,6 +18,7 @@ from click.testing import CliRunner
 
 from gobby.cli import cli
 from gobby.cli.tasks._utils import config as task_config_utils
+from gobby.config import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
@@ -1939,18 +1940,20 @@ class TestValidateCommandExtended:
 
             # With 2 failures + 1 new failure = 3, --max-iterations 3 is exceeded.
 
-            result = runner.invoke(
-                cli,
-                [
-                    "tasks",
-                    "validate",
-                    "gt-abc123",
-                    "--max-iterations",
-                    "3",
-                    "--summary",
-                    "fix",
-                ],
-            )
+            mock_config.return_value = DaemonConfig()
+            with patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()):
+                result = runner.invoke(
+                    cli,
+                    [
+                        "tasks",
+                        "validate",
+                        "gt-abc123",
+                        "--max-iterations",
+                        "3",
+                        "--summary",
+                        "fix",
+                    ],
+                )
 
             assert result.exit_code == 0
             assert "Exceeded max retries" in result.output

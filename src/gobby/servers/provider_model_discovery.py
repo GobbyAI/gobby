@@ -115,18 +115,21 @@ async def discover_codex_models(
 
     client = codex_client
     owns_client = False
-    if client is None or not client.is_connected:
+    if client is None:
         from gobby.adapters.codex_impl.client import CodexAppServerClient
 
         client = CodexAppServerClient()
         owns_client = True
+    started_client = False
+    if not client.is_connected:
         await client.start()
+        started_client = True
 
     assert client is not None
     try:
         raw_models = await client.list_models(include_hidden=True)
     finally:
-        if owns_client:
+        if owns_client or started_client:
             await client.stop()
 
     models: list[dict[str, Any]] = []
@@ -442,14 +445,17 @@ async def probe_claude_model(
         raise RuntimeError(f"Claude {alias}: missing modelUsage")
 
     canonical_id = next(iter(model_usage))
-    return {
+    result: dict[str, Any] = {
         "value": alias,
         "label": label,
         "canonical_id": str(canonical_id),
-        "context_length": context_length_resolver("claude", str(canonical_id)),
-        "context_length_source": "static_default",
         "reasoning": {"supported_efforts": list(CLAUDE_REASONING_EFFORTS)},
     }
+    context_length = context_length_resolver("claude", str(canonical_id))
+    if context_length is not None:
+        result["context_length"] = context_length
+        result["context_length_source"] = "static_default"
+    return result
 
 
 async def get_cli_version(provider: str, *, which: Which) -> str | None:

@@ -8,6 +8,7 @@ from typing import Any, Literal, cast
 MEMORY_UUID_NAMESPACE = uuid.UUID("a3b2c1d0-1234-5678-9abc-def012345678")
 
 Visibility = Literal["active", "hidden", "all"]
+_ALLOWED_VISIBILITY_COLUMNS = frozenset({"deleted_at", "memories.deleted_at", "m.deleted_at"})
 """Three-state memory visibility filter: visible rows, dream-hidden rows, or both."""
 
 
@@ -19,6 +20,8 @@ def visibility_predicate(visibility: Visibility, *, column: str = "deleted_at") 
     value so bad input fails loudly at the storage boundary rather than silently
     leaking hidden rows.
     """
+    if column not in _ALLOWED_VISIBILITY_COLUMNS:
+        raise ValueError(f"Invalid visibility column: {column!r}")
     if visibility == "active":
         return f"{column} IS NULL"
     if visibility == "hidden":

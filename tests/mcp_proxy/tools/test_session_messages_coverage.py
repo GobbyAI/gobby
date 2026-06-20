@@ -743,6 +743,7 @@ class TestGetHandoffContext:
         session_manager = MagicMock()
         mock_session = MagicMock()
         mock_session.id = "sess-123"
+        mock_session.status = "handoff_ready"
         mock_session.summary_markdown = None
         session_manager.resolve_session_reference.return_value = "sess-123"
         session_manager.get.return_value = mock_session

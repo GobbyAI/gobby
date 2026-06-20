@@ -450,6 +450,10 @@ class HookManager:
             mcp_calls,
         )
 
+    def evaluate_workflow_rules(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
+        """Evaluate workflow rules and dispatch mcp_call effects."""
+        return self._evaluate_workflow_rules(event)
+
     def _evaluate_workflow_rules(self, event: HookEvent) -> tuple[str | None, HookResponse | None]:
         """Evaluate workflow rules and dispatch mcp_call effects."""
         return self._create_rule_evaluator().evaluate(event)

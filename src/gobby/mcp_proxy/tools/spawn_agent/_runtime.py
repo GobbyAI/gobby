@@ -4,9 +4,14 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
+
+
+@runtime_checkable
+class ReasoningPayload(Protocol):
+    def to_dict(self) -> dict[str, Any]: ...
 
 
 def _normalize_string_list(value: Any) -> list[str]:
@@ -76,6 +81,8 @@ def _build_spawn_success_response(
     code_index_preflight_warning: dict[str, str] | None,
     reasoning: Any,
 ) -> dict[str, Any]:
+    if not isinstance(reasoning, ReasoningPayload):
+        raise TypeError("spawn reasoning payload must implement to_dict()")
     response = {
         "success": True,
         "run_id": run_id,

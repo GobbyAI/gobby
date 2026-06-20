@@ -154,6 +154,7 @@ class TestWakeDispatcherSdkResume:
             "agent-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
+            escape_before_submit=True,
         )
         assert tmux_sender.await_count == 1
         assert tmux_sender.await_args is not None
@@ -189,6 +190,7 @@ class TestWakeDispatcherSdkResume:
             "agent-1",
             CONTINUE_WAKE_MESSAGE,
             submit=True,
+            escape_before_submit=True,
         )
         assert tmux_sender.await_count == 1
         assert tmux_sender.await_args is not None

@@ -587,7 +587,7 @@ class TestStartCommand:
         # HTTP port available, WS port not
         daemon_port = int(mock_daemon_config.daemon_port)
 
-        def port_available_side_effect(port: int) -> bool:
+        def port_available_side_effect(port: int, **_kwargs: object) -> bool:
             return port == daemon_port
 
         mock_is_port_available.side_effect = port_available_side_effect

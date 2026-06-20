@@ -218,9 +218,12 @@ def apply_cli_overrides(
             # Handle nested keys like "logging.level"
             parts = key.split(".")
             current = config_dict
-            for part in parts[:-1]:
+            for index, part in enumerate(parts[:-1]):
                 if part not in current:
                     current[part] = {}
+                elif not isinstance(current[part], dict):
+                    path = ".".join(parts[: index + 1])
+                    raise ValueError(f"Cannot apply override {key!r}: {path!r} is not a mapping")
                 current = current[part]
             current[parts[-1]] = value
         else:

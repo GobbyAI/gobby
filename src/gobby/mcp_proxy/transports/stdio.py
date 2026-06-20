@@ -127,10 +127,17 @@ class StdioTransportConnection(BaseTransportConnection):
         transport_entered: bool,
     ) -> None:
         session_ctx = self._session_context
+        transport_ctx = self._transport_context
+        self._session = None
+        self._session_context = None
+        self._transport_context = None
+        self._state = ConnectionState.DISCONNECTED
         try:
             if session_entered and session_ctx is not None:
                 try:
-                    await session_ctx.__aexit__(None, None, None)
+                    await asyncio.wait_for(session_ctx.__aexit__(None, None, None), timeout=2.0)
+                except TimeoutError:
+                    logger.warning("Session cleanup timed out for %s", self.config.name)
                 except asyncio.CancelledError:
                     logger.warning("Session cleanup cancelled for %s", self.config.name)
                     raise
@@ -141,10 +148,11 @@ class StdioTransportConnection(BaseTransportConnection):
                         cleanup_error,
                     )
 
-            transport_ctx = self._transport_context
             if transport_entered and transport_ctx is not None:
                 try:
-                    await transport_ctx.__aexit__(None, None, None)
+                    await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=2.0)
+                except TimeoutError:
+                    logger.warning("Transport cleanup timed out for %s", self.config.name)
                 except asyncio.CancelledError:
                     logger.warning("Transport cleanup cancelled for %s", self.config.name)
                     raise
@@ -155,10 +163,6 @@ class StdioTransportConnection(BaseTransportConnection):
                         cleanup_error,
                     )
         finally:
-            self._session = None
-            self._session_context = None
-            self._transport_context = None
-            self._state = ConnectionState.DISCONNECTED
             self._close_stdio_errlog()
 
     async def connect(self) -> Any:
@@ -219,7 +223,12 @@ class StdioTransportConnection(BaseTransportConnection):
         except Exception as e:
             # Handle exceptions with empty str() (EndOfStream, ClosedResourceError)
             error_msg = str(e) if str(e) else f"{type(e).__name__}: Connection closed or timed out"
-            logger.error(f"Failed to connect to stdio server '{self.config.name}': {error_msg}")
+            logger.error(
+                "Failed to connect to stdio server %s: %s",
+                self.config.name,
+                error_msg,
+                extra={"server": self.config.name, "error_type": type(e).__name__},
+            )
 
             await self._cleanup_connect_attempt(
                 session_entered=session_entered,

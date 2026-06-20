@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import re
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
@@ -43,7 +44,7 @@ def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
             deps.load_config(config_file, resolve_database_url=True),
         )
     except Exception as exc:
-        deps.logger.warning("Failed to load bootstrap config: %s", exc)
+        deps.logger.warning("Failed to load bootstrap config: %s", _redact_exception_text(exc))
         return DaemonConfig()
 
     if bootstrap_config.hub_backend != "postgres" or not bootstrap_config.database_url:
@@ -63,7 +64,9 @@ def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
                 ),
             )
     except Exception as exc:
-        deps.logger.warning("Failed to load config from PostgreSQL hub: %s", exc)
+        deps.logger.warning(
+            "Failed to load config from PostgreSQL hub: %s", _redact_exception_text(exc)
+        )
         return bootstrap_config
 
 
@@ -92,6 +95,15 @@ def _redact_dsn(dsn: str) -> str:
     if scheme:
         return f"{scheme}://{redacted_auth}@{suffix}"
     return f"{redacted_auth}@{suffix}"
+
+
+def _redact_exception_text(exc: BaseException) -> str:
+    """Redact PostgreSQL DSNs embedded in exception messages."""
+    return re.sub(
+        r"postgres(?:ql)?(?:\+\w+)?://[^\s'\"<>]+",
+        lambda match: _redact_dsn(match.group(0)),
+        str(exc),
+    )
 
 
 def get_resources_dir(project_path: str | None = None) -> Path:

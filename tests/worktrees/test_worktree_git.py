@@ -422,6 +422,7 @@ class TestWorktreeGitManagerDeleteWorktree:
     def test_delete_handles_failure(self, mock_run, manager, tmp_path) -> None:
         """Delete handles git failure."""
         worktree_path = tmp_path / "worktrees" / "feature-test"
+        worktree_path.mkdir(parents=True)
         mock_run.return_value = subprocess.CompletedProcess(
             args=["git", "worktree", "remove"],
             returncode=128,

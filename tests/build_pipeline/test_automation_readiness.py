@@ -72,11 +72,14 @@ async def test_build_readiness_cascades_manifests_and_current_stage_projection(
     assert result.created is False
     assert result.manifest is not None
     assert result.tick_dispatched >= 1
+    epic_artifacts = task_manager.artifacts.get_artifacts(epic.id)
     for task in subtree:
         assert task.allow_automation is True
         assert task.unattended is False
-        assert task.isolation == "none"
-        assert task_manager.artifacts.get_artifacts(task.id).target_branch == "main"
+        assert getattr(task.isolation, "value", task.isolation) == "worktree"
+        artifacts = task_manager.artifacts.get_artifacts(task.id)
+        expected_target = "main" if task.id == epic.id else epic_artifacts.integration_branch
+        assert artifacts.target_branch == expected_target
         rows = task_manager.stage_states.list_for_task(task.id)
         assert rows
         assert "test_arch" not in {row.stage_name for row in rows}

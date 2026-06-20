@@ -24,6 +24,7 @@ from gobby.hooks.envelope_dedupe import (
     clear_stale_envelope_processing_marker,
     envelope_terminal_response,
     mark_envelope_processed,
+    read_envelope_marker,
 )
 from gobby.servers.tool_approvals import (
     approval_key_for_tool,
@@ -559,6 +560,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 )
 
             if envelope_id and not claim_envelope_processing(envelope_id):
+                marker = read_envelope_marker(envelope_id)
                 stored_response = envelope_terminal_response(envelope_id)
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
@@ -568,12 +570,18 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 ) and claim_envelope_processing(envelope_id):
                     logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
                 else:
-                    logger.debug("Hook envelope %s is already being processed", envelope_id)
+                    status = marker.get("status") if isinstance(marker, dict) else None
+                    reason = (
+                        "duplicate envelope already processing"
+                        if status == "processing"
+                        else "duplicate envelope previously processed"
+                    )
+                    logger.debug("Hook envelope %s duplicate: %s", envelope_id, reason)
                     return JSONResponse(
                         status_code=409,
                         content={
-                            "status": "processing",
-                            "reason": "duplicate envelope already processing",
+                            "status": status if isinstance(status, str) else "duplicate",
+                            "reason": reason,
                         },
                     )
 

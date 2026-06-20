@@ -436,6 +436,7 @@ class WorkflowHookHandler:
             event.metadata = metadata
 
         candidates: list[str] = []
+        project_repo_path: str | None = None
         if event.cwd and event.cwd.strip():
             candidates.append(event.cwd)
         metadata_path = metadata.get("project_path")
@@ -457,13 +458,18 @@ class WorkflowHookHandler:
 
             repo_path = project.repo_path if project is not None else None
             if isinstance(repo_path, str) and repo_path.strip():
-                metadata.setdefault("project_path", repo_path)
-                candidates.append(repo_path)
+                project_repo_path = repo_path
+                metadata.setdefault("project_path", project_repo_path)
+                candidates.append(project_repo_path)
 
         worktree_root = resolve_git_worktree_root(*candidates)
         if worktree_root:
             metadata["project_path"] = worktree_root
-        return worktree_root
+            return worktree_root
+        if project_repo_path:
+            metadata["project_path"] = project_repo_path
+            return project_repo_path
+        return None
 
     def _handle_cancelled(self, event: HookEvent) -> HookResponse:
         """Handle CancelledError by logging and returning appropriate response."""

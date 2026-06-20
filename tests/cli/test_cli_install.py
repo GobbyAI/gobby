@@ -858,7 +858,11 @@ class TestInstallCommand:
         """Test install shows development mode when using source directory."""
         mock_load_config.return_value = MagicMock()
         mock_codex.return_value = False
-        mock_get_install_dir.return_value = Path("/home/user/project/src/gobby/install")
+        source_root = temp_dir / "project"
+        install_dir = source_root / "src" / "gobby" / "install"
+        install_dir.mkdir(parents=True)
+        (source_root / "pyproject.toml").write_text("[project]\nname = 'gobby'\n")
+        mock_get_install_dir.return_value = install_dir
         mock_ensure_config.return_value = {"created": False, "path": "/test/config.yaml"}
         mock_install_claude.return_value = {
             "success": True,

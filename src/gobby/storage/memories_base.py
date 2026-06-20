@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 
 class MemoryStoreBase:
-    def __init__(self, db: HubDatabase):
+    def __init__(self, db: HubDatabase) -> None:
         self.db = db
         self._change_listeners: list[Callable[[], Any]] = []
 

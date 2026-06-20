@@ -415,8 +415,11 @@ class TestRunPipeline:
 
 
 class TestApproveReject:
+    @patch("gobby.cli.pipelines._try_daemon_approval", return_value=None)
     @patch("gobby.cli.pipelines.get_pipeline_executor")
-    def test_approve_success(self, mock_exec_fn: MagicMock, runner: CliRunner) -> None:
+    def test_approve_success(
+        self, mock_exec_fn: MagicMock, mock_daemon: MagicMock, runner: CliRunner
+    ) -> None:
         execution = MagicMock()
         execution.id = "ex-1"
         execution.pipeline_name = "deploy"
@@ -428,22 +431,31 @@ class TestApproveReject:
         assert result.exit_code == 0
         assert "Pipeline approved" in result.output
 
+    @patch("gobby.cli.pipelines._try_daemon_approval", return_value=None)
     @patch("gobby.cli.pipelines.get_pipeline_executor")
-    def test_approve_invalid_token(self, mock_exec_fn: MagicMock, runner: CliRunner) -> None:
+    def test_approve_invalid_token(
+        self, mock_exec_fn: MagicMock, mock_daemon: MagicMock, runner: CliRunner
+    ) -> None:
         with patch("gobby.cli.pipelines.asyncio.run", side_effect=ValueError("bad token")):
             result = runner.invoke(pipelines, ["approve", "bad"])
         assert result.exit_code == 1
         assert "Invalid token" in result.output
 
+    @patch("gobby.cli.pipelines._try_daemon_approval", return_value=None)
     @patch("gobby.cli.pipelines.get_pipeline_executor")
-    def test_approve_generic_error(self, mock_exec_fn: MagicMock, runner: CliRunner) -> None:
+    def test_approve_generic_error(
+        self, mock_exec_fn: MagicMock, mock_daemon: MagicMock, runner: CliRunner
+    ) -> None:
         with patch("gobby.cli.pipelines.asyncio.run", side_effect=RuntimeError("boom")):
             result = runner.invoke(pipelines, ["approve", "tok"])
         assert result.exit_code == 1
         assert "Approval failed" in result.output
 
+    @patch("gobby.cli.pipelines._try_daemon_approval", return_value=None)
     @patch("gobby.cli.pipelines.get_pipeline_executor")
-    def test_reject_success(self, mock_exec_fn: MagicMock, runner: CliRunner) -> None:
+    def test_reject_success(
+        self, mock_exec_fn: MagicMock, mock_daemon: MagicMock, runner: CliRunner
+    ) -> None:
         execution = MagicMock()
         execution.id = "ex-1"
         execution.pipeline_name = "deploy"
@@ -455,21 +467,30 @@ class TestApproveReject:
         assert result.exit_code == 0
         assert "Pipeline rejected" in result.output
 
+    @patch("gobby.cli.pipelines._try_daemon_approval", return_value=None)
     @patch("gobby.cli.pipelines.get_pipeline_executor")
-    def test_reject_invalid_token(self, mock_exec_fn: MagicMock, runner: CliRunner) -> None:
+    def test_reject_invalid_token(
+        self, mock_exec_fn: MagicMock, mock_daemon: MagicMock, runner: CliRunner
+    ) -> None:
         with patch("gobby.cli.pipelines.asyncio.run", side_effect=ValueError("bad")):
             result = runner.invoke(pipelines, ["reject", "bad"])
         assert result.exit_code == 1
 
+    @patch("gobby.cli.pipelines._try_daemon_approval", return_value=None)
     @patch("gobby.cli.pipelines.get_pipeline_executor")
-    def test_reject_generic_error(self, mock_exec_fn: MagicMock, runner: CliRunner) -> None:
+    def test_reject_generic_error(
+        self, mock_exec_fn: MagicMock, mock_daemon: MagicMock, runner: CliRunner
+    ) -> None:
         with patch("gobby.cli.pipelines.asyncio.run", side_effect=RuntimeError("boom")):
             result = runner.invoke(pipelines, ["reject", "tok"])
         assert result.exit_code == 1
         assert "Rejection failed" in result.output
 
+    @patch("gobby.cli.pipelines._try_daemon_approval", return_value=None)
     @patch("gobby.cli.pipelines.get_pipeline_executor")
-    def test_approve_json(self, mock_exec_fn: MagicMock, runner: CliRunner) -> None:
+    def test_approve_json(
+        self, mock_exec_fn: MagicMock, mock_daemon: MagicMock, runner: CliRunner
+    ) -> None:
         execution = MagicMock()
         execution.id = "ex-1"
         execution.pipeline_name = "deploy"
@@ -482,8 +503,11 @@ class TestApproveReject:
         data = json.loads(result.output)
         assert data["status"] == "completed"
 
+    @patch("gobby.cli.pipelines._try_daemon_approval", return_value=None)
     @patch("gobby.cli.pipelines.get_pipeline_executor")
-    def test_reject_json(self, mock_exec_fn: MagicMock, runner: CliRunner) -> None:
+    def test_reject_json(
+        self, mock_exec_fn: MagicMock, mock_daemon: MagicMock, runner: CliRunner
+    ) -> None:
         execution = MagicMock()
         execution.id = "ex-1"
         execution.pipeline_name = "deploy"

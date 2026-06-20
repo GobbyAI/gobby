@@ -2,6 +2,7 @@
 
 import logging
 import os
+import subprocess
 import tempfile
 from collections.abc import Generator, Iterator
 from pathlib import Path
@@ -254,11 +255,35 @@ def mock_config_with_websocket() -> MagicMock:
 
 
 @pytest.fixture
-def sample_project(project_manager: "LocalProjectManager") -> dict[str, Any]:
+def sample_project(project_manager: "LocalProjectManager", tmp_path: Path) -> dict[str, Any]:
     """Create a sample project for testing."""
+    repo_path = tmp_path / "test-project"
+    repo_path.mkdir()
+    subprocess.run(
+        ["git", "init", "-q", "-b", "main"],
+        cwd=repo_path,
+        check=True,
+    )
+    (repo_path / "README.md").write_text("test project\n")
+    subprocess.run(["git", "add", "README.md"], cwd=repo_path, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=Gobby Tests",
+            "-c",
+            "user.email=gobby-tests@example.com",
+            "commit",
+            "-q",
+            "-m",
+            "initial",
+        ],
+        cwd=repo_path,
+        check=True,
+    )
     project = project_manager.create(
         name="test-project",
-        repo_path="/tmp/test-project",
+        repo_path=str(repo_path),
         github_url="https://github.com/test/test-project",
     )
     return project.to_dict()

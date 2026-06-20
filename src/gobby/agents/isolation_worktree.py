@@ -12,38 +12,14 @@ from gobby.agents.isolation_models import (
     IsolationContext,
     IsolationHandler,
     SpawnConfig,
+    SpawnStateKey,
     generate_branch_name,
+    spawn_state_key,
 )
 from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.storage.tasks import TaskArtifactManager
 
 logger = logging.getLogger("gobby.agents.isolation")
-
-type _SpawnStateKey = tuple[
-    str,
-    str | None,
-    int | None,
-    str | None,
-    str | None,
-    str,
-    str,
-    str,
-    str,
-]
-
-
-def _spawn_state_key(config: SpawnConfig) -> _SpawnStateKey:
-    return (
-        config.project_id,
-        config.task_id,
-        config.task_seq_num,
-        config.branch_name,
-        config.branch_prefix,
-        config.base_branch,
-        config.project_path,
-        config.provider,
-        config.parent_session_id,
-    )
 
 
 class WorktreeIsolationHandler(IsolationHandler):
@@ -72,9 +48,7 @@ class WorktreeIsolationHandler(IsolationHandler):
         self._git_manager = git_manager
         self._worktree_storage = worktree_storage
         # Track partial state for cleanup on failure
-        self._created_worktree_path: str | None = None
-        self._created_worktree_id: str | None = None
-        self._partial_worktrees: dict[_SpawnStateKey, dict[str, str | None]] = {}
+        self._partial_worktrees: dict[SpawnStateKey, dict[str, str | None]] = {}
 
     async def prepare_environment(self, config: SpawnConfig) -> IsolationContext:
         """
@@ -83,11 +57,9 @@ class WorktreeIsolationHandler(IsolationHandler):
         Prepare or reuse a git worktree and return isolation metadata.
         """
         # Reset partial state
-        state_key = _spawn_state_key(config)
+        state_key = spawn_state_key(config)
         partial_state: dict[str, str | None] = {"path": None, "id": None}
         self._partial_worktrees[state_key] = partial_state
-        self._created_worktree_path = None
-        self._created_worktree_id = None
 
         branch_name = generate_branch_name(config)
         base_branch = config.base_branch
@@ -175,7 +147,6 @@ class WorktreeIsolationHandler(IsolationHandler):
             raise RuntimeError(f"Failed to create worktree: {result.error}")
 
         # Track for cleanup — worktree exists on disk now
-        self._created_worktree_path = worktree_path
         partial_state["path"] = worktree_path
 
         # Record in storage
@@ -189,7 +160,6 @@ class WorktreeIsolationHandler(IsolationHandler):
         )
 
         # Track storage record for cleanup
-        self._created_worktree_id = worktree.id
         partial_state["id"] = worktree.id
 
         created_base_commit_sha: str | None = None
@@ -217,8 +187,6 @@ class WorktreeIsolationHandler(IsolationHandler):
 
         # Success — clear partial state
         self._partial_worktrees.pop(state_key, None)
-        self._created_worktree_path = None
-        self._created_worktree_id = None
 
         return IsolationContext(
             cwd=worktree.worktree_path,
@@ -233,13 +201,15 @@ class WorktreeIsolationHandler(IsolationHandler):
 
     async def cleanup_environment(self, config: SpawnConfig) -> None:
         """Clean up partially created worktree on prepare failure."""
-        partial_state = self._partial_worktrees.pop(_spawn_state_key(config), None)
-        worktree_path = (
-            partial_state.get("path") if partial_state is not None else self._created_worktree_path
-        )
-        worktree_id = (
-            partial_state.get("id") if partial_state is not None else self._created_worktree_id
-        )
+        partial_state = self._partial_worktrees.pop(spawn_state_key(config), None)
+        if partial_state is None:
+            logger.debug(
+                "Skipping worktree cleanup for %s: no partial worktree state recorded",
+                config.task_id or config.project_id,
+            )
+            return
+        worktree_path = partial_state.get("path")
+        worktree_id = partial_state.get("id")
 
         if worktree_path:
             try:
@@ -258,9 +228,6 @@ class WorktreeIsolationHandler(IsolationHandler):
                 logger.info(f"Cleaned up worktree storage record: {worktree_id}")
             except Exception as e:
                 logger.warning(f"Failed to clean up worktree record {worktree_id}: {e}")
-
-        self._created_worktree_path = None
-        self._created_worktree_id = None
 
     def build_context_prompt(self, original_prompt: str, ctx: IsolationContext) -> str:
         """

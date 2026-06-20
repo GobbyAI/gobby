@@ -9,7 +9,6 @@ import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import replace
 from typing import TYPE_CHECKING, Any, cast
-from weakref import WeakKeyDictionary
 
 from gobby.agents.provider_capabilities import (
     KNOWN_REASONING_EFFORTS,
@@ -65,19 +64,6 @@ _SPAWN_COLD_ADAPTER_STYLES: frozenset[AIAdapterStyle] = frozenset(
         AIAdapterStyle.ACP,
     }
 )
-_SPAWN_COLD_GATES: WeakKeyDictionary[asyncio.AbstractEventLoop, tuple[int, asyncio.Semaphore]] = (
-    WeakKeyDictionary()
-)
-
-
-def _spawn_cold_gate(max_concurrency: int) -> asyncio.Semaphore:
-    loop = asyncio.get_running_loop()
-    gate_entry = _SPAWN_COLD_GATES.get(loop)
-    if gate_entry is None or gate_entry[0] != max_concurrency:
-        gate = asyncio.Semaphore(max_concurrency)
-        _SPAWN_COLD_GATES[loop] = (max_concurrency, gate)
-        return gate
-    return gate_entry[1]
 
 
 class _ReasoningEffortRejectedError(ValueError):
@@ -162,6 +148,7 @@ class TextGenerationService:
         self._candidate_timeout_seconds = candidate_timeout_seconds
         self._cli_candidate_timeout_seconds = cli_candidate_timeout_seconds
         self._spawn_cold_max_concurrency = spawn_cold_max_concurrency
+        self._spawn_cold_gate = asyncio.Semaphore(spawn_cold_max_concurrency)
         self._profile_defaults = {
             FeatureProfile(profile): candidate_runtime_entries(candidates, profile=profile)
             for profile, candidates in (profile_defaults or {}).items()
@@ -215,7 +202,7 @@ class TextGenerationService:
                 awaitable_factory(), request=request, binding=binding
             )
 
-        async with _spawn_cold_gate(self._spawn_cold_max_concurrency):
+        async with self._spawn_cold_gate:
             return await self._await_candidate(
                 awaitable_factory(), request=request, binding=binding
             )
@@ -360,7 +347,14 @@ class TextGenerationService:
                 last_reasoning_error = exc
                 reasoning_rejections += 1
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
-                logger.warning("Skipping text generation candidate: %s", exc)
+                self._log_generation_event(
+                    request=candidate,
+                    binding=binding,
+                    latency_ms=_elapsed_ms(start),
+                    success=False,
+                    error=exc,
+                    terminal_failure=not has_remaining_candidates,
+                )
                 continue
             except Exception as exc:
                 last_error = exc
@@ -462,7 +456,15 @@ class TextGenerationService:
                 last_reasoning_error = exc
                 reasoning_rejections += 1
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
-                logger.warning("Skipping JSON generation candidate: %s", exc)
+                self._log_generation_event(
+                    request=candidate,
+                    binding=binding,
+                    latency_ms=_elapsed_ms(start),
+                    success=False,
+                    error=exc,
+                    json_parse_outcome=parse_outcome,
+                    terminal_failure=not has_remaining_candidates,
+                )
                 continue
             except Exception as exc:
                 last_error = exc
@@ -604,12 +606,18 @@ class TextGenerationService:
         model = request.model or (next(iter(binding.models), None) if binding else None)
         if success:
             log_event = logger.debug
+            message = "feature_llm_call"
+        elif isinstance(error, _ReasoningEffortRejectedError):
+            log_event = logger.warning
+            message = f"feature_llm_call: {error}"
         elif terminal_failure:
             log_event = logger.error
+            message = "feature_llm_call"
         else:
             log_event = logger.debug
+            message = "feature_llm_call"
         log_event(
-            "feature_llm_call",
+            message,
             extra={
                 "feature": request.caller,
                 "profile": request.profile,

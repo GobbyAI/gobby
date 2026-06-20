@@ -85,7 +85,7 @@ class FeatureCandidateConfig(BaseModel):
         return _normalize_reasoning_effort(value)
 
 
-type FeatureCandidateInput = str | FeatureCandidateConfig
+type FeatureCandidateInput = str | FeatureCandidateConfig | Mapping[str, Any]
 
 
 # Built-in profiles stay cloud-only. Local fallback candidates are explicit
@@ -131,6 +131,9 @@ def default_reasoning_for_profile(profile: FeatureProfile | str) -> str | None:
 def _candidate_label(candidate: FeatureCandidateInput) -> str:
     if isinstance(candidate, FeatureCandidateConfig):
         return candidate.candidate
+    if isinstance(candidate, Mapping):
+        raw_candidate = candidate.get("candidate")
+        return raw_candidate if isinstance(raw_candidate, str) else ""
     return candidate
 
 
@@ -231,7 +234,7 @@ class FeatureDefaultConfig(BaseModel):
         default=FeatureProfile.LOW,
         description="Provider-agnostic capability profile requested by this feature.",
     )
-    candidates: list[FeatureCandidateConfig] = Field(
+    candidates: Sequence[FeatureCandidateInput] = Field(
         default_factory=list,
         description=(
             "Ordered provider/model candidates with optional reasoning pins, for example "

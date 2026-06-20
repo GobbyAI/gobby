@@ -55,6 +55,33 @@ class SpawnConfig:
     parent_session_id: str
 
 
+type SpawnStateKey = tuple[
+    str,
+    str | None,
+    int | None,
+    str | None,
+    str | None,
+    str,
+    str,
+    str,
+    str,
+]
+
+
+def spawn_state_key(config: SpawnConfig) -> SpawnStateKey:
+    return (
+        config.project_id,
+        config.task_id,
+        config.task_seq_num,
+        config.branch_name,
+        config.branch_prefix,
+        config.base_branch,
+        config.project_path,
+        config.provider,
+        config.parent_session_id,
+    )
+
+
 def generate_branch_name(config: SpawnConfig) -> str:
     """
     Auto-generate branch name from task or fallback to prefix+timestamp.

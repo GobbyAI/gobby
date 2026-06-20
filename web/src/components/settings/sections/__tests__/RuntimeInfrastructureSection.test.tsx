@@ -27,8 +27,8 @@ const SCHEMA: Record<string, unknown> = {
       type: 'object',
       properties: {
         profile: { $ref: '#/$defs/FeatureProfile' },
-        max_concurrency: { type: 'integer', minimum: 1, maximum: 16 },
-        max_tokens: { type: 'integer', minimum: 1, maximum: 1000 },
+        max_concurrency: { type: 'integer', minimum: 1 },
+        max_tokens: { type: 'integer', minimum: 1 },
       },
     },
     DigestConfig: {

@@ -13,6 +13,7 @@ import pytest
 from click.testing import CliRunner
 
 from gobby.cli import cli
+from gobby.config import DaemonConfig
 
 pytestmark = pytest.mark.unit
 
@@ -79,7 +80,7 @@ class TestValidateCommandWithNewFlags:
         mock_manager = MagicMock()
         mock_manager.list_tasks.return_value = []  # No children
         mock_get_manager.return_value = mock_manager
-        mock_load_config.return_value = MagicMock()
+        mock_load_config.return_value = DaemonConfig()
         validation_result = MagicMock()
         validation_result.status = "invalid"
         validation_result.feedback = "Still broken"
@@ -89,18 +90,19 @@ class TestValidateCommandWithNewFlags:
 
         mock_validator_cls.return_value.validate_task.side_effect = async_result
 
-        result = runner.invoke(
-            cli,
-            [
-                "tasks",
-                "validate",
-                "gt-test123",
-                "--max-iterations",
-                "2",
-                "--summary",
-                "test changes",
-            ],
-        )
+        with patch("gobby.cli.load_full_config_from_db", return_value=DaemonConfig()):
+            result = runner.invoke(
+                cli,
+                [
+                    "tasks",
+                    "validate",
+                    "gt-test123",
+                    "--max-iterations",
+                    "2",
+                    "--summary",
+                    "test changes",
+                ],
+            )
 
         assert result.exit_code == 0
         assert "Exceeded max retries" in result.output

@@ -752,6 +752,13 @@ def install(
     help="Uninstall Qwen CLI hooks only",
 )
 @click.option(
+    "--falkordb",
+    "falkordb_flag",
+    is_flag=True,
+    default=False,
+    help="Uninstall only the FalkorDB service",
+)
+@click.option(
     "--all",
     "all_flag",
     is_flag=True,
@@ -788,6 +795,7 @@ def uninstall(
     codex_flag: bool,
     droid_flag: bool,
     qwen_flag: bool,
+    falkordb_flag: bool,
     all_flag: bool,
     project_flag: bool,
     working_dir: Path | None,
@@ -809,6 +817,7 @@ def uninstall(
         and not qwen_flag
         and not codex_flag
         and not droid_flag
+        and not falkordb_flag
         and not all_flag
     ):
         all_flag = True

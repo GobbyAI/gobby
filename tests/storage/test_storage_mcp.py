@@ -61,6 +61,39 @@ class TestMCPServer:
         assert config["requires_oauth"] is False
         assert config["connect_timeout"] == 30.0
 
+    def test_upsert_preserves_explicit_empty_json_fields(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        server = mcp_manager.upsert(
+            name="empty-json-server",
+            transport="stdio",
+            command="node",
+            args=[],
+            env={},
+            headers={},
+            project_id=sample_project["id"],
+        )
+
+        assert server.args == []
+        assert server.env == {}
+        assert server.headers == {}
+
+    def test_upsert_rejects_ambiguous_boolean_string(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        with pytest.raises(ValueError, match="enabled must be a boolean"):
+            mcp_manager.upsert(
+                name="bad-bool-server",
+                transport="http",
+                url="http://localhost:8080",
+                enabled="maybe",  # type: ignore[arg-type]
+                project_id=sample_project["id"],
+            )
+
 
 class TestTool:
     """Tests for Tool dataclass."""
@@ -98,6 +131,52 @@ class TestTool:
         d = tools[0].to_dict()
         assert d["name"] == "my_tool"
         assert d["description"] == "Does something"
+
+    def test_cache_tools_preserves_empty_input_schema(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        mcp_manager.upsert(
+            name="empty-schema-server",
+            transport="http",
+            url="http://localhost:8080",
+            project_id=sample_project["id"],
+        )
+
+        mcp_manager.cache_tools(
+            "empty-schema-server",
+            [{"name": "empty_schema", "description": "Empty schema", "inputSchema": {}}],
+            project_id=sample_project["id"],
+        )
+
+        tools = mcp_manager.get_cached_tools(
+            "empty-schema-server",
+            project_id=sample_project["id"],
+        )
+        assert tools[0].input_schema == {}
+
+    def test_cache_tools_rejects_duplicate_normalized_names(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        mcp_manager.upsert(
+            name="duplicate-tools-server",
+            transport="http",
+            url="http://localhost:8080",
+            project_id=sample_project["id"],
+        )
+
+        with pytest.raises(ValueError, match="Duplicate MCP tool name after normalization"):
+            mcp_manager.cache_tools(
+                "duplicate-tools-server",
+                [
+                    {"name": "Read_File", "inputSchema": {"type": "object"}},
+                    {"name": " read_file ", "inputSchema": {"type": "object"}},
+                ],
+                project_id=sample_project["id"],
+            )
 
 
 class TestLocalMCPManager:

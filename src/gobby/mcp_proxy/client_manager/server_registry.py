@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from dataclasses import replace
 from typing import Any, Protocol, cast
 
 from gobby.mcp_proxy.bundled import normalize_bundled_server_config
@@ -80,9 +81,9 @@ def load_initial_configs(
                 headers=server.headers,
                 enabled=server.enabled,
                 description=server.description,
-                requires_oauth=server.requires_oauth,
-                oauth_provider=server.oauth_provider,
-                connect_timeout=server.connect_timeout,
+                requires_oauth=getattr(server, "requires_oauth", False),
+                oauth_provider=getattr(server, "oauth_provider", None),
+                connect_timeout=getattr(server, "connect_timeout", None),
                 project_id=server.project_id,
                 tools=manager.load_tools_from_db(
                     manager.mcp_db_manager,
@@ -163,7 +164,7 @@ async def _discover_and_cache_tools(
 
 async def add_server(manager: Any, config: MCPServerConfig) -> dict[str, Any]:
     """Add a server config, persist it, and discover tools if enabled."""
-    config = normalize_bundled_server_config(config)
+    config = normalize_bundled_server_config(replace(config))
     if config.name in manager._configs:
         raise ValueError(f"MCP server '{config.name}' already exists")
 
@@ -237,7 +238,7 @@ async def update_server(
 
     The existing enabled state is preserved; use set_server_enabled to change it.
     """
-    config = normalize_bundled_server_config(config)
+    config = normalize_bundled_server_config(replace(config))
     if name not in manager._configs:
         raise ValueError(f"MCP server '{name}' not found")
     if config.name != name:

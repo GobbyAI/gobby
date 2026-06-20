@@ -15,7 +15,7 @@ def _get_daemon_client(ctx: click.Context) -> DaemonClient:
     from gobby.utils.daemon_client import DaemonClient
 
     if not isinstance(ctx.obj, dict):
-        raise click.ClickException("CLI context object is unavailable")
+        raise click.ClickException("Daemon config is unavailable in CLI context")
     config = ctx.obj.get("config")
     if not isinstance(config, DaemonConfig):
         raise click.ClickException("Daemon config is unavailable in CLI context")

@@ -357,6 +357,8 @@ export function ChatInput({
 
   const {
     handleMicPointerCancel,
+    handleMicKeyDown,
+    handleMicKeyUp,
     handleMicPointerDown,
     handleMicPointerMove,
     handleMicPointerUp,
@@ -516,6 +518,8 @@ export function ChatInput({
                 kind={primaryButtonKind}
                 label={primaryButtonLabel}
                 onClick={handlePrimaryButtonClick}
+                onMicKeyDown={handleMicKeyDown}
+                onMicKeyUp={handleMicKeyUp}
                 onMicPointerCancel={handleMicPointerCancel}
                 onMicPointerDown={handleMicPointerDown}
                 onMicPointerMove={handleMicPointerMove}

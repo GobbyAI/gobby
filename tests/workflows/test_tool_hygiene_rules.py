@@ -155,8 +155,7 @@ class TestRequireUvRule:
         response = await engine.evaluate(event, session_id="sess-1", variables={"require_uv": True})
 
         assert response.decision == "allow"
-        assert response.modified_input is not None
-        assert "uv run python" in response.modified_input["command"]
+        assert response.modified_input is None
 
     @pytest.mark.asyncio
     async def test_bundled_rule_blocks_bare_python_without_modified_input(
@@ -172,9 +171,8 @@ class TestRequireUvRule:
 
         assert response.decision == "block"
         assert response.reason == f"Rule enforced by Gobby: [require-uv]\n{REQUIRE_UV_REASON}"
-        assert response.modified_input is not None
-        assert "python script.py" in response.modified_input["command"]
-        assert response.auto_approve is True
+        assert response.modified_input is None
+        assert response.auto_approve is False
 
 
 class TestTrackPendingMemoryReview:

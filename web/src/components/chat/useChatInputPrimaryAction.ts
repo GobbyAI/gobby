@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, type PointerEvent } from 'react'
+import { useCallback, useEffect, useRef, type KeyboardEvent, type PointerEvent } from 'react'
 import { cn } from '../../lib/utils'
 
 export type ChatInputPrimaryButtonKind = 'stop' | 'mic-idle' | 'mic-recording' | 'send'
@@ -39,6 +39,7 @@ export function useChatInputPrimaryAction({
   const holdActiveRef = useRef(false)
   const latchedRef = useRef(false)
   const activePointerIdRef = useRef<number | null>(null)
+  const activeKeyRef = useRef<string | null>(null)
   const pointerStartedWhileRecordingRef = useRef(false)
 
   const primaryButtonKind: ChatInputPrimaryButtonKind = isStreaming
@@ -60,6 +61,7 @@ export function useChatInputPrimaryAction({
     clearHoldTimer()
     holdActiveRef.current = false
     activePointerIdRef.current = null
+    activeKeyRef.current = null
     pointerStartedWhileRecordingRef.current = false
   }, [clearHoldTimer])
 
@@ -187,6 +189,35 @@ export function useChatInputPrimaryAction({
     [cancelRecording, resetPTTGesture],
   )
 
+  const handleMicKeyDown = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      event.preventDefault()
+      if (event.repeat || activeKeyRef.current !== null) return
+      if (disabled || primaryButtonKind === 'stop' || !startRecording) return
+
+      activeKeyRef.current = event.key
+      if (!isRecording) {
+        void startRecording()
+      }
+    },
+    [disabled, isRecording, primaryButtonKind, startRecording],
+  )
+
+  const handleMicKeyUp = useCallback(
+    (event: KeyboardEvent<HTMLButtonElement>) => {
+      if (event.key !== 'Enter' && event.key !== ' ') return
+      if (activeKeyRef.current !== event.key) return
+
+      event.preventDefault()
+      activeKeyRef.current = null
+
+      latchedRef.current = false
+      void stopRecording?.()
+    },
+    [stopRecording],
+  )
+
   const handlePrimaryButtonClick = useCallback(() => {
     if (primaryButtonKind === 'stop') {
       onStop?.()
@@ -224,6 +255,8 @@ export function useChatInputPrimaryAction({
 
   return {
     handleMicPointerCancel,
+    handleMicKeyDown,
+    handleMicKeyUp,
     handleMicPointerDown,
     handleMicPointerMove,
     handleMicPointerUp,

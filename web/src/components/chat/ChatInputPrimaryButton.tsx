@@ -1,4 +1,4 @@
-import type { PointerEventHandler, RefObject } from 'react'
+import type { KeyboardEventHandler, PointerEventHandler, RefObject } from 'react'
 import { RecordIcon, SendIcon, StopIcon } from './ChatInputIcons'
 import type { ChatInputPrimaryButtonKind } from './useChatInputPrimaryAction'
 
@@ -9,6 +9,8 @@ interface ChatInputPrimaryButtonProps {
   kind: ChatInputPrimaryButtonKind
   label: string
   onClick: () => void
+  onMicKeyDown: KeyboardEventHandler<HTMLButtonElement>
+  onMicKeyUp: KeyboardEventHandler<HTMLButtonElement>
   onMicPointerCancel: PointerEventHandler<HTMLButtonElement>
   onMicPointerDown: PointerEventHandler<HTMLButtonElement>
   onMicPointerMove: PointerEventHandler<HTMLButtonElement>
@@ -26,6 +28,8 @@ export function ChatInputPrimaryButton({
   kind,
   label,
   onClick,
+  onMicKeyDown,
+  onMicKeyUp,
   onMicPointerCancel,
   onMicPointerDown,
   onMicPointerMove,
@@ -39,6 +43,8 @@ export function ChatInputPrimaryButton({
       type="button"
       className={className}
       onClick={micButton ? undefined : onClick}
+      onKeyDown={micButton ? onMicKeyDown : undefined}
+      onKeyUp={micButton ? onMicKeyUp : undefined}
       onPointerDown={micButton ? onMicPointerDown : undefined}
       onPointerUp={micButton ? onMicPointerUp : undefined}
       onPointerMove={micButton ? onMicPointerMove : undefined}

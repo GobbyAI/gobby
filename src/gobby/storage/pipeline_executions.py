@@ -17,7 +17,13 @@ class PipelineExecutionStorageMixin:
     """Pipeline execution CRUD, queries, search, and recovery methods."""
 
     db: HubDatabase
-    project_id: str
+    project_id: str | None
+
+    def _project_predicate(self, column_name: str = "project_id") -> tuple[str, tuple[str, ...]]:
+        """Return a NULL-aware project predicate for internally selected columns."""
+        if self.project_id is None:
+            return f"{column_name} IS NULL", ()
+        return f"{column_name} = %s", (self.project_id,)
 
     def create_execution(
         self,
@@ -83,9 +89,10 @@ class PipelineExecutionStorageMixin:
         Returns:
             PipelineExecution or None if not found
         """
+        project_clause, project_params = self._project_predicate()
         row = self.db.fetchone(
-            "SELECT * FROM pipeline_executions WHERE id = %s",
-            (execution_id,),
+            f"SELECT * FROM pipeline_executions WHERE id = %s AND {project_clause}",  # nosec B608
+            (execution_id, *project_params),
         )
         return PipelineExecution.from_row(row) if row else None
 
@@ -120,16 +127,17 @@ class PipelineExecutionStorageMixin:
             else None
         )
 
+        project_clause, project_params = self._project_predicate()
         self.db.execute(
-            """
+            f"""
             UPDATE pipeline_executions
             SET status = %s,
                 resume_token = COALESCE(%s, resume_token),
                 outputs_json = COALESCE(%s, outputs_json),
                 completed_at = COALESCE(%s, completed_at),
                 updated_at = %s
-            WHERE id = %s
-            """,
+            WHERE id = %s AND {project_clause}
+            """,  # nosec B608
             (
                 status.value,
                 resume_token,
@@ -137,6 +145,7 @@ class PipelineExecutionStorageMixin:
                 completed_at,
                 now,
                 execution_id,
+                *project_params,
             ),
         )
 
@@ -155,12 +164,9 @@ class PipelineExecutionStorageMixin:
         Returns a fragment that always begins with ``WHERE `` and is scoped to
         ``self.project_id`` (NULL-aware).
         """
-        params: list[Any] = []
-        if self.project_id is None:
-            where = "WHERE project_id IS NULL"
-        else:
-            where = "WHERE project_id = %s"
-            params.append(self.project_id)
+        project_clause, project_params = self._project_predicate()
+        params: list[Any] = [*project_params]
+        where = f"WHERE {project_clause}"
 
         if status is not None:
             where += " AND status = %s"
@@ -355,9 +361,13 @@ class PipelineExecutionStorageMixin:
             review_json: JSON string containing the review data
         """
         now = datetime.now(UTC).isoformat()
+        project_clause, project_params = self._project_predicate()
         self.db.execute(
-            "UPDATE pipeline_executions SET review_json = %s, updated_at = %s WHERE id = %s",
-            (review_json, now, execution_id),
+            (
+                "UPDATE pipeline_executions SET review_json = %s, updated_at = %s "
+                f"WHERE id = %s AND {project_clause}"
+            ),  # nosec B608
+            (review_json, now, execution_id, *project_params),
         )
 
     def search_executions(
@@ -391,14 +401,8 @@ class PipelineExecutionStorageMixin:
             raise ValueError(f"offset must be >= 0, got {offset}")
         escaped_query = query.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
         like_pattern = f"%{escaped_query}%"
-        params: list[Any] = []
-
-        # Build WHERE conditions
-        if self.project_id is None:
-            project_clause = "pe.project_id IS NULL"
-        else:
-            project_clause = "pe.project_id = %s"
-            params.append(self.project_id)
+        project_clause, project_params = self._project_predicate("pe.project_id")
+        params: list[Any] = [*project_params]
 
         # Build LIKE conditions
         like_conditions = ["pe.pipeline_name LIKE %s ESCAPE '\\'"]
@@ -452,13 +456,8 @@ class PipelineExecutionStorageMixin:
             .replace("_", chr(92) + "_")
         )
         like_pattern = f"%{escaped_query}%"
-        params: list[Any] = []
-
-        if self.project_id is None:
-            project_clause = "pe.project_id IS NULL"
-        else:
-            project_clause = "pe.project_id = %s"
-            params.append(self.project_id)
+        project_clause, project_params = self._project_predicate("pe.project_id")
+        params: list[Any] = [*project_params]
 
         like_conditions = ["pe.pipeline_name LIKE %s ESCAPE '" + chr(92) + "'"]
         params.append(like_pattern)
@@ -496,9 +495,10 @@ class PipelineExecutionStorageMixin:
         Returns:
             PipelineExecution or None if not found
         """
+        project_clause, project_params = self._project_predicate()
         row = self.db.fetchone(
-            "SELECT * FROM pipeline_executions WHERE resume_token = %s",
-            (token,),
+            f"SELECT * FROM pipeline_executions WHERE resume_token = %s AND {project_clause}",  # nosec B608
+            (token, *project_params),
         )
         return PipelineExecution.from_row(row) if row else None
 
@@ -523,19 +523,22 @@ class PipelineExecutionStorageMixin:
         if execution:
             return execution.id
 
-        # Try prefix match
-        if self.project_id is None:
-            row = self.db.fetchone(
-                "SELECT id FROM pipeline_executions WHERE id LIKE %s AND project_id IS NULL",
-                (f"{ref}%",),
-            )
-        else:
-            row = self.db.fetchone(
-                "SELECT id FROM pipeline_executions WHERE id LIKE %s AND project_id = %s",
-                (f"{ref}%", self.project_id),
-            )
-        if row:
-            result: str = row["id"]
+        # Try prefix match.
+        escaped_ref = ref.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        project_clause, project_params = self._project_predicate()
+        rows = self.db.fetchall(
+            f"""
+            SELECT id FROM pipeline_executions
+            WHERE id LIKE %s ESCAPE '\\' AND {project_clause}
+            ORDER BY id ASC
+            LIMIT 2
+            """,  # nosec B608
+            (f"{escaped_ref}%", *project_params),
+        )
+        if len(rows) > 1:
+            raise ValueError(f"Execution reference is ambiguous: {ref}")
+        if rows:
+            result: str = rows[0]["id"]
             return result
 
         raise ValueError(f"Cannot resolve execution reference: {ref}")
@@ -567,48 +570,50 @@ class PipelineExecutionStorageMixin:
         # Build exclusion clause for parameter binding
         exclude_clause, exclude_params = build_not_in_clause(exclude_ids, "execution_id")
         exec_exclude_clause, exec_exclude_params = build_not_in_clause(exclude_ids, "id")
+        project_clause, project_params = self._project_predicate()
 
-        # Fail running step executions that belong to running pipeline executions
-        self.db.execute(
-            f"""
-            UPDATE step_executions
-            SET status = %s, error = 'Daemon restarted', completed_at = %s
-            WHERE status = %s
-              AND execution_id IN (
-                  SELECT id FROM pipeline_executions
-                  WHERE status = %s AND project_id = %s
-              ){exclude_clause}
-            """,  # nosec B608
-            (
-                StepStatus.FAILED.value,
-                now,
-                StepStatus.RUNNING.value,
-                ExecutionStatus.RUNNING.value,
-                self.project_id,
-                *exclude_params,
-            ),
-        )
+        with self.db.transaction() as conn:
+            # Fail running step executions that belong to running pipeline executions.
+            conn.execute(
+                f"""
+                UPDATE step_executions
+                SET status = %s, error = 'Daemon restarted', completed_at = %s
+                WHERE status = %s
+                  AND execution_id IN (
+                      SELECT id FROM pipeline_executions
+                      WHERE status = %s AND {project_clause}
+                  ){exclude_clause}
+                """,  # nosec B608
+                (
+                    StepStatus.FAILED.value,
+                    now,
+                    StepStatus.RUNNING.value,
+                    ExecutionStatus.RUNNING.value,
+                    *project_params,
+                    *exclude_params,
+                ),
+            )
 
-        # Mark running pipeline executions as interrupted
-        cursor = self.db.execute(
-            f"""
-            UPDATE pipeline_executions
-            SET status = %s, outputs_json = %s, updated_at = %s
-            WHERE status = %s AND project_id = %s{exec_exclude_clause}
-            """,  # nosec B608
-            (
-                ExecutionStatus.INTERRUPTED.value,
-                '{"error": "Daemon restarted while execution was in progress"}',
-                now,
-                ExecutionStatus.RUNNING.value,
-                self.project_id,
-                *exec_exclude_params,
-            ),
-        )
+            # Mark running pipeline executions as interrupted.
+            cursor = conn.execute(
+                f"""
+                UPDATE pipeline_executions
+                SET status = %s, outputs_json = %s, updated_at = %s
+                WHERE status = %s AND {project_clause}{exec_exclude_clause}
+                """,  # nosec B608
+                (
+                    ExecutionStatus.INTERRUPTED.value,
+                    '{"error": "Daemon restarted while execution was in progress"}',
+                    now,
+                    ExecutionStatus.RUNNING.value,
+                    *project_params,
+                    *exec_exclude_params,
+                ),
+            )
 
         count: int = cursor.rowcount if cursor else 0
         if count > 0:
-            logger.info(f"Marked {count} stale running executions as interrupted after restart")
+            logger.info("Marked %s stale running executions as interrupted after restart", count)
         return count
 
     def fail_stale_running_executions(self, exclude_ids: set[str] | None = None) -> int:

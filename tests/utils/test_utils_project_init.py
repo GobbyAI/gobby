@@ -195,7 +195,7 @@ class TestDetectVerificationCommands:
 
         result = detect_verification_commands(tmp_path)
 
-        assert result.unit_tests == "uv run pytest tests/ -v"
+        assert result.unit_tests == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
         assert result.type_check == "uv run mypy src/"
         assert result.lint == "uv run ruff check src/"
 
@@ -211,7 +211,7 @@ class TestDetectVerificationCommands:
 
         result = detect_verification_commands(tmp_path)
 
-        assert result.unit_tests == "uv run pytest tests/ -v"
+        assert result.unit_tests == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
         assert result.type_check == "uv run mypy ."
         assert result.lint == "uv run ruff check ."
 
@@ -483,7 +483,7 @@ class TestDetectVerificationMultiLanguage:
         result = detect_verification_commands(tmp_path)
 
         # Python claims primary slots
-        assert result.unit_tests == "uv run pytest tests/ -v"
+        assert result.unit_tests == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
         assert result.type_check == "uv run mypy src/"
         assert result.lint == "uv run ruff check src/"
         assert result.format == "uv run ruff format --check src/"
@@ -554,14 +554,16 @@ class TestUpdateProjectJsonVerification:
         )
 
         verification = VerificationCommands(
-            unit_tests="uv run pytest tests/ -v",
+            unit_tests="GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v",
             lint="uv run ruff check src/",
             format="uv run ruff format --check src/",
         )
         _update_project_json_verification(tmp_path, verification)
 
         content = json.loads(project_file.read_text())
-        assert content["verification"]["unit_tests"] == "uv run pytest tests/ -v"
+        assert content["verification"]["unit_tests"] == (
+            "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
+        )
         assert content["verification"]["lint"] == "uv run ruff check src/"
         assert content["verification"]["format"] == "uv run ruff format --check src/"
         # Hooks preserved
@@ -1017,7 +1019,9 @@ class TestInitializeProject:
                             result = initialize_project(tmp_path)
 
                             assert result.verification is not None
-                            assert result.verification.unit_tests == "uv run pytest tests/ -v"
+                            assert result.verification.unit_tests == (
+                                "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
+                            )
                             assert result.verification.type_check == "uv run mypy src/"
                             assert result.verification.lint == "uv run ruff check src/"
 

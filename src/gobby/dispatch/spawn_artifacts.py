@@ -596,10 +596,15 @@ def _effective_spawn_isolation(
         if task_isolation is not None:
             return task_isolation
         return "none"
-    if stage_name in _DEVELOPMENT_FORWARD_ISOLATION_STAGES:
-        return task_isolation
 
     agent_isolation = getattr(agent_body, "isolation", None)
+    if stage_name in _DEVELOPMENT_FORWARD_ISOLATION_STAGES:
+        if task_isolation is not None:
+            return task_isolation
+        if agent_isolation in _EXPLICIT_AGENT_ISOLATIONS:
+            return cast(SpawnIsolation, agent_isolation)
+        return None
+
     if agent_isolation in _EXPLICIT_AGENT_ISOLATIONS:
         return cast(SpawnIsolation, agent_isolation)
     return task_isolation

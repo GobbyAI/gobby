@@ -13,6 +13,34 @@ from starlette.requests import ClientDisconnect
 logger = logging.getLogger(__name__)
 
 
+def _is_client_disconnect(exc: BaseException) -> bool:
+    """Detect Starlette disconnects, including middleware-wrapped test-client cases."""
+    seen: set[int] = set()
+
+    def visit(current: BaseException | None) -> bool:
+        if current is None:
+            return False
+        marker = id(current)
+        if marker in seen:
+            return False
+        seen.add(marker)
+        if isinstance(current, ClientDisconnect):
+            return True
+        if current.__class__.__name__ in {
+            "EndOfStream",
+            "BrokenResourceError",
+            "ClosedResourceError",
+        }:
+            return True
+        if isinstance(current, BaseExceptionGroup):
+            return any(visit(child) for child in current.exceptions)
+        if isinstance(current, RuntimeError) and str(current) == "No response returned.":
+            return True
+        return visit(current.__cause__) or visit(current.__context__)
+
+    return visit(exc)
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """
     Register global exception handlers.
@@ -39,7 +67,7 @@ def register_exception_handlers(app: FastAPI) -> None:
         if isinstance(exc, HTTPException):
             raise exc
 
-        if isinstance(exc, ClientDisconnect):
+        if _is_client_disconnect(exc):
             logger.debug(
                 "Client disconnected before HTTP response completed",
                 extra={

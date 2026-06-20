@@ -5,6 +5,7 @@ import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.memories_models import visibility_predicate
 
 pytestmark = pytest.mark.unit
 
@@ -463,6 +464,41 @@ def test_list_memories_combined_filters(memory_manager, db) -> None:
     results = memory_manager.list_memories(project_id="proj-combo", memory_type="fact")
     assert len(results) == 2
     assert all(r.memory_type == "fact" for r in results)
+
+
+def test_list_memories_tag_filter_fetches_additional_pages(memory_manager, db) -> None:
+    matching = [
+        memory_manager.create_memory(content=f"tag pagination keep {index}", tags=["keep"])
+        for index in range(2)
+    ]
+    skipped = [
+        memory_manager.create_memory(content=f"tag pagination skip {index}", tags=["skip"])
+        for index in range(55)
+    ]
+
+    base = datetime(2026, 1, 1, tzinfo=UTC)
+    for index, memory in enumerate(matching):
+        db.execute(
+            "UPDATE memories SET updated_at = %s WHERE id = %s",
+            ((base + timedelta(minutes=index)).isoformat(), memory.id),
+        )
+    for index, memory in enumerate(skipped):
+        db.execute(
+            "UPDATE memories SET updated_at = %s WHERE id = %s",
+            ((base + timedelta(hours=1, minutes=index)).isoformat(), memory.id),
+        )
+
+    results = memory_manager.list_memories(tags_any=["keep"], limit=2)
+
+    assert {memory.content for memory in results} == {
+        "tag pagination keep 0",
+        "tag pagination keep 1",
+    }
+
+
+def test_visibility_predicate_rejects_unknown_column() -> None:
+    with pytest.raises(ValueError, match="Invalid visibility column"):
+        visibility_predicate("active", column="deleted_at OR 1=1")
 
 
 # --- Dream soft-delete visibility (migration 289) -------------------------

@@ -6,7 +6,7 @@ import subprocess
 import sys
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, NoReturn
 from unittest.mock import MagicMock
 
 import psycopg
@@ -321,12 +321,12 @@ class _FakePipelineExecutor:
 
 
 class _ValueErrorPipelineLoader:
-    async def load_pipeline(self, _name: str):
+    async def load_pipeline(self, _name: str) -> NoReturn:
         raise ValueError("bad pipeline")
 
 
 class _RuntimeErrorPipelineLoader:
-    async def load_pipeline(self, _name: str):
+    async def load_pipeline(self, _name: str) -> NoReturn:
         raise RuntimeError("loader unavailable")
 
 
@@ -1825,6 +1825,11 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
         target_branch="main",
         integration_branch="gobby/integration/phase",
     )
+    subprocess.run(
+        ["git", "branch", "gobby/integration/phase"],
+        cwd=sample_project["repo_path"],
+        check=True,
+    )
     action = SpawnAgentAction(
         task_id=leaf.id,
         task_ref=f"#{leaf.seq_num}",
@@ -2016,6 +2021,11 @@ async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
         parent.id,
         target_branch="main",
         integration_branch="gobby/integration/phase",
+    )
+    subprocess.run(
+        ["git", "branch", "gobby/integration/phase"],
+        cwd=sample_project["repo_path"],
+        check=True,
     )
     task_artifacts.set_artifacts_atomic(leaf.id, target_branch="gobby/integration/phase")
     action = SpawnAgentAction(

@@ -196,6 +196,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             agent_runner=runner.agent_runner,
             pipeline_executor=runner.pipeline_executor,
             services=runner,
+            config=runner.config.cron,
         )
         pipeline_heartbeat = None
         try:

@@ -42,11 +42,11 @@ async def _release_source_session(
     killed = False
     session_manager = getattr(mixin, "session_manager", None)
 
-    try:
-        from gobby.agents.kill import kill_agent
-        from gobby.storage.agents import LocalAgentRunManager
+    from gobby.agents.kill import kill_agent
+    from gobby.storage.agents import LocalAgentRunManager
 
-        if session_manager:
+    if session_manager:
+        try:
             arm = LocalAgentRunManager(session_manager.db)
             run = arm.get_by_session(source_session_id)
             if run:
@@ -54,8 +54,8 @@ async def _release_source_session(
                 await kill_agent(run, session_manager.db, close_terminal=True)
                 killed = True
                 await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
-    except Exception as exc:
-        logger.warning("Failed to kill running agent before resume: %s", exc)
+        except Exception as exc:
+            raise RuntimeError(f"failed to kill running agent: {exc}") from exc
 
     if killed:
         return
@@ -70,11 +70,12 @@ async def _release_source_session(
             source_session_id,
         )
     except Exception as exc:
-        logger.warning("Failed to kill terminal session before resume: %s", exc)
-        return
+        raise RuntimeError(f"failed to kill terminal session: {exc}") from exc
 
     if term_killed:
         await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
+    else:
+        raise RuntimeError("terminal session was not killed")
 
 
 async def handle_continue_in_chat(
@@ -115,13 +116,23 @@ async def handle_continue_in_chat(
     # Look up source session for project_id and SDK session ID
     session_manager = getattr(mixin, "session_manager", None)
     source_session = None
-    if session_manager:
-        try:
-            source_session = await run_db(mixin, session_manager.get, source_session_id)
-            if source_session and not project_id:
-                project_id = source_session.project_id
-        except Exception as e:
-            logger.warning(f"Failed to look up source session {source_session_id}: {e}")
+    if not session_manager:
+        await mixin._send_error(websocket, "Session manager not available")
+        return
+    try:
+        source_session = await run_db(mixin, session_manager.get, source_session_id)
+    except Exception as e:
+        logger.warning("Failed to look up source session %s: %s", source_session_id, e)
+        await mixin._send_error(websocket, f"Source session lookup failed: {e}")
+        return
+    if not source_session:
+        await mixin._send_error(
+            websocket,
+            f"Source session not found: {source_session_id}",
+            code="NOT_FOUND",
+        )
+        return
+    project_id = source_session.project_id
 
     resume_in_place = bool(source_session and _is_terminal_session(source_session))
     if resume_in_place:
@@ -195,7 +206,12 @@ async def handle_continue_in_chat(
     # 3. Kill the terminal/agent runtime that currently owns the session so the
     #    resumed web chat can take over the same durable session identity.
     if resume_in_place and source_session:
-        await _release_source_session(mixin, source_session_id, source_session)
+        try:
+            await _release_source_session(mixin, source_session_id, source_session)
+        except RuntimeError as exc:
+            logger.error("Failed to release source session %s: %s", source_session_id, exc)
+            await mixin._send_error(websocket, f"Failed to release source session: {exc}")
+            return
 
     # --- Restore transcript from backup if original is missing ---
     if sdk_resume_id and source_session:

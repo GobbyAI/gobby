@@ -887,7 +887,7 @@ async def test_close_task_uses_commit_diff_when_commits_linked(
         changes_summary = validator_call.kwargs["changes_summary"]
         assert "Commit-based diff (2 commits, 3 files):" in changes_summary
         assert "diff content from commits" in changes_summary
-        assert "Agent changes summary:\ntest changes" in changes_summary
+        assert "Agent Changes Summary (supplemental):\ntest changes" in changes_summary
         assert result.get("validated", True) is True
 
 
@@ -1353,11 +1353,12 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
 
         await registry.call("close_task", {"task_id": "t1", "changes_summary": "test changes"})
 
-        # changes_summary is provided, so get_task_diff is NOT called
-        # (changes_summary takes precedence over commit-based diff)
-        mock_diff.assert_not_called()
-        assert mock_diff.call_count == 0
-        assert not mock_diff.called
+        mock_diff.assert_called_once_with(
+            task_id="t1",
+            task_manager=mock_task_manager,
+            include_uncommitted=False,
+            cwd=repo_path,
+        )
 
 
 @pytest.mark.integration
@@ -1417,10 +1418,12 @@ async def test_close_task_with_commits_does_not_fallback_to_smart_context(
 
         await registry.call("close_task", {"task_id": "t1", "changes_summary": "test changes"})
 
-        # changes_summary is provided, so neither get_task_diff nor smart context is called
-        mock_diff.assert_not_called()
-        assert mock_diff.call_count == 0
-        assert not mock_diff.called
+        mock_diff.assert_called_once_with(
+            task_id="t1",
+            task_manager=mock_task_manager,
+            include_uncommitted=False,
+            cwd=repo_path,
+        )
         mock_smart_context.assert_not_called()
         assert mock_smart_context.call_count == 0
         assert not mock_smart_context.called

@@ -614,7 +614,7 @@ class ValidationResult:
 
 def _coerce_blocking_reasons(value: Any) -> list[str]:
     if isinstance(value, list):
-        return [reason for item in value if (reason := str(item).strip())]
+        return [reason for item in value if isinstance(item, str) and (reason := item.strip())]
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []

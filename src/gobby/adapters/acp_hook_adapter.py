@@ -25,6 +25,7 @@ from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
 from gobby.adapters.base import (
+    ADAPTER_EMPTY_BLOCK_REASON_SENTINEL,
     BaseAdapter,
     build_first_hook_session_metadata_lines,
     normalize_adapter_response_reason,
@@ -349,6 +350,9 @@ class ACPHookAdapter(BaseAdapter):
             hook_type=hook_type,
             logger=event_logger,
         )
+        if is_denied and normalized_reason == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL:
+            should_continue = False
+
         result: dict[str, Any] = {
             "decision": response.decision,
             "continue": should_continue,

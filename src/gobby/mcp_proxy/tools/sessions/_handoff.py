@@ -12,6 +12,7 @@ from gobby.utils.injected_context import strip_injected_context
 from gobby.utils.project_context import get_project_context
 
 if TYPE_CHECKING:
+    from gobby.config.sessions import SessionSummaryConfig
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.inter_session_messages import InterSessionMessageManager
     from gobby.storage.sessions import SessionManager
@@ -22,7 +23,7 @@ def register_handoff_tools(
     session_manager: SessionManager | None,
     llm_service: Any | None = None,
     transcript_processor: Any | None = None,
-    session_summary_config: Any | None = None,
+    session_summary_config: SessionSummaryConfig | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
 ) -> None:
     """
@@ -277,6 +278,18 @@ def register_handoff_tools(
                 },
             }
 
+        if getattr(parent_session, "status", None) != "handoff_ready":
+            return {
+                "success": False,
+                "found": False,
+                "message": "No handoff-ready session found",
+                "filters": {
+                    "session_id": session_id,
+                    "project_id": caller_project_id,
+                    "source": source,
+                },
+            }
+
         parent_project_id = getattr(parent_session, "project_id", None)
         if (
             isinstance(parent_project_id, str)
@@ -349,7 +362,7 @@ def register_handoff_tools(
             "has_context": True,
             "context": context,
             "context_type": "summary_markdown",
-            "parent_title": parent_session.title,
+            "parent_title": getattr(parent_session, "title", None),
             "parent_status": parent_session.status,
             "linked_child": resolved_child_id or link_child_session_id,
         }

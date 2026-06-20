@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any, Literal
 
+from gobby.config.cron import CronConfig
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob, CronRun, CronRunStatus
 
@@ -17,6 +18,7 @@ if TYPE_CHECKING:
     from gobby.workflows.pipeline_executor import PipelineExecutor
 
 logger = logging.getLogger(__name__)
+TRUNCATED_MARKER = "\n[truncated]"
 
 # Type for registered cron handlers: async callables that receive a CronJob and return output.
 CronHandler = Callable[[CronJob], Awaitable[object]]
@@ -45,11 +47,13 @@ class CronExecutor:
         agent_runner: Any | None = None,
         pipeline_executor: PipelineExecutor | None = None,
         services: object | None = None,
+        config: CronConfig | None = None,
     ):
         self.storage = storage
         self.agent_runner = agent_runner
         self.pipeline_executor = pipeline_executor
         self.services = services
+        self.config = config or CronConfig()
         self._handlers: dict[str, CronHandler] = {}
         self._background_tasks: set[asyncio.Task[None]] = set()
 
@@ -122,8 +126,16 @@ class CronExecutor:
             run.id,
             status=outcome.status,
             completed_at=completed_at,
-            output=self._truncate(outcome.output, 10000),
-            error=self._truncate(outcome.error, 5000),
+            output=self._truncate(
+                outcome.output,
+                self.config.run_output_max_chars,
+                field_name="output",
+            ),
+            error=self._truncate(
+                outcome.error,
+                self.config.run_error_max_chars,
+                field_name="error",
+            ),
             agent_run_id=outcome.agent_run_id,
             pipeline_execution_id=outcome.pipeline_execution_id,
         )
@@ -171,10 +183,18 @@ class CronExecutor:
         except TypeError:
             return str(value)
 
-    def _truncate(self, value: str | None, limit: int) -> str | None:
+    def _truncate(self, value: str | None, limit: int, *, field_name: str) -> str | None:
         if value is None or len(value) <= limit:
             return value
-        return value[:limit]
+        logger.warning(
+            "Truncating cron run %s from %s to %s characters",
+            field_name,
+            len(value),
+            limit,
+        )
+        if limit <= len(TRUNCATED_MARKER):
+            return TRUNCATED_MARKER[-limit:]
+        return value[: limit - len(TRUNCATED_MARKER)] + TRUNCATED_MARKER
 
     def _overlap_policy(self, job: CronJob) -> Literal["skip_if_active", "allow"]:
         policy = job.action_config.get("overlap_policy", "skip_if_active")

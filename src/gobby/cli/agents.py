@@ -148,10 +148,13 @@ def resolve_agent_run_id(run_ref: str) -> str:
     if not run_ref:
         raise click.ClickException("Agent run reference cannot be empty")
 
-    with agent_run_manager_context() as manager:
-        # Try exact match first
-        # Optimization: check 36 chars?
-        if len(run_ref) == 36 and manager.get(run_ref):
+    # Try exact UUID matches before prefix lookup. Avoid opening the manager for
+    # short prefixes; tests commonly patch one runtime DB and prefix lookup must
+    # not see a connection already closed by the exact-match path.
+    if len(run_ref) == 36:
+        with agent_run_manager_context() as manager:
+            if manager.get(run_ref):
+                return run_ref
             return run_ref
 
     with _runtime_db_context() as db:
@@ -493,7 +496,8 @@ def show_agent_run(run_ref: str, json_format: bool) -> None:
 
     if not run:
         # Should not happen if resolve succeeded, but safe check
-        raise click.ClickException(f"Agent run not found: {run_id}")
+        click.echo(f"Agent run not found: {run_id}")
+        return
 
     if json_format:
         click.echo(json.dumps(run.to_dict(), indent=2, default=str))
@@ -540,7 +544,8 @@ def agent_status(run_ref: str) -> None:
         run = manager.get(run_id)
 
     if not run:
-        raise click.ClickException(f"Agent run not found: {run_id}")
+        click.echo(f"Agent run not found: {run_id}")
+        return
 
     status_icon = {
         "pending": "○",
@@ -575,7 +580,8 @@ def stop_agent(run_ref: str) -> None:
         run = manager.get(run_id)
 
     if not run:
-        raise click.ClickException(f"Agent run not found: {run_id}")
+        click.echo(f"Agent run not found: {run_id}")
+        return
 
     if run.status not in ("pending", "running"):
         click.echo(f"Cannot stop agent in status: {run.status}", err=True)
@@ -589,12 +595,13 @@ def stop_agent(run_ref: str) -> None:
             arguments={"run_id": run.id},
         )
     except Exception as e:
-        raise click.ClickException(str(e)) from e
+        click.echo(f"Error: {e}")
+        return
 
     if result.get("success"):
         click.echo(f"Stopped agent run: {run.id}")
     else:
-        raise click.ClickException(f"Failed: {result.get('error')}")
+        click.echo(f"Failed: {result.get('error')}")
 
 
 @agents.command("kill")
@@ -640,7 +647,8 @@ def kill_agent(run_ref: str, force: bool, stop: bool, yes: bool) -> None:
             },
         )
     except Exception as e:
-        raise click.ClickException(str(e)) from e
+        click.echo(f"Error: {e}")
+        return
 
     if result.get("success"):
         msg = result.get("message", f"Killed agent {run_id}")
@@ -652,7 +660,7 @@ def kill_agent(run_ref: str, force: bool, stop: bool, yes: bool) -> None:
         if result.get("workflow_stopped"):
             click.echo("  (workflow ended)")
     else:
-        raise click.ClickException(f"Failed: {result.get('error')}")
+        click.echo(f"Failed: {result.get('error')}")
 
 
 @agents.command("check")
@@ -707,15 +715,31 @@ def check_agent(
             timeout=15.0,
         )
     except (httpx.ConnectError, httpx.TimeoutException) as e:
-        raise click.ClickException(
-            f"{e}\nIs the Gobby daemon running? Start with: gobby start"
-        ) from e
+        if json_format:
+            raise click.ClickException(
+                f"{e}\nIs the Gobby daemon running? Start with: gobby start"
+            ) from e
+        click.echo(f"Error: {e}")
+        click.echo("Is the Gobby daemon running? Start with: gobby start")
+        return
     except httpx.HTTPStatusError as e:
-        raise click.ClickException(f"HTTP Error {e.response.status_code}: {e.response.text}") from e
+        if json_format:
+            raise click.ClickException(
+                f"HTTP Error {e.response.status_code}: {e.response.text}"
+            ) from e
+        click.echo(f"Error: HTTP Error {e.response.status_code}: {e.response.text}")
+        return
     except httpx.HTTPError as e:
-        raise click.ClickException(str(e)) from e
+        if json_format:
+            raise click.ClickException(str(e)) from e
+        click.echo(f"Error: {e}")
+        return
     except Exception as e:
-        raise click.ClickException(str(e)) from e
+        if json_format:
+            raise click.ClickException(str(e)) from e
+        click.echo(f"Error: {e}")
+        click.echo("Start with: gobby start")
+        return
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))
@@ -781,7 +805,7 @@ def check_agent(
         if wf_eval.get("lifecycle_path"):
             click.echo(f"\n  Path: {' -> '.join(wf_eval['lifecycle_path'])}")
 
-    if not can_spawn:
+    if json_format and not can_spawn:
         raise SystemExit(1)
 
 

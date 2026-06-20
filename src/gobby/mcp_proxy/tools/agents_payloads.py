@@ -2,12 +2,32 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Protocol
 
-from gobby.storage.agents import AgentRun
+from gobby.storage.agents import AgentRunStatus, AgentRunTerminalReason
 
 
-def _agent_result_payload(run: AgentRun, *, include_prompt: bool = True) -> dict[str, Any]:
+class AgentRunProtocol(Protocol):
+    id: str
+    status: AgentRunStatus
+    result: str | None
+    error: str | None
+    provider: str
+    model: str | None
+    tool_calls_count: int
+    turns_used: int
+    started_at: str | None
+    completed_at: str | None
+    child_session_id: str | None
+    terminal_reason: AgentRunTerminalReason | None
+    prompt: str
+
+
+def _agent_result_payload(
+    run: AgentRunProtocol,
+    *,
+    include_prompt: bool = True,
+) -> dict[str, Any]:
     payload = {
         "run_id": run.id,
         "status": run.status,

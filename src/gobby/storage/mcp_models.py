@@ -23,8 +23,12 @@ def _loads_tool_input_schema(row: Mapping[str, Any]) -> dict[str, Any] | None:
         return None
     try:
         schema = json.loads(raw)
-    except json.JSONDecodeError:
-        return None
+    except json.JSONDecodeError as exc:
+        tool_id = row.get("id", "<unknown>")
+        tool_name = row.get("name", "<unknown>")
+        raise ValueError(
+            f"Invalid JSON for MCP tool {tool_name} ({tool_id}) input_schema: {exc}"
+        ) from exc
     return schema if isinstance(schema, dict) else None
 
 

@@ -82,7 +82,7 @@ class LinearProjectOpsMixin:
     def _linear_project_display_name(self) -> str | None:
         try:
             return self._linear_project_name()
-        except Exception:
+        except LinearSyncError:
             return None
 
     def _task_ref(self, task: Any) -> str:
@@ -138,7 +138,7 @@ class LinearProjectOpsMixin:
                 tool_name="list_teams",
                 arguments={},
             )
-        except Exception as e:
+        except LinearSyncError as e:
             client = await self._get_graphql_client()
             if client:
                 return await client.list_teams()
@@ -159,7 +159,7 @@ class LinearProjectOpsMixin:
                 tool_name="list_projects",
                 arguments={"teamId": team_id},
             )
-        except Exception as e:
+        except LinearSyncError as e:
             client = await self._get_graphql_client()
             if client:
                 return await client.list_projects(team_id)
@@ -198,7 +198,7 @@ class LinearProjectOpsMixin:
                     tool_name="create_project",
                     arguments={"teamId": team_id, "name": project_name},
                 )
-            except Exception as e:
+            except LinearSyncError as e:
                 client = await self._get_graphql_client()
                 if not client:
                     raise LinearSyncError(

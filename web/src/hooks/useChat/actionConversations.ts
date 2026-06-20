@@ -11,6 +11,7 @@ import {
   hasSessionUsage,
 } from "./contextUsage";
 import { saveConversationId, uuid } from "./conversationPersistence";
+import { chatLogger } from "./logger";
 import {
   isChatProvider,
   normalizeReasoningEffort,
@@ -122,7 +123,12 @@ export function useConversationActions(
               lastSeqRef.current = data.max_seq as number;
             }
           })
-          .catch((err) => console.error("Failed to fetch chat messages:", err))
+          .catch((error) =>
+            chatLogger.error("Failed to fetch chat messages", {
+              error,
+              sessionId: id,
+            }),
+          )
           .finally(() => {
             if (!viewingSessionIdRef.current && conversationIdRef.current === id) {
               setIsLoadingMessages(false);
@@ -227,7 +233,11 @@ export function useConversationActions(
           forceNew: true,
         });
       } catch (error) {
-        console.error("Failed to create chat session for provider change:", error);
+        chatLogger.error("Failed to create chat session for provider change", {
+          error,
+          provider: newProvider,
+          projectId: projectIdRef.current,
+        });
       }
     },
     [
@@ -318,7 +328,10 @@ export function useConversationActions(
             (sessionData?.session as Record<string, unknown>) ?? null;
         }
       } catch (error) {
-        console.error("Failed to fetch source session:", error);
+        chatLogger.error("Failed to fetch source session", {
+          error,
+          sourceSessionId: sourceDbSessionId,
+        });
         sourceSession = null;
       }
 
@@ -358,15 +371,26 @@ export function useConversationActions(
             setMessages(mapped);
           }
         }
-      } catch (err) {
-        console.error("Failed to fetch source session messages:", err);
+      } catch (error) {
+        chatLogger.error("Failed to fetch source session messages", {
+          error,
+          sourceSessionId: sourceDbSessionId,
+        });
       }
 
       if (hasSessionUsage(sourceSession)) {
         setContextUsage(computeContextUsageFromSessionData(sourceSession));
       }
 
-      wsRef.current.send(
+      const socket = wsRef.current;
+      if (!socket || socket.readyState !== WebSocket.OPEN) {
+        chatLogger.warn("WebSocket unavailable before continue_in_chat send", {
+          sourceSessionId: sourceDbSessionId,
+        });
+        return "";
+      }
+
+      socket.send(
         JSON.stringify({
           type: "continue_in_chat",
           conversation_id: sourceDbSessionId,

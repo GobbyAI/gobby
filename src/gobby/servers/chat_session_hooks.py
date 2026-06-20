@@ -70,7 +70,12 @@ class ChatSessionHooksMixin:
                                 transcript_path,
                             )
                         except Exception as e:
-                            logger.warning(f"Failed to capture transcript_path: {e}")
+                            logger.warning(
+                                "Failed to capture transcript_path for session %s: %s",
+                                self.db_session_id[:8],
+                                e,
+                                exc_info=True,
+                            )
 
                 data = {"prompt": inp.get("prompt", ""), "source": "claude"}
                 resp = await cb(data)
@@ -192,7 +197,7 @@ class ChatSessionHooksMixin:
                     and isinstance(tool_input, dict)
                 ):
                     file_path = tool_input.get("file_path", "")
-                    if _PLAN_FILE_PATTERN.match(file_path):
+                    if isinstance(file_path, str) and _PLAN_FILE_PATTERN.match(file_path):
                         session = cast(Any, self)
                         plan_content = session._read_plan_file()
                         session._reset_plan_broadcast_if_revised(plan_content)

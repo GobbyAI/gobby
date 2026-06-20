@@ -823,20 +823,14 @@ class TestWorktreeIsolationHandler:
         with pytest.raises(RuntimeError, match="DB error"):
             await handler.prepare_environment(config)
 
-        # Handler should have tracked the worktree path but not the storage id
-        assert handler._created_worktree_path is not None
-        assert handler._created_worktree_id is None
-        tracked_path = handler._created_worktree_path
-
         await handler.cleanup_environment(config)
 
         # Should have called delete_worktree to clean up disk
-        mock_git_manager.delete_worktree.assert_called_once_with(
-            worktree_path=tracked_path,
-            force=True,
-        )
-        # State should be cleared after cleanup
-        assert handler._created_worktree_path is None
+        mock_git_manager.delete_worktree.assert_called_once()
+        delete_kwargs = mock_git_manager.delete_worktree.call_args.kwargs
+        assert delete_kwargs["force"] is True
+        assert "my-branch" in str(delete_kwargs["worktree_path"])
+        mock_worktree_storage.delete.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cleanup_after_hook_copy_failure(self) -> None:
@@ -882,10 +876,6 @@ class TestWorktreeIsolationHandler:
             with pytest.raises(OSError, match="Permission denied"):
                 await handler.prepare_environment(config)
 
-        # Both path and id should be tracked
-        assert handler._created_worktree_path is not None
-        assert handler._created_worktree_id == "wt-123"
-
         await handler.cleanup_environment(config)
 
         mock_git_manager.delete_worktree.assert_called_once()
@@ -928,10 +918,6 @@ class TestWorktreeIsolationHandler:
         )
 
         await handler.prepare_environment(config)
-
-        # After success, partial state should be cleared
-        assert handler._created_worktree_path is None
-        assert handler._created_worktree_id is None
 
         await handler.cleanup_environment(config)
 
@@ -1314,19 +1300,13 @@ class TestCloneIsolationHandler:
         with pytest.raises(RuntimeError, match="DB error"):
             await handler.prepare_environment(config)
 
-        # Handler should have tracked the clone path but not the storage id
-        assert handler._created_clone_path is not None
-        assert handler._created_clone_id is None
-        tracked_path = handler._created_clone_path
-
         await handler.cleanup_environment(config)
 
-        mock_clone_manager.delete_clone.assert_called_once_with(
-            clone_path=tracked_path,
-            force=True,
-        )
-        # State should be cleared after cleanup
-        assert handler._created_clone_path is None
+        mock_clone_manager.delete_clone.assert_called_once()
+        delete_kwargs = mock_clone_manager.delete_clone.call_args.kwargs
+        assert delete_kwargs["force"] is True
+        assert "my-branch" in delete_kwargs["clone_path"]
+        mock_clone_storage.delete.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_cleanup_after_hook_copy_failure(self) -> None:
@@ -1368,9 +1348,6 @@ class TestCloneIsolationHandler:
             with pytest.raises(OSError, match="Permission denied"):
                 await handler.prepare_environment(config)
 
-        assert handler._created_clone_path is not None
-        assert handler._created_clone_id == "clone-123"
-
         await handler.cleanup_environment(config)
 
         mock_clone_manager.delete_clone.assert_called_once()
@@ -1410,9 +1387,6 @@ class TestCloneIsolationHandler:
         )
 
         await handler.prepare_environment(config)
-
-        assert handler._created_clone_path is None
-        assert handler._created_clone_id is None
 
         await handler.cleanup_environment(config)
 

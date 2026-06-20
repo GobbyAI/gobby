@@ -12,7 +12,8 @@ from gobby.utils.git import git_subprocess_env
 
 def _workspace_path(kind: str, project_name: str, branch_name: str) -> Path:
     safe_branch = branch_name.replace("/", "-").replace("\\", "-")
-    return Path.home() / ".gobby" / kind / project_name / safe_branch
+    gobby_home = Path(os.environ.get("GOBBY_HOME", "~/.gobby")).expanduser()
+    return gobby_home / kind / project_name / safe_branch
 
 
 def _is_git_workspace_dir(path: str | Path) -> bool:

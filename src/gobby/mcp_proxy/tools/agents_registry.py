@@ -62,7 +62,13 @@ def create_agents_registry(
         clone_storage: Clone storage for spawn_agent isolation.
         clone_manager: Clone git manager for spawn_agent isolation.
         db: Database instance for agent definition lookups.
+        hook_manager_resolver: Resolver for the active HookManager.
         completion_registry: CompletionEventRegistry for auto-subscribing parent sessions.
+        lifecycle_monitor: Agent lifecycle monitor for termination cleanup.
+        running_registry: Legacy compatibility parameter, ignored.
+        daemon_config: Daemon configuration for spawn_agent runtime defaults.
+        code_index: Code index context exposed to spawn_agent.
+        transcript_reader: Transcript reader for agent query payloads.
 
     Returns:
         InternalToolRegistry with all agent tools registered.

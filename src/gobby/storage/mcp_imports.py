@@ -78,10 +78,10 @@ class MCPImportStorageMixin:
             return 0
 
         try:
-            with open(path) as f:
+            with open(path, encoding="utf-8") as f:
                 data = json.load(f)
         except (json.JSONDecodeError, OSError) as e:
-            logger.error(f"Failed to read {path}: {e}")
+            logger.error("Failed to read %s: %s", path, e)
             return 0
 
         imported = 0
@@ -153,14 +153,14 @@ class MCPImportStorageMixin:
             # Check if server exists in database for this project
             server = manager.get_server(server_name, project_id=project_id)
             if not server:
-                logger.debug(f"Skipping tools for unknown server: {server_name}")
+                logger.debug("Skipping tools for unknown server: %s", server_name)
                 continue
 
             # Collect all tool schemas for this server
             tools: list[dict[str, Any]] = []
             for tool_file in server_dir.glob("*.json"):
                 try:
-                    with open(tool_file) as f:
+                    with open(tool_file, encoding="utf-8") as f:
                         tool_data = json.load(f)
                     tools.append(
                         {
@@ -170,13 +170,13 @@ class MCPImportStorageMixin:
                         }
                     )
                 except (json.JSONDecodeError, OSError) as e:
-                    logger.warning(f"Failed to read tool file {tool_file}: {e}")
+                    logger.warning("Failed to read tool file %s: %s", tool_file, e)
                     continue
 
             # Cache tools to database
             if tools:
                 count = manager.cache_tools(server_name, tools, project_id=project_id)
                 total_imported += count
-                logger.info(f"Imported {count} tools for server '{server_name}'")
+                logger.info("Imported %s tools for server %s", count, server_name)
 
         return total_imported

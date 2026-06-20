@@ -114,6 +114,8 @@ def _rewrite_command_string(command: str, *, prefix: str, placeholder_command: s
     if command.strip() == _GOBBY_HOOK_COMMAND_PLACEHOLDER:
         # Bare placeholder (Droid template) — build the full command from the key.
         return placeholder_command
+    if _is_legacy_gobby_hook_script(command):
+        return placeholder_command
     if _GOBBY_OWNED_MARKER not in command:
         # Foreign / non-Gobby command — leave untouched.
         return command
@@ -121,6 +123,12 @@ def _rewrite_command_string(command: str, *, prefix: str, placeholder_command: s
     # future flags); swap only the executable prefix up to and including it.
     suffix = command.split(_GOBBY_OWNED_MARKER, 1)[1]
     return f"{prefix}{suffix}"
+
+
+def _is_legacy_gobby_hook_script(command: str) -> bool:
+    """Return whether a command references an old direct Gobby hook script."""
+    parts = command.replace("\\", "/")
+    return "hook_dispatcher.py" in parts or "hook.py" in parts
 
 
 def _rewrite_commands(node: Any, *, prefix: str, placeholder_command: str) -> None:

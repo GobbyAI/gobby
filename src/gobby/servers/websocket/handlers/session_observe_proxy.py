@@ -59,6 +59,29 @@ async def _resolve_agent_name_for_session(
     return workflow_name
 
 
+async def _web_origin_session_id(
+    mixin: SessionControlMixin,
+    session_manager: Any,
+    target_session: Any,
+    web_session_id: str,
+) -> str:
+    project_id = getattr(target_session, "project_id", None)
+    if not isinstance(project_id, str) or not project_id:
+        raise RuntimeError("target session has no project_id")
+    origin = await run_db(
+        mixin,
+        session_manager.register,
+        external_id=f"web-origin:{web_session_id}",
+        machine_id="web-ui",
+        source="web_chat",
+        project_id=project_id,
+        title="Web UI",
+        session_type="web_chat",
+        is_local=True,
+    )
+    return str(origin.id)
+
+
 async def handle_attach_to_session(
     mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
 ) -> None:
@@ -256,6 +279,21 @@ async def handle_send_to_cli_session(
             logger.warning(f"Failed to create InterSessionMessageManager: {e}")
 
     web_session_id = (mixin.clients.get(websocket) or {}).get("attached_session_id", "web-ui")
+    try:
+        from_session_id = await _web_origin_session_id(
+            mixin,
+            session_manager,
+            session,
+            str(web_session_id),
+        )
+    except Exception as e:
+        logger.warning("Failed to create web-origin sender session: %s", e)
+        await mixin._send_error(
+            websocket,
+            "Failed to create web-origin sender session",
+            code="WEB_ORIGIN_SESSION_ERROR",
+        )
+        return
 
     msg_id: str | None = None
     if inter_msg_manager:
@@ -263,7 +301,7 @@ async def handle_send_to_cli_session(
             msg = await run_db(
                 mixin,
                 inter_msg_manager.create_message,
-                from_session=f"web:{web_session_id}",
+                from_session=from_session_id,
                 to_session=session_id,
                 content=content,
                 message_type="web_chat",

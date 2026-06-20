@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from starlette.requests import ClientDisconnect
 
 from gobby.app_context import ServiceContainer
+from gobby.config import DaemonConfig
 from gobby.servers.http import HTTPServer
 from gobby.storage.sessions import SessionManager
 
@@ -19,7 +20,7 @@ class TestExceptionHandlers:
     def test_global_exception_handler_logs_details(self, session_storage: SessionManager) -> None:
         """Test that global exception handler logs request details."""
         services = ServiceContainer(
-            config=MagicMock(),
+            config=DaemonConfig(),
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -49,7 +50,7 @@ class TestExceptionHandlers:
     def test_global_exception_handler_includes_path(self, session_storage: SessionManager) -> None:
         """Test exception handler includes request path in logs."""
         services = ServiceContainer(
-            config=MagicMock(),
+            config=DaemonConfig(),
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),
@@ -76,7 +77,7 @@ class TestExceptionHandlers:
     ) -> None:
         """Client disconnects should not be logged as unhandled server errors."""
         services = ServiceContainer(
-            config=MagicMock(),
+            config=DaemonConfig(),
             database=session_storage.db,
             session_manager=session_storage,
             task_manager=MagicMock(),

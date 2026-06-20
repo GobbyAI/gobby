@@ -18,6 +18,24 @@ from gobby.storage.mcp_models import MCPServer, Tool
 from gobby.storage.projects import GLOBAL_PROJECT_ID
 
 
+def _parse_mcp_bool(value: Any, *, field_name: str, allow_none: bool = False) -> bool | None:
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"{field_name} must be a boolean")
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, int) and value in (0, 1):
+        return bool(value)
+    if isinstance(value, str):
+        normalized = value.strip().lower()
+        if normalized in {"true", "1", "yes", "on"}:
+            return True
+        if normalized in {"false", "0", "no", "off"}:
+            return False
+    raise ValueError(f"{field_name} must be a boolean")
+
+
 class MCPServerStorageMixin:
     """MCP server persistence, lookup, listing, and normalization methods."""
 
@@ -43,7 +61,12 @@ class MCPServerStorageMixin:
         """Persist a server row without applying bundled-server cleanup."""
         server_id = str(uuid.uuid4())
         now = datetime.now(UTC).isoformat()
-        if requires_oauth is False:
+        requires_oauth_value = _parse_mcp_bool(
+            requires_oauth,
+            field_name="requires_oauth",
+            allow_none=True,
+        )
+        if requires_oauth_value is False:
             oauth_provider = None
 
         self.db.execute(
@@ -79,12 +102,12 @@ class MCPServerStorageMixin:
                 transport,
                 url,
                 command,
-                json.dumps(args) if args else None,
-                json.dumps(env) if env else None,
-                json.dumps(headers) if headers else None,
-                bool(enabled),
+                json.dumps(args) if args is not None else None,
+                json.dumps(env) if env is not None else None,
+                json.dumps(headers) if headers is not None else None,
+                _parse_mcp_bool(enabled, field_name="enabled"),
                 description,
-                requires_oauth,
+                requires_oauth_value,
                 oauth_provider,
                 connect_timeout,
                 now,
@@ -142,7 +165,7 @@ class MCPServerStorageMixin:
                     server_id,
                     tool.name,
                     tool.description,
-                    json.dumps(tool.input_schema) if tool.input_schema else None,
+                    json.dumps(tool.input_schema) if tool.input_schema is not None else None,
                     now,
                     now,
                 ),
@@ -212,7 +235,11 @@ class MCPServerStorageMixin:
         """
         name = name.lower()
         canonical_project_id = canonical_project_id_for_server(name, project_id)
-        sanitized_args = normalize_bundled_managed_args(name, args)
+        sanitized_args = (
+            normalize_bundled_managed_args(name, args)
+            if args is not None or is_bundled_external_mcp_server(name)
+            else None
+        )
 
         server = self._persist_server(
             name=name,
@@ -462,9 +489,13 @@ class MCPServerStorageMixin:
         if "headers" in fields and fields["headers"] is not None:
             fields["headers"] = json.dumps(fields["headers"])
         if "enabled" in fields:
-            fields["enabled"] = bool(fields["enabled"])
+            fields["enabled"] = _parse_mcp_bool(fields["enabled"], field_name="enabled")
         if "requires_oauth" in fields:
-            fields["requires_oauth"] = bool(fields["requires_oauth"])
+            fields["requires_oauth"] = _parse_mcp_bool(
+                fields["requires_oauth"],
+                field_name="requires_oauth",
+                allow_none=True,
+            )
             if fields["requires_oauth"] is False:
                 fields["oauth_provider"] = None
         if "connect_timeout" in fields and fields["connect_timeout"] is not None:

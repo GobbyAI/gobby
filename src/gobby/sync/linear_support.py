@@ -199,7 +199,7 @@ def map_linear_state_to_gobby(linear_state: str) -> str:
         "Todo": "ready",
         "In Progress": "in_progress",
         "Done": "closed",
-        "Canceled": "closed",
+        "Canceled": "escalated",
         "In Review": "in_progress",
         "Backlog": "ready",
         "Triage": "ready",

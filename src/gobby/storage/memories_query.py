@@ -63,6 +63,9 @@ class MemoryQueryMixin(MemoryStoreBase):
         Returns:
             List of matching memories
         """
+        if limit <= 0:
+            return []
+
         query = "SELECT * FROM memories WHERE 1=1"
         params: list[Any] = []
 
@@ -78,17 +81,30 @@ class MemoryQueryMixin(MemoryStoreBase):
         if vis:
             query += f" AND {vis}"
 
-        # Fetch more results to allow for tag filtering
-        fetch_limit = limit * 3 if (tags_all or tags_any or tags_none) else limit
-        query += " ORDER BY updated_at DESC LIMIT %s OFFSET %s"
-        params.extend([fetch_limit, offset])
+        query += " ORDER BY updated_at DESC"
 
-        rows = self.db.fetchall(query, tuple(params))
-        memories = [Memory.from_row(row) for row in rows]
+        if not (tags_all or tags_any or tags_none):
+            rows = self.db.fetchall(
+                f"{query} LIMIT %s OFFSET %s",
+                (*params, limit, offset),  # nosec B608
+            )
+            return [Memory.from_row(row) for row in rows]
 
-        # Apply tag filters
-        if tags_all or tags_any or tags_none:
-            memories = self._filter_by_tags(memories, tags_all, tags_any, tags_none)
+        memories: list[Memory] = []
+        page_limit = max(limit * 3, 50)
+        page_offset = offset
+        while len(memories) < limit:
+            rows = self.db.fetchall(
+                f"{query} LIMIT %s OFFSET %s",
+                (*params, page_limit, page_offset),  # nosec B608
+            )
+            if not rows:
+                break
+            page = [Memory.from_row(row) for row in rows]
+            memories.extend(self._filter_by_tags(page, tags_all, tags_any, tags_none))
+            if len(rows) < page_limit:
+                break
+            page_offset += page_limit
 
         return memories[:limit]
 

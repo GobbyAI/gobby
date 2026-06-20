@@ -58,10 +58,10 @@ class MemoryCrudMixin(MemoryStoreBase):
                 f"""SELECT id, content FROM memories
                    WHERE source_session_id = %s
                      AND {recent_cutoff_sql}
-                   ORDER BY created_at DESC LIMIT 1""",
+                   ORDER BY created_at DESC, id DESC LIMIT 1""",
                 (source_session_id, 60),
             )
-            if recent and normalized_content[:100] == str(recent["content"]).strip()[:100]:
+            if recent and normalized_content == str(recent["content"]).strip():
                 return self.get_memory(recent["id"])
 
         tags_json = json.dumps(tags) if tags else None
@@ -186,7 +186,12 @@ class MemoryCrudMixin(MemoryStoreBase):
         vis = visibility_predicate(visibility)
         vis_clause = f" AND {vis}" if vis else ""
         row = self.db.fetchone(
-            f"SELECT 1 FROM memories WHERE content = %s{vis_clause} LIMIT 1",
+            f"""
+            SELECT 1 FROM memories
+             WHERE content = %s{vis_clause}
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1
+            """,
             (normalized_content,),
         )
         return row is not None
@@ -211,7 +216,12 @@ class MemoryCrudMixin(MemoryStoreBase):
         vis = visibility_predicate(visibility)
         vis_clause = f" AND {vis}" if vis else ""
         row = self.db.fetchone(
-            f"SELECT * FROM memories WHERE content = %s{vis_clause} LIMIT 1",
+            f"""
+            SELECT * FROM memories
+             WHERE content = %s{vis_clause}
+             ORDER BY created_at ASC, id ASC
+             LIMIT 1
+            """,
             (normalized_content,),
         )
         if row:

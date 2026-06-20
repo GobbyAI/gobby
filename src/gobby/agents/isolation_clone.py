@@ -13,38 +13,14 @@ from gobby.agents.isolation_models import (
     IsolationContext,
     IsolationHandler,
     SpawnConfig,
+    SpawnStateKey,
     generate_branch_name,
+    spawn_state_key,
 )
 from gobby.agents.isolation_repair import repair_isolation_environment
 from gobby.storage.tasks import TaskArtifactManager
 
 logger = logging.getLogger("gobby.agents.isolation")
-
-type _SpawnStateKey = tuple[
-    str,
-    str | None,
-    int | None,
-    str | None,
-    str | None,
-    str,
-    str,
-    str,
-    str,
-]
-
-
-def _spawn_state_key(config: SpawnConfig) -> _SpawnStateKey:
-    return (
-        config.project_id,
-        config.task_id,
-        config.task_seq_num,
-        config.branch_name,
-        config.branch_prefix,
-        config.base_branch,
-        config.project_path,
-        config.provider,
-        config.parent_session_id,
-    )
 
 
 def _capture_base_commit_sha(isolation_path: str) -> str:
@@ -88,7 +64,7 @@ class CloneIsolationHandler(IsolationHandler):
         self._clone_storage = clone_storage
         self._git_manager = git_manager
         # Track partial state for cleanup on failure
-        self._partial_clones: dict[_SpawnStateKey, dict[str, str | None]] = {}
+        self._partial_clones: dict[SpawnStateKey, dict[str, str | None]] = {}
 
     async def prepare_environment(self, config: SpawnConfig) -> IsolationContext:
         """
@@ -100,7 +76,7 @@ class CloneIsolationHandler(IsolationHandler):
         - Return IsolationContext with clone info
         """
         # Reset partial state
-        state_key = _spawn_state_key(config)
+        state_key = spawn_state_key(config)
         partial_state: dict[str, str | None] = {"path": None, "id": None}
         self._partial_clones[state_key] = partial_state
 
@@ -231,7 +207,7 @@ class CloneIsolationHandler(IsolationHandler):
 
     async def cleanup_environment(self, config: SpawnConfig) -> None:
         """Clean up partially created clone on prepare failure."""
-        partial_state = self._partial_clones.pop(_spawn_state_key(config), None)
+        partial_state = self._partial_clones.pop(spawn_state_key(config), None)
         if partial_state is None:
             logger.debug(
                 "Skipping clone cleanup for %s: no partial clone state recorded",

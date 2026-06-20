@@ -211,7 +211,6 @@ async def test_list_ready_tasks(mock_task_manager, mock_sync_manager):
         mock_task_manager.list_ready_tasks.assert_called_with(
             priority=None,
             task_type=None,
-            claimed_by_session_id=None,
             parent_task_id=None,
             limit=5,
             project_id="test-project-id",
@@ -238,7 +237,6 @@ async def test_list_ready_tasks_all_projects(mock_task_manager, mock_sync_manage
         mock_task_manager.list_ready_tasks.assert_called_with(
             priority=None,
             task_type=None,
-            claimed_by_session_id=None,
             parent_task_id=None,
             limit=5,
             project_id=None,  # Should be None when all_projects=True

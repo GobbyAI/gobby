@@ -50,7 +50,7 @@ def _fire_synthetic_stop(
             data={},
             metadata={"_platform_session_id": session_id},
         )
-        hook_mgr._evaluate_workflow_rules(stop_event)
+        hook_mgr.evaluate_workflow_rules(stop_event)
         agents.logger.debug(f"Fired synthetic stop rules for killed agent session {session_id}")
     except Exception as e:
         agents.logger.warning(f"Failed to fire synthetic stop rules for session {session_id}: {e}")
