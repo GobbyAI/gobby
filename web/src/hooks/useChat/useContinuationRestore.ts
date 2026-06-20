@@ -7,6 +7,7 @@ import type {
   ToolCall,
   ToolResult,
 } from "../../types/chat";
+import { normalizeChatMode } from "../../types/chat";
 import {
   saveConversationId,
   saveDbSessionId,
@@ -140,6 +141,7 @@ function normalizeSessionMeta(value: unknown): SessionObservationMeta | null {
     value.sessionType === "terminal" || value.sessionType === "web_chat"
       ? value.sessionType
       : null;
+  const rawChatMode = nullableString(value.chatMode);
   return {
     ref: nullableString(value.ref),
     source: value.source,
@@ -150,7 +152,7 @@ function normalizeSessionMeta(value: unknown): SessionObservationMeta | null {
     model: nullableString(value.model),
     reasoningEffort: nullableString(value.reasoningEffort) ?? undefined,
     externalId: typeof value.externalId === "string" ? value.externalId : "",
-    chatMode: nullableString(value.chatMode),
+    chatMode: rawChatMode ? normalizeChatMode(rawChatMode) : null,
     gitBranch: nullableString(value.gitBranch),
     contextWindow: typeof value.contextWindow === "number" ? value.contextWindow : null,
     agentRunId: nullableString(value.agentRunId),

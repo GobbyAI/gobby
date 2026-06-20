@@ -331,15 +331,25 @@ async def test_broadcast_event_backfills_external_id_from_metadata(
 
 
 @pytest.mark.asyncio
-async def test_broadcast_event_session_end_resume_reason(
+@pytest.mark.parametrize(
+    ("session_id", "source", "reason"),
+    [
+        ("codex-thread", SessionSource.CODEX, "resume"),
+        ("gemini-thread", SessionSource.GEMINI, "exit"),
+    ],
+)
+async def test_broadcast_event_session_end_runtime_reason(
     mock_websocket_server: MagicMock,
     default_config: DaemonConfig,
     caplog: pytest.LogCaptureFixture,
+    session_id: str,
+    source: SessionSource,
+    reason: str,
 ) -> None:
-    """Runtime resume reasons must validate before broadcasting SESSION_END."""
+    """Runtime reasons must validate before broadcasting SESSION_END."""
     from datetime import UTC, datetime
 
-    from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+    from gobby.hooks.events import HookEvent, HookEventType
 
     caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
     default_config.hook_extensions.websocket.broadcast_events = ["session-end"]
@@ -347,10 +357,10 @@ async def test_broadcast_event_session_end_resume_reason(
     broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
     event = HookEvent(
         event_type=HookEventType.SESSION_END,
-        session_id="codex-thread",
-        source=SessionSource.CODEX,
+        session_id=session_id,
+        source=source,
         timestamp=datetime.now(UTC),
-        data={"reason": "resume"},
+        data={"reason": reason},
     )
 
     await broadcaster.broadcast_event(event)
@@ -358,41 +368,8 @@ async def test_broadcast_event_session_end_resume_reason(
     mock_websocket_server.broadcast.assert_called_once()
     call_args = mock_websocket_server.broadcast.call_args[0][0]
     assert call_args["event_type"] == "session-end"
-    assert call_args["session_id"] == "codex-thread"
-    assert call_args["data"]["reason"] == "resume"
-    assert not any("Failed to broadcast event" in record.message for record in caplog.records)
-
-
-@pytest.mark.asyncio
-async def test_broadcast_event_session_end_exit_reason(
-    mock_websocket_server: MagicMock,
-    default_config: DaemonConfig,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    """Runtime exit reasons must validate before broadcasting SESSION_END."""
-    from datetime import UTC, datetime
-
-    from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-
-    caplog.set_level("WARNING", logger="gobby.hooks.broadcaster")
-    default_config.hook_extensions.websocket.broadcast_events = ["session-end"]
-
-    broadcaster = HookEventBroadcaster(mock_websocket_server, default_config)
-    event = HookEvent(
-        event_type=HookEventType.SESSION_END,
-        session_id="gemini-thread",
-        source=SessionSource.GEMINI,
-        timestamp=datetime.now(UTC),
-        data={"reason": "exit"},
-    )
-
-    await broadcaster.broadcast_event(event)
-
-    mock_websocket_server.broadcast.assert_called_once()
-    call_args = mock_websocket_server.broadcast.call_args[0][0]
-    assert call_args["event_type"] == "session-end"
-    assert call_args["session_id"] == "gemini-thread"
-    assert call_args["data"]["reason"] == "exit"
+    assert call_args["session_id"] == session_id
+    assert call_args["data"]["reason"] == reason
     assert not any("Failed to broadcast event" in record.message for record in caplog.records)
 
 

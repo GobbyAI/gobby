@@ -6,6 +6,8 @@ from types import SimpleNamespace
 from typing import Any
 from uuid import UUID
 
+import pytest
+
 from gobby.config.sessions import MemoryRecallConfig
 from gobby.hooks.dispatchers.mcp import PROJECT_MEMORY_CLOSE_TAG, PROJECT_MEMORY_OPEN_TAG
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
@@ -15,6 +17,8 @@ from gobby.storage.memories import Memory
 from gobby.workflows.state_manager import SessionVariableManager
 
 SESSION_ID = "hook-memory-recall-session"
+
+pytestmark = pytest.mark.unit
 
 
 class FakeMemoryManager:

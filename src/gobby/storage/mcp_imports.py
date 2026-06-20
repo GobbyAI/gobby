@@ -3,13 +3,14 @@
 import json
 import logging
 from pathlib import Path
-from typing import Any, Protocol, cast
+from typing import Any, Protocol, runtime_checkable
 
 from gobby.storage.mcp_models import MCPServer
 
 logger = logging.getLogger(__name__)
 
 
+@runtime_checkable
 class _ImportManager(Protocol):
     def upsert(
         self,
@@ -30,6 +31,12 @@ class _ImportManager(Protocol):
     ) -> int: ...
 
 
+def _import_manager(host: object) -> _ImportManager:
+    if not isinstance(host, _ImportManager):
+        raise TypeError("MCPImportStorageMixin requires MCP server and tool storage methods")
+    return host
+
+
 class MCPImportStorageMixin:
     """MCP JSON and filesystem import methods."""
 
@@ -40,7 +47,7 @@ class MCPImportStorageMixin:
         config: dict[str, Any],
         project_id: str,
     ) -> None:
-        manager = cast(_ImportManager, self)
+        manager = _import_manager(self)
         transport = config.get("transport", "stdio")
         manager.upsert(
             name=name,
@@ -141,7 +148,7 @@ class MCPImportStorageMixin:
             return 0
 
         total_imported = 0
-        manager = cast(_ImportManager, self)
+        manager = _import_manager(self)
 
         # Iterate through server directories
         for server_dir in tools_dir.iterdir():

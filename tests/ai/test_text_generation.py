@@ -1087,14 +1087,58 @@ async def test_text_generation_service_accepts_valid_effort_for_emit_nothing_pro
         TextGenerationRequest(
             prompt="summarize",
             candidates=(
-                FeatureCandidateConfig(candidate="gemini/gemini-pro", reasoning_effort="max"),
+                FeatureCandidateConfig(candidate="gemini/gemini-pro", reasoning_effort="high"),
             ),
         )
     )
 
     assert result.provider == "gemini"
-    assert result.applied_reasoning_effort == "max"
-    assert gemini.requests[0].reasoning_effort == "max"
+    assert result.applied_reasoning_effort == "high"
+    assert gemini.requests[0].reasoning_effort == "high"
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_rejects_known_effort_when_provider_efforts_empty(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen-model",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-pro",),
+            ),
+        ]
+    )
+    qwen = RecordingAdapter("qwen")
+    gemini = RecordingAdapter("gemini")
+    service = TextGenerationService(registry, {"qwen": qwen, "gemini": gemini})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=(
+                FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="high"),
+                FeatureCandidateConfig(candidate="gemini/gemini-pro", reasoning_effort="high"),
+            ),
+        )
+    )
+
+    assert result.provider == "gemini"
+    assert not qwen.requests
+    assert gemini.requests[0].reasoning_effort == "high"
+    assert (
+        "Unsupported reasoning_effort 'high' for provider 'qwen'; accepted: <none>" in caplog.text
+    )
 
 
 @pytest.mark.asyncio

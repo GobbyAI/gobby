@@ -486,6 +486,20 @@ class TestListAgentRuns:
         assert runner.list_runs.call_count == 1
         assert runner.list_runs.call_args is not None
 
+    @pytest.mark.asyncio
+    async def test_preserves_explicit_zero_limit(self):
+        """Explicit zero is passed through instead of defaulting."""
+        runner = MagicMock()
+        runner.list_runs.return_value = []
+
+        registry = create_agents_registry(runner)
+        list_agent_runs = registry._tools["list_agent_runs"].func
+
+        result = await list_agent_runs(parent_session_id="sess-123", limit=0)
+
+        assert result["success"] is True
+        runner.list_runs.assert_called_once_with("sess-123", status=None, limit=0)
+
 
 class TestStopAgent:
     """Tests for stop_agent MCP tool."""
@@ -681,6 +695,21 @@ class TestListRunningAgents:
         assert len(result["agents"]) == 3
         assert result["scope"] == "all"
         runner.run_storage.list_active.assert_called_once_with(limit=100)
+
+    @pytest.mark.asyncio
+    async def test_preserves_explicit_zero_limit(self):
+        """Explicit zero is passed through instead of defaulting."""
+        runner = _make_runner_with_run_storage()
+        runner.run_storage.list_active.return_value = []
+
+        registry = create_agents_registry(runner)
+        list_running = registry._tools["list_running_agents"].func
+
+        result = await list_running(limit=0)
+
+        assert result["success"] is True
+        assert result["count"] == 0
+        runner.run_storage.list_active.assert_called_once_with(limit=0)
 
     @pytest.mark.asyncio
     async def test_filter_by_parent_session(self):
@@ -1368,12 +1397,12 @@ class TestFireSyntheticStop:
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
         mock_hook_mgr = MagicMock()
-        mock_hook_mgr._evaluate_workflow_rules.return_value = (None, None)
+        mock_hook_mgr.evaluate_workflow_rules.return_value = (None, None)
 
         _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
 
-        mock_hook_mgr._evaluate_workflow_rules.assert_called_once()
-        event_arg = mock_hook_mgr._evaluate_workflow_rules.call_args[0][0]
+        mock_hook_mgr.evaluate_workflow_rules.assert_called_once()
+        event_arg = mock_hook_mgr.evaluate_workflow_rules.call_args[0][0]
         assert event_arg.event_type == HookEventType.STOP
         assert event_arg.metadata["_platform_session_id"] == "sess-123"
 
@@ -1382,11 +1411,11 @@ class TestFireSyntheticStop:
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
 
         mock_hook_mgr = MagicMock()
-        mock_hook_mgr._evaluate_workflow_rules.side_effect = RuntimeError("boom")
+        mock_hook_mgr.evaluate_workflow_rules.side_effect = RuntimeError("boom")
 
         result = _fire_synthetic_stop(lambda: mock_hook_mgr, "sess-123")
         assert result is None
-        assert mock_hook_mgr._evaluate_workflow_rules.call_count == 1
+        assert mock_hook_mgr.evaluate_workflow_rules.call_count == 1
 
     @pytest.mark.asyncio
     async def test_kill_agent_fires_synthetic_stop(self):
@@ -1401,7 +1430,7 @@ class TestFireSyntheticStop:
         runner.cancel_run.return_value = True
 
         mock_hook_mgr = MagicMock()
-        mock_hook_mgr._evaluate_workflow_rules.return_value = (None, None)
+        mock_hook_mgr.evaluate_workflow_rules.return_value = (None, None)
         mock_resolver = MagicMock(return_value=mock_hook_mgr)
 
         registry = create_agents_registry(
@@ -1420,8 +1449,8 @@ class TestFireSyntheticStop:
         assert result["success"] is True
         # Verify synthetic stop was fired for the agent's session
         mock_resolver.assert_called_once()
-        mock_hook_mgr._evaluate_workflow_rules.assert_called_once()
-        event_arg = mock_hook_mgr._evaluate_workflow_rules.call_args[0][0]
+        mock_hook_mgr.evaluate_workflow_rules.assert_called_once()
+        event_arg = mock_hook_mgr.evaluate_workflow_rules.call_args[0][0]
         assert event_arg.metadata["_platform_session_id"] == "sess-456"
 
 

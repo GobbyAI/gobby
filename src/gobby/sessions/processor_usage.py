@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+import psycopg
+
 from gobby.sessions.processor_types import WINDOW_ONLY_CONTEXT_SOURCES, ProcessorHost
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.token_events import (
@@ -32,7 +34,7 @@ class ProcessorUsageMixin:
 
         try:
             session = self.session_manager.get(session_id)
-        except Exception:
+        except psycopg.Error:
             logger.debug("Failed to load session %s for token usage", session_id, exc_info=True)
             return
         if session is None:

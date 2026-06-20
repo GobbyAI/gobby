@@ -46,10 +46,6 @@ def find_web_dir(
         if _qualifies(configured_path):
             return configured_path
 
-    cwd_web = cast(Path, deps.Path.cwd() / "web")
-    if _qualifies(cwd_web):
-        return cwd_web
-
     try:
         import gobby
 
@@ -59,7 +55,7 @@ def find_web_dir(
     except ImportError:
         deps.logger.debug("gobby package not importable, skipping package web dir")
     except OSError as exc:
-        deps.logger.debug(f"Could not locate package web directory: {exc}")
+        deps.logger.debug("Could not locate package web directory: %s", exc)
 
     return None
 
@@ -159,7 +155,7 @@ def spawn_ui_server(
         if not bool(
             deps.wait_for_port_available(port, host="0.0.0.0", timeout=5.0)  # nosec B104
         ):
-            deps.logger.error(f"Port {port} still in use after cleanup - aborting UI server spawn")
+            deps.logger.error("Port %s still in use after cleanup - aborting UI server spawn", port)
             return None
 
     node_modules = web_dir / "node_modules"
@@ -180,7 +176,7 @@ def spawn_ui_server(
             return None
 
         if result.returncode != 0:
-            deps.logger.error(f"Failed to install UI dependencies: {result.stderr.decode()}")
+            deps.logger.error("Failed to install UI dependencies: %s", result.stderr.decode())
             return None
 
     cmd = ["npm", "run", "dev", "--", "--host", host, "--port", str(port)]
@@ -211,8 +207,9 @@ def spawn_ui_server(
 
         if process.poll() is not None:
             deps.logger.error(
-                f"UI server process exited immediately with code {process.returncode}. "
-                f"Check logs: {log_file}"
+                "UI server process exited immediately with code %s. Check logs: %s",
+                process.returncode,
+                log_file,
             )
             return None
 
@@ -223,7 +220,7 @@ def spawn_ui_server(
         return int(process.pid)
 
     except (OSError, RuntimeError, subprocess.SubprocessError) as exc:
-        deps.logger.error(f"Failed to spawn UI server: {exc}")
+        deps.logger.error("Failed to spawn UI server: %s", exc)
         return None
 
 
@@ -247,13 +244,13 @@ def stop_ui_server(quiet: bool = False) -> bool:
             pid = int(file.read().strip())
     except (OSError, ValueError) as exc:
         if not quiet:
-            deps.logger.debug(f"Error reading UI PID file: {exc}")
+            deps.logger.debug("Error reading UI PID file: %s", exc)
         pid_file.unlink(missing_ok=True)
         return True
 
     if not bool(deps._is_process_alive(pid)):
         if not quiet:
-            deps.logger.debug(f"UI server not running (stale PID file with PID {pid})")
+            deps.logger.debug("UI server not running (stale PID file with PID %s)", pid)
         pid_file.unlink(missing_ok=True)
         return True
 
@@ -300,7 +297,7 @@ def stop_ui_server(quiet: bool = False) -> bool:
         return True
     except (OSError, psutil.Error) as exc:
         if not quiet:
-            deps.logger.debug(f"Error stopping UI server: {exc}")
+            deps.logger.debug("Error stopping UI server: %s", exc)
         return False
 
 

@@ -111,7 +111,7 @@ export interface ContinueSessionOptions {
   provider?: string | null;
   model?: string | null;
   reasoningEffort?: string | null;
-  chatMode?: string | null;
+  chatMode?: ChatMode | null;
   fallbackContext?: FallbackContextMode;
 }
 
@@ -206,4 +206,11 @@ export interface ChatControlActions {
 export interface PlanApprovalActions {
   approvePlan: ApprovePlanAction;
   requestPlanChanges: RequestPlanChangesAction;
+}
+
+export interface UseChatActionsResult
+  extends ConversationActions,
+    ChatControlActions,
+    PlanApprovalActions {
+  sendMessage: SendMessageAction;
 }

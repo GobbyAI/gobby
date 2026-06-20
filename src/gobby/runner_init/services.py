@@ -68,6 +68,7 @@ def _validate_memory_embedding_config(
         api_base=emb_cfg.api_base,
         api_key=api_key if api_key is not None else emb_cfg.api_key,
         dim=emb_cfg.dim,
+        query_prefix=emb_cfg.query_prefix,
     )
     if service.is_configured():
         return
@@ -114,6 +115,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                     api_base=emb_cfg.api_base,
                     api_key=embedding_api_key,
                     dim=emb_cfg.dim,
+                    query_prefix=emb_cfg.query_prefix,
                 )
                 embed_fn = embedding_service.generate_embedding
 

@@ -710,6 +710,7 @@ def _persist_spawn_artifacts(
                 extra={"task_id": task_id, "fields": fields},
                 exc_info=True,
             )
+            raise
 
 
 def _field(

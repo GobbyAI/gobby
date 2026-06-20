@@ -201,7 +201,7 @@ async def handle_continue_in_chat(
                     mixin, agent_run_mgr.get_sdk_session_id_for_session, source_session_id
                 )
             except Exception as e:
-                logger.warning(f"Failed to look up sdk_session_id: {e}")
+                logger.warning("Failed to look up sdk_session_id: %s", e)
 
     # 3. Kill the terminal/agent runtime that currently owns the session so the
     #    resumed web chat can take over the same durable session identity.
@@ -284,7 +284,9 @@ async def handle_continue_in_chat(
                     )
         except Exception as e:
             logger.warning(
-                f"Failed to normalize continuation session metadata for {conversation_id}: {e}"
+                "Failed to normalize continuation session metadata for %s: %s",
+                conversation_id,
+                e,
             )
 
     # Create chat session with optional SDK resume (check dict first to avoid redundant creation)
@@ -320,7 +322,7 @@ async def handle_continue_in_chat(
                         **session_updates,
                     )
         except Exception as e:
-            logger.error(f"Failed to create continuation session: {e}")
+            logger.error("Failed to create continuation session: %s", e)
             await mixin._send_error(websocket, f"Failed to create session: {e}")
             return
     elif target_reasoning_effort is not None:
@@ -352,7 +354,7 @@ async def handle_continue_in_chat(
                 source_session_id,
             )
         except Exception as e:
-            logger.warning(f"Failed to set parent_session_id: {e}")
+            logger.warning("Failed to set parent_session_id: %s", e)
 
     # Send confirmation
     await websocket.send(
@@ -382,8 +384,11 @@ async def handle_continue_in_chat(
     else:
         resume_mode = "fresh web chat"
     logger.info(
-        f"Session continued ({resume_mode}): {source_session_id[:8]} -> "
-        f"{conversation_id[:8]} (db={session.db_session_id})"
+        "Session continued (%s): %s -> %s (db=%s)",
+        resume_mode,
+        source_session_id[:8],
+        conversation_id[:8],
+        session.db_session_id,
     )
 
 
@@ -409,7 +414,7 @@ async def check_resume_blocked(mixin: SessionControlMixin, source_session: Any) 
             if row:
                 return "session has a pending or running agent"
         except Exception as e:
-            logger.debug(f"Resume block check failed for {session_id}: {e}")
+            logger.debug("Resume block check failed for %s: %s", session_id, e)
 
         # 2. Active pipeline
         try:
@@ -424,7 +429,7 @@ async def check_resume_blocked(mixin: SessionControlMixin, source_session: Any) 
             if row:
                 return "session has an active pipeline"
         except Exception as e:
-            logger.debug(f"Resume block check failed for {session_id}: {e}")
+            logger.debug("Resume block check failed for %s: %s", session_id, e)
 
     # 4. Active web chat session (in-memory)
     if session_id in {getattr(s, "db_session_id", None) for s in mixin._chat_sessions.values()}:

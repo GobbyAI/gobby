@@ -107,11 +107,6 @@ def _gate_reasoning_effort(
             f"{binding.provider}/{request.model or next(iter(binding.models), None)}"
         )
 
-    if provider_reasoning_flag(binding.provider) is None:
-        if normalized == request.reasoning_effort:
-            return request
-        return replace(request, reasoning_effort=normalized)
-
     accepted_efforts = provider_reasoning_efforts(binding.provider)
     if normalized not in accepted_efforts:
         accepted = ", ".join(sorted(accepted_efforts)) or "<none>"
@@ -119,6 +114,11 @@ def _gate_reasoning_effort(
             f"Unsupported reasoning_effort {normalized!r} for provider "
             f"{binding.provider!r}; accepted: {accepted}"
         )
+
+    if provider_reasoning_flag(binding.provider) is None:
+        if normalized == request.reasoning_effort:
+            return request
+        return replace(request, reasoning_effort=normalized)
 
     if normalized == request.reasoning_effort:
         return request

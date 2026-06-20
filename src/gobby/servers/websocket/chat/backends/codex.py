@@ -427,8 +427,7 @@ class CodexWebChatBackend:
                 raise RuntimeError(
                     "Codex local model pre-flight failed "
                     f"(provider={local_endpoint.provider}, "
-                    f"api_base={local_endpoint.api_base}, "
-                    f"model={local_endpoint.model}): {exc}"
+                    f"model={local_endpoint.model})"
                 ) from exc
 
         if session._thread_id:

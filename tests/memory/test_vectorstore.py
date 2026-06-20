@@ -442,7 +442,11 @@ async def test_rebuild_same_dimension_does_not_recreate_collection(
         patch.object(client, "delete_collection", wraps=client.delete_collection) as delete_spy,
         patch.object(client, "create_collection", wraps=client.create_collection) as create_spy,
     ):
-        await vector_store.rebuild([{"id": MEM_A, "content": "alpha"}], embed_fn)
+        await vector_store.rebuild(
+            [{"id": MEM_A, "content": "alpha"}],
+            embed_fn,
+            recreate_on_mismatch=True,
+        )
 
     assert set(await vector_store.scroll_ids()) == {MEM_A}
     assert await vector_store.count() == 1
@@ -559,7 +563,11 @@ async def test_rebuild_same_dimension_removes_stale_point_ids(
     async def embed_fn(_text: str) -> list[float]:
         return _make_embedding(3.0)
 
-    await vector_store.rebuild([{"id": MEM_2, "content": "keep new"}], embed_fn)
+    await vector_store.rebuild(
+        [{"id": MEM_2, "content": "keep new"}],
+        embed_fn,
+        recreate_on_mismatch=True,
+    )
 
     assert set(await vector_store.scroll_ids()) == {MEM_2}
     assert await vector_store.count() == 1
@@ -649,7 +657,7 @@ async def test_rebuild_deletes_stale_point_ids_in_batches_under_lifecycle_lock()
     async def embed_fn(_text: str) -> list[float]:
         return _make_embedding()
 
-    await store.rebuild([], embed_fn)
+    await store.rebuild([], embed_fn, recreate_on_mismatch=True)
 
     assert delete_batch_sizes == [500, 500, 1]
     assert delete_lock_states == [True, True, True]

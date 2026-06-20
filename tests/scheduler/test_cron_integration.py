@@ -234,6 +234,11 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     # Create a recent run
     recent_run = cron_storage.create_run(job.id)
     cron_storage.update_run(recent_run.id, status="completed")
+    active_run = cron_storage.create_run(job.id)
+    cron_storage.db.execute(
+        "UPDATE cron_runs SET created_at = %s WHERE id = %s",
+        (old_time, active_run.id),
+    )
 
     # Cleanup runs older than 7 days
     deleted = cron_storage.cleanup_old_runs(days=7)
@@ -242,6 +247,7 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
     # Old run gone, recent run still there
     assert cron_storage.get_run(run.id) is None
     assert cron_storage.get_run(recent_run.id) is not None
+    assert cron_storage.get_run(active_run.id) is not None
 
 
 # --- get_job_by_name ---

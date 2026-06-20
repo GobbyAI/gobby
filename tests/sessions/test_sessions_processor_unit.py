@@ -9,6 +9,7 @@ import json
 from datetime import datetime
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import psycopg
 import pytest
 
 from gobby.sessions.processor import SessionMessageProcessor
@@ -441,8 +442,11 @@ class TestProcessSession:
         processor.message_manager = AsyncMock()
         processor.message_manager.get_state = AsyncMock(return_value=None)
 
-        # Make the file unreadable by patching open
-        with patch("builtins.open", side_effect=PermissionError("Permission denied")):
+        # Make the file unreadable by patching aiofiles.open.
+        with patch(
+            "gobby.sessions.processor_transcripts.aiofiles.open",
+            side_effect=PermissionError("Permission denied"),
+        ):
             with caplog.at_level("ERROR"):
                 await processor._process_session("session-1", str(transcript))
 
@@ -869,6 +873,40 @@ class TestModelExtraction:
         assert usage_payload["last_prompt_uncached_input_tokens"] == 11392
         assert usage_payload["context_window"] == 258400
         mock_ws.broadcast_token_event.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_persist_usage_events_ignores_session_lookup_db_errors(
+        self,
+        mock_db,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        mock_session_manager = MagicMock()
+        mock_session_manager.get.side_effect = psycopg.OperationalError("db down")
+        processor = SessionMessageProcessor(mock_db, session_manager=mock_session_manager)
+        parsed_msg = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="Done",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+            usage=TokenUsage(
+                input_tokens=1,
+                output_tokens=2,
+                cache_creation_tokens=0,
+                cache_read_tokens=0,
+            ),
+            model="codex-test",
+        )
+
+        with caplog.at_level("DEBUG", logger="gobby.sessions.processor_usage"):
+            await processor._persist_usage_events("session-1", [parsed_msg])
+
+        assert "Failed to load session session-1 for token usage" in caplog.text
+        mock_session_manager.update_usage.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_process_session_records_grok_window_only_snapshot(

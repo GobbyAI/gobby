@@ -126,16 +126,23 @@ def test_find_web_dir_config_missing(tmp_path: Path) -> None:
     assert result is None
 
 
-def test_find_web_dir_from_cwd(tmp_path: Path) -> None:
+def test_find_web_dir_ignores_cwd(tmp_path: Path) -> None:
+    import gobby
     from gobby.cli.utils import find_web_dir
 
     web_dir = tmp_path / "web"
     web_dir.mkdir()
     (web_dir / "package.json").write_text("{}")
+    fake_pkg = tmp_path / "fake-pkg" / "__init__.py"
+    fake_pkg.parent.mkdir(parents=True)
+    fake_pkg.write_text("")
 
-    with patch("gobby.cli.utils.Path.cwd", return_value=tmp_path):
+    with (
+        patch("gobby.cli.utils.Path.cwd", return_value=tmp_path),
+        patch.object(gobby, "__file__", str(fake_pkg)),
+    ):
         result = find_web_dir(None)
-    assert result == web_dir
+    assert result is None
 
 
 def test_find_web_dir_none(tmp_path: Path) -> None:
@@ -927,6 +934,8 @@ def test_kill_all_gobby_daemons_kills_runner_process() -> None:
         result = kill_all_gobby_daemons()
     assert result == 1
     fake_proc.send_signal.assert_called_once_with(signal.SIGTERM)
+    fake_proc.wait.assert_called_once_with(timeout=5)
+    fake_proc.net_connections.assert_not_called()
     assert fake_proc.wait.call_count == 1
 
 
@@ -965,8 +974,8 @@ def test_kill_all_gobby_daemons_force_kill_on_timeout() -> None:
     assert fake_proc.wait.call_count == 2
 
 
-def test_kill_all_gobby_daemons_port_match() -> None:
-    """Detects daemon by port listening when cmdline doesn't match runner pattern."""
+def test_kill_all_gobby_daemons_skips_unverified_port_match() -> None:
+    """Does not kill an unrelated process only because it owns the daemon port."""
     from gobby.cli.utils import kill_all_gobby_daemons
 
     mock_config = MagicMock()
@@ -999,8 +1008,43 @@ def test_kill_all_gobby_daemons_port_match() -> None:
         patch("gobby.cli.utils.click.echo"),
     ):
         result = kill_all_gobby_daemons()
-    assert result == 1
+    assert result == 0
     assert fake_proc.net_connections.call_count == 1
+    fake_proc.send_signal.assert_not_called()
+
+
+def test_kill_all_gobby_daemons_kills_pid_file_match(tmp_path: Path) -> None:
+    """Detects the daemon by PID file when cmdline does not expose the runner marker."""
+    from gobby.cli.utils import kill_all_gobby_daemons
+
+    mock_config = MagicMock()
+    mock_config.daemon_port = 60887
+    mock_config.websocket.port = 60888
+    (tmp_path / "gobby.pid").write_text("88888")
+
+    fake_proc = MagicMock()
+    fake_proc.pid = 88888
+    fake_proc.cmdline.return_value = ["python", "some_script.py"]
+    fake_proc.send_signal = MagicMock()
+    fake_proc.wait = MagicMock()
+
+    parent_proc = MagicMock()
+    parent_proc.parent.return_value = None
+    parent_proc.pid = 1
+
+    with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
+        patch("gobby.cli.utils.load_config", return_value=mock_config),
+        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
+        patch("gobby.cli.utils.os.getpid", return_value=10000),
+        patch("gobby.cli.utils.os.getppid", return_value=10001),
+        patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
+        patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]),
+        patch("gobby.cli.utils.click.echo"),
+    ):
+        result = kill_all_gobby_daemons()
+    assert result == 1
+    fake_proc.send_signal.assert_called_once_with(signal.SIGTERM)
 
 
 def test_kill_all_gobby_daemons_skips_self() -> None:
@@ -1060,6 +1104,38 @@ def test_kill_all_gobby_daemons_handles_process_error() -> None:
         result = kill_all_gobby_daemons()
     assert result == 0
     assert fake_proc.cmdline.call_count == 1
+
+
+def test_spawn_ui_server_refuses_unverified_port_holder(tmp_path: Path) -> None:
+    from gobby.cli.utils import spawn_ui_server
+
+    deps = MagicMock()
+    deps.stop_ui_server.return_value = True
+    deps.is_port_available.return_value = False
+    deps.logger = MagicMock()
+
+    with (
+        patch("gobby.cli.utils_ui.facade", return_value=deps),
+        patch("gobby.cli.utils_ui._find_gobby_ui_port_holder", return_value=None),
+        patch("gobby.cli.utils_ui.subprocess.Popen") as popen,
+    ):
+        result = spawn_ui_server(
+            host="127.0.0.1",
+            port=5173,
+            web_dir=tmp_path,
+            log_file=tmp_path / "ui.log",
+        )
+
+    assert result is None
+    deps.stop_ui_server.assert_called_once_with(quiet=True)
+    deps.is_port_available.assert_called_once_with(5173, host="0.0.0.0")
+    deps.wait_for_port_available.assert_not_called()
+    deps._open_ui_log_handler.assert_not_called()
+    deps.logger.error.assert_called_once_with(
+        "Port %s is in use by a non-Gobby UI process; aborting UI server spawn",
+        5173,
+    )
+    popen.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -1202,6 +1278,8 @@ def test_stop_ui_server_running_graceful(tmp_path: Path) -> None:
     alive_calls = iter([True, False, False])
     mock_parent = MagicMock()
     mock_parent.children.return_value = []
+    mock_parent.cmdline.return_value = ["npm", "run", "dev"]
+    mock_parent.cwd.return_value = str(tmp_path)
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1241,6 +1319,8 @@ def test_stop_ui_server_force_kill(tmp_path: Path) -> None:
     mock_child.is_running.return_value = True
     mock_parent = MagicMock()
     mock_parent.children.return_value = [mock_child]
+    mock_parent.cmdline.return_value = ["npm", "run", "dev"]
+    mock_parent.cwd.return_value = str(tmp_path)
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1297,7 +1377,7 @@ def test_stop_ui_server_generic_exception(tmp_path: Path) -> None:
         patch("gobby.cli.utils.kill_all_gobby_daemons", return_value=0),
         patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
         patch("gobby.cli.utils._is_process_alive", return_value=True),
-        patch("gobby.cli.utils.psutil.Process", side_effect=RuntimeError("unexpected")),
+        patch("gobby.cli.utils.psutil.Process", side_effect=OSError("unexpected")),
     ):
         result = stop_ui_server(quiet=False)
     assert result is False
@@ -1582,7 +1662,7 @@ def test_stop_daemon_generic_exception(tmp_path: Path) -> None:
         patch("gobby.cli.utils.stop_ui_server"),
         patch("gobby.cli.utils._is_process_alive", return_value=True),
         patch("gobby.cli.utils.psutil.Process", return_value=mock_proc),
-        patch("gobby.cli.utils.os.kill", side_effect=RuntimeError("unexpected")),
+        patch("gobby.cli.utils.os.kill", side_effect=OSError("unexpected")),
         patch("gobby.cli.utils.click.echo"),
         patch(
             "gobby.cli.installers.service.get_service_status",

@@ -85,6 +85,7 @@ def register_agent_query_tools(
         status: str | None = None,
         limit: int = 20,
     ) -> dict[str, Any]:
+        limit = max(0, min(limit, 100))
         effective_parent_ref = parent_session_id or ctx.get_current_session_id()
         if not effective_parent_ref:
             return {
@@ -159,6 +160,7 @@ def register_agent_query_tools(
         status: str = "active",
         limit: int = 100,
     ) -> dict[str, Any]:
+        limit = max(0, min(limit, 100))
         scope_key = scope.strip().lower().replace("_", "-")
         if scope_key in {"build", "build-wide"}:
             scope_key = "all"

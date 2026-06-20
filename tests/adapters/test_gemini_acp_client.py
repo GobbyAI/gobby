@@ -705,6 +705,7 @@ class TestSend:
                     async for _ in client.send("slow"):
                         pass
 
+    @pytest.mark.asyncio
     async def test_send_ignores_late_response_after_prompt_timeout(self) -> None:
         stale_response = (
             json.dumps({"jsonrpc": "2.0", "id": 3, "result": {"stats": {"source": "stale"}}}) + "\n"

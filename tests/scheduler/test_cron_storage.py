@@ -741,6 +741,14 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
         action_config={"command": "echo"},
         cron_expr="0 * * * *",
     )
+    running_job = cron_storage.create_job(
+        project_id=PROJECT_ID,
+        name="Cleanup Running",
+        schedule_type="cron",
+        action_type="shell",
+        action_config={"command": "echo"},
+        cron_expr="0 * * * *",
+    )
     # Create a recent run
     cron_storage.create_run(job.id)
     # Simulate old run by manually inserting
@@ -750,10 +758,16 @@ def test_cleanup_old_runs(cron_storage: CronJobStorage) -> None:
         VALUES (%s, %s, %s, 'completed', %s)""",
         ("cr-old", job.id, old_time, old_time),
     )
+    cron_storage.db.execute(
+        """INSERT INTO cron_runs (id, cron_job_id, triggered_at, status, created_at)
+        VALUES (%s, %s, %s, 'running', %s)""",
+        ("cr-old-running", running_job.id, old_time, old_time),
+    )
     assert len(cron_storage.list_runs(job.id)) == 2
     deleted = cron_storage.cleanup_old_runs(30)
     assert deleted == 1
     assert len(cron_storage.list_runs(job.id)) == 1
+    assert cron_storage.get_run("cr-old-running") is not None
 
 
 @pytest.mark.parametrize("days", [0, -1, True, 1.5, "7"])

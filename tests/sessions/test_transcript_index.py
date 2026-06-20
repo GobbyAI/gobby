@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 import logging
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from typing import Any
 
@@ -388,6 +388,15 @@ def test_nonserializable_adjustment_log_redacts_value(
     assert record.value_type == "dict"
     assert record.value_length == 1
     assert record.value_redacted is True
+    loaded = load_index_sidecar(
+        str(transcript),
+        "codex",
+        seek_mode="byte",
+        mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
+    )
+    assert loaded is not None
+    assert loaded.post_pass_adjustments == []
 
 
 def test_nonserializable_adjustment_len_value_error_propagates() -> None:
@@ -450,6 +459,84 @@ async def test_get_or_build_index_caches_and_invalidates(tmp_path: Path) -> None
     )
     assert third is not first
     assert third.total_groups >= first.total_groups
+    clear_index_cache()
+
+
+@pytest.mark.asyncio
+async def test_get_or_build_index_defers_lazy_lines_to_worker(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.sessions.transcript_index_sidecar as sidecar
+
+    clear_index_cache()
+    raw_lines = _codex_lines()
+    path = _write(tmp_path, "codex", raw_lines)
+    st = os.stat(path)
+
+    class LazyLines:
+        iterated = False
+
+        def __iter__(self) -> Iterator[str]:
+            self.iterated = True
+            return iter(raw_lines)
+
+    lazy_lines = LazyLines()
+    saw_build_worker = False
+
+    async def immediate_to_thread(func: Callable[..., Any], *args: Any, **kwargs: Any) -> Any:
+        nonlocal saw_build_worker
+        if getattr(func, "__name__", "") == "<lambda>":
+            saw_build_worker = True
+            assert lazy_lines.iterated is False
+        return func(*args, **kwargs)
+
+    monkeypatch.setattr(sidecar.asyncio, "to_thread", immediate_to_thread)
+
+    index = await get_or_build_index(
+        path,
+        "codex",
+        SESSION,
+        lines=lazy_lines,
+        mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
+    )
+
+    assert index.total_groups > 0
+    assert saw_build_worker is True
+    assert lazy_lines.iterated is True
+    clear_index_cache()
+
+
+@pytest.mark.asyncio
+async def test_get_or_build_index_clears_build_lock_after_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import gobby.sessions.transcript_index_sidecar as sidecar
+
+    clear_index_cache()
+    sidecar._BUILD_LOCKS.clear()
+    raw_lines = _codex_lines()
+    path = _write(tmp_path, "codex", raw_lines)
+    st = os.stat(path)
+
+    def fail_build(*_args: Any, **_kwargs: Any) -> Any:
+        raise RuntimeError("build failed")
+
+    monkeypatch.setattr(transcript_index, "build_index_from_lines", fail_build)
+
+    with pytest.raises(RuntimeError, match="build failed"):
+        await get_or_build_index(
+            path,
+            "codex",
+            SESSION,
+            lines=raw_lines,
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+
+    assert sidecar._BUILD_LOCKS == {}
     clear_index_cache()
 
 

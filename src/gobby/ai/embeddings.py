@@ -235,13 +235,15 @@ def _needs_nomic_prefix(model: str) -> bool:
     return "nomic" in model.lower()
 
 
-def _apply_prefix(text: str, is_query: bool, model: str) -> str:
+def _apply_prefix(text: str, is_query: bool, model: str, query_prefix: str | None = None) -> str:
     """Prepend nomic task prefix when applicable.
 
     nomic-embed-text was trained with task-specific prefixes:
     - 'search_query: ' for queries
     - 'search_document: ' for documents
     """
+    if is_query and query_prefix:
+        return f"{query_prefix}{text}"
     if not _needs_nomic_prefix(model):
         return text
     if is_query:
@@ -258,6 +260,7 @@ async def _generate_embeddings(
     base_delay: float = _DEFAULT_BASE_DELAY,
     is_query: bool = False,
     expected_dim: int | None = None,
+    query_prefix: str | None = None,
 ) -> list[list[float]]:
     """Generate embeddings using an OpenAI-compatible API with exponential backoff.
 
@@ -275,7 +278,7 @@ async def _generate_embeddings(
         api_key: Optional API key from embedding configuration
         max_retries: Maximum retry attempts for rate limit errors (default: 5)
         base_delay: Initial backoff delay in seconds (default: 1.0)
-        is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
+        is_query: Whether this is a query embedding (applies configured/nomic prefix)
         expected_dim: Expected embedding dimension. When set, mismatches fail fast.
 
     Returns:
@@ -290,7 +293,7 @@ async def _generate_embeddings(
 
     # Apply nomic task prefix before cache lookup so prefixed/unprefixed
     # texts cache separately.
-    prefixed_texts = [_apply_prefix(t, is_query, model) for t in texts]
+    prefixed_texts = [_apply_prefix(t, is_query, model, query_prefix) for t in texts]
 
     lock = _get_lock()
 
@@ -378,7 +381,7 @@ async def _try_reload_model(model: str, api_base: str) -> bool:
 
     from gobby.cli.services import try_autoload_embedding_model
 
-    logger.info(f"Embedding model evicted — attempting reload ({model})")
+    logger.info("Embedding model evicted — attempting reload (%s)", model)
     return await try_autoload_embedding_model(model, api_base)
 
 
@@ -401,7 +404,7 @@ async def _try_recover_local_lm_studio_service(
         get_local_embedding_service_failure_reason,
     )
 
-    logger.info(f"Embedding endpoint unavailable — attempting LM Studio recovery ({model})")
+    logger.info("Embedding endpoint unavailable — attempting LM Studio recovery (%s)", model)
     recovered = await ensure_local_embedding_service_ready(
         model=model,
         api_base=api_base,
@@ -413,7 +416,7 @@ async def _try_recover_local_lm_studio_service(
 
     reason = get_local_embedding_service_failure_reason()
     if reason:
-        logger.warning(f"LM Studio recovery failed: {reason}")
+        logger.warning("LM Studio recovery failed: %s", reason)
     return False
 
 
@@ -491,7 +494,7 @@ async def _retry_embeddings_after_reload(
         model=model,
         api_base=api_base,
     )
-    logger.debug(f"Generated {len(embeddings)} embeddings ({model}) after reload")
+    logger.debug("Generated %s embeddings (%s) after reload", len(embeddings), model)
     return embeddings
 
 
@@ -564,16 +567,16 @@ async def _fetch_embeddings(
                     model=model,
                     api_base=provider.api_base,
                 )
-                logger.debug(f"Generated {len(embeddings)} embeddings ({model})")
+                logger.debug("Generated %s embeddings (%s)", len(embeddings), model)
                 return embeddings
             except AuthenticationError as e:
-                logger.error(f"Embedding authentication failed: {e}")
+                logger.error("Embedding authentication failed: %s", e)
                 raise EmbeddingGenerationError(f"Authentication failed: {e}") from e
             except (APIConnectionError, httpx.HTTPError) as e:
                 from gobby.cli.services import _is_lm_studio_endpoint
 
                 if not provider.api_base or not _is_lm_studio_endpoint(provider.api_base):
-                    logger.error(f"Failed to generate embeddings: {e}")
+                    logger.error("Failed to generate embeddings: %s", e)
                     raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
 
                 recovered = await _try_recover_local_lm_studio_service(
@@ -603,7 +606,7 @@ async def _fetch_embeddings(
                 if "try pulling it first" not in error_message or not _is_ollama_endpoint(
                     provider.api_base
                 ):
-                    logger.error(f"Embedding model not found: {e}")
+                    logger.error("Embedding model not found: %s", e)
                     raise EmbeddingGenerationError(f"Model not found: {e}") from e
                 assert (
                     provider.api_base is not None
@@ -628,7 +631,7 @@ async def _fetch_embeddings(
             except BadRequestError as e:
                 error_message = _get_api_error_message(e).lower()
                 if "no models loaded" not in error_message or not provider.api_base:
-                    logger.error(f"Failed to generate embeddings: {e}")
+                    logger.error("Failed to generate embeddings: %s", e)
                     raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
                 # Model was evicted from local inference server — try to reload
                 reloaded = await _try_reload_model(model, provider.api_base)
@@ -656,16 +659,19 @@ async def _fetch_embeddings(
                     0.8, 1.2
                 )  # nosec B311
                 logger.warning(
-                    f"Rate limited (attempt {attempt + 1}/{max_retries + 1}), retrying in {delay:.1f}s"
+                    "Rate limited (attempt %s/%s), retrying in %.1fs",
+                    attempt + 1,
+                    max_retries + 1,
+                    delay,
                 )
                 await asyncio.sleep(delay)
             except RuntimeError:
                 raise
             except APIError as e:
-                logger.error(f"Failed to generate embeddings: {e}")
+                logger.error("Failed to generate embeddings: %s", e)
                 raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
 
-        logger.error(f"Rate limit exceeded after {max_retries + 1} attempts: {last_error}")
+        logger.error("Rate limit exceeded after %s attempts: %s", max_retries + 1, last_error)
         raise EmbeddingGenerationError(
             f"Rate limit exceeded after {max_retries + 1} attempts: {last_error}"
         ) from last_error
@@ -682,6 +688,7 @@ async def _generate_embedding(
     base_delay: float = _DEFAULT_BASE_DELAY,
     is_query: bool = False,
     expected_dim: int | None = None,
+    query_prefix: str | None = None,
 ) -> list[float]:
     """Generate embedding for a single text.
 
@@ -694,7 +701,7 @@ async def _generate_embedding(
         api_key: Optional API key
         max_retries: Maximum retry attempts for rate limit errors
         base_delay: Initial backoff delay in seconds
-        is_query: Whether this is a query embedding (applies nomic prefix when model is nomic)
+        is_query: Whether this is a query embedding (applies configured/nomic prefix)
         expected_dim: Expected embedding dimension. When set, mismatches fail fast.
 
     Returns:
@@ -712,6 +719,7 @@ async def _generate_embedding(
         base_delay=base_delay,
         is_query=is_query,
         expected_dim=expected_dim,
+        query_prefix=query_prefix,
     )
     if not embeddings:
         raise EmbeddingGenerationError(
@@ -889,6 +897,7 @@ class EmbeddingService:
     api_base: str | None = None
     api_key: str | None = None
     dim: int | None = None
+    query_prefix: str | None = None
 
     @classmethod
     def from_config(cls, config: EmbeddingsConfig) -> EmbeddingService:
@@ -898,6 +907,7 @@ class EmbeddingService:
             api_base=config.api_base,
             api_key=config.api_key,
             dim=config.dim,
+            query_prefix=config.query_prefix,
         )
 
     def is_configured(self, *, model: str | None = None) -> bool:
@@ -958,6 +968,7 @@ class EmbeddingService:
             base_delay=base_delay,
             is_query=is_query,
             expected_dim=self.dim,
+            query_prefix=self.query_prefix,
         )
 
     async def generate_embedding(
@@ -979,6 +990,7 @@ class EmbeddingService:
             base_delay=base_delay,
             is_query=is_query,
             expected_dim=self.dim,
+            query_prefix=self.query_prefix,
         )
 
     def clear_cache(self) -> None:

@@ -1,6 +1,6 @@
 """Tests for ChatSession send_message and related client lifecycle methods."""
 
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_agent_sdk import (
@@ -280,6 +280,23 @@ class TestChatSessionSendMessage:
         await session.switch_model("new-model")
         session._client.set_model.assert_awaited_once_with("new-model")
         assert session.model == "new-model"
+
+    @pytest.mark.asyncio
+    async def test_switch_model_uses_selected_local_model(self, session: ChatSession) -> None:
+        endpoint = MagicMock()
+        endpoint.model = "qwen3-coder:latest"
+        selection = MagicMock()
+        selection.endpoint_with_selected_model.return_value = endpoint
+
+        with patch(
+            "gobby.ai.local_endpoints.resolve_local_generation_endpoint_selector",
+            return_value=selection,
+        ):
+            await session.switch_model("local:lmstudio")
+
+        selection.endpoint_with_selected_model.assert_called_once_with()
+        session._client.set_model.assert_awaited_once_with("qwen3-coder:latest")
+        assert session.model == "local:lmstudio"
 
     @pytest.mark.asyncio
     async def test_send_message_reconnects_when_reasoning_effort_changes(

@@ -84,7 +84,12 @@ class Memory:
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "Memory":
         tags_json = row["tags"]
-        tags = json.loads(tags_json) if tags_json else []
+        if isinstance(tags_json, str):
+            tags = json.loads(tags_json) if tags_json else []
+        elif isinstance(tags_json, list):
+            tags = tags_json
+        else:
+            tags = []
 
         raw_source_type = row["source_type"]
         source_type = cast(

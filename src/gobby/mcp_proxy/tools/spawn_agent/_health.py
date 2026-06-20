@@ -7,6 +7,9 @@ import logging
 import os
 from typing import Any
 
+import psycopg
+
+from gobby.agents.tmux.errors import TmuxNotFoundError, TmuxSessionError
 from gobby.agents.tmux.session_manager import TmuxSessionManager
 
 logger = logging.getLogger(__name__)
@@ -52,12 +55,10 @@ async def _check_tmux_session_alive(
     try:
         info = await asyncio.wait_for(manager.get_session(session_name), timeout=5.0)
         return bool(info and not info.pane_dead and info.pane_pid is not None)
-    except TimeoutError:
+    except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError):
         return True  # Timed out, assume alive
     except asyncio.CancelledError:
         raise
-    except Exception:
-        return True  # If check itself fails, don't false-positive
 
 
 async def _deferred_tmux_health_check(
@@ -77,19 +78,21 @@ async def _deferred_tmux_health_check(
         )
         if not alive:
             logger.error(
-                f"Agent {run_id} tmux session '{tmux_session_name}' exited immediately after spawn"
+                "Agent %s tmux session %r exited immediately after spawn",
+                run_id,
+                tmux_session_name,
             )
             try:
                 runner.run_storage.fail(
                     run_id,
                     error="Agent process exited immediately after spawn",
                 )
-            except Exception as e:
-                logger.warning(f"Failed to mark agent_run {run_id} as failed: {e}")
+            except psycopg.Error as e:
+                logger.warning("Failed to mark agent_run %s as failed: %s", run_id, e)
     except asyncio.CancelledError:
         pass
-    except Exception as e:
-        logger.warning(f"Deferred health check for {run_id} failed: {e}")
+    except (TimeoutError, OSError, TmuxNotFoundError, TmuxSessionError, psycopg.Error) as e:
+        logger.warning("Deferred health check for %s failed: %s", run_id, e)
 
 
 def schedule_tmux_health_check(

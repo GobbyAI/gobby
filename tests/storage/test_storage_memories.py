@@ -1,11 +1,12 @@
 import uuid
 from datetime import UTC, datetime, timedelta
+from unittest.mock import MagicMock
 
 import pytest
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
-from gobby.storage.memories_models import visibility_predicate
+from gobby.storage.memories_models import Memory, visibility_predicate
 
 pytestmark = pytest.mark.unit
 
@@ -239,6 +240,14 @@ def test_mark_pending_graphs_without_project_resets_all(memory_manager, db) -> N
     assert {row["graph_processed"] for row in rows} == {0}
 
 
+def test_list_all_ids_applies_offset_without_limit(memory_manager, monkeypatch) -> None:
+    fetchall = MagicMock(return_value=[{"id": "mem-3"}])
+    monkeypatch.setattr(memory_manager.db, "fetchall", fetchall)
+
+    assert memory_manager.list_all_ids(offset=2) == ["mem-3"]
+    fetchall.assert_called_once_with("SELECT id FROM memories OFFSET %s", (2,))
+
+
 def test_content_exists_with_project(memory_manager, db) -> None:
     """Test content_exists method with project_id."""
     db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
@@ -412,6 +421,27 @@ def test_memory_from_row_with_null_tags(memory_manager) -> None:
     # Create a memory without tags
     memory = memory_manager.create_memory(content="No tags", tags=None)
     assert memory.tags == []
+
+
+def test_memory_from_row_accepts_jsonb_tags_list() -> None:
+    """Test Memory.from_row accepts tags already decoded from JSONB."""
+    memory = Memory.from_row(
+        {
+            "id": "mem-1",
+            "memory_type": "fact",
+            "content": "Tagged memory",
+            "created_at": "2026-06-20T00:00:00+00:00",
+            "updated_at": "2026-06-20T00:00:00+00:00",
+            "project_id": "proj-1",
+            "source_type": "agent",
+            "source_session_id": None,
+            "access_count": 0,
+            "last_accessed_at": None,
+            "tags": ["alpha", "beta"],
+        }
+    )
+
+    assert memory.tags == ["alpha", "beta"]
 
 
 def test_create_memory_with_all_fields(memory_manager, db) -> None:

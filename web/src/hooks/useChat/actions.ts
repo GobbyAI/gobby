@@ -2,11 +2,11 @@ import { useChatControlActions } from "./actionControls";
 import { useConversationActions } from "./actionConversations";
 import { useMessageAction } from "./actionMessage";
 import { usePlanApprovalActions } from "./actionPlanApproval";
-import type { UseChatActionsParams } from "./actionTypes";
+import type { UseChatActionsParams, UseChatActionsResult } from "./actionTypes";
 
-export type { UseChatActionsParams } from "./actionTypes";
+export type { UseChatActionsParams, UseChatActionsResult } from "./actionTypes";
 
-export function useChatActions(params: UseChatActionsParams) {
+export function useChatActions(params: UseChatActionsParams): UseChatActionsResult {
   const conversationActions = useConversationActions(params);
   const controlActions = useChatControlActions(
     params,

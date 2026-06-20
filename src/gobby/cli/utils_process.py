@@ -91,6 +91,12 @@ def kill_all_gobby_daemons() -> int:
     killed_count = 0
     current_pid = os.getpid()
     parent_pid = os.getppid()
+    pid_file_pid: int | None = None
+    try:
+        pid_file_text = (deps.get_gobby_home() / "gobby.pid").read_text().strip()
+        pid_file_pid = int(pid_file_text) if pid_file_text else None
+    except (OSError, TypeError, ValueError):
+        pid_file_pid = None
 
     parent_pids = {current_pid, parent_pid}
     try:
@@ -115,9 +121,10 @@ def kill_all_gobby_daemons() -> int:
                 or "gobby_client.runner" in cmdline_str
                 or ("gobby" in process_name and "daemon" in cmdline_lower)
             )
+            has_pid_file_identity = pid_file_pid == proc.pid
 
             is_gobby_daemon = (
-                has_gobby_daemon_marker
+                (has_gobby_daemon_marker or has_pid_file_identity)
                 and "gobby.cli" not in cmdline_str
                 and "gobby_client.cli" not in cmdline_str
             )
@@ -128,7 +135,7 @@ def kill_all_gobby_daemons() -> int:
                     for conn in connections:
                         if hasattr(conn, "laddr") and conn.laddr:
                             if conn.laddr.port in [http_port, ws_port]:
-                                if has_gobby_daemon_marker:
+                                if has_gobby_daemon_marker or has_pid_file_identity:
                                     is_gobby_daemon = True
                                     break
                 except (psutil.AccessDenied, psutil.NoSuchProcess):
@@ -144,7 +151,7 @@ def kill_all_gobby_daemons() -> int:
                     try:
                         write_shutdown_source("cli_kill_all", intent=ShutdownIntent.STOP)
                     except Exception as exc:
-                        deps.logger.warning(f"Failed to write shutdown source: {exc}")
+                        deps.logger.warning("Failed to write shutdown source: %s", exc)
                     proc.send_signal(signal.SIGTERM)
                     proc.wait(timeout=5)
                     click.echo(f"Gracefully stopped PID {proc.pid}")
@@ -195,7 +202,10 @@ def _kill_port_holder(port: int) -> None:
                     and conn.status == psutil.CONN_LISTEN
                 ):
                     deps.logger.info(
-                        f"Killing orphan process on port {port}: PID {proc.pid} ({proc.name()})"
+                        "Killing orphan process on port %s: PID %s (%s)",
+                        port,
+                        proc.pid,
+                        proc.name(),
                     )
                     parent = psutil.Process(proc.pid)
                     children = parent.children(recursive=True)

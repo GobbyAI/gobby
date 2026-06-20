@@ -818,9 +818,9 @@ class TestCodexBackend:
         ensure_local_model.assert_awaited_once()
         message = str(exc_info.value)
         assert "provider=ollama" in message
-        assert "api_base=http://localhost:11434" in message
         assert "model=ollama/qwen3-coder" in message
-        assert "model not loaded" in message
+        assert "api_base=http://localhost:11434" not in message
+        assert "model not loaded" not in message
         assert "secret-token" not in message
         assert "api_key" not in message
         assert exc_info.value.__cause__ is failure

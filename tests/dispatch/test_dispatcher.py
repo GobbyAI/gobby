@@ -3376,6 +3376,34 @@ def test_persist_spawn_artifacts_writes_base_commit_sha(
     assert clone_artifacts.base_commit_sha == "clone-base"
 
 
+def test_persist_spawn_artifacts_reraises_persistence_errors(
+    temp_db,
+    sample_project,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Artifact persistence failures propagate to dispatcher callers."""
+    from gobby.dispatch import spawn as spawn_module
+    from gobby.dispatch import spawn_artifacts
+
+    task = _task(temp_db, sample_project, isolation="worktree")
+
+    def fail_set_artifacts_atomic(*_args: object, **_kwargs: object) -> None:
+        raise ValueError("bad artifact")
+
+    monkeypatch.setattr(spawn_artifacts, "_set_artifacts_atomic", fail_set_artifacts_atomic)
+
+    with pytest.raises(ValueError, match="bad artifact"):
+        spawn_module._persist_spawn_artifacts(
+            temp_db,
+            task.id,
+            {
+                "worktree_id": "wt-1",
+                "worktree_path": "/tmp/worktree",
+                "base_commit_sha": "base-sha",
+            },
+        )
+
+
 def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(
     temp_db,
     sample_project,

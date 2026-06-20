@@ -547,7 +547,12 @@ class VectorStore:
             )
             return None
 
-    async def _prepare_collection_for_rebuild(self, client: QdrantClient) -> bool:
+    async def _prepare_collection_for_rebuild(
+        self,
+        client: QdrantClient,
+        *,
+        recreate_on_mismatch: bool = True,
+    ) -> bool:
         """Ensure rebuild collection exists; return true when it is known empty."""
         try:
             exists = await asyncio.to_thread(client.collection_exists, self._collection_name)
@@ -567,6 +572,11 @@ class VectorStore:
 
             existing_dim = await self._read_collection_dimension(client, self._collection_name)
             if existing_dim is not None and existing_dim != self._embedding_dim:
+                if not recreate_on_mismatch:
+                    raise VectorStoreCollectionDimensionError(
+                        f"Qdrant collection '{self._collection_name}' dimension mismatch "
+                        f"(expected_dim={self._embedding_dim}, observed_dim={existing_dim})"
+                    )
                 await asyncio.to_thread(
                     client.delete_collection,
                     collection_name=self._collection_name,
@@ -704,6 +714,7 @@ class VectorStore:
         memories: list[dict[str, Any]],
         embed_fn: Callable[[str], Awaitable[list[float]]],
         *,
+        recreate_on_mismatch: bool = True,
         stale_delete_strategy: StaleDeleteStrategy = "precompute",
     ) -> None:
         """Rebuild the collection from a list of memories.
@@ -721,7 +732,10 @@ class VectorStore:
             client = await self._ensure_initialized()
 
             async with self._collection_lifecycle_lock:
-                collection_reset = await self._prepare_collection_for_rebuild(client)
+                collection_reset = await self._prepare_collection_for_rebuild(
+                    client,
+                    recreate_on_mismatch=recreate_on_mismatch,
+                )
 
                 batch_size = 500
                 total = 0

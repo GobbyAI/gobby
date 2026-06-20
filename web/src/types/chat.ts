@@ -222,7 +222,7 @@ export interface SessionObservationMeta {
   model: string | null;
   reasoningEffort?: string | null;
   externalId: string;
-  chatMode?: string | null;
+  chatMode?: ChatMode | null;
   gitBranch?: string | null;
   contextWindow?: number | null;
   agentRunId?: string | null;
@@ -287,7 +287,7 @@ export interface ChatState {
       provider?: string | null;
       model?: string | null;
       reasoningEffort?: string | null;
-      chatMode?: string | null;
+      chatMode?: ChatMode | null;
       fallbackContext?: FallbackContextMode;
     },
   ) => Promise<string>;

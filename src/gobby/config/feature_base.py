@@ -85,7 +85,7 @@ class FeatureCandidateConfig(BaseModel):
         return _normalize_reasoning_effort(value)
 
 
-type FeatureCandidateInput = str | FeatureCandidateConfig | Mapping[str, Any]
+type FeatureCandidateInput = str | FeatureCandidateConfig | Mapping[str, object]
 
 
 # Built-in profiles stay cloud-only. Local fallback candidates are explicit

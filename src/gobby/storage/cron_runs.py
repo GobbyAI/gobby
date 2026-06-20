@@ -299,10 +299,14 @@ class CronRunStorageMixin:
 
         cutoff = (datetime.now(UTC) - timedelta(days=days)).isoformat()
         cursor = self.db.execute(
-            "DELETE FROM cron_runs WHERE created_at < %s",
+            """
+            DELETE FROM cron_runs
+            WHERE created_at < %s
+              AND status IN ('completed', 'failed', 'skipped')
+            """,
             (cutoff,),
         )
         deleted = cursor.rowcount
         if deleted > 0:
-            logger.info(f"Cleaned up {deleted} cron runs older than {days} days")
+            logger.info("Cleaned up %s terminal cron runs older than %s days", deleted, days)
         return deleted

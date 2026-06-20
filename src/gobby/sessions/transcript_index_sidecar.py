@@ -123,9 +123,11 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
             {
                 "group_index": adjustment.group_index,
                 "field": adjustment.field,
-                "value": _encode_adjustment_value(adjustment.value),
+                "value": encoded_value,
             }
             for adjustment in index.post_pass_adjustments
+            for encoded_value in [_encode_adjustment_value(adjustment.value)]
+            if encoded_value is not None
         ],
     }
 
@@ -370,15 +372,15 @@ async def get_or_build_index(
                     logical_size=logical_size,
                 )
             elif lines is not None:
-                materialized = list(lines)
                 index = await asyncio.to_thread(
-                    build_index_from_lines,
-                    materialized,
-                    source,
-                    session_id,
-                    mtime_ns=mtime_ns,
-                    size=size,
-                    transcript_path=path,
+                    lambda: build_index_from_lines(
+                        list(lines),
+                        source,
+                        session_id,
+                        mtime_ns=mtime_ns,
+                        size=size,
+                        transcript_path=path,
+                    )
                 )
             else:
                 index = await asyncio.to_thread(

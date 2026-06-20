@@ -93,7 +93,11 @@ def test_embeddings_post_treats_single_input_as_one_item_batch(
     async def fake_generate_embeddings(
         service: embeddings_routes.EmbeddingService,
         texts: list[str],
-        **kwargs: Any,
+        *,
+        model: str | None = None,
+        max_retries: int = 5,
+        base_delay: float = 1.0,
+        is_query: bool = False,
     ) -> list[list[float]]:
         calls.append(
             {
@@ -102,7 +106,10 @@ def test_embeddings_post_treats_single_input_as_one_item_batch(
                 "api_base": service.api_base,
                 "api_key": service.api_key,
                 "dim": service.dim,
-                **kwargs,
+                "requested_model": model,
+                "max_retries": max_retries,
+                "base_delay": base_delay,
+                "is_query": is_query,
             }
         )
         return [[0.1, 0.2, 0.3]]
@@ -132,9 +139,22 @@ def test_embeddings_post_treats_single_input_as_one_item_batch(
             "api_base": "http://embeddings.local/v1",
             "api_key": "secret",
             "dim": 3,
+            "requested_model": None,
+            "max_retries": 5,
+            "base_delay": 1.0,
             "is_query": False,
         }
     ]
+
+
+@pytest.mark.parametrize("field", ["provider", "project_id"])
+def test_embeddings_post_rejects_unsupported_routing_fields(field: str) -> None:
+    client = _client(_config())
+
+    response = client.post("/api/embeddings", json={"input": "alpha", field: "unsupported"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == f"Unsupported embedding request field(s): {field}"
 
 
 def test_embeddings_post_preserves_batch_order_and_passes_is_query(
@@ -145,9 +165,22 @@ def test_embeddings_post_preserves_batch_order_and_passes_is_query(
     async def fake_generate_embeddings(
         service: embeddings_routes.EmbeddingService,
         texts: list[str],
-        **kwargs: Any,
+        *,
+        model: str | None = None,
+        max_retries: int = 5,
+        base_delay: float = 1.0,
+        is_query: bool = False,
     ) -> list[list[float]]:
-        calls.append({"texts": texts, "dim": service.dim, **kwargs})
+        calls.append(
+            {
+                "texts": texts,
+                "dim": service.dim,
+                "model": model,
+                "max_retries": max_retries,
+                "base_delay": base_delay,
+                "is_query": is_query,
+            }
+        )
         return [[1.0], [2.0]]
 
     monkeypatch.setattr(
@@ -166,6 +199,7 @@ def test_embeddings_post_preserves_batch_order_and_passes_is_query(
     assert response.json()["embeddings"] == [[1.0], [2.0]]
     assert calls[0]["texts"] == ["first", "second"]
     assert calls[0]["is_query"] is True
+    assert calls[0]["model"] is None
     assert calls[0]["dim"] == 1
 
 

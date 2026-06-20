@@ -4,6 +4,7 @@ import type {
   SessionInteractionMode,
   SessionObservationMeta,
 } from "../../types/chat";
+import { normalizeChatMode } from "../../types/chat";
 import { AUTO_REASONING_EFFORT } from "../../lib/providerModels";
 
 const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex", "droid", "agy", "grok"]);
@@ -200,6 +201,7 @@ export function toSessionObservationMeta(
   overrides?: Partial<SessionObservationMeta>,
 ): SessionObservationMeta | null {
   if (!session) return null;
+  const rawChatMode = sessionString(session, "chat_mode", null);
   return {
     ref: sessionMetaValue(
       overrides,
@@ -225,7 +227,11 @@ export function toSessionObservationMeta(
       "externalId",
       sessionString(session, "external_id", "")!,
     ),
-    chatMode: sessionMetaValue(overrides, "chatMode", sessionString(session, "chat_mode", null)),
+    chatMode: sessionMetaValue(
+      overrides,
+      "chatMode",
+      rawChatMode ? normalizeChatMode(rawChatMode) : null,
+    ),
     gitBranch: sessionMetaValue(
       overrides,
       "gitBranch",

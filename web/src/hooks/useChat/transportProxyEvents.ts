@@ -68,7 +68,6 @@ export function handleAttachToSessionResult(
     ctx.attachedSessionMetaRef.current = meta;
     ctx.setProxyDeliveryNotice(null);
     if (
-      meta.chatMode === "act" ||
       meta.chatMode === "accept_edits" ||
       meta.chatMode === "bypass" ||
       meta.chatMode === "normal" ||

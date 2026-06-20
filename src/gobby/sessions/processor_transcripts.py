@@ -40,19 +40,19 @@ class ProcessorTranscriptMixin:
         valid_offset = last_offset
 
         try:
-            with open(transcript_path, "rb") as f:
-                f.seek(last_offset)
+            async with aiofiles.open(transcript_path, "rb") as f:
+                await f.seek(last_offset)
 
                 while True:
-                    line_start = f.tell()
-                    raw_line = f.readline()
+                    line_start = await f.tell()
+                    raw_line = await f.readline()
                     if not raw_line:
                         break
 
                     if raw_line.endswith(b"\n"):
                         new_lines.append(raw_line.decode("utf-8", errors="replace"))
                         new_line_offsets.append(line_start)
-                        valid_offset = f.tell()
+                        valid_offset = await f.tell()
                     else:
                         break
 

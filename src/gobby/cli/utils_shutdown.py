@@ -39,7 +39,7 @@ def stop_daemon(
         try:
             with open(pid_file) as file:
                 pid = int(file.read().strip())
-        except (FileNotFoundError, ValueError, OSError) as exc:
+        except (OSError, ValueError) as exc:
             if not quiet:
                 deps._stop_step(f"Error reading PID file: {exc}", error=True)
             pid_file.unlink(missing_ok=True)
@@ -160,7 +160,7 @@ def stop_daemon(
         pid_file.unlink(missing_ok=True)
         return True
 
-    except Exception as exc:
+    except OSError as exc:
         if not quiet:
             deps._stop_step(f"Error stopping daemon: {exc}", error=True)
         return False

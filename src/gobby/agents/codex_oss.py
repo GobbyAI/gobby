@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import Protocol
 
 CODEX_OSS_LOCAL_PROVIDERS = frozenset({"lmstudio", "ollama"})
+
+
+class CodexOSSLocalEndpoint(Protocol):
+    provider: str | None
 
 
 def codex_oss_supported_provider_clause() -> str:
@@ -12,9 +16,9 @@ def codex_oss_supported_provider_clause() -> str:
     return " or ".join(f"provider={provider}" for provider in sorted(CODEX_OSS_LOCAL_PROVIDERS))
 
 
-def codex_oss_provider_for_local_endpoint(endpoint: Any) -> str:
+def codex_oss_provider_for_local_endpoint(endpoint: CodexOSSLocalEndpoint) -> str:
     """Return Codex OSS local provider name for a local generation endpoint."""
-    provider = str(getattr(endpoint, "provider", "") or "").strip().lower()
+    provider = str(endpoint.provider or "").strip().lower()
     if not provider:
         raise ValueError(
             f"Codex OSS local routing requires {codex_oss_supported_provider_clause()}"

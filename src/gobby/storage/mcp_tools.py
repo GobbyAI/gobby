@@ -23,11 +23,13 @@ def _normalized_tool_entries(tools: list[dict[str, Any]]) -> list[tuple[str, dic
         raw_name = tool.get("name")
         tool_name = str(raw_name).strip().lower() if raw_name is not None else ""
         if not tool_name:
-            raise ValueError("MCP tool names must normalize to a non-empty string")
+            continue
         if tool_name in seen:
-            raise ValueError(f"Duplicate MCP tool name after normalization: {tool_name}")
+            continue
         seen.add(tool_name)
-        entries.append((tool_name, tool))
+        normalized_tool = dict(tool)
+        normalized_tool["name"] = tool_name
+        entries.append((tool_name, normalized_tool))
     return entries
 
 
@@ -139,6 +141,7 @@ class MCPToolStorageMixin:
             logger.warning("Server not found: %s", server_name)
             return {"added": 0, "updated": 0, "removed": 0, "unchanged": 0, "total": 0}
         entries = _normalized_tool_entries(tools)
+        normalized_tools = [tool for _tool_name, tool in entries]
 
         stats = {"added": 0, "updated": 0, "removed": 0, "unchanged": 0}
         now = datetime.now(UTC).isoformat()
@@ -150,7 +153,11 @@ class MCPToolStorageMixin:
 
         # Detect changes using schema hash if manager available
         if schema_hash_manager:
-            changes = schema_hash_manager.check_tools_for_changes(server_name, project_id, tools)
+            changes = schema_hash_manager.check_tools_for_changes(
+                server_name,
+                project_id,
+                normalized_tools,
+            )
             new_tools = {str(name).strip().lower() for name in changes["new"]}
             changed_tools = {str(name).strip().lower() for name in changes["changed"]}
         else:

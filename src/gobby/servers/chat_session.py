@@ -340,7 +340,7 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
 
         selection = resolve_local_generation_endpoint_selector(self._config, new_model)
         if selection is not None:
-            resolved_model = selection.endpoint.model
+            resolved_model = selection.endpoint_with_selected_model().model
         await self._client.set_model(resolved_model)
         self._model = new_model
 

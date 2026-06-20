@@ -9,6 +9,7 @@ import pytest
 
 import gobby.ai.embeddings as embeddings_mod
 from gobby.ai.embeddings import (
+    EmbeddingService,
     _apply_prefix,
     _needs_nomic_prefix,
 )
@@ -18,6 +19,7 @@ from gobby.ai.embeddings import (
 from gobby.ai.embeddings import (
     _generate_embedding as generate_embedding,
 )
+from gobby.config.persistence import EmbeddingsConfig
 
 pytestmark = pytest.mark.unit
 LOCAL_API_BASE = "http://localhost:1234/v1"
@@ -135,6 +137,25 @@ async def test_generate_embedding_query_prefix_reaches_api() -> None:
 
     assert len(captured) == 1
     assert captured[0] == ["search_query: cats"]
+
+
+async def test_embedding_service_configured_query_prefix_reaches_api() -> None:
+    """Configured query prefix should override the built-in nomic query prefix."""
+    mock_client, captured = _make_mock_client()
+    service = EmbeddingService.from_config(
+        EmbeddingsConfig(
+            model="nomic-embed-text",
+            dim=4,
+            api_base=LOCAL_API_BASE,
+            query_prefix="query: ",
+        )
+    )
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        await service.generate_embedding("cats", is_query=True)
+
+    assert len(captured) == 1
+    assert captured[0] == ["query: cats"]
 
 
 # -- Model reload on eviction --

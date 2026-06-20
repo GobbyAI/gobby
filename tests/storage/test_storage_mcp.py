@@ -2,6 +2,7 @@
 
 import json
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -156,7 +157,7 @@ class TestTool:
         )
         assert tools[0].input_schema == {}
 
-    def test_cache_tools_rejects_duplicate_normalized_names(
+    def test_cache_tools_skips_empty_and_deduplicates_normalized_names(
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
@@ -168,15 +169,27 @@ class TestTool:
             project_id=sample_project["id"],
         )
 
-        with pytest.raises(ValueError, match="Duplicate MCP tool name after normalization"):
-            mcp_manager.cache_tools(
-                "duplicate-tools-server",
-                [
-                    {"name": "Read_File", "inputSchema": {"type": "object"}},
-                    {"name": " read_file ", "inputSchema": {"type": "object"}},
-                ],
-                project_id=sample_project["id"],
-            )
+        count = mcp_manager.cache_tools(
+            "duplicate-tools-server",
+            [
+                {"name": "", "inputSchema": {"type": "object"}},
+                {"name": "Read_File", "description": "kept", "inputSchema": {"type": "object"}},
+                {
+                    "name": " read_file ",
+                    "description": "duplicate",
+                    "inputSchema": {"type": "object"},
+                },
+            ],
+            project_id=sample_project["id"],
+        )
+
+        tools = mcp_manager.get_cached_tools(
+            "duplicate-tools-server",
+            project_id=sample_project["id"],
+        )
+        assert count == 1
+        assert [tool.name for tool in tools] == ["read_file"]
+        assert tools[0].description == "kept"
 
 
 class TestLocalMCPManager:
@@ -1529,6 +1542,74 @@ class TestRefreshToolsIncremental:
         assert len(tools) == 1
         assert tools[0].input_schema == {"type": "object"}
 
+    def test_refresh_tools_incremental_hashes_normalized_deduped_tools(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        """Schema hash checks receive the same normalized batch that is written."""
+
+        class RecordingSchemaHashManager:
+            checked_tools: list[dict[str, Any]] | None = None
+
+            def check_tools_for_changes(
+                self,
+                _server_name: str,
+                _project_id: str,
+                tools: list[dict[str, Any]],
+            ) -> dict[str, list[str]]:
+                self.checked_tools = tools
+                return {"new": [tool["name"] for tool in tools], "changed": []}
+
+            def store_hash(
+                self,
+                _server_name: str,
+                _tool_name: str,
+                _project_id: str,
+                _schema_hash: str,
+            ) -> None:
+                return None
+
+            def cleanup_stale_hashes(
+                self,
+                _server_name: str,
+                _project_id: str,
+                _current_tools: list[str],
+            ) -> None:
+                return None
+
+        mcp_manager.upsert(
+            name="hash-normalize",
+            transport="http",
+            url="http://localhost",
+            project_id=sample_project["id"],
+        )
+        schema_hash_manager = RecordingSchemaHashManager()
+
+        stats = mcp_manager.refresh_tools_incremental(
+            "hash-normalize",
+            [
+                {"name": "", "inputSchema": {"type": "object"}},
+                {"name": "Read_File", "description": "kept", "inputSchema": {"type": "object"}},
+                {
+                    "name": " read_file ",
+                    "description": "duplicate",
+                    "inputSchema": {"type": "object"},
+                },
+            ],
+            project_id=sample_project["id"],
+            schema_hash_manager=schema_hash_manager,
+        )
+
+        assert stats["added"] == 1
+        assert schema_hash_manager.checked_tools == [
+            {
+                "name": "read_file",
+                "description": "kept",
+                "inputSchema": {"type": "object"},
+            }
+        ]
+
 
 class TestMCPServerFromRow:
     """Tests for MCPServer.from_row class method."""
@@ -1574,6 +1655,29 @@ class TestMCPServerFromRow:
         assert server.env is None
         assert server.headers is None
         assert server.command is None
+
+    def test_from_row_malformed_json_includes_server_context(self) -> None:
+        """Malformed server JSON reports the row id and field name."""
+        from gobby.storage.mcp_models import MCPServer
+
+        with pytest.raises(ValueError, match="MCP server server-1 field args"):
+            MCPServer.from_row(
+                {
+                    "id": "server-1",
+                    "name": "bad-server",
+                    "transport": "stdio",
+                    "url": None,
+                    "command": "node",
+                    "args": "[",
+                    "env": None,
+                    "headers": None,
+                    "enabled": True,
+                    "description": None,
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-01T00:00:00Z",
+                    "project_id": "proj-1",
+                }
+            )
 
 
 class TestToolFromRow:
@@ -1627,6 +1731,23 @@ class TestToolFromRow:
         )
         assert len(tools) == 1
         assert tools[0].input_schema is None
+
+    def test_from_row_malformed_input_schema_includes_tool_context(self) -> None:
+        """Malformed tool schema JSON reports the tool id and name."""
+        from gobby.storage.mcp_models import Tool
+
+        with pytest.raises(ValueError, match=r"MCP tool bad_tool \(tool-1\) input_schema"):
+            Tool.from_row(
+                {
+                    "id": "tool-1",
+                    "mcp_server_id": "server-1",
+                    "name": "bad_tool",
+                    "description": None,
+                    "input_schema": "{",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-01T00:00:00Z",
+                }
+            )
 
 
 class TestMCPServerToConfig:
