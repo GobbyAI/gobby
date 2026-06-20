@@ -93,7 +93,7 @@ def store_missing_conflicts(
             continue
         stored_conflict = existing.get(file_path)
         if stored_conflict is not None:
-            _hydrate_existing_conflict(merge_storage, stored_conflict, conflict)
+            _hydrate_existing_conflict(merge_storage, stored_conflict, conflict, status=status)
             continue
         try:
             created = merge_storage.create_conflict(
@@ -211,17 +211,21 @@ def _hydrate_existing_conflict(
     merge_storage: Any,
     stored_conflict: Any,
     git_conflict: dict[str, Any],
+    *,
+    status: str,
 ) -> None:
-    if stored_conflict.ours_content is not None and stored_conflict.theirs_content is not None:
-        return
     ours_content = _first_hunk_content(git_conflict, "ours")
     theirs_content = _first_hunk_content(git_conflict, "theirs")
-    if ours_content is None and theirs_content is None:
-        return
+    if stored_conflict.ours_content is not None:
+        ours_content = None
+    if stored_conflict.theirs_content is not None:
+        theirs_content = None
     merge_storage.update_conflict(
         stored_conflict.id,
+        status=status,
         ours_content=ours_content,
         theirs_content=theirs_content,
+        force_status=True,
     )
 
 
