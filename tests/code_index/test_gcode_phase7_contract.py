@@ -85,7 +85,8 @@ def _assert_falkordb_config(config: str, context: str) -> None:
     )
     _assert_field(context, "pub falkordb: Option<FalkorConfig>")
 
-    assert re.search(r"let\s+falkordb\s*=\s*resolve_falkordb_config\(", config)
+    assert re.search(r"let\s+falkordb\s*=\s*if\s+services\.falkordb", config)
+    assert "resolve_falkordb_config(&mut conn, standalone_config.clone(), quiet)" in config
     graph_name_literal = re.search(r"graph_name:\s*\"gobby_code\"\.to_string\(\)", config)
     graph_name_const = 'const FALKORDB_GRAPH_NAME: &str = "gobby_code";' in config and re.search(
         r"graph_name:\s*FALKORDB_GRAPH_NAME\.to_string\(\)", config
@@ -227,7 +228,15 @@ def test_phase7_cargo_dependencies_and_lockfile_track_falkordb_client() -> None:
 def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() -> None:
     """Phase 7.3 ports every Rust graph read helper to FalkorDB query semantics."""
     code_graph_facade = _read("crates/gcode/src/graph/code_graph.rs")
-    graph_read = _without_rust_unit_tests(_read("crates/gcode/src/graph/code_graph/read.rs"))
+    graph_relationships = _without_rust_unit_tests(
+        _read("crates/gcode/src/graph/code_graph/read/relationships.rs")
+    )
+    graph_relationship_queries = _without_rust_unit_tests(
+        _read("crates/gcode/src/graph/code_graph/read/relationship_queries.rs")
+    )
+    graph_read_support = _without_rust_unit_tests(
+        _read("crates/gcode/src/graph/code_graph/read/support.rs")
+    )
     typed_query = _without_rust_unit_tests(_read("crates/gcode/src/graph/typed_query.rs"))
 
     read_helpers = (
@@ -243,7 +252,7 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
     for function in read_helpers:
         assert re.search(
             rf"pub\s+fn\s+{function}\(\s*ctx:\s*&Context\b",
-            graph_read,
+            graph_relationships,
         ), f"missing public read helper {function}(ctx: &Context, ...)"
         assert function in code_graph_facade
 
@@ -252,20 +261,26 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
         (
             "mod read;",
             "pub use read::{",
-            "pub(crate) use read::get_imports_query;",
+            "pub(crate) use read::{",
+            "get_imports_query",
         ),
     )
     _assert_contains_all(
-        graph_read,
+        graph_relationship_queries,
         (
-            "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol",
             "depth.clamp(1, 5)",
-            "typed_query::clamp_limit(limit, MAX_GRAPH_LIMIT)",
-            "typed_query::clamp_offset(offset, MAX_GRAPH_LIMIT)",
             "SKIP {offset} LIMIT {limit}",
             "target.id IN [{ids}]",
             "src.id IN [{ids}]",
             "LIMIT {limit}",
+        ),
+    )
+    _assert_contains_all(
+        graph_read_support,
+        (
+            "target:CodeSymbol OR target:UnresolvedCallee OR target:ExternalSymbol",
+            "typed_query::clamp_limit(limit, MAX_GRAPH_LIMIT)",
+            "typed_query::clamp_offset(offset, MAX_GRAPH_LIMIT)",
         ),
     )
     _assert_matches(
@@ -277,7 +292,10 @@ def test_phase7_ports_all_eight_read_queries_without_unbound_numeric_params() ->
             r"pub\s+fn\s+clamp_limit\(limit:\s*usize,\s*max:\s*usize\)\s*->\s*usize",
         ),
     )
-    assert re.search(r"fn\s+blast_radius_query\(depth:\s*usize,\s*limit:\s*usize\)", graph_read)
-    assert "$offset" not in graph_read
-    assert "$limit" not in graph_read
-    assert "$ids" not in graph_read
+    assert re.search(
+        r"fn\s+blast_radius_query\(depth:\s*usize,\s*limit:\s*usize\)",
+        graph_relationship_queries,
+    )
+    assert "$offset" not in graph_relationship_queries
+    assert "$limit" not in graph_relationship_queries
+    assert "$ids" not in graph_relationship_queries
