@@ -277,6 +277,7 @@ describe('mobile chrome CSS', () => {
 
   it('keeps the top app chrome compact on mobile touch viewports', () => {
     const appSource = readSource('src/App.tsx')
+    const projectSelectorSource = readSource('src/components/ProjectSelector.tsx')
     const segmentedControlCss = parseCss('src/styles/segmented-control.css')
     const shellCss = parseCss('src/styles/app-shell.css')
 
@@ -288,6 +289,7 @@ describe('mobile chrome CSS', () => {
     expectClassToken(appSource, 'app-brand-title')
     expectClassToken(appSource, 'app-header-actions')
     expectClassToken(appSource, 'app-health-badge')
+    expect(projectSelectorSource).toContain('coarseTouchTarget={false}')
 
     expectDeclarations(
       shellCss,
@@ -304,6 +306,10 @@ describe('mobile chrome CSS', () => {
     expectDeclarations(shellCss, '.project-selector-compact-trigger', {
       background: 'var(--accent-tint)',
       color: 'var(--accent)',
+    })
+    expectDeclarations(shellCss, '.project-selector-compact-wrap', {
+      height: 'var(--control-row-height)',
+      'min-height': 'var(--control-row-height)',
     })
     expectDeclarations(segmentedControlCss, '.segmented-control__option--sm', {
       'padding-inline': '0.5rem',
@@ -326,6 +332,9 @@ describe('mobile chrome CSS', () => {
   it('keeps activity panel filter toolbars to one compact row', () => {
     const activityCss = parseCss('src/components/chat/styles/activity-panel.css')
 
+    expect(findRule(activityCss, '.activity-panel-toolbar').selector).toBe(
+      '.activity-panel-toolbar',
+    )
     expectDeclarations(activityCss, '.activity-panel-toolbar', {
       '--control-row-height-sm': 'var(--status-bar-control-height)',
       'flex-wrap': 'nowrap',
@@ -352,6 +361,9 @@ describe('mobile chrome CSS', () => {
     const inputCss = parseCss('src/components/chat/styles/input.css')
     const narrowChatColumn = 'chat-column (max-width: 360px)'
 
+    expect(
+      findContainerRule(inputCss, '.agent-status-bar__summary', narrowChatColumn).selector,
+    ).toBe('.agent-status-bar__summary')
     expectContainerDeclarations(inputCss, '.agent-status-bar__summary', narrowChatColumn, {
       'flex-wrap': 'nowrap',
     })
@@ -367,6 +379,7 @@ describe('mobile chrome CSS', () => {
     const layoutCss = parseCss('src/components/chat/styles/layout.css')
     const inputCss = parseCss('src/components/chat/styles/input.css')
 
+    expect(findRule(layoutCss, '.command-bar').selector).toBe('.command-bar')
     expectDeclarations(layoutCss, '.command-bar', {
       padding: '0 0.75rem',
     })
@@ -384,6 +397,7 @@ describe('mobile chrome CSS', () => {
   it('keeps the minimum-width chat input toolbar controls to one row', () => {
     const inputCss = parseCss('src/components/chat/styles/input.css')
     const chatInputSource = readSource('src/components/chat/ChatInput.tsx')
+    const modeSelectorSource = readSource('src/components/chat/ModeSelector.tsx')
     const segmentedControlSource = readSource('src/components/ui/SegmentedControl.tsx')
     const agentIndicatorSource = readSource('src/components/chat/ActiveAgentIndicator.tsx')
     const narrowChatColumn = 'chat-column (max-width: 360px)'
@@ -393,6 +407,8 @@ describe('mobile chrome CSS', () => {
     expectNoClassToken(chatInputSource, 'px-4')
     expectNoClassToken(segmentedControlSource, 'px-2')
     expectNoClassToken(segmentedControlSource, 'px-3')
+    expect(modeSelectorSource).toContain('controlHeight="sm"')
+    expect(modeSelectorSource).toContain('coarseTouchTarget={false}')
     expectClassToken(agentIndicatorSource, 'chat-input-agent-button')
     expectClassToken(agentIndicatorSource, 'rounded')
     expectNoClassToken(agentIndicatorSource, 'p-1.5')

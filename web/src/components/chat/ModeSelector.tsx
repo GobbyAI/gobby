@@ -29,6 +29,8 @@ export function ModeSelector({
       ariaLabel="Chat mode"
       size={size}
       controlHeight="sm"
+      // Dense app chrome exception to the .impeccable.md 44px touch-target floor.
+      coarseTouchTarget={false}
       disabled={disabled}
     />
   )

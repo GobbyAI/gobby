@@ -102,6 +102,30 @@ describe('SegmentedControl', () => {
     expect(screen.getByRole('radio', { name: 'C' })).toHaveAttribute('tabindex', '-1')
   })
 
+  it('keeps coarse pointer touch-target classes by default', () => {
+    renderControl()
+
+    expect(screen.getByRole('radiogroup', { name: 'Letter' })).toHaveClass(
+      'pointer-coarse:min-h-11',
+    )
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio).toHaveClass('pointer-coarse:min-h-11')
+      expect(radio).toHaveClass('pointer-coarse:min-w-11')
+    }
+  })
+
+  it('omits coarse pointer touch-target classes when dense chrome opts out', () => {
+    renderControl({ coarseTouchTarget: false })
+
+    expect(screen.getByRole('radiogroup', { name: 'Letter' })).not.toHaveClass(
+      'pointer-coarse:min-h-11',
+    )
+    for (const radio of screen.getAllByRole('radio')) {
+      expect(radio).not.toHaveClass('pointer-coarse:min-h-11')
+      expect(radio).not.toHaveClass('pointer-coarse:min-w-11')
+    }
+  })
+
   it('uses ariaLabel for non-text labels', () => {
     render(
       <SegmentedControl<'grid'>
