@@ -77,7 +77,10 @@ mod tests {
             "`crates/gcode` owns the code-indexing CLI. It indexes source files \
              and projects facts into graph and vector backends."
         );
-        assert!(!cell.contains('|'), "table content must not leak into the cell");
+        assert!(
+            !cell.contains('|'),
+            "table content must not leak into the cell"
+        );
     }
 
     #[test]
@@ -87,7 +90,10 @@ mod tests {
 
         let cell = cell_summary(summary);
 
-        assert_eq!(cell, "Adapts core capabilities to a local daemon transport.");
+        assert_eq!(
+            cell,
+            "Adapts core capabilities to a local daemon transport."
+        );
     }
 
     #[test]

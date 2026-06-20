@@ -5,8 +5,86 @@ use pulldown_cmark::{Event, Options, Parser, Tag, TagEnd};
 use crate::commands::codewiki::inline_code;
 
 pub(super) fn sanitize_model_markdown_links(text: &str) -> String {
-    let replacements = unsafe_link_replacements(text);
-    apply_replacements(text, replacements)
+    let stripped = apply_replacements(text, unsafe_link_replacements(text));
+    apply_replacements(&stripped, citation_anchor_replacements(&stripped))
+}
+
+/// Rewrite relative code-citation link *targets* from `path:line[-end]` to the
+/// resolvable `path#Lline[-Lend]` anchor form used by the provenance block and
+/// pinned by the contract tests. The model emits inline citations as
+/// `[path:line-range](path:line)` links; the bare colon target does not resolve
+/// and `gwiki lint` flags it as a broken link. Only relative file-style targets
+/// are rewritten — URLs, in-page anchors, and already-anchored targets are left
+/// alone (absolute / `file:` / parent-dir targets are stripped by the unsafe
+/// pass first, so they never reach here).
+fn citation_anchor_replacements(text: &str) -> Vec<Replacement> {
+    let mut replacements = Vec::new();
+    // Markdown links do not nest, so a single active frame is sufficient.
+    let mut active: Option<(Range<usize>, String, String)> = None;
+    for (event, range) in Parser::new_ext(text, Options::empty()).into_offset_iter() {
+        match event {
+            Event::Start(Tag::Link { dest_url, .. }) => {
+                active = anchor_citation_target(&dest_url)
+                    .map(|anchored| (range, String::new(), anchored));
+            }
+            Event::End(TagEnd::Link) => {
+                if let Some((link_range, label, anchored)) = active.take()
+                    && link_range == range
+                {
+                    replacements.push(Replacement {
+                        range: link_range,
+                        label: format!("[{label}]({anchored})"),
+                    });
+                }
+            }
+            Event::Text(value)
+            | Event::Code(value)
+            | Event::InlineMath(value)
+            | Event::DisplayMath(value)
+            | Event::Html(value)
+            | Event::InlineHtml(value) => {
+                if let Some((_, label, _)) = active.as_mut() {
+                    label.push_str(&value);
+                }
+            }
+            Event::SoftBreak | Event::HardBreak => {
+                if let Some((_, label, _)) = active.as_mut() {
+                    label.push('\n');
+                }
+            }
+            _ => {}
+        }
+    }
+    replacements
+}
+
+/// Return the `#L`-anchored form of a relative `path:line[-end]` citation
+/// target, or `None` when the target is not a relative file citation (URLs,
+/// in-page anchors, already-anchored targets, or non-numeric line suffixes).
+fn anchor_citation_target(target: &str) -> Option<String> {
+    let target = target.trim();
+    if target.is_empty() || target.starts_with('#') || target.contains('#') {
+        return None;
+    }
+    if has_uri_scheme(target) || target.contains("://") {
+        return None;
+    }
+    let (path, lines) = target.rsplit_once(':')?;
+    if path.is_empty() {
+        return None;
+    }
+    let anchor = match lines.split_once('-') {
+        Some((start, end)) if is_ascii_line_number(start) && is_ascii_line_number(end) => {
+            format!("#L{start}-L{end}")
+        }
+        None if is_ascii_line_number(lines) => format!("#L{lines}"),
+        _ => return None,
+    };
+    Some(format!("{path}{anchor}"))
+}
+
+fn is_ascii_line_number(value: &str) -> bool {
+    !value.is_empty() && value.bytes().all(|byte| byte.is_ascii_digit())
 }
 
 pub(crate) fn neutralize_symbol_purpose_links(text: &str) -> String {
@@ -271,7 +349,8 @@ mod tests {
         // (#895): the bare anchor already grounds the claim.
         let file = "crates/gcode/src/search/rrf.rs";
         let valid_spans = [span(file, 1, 20)];
-        let text = "The merge function delegates to gobby_core crates/gcode/src/search/rrf.rs:15-20.";
+        let text =
+            "The merge function delegates to gobby_core crates/gcode/src/search/rrf.rs:15-20.";
         let grounded = ground_text(
             text,
             &valid_spans,
@@ -323,6 +402,35 @@ mod tests {
         );
 
         assert_eq!(text, sanitize_model_markdown_links(text));
+    }
+
+    #[test]
+    fn reanchors_relative_citation_link_targets_to_line_anchors() {
+        let text = concat!(
+            "ranges [crates/gcode/src/app.rs:41-138](crates/gcode/src/app.rs:41) ",
+            "single [crates/gcode/src/mod.rs:7](crates/gcode/src/mod.rs:7) ",
+            "url [site](https://example.com:8080/x) ",
+            "rel [guide](docs/guide.md)"
+        );
+
+        let sanitized = sanitize_model_markdown_links(text);
+
+        // Relative `path:line[-end]` citation targets gain `#L` anchors so the
+        // links resolve and `gwiki lint` stops flagging them as broken.
+        assert!(
+            sanitized.contains("[crates/gcode/src/app.rs:41-138](crates/gcode/src/app.rs#L41)"),
+            "{sanitized}"
+        );
+        assert!(
+            sanitized.contains("[crates/gcode/src/mod.rs:7](crates/gcode/src/mod.rs#L7)"),
+            "{sanitized}"
+        );
+        // A URL port colon and ordinary relative links are left untouched.
+        assert!(
+            sanitized.contains("[site](https://example.com:8080/x)"),
+            "{sanitized}"
+        );
+        assert!(sanitized.contains("[guide](docs/guide.md)"), "{sanitized}");
     }
 
     #[test]

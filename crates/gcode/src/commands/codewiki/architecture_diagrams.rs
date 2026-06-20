@@ -630,13 +630,19 @@ mod tests {
     fn service_edges_carry_fixed_dependency_strength_labels() {
         let model = sample_model();
         let block = render_topology_flowchart(&model).expect("topology rendered for full model");
-        assert!(is_valid_mermaid(&block), "labelled topology must stay valid:\n{block}");
+        assert!(
+            is_valid_mermaid(&block),
+            "labelled topology must stay valid:\n{block}"
+        );
 
         let code = node_id("gobby-code");
         // The PostgreSQL hub edge is hard-`required`; the embedding API edge is
         // `degraded-ok`. Both labels are fixed, never LLM-drawn.
         assert!(
-            block.contains(&format!("{code} -.->|\"required\"| {}", service_node_id(ServiceKind::Postgres))),
+            block.contains(&format!(
+                "{code} -.->|\"required\"| {}",
+                service_node_id(ServiceKind::Postgres)
+            )),
             "postgres edge must be labelled required:\n{block}"
         );
         assert!(

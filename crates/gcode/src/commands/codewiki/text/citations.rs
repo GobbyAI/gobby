@@ -260,7 +260,9 @@ fn contains_bare_citation(text: &str, valid_spans: &[SourceSpan]) -> bool {
     .map(|token| token.trim_matches(|c: char| matches!(c, '.' | '"' | '\'' | '*')))
     .any(|token| {
         citation_parts(token).is_some_and(|(file, start, end)| {
-            valid_spans.iter().any(|span| span.contains(file, start, end))
+            valid_spans
+                .iter()
+                .any(|span| span.contains(file, start, end))
         })
     })
 }
