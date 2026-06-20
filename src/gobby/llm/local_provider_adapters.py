@@ -24,6 +24,13 @@ _USAGE_FIELDS = (
     "input_tokens",
     "output_tokens",
 )
+_UNSUPPORTED_PARAMETER_MARKERS = (
+    "unsupported",
+    "not supported",
+    "unknown parameter",
+    "unrecognized",
+    "unexpected keyword",
+)
 
 
 class LocalProviderAdapter(Protocol):
@@ -93,6 +100,13 @@ def _usage_dict(usage: Any) -> dict[str, int] | None:
         if isinstance(value, int) and not isinstance(value, bool)
     }
     return result or None
+
+
+def _is_unsupported_parameter_error(error: BaseException, parameter: str) -> bool:
+    message = str(error).lower()
+    return parameter.lower() in message and any(
+        marker in message for marker in _UNSUPPORTED_PARAMETER_MARKERS
+    )
 
 
 def _strip_json_fences(content: str) -> str:
@@ -278,7 +292,20 @@ class OpenAICompatibleLocalProviderAdapter:
             request["messages"][0]["content"] = (
                 system_prompt or "You are a helpful assistant. Respond with valid JSON only."
             )
-            response = await self._client.chat.completions.create(**request)
+            try:
+                response = await self._client.chat.completions.create(**request)
+            except Exception as reasoning_err:
+                if reasoning_effort is None or not _is_unsupported_parameter_error(
+                    reasoning_err,
+                    "reasoning_effort",
+                ):
+                    raise
+                logger.debug(
+                    "reasoning_effort rejected (%s), retrying without reasoning_effort",
+                    reasoning_err,
+                )
+                request.pop("reasoning_effort", None)
+                response = await self._client.chat.completions.create(**request)
 
         return _parse_json_response(response.choices[0].message.content)
 

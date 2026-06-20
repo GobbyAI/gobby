@@ -100,11 +100,15 @@ async def handle_continue_in_chat(
     }
     """
     source_session_id = data.get("source_session_id")
-    if not source_session_id:
+    if not isinstance(source_session_id, str) or not source_session_id:
         await mixin._send_error(websocket, "continue_in_chat requires source_session_id")
         return
 
-    requested_conversation_id = data.get("conversation_id") or str(uuid4())
+    requested_conversation_id = data.get("conversation_id")
+    if requested_conversation_id is not None and not isinstance(requested_conversation_id, str):
+        await mixin._send_error(websocket, "continue_in_chat conversation_id must be a string")
+        return
+    requested_conversation_id = requested_conversation_id or str(uuid4())
     conversation_id = requested_conversation_id
     project_id = data.get("project_id")
     target_provider = data.get("provider")

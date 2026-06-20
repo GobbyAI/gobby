@@ -8,7 +8,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from gobby.ai import (
     AICapability,
@@ -35,6 +35,14 @@ class EmbeddingsPayload(BaseModel):
     input: str | list[str]
     is_query: bool = False
     model: str | None = None
+    project_id: str | None = Field(
+        default=None,
+        description="Reserved for future multi-project embedding routing; currently ignored.",
+    )
+    provider: str | None = Field(
+        default=None,
+        description="Reserved for future provider routing; currently ignored.",
+    )
 
     @property
     def batch(self) -> list[str]:

@@ -19,6 +19,9 @@ from tests._timing import wait_for_async_condition
 
 pytestmark = pytest.mark.unit
 
+BACKGROUND_TASK_CLEANUP_TIMEOUT = 1.0
+BACKGROUND_TASK_CLEANUP_INTERVAL = 0.01
+
 
 def _mock_llm_service() -> MagicMock:
     llm_service = MagicMock()
@@ -610,6 +613,8 @@ class TestGraphBackgroundTask:
         await wait_for_async_condition(
             lambda: len(manager._background_tasks) == 0,
             description="graph background task cleanup",
+            timeout=BACKGROUND_TASK_CLEANUP_TIMEOUT,
+            interval=BACKGROUND_TASK_CLEANUP_INTERVAL,
         )
 
         assert memory.id == "test-id"

@@ -147,12 +147,14 @@ def test_embeddings_post_treats_single_input_as_one_item_batch(
     ]
 
 
-def test_embeddings_payload_schema_omits_unsupported_routing_fields() -> None:
+def test_embeddings_payload_schema_documents_reserved_routing_fields() -> None:
     schema = embeddings_routes.EmbeddingsPayload.model_json_schema()
 
     properties = schema["properties"]
-    assert "provider" not in properties
-    assert "project_id" not in properties
+    assert properties["provider"]["description"].startswith("Reserved for future provider routing")
+    assert properties["project_id"]["description"].startswith(
+        "Reserved for future multi-project embedding routing"
+    )
 
 
 def test_embeddings_post_preserves_batch_order_and_passes_is_query(

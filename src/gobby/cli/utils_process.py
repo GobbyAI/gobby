@@ -192,8 +192,24 @@ def _kill_port_holder(port: int) -> None:
     """Kill any process listening on the given port."""
     deps = facade()
 
-    for proc in psutil.process_iter(["pid", "name"]):
+    if os.environ.get("GOBBY_TEST_PROTECT", "").lower() in ("1", "true", "yes"):
+        deps.logger.warning("_kill_port_holder called during test - skipping")
+        return
+
+    for proc in psutil.process_iter(["pid", "name", "cmdline"]):
         try:
+            cmdline = proc.cmdline()
+            cmdline_str = " ".join(cmdline)
+            cmdline_lower = cmdline_str.lower()
+            process_name = str(proc.info.get("name") or "").lower()
+            has_gobby_daemon_marker = (
+                "gobby.runner" in cmdline_str
+                or "gobby_client.runner" in cmdline_str
+                or ("gobby" in process_name and "daemon" in cmdline_lower)
+            )
+            if not has_gobby_daemon_marker:
+                continue
+
             for conn in proc.net_connections():
                 if (
                     hasattr(conn, "laddr")

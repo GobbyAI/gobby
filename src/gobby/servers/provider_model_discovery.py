@@ -30,6 +30,7 @@ ACPDiscoverer = Callable[[type[ACPClient]], Awaitable[list[dict[str, Any]]]]
 ContextLengthResolver = Callable[[str | None, str | None], int | None]
 
 MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS = 90.0
+logger = logging.getLogger(__name__)
 CLAUDE_ALIASES = (
     ("haiku", "Haiku"),
     ("sonnet", "Sonnet"),
@@ -121,12 +122,12 @@ async def discover_codex_models(
         client = CodexAppServerClient()
         owns_client = True
     started_client = False
-    if not client.is_connected:
-        await client.start()
-        started_client = True
 
     assert client is not None
     try:
+        if not client.is_connected:
+            await client.start()
+            started_client = True
         raw_models = await client.list_models(include_hidden=True)
     finally:
         if owns_client or started_client:
@@ -331,8 +332,8 @@ async def discover_acp_models(
         purpose="model-discovery",
         request_timeout=MODEL_DISCOVERY_REQUEST_TIMEOUT_SECONDS,
     )
-    await client.start()
     try:
+        await client.start()
         session_info = client.session_info
     finally:
         await client.stop()
@@ -422,7 +423,10 @@ async def probe_claude_model(
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=45.0)
     except TimeoutError as exc:
         proc.kill()
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except TimeoutError:
+            logger.warning("Claude probe process did not exit promptly after kill")
         raise TimeoutError(f"Claude probe timed out for {alias}") from exc
 
     if proc.returncode != 0:
@@ -478,7 +482,10 @@ async def get_cli_version(provider: str, *, which: Which) -> str | None:
         stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=10.0)
     except TimeoutError:
         proc.kill()
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=5.0)
+        except TimeoutError:
+            logger.warning("%s version probe did not exit promptly after kill", provider)
         return None
 
     if proc.returncode != 0:

@@ -56,7 +56,10 @@ class ProcessorUsageMixin:
             if message_model:
                 last_model = message_model
 
-            event_context_window = self._message_context_window(msg) or context_window
+            message_context_window = self._message_context_window(msg)
+            event_context_window = (
+                message_context_window if message_context_window is not None else context_window
+            )
             if event_context_window is not None:
                 context_window = event_context_window
             if not self._usage_has_tokens(msg) or msg.usage is None:

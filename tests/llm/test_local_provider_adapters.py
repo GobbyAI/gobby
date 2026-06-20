@@ -141,6 +141,51 @@ async def test_openai_compatible_adapter_forwards_reasoning_effort() -> None:
 
 
 @pytest.mark.asyncio
+async def test_openai_compatible_json_retries_without_unsupported_reasoning_effort() -> None:
+    endpoint = LocalGenerationEndpointConfig(
+        provider="openai-compatible",
+        api_base="http://localhost:8000/v1",
+        model="local-model",
+        api_key="test-key",
+    )
+
+    class RejectingCompletions:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        async def create(self, **kwargs: Any) -> Any:
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                raise RuntimeError("response_format not supported")
+            if "reasoning_effort" in kwargs:
+                raise RuntimeError("reasoning_effort unsupported")
+            return SimpleNamespace(
+                choices=[SimpleNamespace(message=SimpleNamespace(content='{"ok": true}'))],
+                usage=None,
+            )
+
+    completions = RejectingCompletions()
+    fake_client = SimpleNamespace(chat=SimpleNamespace(completions=completions))
+
+    with patch("openai.AsyncOpenAI", return_value=fake_client):
+        adapter = OpenAICompatibleLocalProviderAdapter(endpoint)
+
+    result = await adapter.generate_json(
+        "json",
+        system_prompt="custom system",
+        model="local-model",
+        reasoning_effort="low",
+    )
+
+    assert result == {"ok": True}
+    assert len(completions.calls) == 3
+    assert "response_format" not in completions.calls[1]
+    assert "reasoning_effort" not in completions.calls[2]
+    assert completions.calls[1]["messages"][0]["content"] == "custom system"
+    assert completions.calls[2]["messages"][0]["content"] == "custom system"
+
+
+@pytest.mark.asyncio
 async def test_lmstudio_adapter_posts_native_chat(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

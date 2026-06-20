@@ -19,6 +19,9 @@ def register_agent_query_tools(
     registry: InternalToolRegistry,
     ctx: AgentsRegistryContext,
 ) -> None:
+    def _clamp_limit(limit: int) -> int:
+        return max(1, min(limit, 100))
+
     @registry.tool(
         name="get_agent_result",
         description="Get the result of a completed agent run.",
@@ -85,7 +88,7 @@ def register_agent_query_tools(
         status: str | None = None,
         limit: int = 20,
     ) -> dict[str, Any]:
-        limit = max(0, min(limit, 100))
+        limit = _clamp_limit(limit)
         effective_parent_ref = parent_session_id or ctx.get_current_session_id()
         if not effective_parent_ref:
             return {
@@ -160,7 +163,7 @@ def register_agent_query_tools(
         status: str = "active",
         limit: int = 100,
     ) -> dict[str, Any]:
-        limit = max(0, min(limit, 100))
+        limit = _clamp_limit(limit)
         scope_key = scope.strip().lower().replace("_", "-")
         if scope_key in {"build", "build-wide"}:
             scope_key = "all"
@@ -188,12 +191,14 @@ def register_agent_query_tools(
                 resolved_parent_id = ctx.resolve_session_id(effective_parent_ref)
             except ValueError as e:
                 return {"success": False, "error": str(e)}
-            parent_status = None if status_key == "active" else cast(AgentRunStatus, status_key)
-            runs = ctx.agent_run_manager.list_by_parent(
-                resolved_parent_id,
-                limit=limit,
-                status=parent_status,
-            )
+            if status_key == "active":
+                runs = ctx.agent_run_manager.list_by_parent(resolved_parent_id, limit=limit)
+            else:
+                runs = ctx.agent_run_manager.list_by_parent(
+                    resolved_parent_id,
+                    limit=limit,
+                    status=cast(AgentRunStatus, status_key),
+                )
         elif status_key == "active":
             runs = ctx.agent_run_manager.list_active(limit=limit)
         elif status_key == "running":

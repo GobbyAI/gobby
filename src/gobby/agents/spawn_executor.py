@@ -46,14 +46,13 @@ _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS = ["Workflow", "Task"]
 __all__ = [
     "SpawnRequest",
     "SpawnResult",
-    "_CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS",
-    "_CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC",
-    "_CODEX_PREAPPROVED_GOBBY_TOOLS",
-    "_apply_extra_env",
-    "_record_resume_launch_details",
-    "_sandbox_config_for_spawn",
     "execute_spawn",
 ]
+
+_COMPAT_PRIVATE_EXPORTS = (
+    _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC,
+    _CODEX_PREAPPROVED_GOBBY_TOOLS,
+)
 
 
 def _tmux_spawner_for_request(request: SpawnRequest) -> TmuxSpawner:

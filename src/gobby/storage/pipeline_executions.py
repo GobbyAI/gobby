@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
@@ -75,10 +75,19 @@ class PipelineExecutionStorageMixin:
                 ),
             )
 
-        execution = self.get_execution(execution_id)
-        if execution is None:
-            raise RuntimeError(f"Execution {execution_id} not found after creation")
-        return execution
+        return PipelineExecution(
+            id=execution_id,
+            pipeline_name=pipeline_name,
+            project_id=cast(str, self.project_id),
+            status=ExecutionStatus.PENDING,
+            inputs_json=inputs_json,
+            session_id=session_id,
+            parent_execution_id=parent_execution_id,
+            continuation_prompt=continuation_prompt,
+            definition_json=definition_json,
+            created_at=now,
+            updated_at=now,
+        )
 
     def get_execution(self, execution_id: str) -> PipelineExecution | None:
         """Get execution by ID.
@@ -564,8 +573,9 @@ class PipelineExecutionStorageMixin:
         ) -> tuple[str, tuple[str, ...]]:
             if not ids:
                 return "", ()
-            placeholders = ", ".join("%s" for _ in ids)
-            return f" AND {column_name} NOT IN ({placeholders})", tuple(ids)
+            ordered_ids = tuple(sorted(ids))
+            placeholders = ", ".join("%s" for _ in ordered_ids)
+            return f" AND {column_name} NOT IN ({placeholders})", ordered_ids
 
         # Build exclusion clause for parameter binding
         exclude_clause, exclude_params = build_not_in_clause(exclude_ids, "execution_id")
@@ -646,14 +656,15 @@ class PipelineExecutionStorageMixin:
 
         cutoff = (datetime.now(UTC) - timedelta(seconds=stall_threshold_seconds)).isoformat()
 
+        project_clause, project_params = self._project_predicate()
         rows = self.db.fetchall(
-            """
+            f"""
             SELECT * FROM pipeline_executions
             WHERE status = %s
-              AND project_id = %s
+              AND {project_clause}
               AND updated_at < %s
             ORDER BY updated_at ASC
-            """,
-            (ExecutionStatus.RUNNING.value, self.project_id, cutoff),
+            """,  # nosec B608
+            (ExecutionStatus.RUNNING.value, *project_params, cutoff),
         )
         return [PipelineExecution.from_row(row) for row in rows]

@@ -69,7 +69,9 @@
   font-size: calc(var(--font-size-base) * 0.8125);
   cursor: pointer;
   max-width: 12rem;
+  overflow: hidden;
   text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .chat-project-select:hover {

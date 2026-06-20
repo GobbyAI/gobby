@@ -260,7 +260,7 @@ FalkorDB (graph), Qdrant (semantic), and the embedding/model API degrade indepen
 shim returns a **clean, uniform envelope** and only raises MCP errors for genuine failures.
 
 Uniform success envelope wrapping the raw CLI payload:
-```
+```json
 { "ok": true, "data": <cli json>, "degraded": bool, "degraded_sources": [..],
   "truncated": bool, "warnings": [..] }
 ```

@@ -35,6 +35,8 @@ class TestVectorStoreInitialization:
         )
         assert vs._url == "http://localhost:6333"
         assert vs._path is None
+        # VectorStore exposes no public configured-dimension accessor; assert the
+        # constructor-derived value directly until that API exists.
         assert vs._embedding_dim == 768
 
     @pytest.mark.asyncio

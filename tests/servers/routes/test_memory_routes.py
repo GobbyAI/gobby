@@ -61,7 +61,9 @@ def mock_server():
 @pytest.fixture
 def client(mock_server):
     """Create TestClient with memory router."""
-    with patch("gobby.utils.project_context.get_project_context", return_value={"id": "test-project"}):
+    with patch(
+        "gobby.utils.project_context.get_project_context", return_value={"id": "test-project"}
+    ):
         app = FastAPI()
         router = create_memory_router(mock_server)
         app.include_router(router)

@@ -487,8 +487,8 @@ class TestListAgentRuns:
         assert runner.list_runs.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_preserves_explicit_zero_limit(self):
-        """Explicit zero is passed through instead of defaulting."""
+    async def test_clamps_zero_limit_to_positive_bound(self):
+        """Explicit zero is clamped to the smallest positive limit."""
         runner = MagicMock()
         runner.list_runs.return_value = []
 
@@ -498,7 +498,7 @@ class TestListAgentRuns:
         result = await list_agent_runs(parent_session_id="sess-123", limit=0)
 
         assert result["success"] is True
-        runner.list_runs.assert_called_once_with("sess-123", status=None, limit=0)
+        runner.list_runs.assert_called_once_with("sess-123", status=None, limit=1)
 
 
 class TestStopAgent:
@@ -697,8 +697,8 @@ class TestListRunningAgents:
         runner.run_storage.list_active.assert_called_once_with(limit=100)
 
     @pytest.mark.asyncio
-    async def test_preserves_explicit_zero_limit(self):
-        """Explicit zero is passed through instead of defaulting."""
+    async def test_clamps_zero_limit_to_positive_bound(self):
+        """Explicit zero is clamped to the smallest positive limit."""
         runner = _make_runner_with_run_storage()
         runner.run_storage.list_active.return_value = []
 
@@ -709,7 +709,7 @@ class TestListRunningAgents:
 
         assert result["success"] is True
         assert result["count"] == 0
-        runner.run_storage.list_active.assert_called_once_with(limit=0)
+        runner.run_storage.list_active.assert_called_once_with(limit=1)
 
     @pytest.mark.asyncio
     async def test_filter_by_parent_session(self):
@@ -729,7 +729,6 @@ class TestListRunningAgents:
         runner.run_storage.list_by_parent.assert_called_once_with(
             "parent-1",
             limit=100,
-            status=None,
         )
 
     @pytest.mark.asyncio
@@ -773,7 +772,6 @@ class TestListRunningAgents:
         runner.run_storage.list_by_parent.assert_called_once_with(
             "parent-1",
             limit=100,
-            status=None,
         )
 
     @pytest.mark.asyncio

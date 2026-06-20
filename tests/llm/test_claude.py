@@ -478,7 +478,7 @@ class TestGenerateJson:
         async def mock_query(prompt: str, options: Any) -> object:
             captured["prompt"] = prompt
             captured["system_prompt"] = options.system_prompt
-            captured["effort"] = options.effort
+            captured["effort"] = options.kwargs.get("effort")
             captured["output_format"] = options.output_format
             yield MockAssistantMessage([MockTextBlock('{"entities": []}')])
 

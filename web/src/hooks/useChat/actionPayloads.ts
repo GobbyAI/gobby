@@ -17,7 +17,8 @@ export function userContentBlocks(
   files?: QueuedFile[],
 ): ContentBlock[] | undefined {
   const blocks: ContentBlock[] = [];
-  if (content.trim()) blocks.push({ type: "text", content });
+  const trimmedContent = content.trim();
+  if (trimmedContent) blocks.push({ type: "text", content: trimmedContent });
   for (const qf of files ?? []) {
     if (qf.attachment) {
       blocks.push({ type: "attachment", attachment: qf.attachment });

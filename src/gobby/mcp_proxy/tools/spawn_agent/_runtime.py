@@ -41,7 +41,7 @@ def _persist_spawn_runtime(
         try:
             runner.run_storage.update_child_session(run_id, child_session_id)
         except Exception as e:
-            logger.warning(f"Failed to update child_session_id for {run_id}: {e}")
+            logger.warning("Failed to update child_session_id for %s: %s", run_id, e)
 
     try:
         runner.run_storage.update_runtime(
@@ -52,7 +52,7 @@ def _persist_spawn_runtime(
             clone_id=clone_id,
         )
     except Exception as e:
-        logger.warning(f"Failed to persist runtime state for {run_id}: {e}")
+        logger.warning("Failed to persist runtime state for %s: %s", run_id, e)
 
 
 def _tmux_runtime_metadata(spawn_result: Any) -> tuple[str | None, str | None, str | None]:

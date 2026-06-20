@@ -36,6 +36,7 @@ __all__ = [
     "create_linear_sync_handler",
 ]
 
+# Keep private compatibility imports live for callers that patch through this facade.
 _COMPAT_PRIVATE_EXPORTS = (
     _RepeatedFetchFailureLimiter,
     _extract_record,

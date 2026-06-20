@@ -1182,8 +1182,10 @@ def test_spawn_ui_server_refuses_unverified_port_holder(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_kill_port_holder_finds_process() -> None:
+def test_kill_port_holder_finds_process(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.cli.utils import _kill_port_holder
+
+    monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
 
     conn = MagicMock()
     conn.laddr = MagicMock()
@@ -1197,6 +1199,7 @@ def test_kill_port_holder_finds_process() -> None:
     fake_proc = MagicMock()
     fake_proc.pid = 55555
     fake_proc.name.return_value = "node"
+    fake_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
     fake_proc.net_connections.return_value = [conn]
 
     with (
@@ -1212,8 +1215,10 @@ def test_kill_port_holder_finds_process() -> None:
     child.terminate.assert_called_once()
 
 
-def test_kill_port_holder_no_match() -> None:
+def test_kill_port_holder_no_match(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.cli.utils import _kill_port_holder
+
+    monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
 
     conn = MagicMock()
     conn.laddr = MagicMock()
@@ -1222,6 +1227,7 @@ def test_kill_port_holder_no_match() -> None:
 
     fake_proc = MagicMock()
     fake_proc.pid = 55555
+    fake_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
     fake_proc.net_connections.return_value = [conn]
 
     with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
@@ -1231,11 +1237,14 @@ def test_kill_port_holder_no_match() -> None:
         assert fake_proc.net_connections.call_count == 1
 
 
-def test_kill_port_holder_access_denied() -> None:
+def test_kill_port_holder_access_denied(monkeypatch: pytest.MonkeyPatch) -> None:
     from gobby.cli.utils import _kill_port_holder
+
+    monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
 
     fake_proc = MagicMock()
     fake_proc.pid = 55555
+    fake_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
     fake_proc.net_connections.side_effect = psutil.AccessDenied(55555)
 
     with patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]):
@@ -1244,9 +1253,11 @@ def test_kill_port_holder_access_denied() -> None:
         fake_proc.net_connections.assert_called_once()
 
 
-def test_kill_port_holder_kills_alive_procs() -> None:
+def test_kill_port_holder_kills_alive_procs(monkeypatch: pytest.MonkeyPatch) -> None:
     """When wait_procs returns alive processes, they get killed."""
     from gobby.cli.utils import _kill_port_holder
+
+    monkeypatch.delenv("GOBBY_TEST_PROTECT", raising=False)
 
     conn = MagicMock()
     conn.laddr = MagicMock()
@@ -1262,6 +1273,7 @@ def test_kill_port_holder_kills_alive_procs() -> None:
     fake_proc = MagicMock()
     fake_proc.pid = 55555
     fake_proc.name.return_value = "node"
+    fake_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
     fake_proc.net_connections.return_value = [conn]
 
     with (

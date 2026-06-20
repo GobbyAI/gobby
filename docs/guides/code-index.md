@@ -210,8 +210,6 @@ code_index:
   qdrant_collection_prefix: code_symbols_
   symbol_summary:
     enabled: true
-    profile: feature_low
-    candidates: []
     max_concurrency: 2
     max_tokens: 100
     batch_size: 20

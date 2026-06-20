@@ -9,6 +9,7 @@ Tests cover:
 
 import json
 import logging
+from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -70,7 +71,7 @@ def mock_template_engine():
 
 
 @pytest.fixture
-def sample_transcript_file(tmp_path):
+def sample_transcript_file(tmp_path: Path):
     """Create a sample transcript JSONL file."""
     transcript_file = tmp_path / "transcript.jsonl"
     turns = [
@@ -90,7 +91,7 @@ def sample_transcript_file(tmp_path):
 
 
 @pytest.fixture
-def mock_session(tmp_path):
+def mock_session(tmp_path: Path):
     """Create a mock session object with transcript path."""
     session = MagicMock()
     transcript_file = tmp_path / "transcript.jsonl"
@@ -818,7 +819,7 @@ class TestRepairMissingSessionTitle:
         path.write_text("\n".join(json.dumps(t) for t in turns))
 
     @pytest.mark.asyncio
-    async def test_synthesizes_and_persists_heuristic_title(self, tmp_path) -> None:
+    async def test_synthesizes_and_persists_heuristic_title(self, tmp_path: Path) -> None:
         from gobby.workflows.summary_actions import repair_missing_session_title
 
         transcript = tmp_path / "transcript.jsonl"
@@ -846,7 +847,7 @@ class TestRepairMissingSessionTitle:
         )
 
     @pytest.mark.asyncio
-    async def test_synthesizes_title_for_turnless_session(self, tmp_path) -> None:
+    async def test_synthesizes_title_for_turnless_session(self, tmp_path: Path) -> None:
         """A session with ``turn_count == 0`` but a usable transcript still gets a title.
 
         The repair sweep guards on the transcript, not ``turn_count``: a session's
@@ -880,7 +881,7 @@ class TestRepairMissingSessionTitle:
         )
 
     @pytest.mark.asyncio
-    async def test_replaces_provisional_title_from_transcript(self, tmp_path) -> None:
+    async def test_replaces_provisional_title_from_transcript(self, tmp_path: Path) -> None:
         from gobby.workflows.summary_actions import repair_missing_session_title
 
         transcript = tmp_path / "transcript.jsonl"
@@ -908,7 +909,7 @@ class TestRepairMissingSessionTitle:
         )
 
     @pytest.mark.asyncio
-    async def test_skips_session_with_existing_title(self, tmp_path) -> None:
+    async def test_skips_session_with_existing_title(self, tmp_path: Path) -> None:
         from gobby.workflows.summary_actions import repair_missing_session_title
 
         transcript = tmp_path / "transcript.jsonl"
@@ -928,7 +929,7 @@ class TestRepairMissingSessionTitle:
         manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_skips_manual_title_source(self, tmp_path) -> None:
+    async def test_skips_manual_title_source(self, tmp_path: Path) -> None:
         from gobby.workflows.summary_actions import repair_missing_session_title
 
         transcript = tmp_path / "transcript.jsonl"
@@ -948,7 +949,7 @@ class TestRepairMissingSessionTitle:
         manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_returns_none_when_no_usable_prompt(self, tmp_path) -> None:
+    async def test_returns_none_when_no_usable_prompt(self, tmp_path: Path) -> None:
         from gobby.workflows.summary_actions import repair_missing_session_title
 
         # Transcript whose only user text is a lifecycle command yields no title:
@@ -970,7 +971,7 @@ class TestRepairMissingSessionTitle:
         manager.update_title.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_does_not_persist_command_only_transcript_prompt(self, tmp_path) -> None:
+    async def test_does_not_persist_command_only_transcript_prompt(self, tmp_path: Path) -> None:
         from gobby.workflows.summary_actions import repair_missing_session_title
 
         transcript = tmp_path / "transcript.jsonl"
@@ -1005,7 +1006,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test successful summary generation."""
         transcript_file = tmp_path / "transcript.jsonl"
@@ -1069,7 +1070,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test summary generation in clear mode."""
         transcript_file = tmp_path / "transcript.jsonl"
@@ -1111,7 +1112,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test summary generation in compact mode."""
         transcript_file = tmp_path / "transcript.jsonl"
@@ -1153,7 +1154,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test summary generation with previous summary for cumulative compression."""
         transcript_file = tmp_path / "transcript.jsonl"
@@ -1276,7 +1277,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test summary generation when transcript file doesn't exist."""
         session = MagicMock()
@@ -1300,7 +1301,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test summary generation when transcript processing fails."""
         transcript_file = tmp_path / "bad_transcript.jsonl"
@@ -1328,7 +1329,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test summary generation when LLM call fails."""
         transcript_file = tmp_path / "transcript.jsonl"
@@ -1367,7 +1368,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test summary generation with custom template."""
         transcript_file = tmp_path / "transcript.jsonl"
@@ -1409,7 +1410,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test that summary generation includes git status and file changes."""
         transcript_file = tmp_path / "transcript.jsonl"
@@ -1452,7 +1453,7 @@ class TestGenerateSummary:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test that summary generation includes last messages in context."""
         transcript_file = tmp_path / "transcript.jsonl"
@@ -1498,7 +1499,7 @@ class TestWriteSummaryFile:
     """Tests for the _write_summary_file helper function."""
 
     @pytest.mark.asyncio
-    async def test_write_summary_file_creates_file(self, tmp_path) -> None:
+    async def test_write_summary_file_creates_file(self, tmp_path: Path) -> None:
         """Test that _write_summary_file creates a summary file."""
         output_dir = str(tmp_path / "session_summaries")
 
@@ -1516,7 +1517,7 @@ class TestWriteSummaryFile:
         assert written.read_text() == "# Test Summary\n\nTest content"
 
     @pytest.mark.asyncio
-    async def test_write_summary_file_creates_directory(self, tmp_path) -> None:
+    async def test_write_summary_file_creates_directory(self, tmp_path: Path) -> None:
         """Test that _write_summary_file creates the output directory."""
         output_dir = str(tmp_path / "nested" / "summaries")
 
@@ -1532,7 +1533,7 @@ class TestWriteSummaryFile:
         assert Path(output_dir).exists()
 
     @pytest.mark.asyncio
-    async def test_write_summary_file_uses_external_id(self, tmp_path) -> None:
+    async def test_write_summary_file_uses_external_id(self, tmp_path: Path) -> None:
         """Test that _write_summary_file uses external_id in filename."""
         output_dir = str(tmp_path / "summaries")
 
@@ -1553,7 +1554,7 @@ class TestWriteSummaryFile:
         assert "internal-id" not in result
 
     @pytest.mark.asyncio
-    async def test_write_summary_file_falls_back_to_session_id(self, tmp_path) -> None:
+    async def test_write_summary_file_falls_back_to_session_id(self, tmp_path: Path) -> None:
         """Test fallback to session_id when external_id unavailable."""
         output_dir = str(tmp_path / "summaries")
 
@@ -1568,7 +1569,7 @@ class TestWriteSummaryFile:
         assert "fallback-session-id" in result
 
     @pytest.mark.asyncio
-    async def test_write_summary_file_naming_format(self, tmp_path) -> None:
+    async def test_write_summary_file_naming_format(self, tmp_path: Path) -> None:
         """Test that files follow {ref}-{mode}.md format."""
         output_dir = str(tmp_path / "summaries")
 
@@ -1585,7 +1586,7 @@ class TestWriteSummaryFile:
         assert filename == "my-session-full.md"
 
     @pytest.mark.asyncio
-    async def test_write_summary_file_compact_mode(self, tmp_path) -> None:
+    async def test_write_summary_file_compact_mode(self, tmp_path: Path) -> None:
         """Test that compact mode uses -compact suffix."""
         output_dir = str(tmp_path / "summaries")
 
@@ -1603,7 +1604,11 @@ class TestWriteSummaryFile:
         assert filename == "my-session-compact.md"
 
     @pytest.mark.asyncio
-    async def test_write_summary_file_error_returns_none(self, monkeypatch, tmp_path) -> None:
+    async def test_write_summary_file_error_returns_none(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
         """Test that write errors return None."""
         monkeypatch.setattr(
             "pathlib.Path.mkdir",
@@ -1625,7 +1630,7 @@ class TestWriteSummaryFile:
         mock_llm_service,
         mock_transcript_processor,
         summary_config,
-        tmp_path,
+        tmp_path: Path,
     ) -> None:
         """Test generate_summary with write_file=True produces a file."""
         transcript_file = tmp_path / "transcript.jsonl"

@@ -919,6 +919,7 @@ async def test_text_generation_service_profile_only_uses_configured_profile_defa
     ]
 
 
+@pytest.mark.asyncio
 async def test_text_generation_service_applies_candidate_reasoning_effort_to_text_result() -> None:
     registry = AICapabilityRegistry(
         [
@@ -950,6 +951,7 @@ async def test_text_generation_service_applies_candidate_reasoning_effort_to_tex
     ]
 
 
+@pytest.mark.asyncio
 async def test_text_generation_service_request_reasoning_effort_overrides_candidate() -> None:
     registry = AICapabilityRegistry(
         [
@@ -989,6 +991,7 @@ async def test_text_generation_service_request_reasoning_effort_overrides_candid
     ]
 
 
+@pytest.mark.asyncio
 async def test_text_generation_service_json_applies_effort_without_wrapping_result() -> None:
     registry = AICapabilityRegistry(
         [

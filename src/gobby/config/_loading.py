@@ -418,18 +418,29 @@ def _migrate_default_ui_mode_config_store_row(
         return flat_config
 
     try:
-        cursor = execute(
-            """UPDATE config_store
-               SET value = %s, updated_at = %s
-               WHERE key = %s AND source = %s AND value = %s""",
-            (
-                '"auto"',
-                datetime.now(UTC).isoformat(),
-                _UI_MODE_CONFIG_KEY,
-                "defaults",
-                '"production"',
-            ),
+        transaction = getattr(db, "transaction", None)
+        params = (
+            '"auto"',
+            datetime.now(UTC).isoformat(),
+            _UI_MODE_CONFIG_KEY,
+            "defaults",
+            '"production"',
         )
+        if callable(transaction):
+            with transaction() as conn:
+                cursor = conn.execute(
+                    """UPDATE config_store
+                       SET value = %s, updated_at = %s
+                       WHERE key = %s AND source = %s AND value = %s""",
+                    params,
+                )
+        else:
+            cursor = execute(
+                """UPDATE config_store
+                   SET value = %s, updated_at = %s
+                   WHERE key = %s AND source = %s AND value = %s""",
+                params,
+            )
     except Exception as exc:
         logger.debug("Failed to migrate defaults-seeded ui.mode config row: %s", exc)
         return flat_config

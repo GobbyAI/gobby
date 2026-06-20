@@ -24,6 +24,7 @@ from gobby.dispatch.spawn_artifacts import (
     ensure_epic_integration_workspaces,
 )
 from gobby.dispatch.spawn_completion import (
+    BuildCompletionServices,
     _coordinator_session_matches_project,
     _subscribe_build_coordinator_completion,
     subscribe_agent_completion,
@@ -243,7 +244,7 @@ async def spawn_agent(
             project_id=project_id,
             task_id=action.task_id,
             run_id=str(run_id),
-            services=services,
+            services=cast(BuildCompletionServices | None, services),
         )
     except Exception:
         logger.warning(

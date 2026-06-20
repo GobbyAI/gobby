@@ -65,21 +65,16 @@ async def _web_origin_session_id(
     target_session: Any,
     web_session_id: str,
 ) -> str:
-    project_id = getattr(target_session, "project_id", None)
-    if not isinstance(project_id, str) or not project_id:
-        raise RuntimeError("target session has no project_id")
-    origin = await run_db(
-        mixin,
-        session_manager.register,
-        external_id=f"web-origin:{web_session_id}",
-        machine_id="web-ui",
-        source="web_chat",
-        project_id=project_id,
-        title="Web UI",
-        session_type="web_chat",
-        is_local=True,
-    )
-    return str(origin.id)
+    if session_manager is not None and web_session_id and web_session_id != "web-ui":
+        attached_session = await run_db(mixin, session_manager.get, web_session_id)
+        attached_id = getattr(attached_session, "id", None)
+        if isinstance(attached_id, str) and attached_id:
+            return attached_id
+
+    target_id = getattr(target_session, "id", None)
+    if isinstance(target_id, str) and target_id:
+        return target_id
+    raise RuntimeError("target session has no id")
 
 
 async def handle_attach_to_session(
@@ -287,10 +282,10 @@ async def handle_send_to_cli_session(
             str(web_session_id),
         )
     except Exception as e:
-        logger.warning("Failed to create web-origin sender session: %s", e)
+        logger.warning("Failed to resolve web-origin sender session: %s", e)
         await mixin._send_error(
             websocket,
-            "Failed to create web-origin sender session",
+            "Failed to resolve web-origin sender session",
             code="WEB_ORIGIN_SESSION_ERROR",
         )
         return

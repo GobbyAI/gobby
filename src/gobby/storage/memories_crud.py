@@ -39,24 +39,29 @@ class MemoryCrudMixin(MemoryStoreBase):
         # This aligns with content_exists() which checks globally
         memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, normalized_content))
 
-        # source_id proximity dedup: if the same session created a very similar
-        # memory within the last 60 seconds, treat it as a duplicate
-        if source_session_id:
-            recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "%s", "second")
-            recent = self.db.fetchone(
-                f"""SELECT id, content FROM memories
-                   WHERE source_session_id = %s
-                     AND {recent_cutoff_sql}
-                   ORDER BY created_at DESC, id DESC LIMIT 1""",
-                (source_session_id, 60),
-            )
-            if recent and normalized_content == str(recent["content"]).strip():
-                return self.get_memory(recent["id"])
-
         tags_json = json.dumps(tags) if tags else None
 
-        inserted = False
+        changed = False
+        row: Any | None = None
         with self.db.transaction() as conn:
+            # source_id proximity dedup: if the same session created a very similar
+            # memory within the last 60 seconds, treat it as a duplicate.
+            if source_session_id:
+                recent_cutoff_sql = newer_than_now_expr(self.db, "created_at", "%s", "second")
+                recent = conn.execute(
+                    f"""SELECT * FROM memories
+                       WHERE source_session_id = %s
+                         AND {recent_cutoff_sql}
+                       ORDER BY created_at DESC, id DESC LIMIT 1""",
+                    (source_session_id, 60),
+                ).fetchone()
+                if recent and normalized_content == str(recent["content"]).strip():
+                    return Memory.from_row(recent)
+
+            existing_row = conn.execute(
+                "SELECT deleted_at FROM memories WHERE id = %s",
+                (memory_id,),
+            ).fetchone()
             cursor = conn.execute(
                 """
                 INSERT INTO memories (
@@ -64,7 +69,15 @@ class MemoryCrudMixin(MemoryStoreBase):
                     source_session_id, access_count, tags,
                     created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
-                ON CONFLICT (id) DO NOTHING
+                ON CONFLICT (id) DO UPDATE SET
+                    deleted_at = NULL,
+                    dream_action = NULL,
+                    last_dreamed_at = NULL,
+                    updated_at = CASE
+                        WHEN memories.deleted_at IS NOT NULL THEN excluded.updated_at
+                        ELSE memories.updated_at
+                    END
+                RETURNING *
                 """,
                 (
                     memory_id,
@@ -78,17 +91,15 @@ class MemoryCrudMixin(MemoryStoreBase):
                     now,
                 ),
             )
-            inserted = cursor.rowcount == 1
+            row = cursor.fetchone()
+            changed = existing_row is None or existing_row["deleted_at"] is not None
 
-        existing_row = self.db.fetchone("SELECT * FROM memories WHERE id = %s", (memory_id,))
-        if existing_row and existing_row["deleted_at"] is not None:
-            self.restore_memory(memory_id, when=now)
-        if existing_row is None:
+        if row is None:
             raise RuntimeError(f"Memory {memory_id} not found after creation")
 
-        if inserted:
+        if changed:
             self._notify_listeners()
-        return self.get_memory(memory_id)
+        return Memory.from_row(row)
 
     def get_memory(
         self,
@@ -238,6 +249,8 @@ class MemoryCrudMixin(MemoryStoreBase):
 
         if content is not None:
             content = content.strip()
+            if not content:
+                raise ValueError("Memory content cannot be empty")
             updates.append("content = %s")
             params.append(content)
         if tags is not None:

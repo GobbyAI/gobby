@@ -263,6 +263,8 @@ class TestContinueInChatTerminalKill:
             code="NOT_FOUND",
         )
         host._create_chat_session.assert_not_awaited()
+        assert host._chat_sessions == {}
+        assert host._active_chat_tasks == {}
 
     @pytest.mark.asyncio
     async def test_kills_terminal_when_no_agent_registered(self) -> None:
@@ -604,6 +606,8 @@ class TestContinueInChatTerminalKill:
         host._send_error.assert_awaited_once()
         assert "Failed to release source session" in host._send_error.await_args.args[1]
         host._create_chat_session.assert_not_awaited()
+        assert host._chat_sessions == {}
+        assert host._active_chat_tasks == {}
 
     @pytest.mark.asyncio
     async def test_continue_in_chat_reuses_terminal_session_identity(self) -> None:
@@ -1524,12 +1528,15 @@ class TestContinueInChatTerminalKill:
         }
         source_session.metadata = None
 
+        attached_session = MagicMock()
+        attached_session.id = "web-123"
         session_manager = MagicMock()
-        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.get = MagicMock(
+            side_effect=lambda session_id: attached_session
+            if session_id == "web-123"
+            else source_session
+        )
         session_manager.db = MagicMock()
-        origin_session = MagicMock()
-        origin_session.id = "web-origin-uuid"
-        session_manager.register = MagicMock(return_value=origin_session)
 
         inter_message = MagicMock()
         inter_message.id = "msg-1"
@@ -1562,18 +1569,7 @@ class TestContinueInChatTerminalKill:
 
         mock_get_tmux_manager.assert_called_once_with(source_session.terminal_context)
         tmux_manager.send_keys.assert_awaited_once_with("%7", "hello\n")
-        session_manager.register.assert_called_once_with(
-            external_id="web-origin:web-123",
-            machine_id="web-ui",
-            source="web_chat",
-            project_id="proj-1",
-            title="Web UI",
-            session_type="web_chat",
-            is_local=True,
-        )
-        assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == (
-            "web-origin-uuid"
-        )
+        assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == "web-123"
         inter_msg_manager.mark_delivered.assert_called_once_with("msg-1")
         host._send_error.assert_not_awaited()
 
@@ -1605,12 +1601,15 @@ class TestContinueInChatTerminalKill:
         source_session.terminal_context = {"tmux_pane": "%7"}
         source_session.metadata = None
 
+        attached_session = MagicMock()
+        attached_session.id = "web-123"
         session_manager = MagicMock()
-        session_manager.get = MagicMock(return_value=source_session)
+        session_manager.get = MagicMock(
+            side_effect=lambda session_id: attached_session
+            if session_id == "web-123"
+            else source_session
+        )
         session_manager.db = MagicMock()
-        origin_session = MagicMock()
-        origin_session.id = "web-origin-uuid"
-        session_manager.register = MagicMock(return_value=origin_session)
 
         inter_message = MagicMock()
         inter_message.id = "msg-1"
@@ -1657,9 +1656,7 @@ class TestContinueInChatTerminalKill:
         attached_path = delivered_content.removesuffix("\n").splitlines()[-1]
         assert attached_path.endswith("_note.txt")
         assert (tmp_path / "attachments" / "attached-sessions" / "source-uuid").is_dir()
-        assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == (
-            "web-origin-uuid"
-        )
+        assert inter_msg_manager.create_message.call_args.kwargs["from_session"] == "web-123"
         assert inter_msg_manager.create_message.call_args.kwargs["content"].endswith(attached_path)
         assert host._send_error.await_count == 0
 

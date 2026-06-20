@@ -2,6 +2,7 @@ from typing import Any
 
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import Memory, Visibility, visibility_predicate
+from gobby.storage.sql_dialect import json_array_contains_condition
 
 
 class MemoryQueryMixin(MemoryStoreBase):
@@ -81,32 +82,17 @@ class MemoryQueryMixin(MemoryStoreBase):
         if vis:
             query += f" AND {vis}"
 
+        tag_clause, tag_params = self._tag_filter_clause(tags_all, tags_any, tags_none)
+        query += tag_clause
+        params.extend(tag_params)
+
         query += " ORDER BY updated_at DESC"
 
-        if not (tags_all or tags_any or tags_none):
-            rows = self.db.fetchall(
-                f"{query} LIMIT %s OFFSET %s",
-                (*params, limit, offset),  # nosec B608
-            )
-            return [Memory.from_row(row) for row in rows]
-
-        memories: list[Memory] = []
-        page_limit = max(limit * 3, 50)
-        page_offset = offset
-        while len(memories) < limit:
-            rows = self.db.fetchall(
-                f"{query} LIMIT %s OFFSET %s",
-                (*params, page_limit, page_offset),  # nosec B608
-            )
-            if not rows:
-                break
-            page = [Memory.from_row(row) for row in rows]
-            memories.extend(self._filter_by_tags(page, tags_all, tags_any, tags_none))
-            if len(rows) < page_limit:
-                break
-            page_offset += page_limit
-
-        return memories[:limit]
+        rows = self.db.fetchall(
+            f"{query} LIMIT %s OFFSET %s",
+            (*params, limit, offset),  # nosec B608
+        )
+        return [Memory.from_row(row) for row in rows]
 
     def update_access_stats(self, memory_id: str, accessed_at: str) -> None:
         """
@@ -165,19 +151,51 @@ class MemoryQueryMixin(MemoryStoreBase):
         if vis:
             sql += f" AND {vis}"
 
-        # Fetch more results than needed to allow for tag filtering
-        fetch_limit = limit * 3 if (tags_all or tags_any or tags_none) else limit
+        tag_clause, tag_params = self._tag_filter_clause(tags_all, tags_any, tags_none)
+        sql += tag_clause
+        params.extend(tag_params)
+
         sql += " ORDER BY updated_at DESC LIMIT %s"
-        params.append(fetch_limit)
+        params.append(limit)
 
         rows = self.db.fetchall(sql, tuple(params))
-        memories = [Memory.from_row(row) for row in rows]
+        return [Memory.from_row(row) for row in rows]
 
-        # Apply tag filters in Python
-        if tags_all or tags_any or tags_none:
-            memories = self._filter_by_tags(memories, tags_all, tags_any, tags_none)
+    def _tag_filter_clause(
+        self,
+        tags_all: list[str] | None = None,
+        tags_any: list[str] | None = None,
+        tags_none: list[str] | None = None,
+    ) -> tuple[str, list[Any]]:
+        tag_column = "COALESCE(tags, '[]'::jsonb)"
+        clauses: list[str] = []
+        params: list[Any] = []
 
-        return memories[:limit]
+        for tag in tags_all or []:
+            condition, condition_params = json_array_contains_condition(self.db, tag_column, tag)
+            clauses.append(condition)
+            params.extend(condition_params)
+
+        if tags_any:
+            any_clauses: list[str] = []
+            for tag in tags_any:
+                condition, condition_params = json_array_contains_condition(
+                    self.db,
+                    tag_column,
+                    tag,
+                )
+                any_clauses.append(condition)
+                params.extend(condition_params)
+            clauses.append(f"({' OR '.join(any_clauses)})")
+
+        for tag in tags_none or []:
+            condition, condition_params = json_array_contains_condition(self.db, tag_column, tag)
+            clauses.append(f"NOT ({condition})")
+            params.extend(condition_params)
+
+        if not clauses:
+            return "", []
+        return f" AND {' AND '.join(clauses)}", params
 
     def _filter_by_tags(
         self,

@@ -25,8 +25,9 @@ logger = logging.getLogger("gobby.sessions.transcript_index")
 INDEX_CACHE_MAX_ENTRIES = 16
 INDEX_SCHEMA_VERSION = 1
 INDEX_SIDECAR_SUFFIX = ".gobby-index.json"
+_SKIP_ADJUSTMENT_VALUE = object()
 
-_IndexKey = tuple[str, str, str, int, int]
+_IndexKey = tuple[str, str, str | None, str, int, int]
 
 _INDEX_CACHE: OrderedDict[_IndexKey, TranscriptIndex] = OrderedDict()
 _CACHE_LOCK = asyncio.Lock()
@@ -61,7 +62,7 @@ def _encode_adjustment_value(value: Any) -> Any:
                 "value_redacted": True,
             },
         )
-        return None
+        return _SKIP_ADJUSTMENT_VALUE
     return value
 
 
@@ -114,7 +115,7 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
         "total_groups": index.total_groups,
         "tool_first_open": index.tool_first_open,
         "role_message_counts": index.role_message_counts,
-        "session_stats": index.session_stats,
+        "session_stats": dict(index.session_stats) if index.session_stats is not None else None,
         "next_parser_index": index.next_parser_index,
         "next_raw_line_no": index.next_raw_line_no,
         "safe_to_start_event": index.safe_to_start_event,
@@ -127,7 +128,7 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
             }
             for adjustment in index.post_pass_adjustments
             for encoded_value in [_encode_adjustment_value(adjustment.value)]
-            if encoded_value is not None
+            if encoded_value is not _SKIP_ADJUSTMENT_VALUE
         ],
     }
 
@@ -253,7 +254,10 @@ def load_index_sidecar(
     except FileNotFoundError:
         return None
     except (OSError, json.JSONDecodeError) as exc:
-        logger.debug("Failed to read transcript index sidecar %s: %s", sidecar, exc)
+        logger.debug(
+            "Failed to read transcript index sidecar",
+            extra={"sidecar_path": sidecar, "error": str(exc)},
+        )
         return None
 
     try:
@@ -266,7 +270,10 @@ def load_index_sidecar(
             return None
         return index
     except (KeyError, TypeError, ValueError) as exc:
-        logger.debug("Invalid transcript index sidecar %s: %s", sidecar, exc)
+        logger.debug(
+            "Invalid transcript index sidecar",
+            extra={"sidecar_path": sidecar, "error": str(exc)},
+        )
         return None
 
 
@@ -291,7 +298,10 @@ def persist_index_sidecar(path: str, index: TranscriptIndex) -> None:
             os.fsync(handle.fileno())
         os.replace(temp_name, sidecar)
     except OSError as exc:
-        logger.debug("Failed to persist transcript index sidecar %s: %s", sidecar, exc)
+        logger.debug(
+            "Failed to persist transcript index sidecar",
+            extra={"sidecar_path": sidecar, "error": str(exc)},
+        )
         if temp_name:
             try:
                 os.unlink(temp_name)
@@ -325,8 +335,12 @@ async def get_or_build_index(
         build_index_from_raw_lines,
     )
 
+    if lines is not None or raw_lines is not None:
+        seek_mode = "line"
+        logical_size = None
+
     _require_gzip_logical_size(seek_mode, logical_size)
-    key: _IndexKey = (os.path.abspath(path), source, seek_mode, mtime_ns, size)
+    key: _IndexKey = (os.path.abspath(path), source, session_id, seek_mode, mtime_ns, size)
 
     async with _CACHE_LOCK:
         cached = _INDEX_CACHE.get(key)
