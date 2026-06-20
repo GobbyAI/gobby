@@ -921,6 +921,7 @@ def test_kill_all_gobby_daemons_kills_runner_process() -> None:
     parent_proc = MagicMock()
     parent_proc.parent.return_value = None
     parent_proc.pid = 1
+    echo = MagicMock()
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -929,14 +930,16 @@ def test_kill_all_gobby_daemons_kills_runner_process() -> None:
         patch("gobby.cli.utils.os.getppid", return_value=10001),
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
         patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]),
-        patch("gobby.cli.utils.click.echo"),
+        patch("gobby.cli.utils.click.echo", echo),
     ):
         result = kill_all_gobby_daemons()
     assert result == 1
+    messages = [call.args[0] for call in echo.call_args_list]
+    assert messages[0].startswith("Found gobby daemon (PID 99999)")
+    assert messages[1] == "Gracefully stopped PID 99999"
     fake_proc.send_signal.assert_called_once_with(signal.SIGTERM)
     fake_proc.wait.assert_called_once_with(timeout=5)
     fake_proc.net_connections.assert_not_called()
-    assert fake_proc.wait.call_count == 1
 
 
 def test_kill_all_gobby_daemons_force_kill_on_timeout() -> None:
@@ -1031,6 +1034,7 @@ def test_kill_all_gobby_daemons_kills_pid_file_match(tmp_path: Path) -> None:
     parent_proc = MagicMock()
     parent_proc.parent.return_value = None
     parent_proc.pid = 1
+    echo = MagicMock()
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1040,11 +1044,16 @@ def test_kill_all_gobby_daemons_kills_pid_file_match(tmp_path: Path) -> None:
         patch("gobby.cli.utils.os.getppid", return_value=10001),
         patch("gobby.cli.utils.psutil.Process", return_value=parent_proc),
         patch("gobby.cli.utils.psutil.process_iter", return_value=[fake_proc]),
-        patch("gobby.cli.utils.click.echo"),
+        patch("gobby.cli.utils.click.echo", echo),
     ):
         result = kill_all_gobby_daemons()
     assert result == 1
+    messages = [call.args[0] for call in echo.call_args_list]
+    assert messages[0].startswith("Found gobby daemon (PID 88888)")
+    assert messages[1] == "Gracefully stopped PID 88888"
     fake_proc.send_signal.assert_called_once_with(signal.SIGTERM)
+    fake_proc.wait.assert_called_once_with(timeout=5)
+    fake_proc.net_connections.assert_not_called()
 
 
 def test_kill_all_gobby_daemons_skips_self() -> None:
@@ -1131,7 +1140,8 @@ def test_spawn_ui_server_refuses_unverified_port_holder(tmp_path: Path) -> None:
     deps.is_port_available.assert_called_once_with(5173, host="0.0.0.0")
     deps.wait_for_port_available.assert_not_called()
     deps._open_ui_log_handler.assert_not_called()
-    deps.logger.error.assert_called_once_with(
+    assert deps.logger.error.call_count == 1
+    assert deps.logger.error.call_args.args == (
         "Port %s is in use by a non-Gobby UI process; aborting UI server spawn",
         5173,
     )
