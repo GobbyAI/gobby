@@ -12,6 +12,7 @@ from gobby.hooks._normalization_shell import (
     _SHELL_CHAIN_TOKENS,
     _SHELL_CONTROL_TOKENS,
     _SHELL_INPUT_REDIRECTION_TOKENS,
+    _SHELL_SEQUENCING_TOKENS,
     _extract_redirection_paths,
     _get_command_text,
     _has_perl_inplace_option,
@@ -108,6 +109,19 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
 
     if not parts:
         return {}
+
+    # A gcode navigation piped into read-only filters (``gcode symbol <id> | jq``,
+    # ``gcode outline f | head``) is still navigation: pipelines are the documented
+    # way to read symbol source, and only the leading command touches the index.
+    # Classify on the leading segment before the chain-token demotion below, but
+    # only for pure ``|`` pipelines -- ``&&``/``||``/``;`` sequence in a separate,
+    # possibly side-effecting command, so those still fall through to ``execute``.
+    if "|" in parts and not _SHELL_SEQUENCING_TOKENS.intersection(parts):
+        leading = parts[: parts.index("|")]
+        gcode_metadata = gcode_navigation_metadata(leading)
+        if gcode_metadata:
+            kind, extra = gcode_metadata
+            return _build_canonical_tool_metadata(kind, extra=extra)
 
     if any(token in _SHELL_CHAIN_TOKENS for token in parts):
         return _build_canonical_tool_metadata("execute")

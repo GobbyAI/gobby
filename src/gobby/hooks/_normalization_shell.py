@@ -21,6 +21,11 @@ _SHELL_TOOLS = frozenset(
 )
 
 _SHELL_CHAIN_TOKENS = frozenset({"&&", "||", ";", "|"})
+# Chain tokens that sequence a *separate* command, unlike ``|`` which only pipes
+# the leading command's output into a filter. A gcode navigation piped to a
+# read-only filter (``gcode symbol <id> | jq``) is still navigation; one joined to
+# another command via these is not, so those stay classified as ``execute``.
+_SHELL_SEQUENCING_TOKENS = frozenset({"&&", "||", ";"})
 _SHELL_INPUT_REDIRECTION_TOKENS = frozenset({"<", "<<", "<<<"})
 _SHELL_OUTPUT_REDIRECTION_TOKENS = frozenset({">", ">>", "1>", "1>>"})
 _SHELL_CONTROL_TOKENS = (

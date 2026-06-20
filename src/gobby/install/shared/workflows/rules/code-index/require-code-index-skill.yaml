@@ -72,4 +72,4 @@ rules:
       )
     effects:
       - type: block
-        reason: 'Use `gcode outline path/to/file` to inspect file structure or `gcode symbol <id>` to retrieve a target symbol before broad source reads. Keep follow-up line reads to 40 lines or fewer unless gcode already located the target this turn.'
+        reason: 'Use `gcode outline path/to/file` to inspect file structure or `gcode symbol <id>` to retrieve a target symbol before broad source reads. To read a file directly, pass an explicit line window -- Read with a `limit`/`offset`, or a bounded `sed -n` range: up to 40 lines is always allowed, and wider windows are allowed once you have run a gcode navigation this turn (a piped `gcode ... | jq` now counts). A full-file read with no line limit stays blocked; retrieve the symbol with `gcode symbol <id>` instead.'

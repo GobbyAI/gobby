@@ -695,6 +695,16 @@ class TestCanonicalToolMetadata:
             ("gcode outline src/app.py", "read"),
             ("gcode symbol 00000000-0000-0000-0000-000000000000", "read"),
             ("gcode callers TaskValidator", "read"),
+            # A gcode navigation piped to a read-only filter is still navigation:
+            # `gcode symbol <id> | jq -r .source` is the documented way to read
+            # symbol source, and `| head`/`| rg` are common too. Without this the
+            # per-turn nav flag never sets and source reads stay capped at 40 lines.
+            (
+                "gcode symbol 00000000-0000-0000-0000-000000000000 | jq -r .source",
+                "read",
+            ),
+            ("gcode outline src/app.py | head -40", "read"),
+            ('gcode grep "pattern" src -m 50 | rg fn', "search"),
         ],
     )
     def test_exec_command_gcode_navigation_is_canonical(self, command, expected_kind) -> None:
@@ -706,6 +716,26 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == expected_kind
         assert data["canonical_code_index_navigation"] is True
         assert data["canonical_code_index_command"].startswith("gcode ")
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "gcode outline src/app.py && rm -rf build",
+            "gcode symbol 00000000-0000-0000-0000-000000000000 ; echo done",
+            "gcode grep pattern src || true",
+        ],
+    )
+    def test_exec_command_gcode_with_sequencing_stays_execute(self, command) -> None:
+        # `&&`/`;`/`||` join a *separate* command (possibly side-effecting), so a
+        # gcode-led sequence is not treated as pure navigation -- only a `|`
+        # pipeline of read-only filters is.
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "execute"
+        assert "canonical_code_index_navigation" not in data
 
     def test_exec_command_git_grep_sets_broad_search(self) -> None:
         data = {
