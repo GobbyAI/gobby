@@ -484,6 +484,7 @@ class MergeResolutionManager:
         *,
         ours_content: str | None = None,
         theirs_content: str | None = None,
+        force_status: bool = False,
     ) -> MergeConflict | None:
         """Update a conflict.
 
@@ -500,31 +501,53 @@ class MergeResolutionManager:
         now = datetime.now(UTC).isoformat()
 
         with self.db.transaction() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE merge_conflicts
-                SET
-                    status = COALESCE(%s, status),
-                    ours_content = COALESCE(%s, ours_content),
-                    theirs_content = COALESCE(%s, theirs_content),
-                    resolved_content = COALESCE(%s, resolved_content),
-                    updated_at = %s
-                WHERE id = %s
-                  AND (%s::text IS NULL OR %s::text <> %s::text OR status = %s::text)
-                """,
-                (
-                    status,
-                    ours_content,
-                    theirs_content,
-                    resolved_content,
-                    now,
-                    conflict_id,
-                    status,
-                    status,
-                    ConflictStatus.PENDING.value,
-                    ConflictStatus.PENDING.value,
-                ),
-            )
+            if force_status:
+                cursor = conn.execute(
+                    """
+                    UPDATE merge_conflicts
+                    SET
+                        status = COALESCE(%s, status),
+                        ours_content = COALESCE(%s, ours_content),
+                        theirs_content = COALESCE(%s, theirs_content),
+                        resolved_content = COALESCE(%s, resolved_content),
+                        updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        status,
+                        ours_content,
+                        theirs_content,
+                        resolved_content,
+                        now,
+                        conflict_id,
+                    ),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    UPDATE merge_conflicts
+                    SET
+                        status = COALESCE(%s, status),
+                        ours_content = COALESCE(%s, ours_content),
+                        theirs_content = COALESCE(%s, theirs_content),
+                        resolved_content = COALESCE(%s, resolved_content),
+                        updated_at = %s
+                    WHERE id = %s
+                      AND (%s::text IS NULL OR %s::text <> %s::text OR status = %s::text)
+                    """,
+                    (
+                        status,
+                        ours_content,
+                        theirs_content,
+                        resolved_content,
+                        now,
+                        conflict_id,
+                        status,
+                        status,
+                        ConflictStatus.PENDING.value,
+                        ConflictStatus.PENDING.value,
+                    ),
+                )
 
         if cursor.rowcount > 0:
             self._notify_listeners()
