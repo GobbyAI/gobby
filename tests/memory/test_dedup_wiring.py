@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from tests._timing import wait_for_async_condition, wait_forever
 
@@ -12,14 +13,8 @@ pytestmark = pytest.mark.unit
 
 
 def _make_config(**overrides):
-    """Create a mock MemoryConfig."""
-    config = MagicMock()
-    config.enabled = True
-    config.falkordb_host = None
-    config.auto_crossref = False
-    for k, v in overrides.items():
-        setattr(config, k, v)
-    return config
+    """Create a concrete MemoryConfig."""
+    return MemoryConfig(**overrides)
 
 
 def _make_manager(

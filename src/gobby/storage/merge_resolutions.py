@@ -284,6 +284,7 @@ class MergeResolutionManager:
         resolution_id: str,
         status: str | None = None,
         tier_used: str | None = None,
+        force_status: bool = False,
     ) -> MergeResolution | None:
         """Update a resolution.
 
@@ -298,27 +299,45 @@ class MergeResolutionManager:
         now = datetime.now(UTC).isoformat()
 
         with self.db.transaction() as conn:
-            cursor = conn.execute(
-                """
-                UPDATE merge_resolutions
-                SET
-                    status = COALESCE(%s, status),
-                    tier_used = COALESCE(%s, tier_used),
-                    updated_at = %s
-                WHERE id = %s
-                  AND (%s IS NULL OR %s <> %s OR status = %s)
-                """,
-                (
-                    status,
-                    tier_used,
-                    now,
-                    resolution_id,
-                    status,
-                    status,
-                    ConflictStatus.PENDING.value,
-                    ConflictStatus.PENDING.value,
-                ),
-            )
+            if force_status:
+                cursor = conn.execute(
+                    """
+                    UPDATE merge_resolutions
+                    SET
+                        status = COALESCE(%s, status),
+                        tier_used = COALESCE(%s, tier_used),
+                        updated_at = %s
+                    WHERE id = %s
+                    """,
+                    (
+                        status,
+                        tier_used,
+                        now,
+                        resolution_id,
+                    ),
+                )
+            else:
+                cursor = conn.execute(
+                    """
+                    UPDATE merge_resolutions
+                    SET
+                        status = COALESCE(%s, status),
+                        tier_used = COALESCE(%s, tier_used),
+                        updated_at = %s
+                    WHERE id = %s
+                      AND (%s::text IS NULL OR %s::text <> %s::text OR status = %s::text)
+                    """,
+                    (
+                        status,
+                        tier_used,
+                        now,
+                        resolution_id,
+                        status,
+                        status,
+                        ConflictStatus.PENDING.value,
+                        ConflictStatus.PENDING.value,
+                    ),
+                )
 
         if cursor.rowcount > 0:
             self._notify_listeners()
@@ -491,7 +510,7 @@ class MergeResolutionManager:
                     resolved_content = COALESCE(%s, resolved_content),
                     updated_at = %s
                 WHERE id = %s
-                  AND (%s IS NULL OR %s <> %s OR status = %s)
+                  AND (%s::text IS NULL OR %s::text <> %s::text OR status = %s::text)
                 """,
                 (
                     status,

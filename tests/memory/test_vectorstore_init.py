@@ -11,6 +11,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.config.persistence import MemoryConfig
+
 pytestmark = pytest.mark.unit
 
 
@@ -57,11 +59,7 @@ class TestVectorStoreInitialization:
         vs = MagicMock(spec=VectorStore)
         embed_fn = AsyncMock(return_value=[0.1] * 1536)
 
-        config = MagicMock()
-        config.enabled = True
-        config.backend = "local"
-        config.auto_crossref = False
-        config.falkordb_host = None
+        config = MemoryConfig()
 
         db = MagicMock()
         db.fetchone = MagicMock(return_value=None)
