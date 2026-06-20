@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { RefObject } from 'react'
-import { MicVAD, utils } from '@ricky0123/vad-web'
+import type { MicVAD as MicVADInstance } from '@ricky0123/vad-web'
 import type { VoiceInputMode } from '../useSettings'
 
 const MIN_PTT_DURATION_MS = 250
@@ -23,6 +23,15 @@ const VAD_FRAME_OPTIONS = {
   preSpeechPadFrames: 2,
   submitUserSpeechOnPause: false,
 } as const
+
+type VadWebModule = typeof import('@ricky0123/vad-web')
+
+let vadWebModulePromise: Promise<VadWebModule> | null = null
+
+function loadVadWeb(): Promise<VadWebModule> {
+  vadWebModulePromise ??= import('@ricky0123/vad-web')
+  return vadWebModulePromise
+}
 const VOICE_CONVERSATION_LOG_PREFIX_LENGTH = 8
 
 interface RecordingContext {
@@ -180,7 +189,7 @@ export function useVoiceCapture({
   const [isRecording, setIsRecording] = useState(false)
   const [isTranscribing, setIsTranscribing] = useState(false)
 
-  const vadRef = useRef<MicVAD | null>(null)
+  const vadRef = useRef<MicVADInstance | null>(null)
   const recCtxRef = useRef<RecordingContext | null>(null)
   const samplesRef = useRef<Float32Array[]>([])
   const recordingStartRef = useRef<number | null>(null)
@@ -336,6 +345,7 @@ export function useVoiceCapture({
 
     let base64: string
     try {
+      const { utils } = await loadVadWeb()
       const wavBuffer = utils.encodeWAV(audio, 1, sampleRate, 1, 16)
       base64 = utils.arrayBufferToBase64(wavBuffer)
       if (!base64) {
@@ -507,6 +517,7 @@ export function useVoiceCapture({
     const startVAD = async () => {
       try {
         logVoice('vad_start', {})
+        const { MicVAD } = await loadVadWeb()
         const vad = await MicVAD.new({
           baseAssetPath: '/',
           onnxWASMBasePath: ONNX_WASM_BASE_PATH,

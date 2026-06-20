@@ -327,12 +327,11 @@ def test_quarantine_missing_file_is_handled_as_race(
     inbox_dir.mkdir(parents=True)
     envelope_path = inbox_dir / "n-0000000000001-abcd.json"
 
-    with caplog.at_level("DEBUG", logger="gobby.hooks.inbox"):
+    with caplog.at_level(logging.WARNING, logger="gobby.hooks.inbox"):
         quarantined = _quarantine_file(envelope_path, reason="invalid_json", detail="missing")
 
     assert quarantined is True
-    assert "disappeared before quarantine" in caplog.text
-    assert "Failed to quarantine hook inbox file" not in caplog.text
+    assert not [record for record in caplog.records if record.levelno >= logging.WARNING]
 
 
 def test_compute_sleep_seconds_clamps_negative_jitter() -> None:

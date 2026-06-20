@@ -35,9 +35,12 @@ class MemoryCrudMixin(MemoryStoreBase):
         # Normalize content for consistent ID generation (avoid duplicates from
         # whitespace differences)
         normalized_content = content.strip()
-        # Global dedup: ID based on content only (project_id stored but not in ID)
-        # This aligns with content_exists() which checks globally
-        memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, normalized_content))
+        memory_id_seed = json.dumps(
+            {"content": normalized_content, "project_id": project_id},
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, memory_id_seed))
 
         tags_json = json.dumps(tags) if tags else None
 
@@ -178,31 +181,28 @@ class MemoryCrudMixin(MemoryStoreBase):
     ) -> bool:
         """Check if a memory with identical content already exists.
 
-        Uses global deduplication - checks if any memory has the same content,
-        regardless of project_id. This prevents duplicates when the same content
-        is stored with different or NULL project_ids.
+        Scopes duplicate detection to the exact project, treating ``NULL`` as
+        the global scope.
 
         Args:
             content: The content to check for
-            project_id: Ignored (kept for backward compatibility)
+            project_id: Project scope to check. ``None`` checks global memories.
 
         Returns:
             True if a memory with identical content exists
         """
-        # Global deduplication: check by content directly, ignoring project_id
-        # This fixes the duplicate issue where same content + different project_id
-        # would create different memory IDs
         normalized_content = content.strip()
         vis = visibility_predicate(visibility)
         vis_clause = f" AND {vis}" if vis else ""
         row = self.db.fetchone(
             f"""
             SELECT 1 FROM memories
-             WHERE content = %s{vis_clause}
+             WHERE content = %s
+               AND project_id IS NOT DISTINCT FROM %s{vis_clause}
              ORDER BY created_at ASC, id ASC
              LIMIT 1
             """,
-            (normalized_content,),
+            (normalized_content, project_id),
         )
         return row is not None
 
@@ -211,28 +211,27 @@ class MemoryCrudMixin(MemoryStoreBase):
     ) -> Memory | None:
         """Get a memory by its exact content.
 
-        Uses global lookup - finds any memory with matching content regardless
-        of project_id. This matches the behavior of content_exists().
+        Uses project-scoped lookup, matching the behavior of content_exists().
 
         Args:
             content: The exact content to look up (will be normalized)
-            project_id: Ignored (kept for backward compatibility)
+            project_id: Project scope to check. ``None`` checks global memories.
 
         Returns:
             The Memory object if found, None otherwise
         """
-        # Global lookup: find by content directly, ignoring project_id
         normalized_content = content.strip()
         vis = visibility_predicate(visibility)
         vis_clause = f" AND {vis}" if vis else ""
         row = self.db.fetchone(
             f"""
             SELECT * FROM memories
-             WHERE content = %s{vis_clause}
+             WHERE content = %s
+               AND project_id IS NOT DISTINCT FROM %s{vis_clause}
              ORDER BY created_at ASC, id ASC
              LIMIT 1
             """,
-            (normalized_content,),
+            (normalized_content, project_id),
         )
         if row:
             return Memory.from_row(row)

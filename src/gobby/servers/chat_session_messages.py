@@ -6,8 +6,10 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any, cast
 
+import psycopg
 from claude_agent_sdk import (
     AssistantMessage,
+    ClaudeSDKError,
     ResultMessage,
     TextBlock,
     ThinkingBlock,
@@ -39,6 +41,12 @@ logger = logging.getLogger(__name__)
 _HISTORY_MESSAGE_LIMIT = 50
 _HISTORY_WRAPPER_OVERHEAD_CHARS = 200
 _DRAIN_PENDING_RESPONSE_TIMEOUT_SECONDS = 1.0
+_EXPECTED_CHAT_ERRORS: tuple[type[Exception], ...] = (
+    ClaudeSDKError,
+    TimeoutError,
+    OSError,
+    psycopg.Error,
+)
 
 
 class ChatSessionMessagesMixin:
@@ -127,7 +135,7 @@ class ChatSessionMessagesMixin:
                 + "\n\n".join(parts)
                 + "\n</conversation-history>"
             )
-        except Exception as e:
+        except _EXPECTED_CHAT_ERRORS as e:
             logger.warning(
                 "Failed to load history context for %s: %s",
                 self.conversation_id,
@@ -310,11 +318,17 @@ class ChatSessionMessagesMixin:
                                     needs_spacing_before_text = True
 
             except ExceptionGroup as eg:
-                yield TextChunk(content=f"Generation failed: {format_exception_group(eg)}")
+                expected_errors, unexpected_errors = eg.split(_EXPECTED_CHAT_ERRORS)
+                if unexpected_errors is not None:
+                    raise unexpected_errors from eg
+                assert expected_errors is not None
+                yield TextChunk(
+                    content=f"Generation failed: {format_exception_group(expected_errors)}"
+                )
                 if context_window is None:
                     context_window = self._resolve_context_window_fallback()
                 yield DoneEvent(tool_calls_count=tool_calls_count, context_window=context_window)
-            except Exception as e:
+            except _EXPECTED_CHAT_ERRORS as e:
                 logger.error("ChatSession %s error: %s", self.conversation_id, e, exc_info=True)
                 yield TextChunk(content=f"Generation failed: {sanitize_error(e)}")
                 if context_window is None:
@@ -335,7 +349,7 @@ class ChatSessionMessagesMixin:
         if self._client and self._connected:
             try:
                 await self._client.interrupt()
-            except Exception as e:
+            except _EXPECTED_CHAT_ERRORS as e:
                 logger.warning("ChatSession %s interrupt error: %s", self.conversation_id, e)
 
     async def drain_pending_response(self) -> None:
@@ -355,5 +369,5 @@ class ChatSessionMessagesMixin:
                     pass
         except TimeoutError:
             logger.debug("ChatSession %s: drain timed out (no stale events)", self.conversation_id)
-        except Exception as e:
+        except _EXPECTED_CHAT_ERRORS as e:
             logger.debug("ChatSession %s: drain error (expected): %s", self.conversation_id, e)

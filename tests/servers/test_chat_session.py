@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import psycopg
 import pytest
 
 from gobby.agents.sandbox import SandboxConfig
@@ -636,9 +637,9 @@ class TestHistoryInjection:
 
     @pytest.mark.asyncio
     async def test_load_history_context_handles_error(self, session: ChatSession) -> None:
-        """Returns None on error instead of raising."""
+        """Returns None on expected storage errors instead of raising."""
         mock_manager = AsyncMock()
-        mock_manager.get_messages.side_effect = RuntimeError("DB error")
+        mock_manager.get_messages.side_effect = psycopg.Error("DB error")
         session.db_session_id = "test-db-id"
         session._message_manager = mock_manager
 

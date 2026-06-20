@@ -99,11 +99,11 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, .
     FeatureProfile.MID: (
         FeatureCandidateConfig(candidate="claude/sonnet"),
         FeatureCandidateConfig(candidate="gemini/gemini-3.5-flash"),
-        FeatureCandidateConfig(candidate="codex/gpt-5.5"),
+        FeatureCandidateConfig(candidate="codex/gpt-5.4"),
     ),
     FeatureProfile.HIGH: (
-        FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
-        FeatureCandidateConfig(candidate="claude/opus", reasoning_effort="high"),
+        FeatureCandidateConfig(candidate="codex/gpt-5.4", reasoning_effort="xhigh"),
+        FeatureCandidateConfig(candidate="claude/sonnet", reasoning_effort="high"),
         FeatureCandidateConfig(candidate="gemini/gemini-3.1-pro-preview"),
     ),
 }
@@ -115,7 +115,7 @@ _DEFAULT_PROFILE_REASONING: dict[FeatureProfile, str | None] = {
 }
 
 
-_CLAUDE_FAMILY_ALIASES = ("haiku", "sonnet", "opus", "fable")
+_CLAUDE_FAMILY_ALIASES = ("haiku", "sonnet")
 
 
 def default_candidates_for_profile(profile: FeatureProfile | str) -> tuple[str, ...]:
@@ -238,7 +238,7 @@ class FeatureDefaultConfig(BaseModel):
         default_factory=list,
         description=(
             "Ordered provider/model candidates with optional reasoning pins, for example "
-            "[{'candidate': 'codex/gpt-5.5', 'reasoning_effort': 'xhigh'}, "
+            "[{'candidate': 'codex/gpt-5.4', 'reasoning_effort': 'xhigh'}, "
             "{'candidate': 'claude/haiku'}]."
         ),
     )

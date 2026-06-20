@@ -170,9 +170,10 @@
 
 @media (prefers-reduced-motion: reduce) {
   .ptt-button.recording,
+  .chat-input-primary-button[aria-pressed="true"],
   .speaking-bar,
   .listening-pulse {
-    animation: none;
+    animation: none !important;
   }
 }
 

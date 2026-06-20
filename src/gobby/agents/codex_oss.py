@@ -21,7 +21,7 @@ def codex_oss_supported_provider_clause() -> str:
 
 def codex_oss_provider_for_local_endpoint(endpoint: CodexOSSLocalEndpoint) -> str:
     """Return Codex OSS local provider name for a local generation endpoint."""
-    provider = str(endpoint.provider or "").strip().lower()
+    provider = str(endpoint.provider).strip().lower() if endpoint.provider is not None else ""
     if not provider:
         raise ValueError(
             f"Codex OSS local routing requires {codex_oss_supported_provider_clause()}"
@@ -29,7 +29,7 @@ def codex_oss_provider_for_local_endpoint(endpoint: CodexOSSLocalEndpoint) -> st
     if provider not in CODEX_OSS_LOCAL_PROVIDERS:
         raise ValueError(
             f"Codex OSS local routing supports {codex_oss_supported_provider_clause()}; "
-            f"got provider={provider or 'unknown'}"
+            f"got provider={provider}"
         )
     return provider
 

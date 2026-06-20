@@ -34,8 +34,6 @@ logger = logging.getLogger(__name__)
 CLAUDE_ALIASES = (
     ("haiku", "Haiku"),
     ("sonnet", "Sonnet"),
-    ("opus", "Opus"),
-    ("fable", "Fable"),
 )
 CLAUDE_REASONING_EFFORTS = ("low", "medium", "high", "xhigh", "max")
 QWEN_AUTH_TYPES = frozenset({"qwen-oauth", "openai", "anthropic", "gemini", "vertex-ai"})

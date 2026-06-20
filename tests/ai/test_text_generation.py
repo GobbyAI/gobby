@@ -928,7 +928,7 @@ async def test_text_generation_service_applies_candidate_reasoning_effort_to_tex
                 provider="codex",
                 adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gpt-5.5",),
+                models=("gpt-5.4",),
             ),
         ]
     )
@@ -945,7 +945,7 @@ async def test_text_generation_service_applies_candidate_reasoning_effort_to_tex
             prompt="summarize",
             provider="codex",
             profile=FeatureProfile.HIGH.value,
-            model="gpt-5.5",
+            model="gpt-5.4",
             reasoning_effort="xhigh",
         )
     ]
@@ -1096,8 +1096,8 @@ async def test_text_generation_service_accepts_valid_effort_for_emit_nothing_pro
     )
 
     assert result.provider == "gemini"
-    assert result.applied_reasoning_effort == "high"
-    assert gemini.requests[0].reasoning_effort == "high"
+    assert result.applied_reasoning_effort is None
+    assert gemini.requests[0].reasoning_effort is None
 
 
 @pytest.mark.asyncio
@@ -1138,7 +1138,7 @@ async def test_text_generation_service_rejects_known_effort_when_provider_effort
 
     assert result.provider == "gemini"
     assert not qwen.requests
-    assert gemini.requests[0].reasoning_effort == "high"
+    assert gemini.requests[0].reasoning_effort is None
     assert (
         "Unsupported reasoning_effort 'high' for provider 'qwen'; accepted: <none>" in caplog.text
     )
@@ -1183,7 +1183,7 @@ async def test_text_generation_service_skips_unknown_reasoning_effort_even_witho
 
     assert result.provider == "gemini"
     assert qwen.requests == []
-    assert gemini.requests[0].reasoning_effort == "high"
+    assert gemini.requests[0].reasoning_effort is None
     assert "Unknown reasoning_effort 'banana'" in caplog.text
 
 

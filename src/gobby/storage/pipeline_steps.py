@@ -32,12 +32,13 @@ class PipelineStepStorageMixin:
         Returns:
             Created StepExecution instance
         """
-        self.db.execute(
+        row = self.db.fetchone(
             """
             INSERT INTO step_executions (
                 execution_id, step_id, status, input_json
             )
             VALUES (%s, %s, %s, %s)
+            RETURNING *
             """,
             (
                 execution_id,
@@ -45,12 +46,6 @@ class PipelineStepStorageMixin:
                 StepStatus.PENDING.value,
                 input_json,
             ),
-        )
-
-        # Get the created step by execution_id and step_id (unique combination)
-        row = self.db.fetchone(
-            "SELECT * FROM step_executions WHERE execution_id = %s AND step_id = %s",
-            (execution_id, step_id),
         )
         if row is None:
             raise RuntimeError(f"Step {step_id} not found after creation")

@@ -78,6 +78,8 @@ def _coerce_text_result(
 ) -> LLMTextResult:
     text_result_type = _llm_text_result_type()
     if isinstance(result, text_result_type):
+        if applied_reasoning_effort is None:
+            return result
         if result.applied_reasoning_effort == applied_reasoning_effort:
             return result
         return replace(result, applied_reasoning_effort=applied_reasoning_effort)

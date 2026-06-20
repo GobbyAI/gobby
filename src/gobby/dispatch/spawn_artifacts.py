@@ -704,13 +704,13 @@ def _persist_spawn_artifacts(
     if fields:
         try:
             _set_artifacts_atomic(db, task_id, **fields)
-        except (TaskArtifactConstraintError, ValueError, psycopg.Error):
+        except (TaskArtifactConstraintError, ValueError, psycopg.Error) as exc:
             logger.error(
                 "Failed to persist dispatcher spawn artifacts",
                 extra={"task_id": task_id, "fields": fields},
                 exc_info=True,
             )
-            raise
+            raise DispatchSpawnFailed("artifact_persistence_failed") from exc
 
 
 def _field(

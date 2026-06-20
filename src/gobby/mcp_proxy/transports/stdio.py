@@ -132,14 +132,16 @@ class StdioTransportConnection(BaseTransportConnection):
         self._session_context = None
         self._transport_context = None
         self._state = ConnectionState.DISCONNECTED
+        cancelled_error: asyncio.CancelledError | None = None
         try:
             if session_entered and session_ctx is not None:
                 try:
                     await asyncio.wait_for(session_ctx.__aexit__(None, None, None), timeout=2.0)
                 except TimeoutError:
                     logger.warning("Session cleanup timed out for %s", self.config.name)
-                except asyncio.CancelledError:
+                except asyncio.CancelledError as exc:
                     logger.warning("Session cleanup cancelled for %s", self.config.name)
+                    cancelled_error = exc
                 except Exception as cleanup_error:
                     logger.warning(
                         "Error during session cleanup for %s: %s",
@@ -152,8 +154,9 @@ class StdioTransportConnection(BaseTransportConnection):
                     await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=2.0)
                 except TimeoutError:
                     logger.warning("Transport cleanup timed out for %s", self.config.name)
-                except asyncio.CancelledError:
+                except asyncio.CancelledError as exc:
                     logger.warning("Transport cleanup cancelled for %s", self.config.name)
+                    cancelled_error = cancelled_error or exc
                 except Exception as cleanup_error:
                     logger.warning(
                         "Error during transport cleanup for %s: %s",
@@ -162,6 +165,8 @@ class StdioTransportConnection(BaseTransportConnection):
                     )
         finally:
             self._close_stdio_errlog()
+        if cancelled_error is not None:
+            raise cancelled_error
 
     async def connect(self) -> Any:
         """Connect via stdio transport."""
@@ -242,14 +247,16 @@ class StdioTransportConnection(BaseTransportConnection):
     async def disconnect(self) -> None:
         """Disconnect from stdio server."""
         # Exit session context manager (not the session object itself)
+        cancelled_error: asyncio.CancelledError | None = None
         session_ctx = self._session_context
         if session_ctx is not None:
             try:
                 await asyncio.wait_for(session_ctx.__aexit__(None, None, None), timeout=2.0)
             except TimeoutError:
                 logger.warning(f"Session close timed out for {self.config.name}")
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
                 logger.warning(f"Session close cancelled for {self.config.name}")
+                cancelled_error = exc
             except RuntimeError as e:
                 # Expected when exiting cancel scope from different task
                 if "cancel scope" not in str(e):
@@ -265,8 +272,9 @@ class StdioTransportConnection(BaseTransportConnection):
                 await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=2.0)
             except TimeoutError:
                 logger.warning(f"Transport close timed out for {self.config.name}")
-            except asyncio.CancelledError:
+            except asyncio.CancelledError as exc:
                 logger.warning(f"Transport close cancelled for {self.config.name}")
+                cancelled_error = cancelled_error or exc
             except RuntimeError as e:
                 # Expected when exiting cancel scope from different task
                 if "cancel scope" not in str(e):
@@ -277,3 +285,5 @@ class StdioTransportConnection(BaseTransportConnection):
 
         self._close_stdio_errlog()
         self._state = ConnectionState.DISCONNECTED
+        if cancelled_error is not None:
+            raise cancelled_error

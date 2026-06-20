@@ -54,6 +54,16 @@
   background: var(--bg-tertiary);
 }
 
+.chat-toolbar-btn:focus-visible,
+.chat-scope-btn:focus-visible,
+.chat-scope-option:focus-visible,
+.chat-file-remove-btn:focus-visible,
+.send-button:focus-visible,
+.stop-button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
 .chat-toolbar-btn:disabled {
   opacity: 0.5;
   cursor: not-allowed;
@@ -82,6 +92,12 @@
 .chat-project-select:focus {
   outline: none;
   border-color: var(--accent);
+}
+
+.chat-project-select:focus-visible {
+  border-color: var(--accent);
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
 }
 
 /* Scope toggle (Personal / Project) */

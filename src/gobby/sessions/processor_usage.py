@@ -34,7 +34,7 @@ class ProcessorUsageMixin:
 
         try:
             session = self.session_manager.get(session_id)
-        except (KeyError, ValueError, psycopg.Error):
+        except psycopg.Error:
             logger.debug("Failed to load session %s for token usage", session_id, exc_info=True)
             return
         if session is None:

@@ -49,6 +49,8 @@ def _expansion_feature_config(expansion_config: Any, run: ExpansionRun) -> Any:
     provider = run.provider
     model = run.model
     candidates = candidate_labels(expansion_config.candidates)
+    if not candidates:
+        raise ValueError("No expansion candidates configured")
     if provider is None:
         provider, _model = parse_feature_candidate(candidates[0])
     if model is None:

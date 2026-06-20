@@ -47,11 +47,14 @@ class MemoryGraphMixin(MemoryStoreBase):
             offset: Number of rows to skip before returning results.
         """
         if limit is not None:
-            rows = self.db.fetchall("SELECT id FROM memories LIMIT %s OFFSET %s", (limit, offset))
+            rows = self.db.fetchall(
+                "SELECT id FROM memories ORDER BY id LIMIT %s OFFSET %s",
+                (limit, offset),
+            )
         elif offset:
-            rows = self.db.fetchall("SELECT id FROM memories OFFSET %s", (offset,))
+            rows = self.db.fetchall("SELECT id FROM memories ORDER BY id OFFSET %s", (offset,))
         else:
-            rows = self.db.fetchall("SELECT id FROM memories")
+            rows = self.db.fetchall("SELECT id FROM memories ORDER BY id")
         return [row["id"] for row in rows]
 
     def get_pending_graph_memories(self, limit: int = 20) -> list[Memory]:

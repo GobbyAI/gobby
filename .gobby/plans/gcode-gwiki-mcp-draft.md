@@ -53,6 +53,7 @@ Three facts discovered during research shape the whole plan:
    surface is `callers`/`usages`/`path`/`imports`/`blast-radius`. Dropped, no gobby-cli change.
 
 ### Contract corrections vs. the task brief
+
 - **`blast-radius` takes `--depth`/`--token-budget`, not `--limit`** (positional `<TARGET>`).
 - `symbol`/`symbol-at` return a heavy `source` field — see Bounded Output.
 - Mutations included via parity: `gcode codewiki`, `graph sync-file`/`overview`/`file`/
@@ -150,6 +151,7 @@ inherits the proxy's progressive discovery, enforcement hooks, and context seedi
   the registries are added — no extra plumbing.
 
 ### Contract-derived registry builder (the one new mechanism)
+
 **The MCP tool surface is built dynamically in-process at daemon startup — but data-driven, not
 codegen and not blind reflection.** The tool *list* and arg *schemas* are generated from the
 vendored contract (so they can never drift from the CLI); the selection rule
@@ -260,10 +262,12 @@ FalkorDB (graph), Qdrant (semantic), and the embedding/model API degrade indepen
 shim returns a **clean, uniform envelope** and only raises MCP errors for genuine failures.
 
 Uniform success envelope wrapping the raw CLI payload:
+
 ```json
 { "ok": true, "data": <cli json>, "degraded": bool, "degraded_sources": [..],
   "truncated": bool, "warnings": [..] }
 ```
+
 - **gwiki** already speaks this vocabulary (`degraded`, `degraded_sources[]`, `truncated`,
   `truncated_components[]`, `warnings[]`, `ai.status`/`ai.error`) — pass through.
 - **gcode** signals degradation implicitly: graph down → `callers`/`usages`/`blast_radius`/
@@ -298,6 +302,7 @@ Error mapping (MCP `isError` result, not envelope):
 ## Phased build plan
 
 ### Phase 0 — gobby-cli contract repair (PREREQUISITE, other repo) — ✅ DONE & VERIFIED
+
 The gobby-cli contract repair is already complete. The installed `~/.gobby/bin/gcode` reports
 `contract_version: 2` with all 12 query commands (`outline`, `symbol`, `symbol-at`, `symbols`,
 `tree`, `imports`, `blast-radius`, `callers`, `usages`, `path`, `search-text`, `search-content`)
@@ -305,6 +310,7 @@ The gobby-cli contract repair is already complete. The installed `~/.gobby/bin/g
 `gcode contract --format json`. No gwiki change needed. Daemon work can start immediately.
 
 ### Phase 1 — Smallest useful slice: `code_search` end-to-end (this repo)
+
 1. Refresh vendored `tests/contracts/gcode.contract.json` from the repaired CLI.
 2. Add `GcodeGateway.search()` (read method over `_run_json`).
 3. Add the contract-derived registry builder; build `gobby-code` with **only** `code_search`.
@@ -315,21 +321,25 @@ The gobby-cli contract repair is already complete. The installed `~/.gobby/bin/g
    headers) returns scoped results. **This is the optional prototype, made real.**
 
 ### Phase 2 — Full gcode query surface
+
 Add the remaining `GcodeGateway` query methods; the builder auto-exposes every query command
 (`daemon_consumed`). Includes `include_source` handling for symbol tools, degradation inference,
 `token_budget` pass-through. Per-tool tests for shape + bounding + degraded-backend behavior.
 
 ### Phase 3 — gcode mutation surface (parity)
+
 Wire the `daemon_consumed` mutation commands (`code_codewiki`, `code_graph_*`,
 `code_vector_cleanup_orphans`, `code_index`). Reuse existing `GcodeGateway` projection methods;
 add thin wrappers for any missing. Route `index`/`graph rebuild` through the daemon task-mutex
 path. Tests: project-scoped mutation can't touch another project; mutex serialization.
 
 ### Phase 4 — gwiki surface
+
 Add `wiki_backlinks`; move `wiki_search`/`wiki_ask`/`wiki_read`/`wiki_sources` onto the
 contract-derived builder. Existing gwiki mutation tools stay. Degradation envelope unification.
 
 ### Phase 5 — Hardening & docs
+
 Drift test wiring (built tool set == `daemon_consumed` set of the vendored contract),
 skill/docs note so agents discover `gobby-code`/`gobby-wiki`.
 

@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import PurePosixPath
 
 _DIFF_HEADER_RE = re.compile(r"^diff --git a/(.*?) b/(.*?)$", re.MULTILINE)
-_BINARY_FILES_RE = re.compile(
+_BINARY_FILES_RE: re.Pattern[str] = re.compile(
     r"^Binary files (?P<left>\S+) and (?P<right>\S+) differ$", re.MULTILINE
 )
 _HUNK_HEADER_RE = re.compile(r"^@@ .* @@")

@@ -180,6 +180,9 @@ export function useChatControlActions(
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
         return false;
       }
+      if (!conversationIdRef.current) {
+        return false;
+      }
       wsRef.current.send(
         JSON.stringify({
           type: "ask_user_response",
@@ -196,6 +199,9 @@ export function useChatControlActions(
   const respondToApproval: RespondToApprovalAction = useCallback(
     (toolCallId, decision) => {
       if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) {
+        return false;
+      }
+      if (!conversationIdRef.current) {
         return false;
       }
       wsRef.current.send(

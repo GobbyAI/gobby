@@ -31,11 +31,6 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
         "claude",
         [
             {
-                "value": "opus",
-                "label": "Opus",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
-            },
-            {
                 "value": "sonnet",
                 "label": "Sonnet",
                 "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
@@ -43,11 +38,6 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             {
                 "value": "haiku",
                 "label": "Haiku",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
-            },
-            {
-                "value": "fable",
-                "label": "Fable",
                 "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh", "max"]},
             },
         ],
@@ -58,11 +48,6 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
     "codex": with_context_lengths(
         "codex",
         [
-            {
-                "value": "gpt-5.5",
-                "label": "gpt-5.5",
-                "reasoning": {"supported_efforts": ["low", "medium", "high", "xhigh"]},
-            },
             {
                 "value": "gpt-5.4",
                 "label": "codex-5.4",
@@ -234,7 +219,12 @@ def _filter_models_for_web_chat(
     provider: str, models: list[dict[str, Any]]
 ) -> list[dict[str, Any]]:
     """Drop hidden models from the web-chat picker."""
-    return [model for model in models if not bool(model.get("hidden", False))]
+    hidden_values = {"gpt-5.5"} if provider == "codex" else set()
+    return [
+        model
+        for model in models
+        if not bool(model.get("hidden", False)) and model.get("value") not in hidden_values
+    ]
 
 
 async def _probe_providers() -> list[tuple[str, str | None]]:

@@ -468,6 +468,45 @@ class TestLinearSyncServiceSync:
         assert call.kwargs["arguments"]["projectId"] == "lin-proj"
 
     @pytest.mark.asyncio
+    async def test_pull_updates_reconciles_closed_lifecycle_fields(
+        self, sync_service: LinearSyncService, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        """Closed Linear issues clear escalation fields and set explicit closure metadata."""
+        mock_task_manager.db.fetchall.return_value = [
+            {"id": "task-1", "linear_issue_id": "issue-1"}
+        ]
+        sync_service._linear_mcp_has_tool = MagicMock(return_value=True)  # type: ignore[method-assign]
+        sync_service._get_project_synced_at = MagicMock(return_value=None)  # type: ignore[method-assign]
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [
+                {
+                    "id": "issue-1",
+                    "title": "Finished feature",
+                    "description": "Ready to close",
+                    "priority": 1,
+                    "state": {"name": "Done"},
+                    "updatedAt": "2026-02-11T12:34:56Z",
+                }
+            ]
+        }
+
+        result = await sync_service.pull_linear_updates()
+
+        assert result == {"updated": 1, "skipped": 0, "errors": 0}
+        mock_task_manager.reconcile_task_state.assert_called_once_with(
+            "task-1",
+            title="Finished feature",
+            description="Ready to close",
+            priority=1,
+            closed_at="2026-02-11T12:34:56+00:00",
+            closed_reason="linear_sync",
+            closed_in_session_id=None,
+            closed_commit_sha=None,
+            escalated_at=None,
+            escalation_reason=None,
+        )
+
+    @pytest.mark.asyncio
     async def test_pull_updates_rate_limits_repeated_linear_fetch_failures(
         self, sync_service: LinearSyncService, mock_task_manager, caplog
     ) -> None:

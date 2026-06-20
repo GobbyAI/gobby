@@ -130,10 +130,18 @@ def register_agent_lifecycle_tools(
         )
         if not result.get("success"):
             return result
+        result_status = result.get("status")
+        if result_status != "success":
+            return {
+                "success": False,
+                "run_id": run_id,
+                "status": result_status or "unknown",
+                "error": "Self-termination did not complete with success status",
+            }
         return {
             "success": True,
             "run_id": run_id,
-            "status": result.get("status", "success"),
+            "status": result_status,
         }
 
     @registry.tool(
@@ -212,6 +220,11 @@ def register_agent_lifecycle_tools(
             caller_session_id = ctx.get_current_session_id()
             if caller_session_id and caller_session_id == agent_session_id:
                 is_self_termination = True
+        if status == "success" and not is_self_termination:
+            return {
+                "success": False,
+                "error": "status='success' is only allowed for self-termination",
+            }
         effective_status = status or ("success" if is_self_termination else "cancelled")
 
         agents = facade()

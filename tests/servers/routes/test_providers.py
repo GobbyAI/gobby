@@ -145,14 +145,11 @@ class TestProviderModelsRoute:
 
         # Claude should expose explicit shorthand choices.
         claude_values = [m["value"] for m in providers["claude"]["models"]]
-        assert claude_values == ["opus", "sonnet", "haiku", "fable"]
+        assert claude_values == ["sonnet", "haiku"]
         assert providers["claude"]["models"][0]["reasoning"] == {
             "supported_efforts": ["low", "medium", "high", "xhigh", "max"]
         }
-        assert providers["claude"]["models"][0]["context_length"] == 1_000_000
-        claude_by_id = {m["value"]: m for m in providers["claude"]["models"]}
-        assert claude_by_id["fable"]["label"] == "Fable"
-        assert claude_by_id["fable"]["context_length"] == 1_000_000
+        assert providers["claude"]["models"][0]["context_length"] == 200_000
 
         # Gemini should expose the hardcoded web-chat defaults
         gemini = providers["gemini"]["models"]
@@ -197,7 +194,6 @@ class TestProviderModelsRoute:
         # Codex should expose the hardcoded web-chat defaults, not a placeholder
         codex = providers["codex"]["models"]
         assert [m["value"] for m in codex] == [
-            "gpt-5.5",
             "gpt-5.4",
             "gpt-5.4-mini",
             "gpt-5.3-codex",
@@ -205,7 +201,6 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
         assert [m["label"] for m in codex] == [
-            "gpt-5.5",
             "codex-5.4",
             "mini-5.4",
             "codex-5.3",
@@ -214,7 +209,6 @@ class TestProviderModelsRoute:
         ]
         assert codex[0]["reasoning"] == {"supported_efforts": ["low", "medium", "high", "xhigh"]}
         assert [m["context_length"] for m in codex] == [
-            258_400,
             258_400,
             258_400,
             258_400,
@@ -534,13 +528,10 @@ class TestProviderModelsRoute:
             "gemini-3-flash-preview",
         ]
         assert [m["value"] for m in providers["claude"]["models"]] == [
-            "opus",
             "sonnet",
             "haiku",
-            "fable",
         ]
         assert [m["value"] for m in providers["codex"]["models"]] == [
-            "gpt-5.5",
             "gpt-5.4",
             "gpt-5.4-mini",
             "gpt-5.3-codex",
@@ -548,7 +539,6 @@ class TestProviderModelsRoute:
             "gpt-5.2",
         ]
         assert [m["label"] for m in providers["codex"]["models"]] == [
-            "gpt-5.5",
             "codex-5.4",
             "mini-5.4",
             "codex-5.3",
@@ -567,7 +557,7 @@ class TestProviderModelsRoute:
         response = client.get("/api/providers/models")
         providers = {p["provider"]: p for p in response.json()["providers"]}
 
-        assert providers["codex"]["models"][0]["value"] == "gpt-5.5"
+        assert providers["codex"]["models"][0]["value"] == "gpt-5.4"
 
     def test_current_catalog_uses_static_gemini_models(self) -> None:
         """Gemini models come from current provider catalog/static defaults."""
@@ -629,7 +619,6 @@ class TestProviderModelsRoute:
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
         assert [m["value"] for m in providers["codex"]["models"]] == [
-            "gpt-5.5",
             "gpt-5.4",
             "gpt-5.2",
             "gpt-5.1-codex-max",

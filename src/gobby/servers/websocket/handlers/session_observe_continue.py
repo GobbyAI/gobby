@@ -111,8 +111,8 @@ async def handle_continue_in_chat(
     requested_conversation_id = requested_conversation_id or str(uuid4())
     conversation_id = requested_conversation_id
     project_id = data.get("project_id")
-    target_provider = data.get("provider")
-    target_model = data.get("model")
+    target_provider = _as_str(data.get("provider"))
+    target_model = _as_str(data.get("model"))
     target_reasoning_effort = _as_str(data.get("reasoning_effort"))
     target_chat_mode = _as_str(data.get("chat_mode"))
     requested_fallback_context = _resolve_requested_fallback_context(data)

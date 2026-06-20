@@ -195,19 +195,23 @@ def test_update_memory_rejects_content_mutation(memory_manager) -> None:
     assert memory_manager.get_memory_by_content("Before").id == memory.id
 
 
-def test_create_memory_dedup_across_projects(memory_manager, db) -> None:
-    """Test that same content with different project_ids returns same memory (global dedup)."""
+def test_create_memory_dedup_scopes_to_project(memory_manager, db) -> None:
+    """Same content can be stored independently per project scope."""
     db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
     db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
 
-    memory1 = memory_manager.create_memory(content="Global dedup test", project_id="proj1")
-    memory2 = memory_manager.create_memory(content="Global dedup test", project_id="proj2")
-    memory3 = memory_manager.create_memory(content="Global dedup test", project_id=None)
+    memory1 = memory_manager.create_memory(content="Scoped dedup test", project_id="proj1")
+    memory2 = memory_manager.create_memory(content="Scoped dedup test", project_id="proj2")
+    memory3 = memory_manager.create_memory(content="Scoped dedup test", project_id=None)
+    memory4 = memory_manager.create_memory(content="Scoped dedup test", project_id="proj1")
 
-    # All should return the same memory ID (global deduplication)
-    assert memory1.id == memory2.id == memory3.id
-    # First project_id should be preserved
+    assert memory1.id != memory2.id
+    assert memory1.id != memory3.id
+    assert memory2.id != memory3.id
+    assert memory4.id == memory1.id
     assert memory1.project_id == "proj1"
+    assert memory2.project_id == "proj2"
+    assert memory3.project_id is None
 
 
 def test_memory_exists(memory_manager) -> None:
@@ -263,7 +267,7 @@ def test_list_all_ids_applies_offset_without_limit(memory_manager, monkeypatch) 
     monkeypatch.setattr(memory_manager.db, "fetchall", fetchall)
 
     assert memory_manager.list_all_ids(offset=2) == ["mem-3"]
-    fetchall.assert_called_once_with("SELECT id FROM memories OFFSET %s", (2,))
+    fetchall.assert_called_once_with("SELECT id FROM memories ORDER BY id OFFSET %s", (2,))
 
 
 def test_content_exists_with_project(memory_manager, db) -> None:
@@ -275,9 +279,8 @@ def test_content_exists_with_project(memory_manager, db) -> None:
     # Same content with same project should exist
     assert memory_manager.content_exists("Project content", project_id="proj1") is True
 
-    # Same content with different project should ALSO exist (global deduplication)
-    # This prevents duplicates when same content is stored with different project_ids
-    assert memory_manager.content_exists("Project content", project_id="other-proj") is True
+    # Same content with different project should not exist in that project scope
+    assert memory_manager.content_exists("Project content", project_id="other-proj") is False
 
     # Different content should not exist
     assert memory_manager.content_exists("Other content", project_id="proj1") is False

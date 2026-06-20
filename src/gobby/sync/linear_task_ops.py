@@ -38,6 +38,54 @@ def _parse_linear_timestamp(value: str | None) -> datetime | None:
     return parsed.astimezone(UTC)
 
 
+def _linear_issue_state_name(issue: dict[str, Any]) -> str | None:
+    state = issue.get("state")
+    if isinstance(state, dict):
+        name = state.get("name")
+        return name if isinstance(name, str) and name else None
+    if isinstance(state, str) and state:
+        return state
+
+    status = issue.get("status")
+    return status if isinstance(status, str) and status else None
+
+
+def _linear_lifecycle_fields(
+    gobby_state: str | None,
+    *,
+    state_name: str | None,
+    changed_at: str,
+) -> dict[str, Any]:
+    if gobby_state is None:
+        return {}
+    if gobby_state == "closed":
+        return {
+            "closed_at": changed_at,
+            "closed_reason": "linear_sync",
+            "closed_in_session_id": None,
+            "closed_commit_sha": None,
+            "escalated_at": None,
+            "escalation_reason": None,
+        }
+    if gobby_state == "escalated":
+        return {
+            "closed_at": None,
+            "closed_reason": None,
+            "closed_in_session_id": None,
+            "closed_commit_sha": None,
+            "escalated_at": changed_at,
+            "escalation_reason": f"Linear state: {state_name or 'Canceled'}",
+        }
+    return {
+        "closed_at": None,
+        "closed_reason": None,
+        "closed_in_session_id": None,
+        "closed_commit_sha": None,
+        "escalated_at": None,
+        "escalation_reason": None,
+    }
+
+
 class LinearTaskOpsMixin(LinearProjectOpsMixin):
     """Task-level Linear import, push, pull, and sync operations."""
 
@@ -435,12 +483,26 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                     stats["skipped"] += 1
                     continue
 
+                state_name = _linear_issue_state_name(issue)
+                gobby_state = (
+                    self.map_linear_state_to_gobby(state_name) if state_name is not None else None
+                )
+                changed_at = (
+                    linear_updated.isoformat()
+                    if linear_updated is not None
+                    else datetime.now(UTC).isoformat()
+                )
                 priority_val = issue.get("priority", 2)
                 self.task_manager.reconcile_task_state(
                     task_id,
                     title=_local_title_from_linear(issue.get("title", "")),
                     description=issue.get("description", ""),
                     priority=priority_val,
+                    **_linear_lifecycle_fields(
+                        gobby_state,
+                        state_name=state_name,
+                        changed_at=changed_at,
+                    ),
                 )
                 stats["updated"] += 1
             except Exception as e:

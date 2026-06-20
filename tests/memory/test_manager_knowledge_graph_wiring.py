@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Callable
+from typing import Any, TypeVar
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -21,6 +23,7 @@ pytestmark = pytest.mark.unit
 
 BACKGROUND_TASK_CLEANUP_TIMEOUT = 1.0
 BACKGROUND_TASK_CLEANUP_INTERVAL = 0.01
+_RunDbResult = TypeVar("_RunDbResult")
 
 
 def _mock_llm_service() -> MagicMock:
@@ -381,7 +384,11 @@ class TestKnowledgeGraphRebuildService:
             def mark_pending_graph(self, memory_id: str) -> None:
                 self.pending.append(memory_id)
 
-        async def run_db(func, *args, **kwargs):
+        async def run_db(
+            func: Callable[..., _RunDbResult],
+            *args: Any,
+            **kwargs: Any,
+        ) -> _RunDbResult:
             return func(*args, **kwargs)
 
         storage = Storage()
@@ -431,7 +438,11 @@ class TestKnowledgeGraphRebuildService:
             def mark_pending_graph(self, memory_id: str) -> None:
                 pass
 
-        async def run_db(func, *args, **kwargs):
+        async def run_db(
+            func: Callable[..., _RunDbResult],
+            *args: Any,
+            **kwargs: Any,
+        ) -> _RunDbResult:
             return func(*args, **kwargs)
 
         memories = [

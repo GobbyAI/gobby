@@ -49,7 +49,7 @@ def test_expansion_feature_config_resolves_structured_candidate_overrides() -> N
     expansion_config = TaskExpansionConfig(
         candidates=[
             {"candidate": "claude/sonnet", "reasoning_effort": "high"},
-            {"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"},
+            {"candidate": "codex/gpt-5.4", "reasoning_effort": "xhigh"},
         ]
     )
 
@@ -59,11 +59,11 @@ def test_expansion_feature_config_resolves_structured_candidate_overrides() -> N
     )
     model_only = _expansion_feature_config(
         expansion_config,
-        SimpleNamespace(provider=None, model="opus"),
+        SimpleNamespace(provider=None, model="sonnet"),
     )
 
-    assert candidate_labels(provider_only.candidates) == ("codex/gpt-5.5",)
-    assert candidate_labels(model_only.candidates) == ("claude/opus",)
+    assert candidate_labels(provider_only.candidates) == ("codex/gpt-5.4",)
+    assert candidate_labels(model_only.candidates) == ("claude/sonnet",)
 
 
 def test_compile_contract_plan_emits_tdd_leaves_by_phase(

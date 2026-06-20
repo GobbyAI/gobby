@@ -116,9 +116,7 @@ def _gate_reasoning_effort(
         )
 
     if provider_reasoning_flag(binding.provider) is None:
-        if normalized == request.reasoning_effort:
-            return request
-        return replace(request, reasoning_effort=normalized)
+        return replace(request, reasoning_effort=None)
 
     if normalized == request.reasoning_effort:
         return request

@@ -43,11 +43,11 @@ class TestFeatureProfile:
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID]) == (
             "claude/sonnet",
             "gemini/gemini-3.5-flash",
-            "codex/gpt-5.5",
+            "codex/gpt-5.4",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]) == (
-            "codex/gpt-5.5",
-            "claude/opus",
+            "codex/gpt-5.4",
+            "claude/sonnet",
             "gemini/gemini-3.1-pro-preview",
         )
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
@@ -69,8 +69,8 @@ class TestFeatureProfile:
 
     def test_default_candidates_for_profile_returns_labels(self) -> None:
         assert default_candidates_for_profile(FeatureProfile.HIGH) == (
-            "codex/gpt-5.5",
-            "claude/opus",
+            "codex/gpt-5.4",
+            "claude/sonnet",
             "gemini/gemini-3.1-pro-preview",
         )
 
@@ -176,10 +176,10 @@ class TestFeatureDefaultConfig:
             ("claude/claude-haiku-4-5", "claude/haiku"),
             ("claude/claude-haiku-4-5-20251001", "claude/haiku"),
             ("claude/claude-sonnet-4-5", "claude/sonnet"),
-            ("claude/claude-opus-4-1", "claude/opus"),
-            ("claude/claude-opus-4-5", "claude/opus"),
+            ("claude/claude-opus-4-1", "claude/claude-opus-4-1"),
+            ("claude/claude-opus-4-5", "claude/claude-opus-4-5"),
             ("claude/fable", "claude/fable"),
-            ("claude/claude-fable-5", "claude/fable"),
+            ("claude/claude-fable-5", "claude/claude-fable-5"),
             ("codex/claude-haiku-4-5", "codex/claude-haiku-4-5"),
         ],
     )

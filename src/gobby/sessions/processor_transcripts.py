@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import os
 
 import aiofiles
+import psycopg
 
 from gobby.sessions.processor_types import ProcessorHost
 from gobby.sessions.transcript_normalization import normalize_transcript_records
@@ -26,7 +28,7 @@ class ProcessorTranscriptMixin:
         - .json: Full-file parsing with mtime change detection (Gemini native)
         - .jsonl/.ndjson/other: Incremental line-by-line with byte offset tracking
         """
-        if not os.path.exists(transcript_path):
+        if not await asyncio.to_thread(os.path.exists, transcript_path):
             return
 
         if transcript_path.endswith(".json"):
@@ -83,7 +85,7 @@ class ProcessorTranscriptMixin:
         should_persist_appender = False
         if appender is not None:
             try:
-                appender_stat = os.stat(transcript_path)
+                appender_stat = await asyncio.to_thread(os.stat, transcript_path)
                 appender.append_positioned_lines(
                     new_lines,
                     new_line_offsets,
@@ -91,7 +93,7 @@ class ProcessorTranscriptMixin:
                     size=valid_offset,
                 )
                 should_persist_appender = valid_offset == appender_stat.st_size
-            except Exception as exc:
+            except (OSError, ValueError, psycopg.Error) as exc:
                 logger.debug("Failed to update transcript index for %s: %s", session_id, exc)
 
         if not parsed_messages:
@@ -145,7 +147,7 @@ class ProcessorTranscriptMixin:
         all messages. Only stores messages newer than last_message_index.
         """
         try:
-            current_mtime = os.path.getmtime(transcript_path)
+            current_mtime = await asyncio.to_thread(os.path.getmtime, transcript_path)
         except OSError:
             return
 
@@ -157,7 +159,7 @@ class ProcessorTranscriptMixin:
             async with aiofiles.open(transcript_path, encoding="utf-8") as f:
                 raw = await f.read()
             data = json.loads(raw)
-        except (json.JSONDecodeError, OSError) as e:
+        except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
             logger.error("Error reading JSON transcript %s: %s", transcript_path, e)
             return
 

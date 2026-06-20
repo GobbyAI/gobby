@@ -756,6 +756,12 @@ def reconcile_task_state(
     title: MaybeUnset[str | None] = UNSET,
     description: MaybeUnset[str | None] = UNSET,
     priority: MaybeUnset[int | None] = UNSET,
+    closed_reason: MaybeUnset[str | None] = UNSET,
+    closed_at: MaybeUnset[str | None] = UNSET,
+    closed_in_session_id: MaybeUnset[str | None] = UNSET,
+    closed_commit_sha: MaybeUnset[str | None] = UNSET,
+    escalated_at: MaybeUnset[str | None] = UNSET,
+    escalation_reason: MaybeUnset[str | None] = UNSET,
 ) -> Task:
     """Apply externally-sourced metadata without reopening generic update paths.
 
@@ -769,5 +775,11 @@ def reconcile_task_state(
         title=title,
         description=description,
         priority=priority,
+        closed_reason=closed_reason,
+        closed_at=closed_at,
+        closed_in_session_id=closed_in_session_id,
+        closed_commit_sha=closed_commit_sha,
+        escalated_at=escalated_at,
+        escalation_reason=escalation_reason,
     )
     return get_task(db, task_id)

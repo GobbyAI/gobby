@@ -746,7 +746,7 @@ class _ReachabilityEntry:
     checked_at: float
 
 
-_reachability_cache: dict[tuple[str, bool], _ReachabilityEntry] = {}
+_reachability_cache: dict[tuple[str, str | None], _ReachabilityEntry] = {}
 
 
 def _clear_reachability_cache() -> None:
@@ -761,9 +761,9 @@ def clear_cache() -> None:
     _clear_reachability_cache()
 
 
-def _reachability_cache_key(api_base: str | None, has_key: bool) -> tuple[str, bool]:
-    """Key reachability results by endpoint + whether an auth key was used."""
-    return (api_base or "openai-default", has_key)
+def _reachability_cache_key(api_base: str | None, api_key: str | None) -> tuple[str, str | None]:
+    """Key reachability results by endpoint and credential value."""
+    return (api_base or "openai-default", api_key)
 
 
 def _prune_reachability_cache(now: float, cache_ttl: float, *, incoming: int = 0) -> None:
@@ -819,8 +819,7 @@ async def _is_embedding_reachable(
         return False
 
     normalized_api_base = _normalize_api_base(api_base)
-    has_key = bool(api_key)
-    cache_key = _reachability_cache_key(normalized_api_base, has_key)
+    cache_key = _reachability_cache_key(normalized_api_base, api_key)
     lock = _get_lock()
 
     now = time.monotonic()
@@ -909,7 +908,7 @@ class EmbeddingService:
         """Generate one small embedding and report whether it succeeded."""
         try:
             result = await self.generate_embedding("health", model=model, max_retries=1)
-        except Exception as exc:
+        except EmbeddingGenerationError as exc:
             logger.warning(
                 "Embedding health check failed (model=%s, api_base=%s): %s: %s",
                 model or self.model,
