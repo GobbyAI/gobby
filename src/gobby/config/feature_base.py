@@ -92,11 +92,12 @@ type FeatureCandidateInput = str | FeatureCandidateConfig | Mapping[str, object]
 # profile-default overrides using named local endpoints.
 DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, ...]] = {
     FeatureProfile.LOW: (
+        FeatureCandidateConfig(candidate="claude/haiku"),
         FeatureCandidateConfig(candidate="gemini/gemini-3.5-flash"),
         FeatureCandidateConfig(candidate="codex/gpt-5.4-mini"),
-        FeatureCandidateConfig(candidate="claude/haiku"),
     ),
     FeatureProfile.MID: (
+        FeatureCandidateConfig(candidate="claude/opus"),
         FeatureCandidateConfig(candidate="gemini/gemini-3.5-flash"),
         FeatureCandidateConfig(candidate="claude/sonnet"),
         FeatureCandidateConfig(candidate="codex/gpt-5.5"),
