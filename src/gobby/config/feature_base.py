@@ -97,9 +97,8 @@ DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, .
         FeatureCandidateConfig(candidate="codex/gpt-5.4-mini"),
     ),
     FeatureProfile.MID: (
-        FeatureCandidateConfig(candidate="claude/opus"),
-        FeatureCandidateConfig(candidate="gemini/gemini-3.5-flash"),
         FeatureCandidateConfig(candidate="claude/sonnet"),
+        FeatureCandidateConfig(candidate="gemini/gemini-3.5-flash"),
         FeatureCandidateConfig(candidate="codex/gpt-5.5"),
     ),
     FeatureProfile.HIGH: (

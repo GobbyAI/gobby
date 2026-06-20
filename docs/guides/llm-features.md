@@ -8,7 +8,7 @@ their external form; for task features that is `gobby-tasks`, matching the MCP s
 | Profile | Default candidates |
 | --- | --- |
 | `feature_low` | `claude/haiku`, `gemini/gemini-3.5-flash`, `codex/gpt-5.4-mini` |
-| `feature_mid` | `claude/opus`, `gemini/gemini-3.5-flash`, `claude/sonnet`, `codex/gpt-5.5` |
+| `feature_mid` | `claude/sonnet`, `gemini/gemini-3.5-flash`, `codex/gpt-5.5` |
 | `feature_high` | `codex/gpt-5.5`, `claude/opus`, `gemini/gemini-3.1-pro-preview` |
 
 Built-in defaults are cloud-only. Local runtimes are opt-in named endpoints and

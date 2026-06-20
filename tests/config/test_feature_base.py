@@ -41,9 +41,8 @@ class TestFeatureProfile:
             "codex/gpt-5.4-mini",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID]) == (
-            "claude/opus",
-            "gemini/gemini-3.5-flash",
             "claude/sonnet",
+            "gemini/gemini-3.5-flash",
             "codex/gpt-5.5",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]) == (
