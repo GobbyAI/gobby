@@ -459,7 +459,11 @@ def create_merge_registry(
         )
         if (downgraded or pending_count) and resolution.status == "resolved":
             resolution = (
-                merge_storage.update_resolution(resolution_id=resolution_id, status="pending")
+                merge_storage.update_resolution(
+                    resolution_id=resolution_id,
+                    status="pending",
+                    force_status=True,
+                )
                 or resolution
             )
 
