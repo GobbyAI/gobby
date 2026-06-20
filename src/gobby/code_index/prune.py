@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import signal
 from pathlib import Path
 from typing import TYPE_CHECKING, Protocol
 
+from gobby.code_index.gcode_gateway import GcodeCommandError
 from gobby.scheduler.executor import CronHandler
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
@@ -20,6 +22,15 @@ CODE_INDEX_PRUNE_JOB_NAME = "gobby:code-index-prune"
 CODE_INDEX_PRUNE_HANDLER = "code-index:prune"
 CODE_INDEX_PRUNE_INTERVAL_SECONDS = 3600
 CODE_INDEX_PRUNE_DESCRIPTION = "Prune stale code-index graph and vector projections"
+_NO_STALE_PROJECTS = "No stale projects found."
+
+
+def _is_noop_shutdown_prune(exc: Exception) -> bool:
+    return (
+        isinstance(exc, GcodeCommandError)
+        and exc.returncode == -signal.SIGTERM
+        and _NO_STALE_PROJECTS in exc.stderr
+    )
 
 
 class CronRegistrationProtocol(Protocol):
@@ -115,6 +126,17 @@ class CodeIndexPruner:
                     if not result.get("success", True):
                         raise RuntimeError(result.get("error", "gcode prune failed"))
                 except Exception as exc:
+                    if _is_noop_shutdown_prune(exc):
+                        logger.debug(
+                            "Code index prune was interrupted after no-op result for %s at %s",
+                            project_id,
+                            root_path,
+                        )
+                        await self._context.run_db(
+                            self._context.storage.clear_prune_dirty,
+                            project_id,
+                        )
+                        return f"{project_id}:pruned"
                     await self._record_failure_if_dirty(project_id, dirty, str(exc))
                     logger.warning(
                         "Code index prune failed for %s at %s: %s",

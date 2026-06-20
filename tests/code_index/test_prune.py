@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import signal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
 
 import pytest
 
+from gobby.code_index.gcode_gateway import GcodeCommandError
 from gobby.code_index.models import IndexedProject
 from gobby.code_index.prune import (
     CODE_INDEX_PRUNE_HANDLER,
@@ -151,6 +154,40 @@ async def test_prune_project_records_dirty_failure_when_gateway_missing(tmp_path
 
     assert result == "proj-1:failed"
     assert storage.failures == [("proj-1", "gcode gateway unavailable")]
+
+
+@pytest.mark.asyncio
+async def test_prune_project_treats_sigterm_no_stale_result_as_success(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    class SigtermNoopGateway(PruneGateway):
+        async def prune(self, project_root: Path) -> dict[str, Any]:
+            self.pruned_roots.append(project_root)
+            raise GcodeCommandError(
+                ["gcode", "prune", "--project", str(project_root)],
+                -signal.SIGTERM,
+                "No stale projects found.",
+            )
+
+    storage = PruneStorage()
+    gateway = SigtermNoopGateway()
+    pruner = CodeIndexPruner(PruneContext(storage, gateway))  # type: ignore[arg-type]
+
+    caplog.set_level(logging.WARNING, logger="gobby.code_index.prune")
+
+    result = await pruner.prune_project(
+        project_id="proj-1",
+        root_path=str(tmp_path),
+        dirty=True,
+        reason="shutdown",
+    )
+
+    assert result == "proj-1:pruned"
+    assert gateway.pruned_roots == [tmp_path]
+    assert storage.cleared_dirty == ["proj-1"]
+    assert storage.failures == []
+    assert "Code index prune failed" not in caplog.text
 
 
 @pytest.mark.asyncio
