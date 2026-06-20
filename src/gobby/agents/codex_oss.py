@@ -8,7 +8,10 @@ CODEX_OSS_LOCAL_PROVIDERS = frozenset({"lmstudio", "ollama"})
 
 
 class CodexOSSLocalEndpoint(Protocol):
-    provider: str | None
+    @property
+    def provider(self) -> str | None:
+        """Return the configured local provider name."""
+        ...
 
 
 def codex_oss_supported_provider_clause() -> str:

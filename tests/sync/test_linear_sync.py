@@ -12,7 +12,7 @@ import pytest
 from gobby.integrations.linear_graphql import LinearGraphQLError
 from gobby.storage.cron_models import CronJob
 from gobby.sync import linear as linear_module
-from gobby.sync.linear import LinearSyncService
+from gobby.sync.linear import LinearSyncError, LinearSyncService
 
 pytestmark = pytest.mark.unit
 
@@ -718,6 +718,59 @@ class TestLinearSyncServiceCreate:
         assert mock_task_manager.update_task.call_args is not None
 
     @pytest.mark.asyncio
+    async def test_create_issue_reuses_existing_linear_issue_by_title(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        """create_issue_for_task links an exact existing Linear title before creating."""
+        mock_task = MagicMock()
+        mock_task.title = "Feature: Add new thing"
+        mock_task.description = "Adds a cool feature"
+        mock_task.linear_team_id = None
+        mock_task.id = "test-task-id"
+        mock_task.priority = 2
+        mock_task.seq_num = 42
+        mock_task_manager.get_task.return_value = mock_task
+        mock_mcp_manager.call_tool.return_value = {
+            "issues": [{"id": "lin-existing", "title": "#42: Feature: Add new thing"}]
+        }
+
+        result = await sync_service.create_issue_for_task(task_id="test-task-id")
+
+        mock_mcp_manager.call_tool.assert_awaited_once()
+        assert mock_mcp_manager.call_tool.call_args.kwargs["tool_name"] == "list_issues"
+        mock_task_manager.update_task.assert_called_once_with(
+            "test-task-id",
+            linear_issue_id="lin-existing",
+            linear_team_id="team-123",
+        )
+        assert result["linear_issue_id"] == "lin-existing"
+        assert result["gobby_ref"] == "#42"
+
+    @pytest.mark.asyncio
+    async def test_create_issue_rejects_invalid_mcp_response(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        """create_issue_for_task validates create_issue responses before reading fields."""
+        mock_task = MagicMock()
+        mock_task.title = "Feature"
+        mock_task.description = "Description"
+        mock_task.linear_team_id = None
+        mock_task.id = "test-task-id"
+        mock_task.priority = 2
+        mock_task.seq_num = 42
+        mock_task_manager.get_task.return_value = mock_task
+        mock_mcp_manager.call_tool.side_effect = [
+            {"issues": []},
+            ["not-a-dict"],
+        ]
+
+        with pytest.raises(LinearSyncError, match="expected dict, got list"):
+            await sync_service.create_issue_for_task(task_id="test-task-id")
+
+        assert mock_mcp_manager.call_tool.await_count == 2
+        mock_task_manager.update_task.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_create_issue_raises_when_no_team_id(self, mock_mcp_manager, mock_task_manager):
         """create_issue_for_task raises ValueError when no team_id available."""
         mock_mcp_manager.has_server.return_value = True
@@ -799,6 +852,39 @@ class TestLinearSyncServiceCreate:
         assert "closed_at IS NULL" in sql
         assert result == {"pushed": 2, "skipped": 0, "errors": 0}
         assert sync_service.sync_task_to_linear.await_count == 2
+
+
+class TestLinearProjectBinding:
+    """Test Linear project discovery and creation helpers."""
+
+    @pytest.mark.asyncio
+    async def test_ensure_linear_project_rechecks_by_name_after_mcp_create_failure(
+        self, sync_service, mock_mcp_manager
+    ) -> None:
+        """ensure_linear_project handles races where another actor creates the project."""
+        mock_mcp_manager.call_tool.side_effect = [
+            {"projects": []},
+            RuntimeError("already exists"),
+            {"projects": [{"id": "lin-proj", "name": "gobby"}]},
+        ]
+
+        with patch(
+            "gobby.sync.linear_project_ops.LinearGraphQLClient.from_database_async",
+            new=AsyncMock(return_value=None),
+        ) as graphql_factory:
+            project, created = await sync_service.ensure_linear_project("team-123", "gobby")
+
+        assert project == {"id": "lin-proj", "name": "gobby"}
+        assert created is False
+        assert mock_mcp_manager.call_tool.await_count == 3
+        assert [
+            call.kwargs["tool_name"] for call in mock_mcp_manager.call_tool.await_args_list
+        ] == [
+            "list_projects",
+            "create_project",
+            "list_projects",
+        ]
+        graphql_factory.assert_not_awaited()
 
 
 class TestStateMapping:

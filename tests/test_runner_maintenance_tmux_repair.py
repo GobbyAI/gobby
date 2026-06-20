@@ -8,7 +8,12 @@ from unittest.mock import AsyncMock, call, patch
 
 import pytest
 
-from gobby.runner_maintenance import tmux_window_name_repair_loop
+from gobby.runner_maintenance import (
+    _select_tmux_repair_sessions,
+    _tmux_repair_candidate_score,
+    _tmux_repair_pane_key,
+    tmux_window_name_repair_loop,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -30,6 +35,39 @@ class _BrokenSessionManager:
     def list(self, *, statuses: list[str], limit: int) -> list[SimpleNamespace]:
         self.calls.append((statuses, limit))
         raise RuntimeError("db down")
+
+
+def test_tmux_repair_pane_key_uses_socket_identity() -> None:
+    session = SimpleNamespace(terminal_context={"tmux_pane": "%1", "tmux_socket_name": "sock"})
+    assert _tmux_repair_pane_key(session) == ("sock", "%1")
+
+
+def test_tmux_repair_candidate_score_prefers_identity_and_activity() -> None:
+    inactive = SimpleNamespace(external_id="", message_count=0, turn_count=0, tool_call_count=0)
+    active = SimpleNamespace(external_id="external", message_count=1)
+
+    assert _tmux_repair_candidate_score(inactive) == (0, 0)
+    assert _tmux_repair_candidate_score(active) == (1, 1)
+
+
+def test_select_tmux_repair_sessions_keeps_best_candidate_per_pane() -> None:
+    stale = SimpleNamespace(
+        external_id="",
+        terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
+        message_count=0,
+    )
+    best = SimpleNamespace(
+        external_id="external",
+        terminal_context={"tmux_pane": "%1", "tmux_socket_path": "/tmp/tmux"},
+        message_count=1,
+    )
+    other = SimpleNamespace(
+        external_id="other",
+        terminal_context={"tmux_pane": "%2", "tmux_socket_path": "/tmp/tmux"},
+        message_count=0,
+    )
+
+    assert _select_tmux_repair_sessions([stale, best, other]) == [best, other]
 
 
 @pytest.mark.asyncio

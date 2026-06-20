@@ -53,10 +53,12 @@ function installPointerHelpers(button: HTMLButtonElement) {
 
 function PTTHarness({
   onSend = vi.fn(),
+  onStartRecording = vi.fn(),
   onStopRecording = vi.fn(),
   onCancelRecording = vi.fn(),
 }: {
   onSend?: (message: string, files?: unknown, options?: { reasoningEffort?: string | null }) => void
+  onStartRecording?: () => void
   onStopRecording?: () => void
   onCancelRecording?: () => void
 }) {
@@ -68,7 +70,10 @@ function PTTHarness({
       sttEnabled={true}
       voiceInputMode="ptt"
       isRecording={isRecording}
-      startRecording={async () => setIsRecording(true)}
+      startRecording={async () => {
+        onStartRecording()
+        setIsRecording(true)
+      }}
       stopRecording={async () => {
         onStopRecording()
         setIsRecording(false)
@@ -419,6 +424,55 @@ describe('ChatInput', () => {
     expect(onStopRecording).toHaveBeenCalledTimes(1)
   })
 
+  it('ignores keyboard activation while a pointer PTT gesture is active', () => {
+    vi.useFakeTimers()
+    const onStartRecording = vi.fn()
+    const onStopRecording = vi.fn()
+    render(
+      <PTTHarness
+        onStartRecording={onStartRecording}
+        onStopRecording={onStopRecording}
+      />,
+    )
+
+    const button = screen.getByLabelText('Start push to talk') as HTMLButtonElement
+    installPointerHelpers(button)
+
+    fireEvent.pointerDown(button, { pointerId: 1, button: 0 })
+    const recordingButton = screen.getByLabelText('Push to talk recording') as HTMLButtonElement
+    installPointerHelpers(recordingButton)
+    fireEvent.keyDown(recordingButton, { key: 'Enter' })
+    fireEvent.keyUp(recordingButton, { key: 'Enter' })
+    fireEvent.pointerUp(recordingButton, { pointerId: 1 })
+
+    expect(onStartRecording).toHaveBeenCalledTimes(1)
+    expect(onStopRecording).not.toHaveBeenCalled()
+  })
+
+  it('ignores pointer activation while a keyboard PTT gesture is active', () => {
+    const onStartRecording = vi.fn()
+    const onStopRecording = vi.fn()
+    render(
+      <PTTHarness
+        onStartRecording={onStartRecording}
+        onStopRecording={onStopRecording}
+      />,
+    )
+
+    const button = screen.getByLabelText('Start push to talk') as HTMLButtonElement
+    installPointerHelpers(button)
+
+    fireEvent.keyDown(button, { key: 'Enter' })
+    const recordingButton = screen.getByLabelText('Push to talk recording') as HTMLButtonElement
+    installPointerHelpers(recordingButton)
+    fireEvent.pointerDown(recordingButton, { pointerId: 1, button: 0 })
+    fireEvent.pointerUp(recordingButton, { pointerId: 1 })
+    fireEvent.keyUp(recordingButton, { key: 'Enter' })
+
+    expect(onStartRecording).toHaveBeenCalledTimes(1)
+    expect(onStopRecording).toHaveBeenCalledTimes(1)
+  })
+
   it('long press stops and sends on release', () => {
     vi.useFakeTimers()
     const onStopRecording = vi.fn()
@@ -633,6 +687,7 @@ describe('ChatInput', () => {
 
     expect(screen.getByText('/help')).toBeTruthy()
     expect(screen.getByText('/clear')).toBeTruthy()
+    expect(screen.getByRole('button', { name: /\/help/ })).toHaveAttribute('type', 'button')
   })
 
   it('on mobile, Shift+Enter sends', async () => {

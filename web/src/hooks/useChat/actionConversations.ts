@@ -387,6 +387,9 @@ export function useConversationActions(
         chatLogger.warn("WebSocket unavailable before continue_in_chat send", {
           sourceSessionId: sourceDbSessionId,
         });
+        continuingSessionIdRef.current = null;
+        continuationRollbackRef.current = null;
+        setIsContinuingSession(false);
         return "";
       }
 

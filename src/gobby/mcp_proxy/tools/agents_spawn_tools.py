@@ -41,7 +41,9 @@ def register_agent_spawn_tools(
         if not project_path:
             project_ctx = ctx.get_project_context()
             if project_ctx:
-                project_path = project_ctx.get("project_path")
+                context_project_path = project_ctx.get("project_path")
+                if isinstance(context_project_path, str):
+                    project_path = context_project_path
 
         mcp_mgr = getattr(ctx.runner, "_mcp_manager", None)
 

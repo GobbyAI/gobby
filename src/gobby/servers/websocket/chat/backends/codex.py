@@ -359,6 +359,8 @@ class CodexWebChatBackend:
                 self._client.start(),
                 timeout=_BACKEND_START_TIMEOUT_SECONDS,
             )
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             try:
                 await self._client.stop()
@@ -914,6 +916,8 @@ class CodexWebChatBackend:
                         sdk_session_id=session.sdk_session_id,
                     )
                     turn_completed.set()
+        except asyncio.CancelledError:
+            raise
         except Exception as exc:
             logger.error("Codex managed session %s error: %s", session.conversation_id, exc)
             yield TextChunk(content=f"Error: {exc}")

@@ -554,6 +554,21 @@ async def test_ensure_collection_dimension_mismatch_fails_without_recreate() -> 
 
 
 @pytest.mark.asyncio
+async def test_initialize_existing_collection_dimension_mismatch_raises() -> None:
+    store = VectorStore(collection_name="mock_memories", embedding_dim=4)
+    client = MagicMock()
+    client.collection_exists.return_value = True
+    client.get_collection.return_value = _collection_info(3)
+    store._client = client
+
+    with pytest.raises(VectorStoreCollectionDimensionError) as exc_info:
+        await store.initialize()
+
+    assert "configured=4, existing=3" in str(exc_info.value)
+    client.create_collection.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_rebuild_same_dimension_removes_stale_point_ids(
     vector_store: VectorStore,
 ) -> None:
@@ -693,10 +708,8 @@ async def test_rebuild_dimension_mismatch_recreates_under_lifecycle_lock() -> No
 
 
 @pytest.mark.asyncio
-async def test_dimension_mismatch_logs_error(tmp_path, caplog) -> None:
-    """initialize() should log error when collection dim mismatches configured dim."""
-    import logging
-
+async def test_dimension_mismatch_raises_error(tmp_path) -> None:
+    """initialize() should raise when collection dim mismatches configured dim."""
     # Create a collection with dim=4
     store = VectorStore(
         path=str(tmp_path / "qdrant"),
@@ -713,12 +726,12 @@ async def test_dimension_mismatch_logs_error(tmp_path, caplog) -> None:
         collection_name="dim_test",
         embedding_dim=768,
     )
-    with caplog.at_level(logging.ERROR, logger="gobby.memory.vectorstore"):
+    with pytest.raises(
+        VectorStoreCollectionDimensionError,
+        match="configured=768, existing=4",
+    ):
         await store2.initialize()
 
-    assert "dimension mismatch" in caplog.text.lower()
-    assert "configured=768" in caplog.text
-    assert "existing=4" in caplog.text
     await store2.close()
 
 

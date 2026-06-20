@@ -148,14 +148,14 @@ async def test_drain_hook_inbox_skips_already_processed_envelope(
     mock_client.__aexit__ = AsyncMock(return_value=False)
 
     with (
-        caplog.at_level(logging.INFO, logger="gobby.hooks.inbox"),
+        caplog.at_level(logging.DEBUG, logger="gobby.hooks.inbox"),
         patch("gobby.hooks.inbox.httpx.AsyncClient", return_value=mock_client),
     ):
         replayed = await drain_hook_inbox_once(FastAPI(), inbox_dir=inbox_dir)
 
     assert replayed == 0
     assert not envelope_path.exists()
-    assert "Skipping already-processed hook inbox envelope" not in caplog.text
+    assert "Skipping already-processed hook inbox envelope" in caplog.text
     mock_client.post.assert_not_awaited()
 
 

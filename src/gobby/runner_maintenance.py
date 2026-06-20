@@ -96,9 +96,9 @@ def _tmux_repair_candidate_score(session: Any) -> tuple[int, int]:
     has_identity = int(bool(external_id))
     has_activity = int(
         bool(str(getattr(session, "transcript_path", "") or "").strip())
-        or bool(getattr(session, "message_count", 0) or 0)
-        or bool(getattr(session, "turn_count", 0) or 0)
-        or bool(getattr(session, "tool_call_count", 0) or 0)
+        or bool(getattr(session, "message_count", 0))
+        or bool(getattr(session, "turn_count", 0))
+        or bool(getattr(session, "tool_call_count", 0))
     )
     return has_identity, has_activity
 

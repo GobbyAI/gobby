@@ -104,11 +104,10 @@ class MCPServer:
         """Convert to MCP config format."""
         config: dict[str, Any] = {
             "name": self.name,
+            "project_id": self.project_id,
             "transport": self.transport,
             "enabled": self.enabled,
         }
-        if self.project_id:
-            config["project_id"] = self.project_id
         if self.url:
             config["url"] = self.url
         if self.command:

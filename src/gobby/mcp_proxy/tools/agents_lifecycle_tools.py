@@ -53,7 +53,10 @@ def register_agent_lifecycle_tools(
         if not agent_name:
             return {"success": False, "error": "agent_name is required"}
 
-        resolved_parent = ctx.resolve_session_id(parent_session_id)
+        try:
+            resolved_parent = ctx.resolve_session_id(parent_session_id)
+        except ValueError as e:
+            return {"success": False, "error": str(e)}
         stale = [
             run
             for run in ctx.agent_run_manager.list_by_parent(resolved_parent)
@@ -152,6 +155,13 @@ def register_agent_lifecycle_tools(
     ) -> dict[str, Any]:
         if force:
             signal = "KILL"
+
+        allowed_statuses = {"success", "cancelled", "error"}
+        if status is not None and status not in allowed_statuses:
+            return {
+                "success": False,
+                "error": f"Invalid status '{status}'. Allowed: {', '.join(sorted(allowed_statuses))}",
+            }
 
         signal = signal.upper()
         allowed_signals = {"TERM", "KILL", "INT", "HUP", "QUIT"}

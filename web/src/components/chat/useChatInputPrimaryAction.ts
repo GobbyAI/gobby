@@ -108,6 +108,7 @@ export function useChatInputPrimaryAction({
     (event: PointerEvent<HTMLButtonElement>) => {
       if (disabled || primaryButtonKind === 'stop' || !startRecording) return
       if (event.button !== 0) return
+      if (activeKeyRef.current !== null) return
 
       event.preventDefault()
       primaryButtonRef.current?.setPointerCapture(event.pointerId)
@@ -128,7 +129,7 @@ export function useChatInputPrimaryAction({
 
   const handleMicPointerUp = useCallback(
     (event: PointerEvent<HTMLButtonElement>) => {
-      if (activePointerIdRef.current !== null && event.pointerId !== activePointerIdRef.current) {
+      if (activePointerIdRef.current === null || event.pointerId !== activePointerIdRef.current) {
         return
       }
 
@@ -179,6 +180,9 @@ export function useChatInputPrimaryAction({
 
   const handleMicPointerCancel = useCallback(
     (event: PointerEvent<HTMLButtonElement>) => {
+      if (activePointerIdRef.current === null || event.pointerId !== activePointerIdRef.current) {
+        return
+      }
       if (primaryButtonRef.current?.hasPointerCapture(event.pointerId)) {
         primaryButtonRef.current.releasePointerCapture(event.pointerId)
       }
@@ -194,6 +198,7 @@ export function useChatInputPrimaryAction({
       if (event.key !== 'Enter' && event.key !== ' ') return
       event.preventDefault()
       if (event.repeat || activeKeyRef.current !== null) return
+      if (activePointerIdRef.current !== null) return
       if (disabled || primaryButtonKind === 'stop' || !startRecording) return
 
       activeKeyRef.current = event.key

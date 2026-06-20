@@ -255,8 +255,8 @@ async def is_embedding_healthy(
 ) -> bool:
     """Check if the embedding endpoint is reachable.
 
-    Sends a single short embedding request with max_retries=1. Returns False
-    on any exception. Logs a warning on failure.
+    Uses the embedding service health check. Returns False on any exception.
+    Logs a warning on failure.
     """
     from gobby.ai.embeddings import EmbeddingService
 
@@ -267,11 +267,7 @@ async def is_embedding_healthy(
             api_key=api_key,
             dim=expected_dim,
         )
-        result = await service.generate_embedding(
-            "health",
-            max_retries=1,
-        )
-        return len(result) > 0
+        return await service.health_check()
     except Exception as e:
         logger.warning(
             f"Embedding health check failed (model={model}, api_base={api_base}): {type(e).__name__}: {e}"

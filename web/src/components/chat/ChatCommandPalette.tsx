@@ -18,18 +18,19 @@ export function ChatCommandPalette({
   return (
     <div ref={paletteRef} className="command-palette font-sans">
       {items.map((item, index) => (
-        <div
+        <button
           key={
             item.kind === 'command'
               ? item.name
               : `${item.parentCommand}:${item.name}${item.serverName ? `:${item.serverName}` : ''}`
           }
           className={cn(
-            'px-3 py-2 text-sm cursor-pointer',
+            'block w-full px-3 py-2 text-left text-sm cursor-pointer',
             index === selectedIndex
               ? 'bg-accent/20 text-foreground'
               : 'text-muted-foreground hover:bg-muted',
           )}
+          type="button"
           onClick={() => onSelect(item)}
         >
           {item.kind === 'command' ? (
@@ -52,7 +53,7 @@ export function ChatCommandPalette({
               )}
             </>
           )}
-        </div>
+        </button>
       ))}
     </div>
   )

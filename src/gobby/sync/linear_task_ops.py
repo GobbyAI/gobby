@@ -11,6 +11,7 @@ from gobby.integrations.linear_graphql import LinearGraphQLError
 from gobby.sync.linear_project_ops import LinearProjectOpsMixin
 from gobby.sync.linear_support import (
     LinearSyncError,
+    _extract_records,
     _gobby_seq_from_linear_title,
     _linear_fetch_failure_limiter,
     _local_title_from_linear,
@@ -81,49 +82,50 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             if not issue_id:
                 continue
 
-            existing = self.task_manager.db.fetchone(
-                "SELECT id FROM tasks WHERE linear_issue_id = %s AND project_id = %s",
-                (issue_id, self.project_id),
-            )
-
             title = issue.get("title", "Untitled Issue")
             local_title = _local_title_from_linear(title)
             description = issue.get("description", "")
             priority_val = issue.get("priority", 2)
 
-            if not existing:
-                ref_seq = _gobby_seq_from_linear_title(title)
-                if ref_seq is not None:
-                    existing = self.task_manager.db.fetchone(
-                        "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s",
-                        (self.project_id, ref_seq),
-                    )
-                    if existing:
-                        self.task_manager.update_task(
-                            existing["id"],
-                            linear_issue_id=issue_id,
-                            linear_team_id=effective_team_id,
-                        )
+            with self.task_manager.db.transaction():
+                existing = self.task_manager.db.fetchone(
+                    "SELECT id FROM tasks WHERE linear_issue_id = %s AND project_id = %s",
+                    (issue_id, self.project_id),
+                )
 
-            if existing:
-                self.task_manager.reconcile_task_state(
-                    existing["id"],
-                    title=local_title,
-                    description=description,
-                    priority=priority_val,
-                )
-                task = self.task_manager.get_task(existing["id"])
-                result_tasks.append(task.to_dict())
-            else:
-                task = self.task_manager.create_task(
-                    project_id=self.project_id,
-                    title=local_title,
-                    description=description,
-                    linear_issue_id=issue_id,
-                    linear_team_id=effective_team_id,
-                    priority=priority_val,
-                )
-                result_tasks.append(task.to_dict())
+                if not existing:
+                    ref_seq = _gobby_seq_from_linear_title(title)
+                    if ref_seq is not None:
+                        existing = self.task_manager.db.fetchone(
+                            "SELECT id FROM tasks WHERE project_id = %s AND seq_num = %s",
+                            (self.project_id, ref_seq),
+                        )
+                        if existing:
+                            self.task_manager.update_task(
+                                existing["id"],
+                                linear_issue_id=issue_id,
+                                linear_team_id=effective_team_id,
+                            )
+
+                if existing:
+                    self.task_manager.reconcile_task_state(
+                        existing["id"],
+                        title=local_title,
+                        description=description,
+                        priority=priority_val,
+                    )
+                    task = self.task_manager.get_task(existing["id"])
+                    result_tasks.append(task.to_dict())
+                else:
+                    task = self.task_manager.create_task(
+                        project_id=self.project_id,
+                        title=local_title,
+                        description=description,
+                        linear_issue_id=issue_id,
+                        linear_team_id=effective_team_id,
+                        priority=priority_val,
+                    )
+                    result_tasks.append(task.to_dict())
 
         logger.info("Imported %d issues from Linear team %s", len(result_tasks), effective_team_id)
         return result_tasks
@@ -199,6 +201,27 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         linear_project_id = await self.ensure_project_binding(effective_team_id)
         title = self._linear_issue_title(task)
 
+        existing_issue = await self._find_existing_issue_for_task(
+            task=task,
+            team_id=effective_team_id,
+            project_id=linear_project_id,
+            title=title,
+        )
+        if existing_issue:
+            issue_id = existing_issue["id"]
+            self.task_manager.update_task(
+                task_id,
+                linear_issue_id=issue_id,
+                linear_team_id=effective_team_id,
+            )
+            logger.info("Registered %s in existing Linear issue %s", self._task_ref(task), issue_id)
+            return self._decorate_issue_result(
+                existing_issue,
+                task,
+                team_id=effective_team_id,
+                project_id=linear_project_id,
+            )
+
         client = await self._get_graphql_client()
         if client:
             result_dict = await client.create_issue(
@@ -238,6 +261,11 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             arguments=arguments,
         )
 
+        if not isinstance(result, dict):
+            raise LinearSyncError(
+                f"Invalid response from Linear MCP when creating issue for task "
+                f"{task_id}: expected dict, got {type(result).__name__}"
+            )
         result_dict = cast(dict[str, Any], result)
         issue_id = result_dict.get("id")
         if issue_id:
@@ -254,6 +282,42 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             team_id=effective_team_id,
             project_id=linear_project_id,
         )
+
+    async def _find_existing_issue_for_task(
+        self,
+        *,
+        task: Any,
+        team_id: str,
+        project_id: str | None,
+        title: str,
+    ) -> dict[str, Any] | None:
+        """Find a deterministic existing Linear issue for a Gobby task."""
+        issues: list[dict[str, Any]] | None = None
+        if self._linear_mcp_has_tool("list_issues"):
+            result = await self.mcp_manager.call_tool(
+                server_name="linear",
+                tool_name="list_issues",
+                arguments=self._issue_list_args(team_id),
+            )
+            issues = _extract_records(result, "issues")
+        if issues is None:
+            client = await self._get_graphql_client()
+            if client:
+                issues = await client.list_issues(team_id=team_id, project_id=project_id)
+        if not issues:
+            return None
+
+        task_seq = getattr(task, "seq_num", None)
+        for issue in issues:
+            issue_id = issue.get("id")
+            issue_title = issue.get("title")
+            if not isinstance(issue_id, str) or not isinstance(issue_title, str):
+                continue
+            if issue_title == title:
+                return issue
+            if task_seq is not None and _gobby_seq_from_linear_title(issue_title) == task_seq:
+                return issue
+        return None
 
     async def create_missing_issues(self, team_id: str | None = None) -> list[dict[str, Any]]:
         """Create Linear issues for active non-closed Gobby tasks not linked yet."""

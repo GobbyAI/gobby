@@ -183,33 +183,41 @@ class LinearProjectOpsMixin:
             if project.get("name") == project_name:
                 return project, False
 
-        if not self._linear_mcp_has_tool("create_project"):
-            client = await self._get_graphql_client()
-            if not client:
-                raise LinearSyncError(
-                    "Linear MCP server does not expose create_project and no Linear API key "
-                    "is available for GraphQL project creation."
-                )
-            project = await client.create_project(team_id, project_name)
-        else:
+        if self._linear_mcp_has_tool("create_project"):
+            create_failure_message = (
+                "Linear MCP create_project failed and no Linear API key "
+                "is available for GraphQL project creation."
+            )
             try:
                 result = await self.mcp_manager.call_tool(
                     server_name="linear",
                     tool_name="create_project",
                     arguments={"teamId": team_id, "name": project_name},
                 )
-            except LinearSyncError as e:
-                client = await self._get_graphql_client()
-                if not client:
-                    raise LinearSyncError(
-                        "Linear MCP server does not expose create_project and no Linear API key "
-                        "is available for GraphQL project creation."
-                    ) from e
-                project = await client.create_project(team_id, project_name)
+            except Exception as e:
+                mcp_error = e
             else:
                 project = _extract_record(result, "project")
+                if not project.get("id"):
+                    raise LinearSyncError("Linear MCP create_project did not return a project id.")
+                return project, True
+        else:
+            mcp_error = LinearSyncError("Linear MCP server does not expose create_project.")
+            create_failure_message = (
+                "Linear MCP server does not expose create_project and no Linear API key "
+                "is available for GraphQL project creation."
+            )
+
+        for project in await self.list_projects(team_id):
+            if project.get("name") == project_name:
+                return project, False
+
+        client = await self._get_graphql_client()
+        if not client:
+            raise LinearSyncError(create_failure_message) from mcp_error
+        project = await client.create_project(team_id, project_name)
         if not project.get("id"):
-            raise LinearSyncError("Linear MCP create_project did not return a project id.")
+            raise LinearSyncError("Linear GraphQL create_project did not return a project id.")
         return project, True
 
     async def ensure_project_binding(self, team_id: str) -> str:

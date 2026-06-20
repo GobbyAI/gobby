@@ -954,6 +954,20 @@ class TestKillAgent:
         assert "Invalid signal" in result["error"]
 
     @pytest.mark.asyncio
+    async def test_invalid_status_rejected(self):
+        """Only terminal agent statuses are accepted."""
+        runner = _make_runner_with_run_storage()
+
+        registry = create_agents_registry(runner)
+        kill_agent = registry._tools["kill_agent"].func
+
+        result = await kill_agent(run_id="run-123", status="running")
+
+        assert result["success"] is False
+        assert "Invalid status" in result["error"]
+        runner.get_run.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_session_id_resolves_to_run_id(self):
         """Test that session_id resolves to run_id via DB."""
         runner = _make_runner_with_run_storage()

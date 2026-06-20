@@ -77,6 +77,23 @@ async def test_cancel_stale_helpers_returns_empty_when_no_helpers_running() -> N
 
 
 @pytest.mark.asyncio
+async def test_cancel_stale_helpers_returns_failure_for_bad_session_ref() -> None:
+    runner = _make_runner_with_run_storage()
+    session_manager = MagicMock()
+    session_manager.resolve_session_reference.side_effect = ValueError("bad session")
+    registry = create_agents_registry(runner, session_manager=session_manager)
+    cancel_stale_helpers = registry._tools["cancel_stale_helpers"].func
+
+    result = await cancel_stale_helpers(
+        parent_session_id="missing",
+        agent_name="status-helper",
+    )
+
+    assert result == {"success": False, "error": "bad session"}
+    runner.run_storage.list_by_parent.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_best_effort_continues_on_per_run_failure() -> None:
     first = _make_agent_run("run-first")
     second = _make_agent_run("run-second")

@@ -214,3 +214,5 @@ export interface UseChatActionsResult
     PlanApprovalActions {
   sendMessage: SendMessageAction;
 }
+
+export type UseChatActions = UseChatActionsResult;

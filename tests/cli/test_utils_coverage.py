@@ -333,6 +333,34 @@ def test_stop_daemon_bad_pid_file(tmp_path: Path) -> None:
     assert not pid_file.exists()
 
 
+def test_stop_daemon_service_success_fails_when_pid_survives(tmp_path: Path) -> None:
+    from gobby.cli.utils import stop_daemon
+
+    pid_file = tmp_path / "gobby.pid"
+    pid_file.write_text("12345")
+    mock_proc = MagicMock()
+    mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
+
+    with (
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
+        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
+        patch("gobby.cli.utils.stop_ui_server"),
+        patch("gobby.cli.utils._is_process_alive", return_value=True),
+        patch("gobby.cli.utils.psutil.Process", return_value=mock_proc),
+        patch("gobby.cli.utils.kill_all_gobby_daemons", return_value=0),
+        patch(
+            "gobby.cli.installers.service.get_service_status",
+            return_value={"installed": True, "running": True, "platform": "test"},
+        ),
+        patch("gobby.cli.installers.service.service_stop", return_value={"success": True}),
+        patch("gobby.cli.utils.time.sleep"),
+    ):
+        result = stop_daemon(quiet=True)
+
+    assert result is False
+    assert pid_file.exists()
+
+
 def test_stop_daemon_not_gobby_process(tmp_path: Path) -> None:
     from gobby.cli.utils import stop_daemon
 
@@ -1699,8 +1727,8 @@ def test_stop_daemon_uses_service_stop_under_launchctl(tmp_path: Path) -> None:
     mock_proc = MagicMock()
     mock_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
 
-    # Process is alive initially, then dies after bootout
-    alive_calls = iter([True, True, False])
+    # Process is alive initially, then dies after bootout and remains dead after cleanup.
+    alive_calls = iter([True, True, False, False])
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),

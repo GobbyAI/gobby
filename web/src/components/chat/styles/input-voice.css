@@ -157,6 +157,14 @@
   }
 }
 
+@media (prefers-reduced-motion: reduce) {
+  .ptt-button.recording,
+  .speaking-bar,
+  .listening-pulse {
+    animation: none;
+  }
+}
+
 .voice-error {
   font-size: calc(var(--font-size-base) * 0.75);
   color: var(--color-error);

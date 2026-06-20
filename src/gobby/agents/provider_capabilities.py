@@ -59,7 +59,7 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
     ),
 }
 
-KNOWN_REASONING_EFFORTS = frozenset(
+KNOWN_REASONING_EFFORTS: frozenset[str] = frozenset(
     effort
     for capabilities in PROVIDER_CAPABILITIES.values()
     for effort in capabilities.fallback_reasoning_efforts

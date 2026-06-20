@@ -35,8 +35,6 @@ class EmbeddingsPayload(BaseModel):
     input: str | list[str]
     is_query: bool = False
     model: str | None = None
-    provider: str | None = None
-    project_id: str | None = None
 
     @property
     def batch(self) -> list[str]:
@@ -63,15 +61,6 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
         config = server.config
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
-
-        unsupported_fields = [
-            field for field in ("provider", "project_id") if getattr(payload, field) is not None
-        ]
-        if unsupported_fields:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported embedding request field(s): {', '.join(unsupported_fields)}",
-            )
 
         status = build_daemon_ai_capability_registry(config).status(AICapability.EMBED)
         if not status.available:

@@ -177,6 +177,23 @@ def test_create_memory_returns_existing(memory_manager) -> None:
     assert memory1.content == memory2.content
 
 
+def test_create_memory_persists_normalized_content(memory_manager) -> None:
+    """create_memory stores stripped content consistently with deterministic IDs."""
+    memory = memory_manager.create_memory(content="  Normalized content  ")
+
+    assert memory.content == "Normalized content"
+
+
+def test_update_memory_persists_normalized_content(memory_manager) -> None:
+    """update_memory stores stripped content so exact-content lookup stays consistent."""
+    memory = memory_manager.create_memory(content="Before")
+
+    updated = memory_manager.update_memory(memory.id, content="  After  ")
+
+    assert updated.content == "After"
+    assert memory_manager.get_memory_by_content("After").id == memory.id
+
+
 def test_create_memory_dedup_across_projects(memory_manager, db) -> None:
     """Test that same content with different project_ids returns same memory (global dedup)."""
     db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
@@ -833,7 +850,7 @@ def test_create_memory_restores_hidden_duplicate(memory_manager) -> None:
 
     # Re-creating identical content collides on the deterministic uuid5 id and
     # must reactivate the hidden row instead of returning an invisible memory.
-    recreated = memory_manager.create_memory(content="reactivate via recreate")
+    recreated = memory_manager.create_memory(content="  reactivate via recreate  ")
     assert recreated.id == created.id
     assert recreated.deleted_at is None
     assert recreated.dream_action is None

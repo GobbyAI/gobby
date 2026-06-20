@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, patch
 
 import pytest
@@ -219,6 +220,52 @@ async def test_batch_dedup_within_request() -> None:
     assert len(results) == 3
     assert results[0] == results[1]  # both "alpha"
     assert results[0] != results[2]  # "alpha" != "beta"
+
+
+@pytest.mark.asyncio
+async def test_concurrent_identical_misses_share_inflight_fetch() -> None:
+    """Concurrent cache misses for the same key should share one provider call."""
+    mock_client = _make_mock_client()
+    call_count = 0
+    started = asyncio.Event()
+    second_lookup = asyncio.Event()
+    release = asyncio.Event()
+    original_create = mock_client.embeddings.create
+    lookup_count = 0
+
+    def tracking_cache_key(text: str, model: str, api_base: str | None) -> str:
+        nonlocal lookup_count
+        lookup_count += 1
+        if lookup_count == 2:
+            second_lookup.set()
+        return _cache_key(text, model, api_base)
+
+    async def tracking_create(model: str, input: list[str]):
+        nonlocal call_count
+        call_count += 1
+        started.set()
+        await release.wait()
+        return await original_create(model=model, input=input)
+
+    mock_client.embeddings.create = tracking_create
+
+    with (
+        patch("openai.AsyncOpenAI", return_value=mock_client),
+        patch("gobby.ai.embeddings._cache_key", side_effect=tracking_cache_key),
+    ):
+        first = asyncio.create_task(
+            generate_embedding("same", model="test-model", api_base=LOCAL_API_BASE)
+        )
+        await started.wait()
+        second = asyncio.create_task(
+            generate_embedding("same", model="test-model", api_base=LOCAL_API_BASE)
+        )
+        await second_lookup.wait()
+        release.set()
+        result1, result2 = await asyncio.gather(first, second)
+
+    assert result1 == result2
+    assert call_count == 1
 
 
 @pytest.mark.asyncio

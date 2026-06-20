@@ -154,21 +154,6 @@ class ChatSessionMessagesMixin:
             if session._resolve_reasoning_effort() != self._active_reasoning_effort:
                 await session._reconnect_for_reasoning_effort_change()
 
-            if isinstance(content, list):
-                # SDK streaming mode expects the transport protocol format:
-                # {"type": "user", "message": {"role": "user", "content": ...}}
-                # NOT just {"role": "user", "content": ...}
-                async def _content_blocks() -> AsyncIterator[dict[str, Any]]:
-                    yield {
-                        "type": "user",
-                        "message": {"role": "user", "content": content},
-                        "parent_tool_use_id": None,
-                    }
-
-                await self._client.query(_content_blocks())
-            else:
-                await self._client.query(content)
-
             tool_calls_count = 0
             needs_spacing_before_text = False
             has_text = False
@@ -179,6 +164,21 @@ class ChatSessionMessagesMixin:
             # for tool-heavy turns. message_start gives per-call values.
             _last_call_input: dict[str, int] | None = None
             try:
+                if isinstance(content, list):
+                    # SDK streaming mode expects the transport protocol format:
+                    # {"type": "user", "message": {"role": "user", "content": ...}}
+                    # NOT just {"role": "user", "content": ...}
+                    async def _content_blocks() -> AsyncIterator[dict[str, Any]]:
+                        yield {
+                            "type": "user",
+                            "message": {"role": "user", "content": content},
+                            "parent_tool_use_id": None,
+                        }
+
+                    await self._client.query(_content_blocks())
+                else:
+                    await self._client.query(content)
+
                 async for message in self._client.receive_response():
                     if message is None:
                         continue

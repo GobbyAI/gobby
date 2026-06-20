@@ -254,6 +254,20 @@ class TestChatSessionSendMessage:
         assert isinstance(events[1], DoneEvent)
 
     @pytest.mark.asyncio
+    async def test_send_message_query_failure_yields_done(self, session: ChatSession) -> None:
+        """Failures before response streaming still terminate with DoneEvent."""
+        session._client.query.side_effect = RuntimeError("query failed")
+
+        events = []
+        async for ev in session.send_message("bad"):
+            events.append(ev)
+
+        assert len(events) == 2
+        assert isinstance(events[0], TextChunk)
+        assert "Generation failed:" in events[0].content
+        assert isinstance(events[1], DoneEvent)
+
+    @pytest.mark.asyncio
     async def test_lifecycle_methods(self, session: ChatSession) -> None:
         """Test interrupt, drain, and stop directly."""
         # Interrupt

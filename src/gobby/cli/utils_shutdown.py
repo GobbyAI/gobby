@@ -98,12 +98,18 @@ def stop_daemon(
             shutdown_source=shutdown_source,
         )
         if result.get("success"):
-            pid_file.unlink(missing_ok=True)
             for _ in range(200):
                 time.sleep(0.1)
                 if not bool(deps._is_process_alive(pid)):
                     break
             deps.kill_all_gobby_daemons()
+            if bool(deps._is_process_alive(pid)):
+                if not quiet:
+                    deps._stop_step(
+                        "Service stop reported success but daemon is still running", error=True
+                    )
+                return False
+            pid_file.unlink(missing_ok=True)
             elapsed = time.time() - stop_start
             if not quiet:
                 deps._stop_step(f"Stopped via {svc.get('platform', 'OS')} service ({elapsed:.1f}s)")

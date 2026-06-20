@@ -261,6 +261,8 @@ class UnifiedSearcher:
             embedding = self._get_embedding_backend()
             await embedding.fit_async(items)
             self._active_backend = "embedding"
+            self._using_fallback = False
+            self._fallback_reason = None
             self._fitted = True
             self._fitted_mode = mode
 
@@ -279,6 +281,8 @@ class UnifiedSearcher:
                     embedding = self._get_embedding_backend()
                     await embedding.fit_async(items)
                     self._active_backend = "embedding"
+                    self._using_fallback = False
+                    self._fallback_reason = None
                     self._fitted = True
                     self._fitted_mode = mode
                 except Exception as e:
@@ -302,6 +306,8 @@ class UnifiedSearcher:
                     embedding = self._get_embedding_backend()
                     await embedding.fit_async(items)
                     self._active_backend = "hybrid"
+                    self._using_fallback = False
+                    self._fallback_reason = None
                 except Exception as e:
                     logger.warning(f"Hybrid embedding indexing failed: {e}")
                     self._emit_fallback_event(

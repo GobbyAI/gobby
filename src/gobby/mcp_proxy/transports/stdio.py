@@ -140,7 +140,6 @@ class StdioTransportConnection(BaseTransportConnection):
                     logger.warning("Session cleanup timed out for %s", self.config.name)
                 except asyncio.CancelledError:
                     logger.warning("Session cleanup cancelled for %s", self.config.name)
-                    raise
                 except Exception as cleanup_error:
                     logger.warning(
                         "Error during session cleanup for %s: %s",
@@ -155,7 +154,6 @@ class StdioTransportConnection(BaseTransportConnection):
                     logger.warning("Transport cleanup timed out for %s", self.config.name)
                 except asyncio.CancelledError:
                     logger.warning("Transport cleanup cancelled for %s", self.config.name)
-                    raise
                 except Exception as cleanup_error:
                     logger.warning(
                         "Error during transport cleanup for %s: %s",
@@ -250,6 +248,8 @@ class StdioTransportConnection(BaseTransportConnection):
                 await asyncio.wait_for(session_ctx.__aexit__(None, None, None), timeout=2.0)
             except TimeoutError:
                 logger.warning(f"Session close timed out for {self.config.name}")
+            except asyncio.CancelledError:
+                logger.warning(f"Session close cancelled for {self.config.name}")
             except RuntimeError as e:
                 # Expected when exiting cancel scope from different task
                 if "cancel scope" not in str(e):
@@ -265,6 +265,8 @@ class StdioTransportConnection(BaseTransportConnection):
                 await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=2.0)
             except TimeoutError:
                 logger.warning(f"Transport close timed out for {self.config.name}")
+            except asyncio.CancelledError:
+                logger.warning(f"Transport close cancelled for {self.config.name}")
             except RuntimeError as e:
                 # Expected when exiting cancel scope from different task
                 if "cancel scope" not in str(e):

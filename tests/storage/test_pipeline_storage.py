@@ -5,6 +5,7 @@ TDD tests for pipeline execution CRUD operations.
 
 import json
 from typing import cast
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -803,6 +804,23 @@ class TestPagination:
         assert manager.count_executions() == 3
         assert manager.count_executions(status=ExecutionStatus.RUNNING) == 2
         assert manager.count_executions(status=ExecutionStatus.PENDING) == 1
+
+    def test_count_by_status_with_null_project_scope(self) -> None:
+        """count_by_status scopes global managers with project_id IS NULL."""
+        db = MagicMock()
+        db.fetchall.return_value = [
+            {"status": "pending", "cnt": 1},
+            {"status": "running", "cnt": 1},
+        ]
+        manager = LocalPipelineExecutionManager(cast(HubDatabase, db), project_id="test-project")
+        manager.project_id = None  # type: ignore[assignment]
+
+        result = manager.count_by_status()
+
+        sql, params = db.fetchall.call_args.args
+        assert "project_id IS NULL" in sql
+        assert params == ()
+        assert result == {"pending": 1, "running": 1}
 
     def test_count_executions_respects_pipeline_name_filter(self, manager) -> None:
         """count_executions reflects pipeline_name filter."""

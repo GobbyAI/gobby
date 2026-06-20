@@ -22,6 +22,7 @@ from gobby.config.app import (
 )
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.bootstrap import BootstrapConfigError
+from gobby.config.code_index import CodeIndexConfig
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_DIM_KEY,
@@ -421,6 +422,27 @@ class TestDaemonConfig:
         """Stale top-level conductor config should fail loudly."""
         with pytest.raises(ValidationError, match="conductor config has been removed"):
             DaemonConfig(conductor={"enabled": False})
+
+
+def test_code_index_legacy_summary_keys_migrate_to_symbol_summary() -> None:
+    config = CodeIndexConfig.model_validate(
+        {
+            "summary_enabled": False,
+            "summary_batch_size": 7,
+            "summary_profile": "feature_high",
+            "summary_candidates": [],
+            "summary_max_concurrency": 3,
+            "summary_max_tokens": 88,
+            "symbol_summary": {"max_tokens": 99},
+        }
+    )
+
+    assert config.symbol_summary.enabled is False
+    assert config.symbol_summary.batch_size == 7
+    assert config.symbol_summary.profile == FeatureProfile.HIGH
+    assert config.symbol_summary.candidates == []
+    assert config.symbol_summary.max_concurrency == 3
+    assert config.symbol_summary.max_tokens == 99
 
 
 class TestLoadYaml:

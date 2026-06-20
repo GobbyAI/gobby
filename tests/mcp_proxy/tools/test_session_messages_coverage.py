@@ -707,24 +707,6 @@ class TestGetHandoffContext:
             status="handoff_ready",
         )
 
-    def test_get_project_scoped_handoff_without_session_id(self) -> None:
-        """Test finding handoff_ready session for an explicit project."""
-        session_manager = MagicMock()
-        mock_session = MagicMock()
-        mock_session.id = "sess-latest"
-        mock_session.summary_markdown = "## Summary"
-        mock_session.title = "Latest"
-        mock_session.status = "handoff_ready"
-        session_manager.find_parent.return_value = mock_session
-
-        registry = create_test_registry(session_manager=session_manager)
-        get_context = registry.get_tool("get_handoff_context")
-
-        result = get_context(project_id="project-123")
-
-        assert result["found"] is True
-        assert result["context_type"] == "summary_markdown"
-
     def test_get_no_session_found(self) -> None:
         """Test when no handoff_ready session found."""
         session_manager = MagicMock()

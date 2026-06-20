@@ -196,12 +196,14 @@ class VectorStore:
                         self._collection_name,
                     )
                     if existing_dim is not None and existing_dim != self._embedding_dim:
-                        logger.error(
+                        raise VectorStoreCollectionDimensionError(
                             f"Embedding dimension mismatch for collection '{self._collection_name}': "
                             f"configured={self._embedding_dim}, existing={existing_dim}. "
                             f"Either change embedding_dim in config to {existing_dim}, "
                             f"or run 'gobby memory rebuild' to re-embed with the new model."
                         )
+                except VectorStoreCollectionDimensionError:
+                    raise
                 except Exception as e:
                     self._raise_if_recoverable(e)
                     logger.warning(

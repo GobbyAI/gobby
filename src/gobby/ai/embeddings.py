@@ -1,33 +1,8 @@
-"""Embedding generation via OpenAI-compatible API.
+"""Embedding generation via OpenAI-compatible APIs.
 
-Uses the ``openai`` package (already a dependency) which works with any
-OpenAI-compatible endpoint: OpenAI cloud, Ollama, LM Studio, etc.
-
-| Provider   | Model                          | Config                                    |
-|------------|-------------------------------|-------------------------------------------|
-| Ollama     | nomic-embed-text              | api_base=http://localhost:11434/v1        |
-| LM Studio  | nomic-embed-text              | api_base=http://localhost:1234/v1         |
-| OpenAI     | text-embedding-3-small        | api_key                                   |
-
-``EmbeddingService`` exposes availability helpers in two flavors:
-
-- ``is_configured`` — cheap, synchronous; answers "do we have
-  enough config to *try*?". Does **not** probe the endpoint.
-- ``is_reachable`` — async; actually hits the endpoint's
-  ``/models`` route with a short timeout and a cached result. Use this
-  before code paths that hard-fail on unavailability.
-
-Example usage:
-    from gobby.ai.embeddings import EmbeddingService
-
-    service = EmbeddingService(
-        model="nomic-embed-text",
-        api_base="http://localhost:1234/v1",
-    )
-    if await service.is_reachable():
-        embeddings = await service.generate_embeddings(
-            ["hello world", "foo bar"],
-        )
+Supports local Ollama/LM Studio endpoints and OpenAI cloud models. The
+``EmbeddingService`` wrapper exposes synchronous configuration checks,
+asynchronous reachability probes, health checks, and cached generation.
 """
 
 from __future__ import annotations
@@ -186,6 +161,7 @@ class _CacheEntry:
 
 
 _cache: dict[str, _CacheEntry] = {}
+_inflight: dict[str, asyncio.Future[list[float]]] = {}
 # Initialize at module import: Python's import machinery is serialized, so two
 # concurrent _get_lock() callers cannot race to create distinct RLock objects.
 # The previous lazy-init pattern had exactly that race — two threads arriving
@@ -228,6 +204,15 @@ def _clear_embedding_cache() -> None:
     """Clear the embedding cache. Useful for testing."""
     with _get_lock():
         _cache.clear()
+        for pending in _inflight.values():
+            if not pending.done():
+                pending.cancel()
+        _inflight.clear()
+
+
+def _consume_future_exception(future: asyncio.Future[list[float]]) -> None:
+    if not future.cancelled():
+        future.exception()
 
 
 def _needs_nomic_prefix(model: str) -> bool:
@@ -262,48 +247,22 @@ async def _generate_embeddings(
     expected_dim: int | None = None,
     query_prefix: str | None = None,
 ) -> list[list[float]]:
-    """Generate embeddings using an OpenAI-compatible API with exponential backoff.
-
-    Works with any OpenAI-compatible endpoint (OpenAI cloud, Ollama, LM Studio).
-    Rate limit errors are retried with exponential backoff; non-retryable errors
-    (auth, model not found) fail immediately.
-
-    Results are cached per (text, model, api_base) with a 60-second TTL to
-    deduplicate concurrent identical requests.
-
-    Args:
-        texts: List of texts to embed
-        model: Model name (e.g., "nomic-embed-text", "text-embedding-3-small")
-        api_base: API base URL for OpenAI-compatible endpoint (e.g., "http://localhost:1234/v1" for LM Studio)
-        api_key: Optional API key from embedding configuration
-        max_retries: Maximum retry attempts for rate limit errors (default: 5)
-        base_delay: Initial backoff delay in seconds (default: 1.0)
-        is_query: Whether this is a query embedding (applies configured/nomic prefix)
-        expected_dim: Expected embedding dimension. When set, mismatches fail fast.
-
-    Returns:
-        List of embedding vectors (one per input text). Returns an empty
-        list if the input texts list is empty.
-
-    Raises:
-        EmbeddingGenerationError: If embedding provider generation fails
-    """
+    """Generate embeddings with cache and in-flight dedupe."""
     if not texts:
         return []
 
-    # Apply nomic task prefix before cache lookup so prefixed/unprefixed
-    # texts cache separately.
     prefixed_texts = [_apply_prefix(t, is_query, model, query_prefix) for t in texts]
 
     lock = _get_lock()
+    loop = asyncio.get_running_loop()
 
-    # --- Phase 1: Check cache for each text ---
     with lock:
         _evict_expired()
         results: list[list[float] | None] = []
-        miss_indices: list[int] = []
-        miss_texts: list[str] = []
-        seen_in_batch: dict[str, int] = {}  # key -> first index in results
+        pending: list[tuple[int, str, asyncio.Future[list[float]]]] = []
+        new_miss_keys: list[str] = []
+        new_miss_texts: list[str] = []
+        new_miss_futures: list[asyncio.Future[list[float]]] = []
 
         for i, text in enumerate(prefixed_texts):
             key = _cache_key(text, model, api_base)
@@ -317,46 +276,58 @@ async def _generate_embeddings(
                 entry = None
             if entry is not None:
                 results.append(entry.embedding)
-            elif key in seen_in_batch:
-                # Duplicate within this batch — will be filled from first occurrence
-                results.append(None)
-                miss_indices.append(i)
             else:
+                future = _inflight.get(key)
+                if future is None:
+                    future = loop.create_future()
+                    _inflight[key] = future
+                    new_miss_keys.append(key)
+                    new_miss_texts.append(text)
+                    new_miss_futures.append(future)
                 results.append(None)
-                miss_indices.append(i)
-                miss_texts.append(text)
-                seen_in_batch[key] = i
+                pending.append((i, key, future))
 
-    # --- Phase 2: Fetch uncached embeddings ---
-    if miss_texts:
-        fresh = await _fetch_embeddings(
-            texts=miss_texts,
-            model=model,
-            api_base=api_base,
-            api_key=api_key,
-            max_retries=max_retries,
-            base_delay=base_delay,
-            expected_dim=expected_dim,
-        )
-
-        # --- Phase 3: Store results in cache ---
+    if new_miss_texts:
+        try:
+            fresh = await _fetch_embeddings(
+                texts=new_miss_texts,
+                model=model,
+                api_base=api_base,
+                api_key=api_key,
+                max_retries=max_retries,
+                base_delay=base_delay,
+                expected_dim=expected_dim,
+            )
+        except Exception as exc:
+            with lock:
+                for key, future in zip(new_miss_keys, new_miss_futures, strict=True):
+                    if _inflight.get(key) is future:
+                        del _inflight[key]
+                    if not future.done():
+                        future.set_exception(exc)
+                        future.add_done_callback(_consume_future_exception)
+            raise
         with lock:
             now = time.monotonic()
             expires_at = now + _CACHE_TTL
-
-            # Map miss_texts back to their embeddings
-            text_to_embedding: dict[str, list[float]] = {}
-            for text, emb in zip(miss_texts, fresh, strict=True):
-                key = _cache_key(text, model, api_base)
+            for key, emb, future in zip(new_miss_keys, fresh, new_miss_futures, strict=True):
                 _cache[key] = _CacheEntry(embedding=emb, expires_at=expires_at)
-                text_to_embedding[text] = emb
-
+                if _inflight.get(key) is future:
+                    del _inflight[key]
+                if not future.done():
+                    future.set_result(emb)
             _enforce_max_size()
 
-        # Fill in the None slots
-        for i in miss_indices:
-            text = prefixed_texts[i]
-            results[i] = text_to_embedding.get(text)
+    for i, key, future in pending:
+        embedding = await future
+        if expected_dim is not None and len(embedding) != expected_dim:
+            with lock:
+                _cache.pop(key, None)
+            raise EmbeddingGenerationError(
+                f"Embedding dimension mismatch for model={model}: "
+                f"expected {expected_dim}, got {len(embedding)}"
+            )
+        results[i] = embedding
 
     filled_results: list[list[float]] = []
     for result in results:

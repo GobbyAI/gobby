@@ -39,17 +39,6 @@ class MemoryCrudMixin(MemoryStoreBase):
         # This aligns with content_exists() which checks globally
         memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, normalized_content))
 
-        # Check if memory already exists to avoid duplicate insert errors
-        existing_row = self.db.fetchone("SELECT * FROM memories WHERE id = %s", (memory_id,))
-        if existing_row:
-            # Deterministic uuid5 collision: identical content is already stored.
-            # If dream GC soft-hid that row, reactivate it here — this is the one
-            # create path every backend/storage caller funnels through, so a
-            # hidden collision must restore rather than return an invisible row.
-            if existing_row["deleted_at"] is not None:
-                self.restore_memory(memory_id, when=now)
-            return self.get_memory(memory_id)
-
         # source_id proximity dedup: if the same session created a very similar
         # memory within the last 60 seconds, treat it as a duplicate
         if source_session_id:
@@ -66,20 +55,22 @@ class MemoryCrudMixin(MemoryStoreBase):
 
         tags_json = json.dumps(tags) if tags else None
 
+        inserted = False
         with self.db.transaction() as conn:
-            conn.execute(
+            cursor = conn.execute(
                 """
                 INSERT INTO memories (
                     id, project_id, memory_type, content, source_type,
                     source_session_id, access_count, tags,
                     created_at, updated_at
                 ) VALUES (%s, %s, %s, %s, %s, %s, 0, %s, %s, %s)
+                ON CONFLICT (id) DO NOTHING
                 """,
                 (
                     memory_id,
                     project_id,
                     memory_type,
-                    content,
+                    normalized_content,
                     source_type,
                     source_session_id,
                     tags_json,
@@ -87,8 +78,16 @@ class MemoryCrudMixin(MemoryStoreBase):
                     now,
                 ),
             )
+            inserted = cursor.rowcount == 1
 
-        self._notify_listeners()
+        existing_row = self.db.fetchone("SELECT * FROM memories WHERE id = %s", (memory_id,))
+        if existing_row and existing_row["deleted_at"] is not None:
+            self.restore_memory(memory_id, when=now)
+        if existing_row is None:
+            raise RuntimeError(f"Memory {memory_id} not found after creation")
+
+        if inserted:
+            self._notify_listeners()
         return self.get_memory(memory_id)
 
     def get_memory(
@@ -238,6 +237,7 @@ class MemoryCrudMixin(MemoryStoreBase):
         params: list[Any] = []
 
         if content is not None:
+            content = content.strip()
             updates.append("content = %s")
             params.append(content)
         if tags is not None:

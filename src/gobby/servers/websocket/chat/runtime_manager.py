@@ -72,10 +72,8 @@ class WebChatRuntimeManager:
                 oss_provider = codex_oss_provider_for_local_endpoint(endpoint)
             except ValueError:
                 continue
-            local_client = (
-                CodexAppServerClient(config_overrides=codex_oss_config_overrides(oss_provider))
-                if codex_client is not None
-                else None
+            local_client = CodexAppServerClient(
+                config_overrides=codex_oss_config_overrides(oss_provider)
             )
             self._codex_local_backends[endpoint_name] = CodexWebChatBackend(
                 client=local_client,

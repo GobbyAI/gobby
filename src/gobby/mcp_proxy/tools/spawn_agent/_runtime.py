@@ -79,10 +79,8 @@ def _build_spawn_success_response(
     tmux_socket_name: str | None,
     tmux_socket_path: str | None,
     code_index_preflight_warning: dict[str, str] | None,
-    reasoning: Any,
+    reasoning: Any | None,
 ) -> dict[str, Any]:
-    if not isinstance(reasoning, ReasoningPayload):
-        raise TypeError("spawn reasoning payload must implement to_dict()")
     response = {
         "success": True,
         "run_id": run_id,
@@ -91,17 +89,20 @@ def _build_spawn_success_response(
         "isolation": effective_isolation,
         "branch_name": isolation_ctx.branch_name,
         "worktree_id": isolation_ctx.worktree_id,
-        "worktree_path": isolation_ctx.cwd if effective_isolation == "worktree" else None,
+        "worktree_path": str(isolation_ctx.cwd) if effective_isolation == "worktree" else None,
         "clone_id": isolation_ctx.clone_id,
-        "clone_path": isolation_ctx.cwd if effective_isolation == "clone" else None,
+        "clone_path": str(isolation_ctx.cwd) if effective_isolation == "clone" else None,
         "base_commit_sha": base_commit_sha if isinstance(base_commit_sha, str) else None,
         "pid": spawn_result.pid,
         "tmux_session_name": tmux_session_name,
         "tmux_socket_name": tmux_socket_name,
         "tmux_socket_path": tmux_socket_path,
         "message": spawn_result.message,
-        "reasoning": reasoning.to_dict(),
     }
+    if reasoning is not None:
+        if not isinstance(reasoning, ReasoningPayload):
+            raise TypeError("spawn reasoning payload must implement to_dict()")
+        response["reasoning"] = reasoning.to_dict()
     if code_index_preflight_warning is not None:
         response["warnings"] = [code_index_preflight_warning]
     return response

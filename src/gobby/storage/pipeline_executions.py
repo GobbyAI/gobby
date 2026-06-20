@@ -626,9 +626,10 @@ class PipelineExecutionStorageMixin:
         Returns:
             Dict mapping status values to their counts.
         """
+        project_clause, project_params = self._project_predicate()
         rows = self.db.fetchall(
-            "SELECT status, COUNT(*) as cnt FROM pipeline_executions WHERE project_id = %s GROUP BY status",
-            (self.project_id,),
+            f"SELECT status, COUNT(*) as cnt FROM pipeline_executions WHERE {project_clause} GROUP BY status",  # nosec B608
+            project_params,
         )
         return {row["status"]: row["cnt"] for row in rows}
 

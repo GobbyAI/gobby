@@ -147,14 +147,12 @@ def test_embeddings_post_treats_single_input_as_one_item_batch(
     ]
 
 
-@pytest.mark.parametrize("field", ["provider", "project_id"])
-def test_embeddings_post_rejects_unsupported_routing_fields(field: str) -> None:
-    client = _client(_config())
+def test_embeddings_payload_schema_omits_unsupported_routing_fields() -> None:
+    schema = embeddings_routes.EmbeddingsPayload.model_json_schema()
 
-    response = client.post("/api/embeddings", json={"input": "alpha", field: "unsupported"})
-
-    assert response.status_code == 400
-    assert response.json()["detail"] == f"Unsupported embedding request field(s): {field}"
+    properties = schema["properties"]
+    assert "provider" not in properties
+    assert "project_id" not in properties
 
 
 def test_embeddings_post_preserves_batch_order_and_passes_is_query(

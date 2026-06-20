@@ -42,7 +42,7 @@ export function ChatInputPrimaryButton({
       ref={buttonRef}
       type="button"
       className={className}
-      onClick={micButton ? undefined : onClick}
+      onClick={onClick}
       onKeyDown={micButton ? onMicKeyDown : undefined}
       onKeyUp={micButton ? onMicKeyUp : undefined}
       onPointerDown={micButton ? onMicPointerDown : undefined}

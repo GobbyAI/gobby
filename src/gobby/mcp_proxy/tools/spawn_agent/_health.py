@@ -77,6 +77,9 @@ async def _deferred_tmux_health_check(
             socket_path=socket_path,
         )
         if not alive:
+            run = runner.run_storage.get(run_id)
+            if run is not None and run.status not in ("pending", "running"):
+                return
             logger.error(
                 "Agent %s tmux session %r exited immediately after spawn",
                 run_id,

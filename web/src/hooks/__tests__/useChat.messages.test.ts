@@ -322,6 +322,65 @@ describe("useChat message and conversation state", () => {
     expect(localStorage.getItem("gobby-fresh-chat-draft")).toBeNull();
   });
 
+  it("clears continuation state when the WebSocket disconnects before send", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    mockFetch.fn.mockImplementation(async (input: RequestInfo | URL) => {
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
+      if (url.includes("/api/sessions/source-session/messages?limit=100")) {
+        return new Response(JSON.stringify({ messages: [] }), {
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (url.includes("/api/sessions/source-session")) {
+        ws.simulateClose();
+        return new Response(
+          JSON.stringify({
+            session: {
+              id: "source-session",
+              project_id: "proj-source",
+              source: "codex",
+              model: "gpt-5.4",
+              chat_mode: "accept_edits",
+              usage_input_tokens: 0,
+              usage_output_tokens: 0,
+              usage_cache_read_tokens: 0,
+              usage_cache_creation_tokens: 0,
+              context_window: null,
+            },
+          }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      return new Response(JSON.stringify({ error: "unexpected request" }), {
+        status: 404,
+        headers: { "Content-Type": "application/json" },
+      });
+    });
+
+    await act(async () => {
+      await result.current.continueSessionInChat(
+        "source-session",
+        "proj-source",
+      );
+    });
+
+    expect(result.current.isContinuingSession).toBe(false);
+    expect(
+      ws.send.mock.calls
+        .map(([raw]) => JSON.parse(raw))
+        .some((msg) => msg.type === "continue_in_chat"),
+    ).toBe(false);
+  });
+
   it("switchProvider creates a new server-owned session with the requested provider for an existing chat", async () => {
     // After the session identity unification, switchProvider no longer sends
     // set_provider/set_agent via WebSocket. It calls ensureMainSession with

@@ -385,11 +385,13 @@ code_index:
   embedding_enabled: true
   graph_enabled: true
   qdrant_collection_prefix: code_symbols_
-  symbol_summary:
-    enabled: true
-    profile: feature_low
-    candidates: []
-    max_tokens: 100
+symbol_summary:
+  enabled: true
+  profile: feature_low
+  candidates: []
+  batch_size: 20
+  max_concurrency: 2
+  max_tokens: 100
 ```
 
 `databases.qdrant.collection_prefix` must match
