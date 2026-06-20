@@ -875,6 +875,86 @@ class TestModelExtraction:
         mock_ws.broadcast_token_event.assert_awaited_once()
 
     @pytest.mark.asyncio
+    async def test_duplicate_token_usage_refreshes_session_without_token_broadcast(
+        self, mock_db, monkeypatch
+    ) -> None:
+        """Duplicate token events still refresh session totals and context snapshots."""
+
+        class FakeTokenEventStore:
+            def __init__(self, _db: object) -> None:
+                pass
+
+            def get_session_totals(self, _session_id: str) -> dict[str, int]:
+                return {
+                    "input_tokens": 11392,
+                    "output_tokens": 498,
+                    "cache_creation_tokens": 0,
+                    "cache_read_tokens": 93568,
+                }
+
+            def record(self, _event: object) -> bool:
+                return False
+
+        monkeypatch.setattr(
+            "gobby.sessions.processor.TokenEventStore",
+            lambda _db: FakeTokenEventStore(_db),
+        )
+
+        mock_session_manager = MagicMock()
+        session = MagicMock()
+        session.project_id = "proj-1"
+        session.source = "codex"
+        session.context_window = None
+        session.model = None
+        mock_session_manager.get.return_value = session
+
+        mock_ws = MagicMock()
+        mock_ws.broadcast_token_event = AsyncMock()
+        mock_ws.broadcast_session_usage_updated = AsyncMock()
+
+        processor = SessionMessageProcessor(
+            mock_db,
+            websocket_server=mock_ws,
+            session_manager=mock_session_manager,
+        )
+        parsed_msg = ParsedMessage(
+            index=0,
+            role="assistant",
+            content="",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={"payload": {"info": {"model_context_window": 258400}}},
+            usage=TokenUsage(
+                input_tokens=11392,
+                output_tokens=498,
+                cache_creation_tokens=0,
+                cache_read_tokens=93568,
+            ),
+            model="gpt-5.5",
+            message_id="token-count-1",
+        )
+
+        await processor._persist_usage_events("session-1", [parsed_msg])
+
+        mock_session_manager.update_usage.assert_called_once_with(
+            session_id="session-1",
+            input_tokens=11392,
+            output_tokens=498,
+            cache_creation_tokens=0,
+            cache_read_tokens=93568,
+            context_window=258400,
+            model="gpt-5.5",
+        )
+        mock_session_manager.update_context_usage.assert_called_once()
+        usage_payload = mock_ws.broadcast_session_usage_updated.await_args.args[0]
+        assert usage_payload["usage_input_tokens"] == 11392
+        assert usage_payload["context_used_tokens"] == 104960
+        mock_ws.broadcast_token_event.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_persist_usage_events_ignores_session_lookup_db_errors(
         self,
         mock_db,

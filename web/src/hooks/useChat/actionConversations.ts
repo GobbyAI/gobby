@@ -104,9 +104,12 @@ export function useConversationActions(
       const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
       if (!preserveViewing) {
         setIsLoadingMessages(true);
-        fetch(`${baseUrl}/api/chat/${id}/messages?limit=100&after_seq=0`)
-          .then((res) => (res.ok ? res.json() : null))
-          .then((data) => {
+        void (async () => {
+          try {
+            const res = await fetch(
+              `${baseUrl}/api/chat/${id}/messages?limit=100&after_seq=0`,
+            );
+            const data = res.ok ? await res.json() : null;
             if (viewingSessionIdRef.current || dbSessionIdRef.current !== id) {
               return;
             }
@@ -122,23 +125,25 @@ export function useConversationActions(
             if (data.max_seq) {
               lastSeqRef.current = data.max_seq as number;
             }
-          })
-          .catch((error) =>
+          } catch (error) {
             chatLogger.error("Failed to fetch chat messages", {
               error,
+              conversationId: conversationIdRef.current,
+              provider: selectedProviderRef.current,
               sessionId: id,
-            }),
-          )
-          .finally(() => {
+            });
+          } finally {
             if (!viewingSessionIdRef.current && conversationIdRef.current === id) {
               setIsLoadingMessages(false);
             }
-          });
+          }
+        })();
       }
 
-      fetch(`${baseUrl}/api/sessions/${id}`)
-        .then((res) => (res.ok ? res.json() : null))
-        .then((data) => {
+      void (async () => {
+        try {
+          const res = await fetch(`${baseUrl}/api/sessions/${id}`);
+          const data = res.ok ? await res.json() : null;
           const s = data?.session;
           if (
             !s ||
@@ -157,20 +162,37 @@ export function useConversationActions(
               wsRef.current?.readyState === WebSocket.OPEN &&
               Date.now() - lastServerModeTimestampRef.current > 2000
             ) {
-              wsRef.current.send(
-                JSON.stringify({
-                  type: "set_mode",
+              try {
+                wsRef.current.send(
+                  JSON.stringify({
+                    type: "set_mode",
+                    mode: restored,
+                    conversation_id: id,
+                  }),
+                );
+              } catch (error) {
+                chatLogger.error("Failed to sync chat mode after switch", {
+                  error,
+                  conversationId: id,
                   mode: restored,
-                  conversation_id: id,
-                }),
-              );
+                  provider: selectedProviderRef.current,
+                  sessionId: id,
+                });
+              }
             }
             if (restored !== previousMode) {
               setCurrentMode(restored);
             }
           }
-        })
-        .catch(() => {});
+        } catch (error) {
+          chatLogger.error("Failed to fetch session metadata", {
+            error,
+            conversationId: conversationIdRef.current,
+            provider: selectedProviderRef.current,
+            sessionId: id,
+          });
+        }
+      })();
     },
     [
       applyMainSessionMeta,
@@ -393,23 +415,35 @@ export function useConversationActions(
         return "";
       }
 
-      socket.send(
-        JSON.stringify({
-          type: "continue_in_chat",
-          conversation_id: sourceDbSessionId,
-          source_session_id: sourceDbSessionId,
-          project_id:
-            projectId ??
-            (typeof sourceSession?.project_id === "string"
-              ? sourceSession.project_id
-              : undefined),
+      try {
+        socket.send(
+          JSON.stringify({
+            type: "continue_in_chat",
+            conversation_id: sourceDbSessionId,
+            source_session_id: sourceDbSessionId,
+            project_id:
+              projectId ??
+              (typeof sourceSession?.project_id === "string"
+                ? sourceSession.project_id
+                : undefined),
+            provider: continuationProvider,
+            model: continuationModel,
+            reasoning_effort: reasoningEffort,
+            chat_mode: sourceChatMode,
+            fallback_context: fallbackContext,
+          }),
+        );
+      } catch (error) {
+        chatLogger.error("Failed to send continue_in_chat", {
+          error,
           provider: continuationProvider,
-          model: continuationModel,
-          reasoning_effort: reasoningEffort,
-          chat_mode: sourceChatMode,
-          fallback_context: fallbackContext,
-        }),
-      );
+          sourceSessionId: sourceDbSessionId,
+        });
+        continuingSessionIdRef.current = null;
+        continuationRollbackRef.current = null;
+        setIsContinuingSession(false);
+        return "";
+      }
 
       return sourceDbSessionId;
     },

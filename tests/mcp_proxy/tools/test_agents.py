@@ -143,14 +143,6 @@ class TestCreateAgentsRegistry:
         assert schema is not None
         assert schema["inputSchema"]["properties"]["stop"]["type"] == "boolean"
 
-    def test_accepts_running_registry_for_backward_compat(self) -> None:
-        """Test that running_registry param is accepted but ignored."""
-        runner = MagicMock()
-
-        # Should not raise — param is accepted for backward compat
-        registry = create_agents_registry(runner, running_registry=MagicMock())
-        assert registry is not None
-
     def test_agents_py_under_monolith_limit(self) -> None:
         """Guard against growing the non-test agents module into a monolith."""
         repo_root = Path(__file__).parents[3]

@@ -42,7 +42,27 @@ _CODEX_PREAPPROVED_GOBBY_TOOLS = [
     "get_variable",
     "set_variable",
 ]
+_CODEX_REQUIRED_GOBBY_TOOLS = frozenset(
+    {
+        "list_mcp_servers",
+        "list_tools",
+        "get_tool_schema",
+        "call_tool",
+        "get_variable",
+        "set_variable",
+    }
+)
 _CODEX_GOBBY_MCP_TOOL_TIMEOUT_SEC: int = 360
+
+
+def _validate_codex_gobby_tool_allowlist() -> None:
+    configured = set(_CODEX_PREAPPROVED_GOBBY_TOOLS)
+    if configured != _CODEX_REQUIRED_GOBBY_TOOLS:
+        missing = ", ".join(sorted(_CODEX_REQUIRED_GOBBY_TOOLS - configured)) or "none"
+        extra = ", ".join(sorted(configured - _CODEX_REQUIRED_GOBBY_TOOLS)) or "none"
+        raise RuntimeError(
+            f"Codex Gobby MCP preapproval allowlist drifted (missing: {missing}; extra: {extra})"
+        )
 
 
 async def _spawn_terminal(
@@ -202,6 +222,7 @@ def _codex_mcp_config_overrides(project_path: str | None) -> list[str]:
     """Force Codex spawned in isolated workspaces to use the main repo MCP server."""
     if not project_path:
         return []
+    _validate_codex_gobby_tool_allowlist()
     args = ["run", "--project", project_path, "gobby", "mcp-server"]
     args_toml = "[" + ",".join(json.dumps(arg) for arg in args) + "]"
     overrides = [

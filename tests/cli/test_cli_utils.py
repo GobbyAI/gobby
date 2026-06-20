@@ -223,7 +223,7 @@ class TestResolveSessionId:
 
         with patch("gobby.storage.hub.runtime.open_runtime_hub_database", return_value=hub_db):
             with patch.object(hub_db, "close"):
-                result = resolve_session_id(None)
+                result = resolve_session_id(None, project_id=project.id)
                 assert result == session.id
 
     def test_no_active_session_raises(self, hub_db) -> None:

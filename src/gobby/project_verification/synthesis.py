@@ -7,7 +7,6 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from gobby.ai.text_generation import TextGenerationRequest, TextGenerationService
-from gobby.config.feature_base import candidate_labels
 from gobby.config.features import ProjectVerificationSynthesisConfig
 from gobby.project_verification.candidates import (
     CommandCandidate,
@@ -60,7 +59,7 @@ async def synthesize_verification_commands(
     request = TextGenerationRequest(
         prompt=_build_prompt(bundle, candidates, config.confidence_threshold),
         profile=str(config.profile),
-        candidates=candidate_labels(config.candidates),
+        candidates=tuple(config.candidates),
         system_prompt=SYSTEM_PROMPT,
         caller=CALLER,
         cwd=str(bundle.root),

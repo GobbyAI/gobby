@@ -230,6 +230,16 @@ class TestLinearSyncServiceImport:
         assert any("linear" in str(call) for call in calls)
 
     @pytest.mark.asyncio
+    async def test_import_issues_rejects_invalid_mcp_payload(
+        self, sync_service, mock_mcp_manager
+    ) -> None:
+        """import_linear_issues rejects malformed list_issues payloads."""
+        mock_mcp_manager.call_tool.return_value = {"issues": "not-a-list"}
+
+        with pytest.raises(LinearSyncError, match="Invalid Linear MCP response"):
+            await sync_service.import_linear_issues(team_id="team-123")
+
+    @pytest.mark.asyncio
     async def test_import_issues_creates_tasks(
         self, sync_service, mock_mcp_manager, mock_task_manager
     ):
@@ -913,6 +923,10 @@ class TestStateMapping:
     def test_map_linear_state_to_gobby_in_progress(self, sync_service) -> None:
         """map_linear_state_to_gobby converts In Progress to in_progress."""
         assert sync_service.map_linear_state_to_gobby("In Progress") == "in_progress"
+
+    def test_map_linear_state_to_gobby_in_review(self, sync_service) -> None:
+        """map_linear_state_to_gobby converts In Review to needs_review."""
+        assert sync_service.map_linear_state_to_gobby("In Review") == "needs_review"
 
     def test_map_linear_state_to_gobby_done(self, sync_service) -> None:
         """map_linear_state_to_gobby converts Done to closed."""

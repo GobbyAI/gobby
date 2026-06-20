@@ -47,6 +47,16 @@ def _encode_adjustment_value(value: Any) -> Any:
             "cache_creation_tokens": value.cache_creation_tokens,
             "cache_read_tokens": value.cache_read_tokens,
         }
+    if isinstance(value, bytes | bytearray | memoryview | set | frozenset):
+        logger.debug(
+            "Skipping non-serializable transcript index adjustment value",
+            extra={
+                "value_type": type(value).__name__,
+                "value_length": len(value),
+                "value_redacted": True,
+            },
+        )
+        return _SKIP_ADJUSTMENT_VALUE
     try:
         json.dumps(value)
     except TypeError:

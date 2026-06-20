@@ -300,18 +300,14 @@ class MemoryLifecycleService:
         content: str | None = None,
         tags: list[str] | None = None,
     ) -> Memory:
-        """Update an existing memory and re-embed if content changed."""
+        """Update mutable memory metadata."""
+        if content is not None:
+            raise ValueError("Memory content cannot be updated; create a new memory instead")
         result = self.storage.update_memory(
             memory_id=memory_id,
             content=content,
             tags=tags,
         )
-        if content is not None:
-            await self._embed_and_upsert(
-                memory_id,
-                content,
-                payload={"project_id": result.project_id},
-            )
         return result
 
     async def aupdate_memory(

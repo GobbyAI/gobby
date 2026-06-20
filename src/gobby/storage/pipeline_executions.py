@@ -131,7 +131,6 @@ class PipelineExecutionStorageMixin:
                 ExecutionStatus.COMPLETED,
                 ExecutionStatus.FAILED,
                 ExecutionStatus.CANCELLED,
-                ExecutionStatus.INTERRUPTED,
             )
             else None
         )

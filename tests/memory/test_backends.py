@@ -164,14 +164,15 @@ class TestStorageAdapter:
         backend = _make_adapter(hub_db)
 
         # Create a memory
-        record = await backend.create(content="Original content")
+        record = await backend.create(content="Original content", tags=["old"])
 
         # Update it
         updated = await backend.update(
             record.id,
-            content="Updated content",
+            tags=["new"],
         )
-        assert updated.content == "Updated content"
+        assert updated.content == "Original content"
+        assert updated.tags == ["new"]
 
     @pytest.mark.asyncio
     async def test_storage_adapter_delete(self, hub_db: HubDatabase):

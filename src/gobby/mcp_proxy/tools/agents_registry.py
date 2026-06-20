@@ -44,8 +44,6 @@ def create_agents_registry(
     hook_manager_resolver: Callable[[], HookManager | None] | None = None,
     completion_registry: CompletionEventRegistry | None = None,
     lifecycle_monitor: AgentLifecycleMonitor | None = None,
-    # Legacy parameter — ignored, kept for caller compatibility during migration
-    running_registry: object | None = None,
     daemon_config: DaemonConfig | None = None,
     code_index: CodeIndexContext | None = None,
     transcript_reader: TranscriptReader | None = None,
@@ -65,7 +63,6 @@ def create_agents_registry(
         hook_manager_resolver: Resolver for the active HookManager.
         completion_registry: CompletionEventRegistry for auto-subscribing parent sessions.
         lifecycle_monitor: Agent lifecycle monitor for termination cleanup.
-        running_registry: Legacy compatibility parameter, ignored.
         daemon_config: Daemon configuration for spawn_agent runtime defaults.
         code_index: Code index context exposed to spawn_agent.
         transcript_reader: Transcript reader for agent query payloads.

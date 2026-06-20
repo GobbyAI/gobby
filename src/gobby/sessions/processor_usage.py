@@ -5,6 +5,8 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
+import psycopg
+
 from gobby.sessions.processor_types import WINDOW_ONLY_CONTEXT_SOURCES, ProcessorHost
 from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.storage.token_events import (
@@ -32,7 +34,7 @@ class ProcessorUsageMixin:
 
         try:
             session = self.session_manager.get(session_id)
-        except (KeyError, ValueError):
+        except (KeyError, ValueError, psycopg.Error):
             logger.debug("Failed to load session %s for token usage", session_id, exc_info=True)
             return
         if session is None:
@@ -50,6 +52,7 @@ class ProcessorUsageMixin:
         latest_context_snapshot = None
         latest_event_at: str | None = None
         saw_insert = False
+        saw_token_usage = False
 
         for msg in messages:
             message_model = msg.model if isinstance(msg.model, str) and msg.model else None
@@ -71,6 +74,7 @@ class ProcessorUsageMixin:
                     )
                 continue
 
+            saw_token_usage = True
             event_at = canonicalize_event_timestamp(
                 msg.timestamp if isinstance(msg.timestamp, datetime) else datetime.now(UTC)
             )
@@ -96,21 +100,21 @@ class ProcessorUsageMixin:
                 event_at=event_at,
                 metadata=metadata,
             )
-            if not store.record(event):
-                continue
-
-            saw_insert = True
             latest_event_at = event_at
-            running_totals["input_tokens"] += usage.input_tokens
-            running_totals["output_tokens"] += usage.output_tokens
-            running_totals["cache_creation_tokens"] += usage.cache_creation_tokens
-            running_totals["cache_read_tokens"] += usage.cache_read_tokens
             latest_context_snapshot = self._snapshot_from_token_usage(
                 source=source,
                 context_window=event_context_window,
                 usage=usage,
                 model=event.model,
             )
+            if not store.record(event):
+                continue
+
+            saw_insert = True
+            running_totals["input_tokens"] += usage.input_tokens
+            running_totals["output_tokens"] += usage.output_tokens
+            running_totals["cache_creation_tokens"] += usage.cache_creation_tokens
+            running_totals["cache_read_tokens"] += usage.cache_read_tokens
             if self.websocket_server is not None:
                 await self.websocket_server.broadcast_token_event(
                     build_token_event_payload(
@@ -134,6 +138,20 @@ class ProcessorUsageMixin:
                 )
 
         if not saw_insert:
+            session_totals = running_totals
+            if saw_token_usage:
+                totals = store.get_session_totals(session_id)
+                if any(totals.values()) or not any(running_totals.values()):
+                    session_totals = totals
+                self.session_manager.update_usage(
+                    session_id=session_id,
+                    input_tokens=session_totals["input_tokens"],
+                    output_tokens=session_totals["output_tokens"],
+                    cache_creation_tokens=session_totals["cache_creation_tokens"],
+                    cache_read_tokens=session_totals["cache_read_tokens"],
+                    context_window=context_window,
+                    model=last_model,
+                )
             if latest_context_snapshot is not None:
                 self.session_manager.update_context_usage(session_id, latest_context_snapshot)
                 if self.websocket_server is not None:
@@ -143,7 +161,8 @@ class ProcessorUsageMixin:
                             project_id=project_id,
                             model=last_model,
                             context_window=latest_context_snapshot.context_window,
-                            totals=running_totals,
+                            totals=session_totals,
+                            updated_at=latest_event_at,
                             context_used_tokens=latest_context_snapshot.context_used_tokens,
                             context_usage_ratio=latest_context_snapshot.context_usage_ratio,
                             context_usage_source=latest_context_snapshot.source,

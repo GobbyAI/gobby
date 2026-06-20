@@ -81,25 +81,15 @@ def expand_env_vars(
         Content with variables expanded
     """
 
-    # Pass 1: Resolve $secret:NAME references (secrets-store-only)
-    if secret_resolver is not None:
+    protected_values: list[str] = []
 
-        def replace_secret(match: re.Match[str]) -> str:
-            name = match.group(1)
-            try:
-                value = secret_resolver(name)
-                if value is not None:
-                    return value
-            except Exception as e:
-                logger.debug(f"Secret resolver failed for '$secret:{name}': {e}")
-            logger.warning(
-                f"Unresolved secret '$secret:{name}' in config - not found in secrets store"
-            )
-            return match.group(0)
+    def protect_value(value: str) -> str:
+        placeholder = f"\0GOBBY_CONFIG_VALUE_{len(protected_values)}\0"
+        protected_values.append(value)
+        return placeholder
 
-        content = SECRET_REF_PATTERN.sub(replace_secret, content)
-
-    # Pass 2: Resolve ${VAR} references (secrets first, then env vars)
+    # Pass 1: Resolve ${VAR} references. Secret-derived values are protected so
+    # later passes never interpret their contents as config interpolation syntax.
     def replace_env(match: re.Match[str]) -> str:
         var_name = match.group(1)
         default_value = match.group(2)  # None if no default specified
@@ -109,7 +99,7 @@ def expand_env_vars(
             try:
                 secret_value = secret_resolver(var_name)
                 if secret_value is not None and secret_value != "":
-                    return secret_value
+                    return protect_value(secret_value)
             except Exception as e:
                 logger.debug(f"Secret resolver failed for '{var_name}': {e}")
 
@@ -129,7 +119,30 @@ def expand_env_vars(
         )
         return match.group(0)
 
-    return ENV_VAR_PATTERN.sub(replace_env, content)
+    content = ENV_VAR_PATTERN.sub(replace_env, content)
+
+    # Pass 2: Resolve $secret:NAME references (secrets-store-only).
+    if secret_resolver is not None:
+
+        def replace_secret(match: re.Match[str]) -> str:
+            name = match.group(1)
+            try:
+                value = secret_resolver(name)
+                if value is not None:
+                    return protect_value(value)
+            except Exception as e:
+                logger.debug(f"Secret resolver failed for '$secret:{name}': {e}")
+            logger.warning(
+                f"Unresolved secret '$secret:{name}' in config - not found in secrets store"
+            )
+            return match.group(0)
+
+        content = SECRET_REF_PATTERN.sub(replace_secret, content)
+
+    for index, value in enumerate(protected_values):
+        content = content.replace(f"\0GOBBY_CONFIG_VALUE_{index}\0", value)
+
+    return content
 
 
 def _ensure_config_mapping(data: Any, config_path: Path) -> dict[str, Any]:

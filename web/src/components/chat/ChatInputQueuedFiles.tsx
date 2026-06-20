@@ -1,3 +1,4 @@
+import type { JSX } from 'react'
 import type { QueuedFile } from '../../types/chat'
 import { formatAttachmentSize } from '../../lib/chatAttachments'
 import { PaperclipIcon } from './ChatInputIcons'
@@ -12,7 +13,7 @@ export function ChatInputQueuedFiles({
   files,
   onRemove,
   onRetry,
-}: ChatInputQueuedFilesProps) {
+}: ChatInputQueuedFilesProps): JSX.Element | null {
   if (files.length === 0) return null
 
   return (

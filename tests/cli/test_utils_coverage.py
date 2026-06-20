@@ -262,14 +262,21 @@ def test_stop_ui_server_stale_pid(tmp_path: Path) -> None:
     from gobby.cli.utils import stop_ui_server
 
     pid_file = tmp_path / "ui.pid"
-    pid_file.write_text("999999")
+    pid_file.write_text(json.dumps({"pid": 999999, "started_at": 100.0}))
+    deps = MagicMock()
+    deps.get_gobby_home.return_value = tmp_path
+    deps._is_process_alive.return_value = False
+    deps.logger = MagicMock()
 
     with (
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.cli.utils._is_process_alive", return_value=False),
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
+        patch("gobby.cli.utils_ui.facade", return_value=deps),
     ):
         result = stop_ui_server(quiet=False)
     assert result is True
+    deps.get_gobby_home.assert_called_once_with()
+    deps._is_process_alive.assert_called_once_with(999999)
+    assert not pid_file.exists()
 
 
 # --- stop_daemon ---
@@ -917,7 +924,7 @@ def test_kill_all_gobby_daemons_config_fallback() -> None:
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
-        patch("gobby.cli.utils.load_config", side_effect=Exception("no config")),
+        patch("gobby.cli.utils.load_config", side_effect=OSError("no config")),
         patch("gobby.cli.utils.psutil.process_iter", return_value=[]),
         patch("gobby.cli.utils.psutil.Process") as mock_proc_cls,
     ):
@@ -1123,7 +1130,7 @@ def test_kill_all_gobby_daemons_handles_process_error() -> None:
 
     fake_proc = MagicMock()
     fake_proc.pid = 77777
-    fake_proc.cmdline.side_effect = RuntimeError("unexpected")
+    fake_proc.cmdline.side_effect = OSError("unexpected")
 
     parent_proc = MagicMock()
     parent_proc.parent.return_value = None
@@ -1322,7 +1329,7 @@ def test_stop_ui_server_running_graceful(tmp_path: Path) -> None:
     from gobby.cli.utils import stop_ui_server
 
     pid_file = tmp_path / "ui.pid"
-    pid_file.write_text("12345")
+    pid_file.write_text(json.dumps({"pid": 12345, "started_at": 100.0}))
 
     # Process alive check: True initially, False in loop (breaks), False post-loop
     alive_calls = iter([True, False, False])
@@ -1330,6 +1337,11 @@ def test_stop_ui_server_running_graceful(tmp_path: Path) -> None:
     mock_parent.children.return_value = []
     mock_parent.cmdline.return_value = ["npm", "run", "dev"]
     mock_parent.cwd.return_value = str(tmp_path)
+    mock_parent.create_time.return_value = 100.0
+    deps = MagicMock()
+    deps.get_gobby_home.return_value = tmp_path
+    deps._is_process_alive.side_effect = lambda pid: next(alive_calls, False)
+    deps.logger = MagicMock()
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1337,15 +1349,11 @@ def test_stop_ui_server_running_graceful(tmp_path: Path) -> None:
             "gobby.cli.installers.service.get_service_status",
             return_value={"installed": False, "running": False},
         ),
-        patch("gobby.cli.utils.kill_all_gobby_daemons", return_value=0),
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch(
-            "gobby.cli.utils._is_process_alive", side_effect=lambda pid: next(alive_calls, False)
-        ),
-        patch("gobby.cli.utils.psutil.Process", return_value=mock_parent),
-        patch("gobby.cli.utils.os.kill") as mock_kill,
-        patch("gobby.cli.utils.time.sleep"),
-        patch("gobby.cli.utils.click.echo"),
+        patch("gobby.cli.utils_ui.facade", return_value=deps),
+        patch("gobby.cli.utils_ui.psutil.Process", return_value=mock_parent),
+        patch("gobby.cli.utils_ui.os.kill") as mock_kill,
+        patch("gobby.cli.utils_ui.time.sleep"),
+        patch("gobby.cli.utils_ui.click.echo"),
     ):
         result = stop_ui_server(quiet=False)
     assert result is True
@@ -1358,7 +1366,7 @@ def test_stop_ui_server_force_kill(tmp_path: Path) -> None:
     from gobby.cli.utils import stop_ui_server
 
     pid_file = tmp_path / "ui.pid"
-    pid_file.write_text("12345")
+    pid_file.write_text(json.dumps({"pid": 12345, "started_at": 100.0}))
 
     # Process never dies gracefully — need enough True responses for
     # initial check + 50 loop iterations + final alive check
@@ -1371,6 +1379,11 @@ def test_stop_ui_server_force_kill(tmp_path: Path) -> None:
     mock_parent.children.return_value = [mock_child]
     mock_parent.cmdline.return_value = ["npm", "run", "dev"]
     mock_parent.cwd.return_value = str(tmp_path)
+    mock_parent.create_time.return_value = 100.0
+    deps = MagicMock()
+    deps.get_gobby_home.return_value = tmp_path
+    deps._is_process_alive.side_effect = lambda pid: next(alive_iter, False)
+    deps.logger = MagicMock()
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1378,13 +1391,11 @@ def test_stop_ui_server_force_kill(tmp_path: Path) -> None:
             "gobby.cli.installers.service.get_service_status",
             return_value={"installed": False, "running": False},
         ),
-        patch("gobby.cli.utils.kill_all_gobby_daemons", return_value=0),
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.cli.utils._is_process_alive", side_effect=lambda pid: next(alive_iter, False)),
-        patch("gobby.cli.utils.psutil.Process", return_value=mock_parent),
-        patch("gobby.cli.utils.os.kill") as mock_kill,
-        patch("gobby.cli.utils.time.sleep"),
-        patch("gobby.cli.utils.click.echo"),
+        patch("gobby.cli.utils_ui.facade", return_value=deps),
+        patch("gobby.cli.utils_ui.psutil.Process", return_value=mock_parent),
+        patch("gobby.cli.utils_ui.os.kill") as mock_kill,
+        patch("gobby.cli.utils_ui.time.sleep"),
+        patch("gobby.cli.utils_ui.click.echo"),
     ):
         result = stop_ui_server(quiet=False)
     assert result is True
@@ -1400,15 +1411,22 @@ def test_stop_ui_server_process_lookup_error(tmp_path: Path) -> None:
     from gobby.cli.utils import stop_ui_server
 
     pid_file = tmp_path / "ui.pid"
-    pid_file.write_text("12345")
+    pid_file.write_text(json.dumps({"pid": 12345, "started_at": 100.0}))
+    deps = MagicMock()
+    deps.get_gobby_home.return_value = tmp_path
+    deps._is_process_alive.return_value = True
+    deps.logger = MagicMock()
 
     with (
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.cli.utils._is_process_alive", return_value=True),
-        patch("gobby.cli.utils.psutil.Process", side_effect=psutil.NoSuchProcess(12345)),
+        patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
+        patch("gobby.cli.utils_ui.facade", return_value=deps),
+        patch("gobby.cli.utils_ui.psutil.Process", side_effect=psutil.NoSuchProcess(12345)),
     ):
         result = stop_ui_server(quiet=False)
     assert result is True
+    deps.get_gobby_home.assert_called_once_with()
+    deps._is_process_alive.assert_called_once_with(12345)
+    assert not pid_file.exists()
 
 
 def test_stop_ui_server_generic_exception(tmp_path: Path) -> None:
@@ -1416,7 +1434,11 @@ def test_stop_ui_server_generic_exception(tmp_path: Path) -> None:
     from gobby.cli.utils import stop_ui_server
 
     pid_file = tmp_path / "ui.pid"
-    pid_file.write_text("12345")
+    pid_file.write_text(json.dumps({"pid": 12345, "started_at": 100.0}))
+    deps = MagicMock()
+    deps.get_gobby_home.return_value = tmp_path
+    deps._is_process_alive.return_value = True
+    deps.logger = MagicMock()
 
     with (
         patch.dict(os.environ, {"GOBBY_TEST_PROTECT": ""}),
@@ -1424,10 +1446,8 @@ def test_stop_ui_server_generic_exception(tmp_path: Path) -> None:
             "gobby.cli.installers.service.get_service_status",
             return_value={"installed": False, "running": False},
         ),
-        patch("gobby.cli.utils.kill_all_gobby_daemons", return_value=0),
-        patch("gobby.cli.utils.get_gobby_home", return_value=tmp_path),
-        patch("gobby.cli.utils._is_process_alive", return_value=True),
-        patch("gobby.cli.utils.psutil.Process", side_effect=OSError("unexpected")),
+        patch("gobby.cli.utils_ui.facade", return_value=deps),
+        patch("gobby.cli.utils_ui.psutil.Process", side_effect=OSError("unexpected")),
     ):
         result = stop_ui_server(quiet=False)
     assert result is False

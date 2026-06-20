@@ -90,11 +90,10 @@ async def test_update_memory(memory_manager):
 
     updated = await memory_manager.update_memory(
         memory.id,
-        content="Updated",
         tags=["new", "updated"],
     )
 
-    assert updated.content == "Updated"
+    assert updated.content == "Original"
     assert updated.tags == ["new", "updated"]
 
 

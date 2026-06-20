@@ -65,6 +65,7 @@ export function useMessageAction(
         })
           .then((sessionId) => {
             if (!sessionId) return;
+            if (continuingSessionIdRef.current) return;
             sendMessageRef.current?.(
               content,
               model,

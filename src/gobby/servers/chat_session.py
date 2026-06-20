@@ -174,10 +174,10 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
 
         resolved_model = endpoint.model
         try:
-            from gobby.agents.local_model import ensure_local_model
+            from gobby.agents.local_model import LocalModelError, ensure_local_model
 
             resolved_model = await ensure_local_model(endpoint, run_manager=None)
-        except Exception as e:
+        except LocalModelError as e:
             raise RuntimeError(f"Local model pre-flight failed: {e}") from e
 
         logger.info(
@@ -340,7 +340,14 @@ class ChatSession(ChatSessionHooksMixin, ChatSessionMessagesMixin, ChatSessionPe
 
         selection = resolve_local_generation_endpoint_selector(self._config, new_model)
         if selection is not None:
-            resolved_model = selection.endpoint_with_selected_model().model
+            endpoint = selection.endpoint_with_selected_model()
+            resolved_model = endpoint.model
+            try:
+                from gobby.agents.local_model import LocalModelError, ensure_local_model
+
+                resolved_model = await ensure_local_model(endpoint, run_manager=None)
+            except LocalModelError as e:
+                raise RuntimeError(f"Local model pre-flight failed: {e}") from e
         await self._client.set_model(resolved_model)
         self._model = new_model
 

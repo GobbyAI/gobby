@@ -1,4 +1,4 @@
-import type { KeyboardEventHandler, PointerEventHandler, RefObject } from 'react'
+import type { JSX, KeyboardEventHandler, PointerEventHandler, RefObject } from 'react'
 import { RecordIcon, SendIcon, StopIcon } from './ChatInputIcons'
 import type { ChatInputPrimaryButtonKind } from './useChatInputPrimaryAction'
 
@@ -34,7 +34,7 @@ export function ChatInputPrimaryButton({
   onMicPointerDown,
   onMicPointerMove,
   onMicPointerUp,
-}: ChatInputPrimaryButtonProps) {
+}: ChatInputPrimaryButtonProps): JSX.Element {
   const micButton = isMicButton(kind)
 
   return (

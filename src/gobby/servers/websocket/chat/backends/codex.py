@@ -18,6 +18,7 @@ from gobby.adapters.codex_impl.item_normalization import (
     build_pre_tool_lifecycle_payload,
     parse_mcp_arguments,
 )
+from gobby.agents.local_model import LocalModelError, ensure_local_model
 from gobby.agents.sandbox import CodexSandboxResolver, SandboxConfig
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk, ToolCallEvent, ToolResultEvent
@@ -418,8 +419,6 @@ class CodexWebChatBackend:
             raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
 
         if self._local_endpoint is not None:
-            from gobby.agents.local_model import LocalModelError, ensure_local_model
-
             local_endpoint = self._local_endpoint
             if session._model:
                 local_endpoint = local_endpoint.model_copy(update={"model": session._model})

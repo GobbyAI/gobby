@@ -22,7 +22,6 @@ from gobby.config.app import (
 )
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.bootstrap import BootstrapConfigError
-from gobby.config.code_index import CodeIndexConfig
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_DIM_KEY,
@@ -208,6 +207,24 @@ class TestExpandEnvVars:
 
         result = expand_env_vars("key: $secret:API_KEY", secret_resolver=resolver)
         assert result == "key: my_secret"
+
+    def test_secret_values_are_not_reexpanded(self) -> None:
+        """Secret values are returned as-is instead of being interpolated again."""
+
+        def resolver(name: str) -> str | None:
+            if name == "API_KEY":
+                return "$secret:OTHER ${ENV_KEY}"
+            if name == "OTHER":
+                return "other_secret"
+            return None
+
+        with patch.dict(os.environ, {"ENV_KEY": "env_value"}):
+            result = expand_env_vars(
+                "env: ${API_KEY}, direct: $secret:API_KEY",
+                secret_resolver=resolver,
+            )
+
+        assert result == "env: $secret:OTHER ${ENV_KEY}, direct: $secret:OTHER ${ENV_KEY}"
 
     def test_secret_ref_no_env_fallback(self) -> None:
         """Test $secret:NAME does NOT fall back to env vars."""
@@ -422,27 +439,6 @@ class TestDaemonConfig:
         """Stale top-level conductor config should fail loudly."""
         with pytest.raises(ValidationError, match="conductor config has been removed"):
             DaemonConfig(conductor={"enabled": False})
-
-
-def test_code_index_legacy_summary_keys_migrate_to_symbol_summary() -> None:
-    config = CodeIndexConfig.model_validate(
-        {
-            "summary_enabled": False,
-            "summary_batch_size": 7,
-            "summary_profile": "feature_high",
-            "summary_candidates": [],
-            "summary_max_concurrency": 3,
-            "summary_max_tokens": 88,
-            "symbol_summary": {"max_tokens": 99},
-        }
-    )
-
-    assert config.symbol_summary.enabled is False
-    assert config.symbol_summary.batch_size == 7
-    assert config.symbol_summary.profile == FeatureProfile.HIGH
-    assert config.symbol_summary.candidates == []
-    assert config.symbol_summary.max_concurrency == 3
-    assert config.symbol_summary.max_tokens == 99
 
 
 class TestLoadYaml:

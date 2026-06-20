@@ -543,12 +543,11 @@ class TestUpdateMemory:
 
     @pytest.mark.asyncio
     async def test_update_memory_content(self, memory_manager):
-        """Test updating memory content."""
+        """Test updating memory content is rejected."""
         memory = await memory_manager.create_memory(content="Original")
 
-        updated = await memory_manager.update_memory(memory.id, content="Updated")
-
-        assert updated.content == "Updated"
+        with pytest.raises(ValueError, match="cannot be updated"):
+            await memory_manager.update_memory(memory.id, content="Updated")
 
     @pytest.mark.asyncio
     async def test_update_memory_tags(self, memory_manager):
@@ -563,7 +562,7 @@ class TestUpdateMemory:
     async def test_update_memory_not_found_raises(self, memory_manager):
         """Test updating non-existent memory raises ValueError."""
         with pytest.raises(ValueError, match="not found"):
-            await memory_manager.update_memory("mm-nonexistent", content="New")
+            await memory_manager.update_memory("mm-nonexistent", tags=["new"])
 
 
 # =============================================================================
@@ -777,7 +776,7 @@ class TestLifecycleService:
         db,
         memory_config,
     ) -> None:
-        """Lifecycle service handles vector side effects without manager logic."""
+        """Lifecycle service handles mutable metadata without vector churn."""
         mock_vs = MagicMock()
         mock_vs.upsert = AsyncMock()
         mock_vs.delete = AsyncMock()
@@ -797,13 +796,14 @@ class TestLifecycleService:
         )
         updated = await manager._lifecycle_service.update_memory(
             memory.id,
-            content="Updated lifecycle service memory",
+            tags=["updated"],
         )
         deleted = await manager._lifecycle_service.delete_memory(memory.id)
 
-        assert updated.content == "Updated lifecycle service memory"
+        assert updated.content == "Lifecycle service memory"
+        assert updated.tags == ["updated"]
         assert deleted is True
-        assert mock_vs.upsert.await_count == 2
+        assert mock_vs.upsert.await_count == 1
         mock_vs.delete.assert_awaited_once_with(memory.id)
 
 
@@ -975,10 +975,10 @@ class TestAUpdateMemory:
 
     @pytest.mark.asyncio
     async def test_aupdate_content(self, memory_manager) -> None:
-        """aupdate_memory updates content."""
+        """aupdate_memory rejects content updates."""
         memory = await memory_manager.create_memory(content="Original async")
-        updated = await memory_manager.aupdate_memory(memory.id, content="Updated async")
-        assert updated.content == "Updated async"
+        with pytest.raises(ValueError, match="cannot be updated"):
+            await memory_manager.aupdate_memory(memory.id, content="Updated async")
 
     @pytest.mark.asyncio
     async def test_aupdate_tags(self, memory_manager) -> None:

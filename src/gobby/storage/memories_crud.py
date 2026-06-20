@@ -251,8 +251,7 @@ class MemoryCrudMixin(MemoryStoreBase):
             content = content.strip()
             if not content:
                 raise ValueError("Memory content cannot be empty")
-            updates.append("content = %s")
-            params.append(content)
+            raise ValueError("Memory content cannot be updated; create a new memory instead")
         if tags is not None:
             updates.append("tags = %s")
             params.append(json.dumps(tags))

@@ -43,12 +43,12 @@ def test_get_memory(memory_manager) -> None:
 
 def test_update_memory(memory_manager) -> None:
     created = memory_manager.create_memory(content="Original")
-    updated = memory_manager.update_memory(
-        created.id,
-        content="Updated",
-    )
-    assert updated.content == "Updated"
-    assert updated.updated_at >= created.updated_at
+    with pytest.raises(ValueError, match="cannot be updated"):
+        memory_manager.update_memory(
+            created.id,
+            content="Updated",
+        )
+    assert memory_manager.get_memory(created.id).content == "Original"
 
 
 def test_rescope_memory_to_global_does_not_bump_updated_at(memory_manager, db) -> None:
@@ -138,9 +138,9 @@ def test_add_change_listener(memory_manager) -> None:
     memory_manager.create_memory(content="Listener test")
     assert call_count[0] == 1
 
-    # Listener should be called on update
+    # Listener should be called on mutable metadata update
     memories = memory_manager.list_memories()
-    memory_manager.update_memory(memories[0].id, content="Updated content")
+    memory_manager.update_memory(memories[0].id, tags=["updated"])
     assert call_count[0] == 2
 
     # Listener should be called on delete
@@ -184,14 +184,15 @@ def test_create_memory_persists_normalized_content(memory_manager) -> None:
     assert memory.content == "Normalized content"
 
 
-def test_update_memory_persists_normalized_content(memory_manager) -> None:
-    """update_memory stores stripped content so exact-content lookup stays consistent."""
+def test_update_memory_rejects_content_mutation(memory_manager) -> None:
+    """update_memory rejects content changes to preserve content-derived IDs."""
     memory = memory_manager.create_memory(content="Before")
 
-    updated = memory_manager.update_memory(memory.id, content="  After  ")
+    with pytest.raises(ValueError, match="cannot be updated"):
+        memory_manager.update_memory(memory.id, content="  After  ")
 
-    assert updated.content == "After"
-    assert memory_manager.get_memory_by_content("After").id == memory.id
+    assert memory_manager.get_memory(memory.id).content == "Before"
+    assert memory_manager.get_memory_by_content("Before").id == memory.id
 
 
 def test_create_memory_dedup_across_projects(memory_manager, db) -> None:
@@ -300,10 +301,9 @@ def test_update_memory_individual_fields(memory_manager) -> None:
         tags=["original"],
     )
 
-    # Update only content
-    updated = memory_manager.update_memory(memory.id, content="New content")
-    assert updated.content == "New content"
-    assert updated.tags == ["original"]
+    with pytest.raises(ValueError, match="cannot be updated"):
+        memory_manager.update_memory(memory.id, content="New content")
+    assert memory_manager.get_memory(memory.id).content == "Original content"
 
     # Update only tags
     updated = memory_manager.update_memory(memory.id, tags=["new", "tags"])
@@ -321,7 +321,7 @@ def test_update_memory_no_changes(memory_manager) -> None:
 def test_update_memory_not_found(memory_manager) -> None:
     """Test update_memory raises error for non-existent memory."""
     with pytest.raises(ValueError, match="Memory mm-nonexistent not found"):
-        memory_manager.update_memory("mm-nonexistent", content="Update")
+        memory_manager.update_memory("mm-nonexistent", tags=["updated"])
 
 
 def test_delete_memory_not_found(memory_manager) -> None:

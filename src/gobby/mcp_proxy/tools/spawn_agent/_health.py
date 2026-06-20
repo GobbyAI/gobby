@@ -5,7 +5,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
-from typing import Any
+from typing import Any, Protocol
 
 import psycopg
 
@@ -16,6 +16,23 @@ logger = logging.getLogger(__name__)
 
 # Track fire-and-forget health check tasks for clean shutdown
 _health_check_tasks: set[asyncio.Task[None]] = set()
+
+
+class _RunStorageForHealth(Protocol):
+    def get(self, run_id: str) -> Any | None: ...
+
+    def fail(
+        self,
+        run_id: str,
+        error: str,
+        tool_calls_count: int = 0,
+        turns_used: int = 0,
+    ) -> Any | None: ...
+
+
+class _RunnerWithRunStorage(Protocol):
+    @property
+    def run_storage(self) -> _RunStorageForHealth: ...
 
 
 def cancel_health_checks() -> None:
@@ -62,7 +79,7 @@ async def _check_tmux_session_alive(
 
 
 async def _deferred_tmux_health_check(
-    runner: Any,
+    runner: _RunnerWithRunStorage,
     run_id: str,
     tmux_session_name: str,
     socket_name: str | None,
@@ -99,7 +116,7 @@ async def _deferred_tmux_health_check(
 
 
 def schedule_tmux_health_check(
-    runner: Any,
+    runner: _RunnerWithRunStorage,
     run_id: str,
     tmux_session_name: str,
     socket_name: str | None,

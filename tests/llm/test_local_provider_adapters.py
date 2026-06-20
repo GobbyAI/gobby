@@ -8,6 +8,7 @@ from unittest.mock import patch
 
 import httpx
 import pytest
+from openai import BadRequestError
 
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm import local_provider_adapters as adapters
@@ -156,7 +157,11 @@ async def test_openai_compatible_json_retries_without_unsupported_reasoning_effo
         async def create(self, **kwargs: Any) -> Any:
             self.calls.append(kwargs)
             if len(self.calls) == 1:
-                raise RuntimeError("response_format not supported")
+                raise BadRequestError(
+                    message="response_format json_object not supported",
+                    response=httpx.Response(400, request=httpx.Request("POST", "http://test")),
+                    body=None,
+                )
             if "reasoning_effort" in kwargs:
                 raise RuntimeError("reasoning_effort unsupported")
             return SimpleNamespace(

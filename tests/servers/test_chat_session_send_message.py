@@ -1,6 +1,6 @@
 """Tests for ChatSession send_message and related client lifecycle methods."""
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 from claude_agent_sdk import (
@@ -15,6 +15,7 @@ from claude_agent_sdk import (
 )
 from claude_agent_sdk.types import StreamEvent
 
+from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm.claude_models import (
     DoneEvent,
     TextChunk,
@@ -297,18 +298,34 @@ class TestChatSessionSendMessage:
 
     @pytest.mark.asyncio
     async def test_switch_model_uses_selected_local_model(self, session: ChatSession) -> None:
-        endpoint = MagicMock()
-        endpoint.model = "qwen3-coder:latest"
-        selection = MagicMock()
-        selection.endpoint_with_selected_model.return_value = endpoint
+        endpoint = LocalGenerationEndpointConfig(
+            provider="openai-compatible",
+            api_base="http://localhost:1234/v1",
+            model="qwen3-coder:latest",
+        )
 
-        with patch(
-            "gobby.ai.local_endpoints.resolve_local_generation_endpoint_selector",
-            return_value=selection,
+        class Selection:
+            def __init__(self) -> None:
+                self.calls = 0
+
+            def endpoint_with_selected_model(self) -> LocalGenerationEndpointConfig:
+                self.calls += 1
+                return endpoint
+
+        selection = Selection()
+        ensure_local_model = AsyncMock(return_value="qwen3-coder:latest")
+
+        with (
+            patch(
+                "gobby.ai.local_endpoints.resolve_local_generation_endpoint_selector",
+                return_value=selection,
+            ),
+            patch("gobby.agents.local_model.ensure_local_model", ensure_local_model),
         ):
             await session.switch_model("local:lmstudio")
 
-        selection.endpoint_with_selected_model.assert_called_once_with()
+        assert selection.calls == 1
+        ensure_local_model.assert_awaited_once_with(endpoint, run_manager=None)
         session._client.set_model.assert_awaited_once_with("qwen3-coder:latest")
         assert session.model == "local:lmstudio"
 

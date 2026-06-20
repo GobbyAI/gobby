@@ -765,7 +765,7 @@ class TestCodexBackend:
         session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
         session.project_path = "/tmp/project"
         with patch(
-            "gobby.agents.local_model.ensure_local_model",
+            "gobby.servers.websocket.chat.backends.codex.ensure_local_model",
             new=AsyncMock(return_value="ollama/qwen3-coder"),
         ) as ensure_local_model:
             await session.start(model="ollama/qwen3-coder")
@@ -808,7 +808,7 @@ class TestCodexBackend:
 
         with (
             patch(
-                "gobby.agents.local_model.ensure_local_model",
+                "gobby.servers.websocket.chat.backends.codex.ensure_local_model",
                 new=AsyncMock(side_effect=failure),
             ) as ensure_local_model,
             pytest.raises(RuntimeError) as exc_info,

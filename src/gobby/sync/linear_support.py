@@ -106,14 +106,24 @@ class LinearNotFoundError(LinearSyncError):
 
 def _extract_records(result: Any, key: str) -> list[dict[str, Any]]:
     if isinstance(result, list):
-        return [item for item in result if isinstance(item, dict)]
+        if not all(isinstance(item, dict) for item in result):
+            raise LinearSyncError(f"Invalid Linear MCP response: {key} contains non-object items")
+        return cast(list[dict[str, Any]], result)
     if not isinstance(result, dict):
-        return []
+        raise LinearSyncError(
+            f"Invalid Linear MCP response for {key}: expected object, got {type(result).__name__}"
+        )
 
     value = result.get(key) or result.get("nodes") or result.get("items")
     if isinstance(value, list):
-        return [item for item in value if isinstance(item, dict)]
-    return []
+        if not all(isinstance(item, dict) for item in value):
+            raise LinearSyncError(f"Invalid Linear MCP response: {key} contains non-object items")
+        return cast(list[dict[str, Any]], value)
+    if value is None:
+        return []
+    raise LinearSyncError(
+        f"Invalid Linear MCP response for {key}: expected list, got {type(value).__name__}"
+    )
 
 
 def _extract_record(result: Any, key: str) -> dict[str, Any]:
@@ -121,8 +131,15 @@ def _extract_record(result: Any, key: str) -> dict[str, Any]:
         value = result.get(key)
         if isinstance(value, dict):
             return cast(dict[str, Any], value)
+        if value is not None:
+            raise LinearSyncError(
+                f"Invalid Linear MCP response for {key}: expected object, "
+                f"got {type(value).__name__}"
+            )
         return cast(dict[str, Any], result)
-    return {}
+    raise LinearSyncError(
+        f"Invalid Linear MCP response for {key}: expected object, got {type(result).__name__}"
+    )
 
 
 def _gobby_seq_from_linear_title(title: str) -> int | None:
@@ -200,7 +217,7 @@ def map_linear_state_to_gobby(linear_state: str) -> str:
         "In Progress": "in_progress",
         "Done": "closed",
         "Canceled": "escalated",
-        "In Review": "in_progress",
+        "In Review": "needs_review",
         "Backlog": "ready",
         "Triage": "ready",
     }

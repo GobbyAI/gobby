@@ -33,6 +33,24 @@ def _observe_facade() -> Any:
     return session_observe
 
 
+def _tmux_context_and_pane(session: Any) -> tuple[dict[str, Any], Any | None]:
+    context = (
+        session.terminal_context
+        if hasattr(session, "terminal_context") and isinstance(session.terminal_context, dict)
+        else {}
+    )
+    pane = context.get("tmux_pane")
+    if pane:
+        return context, pane
+
+    metadata = (
+        session.metadata
+        if hasattr(session, "metadata") and isinstance(session.metadata, dict)
+        else {}
+    )
+    return context, metadata.get("terminal_tmux_pane")
+
+
 async def _resolve_agent_name_for_session(
     mixin: SessionControlMixin,
     session_id: str,
@@ -307,15 +325,7 @@ async def handle_send_to_cli_session(
 
     # Try tmux delivery for idle sessions
     delivered_via_tmux = False
-    ctx: dict[str, Any] | None = None
-    tmux_pane = None
-    if hasattr(session, "terminal_context") and session.terminal_context:
-        ctx = session.terminal_context if isinstance(session.terminal_context, dict) else {}
-        tmux_pane = ctx.get("tmux_pane")
-
-    if not tmux_pane and hasattr(session, "metadata") and session.metadata:
-        meta = session.metadata if isinstance(session.metadata, dict) else {}
-        tmux_pane = meta.get("terminal_tmux_pane")
+    ctx, tmux_pane = _tmux_context_and_pane(session)
 
     if tmux_pane:
         try:

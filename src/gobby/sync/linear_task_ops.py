@@ -64,8 +64,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 tool_name="list_issues",
                 arguments=args,
             )
-            issues = result.get("issues", [])
-        except Exception:
+            issues = _extract_records(result, "issues")
+        except LinearSyncError:
             client = await self._get_graphql_client()
             if not client:
                 raise
@@ -261,12 +261,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
             arguments=arguments,
         )
 
-        if not isinstance(result, dict):
-            raise LinearSyncError(
-                f"Invalid response from Linear MCP when creating issue for task "
-                f"{task_id}: expected dict, got {type(result).__name__}"
-            )
-        result_dict = cast(dict[str, Any], result)
+        result_dict = self._extract_created_issue(result, task_id)
         issue_id = result_dict.get("id")
         if issue_id:
             self.task_manager.update_task(
@@ -406,8 +401,8 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 tool_name="list_issues",
                 arguments=self._issue_list_args(effective_team_id),
             )
-            issues = result.get("issues", [])
-        except Exception as e:
+            issues = _extract_records(result, "issues")
+        except LinearSyncError as e:
             client = await self._get_graphql_client()
             if not client:
                 _linear_fetch_failure_limiter.log_failure(logger, e)
@@ -501,6 +496,22 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
     def map_gobby_state_to_linear(self, gobby_state: str) -> str:
         """Map gobby task state to Linear issue state name."""
         return _map_gobby_state_to_linear(gobby_state)
+
+    def _extract_created_issue(self, result: Any, task_id: str) -> dict[str, Any]:
+        if isinstance(result, dict):
+            issue = result.get("issue")
+            if isinstance(issue, dict):
+                return cast(dict[str, Any], issue)
+            if issue is not None:
+                raise LinearSyncError(
+                    f"Invalid response from Linear MCP when creating issue for task "
+                    f"{task_id}: issue must be an object, got {type(issue).__name__}"
+                )
+            return cast(dict[str, Any], result)
+        raise LinearSyncError(
+            f"Invalid response from Linear MCP when creating issue for task "
+            f"{task_id}: expected dict, got {type(result).__name__}"
+        )
 
     def _project_gobby_state_for_linear(self, task: Any) -> str:
         return project_gobby_state_for_linear(task)

@@ -41,7 +41,6 @@
   background: color-mix(in srgb, var(--color-error) 20%, transparent);
   border-color: var(--color-error);
   color: var(--color-error);
-  animation: pulse-recording 1.5s ease-in-out infinite;
 }
 
 .ptt-button.transcribing {
@@ -88,7 +87,6 @@
   height: 12px;
   background: var(--accent);
   border-radius: 2px;
-  animation: speaking-wave 1.2s ease-in-out infinite;
 }
 
 .speaking-bar:nth-child(2) {
@@ -142,7 +140,6 @@
   height: 8px;
   border-radius: 50%;
   background: var(--accent);
-  animation: listening-pulse-anim 2s ease-in-out infinite;
 }
 
 @keyframes listening-pulse-anim {
@@ -154,6 +151,20 @@
   50% {
     opacity: 1;
     transform: scale(1.1);
+  }
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  .ptt-button.recording {
+    animation: pulse-recording 1.5s ease-in-out infinite;
+  }
+
+  .speaking-bar {
+    animation: speaking-wave 1.2s ease-in-out infinite;
+  }
+
+  .listening-pulse {
+    animation: listening-pulse-anim 2s ease-in-out infinite;
   }
 }
 

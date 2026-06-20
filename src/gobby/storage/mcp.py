@@ -18,6 +18,6 @@ class LocalMCPManager(
 
     db: HubDatabase
 
-    def __init__(self, db: HubDatabase):
+    def __init__(self, db: HubDatabase) -> None:
         """Initialize with database connection."""
         self.db = db

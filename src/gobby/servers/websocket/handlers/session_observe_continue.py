@@ -221,7 +221,7 @@ async def handle_continue_in_chat(
     if sdk_resume_id and source_session:
         transcript_path = source_session.transcript_path
         if transcript_path and source_session.external_id:
-            original_exists = await asyncio.to_thread(lambda: Path(transcript_path).is_file())
+            original_exists = await asyncio.to_thread(Path(transcript_path).is_file)
             if not original_exists:
                 restored = await asyncio.to_thread(
                     restore_transcript,

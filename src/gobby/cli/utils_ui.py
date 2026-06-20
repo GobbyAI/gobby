@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 import os
 import signal
@@ -18,6 +19,40 @@ from gobby.cli.utils_runtime import facade
 from gobby.config.app import DaemonConfig
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.config.ui import UIConfig
+
+
+def _read_ui_pid_record(pid_file: Path) -> tuple[int, float | None]:
+    raw = pid_file.read_text(encoding="utf-8").strip()
+    try:
+        data = json.loads(raw)
+    except json.JSONDecodeError:
+        return int(raw), None
+    if not isinstance(data, dict):
+        raise ValueError("UI PID file must contain an object")
+    pid = data.get("pid")
+    if not isinstance(pid, int) or isinstance(pid, bool):
+        raise ValueError("UI PID file is missing an integer pid")
+    started_at = data.get("started_at")
+    if started_at is not None and not isinstance(started_at, int | float):
+        raise ValueError("UI PID file started_at must be numeric")
+    return pid, float(started_at) if started_at is not None else None
+
+
+def _write_ui_pid_record(pid_file: Path, process: subprocess.Popen[bytes]) -> None:
+    proc = psutil.Process(process.pid)
+    pid_file.write_text(
+        json.dumps({"pid": process.pid, "started_at": proc.create_time()}),
+        encoding="utf-8",
+    )
+
+
+def _process_start_matches(proc: psutil.Process, started_at: float | None) -> bool:
+    if started_at is None:
+        return True
+    try:
+        return bool(abs(proc.create_time() - started_at) < 0.001)
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
+        return False
 
 
 def find_web_dir(
@@ -214,8 +249,7 @@ def spawn_ui_server(
             return None
 
         pid_file = cast(Path, deps.get_gobby_home() / "ui.pid")
-        with open(pid_file, "w") as file:
-            file.write(str(process.pid))
+        _write_ui_pid_record(pid_file, process)
 
         return int(process.pid)
 
@@ -240,8 +274,7 @@ def stop_ui_server(quiet: bool = False) -> bool:
         return True
 
     try:
-        with open(pid_file) as file:
-            pid = int(file.read().strip())
+        pid, started_at = _read_ui_pid_record(pid_file)
     except (OSError, ValueError) as exc:
         if not quiet:
             deps.logger.debug("Error reading UI PID file: %s", exc)
@@ -256,6 +289,13 @@ def stop_ui_server(quiet: bool = False) -> bool:
 
     try:
         parent = psutil.Process(pid)
+        if not _process_start_matches(parent, started_at):
+            if not quiet:
+                deps.logger.warning(
+                    "Refusing to stop PID %s from ui.pid: process start time does not match",
+                    pid,
+                )
+            return False
         if not _is_gobby_ui_process(parent):
             if not quiet:
                 deps.logger.warning(

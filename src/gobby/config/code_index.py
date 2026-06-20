@@ -148,25 +148,10 @@ class CodeIndexConfig(BaseModel):
 
     @model_validator(mode="before")
     @classmethod
-    def migrate_legacy_keys(cls, data: object) -> object:
-        """Normalize legacy daemon-owned code-index config keys."""
+    def drop_removed_keys(cls, data: object) -> object:
+        """Drop removed daemon-owned code-index config keys."""
         if isinstance(data, dict):
             updated = dict(data)
             updated.pop("sync_worker_vector_batch_size", None)
-            legacy_summary = {
-                "enabled": updated.pop("summary_enabled", None),
-                "batch_size": updated.pop("summary_batch_size", None),
-                "profile": updated.pop("summary_profile", None),
-                "candidates": updated.pop("summary_candidates", None),
-                "max_concurrency": updated.pop("summary_max_concurrency", None),
-                "max_tokens": updated.pop("summary_max_tokens", None),
-            }
-            migrated = {key: value for key, value in legacy_summary.items() if value is not None}
-            if migrated:
-                symbol_summary = updated.get("symbol_summary")
-                if isinstance(symbol_summary, dict):
-                    updated["symbol_summary"] = {**migrated, **symbol_summary}
-                else:
-                    updated["symbol_summary"] = migrated
             return updated
         return data

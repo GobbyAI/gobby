@@ -84,7 +84,7 @@ def kill_all_gobby_daemons() -> int:
         config = deps.load_config()
         http_port = int(config.daemon_port)
         ws_port = int(config.websocket.port)
-    except Exception:
+    except (AttributeError, OSError, TypeError, ValueError):
         http_port = 60887
         ws_port = DEFAULT_WEBSOCKET_PORT
 
@@ -148,10 +148,7 @@ def kill_all_gobby_daemons() -> int:
                 from gobby.shutdown_intent import ShutdownIntent
 
                 try:
-                    try:
-                        write_shutdown_source("cli_kill_all", intent=ShutdownIntent.STOP)
-                    except Exception as exc:
-                        deps.logger.warning("Failed to write shutdown source: %s", exc)
+                    write_shutdown_source("cli_kill_all", intent=ShutdownIntent.STOP)
                     proc.send_signal(signal.SIGTERM)
                     proc.wait(timeout=5)
                     click.echo(f"Gracefully stopped PID {proc.pid}")
@@ -173,7 +170,7 @@ def kill_all_gobby_daemons() -> int:
 
         except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
             pass
-        except Exception as exc:
+        except OSError as exc:
             click.echo(f"Warning: Error checking process {proc.pid}: {exc}", err=True)
 
     return killed_count

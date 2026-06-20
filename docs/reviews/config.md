@@ -115,12 +115,12 @@
 - **Minimal fix:** Reuse `bootstrap_io`'s atomic writer for the export; add tests asserting the poisoning cases do NOT yield positive evidence (they fail today, codifying the fix).
 
 ### [IMPORTANT] Numeric validation gaps and URL/SSRF hardening across config models
-- **Where:** `config/code_index.py:21-26,84-87` (`maintenance_interval_seconds`/`max_file_size_bytes`/`symbol_summary.batch_size`/`sync_worker_interval_seconds` lack lower bounds while siblings have `ge=1`); `config/tasks.py:148,152,131` (expansion `timeout`/`research_timeout`/`research_max_steps` lack the `>= 0` validator `WorkflowConfig.timeout` has); operator-supplied URLs (`mcp_proxy/models.py:122`, `config/voice.py:15`, `config/local.py:15`, `config/ai.py:17`, `config/extensions.py:51`) validated only non-empty, no scheme/host check.
+- **Where:** `config/code_index.py:15,45,57,116` (`symbol_summary.batch_size`/`maintenance_interval_seconds`/`max_file_size_bytes`/`sync_worker_interval_seconds` lack lower bounds while siblings have `ge=1`); `config/tasks.py:148,152,131` (expansion `timeout`/`research_timeout`/`research_max_steps` lack the `>= 0` validator `WorkflowConfig.timeout` has); operator-supplied endpoints (`mcp_proxy/models.py:122`, `config/voice.py:24`, `config/ai.py:32`, `config/extensions.py:51`) validated only non-empty, no scheme/host check.
 - **Failure mode:** `maintenance_interval_seconds=0`/negative → tight loop; `max_file_size_bytes=0` → indexes nothing; the URL fields are operator-trusted today (no live SSRF) but become a live SSRF if any ever becomes settable by a lower-trust caller (e.g. `import_mcp_server` from remote registry data).
 - **Minimal fix:** Add `gt=0`/`ge=1`/`ge=0` bounds for consistency; centralize a URL validator (require http/https, optionally block link-local/metadata) for the URL fields.
 
 ### [NIT] Nested `api_key` fields bypass config_store secret enforcement; redaction gaps
-- **Where:** `config/voice.py:23`, `config/ai.py:25`, `config/local.py:21` (`api_key` nested in object/list config — never passes `config_store._reject_plaintext_secret_value`, which guards only flat secret-suffixed dotted keys; `ai`/`local` document `$secret:NAME`, voice does not, and voice has no redaction in any config dump).
+- **Where:** `config/voice.py:32`, `config/ai.py:38` (`api_key` nested in object/list config — never passes `config_store._reject_plaintext_secret_value`, which guards only flat secret-suffixed dotted keys; `ai` documents `$secret:NAME`, voice does not, and voice has no redaction in any config dump).
 - **Minimal fix:** Add `$secret:` guidance to voice's `api_key` and ensure config dump/export redacts these nested fields.
 
 ### [NIT] Dead keyring constant + stale contract; `resolve_secrets_in_config` re-raises with `exc_info`

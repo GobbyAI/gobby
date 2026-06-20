@@ -201,7 +201,7 @@ async def test_synthesis_uses_profile_candidates_and_accepts_evidenced_json(
     assert result.accepted["unit_tests"].command == "GOBBY_TEST_PROTECT=1 uv run pytest tests/ -v"
     assert service.request is not None
     assert service.request.profile == "feature_mid"
-    assert service.request.candidates == ("local:lm-studio/test-model",)
+    assert service.request.candidates == tuple(config.candidates)
     assert service.request.caller == "project_verification.refresh"
 
 
