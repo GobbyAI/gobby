@@ -265,6 +265,7 @@ pub(crate) fn generate_hierarchical_docs_core(
             input.leading_chunks.get(file),
             &relationships,
             audit.map(|audit| &audit.deprecations),
+            audit.map(|audit| &audit.tests),
             generate,
             verify,
             reuse,

@@ -63,6 +63,13 @@ member crates, their workspace-internal dependency edges, the service \
 boundaries their feature gates pull in, and the standalone-vs-daemon runtime \
 branch. They describe structure, not per-symbol call graphs.\n\n",
     );
+    section.push_str(
+        "Solid edges are workspace-internal crate dependencies. Dotted edges are \
+service boundaries, labelled by dependency strength: **required** (the command \
+cannot run without it), **degraded-ok** (required product infrastructure with \
+degraded command behavior when the service is absent), **optional** (engaged \
+only when that routing is selected), and **always** (always-on transport).\n\n",
+    );
     for block in blocks {
         section.push_str(&block);
         if !section.ends_with('\n') {
@@ -71,6 +78,62 @@ branch. They describe structure, not per-symbol call graphs.\n\n",
         section.push('\n');
     }
     Some(section)
+}
+
+/// Deterministic service matrix for the architecture page: one row per service
+/// boundary the model reaches, with a fixed requirement classification and what
+/// pulls it in. Seeded only from the [`SystemModel`] — no LLM — so an evaluator
+/// gets the at-a-glance "what does this need to run, and what merely degrades"
+/// picture. Returns `None` when the model reaches no services (nothing to show).
+pub(crate) fn render_service_matrix(model: &SystemModel) -> Option<String> {
+    if model.services.is_empty() {
+        return None;
+    }
+
+    let mut section = String::from("## Services\n\n");
+    section.push_str(
+        "Derived deterministically from the workspace's Cargo features and service \
+boundaries. **Requirement** classifies each service: the PostgreSQL hub is hard-required; \
+FalkorDB, Qdrant, and the embedding API are required product infrastructure with degraded \
+command behavior when absent (search drops a ranking signal, never the whole result); the \
+daemon is optional AI routing; the ghook inbox is always-on transport; and the parsing / \
+media toolchains gate AST and multimodal ingest.\n\n",
+    );
+    section.push_str("| Service | Requirement | Pulled in by |\n");
+    section.push_str("| --- | --- | --- |\n");
+    for service in &model.services {
+        let pulled_in_by = if service.pulled_in_by.is_empty() {
+            "workspace".to_string()
+        } else {
+            service.pulled_in_by.join("; ")
+        };
+        let _ = writeln!(
+            section,
+            "| {} | {} | {} |",
+            service.name,
+            service_requirement(service.kind),
+            pulled_in_by
+        );
+    }
+    section.push('\n');
+    Some(section)
+}
+
+/// Fixed requirement classification for the service matrix — never LLM-drawn.
+/// Mirrors the edge labels in [`service_edge_label`] but in full evaluator
+/// wording.
+fn service_requirement(kind: ServiceKind) -> &'static str {
+    match kind {
+        ServiceKind::Postgres => "Required (index-backed commands)",
+        ServiceKind::Falkor | ServiceKind::Qdrant | ServiceKind::EmbeddingApi => {
+            "Required, degraded behavior when absent"
+        }
+        ServiceKind::Daemon => "Optional (AI routing)",
+        ServiceKind::GhookInbox => "Always-on (hook transport)",
+        ServiceKind::TreeSitter | ServiceKind::DocumentToolchain | ServiceKind::MediaToolchain => {
+            "Toolchain (degraded behavior when absent)"
+        }
+    }
 }
 
 /// Topology flowchart: crates as nodes, dependency edges as arrows, services
@@ -140,8 +203,9 @@ fn render_topology_flowchart(model: &SystemModel) -> Option<String> {
     for (krate, kind) in &service_edges {
         let _ = writeln!(
             body,
-            "    {} -.-> {}",
+            "    {} -.->|\"{}\"| {}",
             node_id(krate),
+            service_edge_label(*kind),
             service_node_id(*kind)
         );
     }
@@ -306,6 +370,26 @@ fn service_node_id(kind: ServiceKind) -> &'static str {
         ServiceKind::TreeSitter => "svc_treesitter",
         ServiceKind::DocumentToolchain => "svc_documents",
         ServiceKind::MediaToolchain => "svc_media",
+    }
+}
+
+/// Short, fixed edge label classifying how the workspace depends on a service
+/// boundary. Stitched onto the deterministic crate→service edges so the diagram
+/// reads as an evaluator's dependency map, not just a wiring chart. The wording
+/// is hard-coded (never LLM-drawn): the PostgreSQL hub is `required`;
+/// FalkorDB/Qdrant/the embedding API are `degraded-ok` — required product
+/// infrastructure with degraded command behavior when absent; the daemon is
+/// `optional` routing; the ghook inbox is `always`-on transport; the parsing /
+/// media boundaries are `toolchain` dependencies.
+fn service_edge_label(kind: ServiceKind) -> &'static str {
+    match kind {
+        ServiceKind::Postgres => "required",
+        ServiceKind::Falkor | ServiceKind::Qdrant | ServiceKind::EmbeddingApi => "degraded-ok",
+        ServiceKind::Daemon => "optional",
+        ServiceKind::GhookInbox => "always",
+        ServiceKind::TreeSitter | ServiceKind::DocumentToolchain | ServiceKind::MediaToolchain => {
+            "toolchain"
+        }
     }
 }
 
@@ -540,6 +624,61 @@ mod tests {
         // The standalone-vs-daemon runtime branch is represented.
         assert!(block.contains("standalone"));
         assert!(block.contains("daemon"));
+    }
+
+    #[test]
+    fn service_edges_carry_fixed_dependency_strength_labels() {
+        let model = sample_model();
+        let block = render_topology_flowchart(&model).expect("topology rendered for full model");
+        assert!(is_valid_mermaid(&block), "labelled topology must stay valid:\n{block}");
+
+        let code = node_id("gobby-code");
+        // The PostgreSQL hub edge is hard-`required`; the embedding API edge is
+        // `degraded-ok`. Both labels are fixed, never LLM-drawn.
+        assert!(
+            block.contains(&format!("{code} -.->|\"required\"| {}", service_node_id(ServiceKind::Postgres))),
+            "postgres edge must be labelled required:\n{block}"
+        );
+        assert!(
+            block.contains(&format!(
+                "{code} -.->|\"degraded-ok\"| {}",
+                service_node_id(ServiceKind::EmbeddingApi)
+            )),
+            "embedding edge must be labelled degraded-ok:\n{block}"
+        );
+    }
+
+    #[test]
+    fn diagram_section_caption_explains_required_but_degraded_framing() {
+        let model = sample_model();
+        let section = render_architecture_diagrams(&model).expect("section for full model");
+        assert!(
+            section.contains("required product infrastructure with degraded command behavior"),
+            "caption must carry the required-but-degraded framing:\n{section}"
+        );
+    }
+
+    #[test]
+    fn service_matrix_lists_services_with_fixed_requirement_classes() {
+        let model = sample_model();
+        let matrix = render_service_matrix(&model).expect("matrix for full model");
+        assert!(matrix.contains("## Services"));
+        assert!(matrix.contains("| Service | Requirement | Pulled in by |"));
+        assert!(matrix.contains("PostgreSQL hub"));
+        assert!(matrix.contains("Required (index-backed commands)"));
+        // The embedding API boundary is required-but-degraded.
+        assert!(matrix.contains("Required, degraded behavior when absent"));
+        assert!(
+            matrix.contains("required product infrastructure with degraded command behavior"),
+            "matrix intro must carry the required-but-degraded framing:\n{matrix}"
+        );
+    }
+
+    #[test]
+    fn service_matrix_empty_when_model_reaches_no_services() {
+        let mut model = sample_model();
+        model.services.clear();
+        assert!(render_service_matrix(&model).is_none());
     }
 
     #[test]

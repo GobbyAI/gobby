@@ -95,6 +95,7 @@ pub fn doc_dep() {}
         None,
         &RelationshipFacts::default(),
         Some(&audit.deprecations),
+        Some(&audit.tests),
         &mut None,
         &mut None,
         &mut None,
@@ -215,6 +216,7 @@ fn method_like() {}
     let audit = AuditContext {
         project_root: root.to_path_buf(),
         deprecations: std::collections::BTreeMap::new(),
+        tests: std::collections::BTreeSet::new(),
         entry_points,
     };
 

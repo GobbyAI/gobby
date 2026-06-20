@@ -9,7 +9,20 @@ const DEFAULT_OUT_DIR: &str = "codewiki";
 const CODEWIKI_META_PATH: &str = "_meta/codewiki.json";
 const OWNERSHIP_META_PATH: &str = "_meta/ownership.json";
 const MAX_EDGE_LIMIT: usize = 100_000;
-/// Cache epoch for generated pages. Bumped 7 -> 8 so reused pages regenerate
+/// Cache epoch for generated pages. Bumped 9 -> 10 so reused pages re-render
+/// with compact navigation-table cells: a subsystem / child-module / module
+/// summary inlined into a parent table cell is reduced to its leading paragraph
+/// (the full multi-table brief stays on the module's own page) instead of a wall
+/// of pipe-escaped pseudo-tables.
+/// Bumped 8 -> 9 for the deep-wiki narrative
+/// pass: file pages demote `## Key components` to a capped `## Reference` table
+/// with test-gated symbols collapsed into a single behavior-spec line; the
+/// architecture topology diagram stitches fixed required/degraded service-edge
+/// labels; the page prompts demand design rationale, failure/degradation
+/// behavior, and evaluator context; and the grounding pass no longer appends the
+/// trailing bare-citation dump when a page already cites inline (#895). All
+/// reused pages must regenerate into the new shape.
+/// Bumped 7 -> 8 so reused pages regenerate
 /// without the auto-generated mermaid code-graph diagrams (per-module
 /// dependency/call diagrams, repo/architecture subsystem maps), which were the
 /// sole source of `graph-truncated`/`graph-unavailable` page degradation; graph
@@ -20,7 +33,7 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 /// `<details>` provenance) cannot be reused from disk: the new shape renders a
 /// verified narrative body plus a human Key components table. (5 was the
 /// grounded verification pass; 4 the pre-verify pages.)
-const CODEWIKI_RENDER_VERSION: u32 = 8;
+const CODEWIKI_RENDER_VERSION: u32 = 10;
 
 /// Default daemon feature profile for aggregate (module/repo/architecture)
 /// prose, which synthesizes 10k+-token grounded prompts; file and symbol
@@ -99,7 +112,7 @@ pub use system_model::{
 // Model-seeded architectural Mermaid diagrams for the architecture page (#891).
 #[cfg(test)]
 pub(crate) use architecture_diagrams::is_valid_mermaid;
-pub(crate) use architecture_diagrams::render_architecture_diagrams;
+pub(crate) use architecture_diagrams::{render_architecture_diagrams, render_service_matrix};
 // Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,
@@ -141,7 +154,7 @@ pub(crate) use types::{
     DeadCodeDoc, DeprecatedSymbol, DeprecationIndex, DeprecationsDoc, FeatureCatalogDoc, FileDoc,
     FileLink, HotspotFinding, HotspotNode, HotspotsDoc, InfraSection, InfrastructureDoc, ModuleDoc,
     ModuleLink, OnboardingDoc, OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc,
-    VerifyNote, ranked_source_excerpts, source_excerpt_for_file,
+    TestIndex, VerifyNote, ranked_source_excerpts, source_excerpt_for_file,
 };
 // Feature catalog row/section types (#888) are only named by the catalog's
 // drift-guard tests; the lib builds the page through `FeatureCatalogDoc`.

@@ -23,6 +23,15 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
             doc.push('\n');
         }
     }
+    // Deterministic service matrix (#892 facts, this leaf): emitted verbatim
+    // from the validated table string, after the diagrams and before the
+    // subsystem table. Absence is normal and never marks the page degraded.
+    if let Some(service_matrix) = &architecture.service_matrix {
+        doc.push_str(service_matrix);
+        if !doc.ends_with('\n') {
+            doc.push('\n');
+        }
+    }
     if !architecture.subsystems.is_empty() {
         doc.push_str("## Subsystems\n\n");
         write_markdown_table_header(&mut doc, &["Subsystem", "Responsibility", "Child modules"]);
@@ -41,7 +50,9 @@ pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String 
                 &mut doc,
                 [
                     module_wikilink(&subsystem.module),
-                    subsystem.responsibility.clone(),
+                    // Compact the subsystem's full brief to its leading paragraph;
+                    // the structured detail lives on the subsystem's own page.
+                    super::cell_summary(&subsystem.responsibility),
                     child_modules,
                 ],
             );

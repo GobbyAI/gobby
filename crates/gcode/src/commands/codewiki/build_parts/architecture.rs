@@ -154,11 +154,17 @@ pub(crate) fn build_architecture_doc(
     // which is normal and never touches `degraded_sources`.
     let diagrams = system_model.and_then(render_architecture_diagrams);
 
+    // Deterministic service matrix from the same model: the at-a-glance
+    // required/degraded picture an evaluator needs. Same non-degrading contract
+    // as the diagrams — a model with no services yields `None`.
+    let service_matrix = system_model.and_then(render_service_matrix);
+
     ArchitectureDoc {
         source_spans,
         subsystems,
         narrative,
         diagrams,
+        service_matrix,
         degraded_sources: degraded_sources.into_iter().collect(),
     }
 }

@@ -26,7 +26,12 @@ pub(crate) fn render_module_doc(module: &ModuleDoc) -> String {
         for child in &module.child_modules {
             write_markdown_table_row(
                 &mut doc,
-                [module_wikilink(&child.module), child.summary.clone()],
+                [
+                    module_wikilink(&child.module),
+                    // Leading-paragraph gist only; the child's full brief (with
+                    // its own tables) lives on the linked child-module page.
+                    super::cell_summary(&child.summary),
+                ],
             );
         }
         doc.push('\n');
@@ -66,16 +71,29 @@ pub(crate) fn render_file_doc(file: &FileDoc) -> String {
         doc.push_str(body);
         doc.push_str("\n\n");
     }
-    // Human Key components table: name + hub purpose only. The agent-facing
-    // detail (UUID component IDs, byte/line offsets, signatures) lives in
-    // `gcode`, where it stays fresher; the wiki keeps the readable surface.
-    doc.push_str("## Key components\n\n");
-    if file.symbols.is_empty() {
-        doc.push_str("No indexed symbols.\n");
+    // The page leads with the verified narrative body above; the reference table
+    // is demoted below it and capped. It carries the file's real API/code
+    // symbols (name + kind + hub purpose only) — the agent-facing detail (UUID
+    // component IDs, byte/line offsets, signatures) lives in `gcode`, where it
+    // stays fresher. Test-gated symbols are collapsed into a single behavior-spec
+    // line instead of one row each, so the readable surface is code, not a test
+    // roster.
+    doc.push_str("## Reference\n\n");
+
+    let (tests, api): (Vec<&SymbolDoc>, Vec<&SymbolDoc>) =
+        file.symbols.iter().partition(|symbol| symbol.is_test);
+
+    if api.is_empty() {
+        if tests.is_empty() {
+            doc.push_str("No indexed symbols.\n");
+        } else {
+            push_test_summary_line(&mut doc, tests.len());
+        }
         return doc;
     }
+
     write_markdown_table_header(&mut doc, &["Symbol", "Kind", "Purpose"]);
-    for symbol in &file.symbols {
+    for symbol in api.iter().take(REFERENCE_ROW_CAP) {
         // Deterministic deprecation badge (#889): a `Some` reason marks this
         // symbol as deprecated. Surface a visible badge in the Symbol cell and
         // carry the reason inline into the Purpose cell so the readable row keeps
@@ -105,5 +123,30 @@ pub(crate) fn render_file_doc(file: &FileDoc) -> String {
         );
     }
     doc.push('\n');
+    if api.len() > REFERENCE_ROW_CAP {
+        let _ = writeln!(
+            doc,
+            "_{} more symbol(s) not shown — run `gcode outline {}` for the full list._\n",
+            api.len() - REFERENCE_ROW_CAP,
+            file.path
+        );
+    }
+    if !tests.is_empty() {
+        push_test_summary_line(&mut doc, tests.len());
+    }
     doc
+}
+
+/// Max rows in a file page's `## Reference` table. A readable cap so a large
+/// file lists its most prominent symbols (in index order) rather than dumping a
+/// hundred-row index; the overflow count points the reader at `gcode` for the
+/// rest.
+const REFERENCE_ROW_CAP: usize = 24;
+
+/// Append the single behavior-spec line that collapses a file's test-gated
+/// symbols into a count, so the file page reports its in-file test coverage
+/// without listing every test as a `## Reference` row.
+fn push_test_summary_line(doc: &mut String, count: usize) {
+    let plural = if count == 1 { "" } else { "s" };
+    let _ = writeln!(doc, "_Verified by {count} in-file unit test{plural}._\n");
 }

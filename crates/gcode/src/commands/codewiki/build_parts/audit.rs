@@ -8,13 +8,13 @@
 //! (mirroring `system_model`'s `std::fs::read_to_string`), so the index parser
 //! and the hub schema are untouched.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 
 use super::super::{
     CodewikiGraphAvailability, CodewikiGraphEdge, CodewikiGraphEdgeKind, CodewikiInput,
     DeadCodeCandidate, DeadCodeDoc, DeprecatedSymbol, DeprecationIndex, DeprecationsDoc,
-    FeatureCatalogDoc,
+    FeatureCatalogDoc, TestIndex,
 };
 use crate::models::Symbol;
 
@@ -40,6 +40,10 @@ pub(crate) struct AuditContext {
     /// files without changing the generation core's signature.
     pub(crate) project_root: PathBuf,
     pub(crate) deprecations: DeprecationIndex,
+    /// Ids of every test-gated symbol, so the file page can collapse tests into
+    /// a single count instead of one `## Reference` row each. Built by the same
+    /// bounded source scan as `deprecations`.
+    pub(crate) tests: TestIndex,
     /// `(file_path, name)` pairs that are contract-handler entry points, drawn
     /// from the feature catalog. A symbol matching one is never a dead-code
     /// candidate (it is reached from the CLI dispatch, not via a Call edge).
@@ -56,8 +60,25 @@ pub(crate) fn build_audit_context(
     AuditContext {
         project_root: project_root.to_path_buf(),
         deprecations: build_deprecation_index(project_root, input),
+        tests: build_test_index(project_root, input),
         entry_points: entry_points_from_catalog(feature_catalog),
     }
+}
+
+/// Scan the documented source once and collect the ids of every test-gated
+/// symbol (a `#[test]`/`#[cfg(test)]` attribute above it, or a tests path),
+/// reusing the same per-file source read and `is_test_gated` heuristic as the
+/// dead-code page. Lets the file page collapse tests into a single count instead
+/// of one `## Reference` row each. Files that cannot be read contribute nothing.
+fn build_test_index(project_root: &Path, input: &CodewikiInput) -> TestIndex {
+    let mut index: TestIndex = BTreeSet::new();
+    let mut file_cache: BTreeMap<&str, Option<Vec<String>>> = BTreeMap::new();
+    for symbol in &input.symbols {
+        if is_test_gated(symbol, project_root, &mut file_cache) {
+            index.insert(symbol.id.clone());
+        }
+    }
+    index
 }
 
 /// Collapse the feature catalog into the `(handler_file, entry_name)` set. The

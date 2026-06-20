@@ -229,7 +229,7 @@ fn contains_valid_citation(text: &str, valid_spans: &[SourceSpan]) -> bool {
     while let Some(open) = rest.find('[') {
         let after_open = &rest[open + 1..];
         let Some(close) = after_open.find(']') else {
-            return false;
+            break;
         };
         if let Some((file, start, end)) = citation_parts(&after_open[..close])
             && valid_spans
@@ -240,7 +240,29 @@ fn contains_valid_citation(text: &str, valid_spans: &[SourceSpan]) -> bool {
         }
         rest = &after_open[close + 1..];
     }
-    false
+    // Bare `file:line` anchors in prose. The page system prompts ask for bare
+    // anchors (not brackets), so a well-cited page commonly carries no `[...]`
+    // citation at all; recognising the bare form stops `ground_text` from
+    // appending the trailing bracket-citation dump on top of a page that is
+    // already cited inline (#895).
+    contains_bare_citation(text, valid_spans)
+}
+
+/// True when `text` contains a bare `path:line` / `path:start-end` anchor (no
+/// surrounding brackets) that lands inside a valid span. Tokenises on prose
+/// boundaries and strips wrapping punctuation / backticks before parsing, so an
+/// anchor written as `` `crates/x.rs:10` `` or `crates/x.rs:10-12,` is still
+/// recognised.
+fn contains_bare_citation(text: &str, valid_spans: &[SourceSpan]) -> bool {
+    text.split(|c: char| {
+        c.is_whitespace() || matches!(c, '(' | ')' | '[' | ']' | '`' | ',' | ';' | '<' | '>' | '|')
+    })
+    .map(|token| token.trim_matches(|c: char| matches!(c, '.' | '"' | '\'' | '*')))
+    .any(|token| {
+        citation_parts(token).is_some_and(|(file, start, end)| {
+            valid_spans.iter().any(|span| span.contains(file, start, end))
+        })
+    })
 }
 
 fn citation_parts(value: &str) -> Option<(&str, usize, usize)> {

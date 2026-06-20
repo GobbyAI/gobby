@@ -35,7 +35,7 @@ fn generates_hierarchical_docs() {
     assert!(repo.contains("Repository Overview"));
     assert!(module.contains("[[code/files/src/lib.rs\\|src/lib.rs]]"));
     assert!(file.contains("## Overview"));
-    assert!(file.contains("## Key components"));
+    assert!(file.contains("## Reference"));
     assert!(!file.contains("## API Symbols"));
     assert!(file.contains("[[code/modules/src|src]]"));
 }
@@ -250,7 +250,7 @@ fn file_page_structural_fallback_is_multi_section_without_symbol_dump() {
     let docs = generate_hierarchical_docs(&input, None);
     let file = rendered_doc(&docs, "code/files/src/lib.rs.md");
 
-    // Overview + How it fits (body) + Key components (rendered) = three sections,
+    // Overview + How it fits (body) + Reference (rendered) = three sections,
     // even with AI off — the page is narrative structure, not a bare summary.
     assert!(
         file.matches("\n## ").count() >= 3,
@@ -258,7 +258,7 @@ fn file_page_structural_fallback_is_multi_section_without_symbol_dump() {
     );
     assert!(file.contains("## Overview"));
     assert!(file.contains("## How it fits"));
-    assert!(file.contains("## Key components"));
+    assert!(file.contains("## Reference"));
     assert!(file.contains("| Symbol | Kind | Purpose |"));
     // None of the old machine surface: no UUID component IDs, no symbol-table
     // header, no full-range `<details>` provenance wall.

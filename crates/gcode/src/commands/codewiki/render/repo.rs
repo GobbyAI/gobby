@@ -1,5 +1,5 @@
 use super::super::*;
-use super::model_degraded_sources;
+use super::{cell_summary, model_degraded_sources};
 
 pub(crate) fn build_repo_doc(
     files: &[FileDoc],
@@ -143,7 +143,10 @@ pub(crate) fn render_repo_doc(
         doc.push_str("### Modules\n\n");
         write_markdown_table_header(&mut doc, &["Module", "Summary"]);
         for module in modules {
-            let summary = replace_citations_with_markers(&module.summary, source_spans);
+            // Reference-appendix rows are navigational: keep the module's leading
+            // paragraph, not its full multi-table brief (that lives on its page).
+            let summary =
+                replace_citations_with_markers(&cell_summary(&module.summary), source_spans);
             write_markdown_table_row(&mut doc, [module_wikilink(&module.module), summary]);
         }
         doc.push('\n');

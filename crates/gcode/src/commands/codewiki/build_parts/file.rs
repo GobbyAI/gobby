@@ -2,9 +2,10 @@ use std::collections::BTreeSet;
 
 use super::super::{
     AiDepth, CodewikiProgress, DeprecationIndex, FileDoc, Generation, LeadingChunk, PromptTier,
-    RelationshipFacts, ReusePlan, SourceSpan, SymbolDoc, TextGenerator, TextVerifier, VerifyNote,
-    VerifyOutcome, citation_list, component_label, file_doc_path, ground_text, maybe_generate,
-    prompts, structural_file_summary, structural_symbol_purpose, verify_with_notes, write_section,
+    RelationshipFacts, ReusePlan, SourceSpan, SymbolDoc, TestIndex, TextGenerator, TextVerifier,
+    VerifyNote, VerifyOutcome, citation_list, component_label, file_doc_path, ground_text,
+    maybe_generate, prompts, structural_file_summary, structural_symbol_purpose, verify_with_notes,
+    write_section,
 };
 use crate::models::Symbol;
 
@@ -28,6 +29,10 @@ pub(crate) fn build_file_doc(
     // "deprecated" badge into each `SymbolDoc` for the file page's Key components
     // table.
     deprecations: Option<&DeprecationIndex>,
+    // Deterministic test-gated symbol ids (same source scan as `deprecations`).
+    // `None` from the AI-off/test entry points. Stamps `SymbolDoc::is_test` so
+    // the file page collapses tests into a single count instead of a row each.
+    tests: Option<&TestIndex>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
@@ -95,6 +100,7 @@ pub(crate) fn build_file_doc(
             let deprecation = deprecations
                 .and_then(|index| index.get(&component_id))
                 .cloned();
+            let is_test = tests.is_some_and(|index| index.contains(&component_id));
             SymbolDoc {
                 symbol,
                 purpose,
@@ -102,6 +108,7 @@ pub(crate) fn build_file_doc(
                 component_label,
                 source_span,
                 deprecation,
+                is_test,
             }
         })
         .collect::<Vec<_>>();
@@ -255,7 +262,7 @@ fn build_file_body(
 
 /// Deterministic multi-section file body for `--ai off`, generation failure, or
 /// an unverifiable draft: a real `## Overview` and `## How it fits` so the page
-/// keeps narrative structure even without a model. The Key components table is
+/// keeps narrative structure even without a model. The `## Reference` table is
 /// appended by the renderer, so two sections here render as three on the page.
 fn structural_file_body(file: &str, symbols: &[SymbolDoc]) -> String {
     let mut body = String::new();
@@ -268,7 +275,7 @@ fn structural_file_body(file: &str, symbols: &[SymbolDoc]) -> String {
         &mut body,
         "How it fits",
         &format!(
-            "`{file}` is documented from its indexed symbols; see the Key components below \
+            "`{file}` is documented from its indexed symbols; see the Reference table below \
              and the module page for how it connects to sibling files."
         ),
     );

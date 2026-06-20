@@ -171,6 +171,14 @@ pub(crate) struct SymbolDoc {
     /// `None` for the common, non-deprecated case. Deterministic, never
     /// degrading.
     pub(crate) deprecation: Option<String>,
+    /// Whether this symbol is test-gated (a `#[test]`/`#[cfg(test)]` attribute
+    /// above it, or a tests path), detected by the same deterministic source
+    /// scan that powers the dead-code page. The file page collapses test-gated
+    /// symbols into a single behavior-spec line + count instead of one
+    /// `## Reference` row each, so the readable surface is real code, not a test
+    /// roster. `false` for the common case and for the AI-off/test entry points
+    /// that pass no test index.
+    pub(crate) is_test: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -199,6 +207,13 @@ pub(crate) struct ArchitectureDoc {
     /// `None` when no model was supplied or the model was too sparse to draw —
     /// a missing diagram is normal and never marks the page degraded.
     pub(crate) diagrams: Option<String>,
+    /// Pre-rendered, deterministic service matrix seeded from the same
+    /// [`super::SystemModel`] as `diagrams`: one row per service boundary with a
+    /// fixed required/degraded requirement classification and what pulls it in.
+    /// Gives an evaluator the at-a-glance "what does this need to run" picture;
+    /// the narrative is asked to narrate around it. `None` when no model was
+    /// supplied or it reached no services.
+    pub(crate) service_matrix: Option<String>,
     pub(crate) degraded_sources: Vec<String>,
 }
 
@@ -272,6 +287,12 @@ pub(crate) struct FeatureCatalogDoc {
 /// A `BTreeMap` so the aggregate page lists symbols in a stable order. Empty
 /// when nothing is deprecated; the scan never panics and never degrades.
 pub(crate) type DeprecationIndex = BTreeMap<String, String>;
+
+/// Set of `symbol.id`s that are test-gated, built by the same deterministic
+/// source scan as [`DeprecationIndex`] and threaded into `build_file_doc` to
+/// stamp `SymbolDoc::is_test`. A `BTreeSet` for stable, de-duplicated membership
+/// checks. Empty when nothing is test-gated; the scan never panics or degrades.
+pub(crate) type TestIndex = BTreeSet<String>;
 
 /// One deprecated symbol on the deterministic `code/deprecations.md` page
 /// (#889): its name, kind, defining `file:line`, the detected reason, and the

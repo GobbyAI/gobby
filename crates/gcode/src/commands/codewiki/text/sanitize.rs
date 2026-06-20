@@ -264,6 +264,39 @@ mod tests {
     }
 
     #[test]
+    fn ground_text_keeps_bare_anchor_and_skips_the_trailing_citation_dump() {
+        // The page system prompts ask for bare `file:line` anchors, so a
+        // well-cited page commonly carries no `[...]` citation. Such a page must
+        // not also get the trailing bracket-citation dump appended on top of it
+        // (#895): the bare anchor already grounds the claim.
+        let file = "crates/gcode/src/search/rrf.rs";
+        let valid_spans = [span(file, 1, 20)];
+        let text = "The merge function delegates to gobby_core crates/gcode/src/search/rrf.rs:15-20.";
+        let grounded = ground_text(
+            text,
+            &valid_spans,
+            Some("[crates/gcode/src/search/rrf.rs:1]\n[crates/gcode/src/search/rrf.rs:7]"),
+        );
+
+        assert_eq!(text, grounded);
+        assert!(!grounded.contains("[crates/gcode/src/search/rrf.rs:1]"));
+    }
+
+    #[test]
+    fn ground_text_still_appends_fallback_when_page_is_uncited() {
+        // The fallback dump is preserved for a genuinely uncited page, so the
+        // #895 fix does not strip the only anchor from an otherwise-bare page.
+        let valid_spans = [span("crates/gcode/src/lib.rs", 3, 3)];
+        let grounded = ground_text(
+            "A summary paragraph with no anchors at all.",
+            &valid_spans,
+            Some("[crates/gcode/src/lib.rs:3]"),
+        );
+
+        assert!(grounded.ends_with("[crates/gcode/src/lib.rs:3]"));
+    }
+
+    #[test]
     fn strips_traversal_windows_unc_file_and_tilde_targets_to_label_text() {
         let text = concat!(
             "[up](../secret.md) ",

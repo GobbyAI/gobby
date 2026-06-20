@@ -420,9 +420,9 @@ fn module_page_does_not_degrade_without_falkordb() {
     assert!(!module.contains("degraded: graph-unavailable"));
     assert!(!module.contains("graph-unavailable"));
     assert!(!module.contains("```mermaid"));
-    // File pages render a human Key components table keyed by symbol name, not a
+    // File pages render a human Reference table keyed by symbol name, not a
     // UUID component-id dump (#871).
-    assert!(file.contains("## Key components"));
+    assert!(file.contains("## Reference"));
     assert!(file.contains("| `handle` | function |"));
     assert!(!file.contains(&test_component_id(
         "src/api/handler.rs",
