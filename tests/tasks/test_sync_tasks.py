@@ -552,6 +552,7 @@ class TestClosedStateRoundTrip:
         task = task_manager.create_task(sample_project["id"], "Session task")
 
         # Set session-local fields that should NOT be wiped by import
+        _insert_session(sync_manager.db, "session-uuid-123", sample_project["id"])
         _insert_session(sync_manager.db, "session-aaa", sample_project["id"])
         _insert_session(sync_manager.db, "session-bbb", sample_project["id"])
         sync_manager.db.execute(

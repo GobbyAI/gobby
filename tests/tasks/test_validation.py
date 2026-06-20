@@ -1320,7 +1320,11 @@ class TestTaskValidatorMerged:
         test_file = tmp_path / "test.txt"
         test_file.write_text("file content")
 
-        mock_llm.call_json_feature.return_value = {"status": "invalid", "feedback": "Bad"}
+        mock_llm.call_json_feature.return_value = {
+            "status": "invalid",
+            "feedback": "Bad",
+            "blocking_reasons": ["Bad"],
+        }
 
         result = await validator.validate_task(
             "task-1", "title", "instr", "summary", context_files=[str(test_file)]
@@ -1778,6 +1782,7 @@ class TestTaskValidatorAdditionalEdgeCases:
         mock_llm.call_json_feature.return_value = {
             "status": "invalid",
             "feedback": "Missing tests",
+            "blocking_reasons": ["Missing tests"],
         }
 
         result = await validator.validate_task(

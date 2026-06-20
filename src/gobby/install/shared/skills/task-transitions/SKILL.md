@@ -88,7 +88,7 @@ All changes must be committed before status transitions.
 
 ```bash
 git add <specific-files>
-git commit -m "[<project-name>-#<task-number>] <type>: <description>"
+git commit -m "[<project_name>-#<task_number>] <type>: <description>"
 ```
 
 Prefer staging specific files over `git add -A`. Include the task reference in the
@@ -133,7 +133,7 @@ Do NOT create memories for bugs or errors — create tasks instead.
 ```
 1. Run verification commands from .gobby/project.json after the final file edit
 2. Fix every error, warning, and failure you encounter
-3. git add + git commit (with `[<project-name>-#<task-number>]` in the message, using the project name from `.gobby/project.json`)
+3. git add + git commit (with `[<project_name>-#<task_number>]` in the message, using the project name from `.gobby/project.json`)
 4. Review memories → save/delete/clear gate
 5. set_variable(memory_review_completed=true)
 6. close_task(task_id, commit_sha, changes_summary)  ← one call links + closes

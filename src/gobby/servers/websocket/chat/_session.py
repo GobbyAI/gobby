@@ -338,7 +338,7 @@ class ChatSessionMixin:
             chat_cfg = getattr(daemon_cfg, "chat", None)
             for candidate in getattr(chat_cfg, "candidates", ()) or ():
                 try:
-                    candidate_provider, _candidate_model = parse_feature_candidate(str(candidate))
+                    candidate_provider, _candidate_model = parse_feature_candidate(candidate)
                 except ValueError:
                     continue
                 normalized = _normalize_web_chat_provider(candidate_provider)

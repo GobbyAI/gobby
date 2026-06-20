@@ -45,7 +45,8 @@ def mock_server():
     server._background_tasks = set()
     server.register_background_task.side_effect = lambda task: server._background_tasks.add(task)
     server.services = SimpleNamespace(
-        config=SimpleNamespace(memory=SimpleNamespace(dream=MemoryDreamConfig()))
+        project_id="test-project",
+        config=SimpleNamespace(memory=SimpleNamespace(dream=MemoryDreamConfig())),
     )
     server.llm_service = None
     server.memory_manager = MagicMock()
@@ -60,10 +61,11 @@ def mock_server():
 @pytest.fixture
 def client(mock_server):
     """Create TestClient with memory router."""
-    app = FastAPI()
-    router = create_memory_router(mock_server)
-    app.include_router(router)
-    return TestClient(app)
+    with patch("gobby.utils.project_context.get_project_context", return_value={"id": "test-project"}):
+        app = FastAPI()
+        router = create_memory_router(mock_server)
+        app.include_router(router)
+        yield TestClient(app)
 
 
 @pytest.fixture
@@ -377,13 +379,14 @@ class TestRestoreMemory:
 
     def test_restore_not_found(self, client, mock_server) -> None:
         """A missing memory raises ValueError in storage and surfaces as 404."""
-        mock_server.memory_manager.restore_memory.side_effect = ValueError("Memory nope not found")
+        mock_server.memory_manager.get_memory.return_value = None
         response = client.post("/api/memories/nope/restore")
         assert response.status_code == 404
-        mock_server.memory_manager.get_memory.assert_not_called()
+        mock_server.memory_manager.restore_memory.assert_not_called()
 
     def test_restore_server_error(self, client, mock_server) -> None:
         """An unexpected storage failure surfaces as 500."""
+        mock_server.memory_manager.get_memory.return_value = _make_memory(id="mm-1")
         mock_server.memory_manager.restore_memory.side_effect = RuntimeError("DB error")
         response = client.post("/api/memories/mm-1/restore")
         assert response.status_code == 500
@@ -394,6 +397,7 @@ class TestPromoteMemory:
 
     def test_promote_returns_global_memory(self, client, mock_server) -> None:
         """POST /memories/{id}/promote moves a row to global scope and returns it."""
+        mock_server.memory_manager.get_memory.return_value = _make_memory(id="mm-promoted")
         promoted = _make_memory(id="mm-promoted", project_id=None)
         mock_server.memory_manager.rescope_memory = AsyncMock(return_value=promoted)
 
@@ -421,6 +425,7 @@ class TestPromoteMemory:
 
     def test_promote_not_found(self, client, mock_server) -> None:
         """A missing memory raises ValueError in storage and surfaces as 404."""
+        mock_server.memory_manager.get_memory.return_value = _make_memory(id="nope")
         mock_server.memory_manager.rescope_memory = AsyncMock(
             side_effect=ValueError("Memory nope not found")
         )

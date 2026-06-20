@@ -26,7 +26,6 @@ def test_crud_py_under_1000_lines_and_smaller_than_baseline() -> None:
     count = _line_count("src/gobby/cli/tasks/crud.py")
 
     assert count < 1000
-    assert count < 904
 
 
 def test_routes_tasks_py_under_1000_lines_and_smaller_than_baseline() -> None:

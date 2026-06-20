@@ -71,6 +71,12 @@ def load_initial_configs(
             db_servers = manager.mcp_db_manager.list_all_servers(enabled_only=False)
 
         for server in db_servers:
+            raw_connect_timeout = getattr(server, "connect_timeout", None)
+            connect_timeout = (
+                float(raw_connect_timeout)
+                if raw_connect_timeout is not None
+                else MCPServerConfig.connect_timeout
+            )
             config = MCPServerConfig(
                 name=server.name,
                 transport=server.transport,
@@ -83,7 +89,7 @@ def load_initial_configs(
                 description=server.description,
                 requires_oauth=getattr(server, "requires_oauth", False),
                 oauth_provider=getattr(server, "oauth_provider", None),
-                connect_timeout=getattr(server, "connect_timeout", None),
+                connect_timeout=connect_timeout,
                 project_id=server.project_id,
                 tools=manager.load_tools_from_db(
                     manager.mcp_db_manager,

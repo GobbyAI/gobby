@@ -5,6 +5,7 @@ from __future__ import annotations
 import errno
 import os
 import stat
+import sys
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, NoReturn
@@ -151,7 +152,24 @@ def _current_project_path() -> str | None:
 
 
 def _resolve_path(path: str) -> Path:
-    return Path(path).expanduser().absolute()
+    return _normalize_platform_path_alias(Path(path).expanduser().absolute())
+
+
+def _normalize_platform_path_alias(path: Path) -> Path:
+    """Normalize OS-level temp path aliases before symlink-safe validation."""
+    if sys.platform != "darwin" or len(path.parts) < 2 or path.parts[1] != "var":
+        return path
+
+    var_path = Path("/var")
+    if not var_path.is_symlink():
+        return path
+    try:
+        real_var = var_path.resolve(strict=True)
+    except OSError:
+        return path
+    if real_var != Path("/private/var"):
+        return path
+    return real_var.joinpath(*path.parts[2:])
 
 
 def _resolve_existing_dir(path: str, *, label: str) -> Path:

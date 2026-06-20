@@ -12,7 +12,6 @@ from gobby.storage.hub.protocol import (
     SessionRecoveryByProject,
     SessionRegistration,
     SessionSeqMutation,
-    WebChatSessionBootstrap,
 )
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.session_models import Session
@@ -21,6 +20,7 @@ from ._constants import SYSTEM_SESSION_ID, ensure_system_session, get_logger
 from ._lineage_guard import repair_self_parent_session, sanitize_parent_session_id
 from ._title_defaults import PROVISIONAL_TITLE_SOURCE, format_provisional_session_title
 from ._upsert import is_session_unique_conflict, update_existing_session
+from ._web_chat_crud import _SessionWebChatCRUDMixin
 
 
 class _SessionCRUDHost(Protocol):
@@ -69,7 +69,7 @@ class _SessionCRUDHost(Protocol):
     ) -> Session: ...
 
 
-class _SessionCRUDMixin:
+class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
     def register(
         self: _SessionCRUDHost,
         external_id: str,
@@ -343,71 +343,6 @@ class _SessionCRUDMixin:
 
         self._notify_session_change(change_event, session.id)
         return session
-
-    def create_web_chat_session(
-        self: _SessionCRUDHost,
-        *,
-        machine_id: str,
-        project_id: str,
-        source: str,
-        title: str | None = None,
-        model: str | None = None,
-        is_local: bool = False,
-        chat_mode: str | None = None,
-        sandbox_enabled: bool,
-        sandbox_policy_hash: str,
-    ) -> Session:
-        """Create a new web-chat session with a temporary runtime identity.
-
-        The durable identity for web chat is the DB session ID. A temporary
-        ``external_id`` is still required at row creation time and is later
-        replaced with the provider-native runtime/session identifier when known.
-        """
-        if chat_mode is not None and chat_mode not in self._VALID_CHAT_MODES:
-            raise ValueError(
-                f"Invalid chat_mode {chat_mode!r}. Must be one of: {', '.join(sorted(self._VALID_CHAT_MODES))}"
-            )
-
-        bootstrap_external_id = f"web-chat-bootstrap:{uuid.uuid4()}"
-        with self.db.transaction_immediate(
-            WebChatSessionBootstrap(
-                external_id=bootstrap_external_id,
-                machine_id=machine_id,
-                source=source,
-                project_id=project_id,
-                session_type="web_chat",
-            )
-        ):
-            session = self.register(
-                external_id=bootstrap_external_id,
-                machine_id=machine_id,
-                source=source,
-                project_id=project_id,
-                title=title,
-                session_type="web_chat",
-                is_local=is_local,
-                sandbox_enabled=sandbox_enabled,
-                sandbox_policy_hash=sandbox_policy_hash,
-            )
-            if model is None and chat_mode is None:
-                return session
-
-            now = datetime.now(UTC).isoformat()
-            self.db.execute(
-                """
-                UPDATE sessions
-                SET model = COALESCE(%s, model),
-                    is_local = %s,
-                    chat_mode = COALESCE(%s, chat_mode),
-                    updated_at = %s
-                WHERE id = %s
-                """,
-                (model, bool(is_local), chat_mode, now, session.id),
-            )
-            updated = self.get(session.id)
-            if updated is None:
-                raise RuntimeError(f"Web chat session {session.id} disappeared after update")
-            return updated
 
     def get(self: _SessionCRUDHost, session_id: str) -> Session | None:
         """Get session by ID."""

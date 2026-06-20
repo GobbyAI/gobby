@@ -16,9 +16,11 @@ import pytest
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.prompt_detector import PromptDetector
 from gobby.agents.step_workflow import register_agent_step_workflow
+from gobby.agents.tmux import configure_tmux
 from gobby.build.options import BuildOptions
 from gobby.build.stage_manifest import resolve_stage_manifest_specs
 from gobby.config.app import DaemonConfig
+from gobby.config.tmux import TmuxConfig
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 from gobby.mcp_proxy.tools.tasks._stage_ops import create_stage_ops_registry
 from gobby.storage.agents import LocalAgentRunManager
@@ -36,6 +38,8 @@ from tests._timing import wait_for_async_condition
 from tests.storage.tasks._stage_test_helpers import stage_row
 
 pytestmark = pytest.mark.e2e
+
+configure_tmux(TmuxConfig())
 
 
 class _MiniPipeline:

@@ -8,6 +8,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from gobby.config import DaemonConfig
+from gobby.config.tasks import GobbyTasksConfig, TaskExpansionConfig, TaskValidationConfig
 from gobby.runner import GobbyRunner
 from gobby.runner_init.orchestration import _send_tmux_pane_wake, _send_tmux_session_wake
 from tests.runner_helpers import create_base_patches, set_mock_default
@@ -87,11 +89,19 @@ class TestGobbyRunnerInit:
         )
 
         with (
+            patch("gobby.runner_init.services.EmbeddingService") as mock_embedding_service,
             patch("gobby.runner_init.services.VectorStore") as mock_vector_store,
             patch("gobby.runner_init.services.MemoryManager") as mock_memory_manager,
         ):
+            mock_embedding_service.return_value.is_configured.return_value = True
             services._init_memory_stack(runner)
 
+        mock_embedding_service.assert_any_call(
+            model="text-embedding-3-small",
+            api_base=None,
+            api_key="sk-secret",
+            dim=1536,
+        )
         mock_vector_store.assert_called_once_with(
             url="http://qdrant:6333",
             api_key=None,
@@ -102,9 +112,7 @@ class TestGobbyRunnerInit:
         assert runner.memory_manager is mock_memory_manager.return_value
         mock_memory_manager.assert_called_once()
         embed_fn = mock_memory_manager.call_args.kwargs["embed_fn"]
-        assert embed_fn.keywords["model"] == "text-embedding-3-small"
-        assert embed_fn.keywords["api_key"] == "sk-secret"
-        assert embed_fn.keywords["expected_dim"] == 1536
+        assert embed_fn is mock_embedding_service.return_value.generate_embedding
 
     def test_embedding_api_key_resolver_checks_legacy_secret_names(self) -> None:
         from gobby.runner_init.services import _resolve_embedding_api_key
@@ -518,19 +526,15 @@ class TestGobbyRunnerInitialization:
 
     def test_init_with_task_validator(self) -> None:
         """Test TaskValidator initialization when LLM service and validation enabled."""
-        mock_config = MagicMock()
-        mock_config.daemon_port = 60887
-        mock_config.websocket = None
-        mock_config.session_lifecycle = MagicMock()
-        mock_config.message_tracking = None
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = False
-        mock_config.gobby_tasks = MagicMock()
-        mock_config.gobby_tasks.expansion = MagicMock()
-        mock_config.gobby_tasks.expansion.enabled = False
-        mock_config.gobby_tasks.validation = MagicMock()
-        mock_config.gobby_tasks.validation.enabled = True
+        mock_config = DaemonConfig(
+            daemon_port=60887,
+            gobby_tasks=GobbyTasksConfig(
+                expansion=TaskExpansionConfig(enabled=False),
+                validation=TaskValidationConfig(enabled=True),
+            ),
+        )
 
+        mock_text_generation = MagicMock()
         mock_llm_service = MagicMock()
         mock_llm_service.enabled_providers = ["test"]
         mock_task_validator = MagicMock()
@@ -538,6 +542,12 @@ class TestGobbyRunnerInitialization:
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]
         patches = [p for p in patches if "TaskValidator" not in str(p)]
+        patches.append(
+            patch(
+                "gobby.runner_init.services.build_daemon_text_generation_service",
+                return_value=mock_text_generation,
+            )
+        )
         patches.append(
             patch("gobby.runner_init.services.create_llm_service", return_value=mock_llm_service)
         )
@@ -552,28 +562,31 @@ class TestGobbyRunnerInitialization:
 
             assert runner.task_validator == mock_task_validator
             assert runner.llm_service == mock_llm_service
+            assert runner.text_generation_service == mock_text_generation
 
     def test_init_task_validator_exception(self) -> None:
         """Test TaskValidator initialization exception is handled."""
-        mock_config = MagicMock()
-        mock_config.daemon_port = 60887
-        mock_config.websocket = None
-        mock_config.session_lifecycle = MagicMock()
-        mock_config.message_tracking = None
-        mock_config.memory_sync = MagicMock()
-        mock_config.memory_sync.enabled = False
-        mock_config.gobby_tasks = MagicMock()
-        mock_config.gobby_tasks.expansion = MagicMock()
-        mock_config.gobby_tasks.expansion.enabled = False
-        mock_config.gobby_tasks.validation = MagicMock()
-        mock_config.gobby_tasks.validation.enabled = True
+        mock_config = DaemonConfig(
+            daemon_port=60887,
+            gobby_tasks=GobbyTasksConfig(
+                expansion=TaskExpansionConfig(enabled=False),
+                validation=TaskValidationConfig(enabled=True),
+            ),
+        )
 
+        mock_text_generation = MagicMock()
         mock_llm_service = MagicMock()
         mock_llm_service.enabled_providers = ["test"]
 
         patches = create_base_patches(mock_config=mock_config)
         patches = [p for p in patches if "create_llm_service" not in str(p)]
         patches = [p for p in patches if "TaskValidator" not in str(p)]
+        patches.append(
+            patch(
+                "gobby.runner_init.services.build_daemon_text_generation_service",
+                return_value=mock_text_generation,
+            )
+        )
         patches.append(
             patch("gobby.runner_init.services.create_llm_service", return_value=mock_llm_service)
         )
@@ -589,6 +602,7 @@ class TestGobbyRunnerInitialization:
             runner = GobbyRunner()
             assert runner.task_validator is None
             assert runner.llm_service == mock_llm_service
+            assert runner.text_generation_service == mock_text_generation
 
     def test_init_agent_runner_exception(self) -> None:
         """Test AgentRunner initialization exception is handled."""

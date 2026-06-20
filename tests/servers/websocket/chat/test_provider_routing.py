@@ -128,7 +128,7 @@ class TestPendingProviderOverride:
     async def test_daemon_chat_provider_used_when_request_has_no_provider(self) -> None:
         """Daemon chat.provider supplies the default web-chat backend."""
         mixin = _make_mixin(
-            daemon_config=DaemonConfig(chat=ChatConfig(provider="codex", model="gpt-5")),
+            daemon_config=DaemonConfig(chat=ChatConfig(candidates=["codex/gpt-5"])),
         )
         mock_session = AsyncMock()
         mock_session.provider = "codex"

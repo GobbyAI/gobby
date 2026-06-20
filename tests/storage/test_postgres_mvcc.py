@@ -20,7 +20,7 @@ class _CounterLock:
 
 
 def test_post_phase5_audit_report_frontmatter_and_rows(repo_root: Path) -> None:
-    report_path = repo_root / "docs" / "postgres-concurrency-audit.md"
+    report_path = repo_root / "docs" / "audits" / "postgres-concurrency-audit.md"
     text = report_path.read_text()
 
     top_frontmatter = _parse_top_frontmatter(text)

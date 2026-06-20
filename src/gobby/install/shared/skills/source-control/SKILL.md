@@ -35,8 +35,8 @@ Prefer staging specific files over `git add -A`.
 git commit -m "[<project_name>-#<task_number>] <type>: <description>"
 ```
 
-Use the real project name in the task reference (e.g., `[gobby-#123]` or
-`[gobby-cli-#123]`). `project_name` is a placeholder, never a literal prefix.
+Template examples use `[<project_name>-#<task_number>]`; replace both
+placeholders with the real project name and task number before committing.
 The hyphen before `#` is required.
 
 ### Step 3: Task Transitions (close_task, review, validation)
@@ -67,10 +67,10 @@ memory review).
 ### Examples
 
 ```
-[gobby-#123] feat: add user authentication
-[gobby-#789] fix: resolve password reset bug
-[gobby-#456] refactor: extract auth logic to service
-[gobby-#12] test: add unit tests for auth module
+[<project_name>-#123] feat: add user authentication
+[<project_name>-#789] fix: resolve password reset bug
+[<project_name>-#456] refactor: extract auth logic to service
+[<project_name>-#12] test: add unit tests for auth module
 ```
 
 ## Common Mistakes
@@ -84,7 +84,7 @@ git commit -m "fix: implement feature"
 ### Right: Include the Task in the Commit Message
 
 ```bash
-git commit -m "[gobby-#42] feat: implement feature"
+git commit -m "[<project_name>-#42] feat: implement feature"
 ```
 
 ---
@@ -102,7 +102,7 @@ Update all version files on the working branch:
 3. `CHANGELOG.md` — add new `[version]` section
 4. Run `uv sync` to update `uv.lock`
 
-Commit: `[gobby-#N] chore: bump version to X.Y.Z`
+Commit: `[<project_name>-#N] chore: bump version to X.Y.Z`
 
 ### Step 2: Push and Create PR
 

@@ -100,6 +100,8 @@ def _current_project_id(server: "HTTPServer") -> str | None:
 
 def _ensure_memory_in_current_project(server: "HTTPServer", memory_id: str) -> None:
     memory = server.memory_manager.get_memory(memory_id, visibility="all")
+    if memory is None:
+        raise ValueError(f"Memory {memory_id} not found")
     current_project_id = _current_project_id(server)
     if memory.project_id is not None and memory.project_id != current_project_id:
         raise ValueError(f"Memory {memory_id} not found")

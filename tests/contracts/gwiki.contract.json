@@ -407,6 +407,50 @@
       ]
     },
     {
+      "name": "sync-sessions",
+      "summary": "Sync archived Gobby session transcripts into the wiki vault.",
+      "daemon_consumed": true,
+      "positionals": [],
+      "flags": [
+        {
+          "name": "--archive-dir",
+          "takes_value": true,
+          "value_name": "PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--limit",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        }
+      ],
+      "json_output_keys": [
+        "command",
+        "scope",
+        "status",
+        "archive_dir",
+        "scanned",
+        "accepted",
+        "skipped",
+        "failed",
+        "indexed"
+      ],
+      "hard_dependencies": [
+        "vault"
+      ],
+      "optional_dependencies": [
+        "PostgreSQL",
+        "Qdrant+embeddings",
+        "FalkorDB graph"
+      ],
+      "multimodal": "session_transcript"
+    },
+    {
       "name": "collect",
       "summary": "Collect recognized inbox drops into raw storage.",
       "daemon_consumed": true,
@@ -447,6 +491,14 @@
           "repeatable": true
         },
         {
+          "name": "--source",
+          "takes_value": true,
+          "value_name": "SOURCE_ID_OR_PATH",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": true
+        },
+        {
           "name": "--kind",
           "takes_value": true,
           "value_name": "source|concept|topic",
@@ -473,6 +525,19 @@
           "allowed_values": [],
           "required": false,
           "repeatable": false
+        },
+        {
+          "name": "--ai",
+          "takes_value": true,
+          "value_name": "auto|daemon|direct|off",
+          "allowed_values": [
+            "auto",
+            "daemon",
+            "direct",
+            "off"
+          ],
+          "required": false,
+          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -487,8 +552,23 @@
         "index_path",
         "handoff_id",
         "page_writes",
-        "prompt"
-      ]
+        "prompt",
+        "ai"
+      ],
+      "optional_dependencies": [
+        "model synthesis",
+        "daemon text lane or direct OpenAI-compatible endpoint"
+      ],
+      "multimodal": "none",
+      "degradation": {
+        "output_shape": "explainer failure keeps the deterministic skeleton with degradation markers; AI off compiles the structural article without markers",
+        "metadata_keys": [
+          "ai.status",
+          "ai.error",
+          "page frontmatter degraded",
+          "page frontmatter degraded_sources[]"
+        ]
+      }
     },
     {
       "name": "audit",

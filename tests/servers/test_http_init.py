@@ -182,12 +182,14 @@ class TestHTTPServerInit:
         """Test HTTPServer creates LLM service from config."""
         mock_config = MagicMock()
         mock_config.llm = MagicMock()
+        mock_text_generation = MagicMock()
 
         services = ServiceContainer(
             config=mock_config,
             database=MagicMock(),
             session_manager=MagicMock(),
             task_manager=MagicMock(),
+            text_generation_service=mock_text_generation,
         )
 
         with patch("gobby.servers.http.create_llm_service") as mock_create:
@@ -201,7 +203,10 @@ class TestHTTPServerInit:
                 test_mode=True,
             )
 
-            mock_create.assert_called_once_with(mock_config)
+            mock_create.assert_called_once_with(
+                mock_config,
+                text_generation=mock_text_generation,
+            )
             assert server.llm_service is mock_llm
             assert server.services.llm_service is mock_llm
 

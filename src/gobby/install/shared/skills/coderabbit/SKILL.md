@@ -108,8 +108,8 @@ reason in `Reason/Planned Fix`. Do not silently drop stale comments.
    when available.
 13. Commit with the task ref as `[<project_name>-#<task_number>] <type>: <summary>`
     and close the task with `commit_sha`. Use the real project name in the task
-    reference, such as `[gobby-#123]`; `project_name` is a placeholder, never a
-    literal prefix.
+    reference. Replace `<project_name>` and `<task_number>` with the real
+    values; `project_name` is a placeholder, never a literal prefix.
     Allowed types: `fix`, `feat`, `refactor`, `chore`, `docs`, and `test`.
 
 ## Verification Discipline
