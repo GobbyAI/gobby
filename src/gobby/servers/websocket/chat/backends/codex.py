@@ -416,14 +416,14 @@ class CodexWebChatBackend:
             raise RuntimeError(self._health.startup_error or "Codex backend unavailable")
 
         if self._local_endpoint is not None:
-            from gobby.agents.local_model import ensure_local_model
+            from gobby.agents.local_model import LocalModelError, ensure_local_model
 
             local_endpoint = self._local_endpoint
             if session._model:
                 local_endpoint = local_endpoint.model_copy(update={"model": session._model})
             try:
                 session._model = await ensure_local_model(local_endpoint, run_manager=None)
-            except Exception as exc:
+            except LocalModelError as exc:
                 raise RuntimeError(
                     "Codex local model pre-flight failed "
                     f"(provider={local_endpoint.provider}, "

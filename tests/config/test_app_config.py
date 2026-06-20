@@ -480,6 +480,22 @@ class TestLoadYaml:
         with pytest.raises(ValueError, match="Invalid JSON"):
             load_yaml(str(config_file))
 
+    def test_yaml_requires_top_level_mapping(self, temp_dir: Path) -> None:
+        """Test YAML lists are rejected as daemon configs."""
+        config_file = temp_dir / "list.yaml"
+        config_file.write_text("- daemon_port\n- 9000\n")
+
+        with pytest.raises(ValueError, match="mapping/object"):
+            load_yaml(str(config_file))
+
+    def test_json_requires_top_level_mapping(self, temp_dir: Path) -> None:
+        """Test JSON arrays are rejected as daemon configs."""
+        config_file = temp_dir / "list.json"
+        config_file.write_text("[1, 2, 3]")
+
+        with pytest.raises(ValueError, match="mapping/object"):
+            load_yaml(str(config_file))
+
     def test_empty_json_file(self, temp_dir: Path) -> None:
         """Test loading empty JSON file returns empty dict."""
         config_file = temp_dir / "empty.json"

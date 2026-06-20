@@ -2,7 +2,8 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any
+from collections.abc import Callable
+from typing import TYPE_CHECKING
 
 from gobby.mcp_proxy.tools.agents_context import AgentsRegistryContext
 from gobby.mcp_proxy.tools.agents_lifecycle_tools import register_agent_lifecycle_tools
@@ -14,28 +15,40 @@ from gobby.storage.agents import LocalAgentRunManager
 if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
+    from gobby.clones.git import CloneGitManager
+    from gobby.code_index.context import CodeIndexContext
+    from gobby.config.app import DaemonConfig
+    from gobby.events.completion_registry import CompletionEventRegistry
+    from gobby.hooks.hook_manager import HookManager
+    from gobby.sessions.transcript_reader import TranscriptReader
+    from gobby.storage.clones import LocalCloneManager
+    from gobby.storage.hub.protocol import HubDatabase
+    from gobby.storage.sessions import SessionManager
+    from gobby.storage.tasks import LocalTaskManager
+    from gobby.storage.worktrees import LocalWorktreeManager
+    from gobby.worktrees.git import WorktreeGitManager
 
 
 def create_agents_registry(
     runner: AgentRunner,
-    session_manager: Any | None = None,
+    session_manager: SessionManager | None = None,
     # spawn_agent dependencies
-    task_manager: Any | None = None,
-    worktree_storage: Any | None = None,
-    git_manager: Any | None = None,
-    clone_storage: Any | None = None,
-    clone_manager: Any | None = None,
+    task_manager: LocalTaskManager | None = None,
+    worktree_storage: LocalWorktreeManager | None = None,
+    git_manager: WorktreeGitManager | None = None,
+    clone_storage: LocalCloneManager | None = None,
+    clone_manager: CloneGitManager | None = None,
     # For mode=self (workflow activation on caller session)
-    db: Any | None = None,
+    db: HubDatabase | None = None,
     # For firing synthetic stop events on agent kill
-    hook_manager_resolver: Any | None = None,
-    completion_registry: Any | None = None,
+    hook_manager_resolver: Callable[[], HookManager | None] | None = None,
+    completion_registry: CompletionEventRegistry | None = None,
     lifecycle_monitor: AgentLifecycleMonitor | None = None,
     # Legacy parameter — ignored, kept for caller compatibility during migration
-    running_registry: Any | None = None,
-    daemon_config: Any | None = None,
-    code_index: Any | None = None,
-    transcript_reader: Any | None = None,
+    running_registry: object | None = None,
+    daemon_config: DaemonConfig | None = None,
+    code_index: CodeIndexContext | None = None,
+    transcript_reader: TranscriptReader | None = None,
 ) -> InternalToolRegistry:
     """
     Create an agent tool registry with all agent-related tools.

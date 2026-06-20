@@ -116,11 +116,14 @@ class MemoryCrossRefMixin(MemoryStoreBase):
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 """
+                WITH project_memories AS (
+                    SELECT id FROM memories WHERE project_id = %s
+                )
                 DELETE FROM memory_crossrefs
-                WHERE source_id IN (SELECT id FROM memories WHERE project_id = %s)
-                   OR target_id IN (SELECT id FROM memories WHERE project_id = %s)
+                WHERE source_id IN (SELECT id FROM project_memories)
+                   OR target_id IN (SELECT id FROM project_memories)
                 """,
-                (project_id, project_id),
+                (project_id,),
             )
             return cursor.rowcount
 
@@ -135,7 +138,7 @@ class MemoryCrossRefMixin(MemoryStoreBase):
         Useful for building memory graphs.
 
         Args:
-            project_id: Filter to memories in this project
+            project_id: Filter to project and global memories visible to this project
             limit: Maximum number of results
 
         Returns:

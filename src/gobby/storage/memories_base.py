@@ -19,8 +19,8 @@ class MemoryStoreBase:
         for listener in self._change_listeners:
             try:
                 listener()
-            except Exception as e:
-                logger.error(f"Error in memory change listener: {e}")
+            except Exception:
+                logger.error("Error in memory change listener", exc_info=True)
 
     def restore_memory(self, memory_id: str, when: str | None = None) -> bool:
         raise NotImplementedError

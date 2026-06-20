@@ -5,14 +5,21 @@ from __future__ import annotations
 from typing import Any
 
 from gobby.adapters.codex_impl.client import CodexAppServerClient
-from gobby.agents.codex_oss import codex_oss_config_overrides, codex_oss_provider_for_local_endpoint
+from gobby.agents.codex_oss import (
+    codex_oss_config_overrides,
+    codex_oss_provider_for_local_endpoint,
+    codex_oss_supported_provider_clause,
+)
 from gobby.agents.sandbox import (
     SandboxConfig,
     web_chat_policy_mismatch_message,
     web_chat_sandbox_config,
     web_chat_sandbox_policy_hash,
 )
-from gobby.ai.local_endpoints import parse_local_endpoint_model_selector
+from gobby.ai.local_endpoints import (
+    _local_generation_endpoints,
+    parse_local_endpoint_model_selector,
+)
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.chat_session import ChatSession
@@ -49,10 +56,7 @@ class WebChatRuntimeManager:
         self._sandbox_policy_hash = web_chat_sandbox_policy_hash(daemon_config)
         self._local_generation_endpoints: dict[str, LocalGenerationEndpointConfig] = {}
         if daemon_config is not None:
-            ai_config = getattr(daemon_config, "ai", None)
-            generation_config = getattr(ai_config, "generation", None)
-            local_config = getattr(generation_config, "local", None)
-            self._local_generation_endpoints = getattr(local_config, "endpoints", {}) or {}
+            self._local_generation_endpoints = _local_generation_endpoints(daemon_config)
         self._claude_backend = ClaudeWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
@@ -256,6 +260,6 @@ class WebChatRuntimeManager:
         backend = self._codex_local_backends.get(selector.endpoint_name)
         if backend is None:
             raise RuntimeError(
-                "Codex OSS local web chat supports provider=lmstudio or provider=ollama"
+                f"Codex OSS local web chat supports {codex_oss_supported_provider_clause()}"
             )
         return backend, selector.model or endpoint.model

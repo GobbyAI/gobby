@@ -192,6 +192,7 @@ class TestStart:
                 assert call_args[0][0] == "/usr/bin/gemini"
                 assert "--acp" in call_args[0]
 
+    @pytest.mark.asyncio
     async def test_start_skips_stale_skills_reload_response_without_warning(
         self,
         caplog: pytest.LogCaptureFixture,

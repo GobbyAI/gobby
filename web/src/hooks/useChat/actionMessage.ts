@@ -41,14 +41,6 @@ export function useMessageAction(
       reasoningEffort,
       ttsEnabled,
     ) => {
-      console.log(
-        "sendMessage called:",
-        content,
-        "model:",
-        model,
-        "files:",
-        files?.length,
-      );
       const normalizedReasoningEffort =
         normalizeReasoningEffort(reasoningEffort);
 
@@ -220,7 +212,6 @@ export function useMessageAction(
         payload.attachments = attachments;
       }
 
-      console.log("Sending WebSocket message:", payload);
       wsRef.current.send(JSON.stringify(payload));
 
       setIsStreaming(true);

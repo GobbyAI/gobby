@@ -482,7 +482,7 @@ class PipelineExecutionStorageMixin:
                 LEFT JOIN step_executions se ON se.execution_id = pe.id
                 WHERE {project_clause}
                   AND ({like_clause}){status_clause}
-            )
+            ) AS matching_executions
         """  # nosec B608
         row = self.db.fetchone(sql, tuple(params))
         return int(row["cnt"]) if row else 0
@@ -524,10 +524,16 @@ class PipelineExecutionStorageMixin:
             return execution.id
 
         # Try prefix match
-        row = self.db.fetchone(
-            "SELECT id FROM pipeline_executions WHERE id LIKE %s AND project_id = %s",
-            (f"{ref}%", self.project_id),
-        )
+        if self.project_id is None:
+            row = self.db.fetchone(
+                "SELECT id FROM pipeline_executions WHERE id LIKE %s AND project_id IS NULL",
+                (f"{ref}%",),
+            )
+        else:
+            row = self.db.fetchone(
+                "SELECT id FROM pipeline_executions WHERE id LIKE %s AND project_id = %s",
+                (f"{ref}%", self.project_id),
+            )
         if row:
             result: str = row["id"]
             return result

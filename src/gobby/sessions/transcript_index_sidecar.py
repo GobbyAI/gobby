@@ -334,68 +334,70 @@ async def get_or_build_index(
         build_lock = _BUILD_LOCKS.setdefault(key, asyncio.Lock())
 
     async with build_lock:
-        async with _CACHE_LOCK:
-            cached = _INDEX_CACHE.get(key)
-            if cached is not None:
-                _INDEX_CACHE.move_to_end(key)
-                return cached
-
-        sidecar_index = await asyncio.to_thread(
-            load_index_sidecar,
-            path,
-            source,
-            seek_mode=seek_mode,
-            mtime_ns=mtime_ns,
-            size=size,
-        )
-        if sidecar_index is not None:
+        try:
             async with _CACHE_LOCK:
-                _INDEX_CACHE[key] = sidecar_index
-                _INDEX_CACHE.move_to_end(key)
-                while len(_INDEX_CACHE) > INDEX_CACHE_MAX_ENTRIES:
-                    _INDEX_CACHE.popitem(last=False)
-                _BUILD_LOCKS.pop(key, None)
-            return sidecar_index
+                cached = _INDEX_CACHE.get(key)
+                if cached is not None:
+                    _INDEX_CACHE.move_to_end(key)
+                    return cached
 
-        if raw_lines is not None:
-            index = await asyncio.to_thread(
-                build_index_from_raw_lines,
-                raw_lines,
+            sidecar_index = await asyncio.to_thread(
+                load_index_sidecar,
+                path,
                 source,
-                session_id,
                 seek_mode=seek_mode,
                 mtime_ns=mtime_ns,
                 size=size,
-                transcript_path=path,
-                logical_size=logical_size,
             )
-        elif lines is not None:
-            materialized = list(lines)
-            index = await asyncio.to_thread(
-                build_index_from_lines,
-                materialized,
-                source,
-                session_id,
-                mtime_ns=mtime_ns,
-                size=size,
-                transcript_path=path,
-            )
-        else:
-            index = await asyncio.to_thread(
-                build_index_from_file,
-                path,
-                source,
-                session_id,
-                mtime_ns=mtime_ns,
-                size=size,
-            )
-        await asyncio.to_thread(persist_index_sidecar, path, index)
+            if sidecar_index is not None:
+                async with _CACHE_LOCK:
+                    _INDEX_CACHE[key] = sidecar_index
+                    _INDEX_CACHE.move_to_end(key)
+                    while len(_INDEX_CACHE) > INDEX_CACHE_MAX_ENTRIES:
+                        _INDEX_CACHE.popitem(last=False)
+                return sidecar_index
 
-        async with _CACHE_LOCK:
-            _INDEX_CACHE[key] = index
-            _INDEX_CACHE.move_to_end(key)
-            while len(_INDEX_CACHE) > INDEX_CACHE_MAX_ENTRIES:
-                _INDEX_CACHE.popitem(last=False)
-            _BUILD_LOCKS.pop(key, None)
+            if raw_lines is not None:
+                index = await asyncio.to_thread(
+                    build_index_from_raw_lines,
+                    raw_lines,
+                    source,
+                    session_id,
+                    seek_mode=seek_mode,
+                    mtime_ns=mtime_ns,
+                    size=size,
+                    transcript_path=path,
+                    logical_size=logical_size,
+                )
+            elif lines is not None:
+                materialized = list(lines)
+                index = await asyncio.to_thread(
+                    build_index_from_lines,
+                    materialized,
+                    source,
+                    session_id,
+                    mtime_ns=mtime_ns,
+                    size=size,
+                    transcript_path=path,
+                )
+            else:
+                index = await asyncio.to_thread(
+                    build_index_from_file,
+                    path,
+                    source,
+                    session_id,
+                    mtime_ns=mtime_ns,
+                    size=size,
+                )
+            await asyncio.to_thread(persist_index_sidecar, path, index)
+
+            async with _CACHE_LOCK:
+                _INDEX_CACHE[key] = index
+                _INDEX_CACHE.move_to_end(key)
+                while len(_INDEX_CACHE) > INDEX_CACHE_MAX_ENTRIES:
+                    _INDEX_CACHE.popitem(last=False)
+        finally:
+            async with _CACHE_LOCK:
+                _BUILD_LOCKS.pop(key, None)
 
     return index

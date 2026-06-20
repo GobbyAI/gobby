@@ -127,31 +127,39 @@ class StdioTransportConnection(BaseTransportConnection):
         transport_entered: bool,
     ) -> None:
         session_ctx = self._session_context
-        if session_entered and session_ctx is not None:
-            try:
-                await session_ctx.__aexit__(None, None, None)
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Error during session cleanup for %s: %s",
-                    self.config.name,
-                    cleanup_error,
-                )
+        try:
+            if session_entered and session_ctx is not None:
+                try:
+                    await session_ctx.__aexit__(None, None, None)
+                except asyncio.CancelledError:
+                    logger.warning("Session cleanup cancelled for %s", self.config.name)
+                    raise
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "Error during session cleanup for %s: %s",
+                        self.config.name,
+                        cleanup_error,
+                    )
 
-        transport_ctx = self._transport_context
-        if transport_entered and transport_ctx is not None:
-            try:
-                await transport_ctx.__aexit__(None, None, None)
-            except Exception as cleanup_error:
-                logger.warning(
-                    "Error during transport cleanup for %s: %s",
-                    self.config.name,
-                    cleanup_error,
-                )
-
-        self._session = None
-        self._session_context = None
-        self._transport_context = None
-        self._close_stdio_errlog()
+            transport_ctx = self._transport_context
+            if transport_entered and transport_ctx is not None:
+                try:
+                    await transport_ctx.__aexit__(None, None, None)
+                except asyncio.CancelledError:
+                    logger.warning("Transport cleanup cancelled for %s", self.config.name)
+                    raise
+                except Exception as cleanup_error:
+                    logger.warning(
+                        "Error during transport cleanup for %s: %s",
+                        self.config.name,
+                        cleanup_error,
+                    )
+        finally:
+            self._session = None
+            self._session_context = None
+            self._transport_context = None
+            self._state = ConnectionState.DISCONNECTED
+            self._close_stdio_errlog()
 
     async def connect(self) -> Any:
         """Connect via stdio transport."""

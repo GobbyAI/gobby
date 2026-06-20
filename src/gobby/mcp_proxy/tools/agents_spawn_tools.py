@@ -83,8 +83,7 @@ def register_agent_spawn_tools(
         code_index=ctx.code_index,
     )
 
-    for tool_name, tool in spawn_registry._tools.items():
-        registry._tools[tool_name] = tool
+    registry.merge_from(spawn_registry)
 
     @registry.tool(
         name="apply_persona",

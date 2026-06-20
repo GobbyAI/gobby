@@ -25,6 +25,18 @@ from gobby.sync.linear_support import (
 )
 
 
+def _parse_linear_timestamp(value: str | None) -> datetime | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
+
+
 class LinearTaskOpsMixin(LinearProjectOpsMixin):
     """Task-level Linear import, push, pull, and sync operations."""
 
@@ -290,8 +302,10 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         created_issues = await self.create_missing_issues(team_id=effective_team_id)
         push_stats = await self.push_active_tasks()
 
-        synced_at = datetime.now(UTC).isoformat()
-        self._update_synced_at(synced_at)
+        synced_at = None
+        if push_stats.get("errors", 0) == 0:
+            synced_at = datetime.now(UTC).isoformat()
+            self._update_synced_at(synced_at)
 
         return {
             "mode": "forward_active",
@@ -309,7 +323,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         if not effective_team_id:
             raise ValueError("No team_id provided and no default linear_team_id configured.")
 
-        synced_at = self._get_project_synced_at()
+        synced_at = _parse_linear_timestamp(self._get_project_synced_at())
         stats = {"updated": 0, "skipped": 0, "errors": 0}
 
         rows = self.task_manager.db.fetchall(
@@ -357,7 +371,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 continue
 
             try:
-                linear_updated = issue.get("updatedAt", "")
+                linear_updated = _parse_linear_timestamp(issue.get("updatedAt"))
                 if synced_at and linear_updated and linear_updated <= synced_at:
                     stats["skipped"] += 1
                     continue

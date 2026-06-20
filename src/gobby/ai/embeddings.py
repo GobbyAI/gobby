@@ -776,6 +776,12 @@ def _clear_reachability_cache() -> None:
         _reachability_cache.clear()
 
 
+def clear_cache() -> None:
+    """Clear generated embedding and reachability caches."""
+    _clear_embedding_cache()
+    _clear_reachability_cache()
+
+
 def _reachability_cache_key(api_base: str | None, has_key: bool) -> tuple[str, bool]:
     """Key reachability results by endpoint + whether an auth key was used."""
     return (api_base or "openai-default", has_key)
@@ -861,7 +867,7 @@ async def _is_embedding_reachable(
                     url,
                     resp.status_code,
                 )
-    except Exception as exc:
+    except (httpx.HTTPError, httpx.InvalidURL) as exc:
         logger.debug("Embedding probe failed: url=%s err=%r", url, exc)
         reachable = False
 
@@ -977,5 +983,4 @@ class EmbeddingService:
 
     def clear_cache(self) -> None:
         """Clear generated embedding and reachability caches."""
-        _clear_embedding_cache()
-        _clear_reachability_cache()
+        clear_cache()

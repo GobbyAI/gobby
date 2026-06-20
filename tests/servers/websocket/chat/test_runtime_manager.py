@@ -14,6 +14,7 @@ import pytest
 
 from gobby.adapters import acp_client_requests
 from gobby.adapters.gemini_acp_client import StreamEvent
+from gobby.agents.local_model import LocalModelError
 from gobby.agents.sandbox import SandboxConfig
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.config.app import DaemonConfig
@@ -803,7 +804,7 @@ class TestCodexBackend:
         await backend.start()
         session = CodexManagedChatSession(conversation_id="conv-codex", _backend=backend)
         session.project_path = "/tmp/project"
-        failure = RuntimeError("model not loaded")
+        failure = LocalModelError("model not loaded")
 
         with (
             patch(

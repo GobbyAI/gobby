@@ -1,13 +1,19 @@
-import type { Dispatch, SetStateAction } from "react";
+import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {
   ApprovalOption,
   ChatMessage,
   ChatMode,
+  ContextUsage,
   FallbackContextMode,
   QueuedFile,
+  SessionInteractionMode,
+  SessionObservationMeta,
 } from "../../types/chat";
+import type { PendingProxyMessage } from "./pendingProxyMessages";
+import type { ContinuationRollbackSnapshot } from "./sessionRecords";
 
 export type Setter<T> = Dispatch<SetStateAction<T>>;
+type SetCurrentMode = (mode: ChatMode) => ChatMode;
 
 export interface EnsureMainSessionOptions {
   projectId?: string | null;
@@ -17,12 +23,79 @@ export interface EnsureMainSessionOptions {
   forceNew?: boolean;
 }
 
-export interface UseChatActionsParams extends Record<string, any> {
+interface PendingChatMessage {
+  content: string;
+  model?: string | null;
+  files?: QueuedFile[];
+  projectId?: string | null;
+  reasoningEffort?: string | null;
+  ttsEnabled?: boolean;
+}
+
+export interface UseChatActionsParams {
+  activeRequestIdRef: MutableRefObject<string | null>;
+  applyMainSessionMeta: (session: Record<string, unknown> | null) => void;
+  attachedSessionId: string | null;
+  attachedSessionIdRef: MutableRefObject<string | null>;
+  attachedSessionMeta: SessionObservationMeta | null;
+  attachedSessionMetaRef: MutableRefObject<SessionObservationMeta | null>;
+  bindActiveSession: (sessionId: string | null) => void;
+  clearPreAttachContextUsage: () => void;
+  clearSessionObservationState: (options?: { preserveViewing?: boolean }) => void;
+  contextUsage: ContextUsage;
+  continuingSessionIdRef: MutableRefObject<string | null>;
+  continuationRollbackRef: MutableRefObject<ContinuationRollbackSnapshot | null>;
+  conversationId: string;
+  conversationIdRef: MutableRefObject<string>;
+  currentBranch: string | null;
+  currentModeRef: MutableRefObject<ChatMode>;
+  dbSessionId: string | null;
+  dbSessionIdRef: MutableRefObject<string | null>;
   ensureMainSession: (
     options: EnsureMainSessionOptions,
   ) => Promise<string | null>;
+  isStreaming: boolean;
+  lastSeqRef: MutableRefObject<number>;
+  lastServerModeTimestampRef: MutableRefObject<number>;
+  mainSessionMeta: SessionObservationMeta | null;
+  messages: ChatMessage[];
+  messagesRef: MutableRefObject<ChatMessage[]>;
+  observedSessionId: string | null;
+  observedSessionMetaRef: MutableRefObject<SessionObservationMeta | null>;
+  onModeChangedRef: MutableRefObject<((mode: ChatMode) => void) | null>;
+  pendingMessagesRef: MutableRefObject<PendingChatMessage[]>;
+  pendingPlanFeedbackRef: MutableRefObject<string | null>;
+  pendingProxyMessagesRef: MutableRefObject<Map<string, PendingProxyMessage>>;
+  pendingProxySessionQueuesRef: MutableRefObject<Map<string, string[]>>;
+  planContentRef: MutableRefObject<string | null>;
+  projectIdRef: MutableRefObject<string | null>;
+  proxyDeliveryNotice: string | null;
+  resetMainChatState: () => void;
+  selectedProvider: string | null;
+  selectedProviderRef: MutableRefObject<string | null>;
+  sendMessageRef: MutableRefObject<SendMessageAction | null>;
+  sessionInteractionMode: SessionInteractionMode;
+  sessionInteractionModeRef: MutableRefObject<SessionInteractionMode>;
+  sessionRef: string | null;
+  sessionTitle: string | null;
+  setActiveAgent: Setter<string>;
+  setContextUsage: Setter<ContextUsage>;
+  setConversationId: Setter<string>;
   setConversationSwitchKey: Setter<number>;
+  setCurrentMode: SetCurrentMode;
+  setIsContinuingSession: Setter<boolean>;
+  setIsLoadingMessages: Setter<boolean>;
+  setIsStreaming: Setter<boolean>;
+  setIsThinking: Setter<boolean>;
   setMessages: Setter<ChatMessage[]>;
+  setPlanPendingApproval: Setter<boolean>;
+  setProxyDeliveryNotice: Setter<string | null>;
+  setSelectedProvider: Setter<string | null>;
+  viewingSessionId: string | null;
+  viewingSessionIdRef: MutableRefObject<string | null>;
+  viewingSessionMeta: SessionObservationMeta | null;
+  worktreePath: string | null;
+  wsRef: MutableRefObject<WebSocket | null>;
 }
 
 export interface SwitchConversationOptions {

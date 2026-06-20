@@ -45,7 +45,11 @@ def resolve_project_ref(project_ref: str | None, exit_on_not_found: bool = True)
     return None
 
 
-def get_active_session_id(db: HubDatabase | None = None) -> str | None:
+def get_active_session_id(
+    db: HubDatabase | None = None,
+    *,
+    project_id: str | None = None,
+) -> str | None:
     """Get the most recent active session ID."""
     close_db = False
     if db is None:
@@ -55,10 +59,18 @@ def get_active_session_id(db: HubDatabase | None = None) -> str | None:
         close_db = True
 
     try:
-        row = db.fetchone(
-            "SELECT id FROM sessions WHERE status = 'active' AND source != 'system' "
-            "ORDER BY updated_at DESC LIMIT 1"
-        )
+        if project_id:
+            row = db.fetchone(
+                "SELECT id FROM sessions "
+                "WHERE status = 'active' AND source != 'system' AND project_id = %s "
+                "ORDER BY updated_at DESC LIMIT 1",
+                (project_id,),
+            )
+        else:
+            row = db.fetchone(
+                "SELECT id FROM sessions WHERE status = 'active' AND source != 'system' "
+                "ORDER BY updated_at DESC LIMIT 1"
+            )
         return str(row["id"]) if row else None
     finally:
         if close_db:
@@ -73,15 +85,15 @@ def resolve_session_id(session_ref: str | None, project_id: str | None = None) -
 
     db = open_runtime_hub_database(apply_migrations=False)
     try:
-        if not session_ref:
-            active_id = deps.get_active_session_id(db)
-            if not active_id:
-                raise click.ClickException("No active session found. Specify --session.")
-            return str(active_id)
-
         if not project_id:
             ctx = deps.get_project_context(cwd=deps.Path.cwd())
             project_id = str(ctx.get("id")) if ctx and ctx.get("id") else None
+
+        if not session_ref:
+            active_id = deps.get_active_session_id(db, project_id=project_id)
+            if not active_id:
+                raise click.ClickException("No active session found. Specify --session.")
+            return str(active_id)
 
         manager = deps.SessionManager(db)
         try:

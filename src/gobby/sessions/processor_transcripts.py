@@ -56,7 +56,7 @@ class ProcessorTranscriptMixin:
                     else:
                         break
 
-        except Exception as e:
+        except (OSError, UnicodeDecodeError) as e:
             logger.error("Error reading transcript %s: %s", transcript_path, e)
             return
 

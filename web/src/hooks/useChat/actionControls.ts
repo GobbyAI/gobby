@@ -36,6 +36,9 @@ export function useChatControlActions(
 
   const clearHistory = useCallback((): boolean => {
     const oldConversationId = conversationIdRef.current;
+    if (oldConversationId == null || oldConversationId === "") {
+      return false;
+    }
     if (wsRef.current?.readyState !== WebSocket.OPEN) {
       return false;
     }

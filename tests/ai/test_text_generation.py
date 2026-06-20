@@ -1186,6 +1186,51 @@ async def test_text_generation_service_skips_provider_unsupported_reasoning_effo
     assert "Unsupported reasoning_effort 'xhigh' for provider 'droid'" in caplog.text
 
 
+@pytest.mark.asyncio
+async def test_text_generation_service_raises_last_reasoning_effort_error_when_all_reject() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("qwen-model",),
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="gemini",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-pro",),
+            ),
+        ]
+    )
+    qwen = RecordingAdapter("qwen")
+    gemini = RecordingAdapter("gemini")
+    service = TextGenerationService(registry, {"qwen": qwen, "gemini": gemini})
+
+    with pytest.raises(ValueError, match="Unknown reasoning_effort 'kumquat'"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                candidates=(
+                    FeatureCandidateConfig(
+                        candidate="qwen/qwen-model",
+                        reasoning_effort="banana",
+                    ),
+                    FeatureCandidateConfig(
+                        candidate="gemini/gemini-pro",
+                        reasoning_effort="kumquat",
+                    ),
+                ),
+            )
+        )
+
+    assert qwen.requests == []
+    assert gemini.requests == []
+
+
 def test_coerce_text_result_applies_reasoning_effort_to_raw_string() -> None:
     result = _coerce_text_result("Generated text", applied_reasoning_effort="high")
 

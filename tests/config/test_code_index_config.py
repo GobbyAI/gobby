@@ -6,7 +6,11 @@ import pytest
 from pydantic import ValidationError
 
 from gobby.config.code_index import CodeIndexConfig
-from gobby.config.feature_base import FeatureProfile
+from gobby.config.feature_base import (
+    DEFAULT_PROFILE_CANDIDATES,
+    FeatureProfile,
+    candidate_labels,
+)
 
 pytestmark = pytest.mark.unit
 
@@ -31,7 +35,9 @@ def test_code_index_config_uses_nested_symbol_summary_defaults() -> None:
     assert config.symbol_summary.profile == FeatureProfile.LOW
     assert config.symbol_summary.max_concurrency == 2
     assert config.symbol_summary.max_tokens == 100
-    assert config.symbol_summary.candidates
+    assert candidate_labels(config.symbol_summary.candidates) == candidate_labels(
+        DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW]
+    )
 
 
 def test_code_index_config_rejects_legacy_flat_summary_fields() -> None:

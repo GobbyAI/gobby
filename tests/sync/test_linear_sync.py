@@ -773,6 +773,20 @@ class TestLinearSyncServiceCreate:
         sync_service._update_synced_at.assert_called_once()
 
     @pytest.mark.asyncio
+    async def test_sync_active_forward_keeps_cursor_when_push_has_errors(self, sync_service):
+        """sync_active_forward leaves synced_at unchanged when active push fails."""
+        sync_service.create_missing_issues = AsyncMock(return_value=[])
+        sync_service.push_active_tasks = AsyncMock(
+            return_value={"pushed": 1, "skipped": 0, "errors": 1}
+        )
+        sync_service._update_synced_at = MagicMock()
+
+        result = await sync_service.sync_active_forward(team_id="team-123")
+
+        assert result["synced_at"] is None
+        sync_service._update_synced_at.assert_not_called()
+
+    @pytest.mark.asyncio
     async def test_push_active_tasks_filters_closed_tasks(self, sync_service, mock_task_manager):
         """push_active_tasks only pushes linked non-closed tasks."""
         mock_task_manager.db.fetchall.return_value = [{"id": "task-1"}, {"id": "task-2"}]

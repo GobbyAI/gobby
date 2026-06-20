@@ -108,10 +108,16 @@ def kill_all_gobby_daemons() -> int:
 
             cmdline = proc.cmdline()
             cmdline_str = " ".join(cmdline)
+            cmdline_lower = cmdline_str.lower()
+            process_name = str(proc.info.get("name") or "").lower()
+            has_gobby_daemon_marker = (
+                "gobby.runner" in cmdline_str
+                or "gobby_client.runner" in cmdline_str
+                or ("gobby" in process_name and "daemon" in cmdline_lower)
+            )
 
             is_gobby_daemon = (
-                "python" in cmdline_str.lower()
-                and ("gobby.runner" in cmdline_str or "gobby_client.runner" in cmdline_str)
+                has_gobby_daemon_marker
                 and "gobby.cli" not in cmdline_str
                 and "gobby_client.cli" not in cmdline_str
             )
@@ -122,7 +128,7 @@ def kill_all_gobby_daemons() -> int:
                     for conn in connections:
                         if hasattr(conn, "laddr") and conn.laddr:
                             if conn.laddr.port in [http_port, ws_port]:
-                                if "python" in cmdline_str.lower():
+                                if has_gobby_daemon_marker:
                                     is_gobby_daemon = True
                                     break
                 except (psutil.AccessDenied, psutil.NoSuchProcess):

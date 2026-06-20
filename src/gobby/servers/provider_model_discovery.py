@@ -346,7 +346,8 @@ def parse_acp_models(
 
         return models_from_acp_session(session_info)
 
-    raw_models = session_info.get("models", {}).get("availableModels", [])
+    models_info = session_info.get("models")
+    raw_models = models_info.get("availableModels", []) if isinstance(models_info, dict) else []
     models: list[dict[str, Any]] = []
     for item in raw_models:
         if not isinstance(item, dict):

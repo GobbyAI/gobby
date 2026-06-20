@@ -183,23 +183,31 @@ class LinearProjectOpsMixin:
             if project.get("name") == project_name:
                 return project, False
 
-        try:
-            if not self._linear_mcp_has_tool("create_project"):
-                raise LinearSyncError("Linear MCP server does not expose create_project.")
-            result = await self.mcp_manager.call_tool(
-                server_name="linear",
-                tool_name="create_project",
-                arguments={"teamId": team_id, "name": project_name},
-            )
-            project = _extract_record(result, "project")
-        except Exception as e:
+        if not self._linear_mcp_has_tool("create_project"):
             client = await self._get_graphql_client()
             if not client:
                 raise LinearSyncError(
                     "Linear MCP server does not expose create_project and no Linear API key "
                     "is available for GraphQL project creation."
-                ) from e
+                )
             project = await client.create_project(team_id, project_name)
+        else:
+            try:
+                result = await self.mcp_manager.call_tool(
+                    server_name="linear",
+                    tool_name="create_project",
+                    arguments={"teamId": team_id, "name": project_name},
+                )
+            except Exception as e:
+                client = await self._get_graphql_client()
+                if not client:
+                    raise LinearSyncError(
+                        "Linear MCP server does not expose create_project and no Linear API key "
+                        "is available for GraphQL project creation."
+                    ) from e
+                project = await client.create_project(team_id, project_name)
+            else:
+                project = _extract_record(result, "project")
         if not project.get("id"):
             raise LinearSyncError("Linear MCP create_project did not return a project id.")
         return project, True

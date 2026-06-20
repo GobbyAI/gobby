@@ -84,6 +84,7 @@ def _prepare_spawn_artifacts(
             task=task,
             task_manager=task_manager,
             project_id=project_id,
+            services=services,
             backend=cast(Literal["worktree", "clone"], isolation),
             artifacts=artifacts,
         )
@@ -339,6 +340,7 @@ def _repair_missing_epic_target_branch(
     task: Task,
     task_manager: LocalTaskManager,
     project_id: str,
+    services: object | None,
     backend: Literal["worktree", "clone"],
     artifacts: TaskArtifacts,
 ) -> TaskArtifacts:
@@ -349,7 +351,12 @@ def _repair_missing_epic_target_branch(
     if repaired is not None:
         return repaired
 
-    target_branch = _nearest_parent_integration_or_target(task_manager, task)
+    target_branch = _nearest_parent_integration_or_target(
+        task_manager,
+        task,
+        project_id=project_id,
+        services=services,
+    )
     if target_branch is None:
         target_branch = _current_project_branch(db, project_id)
     if target_branch is None:

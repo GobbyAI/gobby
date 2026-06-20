@@ -33,6 +33,31 @@ class _ImportManager(Protocol):
 class MCPImportStorageMixin:
     """MCP JSON and filesystem import methods."""
 
+    def _upsert_imported_mcp_server(
+        self,
+        *,
+        name: str,
+        config: dict[str, Any],
+        project_id: str,
+    ) -> None:
+        manager = cast(_ImportManager, self)
+        transport = config.get("transport", "stdio")
+        manager.upsert(
+            name=name,
+            transport=transport,
+            url=config.get("url"),
+            command=config.get("command"),
+            args=config.get("args"),
+            env=config.get("env"),
+            headers=config.get("headers"),
+            enabled=config.get("enabled", True),
+            description=config.get("description"),
+            requires_oauth=config.get("requires_oauth"),
+            oauth_provider=config.get("oauth_provider"),
+            connect_timeout=config.get("connect_timeout"),
+            project_id=project_id,
+        )
+
     def import_from_mcp_json(self, path: str | Path, project_id: str) -> int:
         """
         Import servers from .mcp.json file.
@@ -60,29 +85,19 @@ class MCPImportStorageMixin:
             return 0
 
         imported = 0
-        manager = cast(_ImportManager, self)
 
         # Handle Gobby format: {"servers": [{"name": "...", ...}, ...]}
         if "servers" in data and isinstance(data["servers"], list):
             for config in data["servers"]:
+                if not isinstance(config, dict):
+                    continue
                 name = config.get("name")
                 if not name:
                     continue
 
-                transport = config.get("transport", "stdio")
-                manager.upsert(
-                    name=name,
-                    transport=transport,
-                    url=config.get("url"),
-                    command=config.get("command"),
-                    args=config.get("args"),
-                    env=config.get("env"),
-                    headers=config.get("headers"),
-                    enabled=config.get("enabled", True),
-                    description=config.get("description"),
-                    requires_oauth=config.get("requires_oauth"),
-                    oauth_provider=config.get("oauth_provider"),
-                    connect_timeout=config.get("connect_timeout"),
+                self._upsert_imported_mcp_server(
+                    name=str(name),
+                    config=config,
                     project_id=project_id,
                 )
                 imported += 1
@@ -90,20 +105,11 @@ class MCPImportStorageMixin:
         # Handle Claude Code format: {"mcpServers": {"server_name": {...}, ...}}
         elif "mcpServers" in data and isinstance(data["mcpServers"], dict):
             for name, config in data["mcpServers"].items():
-                transport = config.get("transport", "stdio")
-                manager.upsert(
-                    name=name,
-                    transport=transport,
-                    url=config.get("url"),
-                    command=config.get("command"),
-                    args=config.get("args"),
-                    env=config.get("env"),
-                    headers=config.get("headers"),
-                    enabled=config.get("enabled", True),
-                    description=config.get("description"),
-                    requires_oauth=config.get("requires_oauth"),
-                    oauth_provider=config.get("oauth_provider"),
-                    connect_timeout=config.get("connect_timeout"),
+                if not isinstance(config, dict):
+                    continue
+                self._upsert_imported_mcp_server(
+                    name=str(name),
+                    config=config,
                     project_id=project_id,
                 )
                 imported += 1

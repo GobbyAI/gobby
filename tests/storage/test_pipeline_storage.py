@@ -4,6 +4,7 @@ TDD tests for pipeline execution CRUD operations.
 """
 
 import json
+from typing import cast
 
 import pytest
 
@@ -458,6 +459,30 @@ class TestResolveExecutionReference:
         prefix = execution.id[:12]  # pe-xxxxxxxx (12 chars)
         resolved = manager.resolve_execution_reference(prefix)
         assert resolved == execution.id
+
+    def test_resolve_uuid_prefix_without_project_filters_for_null_project(self) -> None:
+        """Test prefix resolution when a project-less manager is used."""
+
+        class FakeDB:
+            def __init__(self) -> None:
+                self.queries: list[tuple[str, tuple[str, ...]]] = []
+
+            def fetchone(self, sql: str, params: tuple[str, ...]) -> dict[str, str] | None:
+                self.queries.append((sql, params))
+                if "LIKE" in sql:
+                    return {"id": "pe-global-execution"}
+                return None
+
+        fake_db = FakeDB()
+        manager = LocalPipelineExecutionManager(cast(HubDatabase, fake_db), project_id="unused")
+        manager.project_id = None  # type: ignore[assignment]
+
+        resolved = manager.resolve_execution_reference("pe-global")
+
+        assert resolved == "pe-global-execution"
+        prefix_sql, prefix_params = fake_db.queries[-1]
+        assert "project_id IS NULL" in prefix_sql
+        assert prefix_params == ("pe-global%",)
 
     def test_resolve_invalid_reference(self, manager) -> None:
         """Test resolving invalid reference raises ValueError."""

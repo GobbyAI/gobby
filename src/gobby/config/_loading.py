@@ -132,6 +132,17 @@ def expand_env_vars(
     return ENV_VAR_PATTERN.sub(replace_env, content)
 
 
+def _ensure_config_mapping(data: Any, config_path: Path) -> dict[str, Any]:
+    if data is None:
+        return {}
+    if not isinstance(data, dict):
+        raise ValueError(
+            "Config file must contain a mapping/object at the top level, "
+            f"got {type(data).__name__}: {config_path}"
+        )
+    return data
+
+
 def load_yaml(
     config_file: str,
     secret_resolver: Callable[[str], str | None] | None = None,
@@ -171,11 +182,12 @@ def load_yaml(
 
         # Handle JSON files
         if file_ext == ".json":
-            return json.loads(content) if content.strip() else {}
+            data = json.loads(content) if content.strip() else {}
+            return _ensure_config_mapping(data, config_path)
 
         # Handle YAML files
         data = yaml.safe_load(content)
-        return data if data is not None else {}
+        return _ensure_config_mapping(data, config_path)
 
     except yaml.YAMLError as e:
         raise ValueError(f"Invalid YAML in config file: {e}") from e
@@ -352,25 +364,32 @@ def _migrate_code_index_symbol_summary_config_store_keys(
         return flat_config
 
     migrated = dict(flat_config)
-    updates: dict[str, Any] = {}
+    keys_to_delete: list[str] = []
+    set_value = getattr(config_store, "set", None)
     for old_key in old_keys:
         new_key = _CODE_INDEX_SYMBOL_SUMMARY_KEY_MIGRATIONS[old_key]
-        value = migrated.pop(old_key)
+        value = migrated[old_key]
         if new_key not in migrated:
+            if callable(set_value):
+                try:
+                    set_value(new_key, value, source="migration")
+                except Exception as exc:
+                    logger.debug(
+                        "Failed to persist migrated config key %s: %s",
+                        new_key,
+                        exc,
+                    )
+                    continue
             migrated[new_key] = value
-            updates[new_key] = value
+        migrated.pop(old_key, None)
+        keys_to_delete.append(old_key)
 
-    set_value = getattr(config_store, "set", None)
-    if updates and callable(set_value):
-        for key, value in updates.items():
-            try:
-                set_value(key, value, source="migration")
-            except Exception as exc:
-                logger.debug("Failed to persist migrated config key %s: %s", key, exc)
+    if not keys_to_delete:
+        return migrated
 
     delete = getattr(config_store, "delete", None)
     if callable(delete):
-        for key in old_keys:
+        for key in keys_to_delete:
             try:
                 delete(key)
             except Exception as exc:
@@ -378,7 +397,7 @@ def _migrate_code_index_symbol_summary_config_store_keys(
 
     logger.info(
         "Migrated code-index symbol summary config keys: %s",
-        ", ".join(old_keys),
+        ", ".join(keys_to_delete),
     )
     return migrated
 
@@ -465,9 +484,13 @@ def export_config_to_yaml(config: DaemonConfig, config_file: str | None = None) 
     # mode="json" ensures Path objects are converted to strings for YAML serialization
     config_dict = config.model_dump(mode="json", exclude_none=True, by_alias=True)
 
-    # Write to YAML file
-    with open(config_path, "w") as f:
-        yaml.safe_dump(config_dict, f, default_flow_style=False, sort_keys=False)
-
-    # Set restrictive permissions (owner read/write only)
-    config_path.chmod(0o600)
+    # Write with owner-only permissions before any data is emitted.
+    fd = os.open(config_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    try:
+        os.fchmod(fd, 0o600)
+        with os.fdopen(fd, "w") as f:
+            fd = -1
+            yaml.safe_dump(config_dict, f, default_flow_style=False, sort_keys=False)
+    finally:
+        if fd != -1:
+            os.close(fd)

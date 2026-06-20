@@ -382,7 +382,9 @@ async def check_resume_blocked(mixin: SessionControlMixin, source_session: Any) 
     session_manager = getattr(mixin, "session_manager", None)
     if session_manager:
         try:
-            row = session_manager.db.fetchone(
+            row = await run_db(
+                mixin,
+                session_manager.db.fetchone,
                 "SELECT id FROM agent_runs "
                 "WHERE parent_session_id = %s AND status IN ('pending', 'running') "
                 "LIMIT 1",
@@ -395,7 +397,9 @@ async def check_resume_blocked(mixin: SessionControlMixin, source_session: Any) 
 
         # 2. Active pipeline
         try:
-            row = session_manager.db.fetchone(
+            row = await run_db(
+                mixin,
+                session_manager.db.fetchone,
                 "SELECT id FROM pipeline_executions "
                 "WHERE session_id = %s AND status IN ('pending', 'running', 'waiting_approval') "
                 "LIMIT 1",

@@ -63,6 +63,14 @@ def create_embeddings_router(server: HTTPServer) -> APIRouter:
         config = server.config
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
+        if payload.provider is not None:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "Embedding provider overrides are not supported by this route; "
+                    "configure daemon embeddings or pass only model."
+                ),
+            )
 
         status = build_daemon_ai_capability_registry(config).status(AICapability.EMBED)
         if not status.available:

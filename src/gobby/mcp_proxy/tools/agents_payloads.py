@@ -4,8 +4,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from gobby.storage.agents import AgentRun
 
-def _agent_result_payload(run: Any, *, include_prompt: bool = True) -> dict[str, Any]:
+
+def _agent_result_payload(run: AgentRun, *, include_prompt: bool = True) -> dict[str, Any]:
     payload = {
         "run_id": run.id,
         "status": run.status,

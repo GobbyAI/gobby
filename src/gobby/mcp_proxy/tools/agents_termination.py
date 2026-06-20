@@ -14,6 +14,7 @@ if TYPE_CHECKING:
 def _fire_synthetic_stop(
     hook_manager_resolver: Any | None,
     session_id: str,
+    session_manager: Any | None = None,
 ) -> None:
     """Fire a synthetic STOP event so stop-triggered rules evaluate for killed agents."""
     if not hook_manager_resolver:
@@ -27,10 +28,24 @@ def _fire_synthetic_stop(
 
         from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 
+        source = SessionSource.CLAUDE
+        if session_manager is not None:
+            try:
+                session = session_manager.get(session_id)
+                session_source = getattr(session, "source", None) if session else None
+                if isinstance(session_source, str) and session_source:
+                    source = SessionSource(session_source)
+            except (AttributeError, ValueError) as exc:
+                agents.logger.debug(
+                    "Failed to resolve source for synthetic stop session %s: %s",
+                    session_id,
+                    exc,
+                )
+
         stop_event = HookEvent(
             event_type=HookEventType.STOP,
             session_id=session_id,
-            source=SessionSource.CLAUDE,
+            source=source,
             timestamp=datetime.now(UTC),
             data={},
             metadata={"_platform_session_id": session_id},
@@ -82,7 +97,11 @@ async def _cleanup_terminal_artifacts(
             except Exception as e:
                 result["session_expire_error"] = str(e)
 
-        agents._fire_synthetic_stop(hook_manager_resolver, agent_session_id)
+        agents._fire_synthetic_stop(
+            hook_manager_resolver,
+            agent_session_id,
+            session_manager=session_manager,
+        )
 
 
 async def _complete_self_terminated_run(

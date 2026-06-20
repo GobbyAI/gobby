@@ -84,6 +84,16 @@ class _ReasoningEffortRejectedError(ValueError):
     """Raised when a candidate's reasoning effort must fail before adapter execution."""
 
 
+def _all_candidates_rejected_reasoning(
+    attempted_candidates: list[str],
+    candidate_errors: dict[str, str],
+) -> bool:
+    return bool(attempted_candidates) and all(
+        candidate_errors.get(candidate, "").startswith("_ReasoningEffortRejectedError:")
+        for candidate in attempted_candidates
+    )
+
+
 def _json_parse_failure(raw: str, exc: Exception) -> ValueError:
     preview = raw[:240].replace("\n", "\\n").replace("\r", "\\r")
     if not preview:
@@ -234,6 +244,12 @@ class TextGenerationService:
         if text_result is not None:
             return text_result
 
+        if (
+            last_error is not None
+            and isinstance(last_error, _ReasoningEffortRejectedError)
+            and _all_candidates_rejected_reasoning(attempted_candidates, candidate_errors)
+        ):
+            raise last_error
         if len(attempted_candidates) == 1 and last_error is not None:
             raise last_error
         if unavailable_error := self._aggregate_unavailable_candidates_error(
@@ -263,6 +279,12 @@ class TextGenerationService:
         if result is not None:
             return result
 
+        if (
+            last_error is not None
+            and isinstance(last_error, _ReasoningEffortRejectedError)
+            and _all_candidates_rejected_reasoning(attempted_candidates, candidate_errors)
+        ):
+            raise last_error
         if len(attempted_candidates) == 1 and last_error is not None:
             raise last_error
         if unavailable_error := self._aggregate_unavailable_candidates_error(
@@ -286,6 +308,8 @@ class TextGenerationService:
         candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[LLMTextResult | None, Exception | None]:
         last_error: Exception | None = None
+        last_reasoning_error: _ReasoningEffortRejectedError | None = None
+        reasoning_rejections = 0
         for index, candidate in enumerate(candidates):
             candidate_label = _candidate_debug_label(candidate)
             has_remaining_candidates = index < len(candidates) - 1
@@ -333,6 +357,8 @@ class TextGenerationService:
                 raise
             except _ReasoningEffortRejectedError as exc:
                 last_error = exc
+                last_reasoning_error = exc
+                reasoning_rejections += 1
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
                 logger.warning("Skipping text generation candidate: %s", exc)
                 continue
@@ -350,6 +376,12 @@ class TextGenerationService:
                     terminal_failure=not has_remaining_candidates,
                 )
                 continue
+        if (
+            attempted_candidates
+            and reasoning_rejections == len(attempted_candidates)
+            and last_reasoning_error is not None
+        ):
+            return None, last_reasoning_error
         return None, last_error
 
     async def _try_generate_json_candidates(
@@ -361,6 +393,8 @@ class TextGenerationService:
         candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[dict[str, Any] | None, Exception | None]:
         last_error: Exception | None = None
+        last_reasoning_error: _ReasoningEffortRejectedError | None = None
+        reasoning_rejections = 0
         for index, candidate in enumerate(candidates):
             candidate_label = _candidate_debug_label(candidate)
             has_remaining_candidates = index < len(candidates) - 1
@@ -425,6 +459,8 @@ class TextGenerationService:
                 raise
             except _ReasoningEffortRejectedError as exc:
                 last_error = exc
+                last_reasoning_error = exc
+                reasoning_rejections += 1
                 candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
                 logger.warning("Skipping JSON generation candidate: %s", exc)
                 continue
@@ -446,6 +482,12 @@ class TextGenerationService:
                     json_parse_outcome=parse_outcome,
                     terminal_failure=not has_remaining_candidates,
                 )
+        if (
+            attempted_candidates
+            and reasoning_rejections == len(attempted_candidates)
+            and last_reasoning_error is not None
+        ):
+            return None, last_reasoning_error
         return None, last_error
 
     @staticmethod

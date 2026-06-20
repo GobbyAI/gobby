@@ -11,9 +11,9 @@ from gobby.ai.embeddings import (
     EmbeddingGenerationError,
     _cache,
     _cache_key,
-)
-from gobby.ai.embeddings import (
-    _clear_embedding_cache as clear_cache,
+    _reachability_cache,
+    _ReachabilityEntry,
+    clear_cache,
 )
 from gobby.ai.embeddings import (
     _generate_embedding as generate_embedding,
@@ -332,3 +332,15 @@ async def test_clear_cache() -> None:
 
     clear_cache()
     assert len(_cache) == 0
+
+
+def test_clear_cache_clears_reachability_cache() -> None:
+    """clear_cache() should empty reachability probes too."""
+    _reachability_cache[("http://localhost:1234/v1", False)] = _ReachabilityEntry(
+        reachable=True,
+        checked_at=1.0,
+    )
+
+    clear_cache()
+
+    assert _reachability_cache == {}

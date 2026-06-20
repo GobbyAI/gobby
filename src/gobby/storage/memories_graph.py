@@ -48,6 +48,8 @@ class MemoryGraphMixin(MemoryStoreBase):
         """
         if limit is not None:
             rows = self.db.fetchall("SELECT id FROM memories LIMIT %s OFFSET %s", (limit, offset))
+        elif offset:
+            rows = self.db.fetchall("SELECT id FROM memories OFFSET %s", (offset,))
         else:
             rows = self.db.fetchall("SELECT id FROM memories")
         return [row["id"] for row in rows]

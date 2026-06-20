@@ -317,7 +317,8 @@ export function useConversationActions(
           sourceSession =
             (sessionData?.session as Record<string, unknown>) ?? null;
         }
-      } catch {
+      } catch (error) {
+        console.error("Failed to fetch source session:", error);
         sourceSession = null;
       }
 

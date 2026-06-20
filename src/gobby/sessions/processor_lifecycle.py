@@ -197,8 +197,8 @@ class ProcessorLifecycleMixin:
         if self.session_manager:
             self.session_manager.update_stats(
                 session_id,
-                message_count=stats.get("message_count", 0),
-                turn_count=stats.get("turn_count", 0),
-                tool_call_count=stats.get("tool_call_count", 0),
-                last_assistant_content=stats.get("last_assistant_content"),
+                message_count=stats["message_count"],
+                turn_count=stats["turn_count"],
+                tool_call_count=stats["tool_call_count"],
+                last_assistant_content=stats["last_assistant_content"],
             )

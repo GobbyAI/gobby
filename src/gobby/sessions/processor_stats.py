@@ -151,6 +151,6 @@ class ProcessorStatsMixin:
             "cache_creation_tokens",
             "cache_read_tokens",
         )
-        if not all(isinstance(getattr(usage, field, 0), int) for field in fields):
+        if not all(type(getattr(usage, field, 0)) is int for field in fields):
             return False
         return any(getattr(usage, field, 0) != 0 for field in fields)

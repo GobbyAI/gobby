@@ -223,7 +223,7 @@ def register_agent_query_tools(
 
     @registry.tool(
         name="unregister_agent",
-        description="Mark an agent run as cancelled (internal use).",
+        description="Mark an active agent run as failed/unregistered (internal use).",
     )
     async def unregister_agent(run_id: str) -> dict[str, Any]:
         run = ctx.agent_run_manager.get(run_id)

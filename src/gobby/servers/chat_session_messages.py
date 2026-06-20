@@ -36,6 +36,10 @@ from gobby.llm.sdk_utils import (
 
 logger = logging.getLogger(__name__)
 
+_HISTORY_MESSAGE_LIMIT = 50
+_HISTORY_WRAPPER_OVERHEAD_CHARS = 200
+_DRAIN_PENDING_RESPONSE_TIMEOUT_SECONDS = 1.0
+
 
 class ChatSessionMessagesMixin:
     """History injection and streaming response handling for ChatSession."""
@@ -74,7 +78,10 @@ class ChatSessionMessagesMixin:
             return None
 
         try:
-            messages = await self._message_manager.get_messages(target_id, limit=50)
+            messages = await self._message_manager.get_messages(
+                target_id,
+                limit=_HISTORY_MESSAGE_LIMIT,
+            )
             if not messages:
                 return None
 
@@ -92,8 +99,7 @@ class ChatSessionMessagesMixin:
             effective_max = (
                 max_total_chars if max_total_chars is not None else self._max_history_total_chars
             )
-            wrapper_overhead = 200
-            content_budget = effective_max - wrapper_overhead
+            content_budget = effective_max - _HISTORY_WRAPPER_OVERHEAD_CHARS
             if content_budget <= 0:
                 return None
 
@@ -339,7 +345,7 @@ class ChatSessionMessagesMixin:
         if not self._client or not self._connected:
             return
         try:
-            async with asyncio.timeout(1.0):
+            async with asyncio.timeout(_DRAIN_PENDING_RESPONSE_TIMEOUT_SECONDS):
                 async for _ in self._client.receive_response():
                     pass
         except TimeoutError:

@@ -176,10 +176,14 @@ async def _local_generation_model_groups(
     endpoints = getattr(local_cfg, "endpoints", {})
     if not isinstance(endpoints, dict):
         return []
-    return [
-        await discover_local_endpoint_model_group(name, endpoint)
-        for name, endpoint in endpoints.items()
-    ]
+    return list(
+        await asyncio.gather(
+            *(
+                discover_local_endpoint_model_group(name, endpoint)
+                for name, endpoint in endpoints.items()
+            )
+        )
+    )
 
 
 def _local_generation_provider_entries(

@@ -6,6 +6,28 @@ from dataclasses import dataclass
 from typing import Any
 
 
+def _loads_server_json_field(row: Mapping[str, Any], field: str) -> Any:
+    raw = row[field]
+    if not raw:
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError as exc:
+        server_id = row.get("id", "<unknown>")
+        raise ValueError(f"Invalid JSON for MCP server {server_id} field {field}: {exc}") from exc
+
+
+def _loads_tool_input_schema(row: Mapping[str, Any]) -> dict[str, Any] | None:
+    raw = row["input_schema"]
+    if not raw:
+        return None
+    try:
+        schema = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    return schema if isinstance(schema, dict) else None
+
+
 @dataclass
 class MCPServer:
     """MCP server configuration model."""
@@ -36,9 +58,9 @@ class MCPServer:
             transport=row["transport"],
             url=row["url"],
             command=row["command"],
-            args=json.loads(row["args"]) if row["args"] else None,
-            env=json.loads(row["env"]) if row["env"] else None,
-            headers=json.loads(row["headers"]) if row["headers"] else None,
+            args=_loads_server_json_field(row, "args"),
+            env=_loads_server_json_field(row, "env"),
+            headers=_loads_server_json_field(row, "headers"),
             enabled=bool(row["enabled"]),
             description=row["description"],
             requires_oauth=bool(row.get("requires_oauth", False)),
@@ -122,7 +144,7 @@ class Tool:
             mcp_server_id=row["mcp_server_id"],
             name=row["name"],
             description=row["description"],
-            input_schema=json.loads(row["input_schema"]) if row["input_schema"] else None,
+            input_schema=_loads_tool_input_schema(row),
             created_at=row["created_at"],
             updated_at=row["updated_at"],
         )

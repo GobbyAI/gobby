@@ -107,6 +107,12 @@ class TestFeatureDefaultConfig:
         assert cfg._candidates_omitted is False
         assert candidate_labels(cfg.candidates) == ("qwen/qwen3-coder", "claude/opus")
 
+    def test_explicit_empty_candidates_remain_empty(self) -> None:
+        cfg = FeatureDefaultConfig(profile=FeatureProfile.HIGH, candidates=[])
+
+        assert cfg._candidates_omitted is False
+        assert cfg.candidates == []
+
     def test_structured_candidate_config_parses_reasoning_effort(self) -> None:
         cfg = FeatureDefaultConfig(
             candidates=[

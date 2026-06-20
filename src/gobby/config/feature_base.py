@@ -244,7 +244,7 @@ class FeatureDefaultConfig(BaseModel):
     def populate_and_validate_candidates(self) -> "FeatureDefaultConfig":
         """Fill profile defaults and validate provider-scoped candidate labels."""
         self._candidates_omitted = "candidates" not in self.model_fields_set
-        if not self.candidates:
+        if self._candidates_omitted:
             self.candidates = list(DEFAULT_PROFILE_CANDIDATES[FeatureProfile(self.profile)])
         self.candidates = validate_feature_candidates(self.candidates)
         return self

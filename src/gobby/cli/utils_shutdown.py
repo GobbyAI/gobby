@@ -39,7 +39,7 @@ def stop_daemon(
         try:
             with open(pid_file) as file:
                 pid = int(file.read().strip())
-        except Exception as exc:
+        except (FileNotFoundError, ValueError, OSError) as exc:
             if not quiet:
                 deps._stop_step(f"Error reading PID file: {exc}", error=True)
             pid_file.unlink(missing_ok=True)
@@ -82,10 +82,10 @@ def stop_daemon(
 
     try:
         from gobby.runner_maintenance import write_shutdown_source
-
-        write_shutdown_source(shutdown_source, intent=shutdown_intent)
-    except Exception as exc:
+    except ImportError as exc:
         deps.logger.debug(f"Failed to write shutdown source: {exc}")
+    else:
+        write_shutdown_source(shutdown_source, intent=shutdown_intent)
 
     stop_start = time.time()
 
