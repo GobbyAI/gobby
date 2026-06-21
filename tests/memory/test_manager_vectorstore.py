@@ -15,18 +15,19 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
+from gobby.storage.hub.protocol import HubDatabase
 
 pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(hub_db):
+def db(hub_db: HubDatabase) -> HubDatabase:
     """Create a temporary hub database for testing."""
     return hub_db
 
 
 @pytest.fixture
-def mock_vector_store():
+def mock_vector_store() -> AsyncMock:
     """Create a mock VectorStore."""
     vs = AsyncMock(spec=VectorStore)
     vs.upsert = AsyncMock()
@@ -38,13 +39,13 @@ def mock_vector_store():
 
 
 @pytest.fixture
-def mock_embed_fn():
+def mock_embed_fn() -> AsyncMock:
     """Create a mock embedding function."""
     return AsyncMock(return_value=[0.1, 0.2, 0.3, 0.4] * 384)  # 1536-dim
 
 
 @pytest.fixture
-def manager(db, mock_vector_store, mock_embed_fn):
+def manager(db, mock_vector_store: AsyncMock, mock_embed_fn: AsyncMock) -> MemoryManager:
     """Create a MemoryManager with VectorStore."""
     config = MemoryConfig(enabled=True, backend="local")
     mgr = MemoryManager(
@@ -57,7 +58,9 @@ def manager(db, mock_vector_store, mock_embed_fn):
 
 
 @pytest.mark.asyncio
-async def test_create_memory_upserts_to_qdrant(manager, mock_vector_store, mock_embed_fn):
+async def test_create_memory_upserts_to_qdrant(
+    manager: MemoryManager, mock_vector_store: AsyncMock, mock_embed_fn: AsyncMock
+) -> None:
     """create_memory should store locally and upsert to Qdrant."""
     memory = await manager.create_memory(
         content="test fact",
@@ -75,7 +78,7 @@ async def test_create_memory_upserts_to_qdrant(manager, mock_vector_store, mock_
 
 
 @pytest.mark.asyncio
-async def test_create_memory_works_without_vectorstore(db):
+async def test_create_memory_works_without_vectorstore(db: HubDatabase) -> None:
     """create_memory should work when VectorStore is None (Phase 1 compat)."""
     config = MemoryConfig(enabled=True, backend="local")
     mgr = MemoryManager(db=db, config=config)
@@ -85,7 +88,9 @@ async def test_create_memory_works_without_vectorstore(db):
 
 
 @pytest.mark.asyncio
-async def test_search_memories_queries_qdrant(manager, mock_vector_store, mock_embed_fn):
+async def test_search_memories_queries_qdrant(
+    manager: MemoryManager, mock_vector_store: AsyncMock, mock_embed_fn: AsyncMock
+) -> None:
     """search_memories with query should embed query + search Qdrant."""
     # Create a memory first
     memory = await manager.create_memory(content="cats are great")
@@ -117,7 +122,9 @@ async def test_search_memories_queries_qdrant(manager, mock_vector_store, mock_e
 
 
 @pytest.mark.asyncio
-async def test_search_memories_user_source_boost(manager, mock_vector_store, mock_embed_fn):
+async def test_search_memories_user_source_boost(
+    manager: MemoryManager, mock_vector_store: AsyncMock, mock_embed_fn: AsyncMock
+) -> None:
     """search_memories should boost user memories by 1.2x."""
     # Create two memories
     user_mem = await manager.create_memory(content="user memory alpha", source_type="user")
@@ -147,7 +154,9 @@ async def test_search_memories_user_source_boost(manager, mock_vector_store, moc
 
 
 @pytest.mark.asyncio
-async def test_search_memories_no_query_returns_list(manager, mock_vector_store):
+async def test_search_memories_no_query_returns_list(
+    manager: MemoryManager, mock_vector_store: AsyncMock
+) -> None:
     """search_memories without query should list from local storage."""
     await manager.create_memory(content="fact one")
     await manager.create_memory(content="fact two")
@@ -163,7 +172,9 @@ async def test_search_memories_no_query_returns_list(manager, mock_vector_store)
 
 
 @pytest.mark.asyncio
-async def test_delete_memory_removes_from_qdrant(manager, mock_vector_store):
+async def test_delete_memory_removes_from_qdrant(
+    manager: MemoryManager, mock_vector_store: AsyncMock
+) -> None:
     """delete_memory should remove from both local storage and Qdrant."""
     memory = await manager.create_memory(content="to delete")
     await manager.delete_memory(memory.id)
@@ -175,7 +186,9 @@ async def test_delete_memory_removes_from_qdrant(manager, mock_vector_store):
 
 
 @pytest.mark.asyncio
-async def test_delete_memory_removes_from_graph(manager, mock_vector_store):
+async def test_delete_memory_removes_from_graph(
+    manager: MemoryManager, mock_vector_store: AsyncMock
+) -> None:
     """delete_memory should remove from Neo4j when kg_service is available."""
     mock_kg = AsyncMock()
     mock_kg.remove_memory_from_graph = AsyncMock()
@@ -190,7 +203,9 @@ async def test_delete_memory_removes_from_graph(manager, mock_vector_store):
 
 
 @pytest.mark.asyncio
-async def test_delete_memory_works_without_kg_service(manager, mock_vector_store):
+async def test_delete_memory_works_without_kg_service(
+    manager: MemoryManager, mock_vector_store: AsyncMock
+) -> None:
     """delete_memory should succeed when _kg_service is None."""
     manager._kg_service = None
     memory = await manager.create_memory(content="no graph")
@@ -200,8 +215,8 @@ async def test_delete_memory_works_without_kg_service(manager, mock_vector_store
 
 @pytest.mark.asyncio
 async def test_update_memory_content_rejected_without_reembed(
-    manager, mock_vector_store, mock_embed_fn
-):
+    manager: MemoryManager, mock_vector_store: AsyncMock, mock_embed_fn: AsyncMock
+) -> None:
     """update_memory rejects content changes and does not re-embed."""
     memory = await manager.create_memory(content="original")
     mock_embed_fn.reset_mock()
@@ -215,7 +230,9 @@ async def test_update_memory_content_rejected_without_reembed(
 
 
 @pytest.mark.asyncio
-async def test_search_memories_tag_filtering(manager, mock_vector_store, mock_embed_fn):
+async def test_search_memories_tag_filtering(
+    manager: MemoryManager, mock_vector_store: AsyncMock, mock_embed_fn: AsyncMock
+) -> None:
     """search_memories should support tag filtering."""
     m1 = await manager.create_memory(content="tagged", tags=["python"])
     await manager.create_memory(content="untagged")
@@ -228,7 +245,9 @@ async def test_search_memories_tag_filtering(manager, mock_vector_store, mock_em
 
 
 @pytest.mark.asyncio
-async def test_search_memories_skips_deleted_memories(manager, mock_vector_store, mock_embed_fn):
+async def test_search_memories_skips_deleted_memories(
+    manager: MemoryManager, mock_vector_store: AsyncMock, mock_embed_fn: AsyncMock
+) -> None:
     """search_memories should skip memories deleted from DB but still in the index."""
     # Create two memories, then delete one from DB only (index still references it)
     mem_kept = await manager.create_memory(content="still here")
@@ -252,7 +271,9 @@ async def test_search_memories_skips_deleted_memories(manager, mock_vector_store
 
 
 @pytest.mark.asyncio
-async def test_purge_dream_hidden_reconciles_qdrant_and_graph(manager, mock_vector_store):
+async def test_purge_dream_hidden_reconciles_qdrant_and_graph(
+    manager: MemoryManager, mock_vector_store: AsyncMock
+) -> None:
     """Purging an aged soft-hidden row hard-deletes it and reconciles secondary stores.
 
     Secondary stores keep soft-hidden rows until purge, so the purge path must drop the
@@ -286,7 +307,9 @@ async def test_purge_dream_hidden_reconciles_qdrant_and_graph(manager, mock_vect
 
 
 @pytest.mark.asyncio
-async def test_purge_dream_hidden_reconciles_secondary_indices_concurrently(manager):
+async def test_purge_dream_hidden_reconciles_secondary_indices_concurrently(
+    manager: MemoryManager,
+) -> None:
     """Purged memory IDs reconcile secondary stores concurrently."""
     old_stamp = (datetime.now(UTC) - timedelta(days=400)).isoformat()
     first = await manager.create_memory(content="obsolete fact one")
@@ -324,7 +347,7 @@ async def test_purge_dream_hidden_reconciles_secondary_indices_concurrently(mana
 
 
 @pytest.mark.asyncio
-async def test_restore_memory_unhides_dream_flagged_row(manager):
+async def test_restore_memory_unhides_dream_flagged_row(manager: MemoryManager) -> None:
     """Restoring a soft-hidden memory returns it to active visibility.
 
     Secondary stores keep the row through soft-hide, so restore only flips the
@@ -347,14 +370,14 @@ async def test_restore_memory_unhides_dream_flagged_row(manager):
 
 
 @pytest.mark.asyncio
-async def test_restore_memory_missing_raises(manager):
+async def test_restore_memory_missing_raises(manager: MemoryManager) -> None:
     """Restoring an unknown memory id raises ValueError from storage."""
     with pytest.raises(ValueError, match="not found"):
         manager.restore_memory("does-not-exist")
 
 
 @pytest.mark.asyncio
-async def test_no_search_coordinator_import():
+async def test_no_search_coordinator_import() -> None:
     """MemoryManager should not import SearchCoordinator."""
     import gobby.memory.manager as mod
 

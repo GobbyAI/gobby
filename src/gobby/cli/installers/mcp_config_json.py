@@ -14,6 +14,13 @@ from .mcp_config_shared import (
 )
 
 
+def _resolved_gobby_mcp_command() -> str:
+    gobby_bin = Path(sys.executable).parent / "gobby"
+    if gobby_bin.exists():
+        return str(gobby_bin)
+    return _GOBBY_MCP_COMMAND
+
+
 def configure_project_mcp_server(project_path: Path, server_name: str = "gobby") -> dict[str, Any]:
     """Add Gobby MCP server to project-specific config in ~/.claude.json.
 
@@ -88,7 +95,7 @@ def configure_project_mcp_server(project_path: Path, server_name: str = "gobby")
                     result["error"] = f"Failed to create backup: {e}"
                     return result
 
-            server_config["command"] = _GOBBY_MCP_COMMAND
+            server_config["command"] = _resolved_gobby_mcp_command()
             server_config["args"] = [*_GOBBY_MCP_ARGS]
             try:
                 with open(settings_path, "w", encoding="utf-8") as f:
@@ -119,7 +126,7 @@ def configure_project_mcp_server(project_path: Path, server_name: str = "gobby")
     # Add gobby MCP server config
     project_settings["mcpServers"][server_name] = {
         "type": "stdio",
-        "command": _GOBBY_MCP_COMMAND,
+        "command": _resolved_gobby_mcp_command(),
         "args": [*_GOBBY_MCP_ARGS],
     }
 
@@ -256,7 +263,7 @@ def configure_mcp_server_json(
         if isinstance(server_config, dict):
             updates: dict[str, Any] = {}
             if _is_repairable_stale_gobby_mcp_server_config(server_config):
-                updates["command"] = _GOBBY_MCP_COMMAND
+                updates["command"] = _resolved_gobby_mcp_command()
                 updates["args"] = [*_GOBBY_MCP_ARGS]
             if extra_server_fields:
                 updates.update(
@@ -308,26 +315,14 @@ def configure_mcp_server_json(
     if "mcpServers" not in existing_settings:
         existing_settings["mcpServers"] = {}
 
-    # Add gobby MCP server config
-    # Resolve the gobby binary from the same environment running this install,
-    # so the MCP config survives uv tool reinstalls and PATH changes.
-    gobby_bin = str(Path(sys.executable).parent / "gobby")
-    if Path(gobby_bin).exists():
-        server_config = {
-            "command": gobby_bin,
-            "args": [*_GOBBY_MCP_ARGS],
-        }
-        if extra_server_fields:
-            server_config.update(extra_server_fields)
-        existing_settings["mcpServers"][server_name] = server_config
-    else:
-        server_config = {
-            "command": _GOBBY_MCP_COMMAND,
-            "args": [*_GOBBY_MCP_ARGS],
-        }
-        if extra_server_fields:
-            server_config.update(extra_server_fields)
-        existing_settings["mcpServers"][server_name] = server_config
+    # Add gobby MCP server config.
+    server_config = {
+        "command": _resolved_gobby_mcp_command(),
+        "args": [*_GOBBY_MCP_ARGS],
+    }
+    if extra_server_fields:
+        server_config.update(extra_server_fields)
+    existing_settings["mcpServers"][server_name] = server_config
 
     # Write updated settings
     try:

@@ -22,7 +22,7 @@ def memory_manager(db):
     return LocalMemoryManager(db)
 
 
-def _insert_session(db, session_id: str, project_id: str) -> None:
+def _insert_session(db: HubDatabase, session_id: str, project_id: str) -> None:
     db.execute(
         "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at) "
         "VALUES (%s, %s, 'machine-1', 'claude', %s, CURRENT_TIMESTAMP)",

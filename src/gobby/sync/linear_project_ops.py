@@ -7,6 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.integrations.linear_graphql import LinearGraphQLClient
+from gobby.mcp_proxy.models import MCPError
 from gobby.sync.linear_support import (
     LinearSyncError,
     _extract_record,
@@ -199,7 +200,7 @@ class LinearProjectOpsMixin:
                 if not isinstance(mcp_project_id, str) or not mcp_project_id.strip():
                     raise LinearSyncError("Linear MCP create_project did not return a project id.")
                 return project, True
-            except Exception as e:
+            except (LinearSyncError, MCPError) as e:
                 mcp_error = e
         else:
             mcp_error = LinearSyncError("Linear MCP server does not expose create_project.")

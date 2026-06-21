@@ -29,7 +29,10 @@ type VadWebModule = typeof import('@ricky0123/vad-web')
 let vadWebModulePromise: Promise<VadWebModule> | null = null
 
 function loadVadWeb(): Promise<VadWebModule> {
-  vadWebModulePromise ??= import('@ricky0123/vad-web')
+  vadWebModulePromise ??= import('@ricky0123/vad-web').catch((error) => {
+    vadWebModulePromise = null
+    throw error
+  })
   return vadWebModulePromise
 }
 const VOICE_CONVERSATION_LOG_PREFIX_LENGTH = 8

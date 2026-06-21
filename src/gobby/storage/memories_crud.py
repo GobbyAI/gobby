@@ -35,12 +35,14 @@ class MemoryCrudMixin(MemoryStoreBase):
         # Normalize content for consistent ID generation (avoid duplicates from
         # whitespace differences)
         normalized_content = content.strip()
-        memory_id_seed = json.dumps(
+        legacy_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, normalized_content))
+        current_memory_id_seed = json.dumps(
             {"content": normalized_content, "project_id": project_id},
             sort_keys=True,
             separators=(",", ":"),
         )
-        memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, memory_id_seed))
+        current_memory_id = str(uuid.uuid5(MEMORY_UUID_NAMESPACE, current_memory_id_seed))
+        memory_id = current_memory_id
 
         tags_json = json.dumps(tags) if tags else None
 
@@ -62,6 +64,16 @@ class MemoryCrudMixin(MemoryStoreBase):
                 ).fetchone()
                 if recent and normalized_content == str(recent["content"]).strip():
                     return Memory.from_row(recent)
+
+            if project_id is None:
+                memory_id = legacy_memory_id
+            else:
+                legacy_row = conn.execute(
+                    "SELECT 1 FROM memories WHERE id = %s",
+                    (legacy_memory_id,),
+                ).fetchone()
+                if legacy_row is not None:
+                    memory_id = legacy_memory_id
 
             existing_row = conn.execute(
                 "SELECT deleted_at FROM memories WHERE id = %s",

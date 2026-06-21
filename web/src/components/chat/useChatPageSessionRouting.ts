@@ -42,7 +42,7 @@ function sessionToObservationMeta(
     status: session.status,
     model: session.model ?? null,
     externalId: session.external_id,
-    chatMode: session.chat_mode ? normalizeChatMode(session.chat_mode) : null,
+    chatMode: session.chat_mode != null ? normalizeChatMode(session.chat_mode) : null,
     gitBranch: session.git_branch ?? null,
     contextWindow: null,
     agentRunId: session.agent_run_id ?? null,

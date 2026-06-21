@@ -17,6 +17,7 @@ Commands for managing git worktrees:
 import json
 from collections.abc import Iterator
 from contextlib import contextmanager
+from json import JSONDecodeError
 from typing import Any, cast
 
 import click
@@ -76,10 +77,11 @@ def _call_worktree_tool(
         ) from exc
     except httpx.HTTPError as exc:
         raise click.ClickException(str(exc)) from exc
-    except Exception as exc:
-        raise click.ClickException(str(exc)) from exc
 
-    result = cast(dict[str, Any], response.json())
+    try:
+        result = cast(dict[str, Any], response.json())
+    except JSONDecodeError as exc:
+        raise click.ClickException(f"Invalid JSON response from Gobby daemon: {exc}") from exc
     inner_result = result.get("result")
     if result.get("success") is True and isinstance(inner_result, dict):
         result = cast(dict[str, Any], inner_result)

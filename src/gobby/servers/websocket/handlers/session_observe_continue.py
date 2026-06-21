@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
+from gobby.agents.kill import kill_agent
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.handlers.session_observe_support import (
@@ -18,6 +19,7 @@ from gobby.servers.websocket.handlers.session_observe_support import (
     _resolve_requested_fallback_context,
 )
 from gobby.sessions.transcript_archive import restore_transcript
+from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
@@ -41,9 +43,6 @@ async def _release_source_session(
     """Stop the active terminal/agent runtime before resuming in web chat."""
     killed = False
     session_manager = getattr(mixin, "session_manager", None)
-
-    from gobby.agents.kill import kill_agent
-    from gobby.storage.agents import LocalAgentRunManager
 
     if session_manager:
         try:

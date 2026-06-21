@@ -114,12 +114,16 @@ def _extract_records(result: Any, key: str = "issues") -> list[dict[str, Any]]:
             f"Invalid Linear MCP response for {key}: expected object, got {type(result).__name__}"
         )
 
+    explicit_collection_key = False
     if key in result:
         value = result[key]
+        explicit_collection_key = True
     elif "nodes" in result:
         value = result["nodes"]
+        explicit_collection_key = True
     elif "items" in result:
         value = result["items"]
+        explicit_collection_key = True
     else:
         value = None
     if isinstance(value, dict):
@@ -129,6 +133,8 @@ def _extract_records(result: Any, key: str = "issues") -> list[dict[str, Any]]:
             raise LinearSyncError(f"Invalid Linear MCP response: {key} contains non-object items")
         return cast(list[dict[str, Any]], value)
     if value is None:
+        if explicit_collection_key:
+            raise LinearSyncError(f"Invalid Linear MCP response: {key} is null")
         for nested in result.values():
             if isinstance(nested, dict) and any(
                 nested_key in nested for nested_key in (key, "nodes", "items")

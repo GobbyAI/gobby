@@ -121,7 +121,18 @@ def kill_all_gobby_daemons() -> int:
                 or "gobby_client.runner" in cmdline_str
                 or ("gobby" in process_name and "daemon" in cmdline_lower)
             )
-            has_pid_file_identity = pid_file_pid == proc.pid
+            owns_daemon_port = False
+            try:
+                connections = proc.net_connections()
+                for conn in connections:
+                    if hasattr(conn, "laddr") and conn.laddr:
+                        if conn.laddr.port in [http_port, ws_port]:
+                            owns_daemon_port = True
+                            break
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                pass
+
+            has_pid_file_identity = pid_file_pid == proc.pid and owns_daemon_port
 
             is_gobby_daemon = (
                 (has_gobby_daemon_marker or has_pid_file_identity)
@@ -130,16 +141,7 @@ def kill_all_gobby_daemons() -> int:
             )
 
             if not is_gobby_daemon:
-                try:
-                    connections = proc.net_connections()
-                    for conn in connections:
-                        if hasattr(conn, "laddr") and conn.laddr:
-                            if conn.laddr.port in [http_port, ws_port]:
-                                if has_gobby_daemon_marker or has_pid_file_identity:
-                                    is_gobby_daemon = True
-                                    break
-                except (psutil.AccessDenied, psutil.NoSuchProcess):
-                    pass
+                is_gobby_daemon = owns_daemon_port and has_gobby_daemon_marker
 
             if is_gobby_daemon:
                 click.echo(f"Found gobby daemon (PID {proc.pid}): {cmdline_str[:100]}")

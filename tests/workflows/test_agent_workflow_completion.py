@@ -12,7 +12,7 @@ import yaml
 
 from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
 from gobby.agents.step_workflow import register_agent_step_workflow
-from gobby.agents.tmux import TmuxConfig, configure_tmux
+from gobby.agents.tmux import TmuxConfig
 from gobby.events.completion_registry import CompletionEventRegistry
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
 from gobby.storage.agents import LocalAgentRunManager
@@ -657,13 +657,13 @@ class TestAgentWorkflowCompletion:
         completion_registry.register(run.id, subscribers=[])
         runner = MagicMock()
         runner.run_storage = run_manager
-        configure_tmux(TmuxConfig())
         runner.agent_lifecycle_monitor = AgentLifecycleMonitor(
             agent_run_manager=run_manager,
             db=db,
             session_manager=sessions,
             completion_registry=completion_registry,
             task_manager=LocalTaskManager(db),
+            tmux_config=TmuxConfig(),
         )
         engine = RuleEngine(db, runner=runner, completion_registry=completion_registry)
 

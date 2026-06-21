@@ -2263,19 +2263,15 @@ async def test_epic_holistic_spawn_promotes_existing_worktree_when_target_missin
 
 @pytest.mark.asyncio
 async def test_epic_holistic_spawn_recovers_missing_target_from_current_branch(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project, tmp_path
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_git_project
 ) -> None:
     """Epic holistic spawn recovers missing target from current branch."""
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
 
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    subprocess.run(["git", "init", "-b", "main"], cwd=repo, check=True, capture_output=True)
-    LocalProjectManager(temp_db).update(sample_project["id"], repo_path=str(repo))
+    sample_project = sample_git_project
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)

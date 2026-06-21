@@ -250,7 +250,7 @@ interface UseContinuationRestoreParams {
     setAttachedSessionMeta: Setter<ContinuationRollbackSnapshot["attachedSessionMeta"]>;
     setContextUsage: Setter<ContinuationRollbackSnapshot["contextUsage"]>;
     setCurrentBranch: Setter<string | null>;
-    setCurrentMode: (mode: ChatMode) => ChatMode;
+    setCurrentMode: (mode: ChatMode) => void;
     setIsLoadingMessages: Setter<boolean>;
     setMainSessionMeta: Setter<ContinuationRollbackSnapshot["mainSessionMeta"]>;
     setMessages: Setter<ContinuationRollbackSnapshot["messages"]>;

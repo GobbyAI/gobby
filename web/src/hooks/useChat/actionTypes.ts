@@ -13,7 +13,7 @@ import type { PendingProxyMessage } from "./pendingProxyMessages";
 import type { ContinuationRollbackSnapshot } from "./sessionRecords";
 
 export type Setter<T> = Dispatch<SetStateAction<T>>;
-type SetCurrentMode = (mode: ChatMode) => ChatMode;
+type SetCurrentMode = (mode: ChatMode) => void;
 
 export interface EnsureMainSessionOptions {
   projectId?: string | null;

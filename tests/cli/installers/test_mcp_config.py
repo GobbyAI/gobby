@@ -15,7 +15,6 @@ import psycopg
 import pytest
 
 from gobby.cli.installers.mcp_config import (
-    _remove_toml_table_block,
     configure_mcp_server_json,
     configure_mcp_server_toml,
     configure_project_mcp_server,
@@ -25,6 +24,8 @@ from gobby.cli.installers.mcp_config import (
     remove_project_mcp_server,
     strip_mcp_tool_overrides_toml,
 )
+from gobby.cli.installers.mcp_config_json import _resolved_gobby_mcp_command
+from gobby.cli.installers.mcp_config_shared import _remove_toml_table_block
 from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE
 
 pytestmark = pytest.mark.unit
@@ -134,7 +135,7 @@ class TestConfigureMCPServerJSON:
         assert result["updated"] is True
         data = json.loads(settings.read_text())
         assert data["mcpServers"]["gobby"] == {
-            "command": "gobby",
+            "command": _resolved_gobby_mcp_command(),
             "args": ["mcp-server"],
         }
 
@@ -170,7 +171,9 @@ class TestConfigureMCPServerJSON:
     def test_backup_failure(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
         settings.write_text(json.dumps({"other": True}))
-        with patch("gobby.cli.installers.mcp_config.copy2", side_effect=OSError("no space")):
+        with patch(
+            "gobby.cli.installers.mcp_config_shared._copy2", side_effect=OSError("no space")
+        ):
             result = configure_mcp_server_json(settings)
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
@@ -255,7 +258,7 @@ class TestRemoveMCPServerJSON:
     def test_backup_failure(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
         settings.write_text(json.dumps({"mcpServers": {"gobby": {}}}))
-        with patch("gobby.cli.installers.mcp_config.copy2", side_effect=OSError("fail")):
+        with patch("gobby.cli.installers.mcp_config_shared._copy2", side_effect=OSError("fail")):
             result = remove_mcp_server_json(settings)
         assert result["success"] is False
         assert "Failed to create backup" in result["error"]
@@ -272,7 +275,7 @@ class TestRemoveMCPServerJSON:
             return orig_open(path, *args, **kwargs)
 
         with (
-            patch("gobby.cli.installers.mcp_config.copy2"),
+            patch("gobby.cli.installers.mcp_config_shared._copy2"),
             patch("builtins.open", side_effect=mock_open),
         ):
             result = remove_mcp_server_json(settings)
@@ -644,7 +647,7 @@ class TestConfigureProjectMCPServer:
     def test_creates_new_settings(self, tmp_path: Path) -> None:
         project_path = tmp_path / "my-project"
         project_path.mkdir()
-        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = configure_project_mcp_server(project_path)
         assert result["success"] is True
         assert result["added"] is True
@@ -652,7 +655,7 @@ class TestConfigureProjectMCPServer:
         abs_path = str(project_path.resolve())
         assert data["projects"][abs_path]["mcpServers"]["gobby"] == {
             "type": "stdio",
-            "command": "gobby",
+            "command": _resolved_gobby_mcp_command(),
             "args": ["mcp-server"],
         }
 
@@ -664,7 +667,7 @@ class TestConfigureProjectMCPServer:
         settings_path.write_text(
             json.dumps({"projects": {abs_path: {"mcpServers": {"gobby": {"command": "uv"}}}}})
         )
-        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = configure_project_mcp_server(project_path)
         assert result["success"] is True
         assert result["already_configured"] is True
@@ -691,7 +694,7 @@ class TestConfigureProjectMCPServer:
                 }
             )
         )
-        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = configure_project_mcp_server(project_path)
 
         assert result["success"] is True
@@ -699,7 +702,7 @@ class TestConfigureProjectMCPServer:
         data = json.loads(settings_path.read_text())
         assert data["projects"][abs_path]["mcpServers"]["gobby"] == {
             "type": "stdio",
-            "command": "gobby",
+            "command": _resolved_gobby_mcp_command(),
             "args": ["mcp-server"],
         }
 
@@ -708,7 +711,7 @@ class TestConfigureProjectMCPServer:
         project_path.mkdir()
         settings_path = tmp_path / ".claude.json"
         settings_path.write_text("bad json{{{")
-        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = configure_project_mcp_server(project_path)
         assert result["success"] is False
         assert "Failed to parse" in result["error"]
@@ -719,7 +722,7 @@ class TestConfigureProjectMCPServer:
         settings_path = tmp_path / ".claude.json"
         settings_path.write_text("{}")
         with (
-            patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path),
+            patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path),
             patch("builtins.open", side_effect=OSError("denied")),
         ):
             result = configure_project_mcp_server(project_path)
@@ -732,8 +735,8 @@ class TestConfigureProjectMCPServer:
         settings_path = tmp_path / ".claude.json"
         settings_path.write_text(json.dumps({"projects": {}}))
         with (
-            patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path),
-            patch("gobby.cli.installers.mcp_config.copy2", side_effect=OSError("fail")),
+            patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path),
+            patch("gobby.cli.installers.mcp_config_shared._copy2", side_effect=OSError("fail")),
         ):
             result = configure_project_mcp_server(project_path)
         assert result["success"] is False
@@ -744,7 +747,7 @@ class TestConfigureProjectMCPServer:
         project_path.mkdir()
         settings_path = tmp_path / ".claude.json"
         settings_path.write_text(json.dumps({"other": True}))
-        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = configure_project_mcp_server(project_path)
         assert result["success"] is True
         assert result["added"] is True
@@ -761,7 +764,7 @@ class TestRemoveProjectMCPServer:
     def test_file_not_exists(self, tmp_path: Path) -> None:
         project_path = tmp_path / "my-project"
         project_path.mkdir()
-        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = remove_project_mcp_server(project_path)
         assert result["success"] is True
         assert result["removed"] is False
@@ -771,7 +774,7 @@ class TestRemoveProjectMCPServer:
         project_path.mkdir()
         settings_path = tmp_path / ".claude.json"
         settings_path.write_text(json.dumps({"projects": {}}))
-        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = remove_project_mcp_server(project_path)
         assert result["success"] is True
         assert result["removed"] is False
@@ -784,7 +787,7 @@ class TestRemoveProjectMCPServer:
         settings_path.write_text(
             json.dumps({"projects": {abs_path: {"mcpServers": {"gobby": {"command": "uv"}}}}})
         )
-        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = remove_project_mcp_server(project_path)
         assert result["success"] is True
         assert result["removed"] is True
@@ -798,7 +801,7 @@ class TestRemoveProjectMCPServer:
         project_path.mkdir()
         settings_path = tmp_path / ".claude.json"
         settings_path.write_text("bad")
-        with patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path):
+        with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = remove_project_mcp_server(project_path)
         assert result["success"] is False
         assert "Failed to read" in result["error"]
@@ -812,8 +815,8 @@ class TestRemoveProjectMCPServer:
             json.dumps({"projects": {abs_path: {"mcpServers": {"gobby": {}}}}})
         )
         with (
-            patch("gobby.cli.installers.mcp_config.Path.home", return_value=tmp_path),
-            patch("gobby.cli.installers.mcp_config.copy2", side_effect=OSError("fail")),
+            patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path),
+            patch("gobby.cli.installers.mcp_config_shared._copy2", side_effect=OSError("fail")),
         ):
             result = remove_project_mcp_server(project_path)
         assert result["success"] is False
@@ -834,7 +837,7 @@ class TestInstallDefaultMCPServers:
         mock_secret_store.exists.return_value = False
         with (
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
@@ -885,7 +888,7 @@ class TestInstallDefaultMCPServers:
         mock_secret_store.exists.return_value = False
         with (
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
@@ -904,7 +907,7 @@ class TestInstallDefaultMCPServers:
         mcp_path.parent.mkdir(parents=True, exist_ok=True)
         mcp_path.write_text("bad json{{{")
         with patch(
-            "gobby.cli.installers.mcp_config.Path.expanduser",
+            "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
             return_value=mcp_path,
         ):
             result = install_default_mcp_servers()
@@ -919,7 +922,7 @@ class TestInstallDefaultMCPServers:
         mock_secret_store.exists.return_value = False
         with (
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
@@ -953,7 +956,7 @@ class TestInstallDefaultMCPServers:
         mock_secret_store.exists.return_value = False
         with (
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
@@ -973,7 +976,7 @@ class TestInstallDefaultMCPServers:
         mock_secret_store.exists.return_value = False
         with (
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
@@ -994,7 +997,7 @@ class TestInstallDefaultMCPServers:
 
         with (
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
@@ -1026,7 +1029,7 @@ class TestInstallDefaultMCPServers:
         with (
             caplog.at_level("WARNING", logger="gobby.cli.installers.mcp_config"),
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
@@ -1051,7 +1054,7 @@ class TestInstallDefaultMCPServers:
 
         with (
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
@@ -1073,7 +1076,7 @@ class TestInstallDefaultMCPServers:
         with (
             caplog.at_level("WARNING", logger="gobby.cli.installers.mcp_config"),
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
@@ -1098,7 +1101,7 @@ class TestInstallDefaultMCPServers:
 
         with (
             patch(
-                "gobby.cli.installers.mcp_config.Path.expanduser",
+                "gobby.cli.installers.mcp_config_defaults.Path.expanduser",
                 return_value=mcp_path,
             ),
             patch("gobby.storage.hub.runtime.open_runtime_hub_database"),

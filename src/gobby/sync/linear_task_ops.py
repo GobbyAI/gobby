@@ -343,7 +343,14 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 tool_name="list_issues",
                 arguments=self._issue_list_args(team_id),
             )
-            issues = _extract_records(result)
+            try:
+                issues = _extract_records(result)
+            except LinearSyncError as exc:
+                logger.warning(
+                    "Failed to parse Linear issues while checking for existing %s: %s",
+                    self._task_ref(task),
+                    exc,
+                )
         if issues is None:
             client = await self._get_graphql_client()
             if client:

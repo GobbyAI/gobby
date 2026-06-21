@@ -231,8 +231,8 @@ async def _invoke_llm_compile(
     system_prompt = self._render_prompt(system_path, {"tdd_mode": True, **prompt_context})
     user_prompt = self._render_prompt(prompt_path, prompt_context)
     scope = f"run={run.id}" + (f" phase={phase_number}" if phase_number is not None else "")
-    feature_config = _expansion_feature_config(expansion_config, run)
     try:
+        feature_config = _expansion_feature_config(expansion_config, run)
         result = await self.llm_service.call_json_feature(
             feature_config,
             user_prompt,

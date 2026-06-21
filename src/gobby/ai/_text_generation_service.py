@@ -604,7 +604,7 @@ class TextGenerationService:
             message = "feature_llm_call"
         elif isinstance(error, _ReasoningEffortRejectedError):
             log_event = logger.warning
-            message = f"feature_llm_call: {error}"
+            message = "feature_llm_call"
         elif terminal_failure:
             log_event = logger.error
             message = "feature_llm_call"

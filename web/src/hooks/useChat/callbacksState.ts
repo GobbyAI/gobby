@@ -31,7 +31,6 @@ export function usePlanArtifactCallbacks() {
     const normalizedMode = normalizeChatMode(mode);
     currentModeRef.current = normalizedMode;
     onModeChangedRef.current?.(normalizedMode);
-    return normalizedMode;
   }, []);
 
   const onPlanReadyRef = useRef<PlanReadyCallback | null>(null);

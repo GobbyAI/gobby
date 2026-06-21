@@ -29,7 +29,14 @@ def _loads_tool_input_schema(row: Mapping[str, Any]) -> dict[str, Any] | None:
         raise ValueError(
             f"Invalid JSON for MCP tool {tool_name} ({tool_id}) input_schema: {exc}"
         ) from exc
-    return schema if isinstance(schema, dict) else None
+    if not isinstance(schema, dict):
+        tool_id = row.get("id", "<unknown>")
+        tool_name = row.get("name", "<unknown>")
+        raise ValueError(
+            f"Invalid JSON for MCP tool {tool_name} ({tool_id}) input_schema: "
+            f"expected object, got {type(schema).__name__}"
+        )
+    return schema
 
 
 @dataclass

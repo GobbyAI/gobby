@@ -71,6 +71,14 @@ def resolve_secrets_in_config(
                     stripped.append(value)
                     continue
                 if (
+                    not value.startswith("-")
+                    and index > 0
+                    and resolved[index - 1].startswith("-")
+                    and stripped
+                    and stripped[-1] == resolved[index - 1]
+                ):
+                    stripped.pop()
+                if (
                     SECRET_REF_PATTERN.fullmatch(value)
                     and index > 0
                     and resolved[index - 1].startswith("-")

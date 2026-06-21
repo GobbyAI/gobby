@@ -66,6 +66,12 @@ def install_default_mcp_servers() -> dict[str, Any]:
     default_servers = _default_mcp_servers()
     servers_repaired: list[str] = []
     default_by_name = {s["name"]: s for s in default_servers}
+
+    def existing_args_have_secret_refs(args: Any) -> bool:
+        return isinstance(args, list) and any(
+            isinstance(arg, str) and "$secret:" in arg for arg in args
+        )
+
     for existing_server in existing_config["servers"]:
         name = existing_server.get("name")
         default = default_by_name.get(name) if name else None
@@ -80,6 +86,8 @@ def install_default_mcp_servers() -> dict[str, Any]:
             "env": dict(default["env"]) if "env" in default else None,
         }
         for field, canonical_value in canonical_fields.items():
+            if field == "args" and existing_args_have_secret_refs(existing_server.get("args")):
+                continue
             if canonical_value is None:
                 if field in existing_server:
                     existing_server.pop(field, None)
@@ -93,61 +101,65 @@ def install_default_mcp_servers() -> dict[str, Any]:
 
     # Resolve optional_secret_args via secret store (lazy init)
     secret_store = None
+    secret_store_db = None
     secret_store_init_failed = False
 
     # Add default servers if not already present
-    for server in default_servers:
-        if server["name"] in existing_names:
-            result["servers_skipped"].append(server["name"])
-        else:
-            # Build args list, adding optional secret-dependent args
-            args = list(server.get("args") or [])
-            optional_secret_args = server.get("optional_secret_args", {})
-            for secret_name, extra_args in optional_secret_args.items():
-                if secret_store is None and not secret_store_init_failed:
-                    try:
-                        from gobby.storage.hub.runtime import open_runtime_hub_database
-                        from gobby.storage.secrets import SecretStore
+    try:
+        for server in default_servers:
+            if server["name"] in existing_names:
+                result["servers_skipped"].append(server["name"])
+            else:
+                # Build args list, adding optional secret-dependent args
+                args = list(server.get("args") or [])
+                optional_secret_args = server.get("optional_secret_args", {})
+                for secret_name, extra_args in optional_secret_args.items():
+                    if secret_store is None and not secret_store_init_failed:
+                        try:
+                            from gobby.storage.hub.runtime import open_runtime_hub_database
+                            from gobby.storage.secrets import SecretStore
 
-                        secret_store = SecretStore(
-                            open_runtime_hub_database(apply_migrations=False)
-                        )
-                    except (ImportError, OSError, RuntimeError, psycopg.Error):
-                        secret_store_init_failed = True
-                        logger.warning(
-                            "Failed to initialize secret store for optional MCP args",
-                            exc_info=True,
-                        )
-                    except Exception:
-                        logger.exception(
-                            "Unexpected error initializing secret store for optional MCP args"
-                        )
-                        raise
-                if secret_store is not None:
-                    try:
-                        if secret_store.exists(secret_name):
-                            args.extend(extra_args + [f"$secret:{secret_name}"])
-                    except (OSError, RuntimeError, psycopg.Error):
-                        logger.warning(
-                            "Failed to read optional MCP secret",
-                            exc_info=True,
-                        )
-                    except Exception:
-                        logger.exception("Unexpected error reading optional MCP secret")
-                        raise
+                            secret_store_db = open_runtime_hub_database(apply_migrations=False)
+                            secret_store = SecretStore(secret_store_db)
+                        except (ImportError, OSError, RuntimeError, psycopg.Error):
+                            secret_store_init_failed = True
+                            logger.warning(
+                                "Failed to initialize secret store for optional MCP args",
+                                exc_info=True,
+                            )
+                        except Exception:
+                            logger.exception(
+                                "Unexpected error initializing secret store for optional MCP args"
+                            )
+                            raise
+                    if secret_store is not None:
+                        try:
+                            if secret_store.exists(secret_name):
+                                args.extend(extra_args + [f"$secret:{secret_name}"])
+                        except (OSError, RuntimeError, psycopg.Error):
+                            logger.warning(
+                                "Failed to read optional MCP secret",
+                                exc_info=True,
+                            )
+                        except Exception:
+                            logger.exception("Unexpected error reading optional MCP secret")
+                            raise
 
-            existing_config["servers"].append(
-                {
-                    "name": server["name"],
-                    "enabled": True,
-                    "transport": server["transport"],
-                    "command": server.get("command"),
-                    "args": args if args else None,
-                    "env": server.get("env"),
-                    "description": server.get("description"),
-                }
-            )
-            result["servers_added"].append(server["name"])
+                existing_config["servers"].append(
+                    {
+                        "name": server["name"],
+                        "enabled": True,
+                        "transport": server["transport"],
+                        "command": server.get("command"),
+                        "args": args if args else None,
+                        "env": server.get("env"),
+                        "description": server.get("description"),
+                    }
+                )
+                result["servers_added"].append(server["name"])
+    finally:
+        if secret_store_db is not None:
+            secret_store_db.close()
 
     # Write updated config if any servers were added or repaired
     if result["servers_added"] or servers_repaired:

@@ -149,7 +149,9 @@ class MCPToolStorageMixin:
         current_tool_names = {tool_name for tool_name, _tool in entries}
 
         # Get existing tools
-        existing_tools = {t.name: t for t in self.get_cached_tools(server_name, project_id)}
+        existing_tools = {
+            str(t.name).strip().lower(): t for t in self.get_cached_tools(server_name, project_id)
+        }
 
         # Detect changes using schema hash if manager available
         if schema_hash_manager:

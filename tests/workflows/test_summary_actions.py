@@ -32,14 +32,14 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_session_manager():
+def mock_session_manager() -> MagicMock:
     """Create a mock session manager."""
     manager = MagicMock()
     return manager
 
 
 @pytest.fixture
-def mock_llm_service():
+def mock_llm_service() -> MagicMock:
     """Create a mock LLM service."""
     service = MagicMock()
     service.call_feature = AsyncMock(return_value="Generated Summary Content")
@@ -52,7 +52,7 @@ def summary_config() -> SessionSummaryConfig:
 
 
 @pytest.fixture
-def mock_transcript_processor():
+def mock_transcript_processor() -> MagicMock:
     """Create a mock transcript processor."""
     processor = MagicMock()
     processor.extract_turns_since_clear.return_value = []
@@ -61,7 +61,7 @@ def mock_transcript_processor():
 
 
 @pytest.fixture
-def mock_template_engine():
+def mock_template_engine() -> MagicMock:
     """Create a mock template engine."""
     engine = MagicMock()
     engine.render.side_effect = lambda template, context: template.replace(
@@ -71,7 +71,7 @@ def mock_template_engine():
 
 
 @pytest.fixture
-def sample_transcript_file(tmp_path: Path):
+def sample_transcript_file(tmp_path: Path) -> Path:
     """Create a sample transcript JSONL file."""
     transcript_file = tmp_path / "transcript.jsonl"
     turns = [
@@ -91,7 +91,7 @@ def sample_transcript_file(tmp_path: Path):
 
 
 @pytest.fixture
-def mock_session(tmp_path: Path):
+def mock_session(tmp_path: Path) -> MagicMock:
     """Create a mock session object with transcript path."""
     session = MagicMock()
     transcript_file = tmp_path / "transcript.jsonl"

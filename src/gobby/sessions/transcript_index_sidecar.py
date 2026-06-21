@@ -361,7 +361,7 @@ async def get_or_build_index(
         build_index_from_raw_lines,
     )
 
-    if lines is not None or (raw_lines is not None and seek_mode == "byte"):
+    if lines is not None:
         seek_mode = "line"
         logical_size = None
 

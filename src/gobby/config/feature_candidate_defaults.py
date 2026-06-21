@@ -111,7 +111,7 @@ def _get_stale_candidate_key(row: Any) -> str | None:
         return key
     candidates = tuple(value)
     expected = _OLD_CLAUDE_ONLY_CANDIDATES[profile]
-    aliases = _OLD_CLAUDE_ONLY_CANDIDATE_ALIASES.get(profile, {expected})
+    aliases = set(_OLD_CLAUDE_ONLY_CANDIDATE_ALIASES.get(profile, ())) | {expected}
     return key if candidates in aliases else None
 
 

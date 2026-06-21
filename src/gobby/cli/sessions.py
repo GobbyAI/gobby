@@ -190,8 +190,7 @@ def show_session(session_id: str, json_format: bool) -> None:
         session = manager.get(session_id)
 
     if not session:
-        click.echo(f"Session not found: {session_id}", err=True)
-        return
+        raise click.ClickException(f"Session not found: {session_id}")
 
     if json_format:
         click.echo(json.dumps(session.to_dict(), indent=2, default=str))
@@ -250,8 +249,7 @@ def show_messages(
         # Resolve session ID
         session = session_manager.get(session_id)
         if not session:
-            click.echo(f"Session not found: {session_id}", err=True)
-            return
+            raise click.ClickException(f"Session not found: {session_id}")
 
         # Fetch messages (live JSONL + gzip archive fallback)
         from gobby.sessions.transcript_reader import TranscriptReader
@@ -440,8 +438,7 @@ def create_handoff(
                 raise SystemExit(1) from e
             session = manager.get(session_id)
             if not session:
-                click.echo(f"Session not found: {session_id}", err=True)
-                return
+                raise click.ClickException(f"Session not found: {session_id}")
         else:
             # Get most recent active session
             try:
@@ -450,8 +447,7 @@ def create_handoff(
                 raise SystemExit(1) from e
             session = manager.get(session_id)
             if not session:
-                click.echo(f"Session not found: {session_id}", err=True)
-                return
+                raise click.ClickException(f"Session not found: {session_id}")
 
     # Check for transcript
     if not session.transcript_path:

@@ -271,6 +271,7 @@ def _init_git_repo(repo_path: Path) -> None:
             "-c",
             "user.email=gobby-tests@example.com",
             "commit",
+            "--no-gpg-sign",
             "-q",
             "-m",
             "initial",

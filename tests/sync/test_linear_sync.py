@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.integrations.linear_graphql import LinearGraphQLError
+from gobby.mcp_proxy.models import MCPError
 from gobby.storage.cron_models import CronJob
 from gobby.sync import linear as linear_module
 from gobby.sync.linear import LinearSyncError, LinearSyncService
@@ -948,7 +949,7 @@ class TestLinearProjectBinding:
         """ensure_linear_project handles races where another actor creates the project."""
         mock_mcp_manager.call_tool.side_effect = [
             {"projects": []},
-            RuntimeError("already exists"),
+            MCPError("already exists"),
             {"projects": [{"id": "lin-proj", "name": "gobby"}]},
         ]
 

@@ -39,9 +39,13 @@ def _read_ui_pid_record(pid_file: Path) -> tuple[int, float | None]:
 
 
 def _write_ui_pid_record(pid_file: Path, process: subprocess.Popen[bytes]) -> None:
-    proc = psutil.Process(process.pid)
+    try:
+        proc = psutil.Process(process.pid)
+        started_at = proc.create_time()
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
+        started_at = None
     pid_file.write_text(
-        json.dumps({"pid": process.pid, "started_at": proc.create_time()}),
+        json.dumps({"pid": process.pid, "started_at": started_at}),
         encoding="utf-8",
     )
 
@@ -304,9 +308,17 @@ def stop_ui_server(quiet: bool = False) -> bool:
                     pid,
                 )
             return False
-        children = parent.children(recursive=True)
+        try:
+            children = parent.children(recursive=True)
+        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+            pid_file.unlink(missing_ok=True)
+            return True
 
-        os.kill(pid, signal.SIGTERM)
+        try:
+            os.kill(pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pid_file.unlink(missing_ok=True)
+            return True
         if not quiet:
             click.echo(f"Stopping UI server (PID {pid})")
 
@@ -320,14 +332,14 @@ def stop_ui_server(quiet: bool = False) -> bool:
             try:
                 if child.is_running():
                     child.kill()
-            except (psutil.NoSuchProcess, psutil.AccessDenied):
+            except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
                 pass
 
         if bool(deps._is_process_alive(pid)):
             try:
                 os.kill(pid, signal.SIGKILL)
                 time.sleep(0.5)
-            except ProcessLookupError:
+            except (ProcessLookupError, PermissionError):
                 pass
 
         pid_file.unlink(missing_ok=True)

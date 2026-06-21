@@ -443,10 +443,11 @@ describe('ChatInput', () => {
     installPointerHelpers(recordingButton)
     fireEvent.keyDown(recordingButton, { key: 'Enter' })
     fireEvent.keyUp(recordingButton, { key: 'Enter' })
+    vi.advanceTimersByTime(300)
     fireEvent.pointerUp(recordingButton, { pointerId: 1 })
 
     expect(onStartRecording).toHaveBeenCalledTimes(1)
-    expect(onStopRecording).not.toHaveBeenCalled()
+    expect(onStopRecording).toHaveBeenCalledTimes(1)
   })
 
   it('ignores pointer activation while a keyboard PTT gesture is active', () => {
