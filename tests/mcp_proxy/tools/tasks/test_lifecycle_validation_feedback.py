@@ -207,6 +207,17 @@ def test_api_validation_error_description_does_not_admit_failure() -> None:
     assert feedback_admits_required_validation_failure(feedback) is False
 
 
+def test_success_feedback_with_negated_missing_gates_does_not_admit_failure() -> None:
+    feedback = (
+        "All acceptance criteria are met. The Changed File Manifest confirms source, test, "
+        "and config changes across all required areas. No missing gates or unmet criteria."
+    )
+
+    assert matched_successful_validation_pattern(feedback) is not None
+    assert matched_required_validation_failure_pattern(feedback) is None
+    assert feedback_admits_required_validation_failure(feedback) is False
+
+
 @pytest.mark.parametrize(
     "feedback",
     [
@@ -393,6 +404,49 @@ async def test_invalid_llm_result_with_verified_success_feedback_is_promoted() -
         "task-1",
         validation_status="valid",
         validation_feedback="Verified all validation criteria are satisfied.",
+    )
+
+
+@pytest.mark.asyncio
+async def test_invalid_llm_result_with_negated_failure_success_feedback_is_promoted() -> None:
+    """Negated failure terms do not block promotion of explicit success feedback."""
+    update_task = MagicMock()
+    task = SimpleNamespace(
+        id="task-1",
+        title="Task",
+        description="Description",
+        validation_criteria="Tests pass",
+        category="code",
+    )
+    feedback = (
+        "All acceptance criteria are met. The Changed File Manifest confirms source, test, "
+        "and config changes across all required areas. No missing gates or unmet criteria."
+    )
+    validator = SimpleNamespace(
+        validate_task=AsyncMock(
+            return_value=TaskValidationResult(
+                status="invalid",
+                feedback=feedback,
+            )
+        )
+    )
+    ctx = SimpleNamespace(task_manager=_task_manager_mock(update_task))
+
+    result = await validate_leaf_task_with_llm(
+        task,
+        validator,
+        "diff context",
+        None,
+        ctx,
+        "task-1",
+        None,
+    )
+
+    assert result.can_close is True
+    update_task.assert_called_once_with(
+        "task-1",
+        validation_status="valid",
+        validation_feedback=feedback,
     )
 
 

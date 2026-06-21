@@ -42,6 +42,11 @@ _ZERO_FAILURE_TOKEN_RE = re.compile(
     r"\b(?:0\s+fail(?:ed|ures?)|zero\s+failures?|fail(?:ed|ures?)\s*[=:]\s*0)\b",
     _FAILURE_FEEDBACK_FLAGS,
 )
+_NEGATED_FAILURE_FRAGMENT_RE = re.compile(
+    r"\b(?:no|without)\s+(?:[\w-]+\s+){0,6}"
+    r"(?:criteri(?:on|a)|gates?|checks?|errors?|failures?)\b",
+    _FAILURE_FEEDBACK_FLAGS,
+)
 _QUOTED_FEEDBACK_FRAGMENT_RE = re.compile(
     r"(?:\"[^\"]{1,240}\"|`[^`]{1,240}`|(?<!\w)'[^']{1,240}'(?!\w))",
     _FAILURE_FEEDBACK_FLAGS,
@@ -273,6 +278,7 @@ def _matched_successful_validation_pattern_unchecked(
         return None
 
     normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
+    normalized_feedback = _NEGATED_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     searchable_feedback = _QUOTED_FEEDBACK_FRAGMENT_RE.sub("", normalized_feedback)
     for pattern in _SUCCESSFUL_VALIDATION_FEEDBACK_PATTERNS:
         if pattern.search(searchable_feedback) is not None:
@@ -286,6 +292,7 @@ def matched_required_validation_failure_pattern(feedback: str | None) -> re.Patt
         return None
 
     normalized_feedback = _ZERO_FAILURE_TOKEN_RE.sub("", " ".join(feedback.split()))
+    normalized_feedback = _NEGATED_FAILURE_FRAGMENT_RE.sub("", normalized_feedback)
     searchable_feedback = _QUOTED_FEEDBACK_FRAGMENT_RE.sub("", normalized_feedback)
     for pattern in _REQUIRED_FAILURE_FEEDBACK_PATTERNS:
         if pattern.search(searchable_feedback) is not None:
