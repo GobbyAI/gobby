@@ -1,17 +1,16 @@
 use std::time::Duration;
 
 use gobby_core::ai::{
-    daemon::generate_via_daemon_with_max_tokens,
+    daemon::{generate_via_daemon_with_candidates, generate_via_daemon_with_max_tokens},
     effective_route,
     text::{generate_text, generate_text_with_max_tokens},
 };
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
 use gobby_core::ai_types::AiError;
-use gobby_core::config::{AiCapability, AiRouting};
+use gobby_core::config::{AiCapability, AiRouting, FeatureCandidate};
 
 use crate::commands::codewiki::{
-    CodewikiAiOptions, DEFAULT_AGGREGATE_PROFILE, DEFAULT_VERIFY_PROFILE, PromptTier,
-    TextGenerator, TextVerifier, prompts,
+    CodewikiAiOptions, DEFAULT_VERIFY_PROFILE, PromptTier, TextGenerator, TextVerifier, prompts,
 };
 use crate::config::{self, Context};
 use crate::{db, secrets};
@@ -19,6 +18,31 @@ use crate::{db, secrets};
 /// Backoff between generation attempts; the array length bounds the retries.
 pub(super) const GENERATION_RETRY_BACKOFF: [Duration; 2] =
     [Duration::from_millis(200), Duration::from_millis(500)];
+
+/// Default aggregate-writer candidate chain (#904): opus writes the high-value
+/// curated/aggregate prose at high reasoning effort, with frontier gpt-5.5 as
+/// the fallback when opus is unavailable. Pinned per call so codewiki gets
+/// opus-first writing without reordering the shared daemon `feature_high`
+/// profile (which stays gpt-5.5-first). Verification runs separately on
+/// [`DEFAULT_VERIFY_PROFILE`] (sonnet).
+fn writer_candidate_chain() -> Vec<FeatureCandidate> {
+    vec![
+        FeatureCandidate {
+            candidate: "claude/opus".to_string(),
+            reasoning_effort: Some("high".to_string()),
+        },
+        FeatureCandidate {
+            candidate: "codex/gpt-5.5".to_string(),
+            reasoning_effort: Some("xhigh".to_string()),
+        },
+    ]
+}
+
+/// Daemon feature profile for [`PromptTier::Module`] writing (#904): module docs
+/// and file-body narratives are mid-level per-unit synthesis, written by sonnet
+/// — cheaper than the opus-first top-level writer, richer than the per-symbol
+/// default tier.
+const MODULE_WRITER_PROFILE: &str = "feature_mid";
 
 pub(crate) fn resolve_text_generator(
     ctx: &Context,
@@ -30,28 +54,49 @@ pub(crate) fn resolve_text_generator(
         return None;
     }
 
-    let aggregate_profile = ai
-        .aggregate_profile
-        .clone()
-        .unwrap_or_else(|| DEFAULT_AGGREGATE_PROFILE.to_string());
+    // Aggregate prose (curated narrative/concepts, repo/architecture/modules) is
+    // the high-value writing surface. By default route it to an opus-first
+    // candidate chain so opus writes it (gpt-5.5 as fallback) — the intended
+    // "opus writes, sonnet verifies" split. An explicit `--ai-aggregate-profile`
+    // overrides that with a named daemon feature profile. Per-file Standard
+    // summaries stay on the binding's lighter default tier.
+    let aggregate_profile = ai.aggregate_profile.clone();
+    let writer_candidates = writer_candidate_chain();
     let max_tokens = ai.prose_depth.max_tokens();
     let register = ai.register;
     let mut warned = false;
     let quiet = ctx.quiet;
     Some(Box::new(move |prompt, system, tier| {
+        // Top-level aggregate writing pins the opus-first chain (unless an
+        // explicit `--ai-aggregate-profile` overrides it); module and file-body
+        // synthesis routes to sonnet; per-symbol Standard prose stays light.
+        let use_opus_writer = matches!(tier, PromptTier::Aggregate) && aggregate_profile.is_none();
         let profile = match tier {
-            PromptTier::Aggregate => Some(aggregate_profile.as_str()),
+            PromptTier::Aggregate => aggregate_profile.as_deref(),
+            PromptTier::Module => Some(MODULE_WRITER_PROFILE),
             PromptTier::Standard => None,
         };
         let system = prompts::with_register(system, register);
         let result = generate_with_bounded_retry(|| match route {
-            AiRouting::Daemon => generate_via_daemon_with_max_tokens(
-                &ai_context,
-                prompt,
-                Some(system.as_ref()),
-                max_tokens,
-                profile,
-            ),
+            AiRouting::Daemon => {
+                if use_opus_writer {
+                    generate_via_daemon_with_candidates(
+                        &ai_context,
+                        prompt,
+                        Some(system.as_ref()),
+                        max_tokens,
+                        &writer_candidates,
+                    )
+                } else {
+                    generate_via_daemon_with_max_tokens(
+                        &ai_context,
+                        prompt,
+                        Some(system.as_ref()),
+                        max_tokens,
+                        profile,
+                    )
+                }
+            }
             AiRouting::Direct => generate_text_with_max_tokens(
                 &ai_context,
                 prompt,
@@ -236,7 +281,9 @@ pub(crate) fn maybe_generate(
     match generate.as_deref_mut() {
         None => Generation::Skipped,
         Some(generate) => match generate(prompt, system, tier) {
-            Some(text) if is_prompt_echo(&text, prompt) => Generation::Failed,
+            Some(text) if is_prompt_echo(&text, prompt) || is_model_refusal(&text) => {
+                Generation::Failed
+            }
             Some(text) => Generation::Generated(text),
             None => Generation::Failed,
         },
@@ -260,6 +307,37 @@ pub(super) fn is_prompt_echo(text: &str, prompt: &str) -> bool {
         return false;
     }
     text.trim_start().starts_with(&prefix)
+}
+
+/// Refusal-detection floor: only the opening of the body is scanned, since a
+/// model refusal leads with the apology rather than burying it in real prose.
+const REFUSAL_SCAN_CHARS: usize = 600;
+
+/// True when the generated body reads as the model *refusing* to write the page
+/// ("I cannot write this chapter ...", "I am unable to ...") instead of
+/// producing prose. Such a refusal is a generation failure, not content: like
+/// an echo it maps to [`Generation::Failed`], so the page falls back to its
+/// structural body and is recorded degraded rather than shipping the apology as
+/// documentation (#904). Conservative on purpose — first-person can't/unable
+/// phrasing scanned only in the lead — so legitimate prose that merely
+/// discusses a limitation is not misflagged.
+pub(super) fn is_model_refusal(text: &str) -> bool {
+    let head_end = text
+        .char_indices()
+        .nth(REFUSAL_SCAN_CHARS)
+        .map_or(text.len(), |(idx, _)| idx);
+    let head = text[..head_end].to_ascii_lowercase();
+    const REFUSAL_MARKERS: [&str; 8] = [
+        "i cannot write",
+        "i can't write",
+        "i cannot create",
+        "i can't create",
+        "i cannot generate",
+        "i can't generate",
+        "i am unable to",
+        "i'm unable to",
+    ];
+    REFUSAL_MARKERS.iter().any(|marker| head.contains(marker))
 }
 
 fn clean_generated(text: String) -> Option<String> {

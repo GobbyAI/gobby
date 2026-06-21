@@ -609,14 +609,16 @@ pub type TextGenerator<'a> = dyn FnMut(&str, &str, PromptTier) -> Option<String>
 /// just the model call — mirroring [`TextGenerator`] but without a prompt tier.
 pub type TextVerifier<'a> = dyn FnMut(&str, &str) -> Option<String> + 'a;
 
-/// Weight tier of one codewiki generation call. Aggregate docs roll up many
-/// child summaries into one long grounded synthesis and route to a heavier
-/// daemon profile; standard calls (file summaries, symbol purposes) are
-/// high-volume and stay on the default profile.
+/// Weight tier of one codewiki generation call (#904). `Aggregate` is the
+/// top-level repo-wide synthesis — repo overview, architecture, and the curated
+/// narrative/concept layer — and is written opus-first. `Module` is mid-level
+/// per-unit synthesis (module docs and file-body narratives) and routes to
+/// sonnet. `Standard` is high-volume per-symbol prose on the default low tier.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum PromptTier {
     #[default]
     Standard,
+    Module,
     Aggregate,
 }
 
@@ -703,8 +705,10 @@ pub struct CodewikiAiOptions {
     /// Audience register layered onto generation prompts. `None` keeps the base
     /// voice; grounding rules hold in every register.
     pub register: Option<ProseRegister>,
-    /// Daemon feature profile for aggregate docs; `None` means
-    /// [`super::DEFAULT_AGGREGATE_PROFILE`].
+    /// Daemon feature profile override for aggregate docs. `None` (the default)
+    /// routes aggregate/curated writing to the opus-first chain
+    /// (`writer_candidate_chain` in `text/generation.rs`); `Some(profile)` pins
+    /// that named daemon feature profile instead.
     pub aggregate_profile: Option<String>,
     /// Override seams for the grounded verification pass. Each `None` falls
     /// back to the resolved `ai.text_generate.verify_*` config, then to the

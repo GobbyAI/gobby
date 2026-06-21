@@ -369,11 +369,11 @@ pub(crate) enum Command {
         #[arg(long, value_enum, default_value_t = AiDepthArg::Files)]
         ai_depth: AiDepthArg,
         /// Daemon feature profile for aggregate docs (architecture/modules/repo)
-        /// [default: feature_mid]
+        /// [default: opus-first writer chain — claude/opus@high, codex/gpt-5.5@xhigh]
         #[arg(long, value_name = "PROFILE")]
         ai_aggregate_profile: Option<String>,
         /// Daemon feature profile for grounded verification
-        /// [default: feature_low]
+        /// [default: feature_mid]
         #[arg(long, value_name = "PROFILE")]
         ai_verify_profile: Option<String>,
         /// Prose verbosity: brief (terser), standard (default), or deep (longer,

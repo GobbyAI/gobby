@@ -159,7 +159,7 @@ pub(crate) fn build_module_docs_with_filter(
                         &relationships,
                     ),
                     prompts::MODULE_SYSTEM,
-                    PromptTier::Aggregate,
+                    PromptTier::Module,
                 )
                 .unwrap_or_record(fallback, &mut degraded);
                 // Relationship endpoint spans widen the grounding allow-list so

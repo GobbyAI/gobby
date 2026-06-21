@@ -226,7 +226,7 @@ fn build_file_body(
                 prompts::FILE_SYSTEM,
             ),
         };
-        maybe_generate(generate, &prompt, system, PromptTier::Aggregate)
+        maybe_generate(generate, &prompt, system, PromptTier::Module)
     } else {
         Generation::Skipped
     };

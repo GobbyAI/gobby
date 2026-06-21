@@ -27,23 +27,28 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 /// dependency/call diagrams, repo/architecture subsystem maps), which were the
 /// sole source of `graph-truncated`/`graph-unavailable` page degradation; graph
 /// availability is now informational only and never marks a page degraded.
+/// Bumped 10 -> 11 so narrative chapters re-render under the deterministic,
+/// reading-ordered slug scheme (`code/narrative/01-introduction.md`, #900): the
+/// old alphabetical bare-slug pages become orphans that `finish`'s cache-
+/// independent GC reclaims on this first full regen.
 /// Bumped 6 -> 7 so verifier audit notes appear in frontmatter even when source
 /// hashes are unchanged. Bumped 5 -> 6 so file and module pages written in the
 /// old symbol-dump shape (API Symbols / Component ID / Lines table, full-range
 /// `<details>` provenance) cannot be reused from disk: the new shape renders a
 /// verified narrative body plus a human Key components table. (5 was the
 /// grounded verification pass; 4 the pre-verify pages.)
-const CODEWIKI_RENDER_VERSION: u32 = 10;
+// 12 (#904): repo overview links the analysis/catalog pages (feature catalog,
+// infrastructure, deprecations, dead-code candidates) from a new "Analysis &
+// catalogs" section, narrative extra chapters carry readable `NN-<title>` slugs,
+// and aggregate prose is written opus-first — so prior on-disk pages re-render.
+const CODEWIKI_RENDER_VERSION: u32 = 12;
 
-/// Default daemon feature profile for aggregate (module/repo/architecture)
-/// prose, which synthesizes 10k+-token grounded prompts; file and symbol
-/// docs stay on the daemon's default low-tier profile.
-pub(crate) const DEFAULT_AGGREGATE_PROFILE: &str = "feature_mid";
-
-/// Default daemon feature profile for the grounded verification pass. Verify is
-/// a cheaper "is this claim supported by the cited source?" judgment than
-/// generation, so it routes to a lighter tier than [`DEFAULT_AGGREGATE_PROFILE`].
-pub(crate) const DEFAULT_VERIFY_PROFILE: &str = "feature_low";
+/// Default daemon feature profile for the grounded verification pass (#904):
+/// `feature_mid` (sonnet) runs the "is this claim supported by the cited
+/// source?" QA judgment, pairing with the opus-first aggregate writer (see
+/// `writer_candidate_chain` in `text/generation.rs`). File and symbol docs stay
+/// on the daemon's default low-tier profile.
+pub(crate) const DEFAULT_VERIFY_PROFILE: &str = "feature_mid";
 
 mod architecture_diagrams;
 mod build;

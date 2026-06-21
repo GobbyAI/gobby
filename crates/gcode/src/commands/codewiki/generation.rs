@@ -170,6 +170,29 @@ pub(crate) fn generate_hierarchical_docs_with_verify(
     docs
 }
 
+/// Reference-appendix links for the deterministic analysis/catalog pages,
+/// included only for the pages that will actually be emitted this run (#904).
+/// Returns `(label, wikilink-target)` pairs; an absent page is never linked, so
+/// the repo overview can't dangle.
+fn repo_audit_links(
+    has_audit: bool,
+    has_feature_catalog: bool,
+    has_infrastructure: bool,
+) -> Vec<(&'static str, &'static str)> {
+    let mut links = Vec::new();
+    if has_feature_catalog {
+        links.push(("Feature catalog", "code/features"));
+    }
+    if has_infrastructure {
+        links.push(("Infrastructure stack", "code/infrastructure"));
+    }
+    if has_audit {
+        links.push(("Deprecations", "code/deprecations"));
+        links.push(("Dead-code candidates", "code/dead-code-candidates"));
+    }
+    links
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "core generation threads mutable generator, verifier, reuse, progress, scope, and emit state"
@@ -334,10 +357,21 @@ pub(crate) fn generate_hierarchical_docs_core(
     ) {
         emit(doc)?;
     }
+    // Audit/analysis pages are deterministic, input-gated projections (#904).
+    // Build the infrastructure page once here (reused at its emission site
+    // below) and link every page that will actually be emitted into the repo
+    // overview's appendix, so they are reachable instead of orphaned.
+    let infrastructure_doc = build_infrastructure_doc(system_model);
+    let audit_links = repo_audit_links(
+        audit.is_some(),
+        feature_catalog.is_some(),
+        infrastructure_doc.is_some(),
+    );
     let (repo_doc, repo_degraded) = build_repo_doc(
         &file_docs,
         &module_docs,
         &input.leading_chunks,
+        &audit_links,
         generate,
         reuse,
         progress,
@@ -411,7 +445,7 @@ pub(crate) fn generate_hierarchical_docs_core(
     // no model was supplied (AI-off / test entry points), exactly like the
     // architecture diagrams.
     progress.emit("generating infrastructure docs");
-    if let Some(infrastructure_doc) = build_infrastructure_doc(system_model) {
+    if let Some(infrastructure_doc) = infrastructure_doc {
         let content = render_infrastructure_doc(&infrastructure_doc);
         emit(match system_model_key.clone() {
             Some(key) => BuiltDoc::derived("code/infrastructure.md", content, key),

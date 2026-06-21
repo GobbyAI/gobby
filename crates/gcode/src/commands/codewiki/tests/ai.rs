@@ -172,21 +172,26 @@ fn aggregate_docs_use_heavier_prompt_tier_than_symbol_docs() {
             .map(|(_, tier)| *tier)
             .collect::<Vec<_>>()
     };
-    for aggregate in [
-        prompts::FILE_SYSTEM,
-        prompts::MODULE_SYSTEM,
-        prompts::REPO_SYSTEM,
-        prompts::ARCHITECTURE_SYSTEM,
-    ] {
+    // Top-level repo-wide synthesis routes to the opus-first aggregate tier (#904).
+    for aggregate in [prompts::REPO_SYSTEM, prompts::ARCHITECTURE_SYSTEM] {
         let seen = tier_for(aggregate);
         assert!(!seen.is_empty(), "{aggregate} generates");
         assert!(
             seen.iter().all(|tier| *tier == PromptTier::Aggregate),
-            "{aggregate} routes to the aggregate tier"
+            "{aggregate} routes to the opus-first aggregate tier"
         );
     }
-    // File pages now synthesize a multi-section narrative, so the file system
-    // prompt joins the aggregate tier; only per-symbol purposes stay standard.
+    // Module docs and file-body narratives are mid-level per-unit synthesis, so
+    // they route to the sonnet Module tier (#904); only per-symbol purposes stay
+    // on the standard tier.
+    for module in [prompts::FILE_SYSTEM, prompts::MODULE_SYSTEM] {
+        let seen = tier_for(module);
+        assert!(!seen.is_empty(), "{module} generates");
+        assert!(
+            seen.iter().all(|tier| *tier == PromptTier::Module),
+            "{module} routes to the module tier"
+        );
+    }
     let symbol_tiers = tier_for(prompts::SYMBOL_SYSTEM);
     assert!(!symbol_tiers.is_empty(), "symbol purposes generate");
     assert!(

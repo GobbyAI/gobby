@@ -5,6 +5,7 @@ pub(crate) fn build_repo_doc(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     leading_chunks: &BTreeMap<String, LeadingChunk>,
+    audit_links: &[(&str, &str)],
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
@@ -70,7 +71,14 @@ pub(crate) fn build_repo_doc(
         Generation::Failed | Generation::Skipped => ground_text(&fallback, &source_spans, None),
     };
 
-    let doc = render_repo_doc(&summary, &top_modules, &root_files, &source_spans, degraded);
+    let doc = render_repo_doc(
+        &summary,
+        &top_modules,
+        &root_files,
+        audit_links,
+        &source_spans,
+        degraded,
+    );
     (doc, degraded)
 }
 
@@ -103,6 +111,7 @@ pub(crate) fn render_repo_doc(
     summary: &str,
     modules: &[ModuleLink],
     files: &[FileLink],
+    audit_links: &[(&str, &str)],
     source_spans: &[SourceSpan],
     degraded: bool,
 ) -> String {
@@ -123,11 +132,11 @@ pub(crate) fn render_repo_doc(
     // the narrative entry points).
     doc.push_str("## Start here — guided tour\n\n");
     doc.push_str(
-        "New to this codebase? Begin with [[code/narrative/introduction|Introduction]].\n\n",
+        "New to this codebase? Begin with [[code/narrative/01-introduction|Introduction]].\n\n",
     );
-    doc.push_str("1. [[code/narrative/introduction|Introduction]]\n");
-    doc.push_str("2. [[code/narrative/architecture|Architecture]]\n");
-    doc.push_str("3. [[code/narrative/data-flow|Data Flow]]\n\n");
+    doc.push_str("1. [[code/narrative/01-introduction|Introduction]]\n");
+    doc.push_str("2. [[code/narrative/02-architecture|Architecture]]\n");
+    doc.push_str("3. [[code/narrative/03-data-flow|Data Flow]]\n\n");
     doc.push_str(
         "Browse all concepts in the [[code/concepts/index|Concept tree and narrative tours]].\n\n",
     );
@@ -135,6 +144,16 @@ pub(crate) fn render_repo_doc(
         "Ask questions across this vault with `gwiki ask \"...\"`, or find pages with `gwiki search \"...\"`.\n\n",
     );
     write_section(&mut doc, "Overview", &summary);
+    // Link the deterministic analysis/catalog pages so they are reachable from
+    // the front page instead of orphaned (#904). Only the pages that were
+    // actually generated are passed in, so these links never dangle.
+    if !audit_links.is_empty() {
+        doc.push_str("## Analysis & catalogs\n\n");
+        for (label, target) in audit_links {
+            doc.push_str(&format!("- [[{target}|{label}]]\n"));
+        }
+        doc.push('\n');
+    }
     let has_appendix = !modules.is_empty() || !files.is_empty();
     if has_appendix {
         doc.push_str("## Reference appendix\n\n");
