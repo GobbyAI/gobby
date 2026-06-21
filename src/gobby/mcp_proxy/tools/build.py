@@ -7,7 +7,6 @@ from dataclasses import asdict
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
-from gobby.app_context import get_app_context
 from gobby.build import (
     build_clean_target,
     build_restart_target,
@@ -23,9 +22,24 @@ from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.utils.session_context import get_current_session_id
 
 if TYPE_CHECKING:
+    from gobby.app_context import ServiceContainer
     from gobby.mcp_proxy.tools.tasks._context import RegistryContext
 
 WorkspaceBackend = Literal["worktree", "clone"]
+
+
+def get_app_context() -> ServiceContainer | None:
+    """Lazily resolve the global ServiceContainer.
+
+    Imported at call time rather than module load to avoid the
+    ``gobby.app_context`` <-> ``gobby.mcp_proxy`` import cycle: ``app_context``
+    imports ``mcp_proxy.manager`` during its own module execution, which
+    transitively reaches this module before ``get_app_context`` is defined.
+    """
+    from gobby.app_context import get_app_context as _get_app_context
+
+    return _get_app_context()
+
 
 AUTOMATION_DISABLED_MESSAGE = (
     "automation_disabled: project build automation is paused. "
