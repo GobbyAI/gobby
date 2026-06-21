@@ -26,6 +26,9 @@ _OLD_CLAUDE_ONLY_CANDIDATE_ALIASES: dict[FeatureProfile, set[tuple[str, ...]]] =
 _OLD_SPARK_CANDIDATE = "codex/gpt-5.3-codex-spark"
 
 _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
+    "ai.generation.profile_defaults.feature_low": FeatureProfile.LOW,
+    "ai.generation.profile_defaults.feature_mid": FeatureProfile.MID,
+    "ai.generation.profile_defaults.feature_high": FeatureProfile.HIGH,
     "session_summary.candidates": FeatureProfile.LOW,
     "digest.candidates": FeatureProfile.LOW,
     "memory_recall.candidates": FeatureProfile.LOW,
@@ -102,6 +105,8 @@ def _get_stale_candidate_key(row: Any) -> str | None:
     if value is None:
         return None
     profile = _FEATURE_CANDIDATE_PROFILES[key]
+    if any(candidate.startswith("gemini/") for candidate in value):
+        return key
     if profile == FeatureProfile.MID and _OLD_SPARK_CANDIDATE in value:
         return key
     candidates = tuple(value)

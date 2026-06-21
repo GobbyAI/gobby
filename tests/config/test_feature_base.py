@@ -37,21 +37,21 @@ class TestFeatureProfile:
     def test_profile_candidate_ordering(self) -> None:
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW]) == (
             "claude/haiku",
-            "gemini/gemini-3.5-flash",
             "codex/gpt-5.4-mini",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.MID]) == (
             "claude/sonnet",
-            "gemini/gemini-3.5-flash",
-            "codex/gpt-5.4",
+            "codex/gpt-5.5",
         )
         assert candidate_labels(DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]) == (
-            "codex/gpt-5.4",
-            "claude/sonnet",
-            "gemini/gemini-3.1-pro-preview",
+            "codex/gpt-5.5",
+            "claude/opus",
         )
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
             assert "claude/fable" not in candidate_labels(candidates)
+            assert all(
+                not candidate.startswith("gemini/") for candidate in candidate_labels(candidates)
+            )
 
     def test_profile_candidate_reasoning_pins(self) -> None:
         high_candidates = DEFAULT_PROFILE_CANDIDATES[FeatureProfile.HIGH]
@@ -59,7 +59,6 @@ class TestFeatureProfile:
         assert [candidate.reasoning_effort for candidate in high_candidates] == [
             "xhigh",
             "high",
-            None,
         ]
         for profile in (FeatureProfile.LOW, FeatureProfile.MID):
             assert all(
@@ -69,9 +68,8 @@ class TestFeatureProfile:
 
     def test_default_candidates_for_profile_returns_labels(self) -> None:
         assert default_candidates_for_profile(FeatureProfile.HIGH) == (
-            "codex/gpt-5.4",
-            "claude/sonnet",
-            "gemini/gemini-3.1-pro-preview",
+            "codex/gpt-5.5",
+            "claude/opus",
         )
 
     def test_default_reasoning_for_profile_is_auto_unset(self) -> None:
@@ -81,7 +79,7 @@ class TestFeatureProfile:
     def test_profiles_use_cloud_only_candidates(self) -> None:
         for candidates in DEFAULT_PROFILE_CANDIDATES.values():
             providers = {candidate.split("/", 1)[0] for candidate in candidate_labels(candidates)}
-            assert providers <= {"codex", "claude", "gemini"}
+            assert providers <= {"codex", "claude"}
 
 
 class TestFeatureDefaultConfig:

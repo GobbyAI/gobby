@@ -774,12 +774,25 @@ class TestLoadConfig:
             "claude/haiku",
         )
 
-    def test_load_config_deletes_seeded_claude_only_feature_candidates(
-        self, temp_dir: Path
-    ) -> None:
-        """Old seeded Claude-only and Spark candidate rows fall through to profiles."""
+    def test_load_config_deletes_seeded_stale_feature_candidates(self, temp_dir: Path) -> None:
+        """Old seeded Gemini, Claude-only, and Spark rows fall through to profiles."""
 
         values = {
+            "ai.generation.profile_defaults.feature_low": [
+                "claude/haiku",
+                "gemini/gemini-3.5-flash",
+                "codex/gpt-5.4-mini",
+            ],
+            "ai.generation.profile_defaults.feature_mid": [
+                "gemini/gemini-3.5-flash",
+                "claude/sonnet",
+                "codex/gpt-5.5",
+            ],
+            "ai.generation.profile_defaults.feature_high": [
+                {"candidate": "codex/gpt-5.5", "reasoning_effort": "xhigh"},
+                {"candidate": "claude/opus", "reasoning_effort": "high"},
+                "gemini/gemini-3.1-pro-preview",
+            ],
             "digest.candidates": ["claude/claude-haiku-4-5"],
             "memory.kg.candidates": ["claude/haiku"],
             "tool_summarizer.candidates": ["claude/haiku"],

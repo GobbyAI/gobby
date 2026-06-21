@@ -93,18 +93,15 @@ type FeatureCandidateInput = str | FeatureCandidateConfig | Mapping[str, object]
 DEFAULT_PROFILE_CANDIDATES: dict[FeatureProfile, tuple[FeatureCandidateConfig, ...]] = {
     FeatureProfile.LOW: (
         FeatureCandidateConfig(candidate="claude/haiku"),
-        FeatureCandidateConfig(candidate="gemini/gemini-3.5-flash"),
         FeatureCandidateConfig(candidate="codex/gpt-5.4-mini"),
     ),
     FeatureProfile.MID: (
         FeatureCandidateConfig(candidate="claude/sonnet"),
-        FeatureCandidateConfig(candidate="gemini/gemini-3.5-flash"),
-        FeatureCandidateConfig(candidate="codex/gpt-5.4"),
+        FeatureCandidateConfig(candidate="codex/gpt-5.5"),
     ),
     FeatureProfile.HIGH: (
-        FeatureCandidateConfig(candidate="codex/gpt-5.4", reasoning_effort="xhigh"),
-        FeatureCandidateConfig(candidate="claude/sonnet", reasoning_effort="high"),
-        FeatureCandidateConfig(candidate="gemini/gemini-3.1-pro-preview"),
+        FeatureCandidateConfig(candidate="codex/gpt-5.5", reasoning_effort="xhigh"),
+        FeatureCandidateConfig(candidate="claude/opus", reasoning_effort="high"),
     ),
 }
 
@@ -238,7 +235,7 @@ class FeatureDefaultConfig(BaseModel):
         default_factory=list,
         description=(
             "Ordered provider/model candidates with optional reasoning pins, for example "
-            "[{'candidate': 'codex/gpt-5.4', 'reasoning_effort': 'xhigh'}, "
+            "[{'candidate': 'codex/gpt-5.5', 'reasoning_effort': 'xhigh'}, "
             "{'candidate': 'claude/haiku'}]."
         ),
     )
