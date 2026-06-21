@@ -19,8 +19,9 @@ classifiers = [
 requires-python = ">=3.13"
 dependencies = [
     "aiofiles>=24.1.0",
-    # aiohttp >=3.14.0 includes fixes for CVE-2026-34993 and CVE-2026-47265.
-    "aiohttp>=3.14.0",
+    # aiohttp <=3.14.0 has 2026 advisories; 3.14.1 carries the fixes plus
+    # CVE-2026-34993 and CVE-2026-47265.
+    "aiohttp>=3.14.1",
     "anthropic>=0.75.0",
     "click>=8.1.0",
     "fastapi>=0.136.0,!=0.136.3",
@@ -45,12 +46,14 @@ dependencies = [
     "falkordb>=1.1.0",
     "faster-whisper>=1.0.0",
     "qdrant-client>=1.12.0",
-    # python-multipart <0.0.27 has CVE-2026-24486, CVE-2026-40347, CVE-2026-42561
-    "python-multipart>=0.0.27",
+    # python-multipart <0.0.31 has CVE-2026-24486, CVE-2026-40347,
+    # CVE-2026-42561 and later DoS advisories fixed in 0.0.30/0.0.31.
+    "python-multipart>=0.0.31",
     # pygments <2.20.0 has CVE-2026-4539 (transitive via rich/textual)
     "pygments>=2.20.0",
-    # cryptography <46.0.7 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
-    "cryptography>=46.0.7",
+    # cryptography <48.0.1 has CVE-2026-26007, CVE-2026-34073, CVE-2026-39892
+    # and the later advisory fixed in 48.0.1.
+    "cryptography>=48.0.1",
     "clawcare>=0.9.0",
 # pyjwt <2.13.0 has 2026 advisories (transitive via mcp)
 "pyjwt>=2.13.0",
@@ -91,10 +94,15 @@ constraint-dependencies = [
     "tokenizers>=0.21",
     # idna <3.15 has CVE-2026-45409 (transitive via HTTP clients)
     "idna>=3.15",
-    # starlette <1.0.1 has CVE-2025-62727; keep the ASGI stack on compatible floors.
+    # starlette <1.3.1 has CVE-2025-62727 and the later GHSA fixed in 1.3.1;
+    # keep the ASGI stack on compatible floors.
     "mcp>=1.27.1",
     "sse-starlette>=3.4.4",
-    "starlette>=1.0.1",
+    "starlette>=1.3.1",
+    # msgpack <=1.2.0 has GHSA (high), fixed in 1.2.1 (transitive via qdrant-client).
+    "msgpack>=1.2.1",
+    # pydantic-settings <2.14.2 has a 2026 advisory (transitive).
+    "pydantic-settings>=2.14.2",
     # authlib <=1.6.11 has GHSA-r95x-qfjj-fjj2 (medium); <1.6.11 also had
     # GHSA-jj8c-mmj3-mmgv. Transitive via fastmcp.
     "authlib>=1.6.12",
