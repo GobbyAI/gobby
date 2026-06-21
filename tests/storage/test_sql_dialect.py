@@ -10,6 +10,7 @@ from gobby.storage.skills import LocalSkillManager
 from gobby.storage.sql_dialect import (
     elapsed_seconds_greater_than_expr,
     json_array_contains_condition,
+    json_empty_array_coalesce_expr,
     json_text_expr,
     newer_than_now_expr,
     older_than_now_expr,
@@ -75,6 +76,10 @@ def test_json_array_contains_condition_uses_jsonb_contains_for_postgres() -> Non
 
     assert condition == "tags @> %s::jsonb"
     assert params == ('["gobby"]',)
+
+
+def test_json_empty_array_coalesce_expr_uses_jsonb_empty_array_for_postgres() -> None:
+    assert json_empty_array_coalesce_expr(_Db(), "tags") == "COALESCE(tags, '[]'::jsonb)"
 
 
 def test_task_list_label_filter_uses_postgres_jsonb_contains() -> None:

@@ -227,6 +227,23 @@ class MCPToolStorageMixin:
                         )
 
                 else:
+                    existing = existing_tools[tool_name]
+                    if existing.name != tool_name:
+                        conn.execute(
+                            """
+                            UPDATE tools
+                            SET name = %s, updated_at = %s
+                            WHERE id = %s
+                              AND NOT EXISTS (
+                                  SELECT 1
+                                  FROM tools
+                                  WHERE mcp_server_id = %s
+                                    AND name = %s
+                                    AND id <> %s
+                              )
+                            """,
+                            (tool_name, now, existing.id, server.id, tool_name, existing.id),
+                        )
                     stats["unchanged"] += 1
                     if schema_hash_manager:
                         schema_hash_manager.update_verification_time(

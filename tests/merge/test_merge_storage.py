@@ -4,6 +4,7 @@ Tests for MergeResolution and MergeConflict persistence in PostgreSQL database.
 Tests should fail initially as the storage module does not exist yet.
 """
 
+from pathlib import Path
 from typing import Any
 
 import pytest
@@ -12,6 +13,13 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.merge_resolutions import MergeResolutionManager
 
 pytestmark = pytest.mark.unit
+
+
+def test_stale_writer_guards_use_standard_text_casts() -> None:
+    source = Path("src/gobby/storage/merge_resolutions.py").read_text()
+
+    assert "%s::text" not in source
+    assert source.count("CAST(%s AS TEXT)") >= 6
 
 
 def _table_exists(db: HubDatabase, table_name: str) -> bool:

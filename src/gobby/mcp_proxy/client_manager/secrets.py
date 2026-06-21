@@ -70,14 +70,7 @@ def resolve_secrets_in_config(
                 if not SECRET_REF_PATTERN.search(value):
                     stripped.append(value)
                     continue
-                if (
-                    not value.startswith("-")
-                    and index > 0
-                    and resolved[index - 1].startswith("-")
-                    and stripped
-                    and stripped[-1] == resolved[index - 1]
-                ):
-                    stripped.pop()
+                removed = False
                 if (
                     SECRET_REF_PATTERN.fullmatch(value)
                     and index > 0
@@ -86,14 +79,19 @@ def resolve_secrets_in_config(
                     and stripped[-1] == resolved[index - 1]
                 ):
                     stripped.pop()
+                    removed = True
                 elif value.startswith("-") and index + 1 < len(resolved):
                     next_value = resolved[index + 1]
                     if SECRET_REF_PATTERN.fullmatch(next_value):
                         skip_next = True
-                logger.warning(
-                    "Stripping unresolved secret ref from %s args",
-                    config.name,
-                )
+                        removed = True
+                elif SECRET_REF_PATTERN.search(value):
+                    removed = True
+                if removed:
+                    logger.warning(
+                        "Stripping unresolved secret ref from %s args",
+                        config.name,
+                    )
             return stripped
 
         updates: dict[str, Any] = {}

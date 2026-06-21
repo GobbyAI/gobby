@@ -1644,6 +1644,67 @@ class TestRefreshToolsIncremental:
             }
         ]
 
+    def test_refresh_tools_incremental_persists_normalized_unchanged_tool_name(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+    ) -> None:
+        class RecordingSchemaHashManager:
+            def check_tools_for_changes(
+                self,
+                _server_name: str,
+                _project_id: str,
+                _tools: list[dict[str, Any]],
+            ) -> dict[str, list[str]]:
+                return {"new": [], "changed": []}
+
+            def update_verification_time(
+                self,
+                _server_name: str,
+                _tool_name: str,
+                _project_id: str,
+            ) -> None:
+                return None
+
+            def cleanup_stale_hashes(
+                self,
+                _server_name: str,
+                _project_id: str,
+                _current_tools: list[str],
+            ) -> None:
+                return None
+
+        server = mcp_manager.upsert(
+            name="unchanged-normalize",
+            transport="http",
+            url="http://localhost",
+            project_id=sample_project["id"],
+        )
+        mcp_manager.db.execute(
+            """
+            INSERT INTO tools (id, mcp_server_id, name, description, input_schema, created_at, updated_at)
+            VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (
+                "mixed-case-tool",
+                server.id,
+                "Read_File",
+                "kept",
+                json.dumps({"type": "object"}),
+            ),
+        )
+
+        stats = mcp_manager.refresh_tools_incremental(
+            "unchanged-normalize",
+            [{"name": " read_file ", "description": "kept", "inputSchema": {"type": "object"}}],
+            project_id=sample_project["id"],
+            schema_hash_manager=RecordingSchemaHashManager(),
+        )
+
+        assert stats["unchanged"] == 1
+        tools = mcp_manager.get_cached_tools("unchanged-normalize", project_id=sample_project["id"])
+        assert [tool.name for tool in tools] == ["read_file"]
+
 
 class TestMCPServerFromRow:
     """Tests for MCPServer.from_row class method."""
@@ -1689,6 +1750,31 @@ class TestMCPServerFromRow:
         assert server.env is None
         assert server.headers is None
         assert server.command is None
+
+    def test_from_row_preserves_predecoded_json_fields(self) -> None:
+        from gobby.storage.mcp_models import MCPServer
+
+        server = MCPServer.from_row(
+            {
+                "id": "server-1",
+                "name": "decoded-server",
+                "transport": "stdio",
+                "url": None,
+                "command": "node",
+                "args": [],
+                "env": {},
+                "headers": {"X-Test": "value"},
+                "enabled": True,
+                "description": None,
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:00:00Z",
+                "project_id": "proj-1",
+            }
+        )
+
+        assert server.args == []
+        assert server.env == {}
+        assert server.headers == {"X-Test": "value"}
 
     def test_from_row_malformed_json_includes_server_context(self) -> None:
         """Malformed server JSON reports the row id and field name."""
@@ -1778,6 +1864,39 @@ class TestToolFromRow:
                     "name": "bad_tool",
                     "description": None,
                     "input_schema": "{",
+                    "created_at": "2024-01-01T00:00:00Z",
+                    "updated_at": "2024-01-01T00:00:00Z",
+                }
+            )
+
+    def test_from_row_preserves_predecoded_dict_schema(self) -> None:
+        from gobby.storage.mcp_models import Tool
+
+        tool = Tool.from_row(
+            {
+                "id": "tool-1",
+                "mcp_server_id": "server-1",
+                "name": "decoded_tool",
+                "description": None,
+                "input_schema": {"type": "object"},
+                "created_at": "2024-01-01T00:00:00Z",
+                "updated_at": "2024-01-01T00:00:00Z",
+            }
+        )
+
+        assert tool.input_schema == {"type": "object"}
+
+    def test_from_row_rejects_predecoded_list_schema(self) -> None:
+        from gobby.storage.mcp_models import Tool
+
+        with pytest.raises(ValueError, match="expected object, got list"):
+            Tool.from_row(
+                {
+                    "id": "tool-1",
+                    "mcp_server_id": "server-1",
+                    "name": "decoded_tool",
+                    "description": None,
+                    "input_schema": [],
                     "created_at": "2024-01-01T00:00:00Z",
                     "updated_at": "2024-01-01T00:00:00Z",
                 }

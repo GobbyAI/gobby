@@ -155,7 +155,7 @@ class TestGetAgentResult:
     """Tests for get_agent_result MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_run_not_found_returns_error(self):
+    async def test_run_not_found_returns_error(self) -> None:
         """Test error when run_id not found."""
         runner = MagicMock()
         runner.get_run.return_value = None
@@ -169,7 +169,7 @@ class TestGetAgentResult:
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_returns_run_details(self):
+    async def test_returns_run_details(self) -> None:
         """Test successful run retrieval returns all details."""
         mock_run = MagicMock()
         mock_run.id = "run-123"
@@ -208,7 +208,7 @@ class TestWaitForAgent:
     """Tests for wait_for_agent MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_completed_run_returns_immediately(self):
+    async def test_completed_run_returns_immediately(self) -> None:
         mock_run = MagicMock()
         mock_run.id = "run-123"
         mock_run.status = "success"
@@ -408,7 +408,7 @@ class TestListAgentRuns:
     """Tests for list_agent_runs MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_returns_empty_list_when_no_runs(self):
+    async def test_returns_empty_list_when_no_runs(self) -> None:
         """Test empty list when no runs exist."""
         runner = MagicMock()
         runner.list_runs.return_value = []
@@ -423,7 +423,7 @@ class TestListAgentRuns:
         assert result["count"] == 0
 
     @pytest.mark.asyncio
-    async def test_returns_runs_with_truncated_prompts(self):
+    async def test_returns_runs_with_truncated_prompts(self) -> None:
         """Test that long prompts are truncated in list."""
         mock_run = MagicMock()
         mock_run.id = "run-123"
@@ -449,7 +449,7 @@ class TestListAgentRuns:
         assert result["runs"][0]["prompt"].endswith("...")
 
     @pytest.mark.asyncio
-    async def test_respects_status_filter(self):
+    async def test_respects_status_filter(self) -> None:
         """Test status filter is passed to runner."""
         runner = MagicMock()
         runner.list_runs.return_value = []
@@ -464,7 +464,7 @@ class TestListAgentRuns:
         assert runner.list_runs.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_respects_limit(self):
+    async def test_respects_limit(self) -> None:
         """Test limit parameter is passed to runner."""
         runner = MagicMock()
         runner.list_runs.return_value = []
@@ -479,7 +479,7 @@ class TestListAgentRuns:
         assert runner.list_runs.call_args is not None
 
     @pytest.mark.asyncio
-    async def test_clamps_zero_limit_to_positive_bound(self):
+    async def test_clamps_zero_limit_to_positive_bound(self) -> None:
         """Explicit zero is clamped to the smallest positive limit."""
         runner = MagicMock()
         runner.list_runs.return_value = []
@@ -497,7 +497,7 @@ class TestStopAgent:
     """Tests for stop_agent MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_successful_stop(self):
+    async def test_successful_stop(self) -> None:
         """Test successful agent stop."""
         runner = _make_runner_with_run_storage()
         runner.get_run.return_value = _make_mock_agent_run(status="running")
@@ -534,7 +534,7 @@ class TestStopAgent:
         )
 
     @pytest.mark.asyncio
-    async def test_successful_stop_passes_task_manager_to_cancellation_helper(self):
+    async def test_successful_stop_passes_task_manager_to_cancellation_helper(self) -> None:
         """Test stop_agent wires task recovery dependencies into fallback cancellation."""
         runner = _make_runner_with_run_storage()
         runner.get_run.return_value = _make_mock_agent_run(status="running")
@@ -578,7 +578,7 @@ class TestStopAgent:
         )
 
     @pytest.mark.asyncio
-    async def test_run_not_found(self):
+    async def test_run_not_found(self) -> None:
         """Test error when run not found."""
         runner = MagicMock()
         runner.cancel_run.return_value = False
@@ -593,7 +593,7 @@ class TestStopAgent:
         assert "not found" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_cannot_stop_completed_run(self):
+    async def test_cannot_stop_completed_run(self) -> None:
         """Test error when trying to stop non-running agent."""
         mock_run = MagicMock()
         mock_run.status = "success"
@@ -616,7 +616,7 @@ class TestCanSpawnAgent:
     """Tests for can_spawn_agent MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_can_spawn_returns_true(self):
+    async def test_can_spawn_returns_true(self) -> None:
         """Test when spawning is allowed."""
         runner = MagicMock()
         runner.can_spawn.return_value = (True, "Spawning allowed", 0)
@@ -630,7 +630,7 @@ class TestCanSpawnAgent:
         assert result["reason"] == "Spawning allowed"
 
     @pytest.mark.asyncio
-    async def test_cannot_spawn_returns_false(self):
+    async def test_cannot_spawn_returns_false(self) -> None:
         """Test when spawning is not allowed."""
         runner = MagicMock()
         runner.can_spawn.return_value = (False, "Max depth reached", 3)
@@ -671,7 +671,7 @@ class TestListRunningAgents:
         ]
 
     @pytest.mark.asyncio
-    async def test_list_all_running_agents(self):
+    async def test_list_all_running_agents(self) -> None:
         """Test listing all running agents."""
         runner = _make_runner_with_run_storage()
         agents = self._make_agents()
@@ -689,7 +689,7 @@ class TestListRunningAgents:
         runner.run_storage.list_active.assert_called_once_with(limit=100)
 
     @pytest.mark.asyncio
-    async def test_clamps_zero_limit_to_positive_bound(self):
+    async def test_clamps_zero_limit_to_positive_bound(self) -> None:
         """Explicit zero is clamped to the smallest positive limit."""
         runner = _make_runner_with_run_storage()
         runner.run_storage.list_active.return_value = []
@@ -704,7 +704,7 @@ class TestListRunningAgents:
         runner.run_storage.list_active.assert_called_once_with(limit=1)
 
     @pytest.mark.asyncio
-    async def test_filter_by_parent_session(self):
+    async def test_filter_by_parent_session(self) -> None:
         """Test filtering by parent session ID."""
         runner = _make_runner_with_run_storage()
         agents = self._make_agents()
@@ -724,7 +724,7 @@ class TestListRunningAgents:
         )
 
     @pytest.mark.asyncio
-    async def test_default_all_scope_ignores_current_session_context(self):
+    async def test_default_all_scope_ignores_current_session_context(self) -> None:
         """Default listing is build-wide even when MCP seeds caller session context."""
         from gobby.utils.session_context import session_context_for_test
 
@@ -744,7 +744,7 @@ class TestListRunningAgents:
         runner.run_storage.list_by_parent.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_parent_scope_uses_current_session_context_when_requested(self):
+    async def test_parent_scope_uses_current_session_context_when_requested(self) -> None:
         """Callers can still ask for direct children of the current session."""
         from gobby.utils.session_context import session_context_for_test
 
@@ -767,7 +767,7 @@ class TestListRunningAgents:
         )
 
     @pytest.mark.asyncio
-    async def test_running_status_uses_cli_equivalent_query(self):
+    async def test_running_status_uses_cli_equivalent_query(self) -> None:
         """status='running' uses the same storage path as CLI --status running."""
         runner = _make_runner_with_run_storage()
         running_agents = [self._make_agents()[0]]
@@ -784,7 +784,7 @@ class TestListRunningAgents:
         runner.run_storage.list_running.assert_called_once_with(limit=25)
 
     @pytest.mark.asyncio
-    async def test_list_includes_agent_identity(self):
+    async def test_list_includes_agent_identity(self) -> None:
         """List payloads expose agent identity so orchestrators can filter workers."""
         runner = _make_runner_with_run_storage()
         runner.run_storage.list_by_parent.return_value = [
@@ -812,7 +812,7 @@ class TestGetRunningAgent:
     """Tests for get_running_agent MCP tool (DB-backed)."""
 
     @pytest.mark.asyncio
-    async def test_agent_found(self):
+    async def test_agent_found(self) -> None:
         """Test getting an existing running agent."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -835,7 +835,7 @@ class TestGetRunningAgent:
         assert result["agent"]["pid"] == 12345
 
     @pytest.mark.asyncio
-    async def test_agent_not_found(self):
+    async def test_agent_not_found(self) -> None:
         """Test error when agent not found."""
         runner = _make_runner_with_run_storage()
         runner.run_storage.get.return_value = None
@@ -849,7 +849,7 @@ class TestGetRunningAgent:
         assert "no running agent found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_completed_agent_not_returned(self):
+    async def test_completed_agent_not_returned(self) -> None:
         """Test that completed agents are not returned as 'running'."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(run_id="run-123", status="success")
@@ -868,7 +868,7 @@ class TestUnregisterAgent:
     """Tests for unregister_agent MCP tool (DB-backed via agent_run_manager.fail)."""
 
     @pytest.mark.asyncio
-    async def test_successful_unregistration(self):
+    async def test_successful_unregistration(self) -> None:
         """Test successful agent unregistration (marks as failed in DB)."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(run_id="run-123", status="running")
@@ -884,7 +884,7 @@ class TestUnregisterAgent:
         runner.run_storage.fail.assert_called_once_with("run-123", error="Unregistered")
 
     @pytest.mark.asyncio
-    async def test_unregister_not_found(self):
+    async def test_unregister_not_found(self) -> None:
         """Test error when agent not found."""
         runner = _make_runner_with_run_storage()
         runner.run_storage.get.return_value = None
@@ -898,7 +898,7 @@ class TestUnregisterAgent:
         assert "no agent found" in result["error"].lower()
 
     @pytest.mark.asyncio
-    async def test_unregister_already_completed(self):
+    async def test_unregister_already_completed(self) -> None:
         """Test unregistering an already-completed agent returns success with message."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(run_id="run-123", status="success")
@@ -918,7 +918,7 @@ class TestKillAgent:
     """Tests for kill_agent MCP tool."""
 
     @pytest.mark.asyncio
-    async def test_requires_run_id_or_session_id(self):
+    async def test_requires_run_id_or_session_id(self) -> None:
         """Test error when neither run_id nor session_id provided."""
         runner = _make_runner_with_run_storage()
 
@@ -931,7 +931,7 @@ class TestKillAgent:
         assert "run_id or session_id required" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_invalid_signal_rejected(self):
+    async def test_invalid_signal_rejected(self) -> None:
         """Test invalid signal is rejected."""
         runner = _make_runner_with_run_storage()
 
@@ -944,7 +944,7 @@ class TestKillAgent:
         assert "Invalid signal" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_invalid_status_rejected(self):
+    async def test_invalid_status_rejected(self) -> None:
         """Only terminal agent statuses are accepted."""
         runner = _make_runner_with_run_storage()
 
@@ -958,7 +958,7 @@ class TestKillAgent:
         runner.get_run.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_session_id_resolves_to_run_id(self):
+    async def test_session_id_resolves_to_run_id(self) -> None:
         """Test that session_id resolves to run_id via DB."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -983,7 +983,7 @@ class TestKillAgent:
         assert "No agent found for session" not in result.get("error", "")
 
     @pytest.mark.asyncio
-    async def test_session_id_not_found_returns_error(self):
+    async def test_session_id_not_found_returns_error(self) -> None:
         """Test error when session_id doesn't match any agent."""
         runner = _make_runner_with_run_storage()
         runner.run_storage.get_by_session.return_value = None
@@ -998,7 +998,7 @@ class TestKillAgent:
         assert "No agent found for session" in result["error"]
 
     @pytest.mark.asyncio
-    async def test_default_full_cleanup(self):
+    async def test_default_full_cleanup(self) -> None:
         """Test that kill_agent does full cleanup by default."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -1024,7 +1024,7 @@ class TestKillAgent:
         runner.cancel_run.assert_called_once_with("run-123")
 
     @pytest.mark.asyncio
-    async def test_stop_false_kills_without_terminalizing_workflow(self):
+    async def test_stop_false_kills_without_terminalizing_workflow(self) -> None:
         """CLI kill without --stop should not cancel workflow state."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -1059,7 +1059,7 @@ class TestKillAgent:
         runner.run_storage.fail.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_debug_preserves_state(self):
+    async def test_debug_preserves_state(self) -> None:
         """Test that debug=True preserves workflow state."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -1236,7 +1236,7 @@ class TestKillAgentSelfTerminationViaRunId:
     """Tests for self-termination detection via run_id path using _context."""
 
     @pytest.mark.asyncio
-    async def test_run_id_self_termination_defaults_to_success(self):
+    async def test_run_id_self_termination_defaults_to_success(self) -> None:
         """When agent calls kill_agent(run_id=...) and _context matches, default to success."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -1269,7 +1269,7 @@ class TestKillAgentSelfTerminationViaRunId:
         runner.cancel_run.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_run_id_parent_kill_defaults_to_cancelled(self):
+    async def test_run_id_parent_kill_defaults_to_cancelled(self) -> None:
         """When parent kills agent via run_id, session context doesn't match, default to cancelled."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -1301,7 +1301,7 @@ class TestKillAgentSelfTerminationViaRunId:
         runner.complete_run.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_run_id_no_context_defaults_to_cancelled(self):
+    async def test_run_id_no_context_defaults_to_cancelled(self) -> None:
         """Without _context, run_id path defaults to cancelled (backward compat)."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -1331,7 +1331,7 @@ class TestRunningAgentStats:
     """Tests for running_agent_stats MCP tool (DB-backed)."""
 
     @pytest.mark.asyncio
-    async def test_empty_stats(self):
+    async def test_empty_stats(self) -> None:
         """Test stats with no running agents."""
         runner = _make_runner_with_run_storage()
         runner.run_storage.list_active.return_value = []
@@ -1346,7 +1346,7 @@ class TestRunningAgentStats:
         assert result["by_parent_count"] == 0
 
     @pytest.mark.asyncio
-    async def test_stats_with_agents(self):
+    async def test_stats_with_agents(self) -> None:
         """Test stats with multiple running agents."""
         runner = _make_runner_with_run_storage()
         runner.run_storage.list_active.return_value = [
@@ -1422,7 +1422,7 @@ class TestFireSyntheticStop:
         assert mock_hook_mgr.evaluate_workflow_rules.call_count == 1
 
     @pytest.mark.asyncio
-    async def test_kill_agent_fires_synthetic_stop(self):
+    async def test_kill_agent_fires_synthetic_stop(self) -> None:
         """Test that kill_agent calls _fire_synthetic_stop after cleanup."""
         runner = _make_runner_with_run_storage()
         mock_run = _make_mock_agent_run(
@@ -1466,7 +1466,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
     """
 
     @pytest.mark.asyncio
-    async def test_signoff_message_set_when_adversary_verdict_present(self):
+    async def test_signoff_message_set_when_adversary_verdict_present(self) -> None:
         from gobby.mcp_proxy.tools.agents import _complete_self_terminated_run
 
         run = MagicMock()
@@ -1514,7 +1514,7 @@ class TestCompleteSelfTerminatedRunSignoffMessage:
         assert notify_result["run_id"] == "run-xyz"
 
     @pytest.mark.asyncio
-    async def test_signoff_message_omitted_when_var_unset(self):
+    async def test_signoff_message_omitted_when_var_unset(self) -> None:
         """Non-adversary runs leave adversary_verdict unset; the result dict
         must NOT carry a signoff_message so the existing fallback message wins.
         """

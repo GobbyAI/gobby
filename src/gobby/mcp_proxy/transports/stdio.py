@@ -7,7 +7,7 @@ import re
 import sys
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO
+from typing import TYPE_CHECKING, Any, TextIO, cast
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -111,12 +111,15 @@ class StdioTransportConnection(BaseTransportConnection):
         self._stdio_errlog_handle = errlog_path.open("a", encoding="utf-8")
         return self._stdio_errlog_handle
 
-    def _close_stdio_errlog(self) -> None:
-        errlog_handle = self._stdio_errlog_handle
-        self._stdio_errlog_handle = None
+    def _close_stdio_errlog(self, errlog_handle: TextIO | None | object = None) -> None:
+        if errlog_handle is None:
+            errlog_handle = self._stdio_errlog_handle
+            self._stdio_errlog_handle = None
+        elif errlog_handle is self._stdio_errlog_handle:
+            self._stdio_errlog_handle = None
         if errlog_handle is not None:
             try:
-                errlog_handle.close()
+                cast(TextIO, errlog_handle).close()
             except Exception as exc:
                 logger.warning("Error closing stdio errlog for %s: %s", self.config.name, exc)
 
@@ -138,30 +141,48 @@ class StdioTransportConnection(BaseTransportConnection):
                 try:
                     await asyncio.wait_for(session_ctx.__aexit__(None, None, None), timeout=2.0)
                 except TimeoutError:
-                    logger.warning("Session cleanup timed out for %s", self.config.name)
+                    logger.warning(
+                        "Session cleanup timed out for %s",
+                        self.config.name,
+                        extra={"server": self.config.name, "cleanup_stage": "session"},
+                    )
                 except asyncio.CancelledError as exc:
-                    logger.warning("Session cleanup cancelled for %s", self.config.name)
+                    logger.warning(
+                        "Session cleanup cancelled for %s",
+                        self.config.name,
+                        extra={"server": self.config.name, "cleanup_stage": "session"},
+                    )
                     cancelled_error = exc
                 except Exception as cleanup_error:
                     logger.warning(
                         "Error during session cleanup for %s: %s",
                         self.config.name,
                         cleanup_error,
+                        extra={"server": self.config.name, "cleanup_stage": "session"},
                     )
 
             if transport_entered and transport_ctx is not None:
                 try:
                     await asyncio.wait_for(transport_ctx.__aexit__(None, None, None), timeout=2.0)
                 except TimeoutError:
-                    logger.warning("Transport cleanup timed out for %s", self.config.name)
+                    logger.warning(
+                        "Transport cleanup timed out for %s",
+                        self.config.name,
+                        extra={"server": self.config.name, "cleanup_stage": "transport"},
+                    )
                 except asyncio.CancelledError as exc:
-                    logger.warning("Transport cleanup cancelled for %s", self.config.name)
+                    logger.warning(
+                        "Transport cleanup cancelled for %s",
+                        self.config.name,
+                        extra={"server": self.config.name, "cleanup_stage": "transport"},
+                    )
                     cancelled_error = cancelled_error or exc
                 except Exception as cleanup_error:
                     logger.warning(
                         "Error during transport cleanup for %s: %s",
                         self.config.name,
                         cleanup_error,
+                        extra={"server": self.config.name, "cleanup_stage": "transport"},
                     )
         finally:
             self._close_stdio_errlog()
@@ -248,6 +269,7 @@ class StdioTransportConnection(BaseTransportConnection):
         """Disconnect from stdio server."""
         # Exit session context manager (not the session object itself)
         cancelled_error: asyncio.CancelledError | None = None
+        errlog_handle = self._stdio_errlog_handle
         session_ctx = self._session_context
         if session_ctx is not None:
             try:
@@ -283,7 +305,7 @@ class StdioTransportConnection(BaseTransportConnection):
                 logger.warning(f"Error closing transport for {self.config.name}: {e}")
             self._transport_context = None
 
-        self._close_stdio_errlog()
+        self._close_stdio_errlog(errlog_handle)
         self._state = ConnectionState.DISCONNECTED
         if cancelled_error is not None:
             raise cancelled_error

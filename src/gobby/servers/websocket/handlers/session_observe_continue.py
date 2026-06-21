@@ -109,7 +109,7 @@ async def handle_continue_in_chat(
         return
     requested_conversation_id = requested_conversation_id or str(uuid4())
     conversation_id = requested_conversation_id
-    project_id = data.get("project_id")
+    project_id = _as_str(data.get("project_id"))
     target_provider = _as_str(data.get("provider"))
     target_model = _as_str(data.get("model"))
     target_reasoning_effort = _as_str(data.get("reasoning_effort"))
@@ -126,7 +126,7 @@ async def handle_continue_in_chat(
         source_session = await run_db(mixin, session_manager.get, source_session_id)
     except Exception as e:
         logger.warning("Failed to look up source session %s: %s", source_session_id, e)
-        await mixin._send_error(websocket, f"Source session lookup failed: {e}")
+        await mixin._send_error(websocket, "Source session lookup failed")
         return
     if not source_session:
         await mixin._send_error(
@@ -135,7 +135,8 @@ async def handle_continue_in_chat(
             code="NOT_FOUND",
         )
         return
-    project_id = source_session.project_id
+    if project_id is None:
+        project_id = source_session.project_id
 
     resume_in_place = bool(source_session and _is_terminal_session(source_session))
     if resume_in_place:
@@ -255,7 +256,7 @@ async def handle_continue_in_chat(
             logger.error(
                 "Failed to convert resumed session %s to web_chat: %s", source_session_id, e
             )
-            await mixin._send_error(websocket, f"Failed to resume session: {e}")
+            await mixin._send_error(websocket, "Failed to resume session")
             return
     # If the client pre-created a web-chat row with a stale provider, correct
     # it before booting the continuation session so provider restore is
@@ -326,7 +327,7 @@ async def handle_continue_in_chat(
                     )
         except Exception as e:
             logger.error("Failed to create continuation session: %s", e)
-            await mixin._send_error(websocket, f"Failed to create session: {e}")
+            await mixin._send_error(websocket, "Failed to create session")
             return
     elif target_reasoning_effort is not None:
         session.reasoning_effort = target_reasoning_effort

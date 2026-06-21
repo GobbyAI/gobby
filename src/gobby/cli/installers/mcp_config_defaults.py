@@ -128,6 +128,8 @@ def install_default_mcp_servers() -> dict[str, Any]:
                                 exc_info=True,
                             )
                         except Exception:
+                            # Unexpected failures should keep their traceback; expected optional
+                            # secret-store errors are handled above and allow installation to continue.
                             logger.exception(
                                 "Unexpected error initializing secret store for optional MCP args"
                             )
@@ -142,6 +144,8 @@ def install_default_mcp_servers() -> dict[str, Any]:
                                 exc_info=True,
                             )
                         except Exception:
+                            # Unexpected secret lookup failures are logged with traceback before
+                            # re-raising; expected storage errors are handled above.
                             logger.exception("Unexpected error reading optional MCP secret")
                             raise
 

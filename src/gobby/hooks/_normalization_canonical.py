@@ -158,7 +158,9 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         and _gcode_pipeline_filters_are_read_only(parts)
     ):
         leading = parts[: parts.index("|")]
-        gcode_metadata = gcode_navigation_metadata(leading)
+        gcode_metadata = (
+            gcode_navigation_metadata(leading) if not _has_shell_redirection(leading) else None
+        )
         if gcode_metadata:
             kind, extra = gcode_metadata
             return _build_canonical_tool_metadata(kind, extra=extra)

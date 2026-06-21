@@ -58,6 +58,31 @@ def test_record_failure_increments_and_schedules_retry(
     assert persisted.consecutive_failures == 2
 
 
+def test_get_rejects_unexpected_non_mapping_row_shape() -> None:
+    class Cursor:
+        def fetchone(self) -> tuple[str]:
+            return ("task-1",)
+
+    class FakeConn:
+        def execute(self, _sql: str, _params: tuple[str]) -> Cursor:
+            return Cursor()
+
+    class FakeDb:
+        def transaction(self) -> FakeDb:
+            return self
+
+        def __enter__(self) -> FakeConn:
+            return FakeConn()
+
+        def __exit__(self, *_exc: object) -> None:
+            return None
+
+    store = TaskValidationBackoffStore(FakeDb())  # type: ignore[arg-type]
+
+    with pytest.raises(TypeError, match="expected Mapping"):
+        store.get("task-1")
+
+
 def test_should_escalate_after_threshold(
     temp_db: HubDatabase,
     sample_project: dict[str, Any],

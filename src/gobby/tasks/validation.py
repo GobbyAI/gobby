@@ -614,7 +614,7 @@ class ValidationResult:
 
 def _coerce_blocking_reasons(value: Any) -> list[str]:
     if isinstance(value, list):
-        return [reason for item in value if isinstance(item, str) and (reason := item.strip())]
+        return [reason for item in value if (reason := str(item).strip())]
     if isinstance(value, str) and value.strip():
         return [value.strip()]
     return []
@@ -656,7 +656,7 @@ def _is_unsupported_reject(result_data: dict[str, Any]) -> bool:
         return False
     reasons = result_data.get("blocking_reasons")
     if isinstance(reasons, list):
-        return not any(str(reason).strip() for reason in reasons)
+        return not _coerce_blocking_reasons(reasons)
     if isinstance(reasons, str):
         return not reasons.strip()
     # Missing or null field: treat as "no reasons given" so the unsupported

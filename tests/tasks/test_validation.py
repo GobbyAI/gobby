@@ -296,6 +296,7 @@ class TestInconsistentVerdictReconciliation:
             ({"status": "invalid"}, True),  # missing field treated as no reasons
             ({"status": "invalid", "blocking_reasons": None}, True),
             ({"status": "invalid", "blocking_reasons": ["   "]}, True),  # whitespace only
+            ({"status": "invalid", "blocking_reasons": [404]}, False),
             ({"status": "INVALID", "blocking_reasons": []}, True),  # case-insensitive
             ({"status": "invalid", "blocking_reasons": ["missing 404 test"]}, False),
             ({"status": "valid", "blocking_reasons": []}, False),
@@ -404,6 +405,29 @@ class TestInconsistentVerdictReconciliation:
 
         assert result.status == "invalid"
         assert result.blocking_reasons == ["No test covers the disabled-feature 404 branch."]
+        assert mock_llm.call_json_feature.call_count == 1
+
+    @pytest.mark.asyncio
+    async def test_blocking_reason_list_entries_are_coerced_to_strings(
+        self, config, mock_llm
+    ) -> None:
+        validator = TaskValidator(config, mock_llm)
+        mock_llm.call_json_feature.return_value = {
+            "status": "invalid",
+            "feedback": "Missing gates.",
+            "blocking_reasons": [404, " missing test ", ""],
+        }
+
+        result = await validator.validate_task(
+            task_id="task-1",
+            title="t",
+            description="d",
+            changes_summary="changes",
+            validation_criteria="criteria",
+        )
+
+        assert result.status == "invalid"
+        assert result.blocking_reasons == ["404", "missing test"]
         assert mock_llm.call_json_feature.call_count == 1
 
     @pytest.mark.asyncio

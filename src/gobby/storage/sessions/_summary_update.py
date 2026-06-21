@@ -167,8 +167,8 @@ class _SummaryUpdateMixin:
             )
 
         now = datetime.now(UTC).isoformat()
-        with self.db.transaction():
-            self.db.execute(
+        with self.db.transaction() as conn:
+            conn.execute(
                 """
                 UPDATE sessions
                 SET summary_path = COALESCE(%s, summary_path),

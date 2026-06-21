@@ -120,6 +120,7 @@
 - **Minimal fix:** Add `gt=0`/`ge=1`/`ge=0` bounds for consistency; centralize a URL validator (require http/https, optionally block link-local/metadata) for the URL fields.
 
 ### [NIT] Nested `api_key` fields bypass config_store secret enforcement; redaction gaps
+
 - **Where:** `config/voice.py:32`, `config/ai.py:38` (`api_key` nested in object/list config — never passes `config_store._reject_plaintext_secret_value`, which guards only flat secret-suffixed dotted keys; `ai` documents `$secret:NAME`, voice does not, and voice has no redaction in any config dump).
 - **Minimal fix:** Add `$secret:` guidance to voice's `api_key` and ensure config dump/export redacts these nested fields.
 

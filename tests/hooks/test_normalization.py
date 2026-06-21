@@ -727,6 +727,7 @@ class TestCanonicalToolMetadata:
             "gcode grep pattern src || true",
             "gcode outline src/app.py | tee out.txt",
             "gcode symbol 00000000-0000-0000-0000-000000000000 | jq -r .source > out.txt",
+            "gcode symbol 00000000-0000-0000-0000-000000000000 > out.txt | head -1",
         ],
     )
     def test_exec_command_gcode_with_sequencing_stays_execute(self, command: str) -> None:

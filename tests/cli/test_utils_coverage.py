@@ -28,6 +28,48 @@ def test_process_start_matches_tolerates_subsecond_drift() -> None:
     assert _process_start_matches(proc, 100.0) is False
 
 
+def test_redact_exception_text_hides_dsn_and_libpq_secret_params() -> None:
+    from gobby.cli.utils_config import _redact_exception_text
+
+    message = (
+        "postgresql://user:secret@example.com/db "
+        "password='open sesame' sslcert=/tmp/client.crt sslkey=\"/tmp/client.key\" "
+        "sslrootcert=/tmp/root.crt"
+    )
+
+    redacted = _redact_exception_text(RuntimeError(message))
+
+    assert "secret" not in redacted
+    assert "open sesame" not in redacted
+    assert "/tmp/client.crt" not in redacted
+    assert "/tmp/client.key" not in redacted
+    assert "/tmp/root.crt" not in redacted
+    assert "postgresql://user:****@example.com/db" in redacted
+    assert "password=****" in redacted
+    assert "sslcert=****" in redacted
+    assert "sslkey=****" in redacted
+    assert "sslrootcert=****" in redacted
+
+
+def test_terminate_ui_process_tolerates_process_races() -> None:
+    from gobby.cli.utils_ui import _terminate_ui_process
+
+    proc = MagicMock()
+    child = MagicMock()
+    proc.children.side_effect = psutil.NoSuchProcess(pid=1)
+    proc.terminate.side_effect = psutil.AccessDenied(pid=1)
+    child.kill.side_effect = psutil.NoSuchProcess(pid=2)
+
+    with patch("gobby.cli.utils_ui.psutil.wait_procs", return_value=([], [child])) as wait_procs:
+        result = _terminate_ui_process(proc)
+
+    assert result is None
+    proc.children.assert_called_once_with(recursive=True)
+    proc.terminate.assert_called_once_with()
+    wait_procs.assert_called_once_with([proc], timeout=3)
+    child.kill.assert_called_once_with()
+
+
 @pytest.fixture(autouse=True)
 def _mock_shutdown_source_writes(request: pytest.FixtureRequest):
     """Keep daemon-path coverage tests from creating shutdown markers."""
@@ -961,6 +1003,7 @@ def test_kill_all_gobby_daemons_kills_runner_process() -> None:
     fake_proc = MagicMock()
     fake_proc.pid = 99999
     fake_proc.cmdline.return_value = ["python", "-m", "gobby.runner"]
+    fake_proc.net_connections.return_value = []
     fake_proc.send_signal = MagicMock()
     fake_proc.wait = MagicMock()  # Graceful shutdown succeeds
 
@@ -986,7 +1029,7 @@ def test_kill_all_gobby_daemons_kills_runner_process() -> None:
     assert messages[1] == "Gracefully stopped PID 99999"
     fake_proc.send_signal.assert_called_once_with(signal.SIGTERM)
     fake_proc.wait.assert_called_once_with(timeout=5)
-    fake_proc.net_connections.assert_not_called()
+    fake_proc.net_connections.assert_called_once_with()
 
 
 def test_kill_all_gobby_daemons_force_kill_on_timeout() -> None:
@@ -1075,6 +1118,10 @@ def test_kill_all_gobby_daemons_kills_pid_file_match(tmp_path: Path) -> None:
     fake_proc = MagicMock()
     fake_proc.pid = 88888
     fake_proc.cmdline.return_value = ["python", "some_script.py"]
+    conn = MagicMock()
+    conn.laddr = MagicMock()
+    conn.laddr.port = 60887
+    fake_proc.net_connections.return_value = [conn]
     fake_proc.send_signal = MagicMock()
     fake_proc.wait = MagicMock()
 
@@ -1100,7 +1147,7 @@ def test_kill_all_gobby_daemons_kills_pid_file_match(tmp_path: Path) -> None:
     assert messages[1] == "Gracefully stopped PID 88888"
     fake_proc.send_signal.assert_called_once_with(signal.SIGTERM)
     fake_proc.wait.assert_called_once_with(timeout=5)
-    fake_proc.net_connections.assert_not_called()
+    fake_proc.net_connections.assert_called_once_with()
 
 
 def test_kill_all_gobby_daemons_skips_self() -> None:

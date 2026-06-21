@@ -129,11 +129,12 @@ class TaskRecoveryHandler:
             return None
 
         task_id = db_run.task_id
+        owner_session_id = db_run.child_session_id or db_run.claimed_session_id
 
-        if not task_id and db_run.child_session_id:
+        if not task_id and owner_session_id:
             tasks = await self._run_db(
                 self._task_manager.list_tasks,
-                claimed_by_session_id=db_run.child_session_id,
+                claimed_by_session_id=owner_session_id,
                 closed=False,
             )
             if tasks:
@@ -143,7 +144,7 @@ class TaskRecoveryHandler:
             return None
 
         task = await self._run_db(self._task_manager.get_task, task_id)
-        if not task or not is_task_actively_claimed(task, db_run.child_session_id):
+        if not task or not is_task_actively_claimed(task, owner_session_id):
             return None
 
         return task_id, task
@@ -421,8 +422,7 @@ class TaskRecoveryHandler:
             )
             return self._task_manager.release_task_claim(task_id, **kwargs)
         try:
-            with mutex:
-                return self._task_manager.release_task_claim(task_id, **kwargs)
+            mutex.__enter__()
         except TypeError as exc:
             logger.debug(
                 "Skipping task recovery dispatch mutex for task %s: %s",
@@ -430,6 +430,10 @@ class TaskRecoveryHandler:
                 exc,
             )
             return self._task_manager.release_task_claim(task_id, **kwargs)
+        try:
+            return self._task_manager.release_task_claim(task_id, **kwargs)
+        finally:
+            mutex.__exit__(None, None, None)
 
     def _clear_claim_session_variables(self, db_run: _AgentRun, task_id: str) -> None:
         """Remove recovered task from any agent-owned session claim variables."""

@@ -84,6 +84,33 @@ def test_resolve_secrets_in_config_resolves_args() -> None:
     ]
 
 
+def test_resolve_secrets_in_config_does_not_warn_when_no_arg_stripped(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = MagicMock()
+    manager.mcp_db_manager = MagicMock(db=object())
+    config = MCPServerConfig(
+        name="context7",
+        transport="stdio",
+        command="npx",
+        args=["--api-key", "$secret:context7_api_key"],
+        project_id="proj-1",
+    )
+    store = MagicMock()
+    store.resolve.side_effect = lambda value: (
+        "resolved-token" if value == "$secret:context7_api_key" else value
+    )
+
+    with (
+        caplog.at_level("WARNING", logger="test"),
+        patch("gobby.storage.secrets.SecretStore", return_value=store),
+    ):
+        resolved = resolve_secrets_in_config(manager, config, logging.getLogger("test"))
+
+    assert resolved.args == ["--api-key", "resolved-token"]
+    assert "Stripping unresolved secret ref" not in caplog.text
+
+
 def test_resolve_secrets_in_config_strips_unresolved_args(
     caplog: pytest.LogCaptureFixture,
 ) -> None:

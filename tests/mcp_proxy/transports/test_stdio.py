@@ -1,12 +1,15 @@
 """Tests for stdio transport environment variable expansion."""
 
+import logging
 import os
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.models import MCPServerConfig
 from gobby.mcp_proxy.transports.stdio import (
     ENV_VAR_PATTERN,
+    StdioTransportConnection,
     _expand_args,
     _expand_env_dict,
     _expand_env_var,
@@ -285,3 +288,60 @@ class TestIntegrationScenarios:
             result = _expand_args(args)
 
             assert result == ["value", "default", "${UNSET_NO_DEFAULT}"]
+
+
+class TestStdioCleanup:
+    @pytest.mark.asyncio
+    async def test_disconnect_closes_original_errlog_handle_only(self) -> None:
+        config = MCPServerConfig(
+            project_id="project-1",
+            name="stdio-test",
+            transport="stdio",
+            command="node",
+        )
+        connection = StdioTransportConnection(config)
+        original_handle = MagicMock()
+        replacement_handle = MagicMock()
+
+        class ReplacingSessionContext:
+            async def __aexit__(self, *_args: object) -> None:
+                connection._stdio_errlog_handle = replacement_handle
+
+        connection._stdio_errlog_handle = original_handle
+        connection._session_context = ReplacingSessionContext()  # type: ignore[assignment]
+
+        await connection.disconnect()
+
+        original_handle.close.assert_called_once_with()
+        replacement_handle.close.assert_not_called()
+        assert connection._stdio_errlog_handle is replacement_handle
+
+    @pytest.mark.asyncio
+    async def test_cleanup_connect_attempt_logs_structured_cleanup_context(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        config = MCPServerConfig(
+            project_id="project-1",
+            name="stdio-test",
+            transport="stdio",
+            command="node",
+        )
+        connection = StdioTransportConnection(config)
+
+        class FailingSessionContext:
+            async def __aexit__(self, *_args: object) -> None:
+                raise RuntimeError("boom")
+
+        connection._session_context = FailingSessionContext()  # type: ignore[assignment]
+
+        with caplog.at_level(logging.WARNING, logger="gobby.mcp_proxy.transports.stdio"):
+            await connection._cleanup_connect_attempt(
+                session_entered=True,
+                transport_entered=False,
+            )
+
+        record = next(
+            record for record in caplog.records if "Error during session cleanup" in record.message
+        )
+        assert record.server == "stdio-test"
+        assert record.cleanup_stage == "session"

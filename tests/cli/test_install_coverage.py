@@ -476,9 +476,9 @@ class TestUninstallCommand:
         assert "Codex" in result.output
 
     def test_uninstall_rejects_falkordb_target(self, runner: CliRunner) -> None:
-        result = runner.invoke(uninstall, ["--falkordb", "--yes"], catch_exceptions=False)
+        result = runner.invoke(uninstall, ["--falkordb", "--yes"])
 
-        assert result.exit_code != 0
+        assert result.exit_code == 2
         assert "No such option: --falkordb" in result.output
 
     def test_uninstall_all_nothing_found(self, runner: CliRunner, tmp_path: Path) -> None:

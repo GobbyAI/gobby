@@ -59,6 +59,11 @@ def json_array_contains_condition(
     return f"{column} @> %s::jsonb", (json.dumps([value]),)
 
 
+def json_empty_array_coalesce_expr(db: object, column: str) -> str:
+    """Return an expression that treats NULL JSON arrays as empty arrays."""
+    return f"COALESCE({column}, '[]'::jsonb)"
+
+
 def older_than_now_expr(db: object, column: str, param: str, unit: IntervalUnit) -> str:
     return f"{column} < NOW() - ({param}::double precision * INTERVAL '1 {unit}')"
 

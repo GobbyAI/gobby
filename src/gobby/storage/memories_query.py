@@ -2,7 +2,7 @@ from typing import Any
 
 from gobby.storage.memories_base import MemoryStoreBase
 from gobby.storage.memories_models import Memory, Visibility, visibility_predicate
-from gobby.storage.sql_dialect import json_array_contains_condition
+from gobby.storage.sql_dialect import json_array_contains_condition, json_empty_array_coalesce_expr
 
 
 class MemoryQueryMixin(MemoryStoreBase):
@@ -167,7 +167,7 @@ class MemoryQueryMixin(MemoryStoreBase):
         tags_any: list[str] | None = None,
         tags_none: list[str] | None = None,
     ) -> tuple[str, list[Any]]:
-        tag_column = "COALESCE(tags, '[]'::jsonb)"
+        tag_column = json_empty_array_coalesce_expr(self.db, "tags")
         clauses: list[str] = []
         params: list[Any] = []
 

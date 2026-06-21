@@ -10,7 +10,7 @@ from gobby.tasks.state_semantics import current_stage_state, is_task_closed, is_
 
 logger = logging.getLogger("gobby.sync.linear")
 
-_LINEAR_GOBBY_REF_TITLE_RE = re.compile(r"^#(?P<seq>\d+):\s*(?P<title>.+)$")
+_LINEAR_GOBBY_REF_TITLE_RE = re.compile(r"^#(?P<seq>\d+)\s*:\s*(?P<title>.+)$")
 _LINEAR_FETCH_FAILURE_SUMMARY_INTERVAL = 10
 
 
@@ -140,6 +140,11 @@ def _extract_records(result: Any, key: str = "issues") -> list[dict[str, Any]]:
                 nested_key in nested for nested_key in (key, "nodes", "items")
             ):
                 return _extract_records(nested, key)
+        if "id" in result:
+            raise LinearSyncError(
+                f"Invalid Linear MCP response for {key}: expected collection wrapper, "
+                "got record object"
+            )
         return []
     raise LinearSyncError(
         f"Invalid Linear MCP response for {key}: expected list, got {type(value).__name__}"
@@ -184,7 +189,8 @@ def task_ref(task: Any) -> str:
 def linear_issue_title(task: Any) -> str:
     ref = task_ref(task)
     title = str(getattr(task, "title", "") or "")
-    return title if title.startswith(f"{ref}: ") else f"{ref}: {title}"
+    title = re.sub(rf"^\s*{re.escape(ref)}\s*:\s*", "", title).strip()
+    return f"{ref}: {title}"
 
 
 def decorate_issue_result(

@@ -53,7 +53,8 @@ class TmuxPaneMonitor:
 
             try:
                 config = get_configured_tmux_config()
-            except RuntimeError:
+            except RuntimeError as exc:
+                logger.warning("Configured tmux config unavailable, using defaults: %s", exc)
                 config = TmuxConfig()
         self._config = config
         self._poll_interval = poll_interval

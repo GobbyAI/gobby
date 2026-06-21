@@ -911,6 +911,47 @@ class TestSessionManagerMetadata:
         assert updated.summary_revision_id is None
         assert session_manager.list_summary_revisions(session.id) == []
 
+    def test_update_summary_path_only_uses_transaction_connection(self) -> None:
+        from gobby.storage.sessions._summary_update import _SummaryUpdateMixin
+
+        class FakeConn:
+            def __init__(self) -> None:
+                self.executed: list[tuple[str, tuple[object, ...]]] = []
+
+            def execute(self, sql: str, params: tuple[object, ...]) -> None:
+                self.executed.append((sql, params))
+
+        class FakeDb:
+            def __init__(self) -> None:
+                self.conn = FakeConn()
+
+            def transaction(self) -> "FakeDb":
+                return self
+
+            def __enter__(self) -> FakeConn:
+                return self.conn
+
+            def __exit__(self, *_exc: object) -> None:
+                return None
+
+            def execute(self, *_args: object, **_kwargs: object) -> None:
+                raise AssertionError("update must execute through transaction connection")
+
+        class Manager(_SummaryUpdateMixin):
+            def __init__(self) -> None:
+                self.db = FakeDb()
+
+            def get(self, _session_id: str) -> None:
+                return None
+
+            def _notify_session_change(self, _event: str, _session_id: str) -> None:
+                return None
+
+        manager = Manager()
+
+        assert manager.update_summary("session-1", summary_path="/tmp/summary.md") is None
+        assert manager.db.conn.executed
+
     def test_update_summary_markdown_only(
         self,
         session_manager: SessionManager,

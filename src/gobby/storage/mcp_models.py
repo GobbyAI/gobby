@@ -8,27 +8,46 @@ from typing import Any
 
 def _loads_server_json_field(row: Mapping[str, Any], field: str) -> Any:
     raw = row[field]
-    if not raw:
+    if raw is None:
         return None
+    if isinstance(raw, str):
+        if not raw:
+            return None
+        try:
+            return json.loads(raw)
+        except json.JSONDecodeError as exc:
+            server_id = row.get("id", "<unknown>")
+            raise ValueError(
+                f"Invalid JSON for MCP server {server_id} field {field}: {exc}"
+            ) from exc
+    if isinstance(raw, (dict, list)):
+        return raw
     try:
         return json.loads(raw)
-    except json.JSONDecodeError as exc:
+    except (TypeError, json.JSONDecodeError) as exc:
         server_id = row.get("id", "<unknown>")
         raise ValueError(f"Invalid JSON for MCP server {server_id} field {field}: {exc}") from exc
 
 
 def _loads_tool_input_schema(row: Mapping[str, Any]) -> dict[str, Any] | None:
     raw = row["input_schema"]
-    if not raw:
+    if raw is None:
         return None
-    try:
-        schema = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        tool_id = row.get("id", "<unknown>")
-        tool_name = row.get("name", "<unknown>")
-        raise ValueError(
-            f"Invalid JSON for MCP tool {tool_name} ({tool_id}) input_schema: {exc}"
-        ) from exc
+    if isinstance(raw, dict):
+        schema = raw
+    elif isinstance(raw, str):
+        if not raw:
+            return None
+        try:
+            schema = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            tool_id = row.get("id", "<unknown>")
+            tool_name = row.get("name", "<unknown>")
+            raise ValueError(
+                f"Invalid JSON for MCP tool {tool_name} ({tool_id}) input_schema: {exc}"
+            ) from exc
+    else:
+        schema = raw
     if not isinstance(schema, dict):
         tool_id = row.get("id", "<unknown>")
         tool_name = row.get("name", "<unknown>")

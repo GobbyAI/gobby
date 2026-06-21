@@ -110,11 +110,18 @@ def _redact_dsn(dsn: str) -> str:
 
 
 def _redact_exception_text(exc: BaseException) -> str:
-    """Redact PostgreSQL DSNs embedded in exception messages."""
-    return re.sub(
+    """Redact PostgreSQL DSNs and libpq secret-bearing params in exception messages."""
+    text = re.sub(
         r"postgres(?:ql)?(?:\+\w+)?://[^\s'\"<>]+",
         lambda match: _redact_dsn(match.group(0)),
         str(exc),
+    )
+    return re.sub(
+        r"\b(password|sslcert|sslkey|sslrootcert)\s*=\s*("
+        r"'[^']*'|\"[^\"]*\"|[^\s]+)",
+        lambda match: f"{match.group(1)}=****",
+        text,
+        flags=re.IGNORECASE,
     )
 
 

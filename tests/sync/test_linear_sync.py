@@ -30,10 +30,21 @@ def test_extract_records_recurses_into_nested_nodes_wrapper() -> None:
     assert _extract_records({"data": {"issues": {"nodes": [{"id": "lin-1"}]}}}) == [{"id": "lin-1"}]
 
 
+def test_extract_records_rejects_plain_record_dict() -> None:
+    with pytest.raises(LinearSyncError, match="expected collection wrapper"):
+        _extract_records({"id": "lin-1", "title": "Plain record"})
+
+
 def test_linear_issue_title_requires_exact_ref_prefix() -> None:
     task = MagicMock(seq_num=42, title="#421: Different task")
 
     assert linear_issue_title(task) == "#42: #421: Different task"
+
+
+def test_linear_issue_title_canonicalizes_existing_ref_spacing() -> None:
+    task = MagicMock(seq_num=42, title="#42:Already prefixed")
+
+    assert linear_issue_title(task) == "#42: Already prefixed"
 
 
 def _set_task_state(task: MagicMock, state: str) -> None:

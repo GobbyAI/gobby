@@ -325,7 +325,7 @@ class MergeResolutionManager:
                         tier_used = COALESCE(%s, tier_used),
                         updated_at = %s
                     WHERE id = %s
-                      AND (%s::text IS NULL OR status = %s::text OR status = %s::text)
+                AND (CAST(%s AS TEXT) IS NULL OR status = CAST(%s AS TEXT) OR status = CAST(%s AS TEXT))
                     """,
                     (
                         status,
@@ -532,7 +532,7 @@ class MergeResolutionManager:
                         resolved_content = COALESCE(%s, resolved_content),
                         updated_at = %s
                     WHERE id = %s
-                      AND (%s::text IS NULL OR status = %s::text OR status = %s::text)
+                AND (CAST(%s AS TEXT) IS NULL OR status = CAST(%s AS TEXT) OR status = CAST(%s AS TEXT))
                     """,
                     (
                         status,

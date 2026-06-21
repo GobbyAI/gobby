@@ -94,14 +94,18 @@ class TaskValidationBackoffStore:
                 "FROM task_validation_backoff WHERE task_id = %s",
                 (task_id,),
             ).fetchone()
-        if row is None or not isinstance(row, Mapping):
-            return None
-        return ValidationBackoffState(
-            task_id=row["task_id"],
-            consecutive_failures=int(row["consecutive_failures"]),
-            next_retry_at=_as_utc(row["next_retry_at"]),
-            last_error=row["last_error"],
-        )
+            if row is None:
+                return None
+            if not isinstance(row, Mapping):
+                raise TypeError(
+                    f"task_validation_backoff query returned {type(row).__name__}; expected Mapping"
+                )
+            return ValidationBackoffState(
+                task_id=row["task_id"],
+                consecutive_failures=int(row["consecutive_failures"]),
+                next_retry_at=_as_utc(row["next_retry_at"]),
+                last_error=row["last_error"],
+            )
 
     def record_failure(
         self,

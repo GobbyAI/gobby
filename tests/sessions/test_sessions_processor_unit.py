@@ -36,6 +36,17 @@ def processor(mock_db):
     return SessionMessageProcessor(mock_db, poll_interval=0.1)
 
 
+def test_usage_has_tokens_rejects_bool_counts(processor) -> None:
+    usage = MagicMock()
+    usage.input_tokens = True
+    usage.output_tokens = 0
+    usage.cache_creation_tokens = 0
+    usage.cache_read_tokens = 0
+    message = MagicMock(usage=usage)
+
+    assert processor._usage_has_tokens(message) is False
+
+
 def _codex_response_message(role: str, text: str) -> str:
     block_type = "output_text" if role == "assistant" else "input_text"
     return (

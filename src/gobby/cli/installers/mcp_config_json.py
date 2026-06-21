@@ -21,6 +21,30 @@ def _resolved_gobby_mcp_command() -> str:
     return _GOBBY_MCP_COMMAND
 
 
+def _load_json_object(
+    settings_path: Path,
+    result: dict[str, Any],
+    *,
+    parse_error_prefix: str,
+    read_error_prefix: str,
+) -> dict[str, Any] | None:
+    try:
+        with open(settings_path, encoding="utf-8") as f:
+            data = json.load(f)
+    except json.JSONDecodeError as e:
+        result["error"] = f"{parse_error_prefix} {settings_path}: {e}"
+        return None
+    except OSError as e:
+        result["error"] = f"{read_error_prefix} {settings_path}: {e}"
+        return None
+    if not isinstance(data, dict):
+        result["error"] = (
+            f"{parse_error_prefix} {settings_path}: expected JSON object, got {type(data).__name__}"
+        )
+        return None
+    return data
+
+
 def configure_project_mcp_server(project_path: Path, server_name: str = "gobby") -> dict[str, Any]:
     """Add Gobby MCP server to project-specific config in ~/.claude.json.
 
@@ -55,15 +79,15 @@ def configure_project_mcp_server(project_path: Path, server_name: str = "gobby")
     # Load existing settings or create empty
     existing_settings: dict[str, Any] = {}
     if settings_path.exists():
-        try:
-            with open(settings_path, encoding="utf-8") as f:
-                existing_settings = json.load(f)
-        except json.JSONDecodeError as e:
-            result["error"] = f"Failed to parse {settings_path}: {e}"
+        loaded = _load_json_object(
+            settings_path,
+            result,
+            parse_error_prefix="Failed to parse",
+            read_error_prefix="Failed to read",
+        )
+        if loaded is None:
             return result
-        except OSError as e:
-            result["error"] = f"Failed to read {settings_path}: {e}"
-            return result
+        existing_settings = loaded
 
     # Ensure projects section exists
     if "projects" not in existing_settings:
@@ -167,11 +191,13 @@ def remove_project_mcp_server(project_path: Path, server_name: str = "gobby") ->
         result["success"] = True
         return result
 
-    try:
-        with open(settings_path, encoding="utf-8") as f:
-            settings = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        result["error"] = f"Failed to read {settings_path}: {e}"
+    settings = _load_json_object(
+        settings_path,
+        result,
+        parse_error_prefix="Failed to read",
+        read_error_prefix="Failed to read",
+    )
+    if settings is None:
         return result
 
     # Check if project and server exist
@@ -243,15 +269,15 @@ def configure_mcp_server_json(
     # Load existing settings or create empty
     existing_settings: dict[str, Any] = {}
     if settings_path.exists():
-        try:
-            with open(settings_path, encoding="utf-8") as f:
-                existing_settings = json.load(f)
-        except json.JSONDecodeError as e:
-            result["error"] = f"Failed to parse {settings_path}: {e}"
+        loaded = _load_json_object(
+            settings_path,
+            result,
+            parse_error_prefix="Failed to parse",
+            read_error_prefix="Failed to read",
+        )
+        if loaded is None:
             return result
-        except OSError as e:
-            result["error"] = f"Failed to read {settings_path}: {e}"
-            return result
+        existing_settings = loaded
 
     # Check if already configured. Existing callers preserve the historical
     # "presence means configured" behavior; callers that pass extra fields can
@@ -358,11 +384,13 @@ def remove_mcp_server_json(settings_path: Path, server_name: str = "gobby") -> d
         result["success"] = True
         return result
 
-    try:
-        with open(settings_path, encoding="utf-8") as f:
-            settings = json.load(f)
-    except (json.JSONDecodeError, OSError) as e:
-        result["error"] = f"Failed to read {settings_path}: {e}"
+    settings = _load_json_object(
+        settings_path,
+        result,
+        parse_error_prefix="Failed to read",
+        read_error_prefix="Failed to read",
+    )
+    if settings is None:
         return result
 
     # Check if server exists

@@ -37,9 +37,10 @@ def manager(db):
     return LocalPipelineExecutionManager(db, project_id="test-project")
 
 
-def test_manager_rejects_missing_project_id(db) -> None:
+@pytest.mark.parametrize("project_id", [None, ""])
+def test_manager_rejects_missing_project_id(db, project_id: str | None) -> None:
     with pytest.raises(ValueError, match="project_id is required"):
-        LocalPipelineExecutionManager(db, project_id=None)  # type: ignore[arg-type]
+        LocalPipelineExecutionManager(db, project_id=project_id)
 
 
 class TestCreateExecution:

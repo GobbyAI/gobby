@@ -153,17 +153,33 @@ def _find_gobby_ui_port_holder(port: int, web_dir: Path) -> psutil.Process | Non
                     and conn.status == psutil.CONN_LISTEN
                 ):
                     return proc
-        except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
+        except (psutil.Error, OSError):
             continue
     return None
 
 
 def _terminate_ui_process(proc: psutil.Process) -> None:
-    children = proc.children(recursive=True)
-    proc.terminate()
-    _, alive = psutil.wait_procs([proc] + children, timeout=3)
+    try:
+        children = proc.children(recursive=True)
+    except (psutil.Error, OSError):
+        children = []
+    try:
+        proc.terminate()
+    except (psutil.NoSuchProcess, psutil.ZombieProcess):
+        return
+    except (psutil.Error, OSError):
+        pass
+    try:
+        _, alive = psutil.wait_procs([proc] + children, timeout=3)
+    except (psutil.Error, OSError):
+        alive = children
     for process in alive:
-        process.kill()
+        try:
+            process.kill()
+        except (psutil.NoSuchProcess, psutil.ZombieProcess):
+            continue
+        except (psutil.Error, OSError):
+            continue
 
 
 def spawn_ui_server(

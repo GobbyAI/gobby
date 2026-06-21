@@ -260,9 +260,10 @@ def _init_git_repo(repo_path: Path) -> None:
         ["git", "init", "-q", "-b", "main"],
         cwd=repo_path,
         check=True,
+        timeout=10,
     )
     (repo_path / "README.md").write_text("test project\n")
-    subprocess.run(["git", "add", "README.md"], cwd=repo_path, check=True)
+    subprocess.run(["git", "add", "README.md"], cwd=repo_path, check=True, timeout=10)
     subprocess.run(
         [
             "git",
@@ -278,6 +279,7 @@ def _init_git_repo(repo_path: Path) -> None:
         ],
         cwd=repo_path,
         check=True,
+        timeout=10,
     )
 
 

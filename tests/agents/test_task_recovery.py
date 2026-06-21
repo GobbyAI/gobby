@@ -118,6 +118,15 @@ async def test_resolve_claimed_task_uses_claimed_session_fallback(
     assert resolved is not None
     assert resolved[0] == task.id
 
+    mismatched_run = _Run(
+        id="run-wrong-owner",
+        status="failed",
+        task_id=task.id,
+        child_session_id=None,
+        claimed_session_id="different-session",
+    )
+    assert await handler.resolve_claimed_task_for_run(mismatched_run) is None
+
 
 def test_release_task_claim_mutex_construction_type_error_falls_back() -> None:
     task_manager = MagicMock()
@@ -152,3 +161,5 @@ def test_release_task_claim_type_error_is_not_swallowed() -> None:
         pytest.raises(TypeError, match="release failed"),
     ):
         handler._release_task_claim_with_mutex("task-1")
+
+    task_manager.release_task_claim.assert_called_once_with("task-1")

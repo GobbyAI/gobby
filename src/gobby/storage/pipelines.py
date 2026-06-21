@@ -20,14 +20,14 @@ class LocalPipelineExecutionManager(
     db: HubDatabase
     project_id: str
 
-    def __init__(self, db: HubDatabase, project_id: str):
+    def __init__(self, db: HubDatabase, project_id: str | None):
         """Initialize with database connection and project context.
 
         Args:
             db: Database connection
             project_id: Project ID for scoping executions
         """
-        if project_id is None:
+        if not project_id:
             raise ValueError("project_id is required")
         self.db = db
         self.project_id = project_id
