@@ -1,4 +1,4 @@
-import type { RefObject } from 'react'
+import type { ReactElement, RefObject } from 'react'
 import type { PaletteItem } from '../../hooks/useColonAutocomplete'
 import { cn } from '../../lib/utils'
 
@@ -14,7 +14,7 @@ export function ChatCommandPalette({
   selectedIndex,
   onSelect,
   paletteRef,
-}: ChatCommandPaletteProps) {
+}: ChatCommandPaletteProps): ReactElement {
   return (
     <div ref={paletteRef} className="command-palette font-sans">
       {items.map((item, index) => (

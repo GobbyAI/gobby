@@ -26,6 +26,9 @@ class MemoryCrossRefMixin(MemoryStoreBase):
             If the crossref already exists, it will be updated with
             the new similarity score.
         """
+        if not 0.0 <= similarity <= 1.0:
+            raise ValueError("similarity must be between 0.0 and 1.0")
+
         now = datetime.now(UTC).isoformat()
 
         with self.db.transaction() as conn:

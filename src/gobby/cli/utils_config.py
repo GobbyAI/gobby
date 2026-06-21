@@ -8,13 +8,25 @@ import re
 from pathlib import Path
 from typing import TYPE_CHECKING, cast
 
+import psycopg
+
 from gobby.cli.utils_runtime import facade
 from gobby.config.app import DaemonConfig
+from gobby.config.bootstrap import BootstrapConfigError
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
+_EXPECTED_CONFIG_LOAD_ERRORS = (
+    BootstrapConfigError,
+    FileNotFoundError,
+    PermissionError,
+    OSError,
+    RuntimeError,
+    ValueError,
+    psycopg.Error,
+)
 
 
 def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
@@ -43,7 +55,7 @@ def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
             DaemonConfig,
             deps.load_config(config_file, resolve_database_url=True),
         )
-    except Exception as exc:
+    except _EXPECTED_CONFIG_LOAD_ERRORS as exc:
         deps.logger.warning("Failed to load bootstrap config: %s", _redact_exception_text(exc))
         return DaemonConfig()
 
@@ -63,7 +75,7 @@ def load_full_config_from_db(config_file: str | None = None) -> DaemonConfig:
                     resolve_database_url=True,
                 ),
             )
-    except Exception as exc:
+    except _EXPECTED_CONFIG_LOAD_ERRORS as exc:
         deps.logger.warning(
             "Failed to load config from PostgreSQL hub: %s", _redact_exception_text(exc)
         )

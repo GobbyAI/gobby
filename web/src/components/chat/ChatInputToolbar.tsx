@@ -90,6 +90,10 @@ export function ChatInputToolbar({
   worktreePath,
   worktreePickerDisabled,
 }: ChatInputToolbarProps) {
+  const attachmentButtonLabel = attachmentsDisabled
+    ? 'Attached session owns attachments'
+    : 'Attach file'
+
   return (
     <div ref={metaRef} className="chat-input-meta">
       <div
@@ -117,7 +121,8 @@ export function ChatInputToolbar({
             variant="ghost"
             onClick={() => fileInputRef.current?.click()}
             disabled={disabled || attachmentsDisabled}
-            title={attachmentsDisabled ? 'Attached session owns attachments' : 'Attach file'}
+            title={attachmentButtonLabel}
+            aria-label={attachmentButtonLabel}
           >
             <PaperclipIcon />
           </Button>

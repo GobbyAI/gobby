@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable, Mapping
+from functools import partial
 from typing import TYPE_CHECKING, Any
 
 from gobby.ai.embeddings import EmbeddingService
@@ -309,7 +310,7 @@ def _text_generate_binding(
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
         metadata=metadata,
-        availability_probe=lambda: provider_installed(entry),
+        availability_probe=partial(provider_installed, entry),
         availability_probe_ttl_seconds=provider_install_probe_ttl_seconds,
     )
 
@@ -390,7 +391,7 @@ def _vision_extract_binding(
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
         metadata=metadata,
-        availability_probe=lambda: provider_installed(entry),
+        availability_probe=partial(provider_installed, entry),
         availability_probe_ttl_seconds=provider_install_probe_ttl_seconds,
     )
 
@@ -500,7 +501,7 @@ def _provider_binding(
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
         metadata=metadata,
-        availability_probe=lambda: provider_installed(entry),
+        availability_probe=partial(provider_installed, entry),
         availability_probe_ttl_seconds=provider_install_probe_ttl_seconds,
     )
 

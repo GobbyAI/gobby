@@ -59,6 +59,13 @@ def _strip_openai_prefix(model: str) -> str:
     return model
 
 
+def _strip_local_embedding_prefix(model: str) -> str:
+    for prefix in ("local:lm-studio/", "local:ollama/"):
+        if model.startswith(prefix):
+            return model.removeprefix(prefix)
+    return model
+
+
 def is_openai_cloud_embedding_model(model: str | None) -> bool:
     """Return True when model names a built-in OpenAI cloud embedding model."""
     if not model:
@@ -100,7 +107,7 @@ def _resolve_embedding_provider(
     normalized_api_base = _normalize_api_base(api_base)
     if normalized_api_base:
         return _ResolvedEmbeddingProvider(
-            model=model,
+            model=_strip_local_embedding_prefix(model),
             api_base=normalized_api_base,
             api_key=api_key or "unused",
         )
@@ -551,7 +558,7 @@ async def _fetch_embeddings(
                     raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
 
                 recovered = await _try_recover_local_lm_studio_service(
-                    model=model,
+                    model=provider.model,
                     api_base=provider.api_base,
                     api_key=api_key,
                     expected_dim=expected_dim,
@@ -582,7 +589,7 @@ async def _fetch_embeddings(
                 assert (
                     provider.api_base is not None
                 )  # guaranteed: _is_ollama_endpoint(provider.api_base) was True above
-                reloaded = await _try_reload_model(model, provider.api_base)
+                reloaded = await _try_reload_model(provider.model, provider.api_base)
                 if not reloaded:
                     raise EmbeddingGenerationError(f"Model not found: {e}") from e
                 try:
@@ -605,7 +612,7 @@ async def _fetch_embeddings(
                     logger.error("Failed to generate embeddings: %s", e)
                     raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
                 # Model was evicted from local inference server — try to reload
-                reloaded = await _try_reload_model(model, provider.api_base)
+                reloaded = await _try_reload_model(provider.model, provider.api_base)
                 if not reloaded:
                     raise EmbeddingGenerationError(f"Embedding generation failed: {e}") from e
                 try:
@@ -762,8 +769,11 @@ def clear_cache() -> None:
 
 
 def _reachability_cache_key(api_base: str | None, api_key: str | None) -> tuple[str, str | None]:
-    """Key reachability results by endpoint and credential value."""
-    return (api_base or "openai-default", api_key)
+    """Key reachability results by endpoint and a non-secret credential fingerprint."""
+    api_key_fingerprint = (
+        hashlib.sha256(api_key.encode("utf-8")).hexdigest()[:12] if api_key else None
+    )
+    return (api_base or "openai-default", api_key_fingerprint)
 
 
 def _prune_reachability_cache(now: float, cache_ttl: float, *, incoming: int = 0) -> None:

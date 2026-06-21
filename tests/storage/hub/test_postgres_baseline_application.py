@@ -329,7 +329,7 @@ def test_apply_postgres_baseline_rejects_partial_baseline_state(monkeypatch) -> 
     monkeypatch.setattr(module.importlib, "resources", _Resources())
     db = _new_db(module, _Pool(fast, locked))
 
-    with pytest.raises(MigrationUnsupportedError, match="version 294"):
+    with pytest.raises(MigrationUnsupportedError, match=rf"version {BASELINE_VERSION}"):
         db._apply_postgres_baseline()
 
     assert "CREATE TABLE tasks(id INTEGER)" not in locked.statements

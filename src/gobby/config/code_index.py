@@ -4,6 +4,14 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig
 
+_LEGACY_SUMMARY_KEYS = {
+    "summary_enabled": "enabled",
+    "summary_batch_size": "batch_size",
+    "summary_profile": "profile",
+    "summary_candidates": "candidates",
+    "summary_max_concurrency": "max_concurrency",
+}
+
 
 class CodeIndexSymbolSummaryConfig(FeatureDefaultConfig):
     """Configuration for LLM-generated code-index symbol summaries."""
@@ -149,9 +157,20 @@ class CodeIndexConfig(BaseModel):
     @model_validator(mode="before")
     @classmethod
     def drop_removed_keys(cls, data: object) -> object:
-        """Drop removed daemon-owned code-index config keys."""
+        """Drop removed keys and migrate legacy flat symbol-summary keys."""
         if isinstance(data, dict):
             updated = dict(data)
             updated.pop("sync_worker_vector_batch_size", None)
+            if any(key in updated for key in _LEGACY_SUMMARY_KEYS):
+                existing_summary = updated.get("symbol_summary")
+                symbol_summary = (
+                    dict(existing_summary) if isinstance(existing_summary, dict) else {}
+                )
+                for old_key, new_key in _LEGACY_SUMMARY_KEYS.items():
+                    if old_key in updated and new_key not in symbol_summary:
+                        symbol_summary[new_key] = updated.pop(old_key)
+                    else:
+                        updated.pop(old_key, None)
+                updated["symbol_summary"] = symbol_summary
             return updated
         return data

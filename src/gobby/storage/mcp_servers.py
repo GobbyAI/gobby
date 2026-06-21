@@ -357,6 +357,14 @@ class MCPServerStorageMixin:
         )
 
         bundled_groups: dict[str, list[MCPServer]] = {}
+        runtime_servers: list[MCPServer] = []
+        for row in project_rows:
+            server = MCPServer.from_row(row)
+            if is_bundled_external_mcp_server(server.name):
+                bundled_groups.setdefault(server.name, []).append(server)
+            else:
+                runtime_servers.append(server)
+
         for project_scope in (GLOBAL_PROJECT_ID, *LEGACY_GLOBAL_PROJECT_IDS):
             global_conditions = ["project_id = %s"]
             params: list[Any] = [project_scope]
@@ -374,13 +382,7 @@ class MCPServerStorageMixin:
                 server = MCPServer.from_row(row)
                 bundled_groups.setdefault(server.name, []).append(server)
 
-        runtime_servers = [MCPServer.from_row(row) for row in project_rows]
-        bundled_names = {
-            server.name for server in runtime_servers if is_bundled_external_mcp_server(server.name)
-        }
-        for name, servers in sorted(bundled_groups.items()):
-            if name in bundled_names:
-                continue
+        for _name, servers in sorted(bundled_groups.items()):
             runtime_servers.append(self._choose_canonical_server(servers))
 
         return sorted(runtime_servers, key=lambda server: server.name)

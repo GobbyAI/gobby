@@ -13,6 +13,7 @@ from gobby.integrations.linear_graphql import LinearGraphQLError
 from gobby.storage.cron_models import CronJob
 from gobby.sync import linear as linear_module
 from gobby.sync.linear import LinearSyncError, LinearSyncService
+from gobby.sync.linear_support import _extract_records, linear_issue_title
 
 pytestmark = pytest.mark.unit
 
@@ -22,6 +23,16 @@ def reset_linear_fetch_failure_limiter():
     linear_module._linear_fetch_failure_limiter.reset()
     yield
     linear_module._linear_fetch_failure_limiter.reset()
+
+
+def test_extract_records_recurses_into_nested_nodes_wrapper() -> None:
+    assert _extract_records({"data": {"issues": {"nodes": [{"id": "lin-1"}]}}}) == [{"id": "lin-1"}]
+
+
+def test_linear_issue_title_requires_exact_ref_prefix() -> None:
+    task = MagicMock(seq_num=42, title="#421: Different task")
+
+    assert linear_issue_title(task) == "#42: #421: Different task"
 
 
 def _set_task_state(task: MagicMock, state: str) -> None:
@@ -814,6 +825,30 @@ class TestLinearSyncServiceCreate:
         ]
 
         with pytest.raises(LinearSyncError, match="expected dict, got list"):
+            await sync_service.create_issue_for_task(task_id="test-task-id")
+
+        assert mock_mcp_manager.call_tool.await_count == 2
+        mock_task_manager.update_task.assert_not_called()
+
+    @pytest.mark.asyncio
+    async def test_create_issue_rejects_missing_mcp_issue_id(
+        self, sync_service, mock_mcp_manager, mock_task_manager
+    ) -> None:
+        """create_issue_for_task rejects create_issue responses without an id."""
+        mock_task = MagicMock()
+        mock_task.title = "Feature"
+        mock_task.description = "Description"
+        mock_task.linear_team_id = None
+        mock_task.id = "test-task-id"
+        mock_task.priority = 2
+        mock_task.seq_num = 42
+        mock_task_manager.get_task.return_value = mock_task
+        mock_mcp_manager.call_tool.side_effect = [
+            {"issues": []},
+            {"title": "Feature"},
+        ]
+
+        with pytest.raises(LinearSyncError, match="missing required id"):
             await sync_service.create_issue_for_task(task_id="test-task-id")
 
         assert mock_mcp_manager.call_tool.await_count == 2

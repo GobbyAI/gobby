@@ -707,7 +707,9 @@ class TestCanonicalToolMetadata:
             ('gcode grep "pattern" src -m 50 | rg fn', "search"),
         ],
     )
-    def test_exec_command_gcode_navigation_is_canonical(self, command, expected_kind) -> None:
+    def test_exec_command_gcode_navigation_is_canonical(
+        self, command: str, expected_kind: str
+    ) -> None:
         data = {"tool_name": "exec_command", "tool_input": {"command": command}}
 
         normalize_tool_fields(data)
@@ -725,7 +727,7 @@ class TestCanonicalToolMetadata:
             "gcode grep pattern src || true",
         ],
     )
-    def test_exec_command_gcode_with_sequencing_stays_execute(self, command) -> None:
+    def test_exec_command_gcode_with_sequencing_stays_execute(self, command: str) -> None:
         # `&&`/`;`/`||` join a *separate* command (possibly side-effecting), so a
         # gcode-led sequence is not treated as pure navigation -- only a `|`
         # pipeline of read-only filters is.

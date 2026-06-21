@@ -81,8 +81,7 @@ class PipelineCompletionSubscriberMixin:
                 FROM agent_runs
                 WHERE status IN ({status_placeholders})
             )
-            """,  # nosec B608
+        """,  # nosec B608
             TERMINAL_AGENT_RUN_STATUSES,
         )
-        rowcount = cursor.rowcount if cursor else 0
-        return rowcount if rowcount > 0 else 0
+        return cursor.rowcount if cursor else 0

@@ -56,6 +56,7 @@ class MCPServer:
     @classmethod
     def from_row(cls, row: Mapping[str, Any]) -> "MCPServer":
         """Create MCPServer from database row."""
+        connect_timeout = row.get("connect_timeout")
         return cls(
             id=row["id"],
             name=row["name"],
@@ -69,11 +70,7 @@ class MCPServer:
             description=row["description"],
             requires_oauth=bool(row.get("requires_oauth", False)),
             oauth_provider=row.get("oauth_provider"),
-            connect_timeout=(
-                float(connect_timeout)
-                if (connect_timeout := row.get("connect_timeout")) is not None
-                else 30.0
-            ),
+            connect_timeout=float(connect_timeout) if connect_timeout is not None else 30.0,
             created_at=row["created_at"],
             updated_at=row["updated_at"],
             project_id=row["project_id"],

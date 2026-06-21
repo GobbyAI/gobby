@@ -375,7 +375,7 @@ async def handle_detach_from_session(
     }
     """
     session_id = data.get("session_id")
-    if not session_id:
+    if not isinstance(session_id, str) or not session_id:
         await mixin._send_error(websocket, "detach_from_session requires session_id")
         return
 

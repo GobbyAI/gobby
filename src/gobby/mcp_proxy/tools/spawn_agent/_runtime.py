@@ -14,6 +14,24 @@ class ReasoningPayload(Protocol):
     def to_dict(self) -> dict[str, Any]: ...
 
 
+class SpawnRunStorage(Protocol):
+    def update_child_session(self, run_id: str, child_session_id: str) -> object: ...
+
+    def update_runtime(
+        self,
+        run_id: str,
+        *,
+        pid: int | None = None,
+        tmux_session_name: str | None = None,
+        worktree_id: str | None = None,
+        clone_id: str | None = None,
+    ) -> None: ...
+
+
+class SpawnRuntimeRunner(Protocol):
+    run_storage: SpawnRunStorage
+
+
 def _normalize_string_list(value: Any) -> list[str]:
     if not isinstance(value, Iterable) or isinstance(value, str | bytes | dict):
         return []
@@ -28,7 +46,7 @@ def _normalize_optional_model(value: str | None) -> str | None:
 
 
 def _persist_spawn_runtime(
-    runner: Any,
+    runner: SpawnRuntimeRunner,
     run_id: str,
     spawn_result: Any,
     *,

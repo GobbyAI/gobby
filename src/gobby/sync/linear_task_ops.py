@@ -112,7 +112,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 tool_name="list_issues",
                 arguments=args,
             )
-            issues = _extract_records(result, "issues")
+            issues = _extract_records(result)
         except LinearSyncError:
             client = await self._get_graphql_client()
             if not client:
@@ -272,13 +272,14 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
 
         client = await self._get_graphql_client()
         if client:
-            result_dict = await client.create_issue(
+            result = await client.create_issue(
                 team_id=effective_team_id,
                 title=title,
                 description=task.description or "",
                 priority=task.priority,
                 project_id=linear_project_id,
             )
+            result_dict = self._extract_created_issue(result, task_id)
             issue_id = result_dict.get("id")
             if issue_id:
                 self.task_manager.update_task(
@@ -342,7 +343,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 tool_name="list_issues",
                 arguments=self._issue_list_args(team_id),
             )
-            issues = _extract_records(result, "issues")
+            issues = _extract_records(result)
         if issues is None:
             client = await self._get_graphql_client()
             if client:
@@ -449,7 +450,7 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
                 tool_name="list_issues",
                 arguments=self._issue_list_args(effective_team_id),
             )
-            issues = _extract_records(result, "issues")
+            issues = _extract_records(result)
         except LinearSyncError as e:
             client = await self._get_graphql_client()
             if not client:
@@ -563,13 +564,21 @@ class LinearTaskOpsMixin(LinearProjectOpsMixin):
         if isinstance(result, dict):
             issue = result.get("issue")
             if isinstance(issue, dict):
-                return cast(dict[str, Any], issue)
-            if issue is not None:
+                result_dict = cast(dict[str, Any], issue)
+            elif issue is not None:
                 raise LinearSyncError(
                     f"Invalid response from Linear MCP when creating issue for task "
                     f"{task_id}: issue must be an object, got {type(issue).__name__}"
                 )
-            return cast(dict[str, Any], result)
+            else:
+                result_dict = cast(dict[str, Any], result)
+            issue_id = result_dict.get("id")
+            if not isinstance(issue_id, str) or not issue_id:
+                raise LinearSyncError(
+                    f"Invalid response from Linear MCP when creating issue for task "
+                    f"{task_id}: missing required id"
+                )
+            return result_dict
         raise LinearSyncError(
             f"Invalid response from Linear MCP when creating issue for task "
             f"{task_id}: expected dict, got {type(result).__name__}"

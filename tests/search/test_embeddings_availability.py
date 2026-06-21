@@ -16,6 +16,7 @@ from gobby.ai.embeddings import (
     _REACHABILITY_CACHE_MAX_SIZE,
     _clear_reachability_cache,
     _reachability_cache,
+    _reachability_cache_key,
 )
 from gobby.ai.embeddings import (
     _is_embedding_configured as is_embedding_configured,
@@ -273,8 +274,16 @@ class TestIsEmbeddingReachable:
                 await is_embedding_reachable(api_base=f"http://host-{index}:11434/v1")
 
         assert len(_reachability_cache) == _REACHABILITY_CACHE_MAX_SIZE
-        assert ("http://host-0:11434/v1", False) not in _reachability_cache
+        assert ("http://host-0:11434/v1", None) not in _reachability_cache
         assert (
             f"http://host-{_REACHABILITY_CACHE_MAX_SIZE + 4}:11434/v1",
-            False,
+            None,
         ) in _reachability_cache
+
+    def test_reachability_cache_key_fingerprints_api_key(self) -> None:
+        first = _reachability_cache_key("http://localhost:1234/v1", "token-a")
+        second = _reachability_cache_key("http://localhost:1234/v1", "token-b")
+
+        assert first != second
+        assert first[1] != "token-a"
+        assert second[1] != "token-b"

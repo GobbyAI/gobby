@@ -938,6 +938,7 @@ class TestLocalMCPManager:
         self,
         mcp_manager: LocalMCPManager,
         sample_project: dict,
+        temp_db: HubDatabase,
     ) -> None:
         """Runtime server listing includes bundled global servers for project contexts."""
         mcp_manager.upsert(
@@ -959,13 +960,33 @@ class TestLocalMCPManager:
             url="http://localhost:9000",
             project_id=sample_project["id"],
         )
+        temp_db.execute(
+            """
+            INSERT INTO mcp_servers (
+                id, name, project_id, transport, command, args, enabled, created_at, updated_at
+            )
+            VALUES (%s, %s, %s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            """,
+            (
+                "legacy-project-context7",
+                "context7",
+                sample_project["id"],
+                "stdio",
+                "npx",
+                json.dumps(["-y", "@upstash/context7-mcp"]),
+                True,
+            ),
+        )
 
         project_servers = mcp_manager.list_servers(project_id=sample_project["id"])
         runtime_servers = mcp_manager.list_runtime_servers(project_id=sample_project["id"])
 
-        assert [server.name for server in project_servers] == ["project-only"]
+        assert {server.name for server in project_servers} == {"context7", "project-only"}
         runtime_names = {server.name for server in runtime_servers}
         assert runtime_names == {"context7", "project-only"}
+        context7_servers = [server for server in runtime_servers if server.name == "context7"]
+        assert len(context7_servers) == 1
+        assert context7_servers[0].project_id == GLOBAL_PROJECT_ID
 
     def test_update_server_nonexistent(
         self,
@@ -1105,6 +1126,19 @@ class TestLocalMCPManager:
         """Test importing from invalid JSON file returns 0."""
         mcp_json = temp_dir / ".mcp.json"
         mcp_json.write_text("{ invalid json }")
+
+        count = mcp_manager.import_from_mcp_json(mcp_json, project_id=sample_project["id"])
+        assert count == 0
+
+    def test_import_from_mcp_json_non_object_payload(
+        self,
+        mcp_manager: LocalMCPManager,
+        sample_project: dict,
+        temp_dir: Path,
+    ) -> None:
+        """Test importing from non-object JSON returns 0."""
+        mcp_json = temp_dir / ".mcp.json"
+        mcp_json.write_text(json.dumps(["not", "an", "object"]))
 
         count = mcp_manager.import_from_mcp_json(mcp_json, project_id=sample_project["id"])
         assert count == 0

@@ -42,6 +42,10 @@ def _make_job(storage: CronJobStorage, action_type: str, action_config: dict) ->
     )
 
 
+def test_truncate_returns_empty_string_for_non_positive_limit(executor: CronExecutor) -> None:
+    assert executor._truncate("abcdef", 0, field_name="output") == ""
+
+
 @pytest.mark.asyncio
 async def test_shutdown_cancels_background_tasks(executor: CronExecutor) -> None:
     started = asyncio.Event()

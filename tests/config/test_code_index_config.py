@@ -40,9 +40,22 @@ def test_code_index_config_uses_nested_symbol_summary_defaults() -> None:
     )
 
 
-def test_code_index_config_rejects_legacy_flat_summary_fields() -> None:
-    with pytest.raises(ValidationError):
-        CodeIndexConfig.model_validate({"summary_enabled": False})
+def test_code_index_config_migrates_legacy_flat_summary_fields() -> None:
+    config = CodeIndexConfig.model_validate(
+        {
+            "summary_enabled": False,
+            "summary_batch_size": 7,
+            "summary_profile": "feature_mid",
+            "summary_candidates": ["claude/sonnet"],
+            "summary_max_concurrency": 3,
+        }
+    )
+
+    assert config.symbol_summary.enabled is False
+    assert config.symbol_summary.batch_size == 7
+    assert config.symbol_summary.profile == FeatureProfile.MID
+    assert candidate_labels(config.symbol_summary.candidates) == ("claude/sonnet",)
+    assert config.symbol_summary.max_concurrency == 3
 
 
 def test_code_index_config_still_rejects_unknown_fields() -> None:

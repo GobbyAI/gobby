@@ -13,6 +13,7 @@ import pytest
 from gobby.config.persistence import MemoryConfig
 from gobby.memory.manager import MemoryManager
 from gobby.memory.vectorstore import VectorStore
+from gobby.storage.memories import LocalMemoryManager
 
 pytestmark = pytest.mark.unit
 
@@ -89,6 +90,14 @@ def memory_manager_with_crossref(
 
 class TestCrossReferences:
     """Tests for memory cross-reference functionality."""
+
+    @pytest.mark.parametrize("similarity", [-0.1, 1.1])
+    def test_create_crossref_rejects_out_of_range_similarity(self, db, similarity: float) -> None:
+        """Cross-reference similarity is constrained to the cosine range."""
+        storage = LocalMemoryManager(db)
+
+        with pytest.raises(ValueError, match="similarity must be between 0.0 and 1.0"):
+            storage.create_crossref("memory-a", "memory-b", similarity)
 
     @pytest.mark.asyncio
     async def test_create_crossrefs_links_similar_memories(self, memory_manager_with_crossref):

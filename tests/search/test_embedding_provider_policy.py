@@ -166,6 +166,22 @@ async def test_local_endpoint_without_key_falls_back_to_placeholder_credential()
     mock_openai.assert_called_once_with(base_url="http://localhost:1234/v1", api_key="unused")
 
 
+@pytest.mark.asyncio
+async def test_local_provider_prefixed_model_is_stripped_for_local_endpoint() -> None:
+    """Local provider selectors are not sent to OpenAI-compatible embedding APIs."""
+    mock_client = _make_openai_client(dim=768)
+
+    with patch("openai.AsyncOpenAI", return_value=mock_client):
+        await generate_embedding(
+            "hello",
+            model="local:ollama/nomic-embed-text",
+            api_base="http://localhost:11434/v1",
+            expected_dim=768,
+        )
+
+    assert mock_client.embeddings.create.await_args.kwargs["model"] == "nomic-embed-text"
+
+
 def test_embedding_configured_requires_api_base_for_local_even_with_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

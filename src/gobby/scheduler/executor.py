@@ -184,7 +184,11 @@ class CronExecutor:
             return str(value)
 
     def _truncate(self, value: str | None, limit: int, *, field_name: str) -> str | None:
-        if value is None or len(value) <= limit:
+        if value is None:
+            return None
+        if limit <= 0:
+            return ""
+        if len(value) <= limit:
             return value
         logger.warning(
             "Truncating cron run %s from %s to %s characters",

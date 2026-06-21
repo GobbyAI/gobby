@@ -18,14 +18,12 @@ import asyncio
 import logging
 from typing import Any, Literal
 
-import psycopg
-
 from gobby.memory.dream.models import DreamAction, DreamCandidate
 from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.storage import MemoryDreamStore
 
 logger = logging.getLogger(__name__)
-_EXPECTED_ACTION_ERRORS = (ValueError, OSError, psycopg.Error)
+_EXPECTED_ACTION_ERRORS = (ValueError,)
 
 
 async def apply_dream_plan(

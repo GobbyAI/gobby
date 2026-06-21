@@ -288,6 +288,7 @@ def stop_ui_server(quiet: bool = False) -> bool:
         return True
 
     try:
+        web_dir = find_web_dir(require_source=True)
         parent = psutil.Process(pid)
         if not _process_start_matches(parent, started_at):
             if not quiet:
@@ -296,7 +297,7 @@ def stop_ui_server(quiet: bool = False) -> bool:
                     pid,
                 )
             return False
-        if not _is_gobby_ui_process(parent):
+        if not _is_gobby_ui_process(parent, web_dir=web_dir):
             if not quiet:
                 deps.logger.warning(
                     "Refusing to stop PID %s from ui.pid: process identity does not match Gobby UI",

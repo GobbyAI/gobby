@@ -104,7 +104,7 @@ class LinearNotFoundError(LinearSyncError):
         self.resource_id = resource_id
 
 
-def _extract_records(result: Any, key: str) -> list[dict[str, Any]]:
+def _extract_records(result: Any, key: str = "issues") -> list[dict[str, Any]]:
     if isinstance(result, list):
         if not all(isinstance(item, dict) for item in result):
             raise LinearSyncError(f"Invalid Linear MCP response: {key} contains non-object items")
@@ -115,11 +115,18 @@ def _extract_records(result: Any, key: str) -> list[dict[str, Any]]:
         )
 
     value = result.get(key) or result.get("nodes") or result.get("items")
+    if isinstance(value, dict):
+        return _extract_records(value, key)
     if isinstance(value, list):
         if not all(isinstance(item, dict) for item in value):
             raise LinearSyncError(f"Invalid Linear MCP response: {key} contains non-object items")
         return cast(list[dict[str, Any]], value)
     if value is None:
+        for nested in result.values():
+            if isinstance(nested, dict) and any(
+                nested_key in nested for nested_key in (key, "nodes", "items")
+            ):
+                return _extract_records(nested, key)
         return []
     raise LinearSyncError(
         f"Invalid Linear MCP response for {key}: expected list, got {type(value).__name__}"
@@ -164,7 +171,7 @@ def task_ref(task: Any) -> str:
 def linear_issue_title(task: Any) -> str:
     ref = task_ref(task)
     title = str(getattr(task, "title", "") or "")
-    return title if title.startswith(ref) else f"{ref}: {title}"
+    return title if title.startswith(f"{ref}: ") else f"{ref}: {title}"
 
 
 def decorate_issue_result(

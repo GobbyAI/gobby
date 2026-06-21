@@ -26,7 +26,10 @@ const SCHEMA: Record<string, unknown> = {
     CodeIndexSymbolSummaryConfig: {
       type: 'object',
       properties: {
+        enabled: { type: 'boolean' },
+        batch_size: { type: 'integer', minimum: 1 },
         profile: { $ref: '#/$defs/FeatureProfile' },
+        candidates: { type: 'array', items: { type: 'string' } },
         max_concurrency: { type: 'integer', minimum: 1 },
         max_tokens: { type: 'integer', minimum: 1 },
       },

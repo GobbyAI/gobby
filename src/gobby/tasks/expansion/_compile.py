@@ -54,7 +54,7 @@ def _expansion_feature_config(expansion_config: Any, run: ExpansionRun) -> Any:
     if provider is None:
         provider, _model = parse_feature_candidate(candidates[0])
     if model is None:
-        model = _model_for_provider(candidates, provider)
+        model = _model_for_provider(expansion_config.candidates, provider)
     return expansion_config.model_copy(update={"candidates": [f"{provider}/{model}"]})
 
 

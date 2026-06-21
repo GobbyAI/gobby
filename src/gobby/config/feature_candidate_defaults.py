@@ -17,6 +17,12 @@ _OLD_CLAUDE_ONLY_CANDIDATES: dict[FeatureProfile, tuple[str, ...]] = {
     FeatureProfile.MID: ("claude/sonnet",),
     FeatureProfile.HIGH: ("claude/opus",),
 }
+_OLD_CLAUDE_ONLY_CANDIDATE_ALIASES: dict[FeatureProfile, set[tuple[str, ...]]] = {
+    FeatureProfile.HIGH: {
+        ("claude/opus",),
+        ("claude/claude-opus-4-5",),
+    },
+}
 _OLD_SPARK_CANDIDATE = "codex/gpt-5.3-codex-spark"
 
 _FEATURE_CANDIDATE_PROFILES: dict[str, FeatureProfile] = {
@@ -98,8 +104,10 @@ def _get_stale_candidate_key(row: Any) -> str | None:
     profile = _FEATURE_CANDIDATE_PROFILES[key]
     if profile == FeatureProfile.MID and _OLD_SPARK_CANDIDATE in value:
         return key
+    candidates = tuple(value)
     expected = _OLD_CLAUDE_ONLY_CANDIDATES[profile]
-    return key if tuple(value) == expected else None
+    aliases = _OLD_CLAUDE_ONLY_CANDIDATE_ALIASES.get(profile, {expected})
+    return key if candidates in aliases else None
 
 
 def _normalized_candidate_list(value: Any) -> list[str] | None:

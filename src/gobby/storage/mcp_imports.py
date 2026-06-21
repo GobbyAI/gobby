@@ -90,6 +90,8 @@ class MCPImportStorageMixin:
         except (json.JSONDecodeError, OSError) as e:
             logger.error("Failed to read %s: %s", path, e)
             return 0
+        if not isinstance(data, dict):
+            return 0
 
         imported = 0
 

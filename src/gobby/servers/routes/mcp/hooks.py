@@ -565,12 +565,19 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 if stored_response is not None:
                     logger.info("Replaying processed hook envelope %s result", envelope_id)
                     return stored_response
+                if not isinstance(marker, dict) or not isinstance(marker.get("status"), str):
+                    reason = "duplicate envelope marker malformed"
+                    logger.debug("Hook envelope %s duplicate: %s", envelope_id, reason)
+                    return JSONResponse(
+                        status_code=409,
+                        content={"status": "malformed_marker", "reason": reason},
+                    )
                 if clear_stale_envelope_processing_marker(
                     envelope_id
                 ) and claim_envelope_processing(envelope_id):
                     logger.info("Reclaimed stale hook envelope processing marker %s", envelope_id)
                 else:
-                    status = marker.get("status") if isinstance(marker, dict) else None
+                    status = marker["status"]
                     reason = (
                         "duplicate envelope already processing"
                         if status == "processing"
@@ -580,7 +587,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     return JSONResponse(
                         status_code=409,
                         content={
-                            "status": status if isinstance(status, str) else "duplicate",
+                            "status": status,
                             "reason": reason,
                         },
                     )
