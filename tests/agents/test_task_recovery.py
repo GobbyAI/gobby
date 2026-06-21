@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -82,3 +83,72 @@ async def test_failed_non_in_progress_recovery_releases_run_mutex(temp_db, sampl
     assert recovered is True
     assert task_manager.get_task(task.id).claimed_by_session_id is None
     assert mutexes.get_mutex(task.id) is None
+
+
+@pytest.mark.asyncio
+async def test_resolve_claimed_task_uses_claimed_session_fallback(
+    temp_db,
+    sample_project,
+) -> None:
+    task_manager = LocalTaskManager(temp_db)
+    session = SessionManager(temp_db).register(
+        external_id="task-recovery-claimed-owner",
+        machine_id="machine-1",
+        source="codex",
+        project_id=sample_project["id"],
+    )
+    task = task_manager.create_task(sample_project["id"], "Recover claimed task")
+    task_manager.claim_task(task.id, session.id)
+    run = _Run(
+        id="run-claimed-only",
+        status="failed",
+        task_id=task.id,
+        child_session_id=None,
+        claimed_session_id=session.id,
+    )
+    handler = TaskRecoveryHandler(
+        task_manager,
+        _RunManager(),
+        _Classifier(),
+        run_db=_run_db,
+    )
+
+    resolved = await handler.resolve_claimed_task_for_run(run)
+
+    assert resolved is not None
+    assert resolved[0] == task.id
+
+
+def test_release_task_claim_mutex_construction_type_error_falls_back() -> None:
+    task_manager = MagicMock()
+    task_manager.db = object()
+    task_manager.release_task_claim.return_value = "released"
+    handler = TaskRecoveryHandler(task_manager, _RunManager(), _Classifier())
+
+    with patch(
+        "gobby.agents.task_recovery.RuntimeDispatchMutex",
+        side_effect=TypeError("old signature"),
+    ):
+        assert handler._release_task_claim_with_mutex("task-1") == "released"
+
+    task_manager.release_task_claim.assert_called_once_with("task-1")
+
+
+def test_release_task_claim_type_error_is_not_swallowed() -> None:
+    class _Mutex:
+        def __enter__(self) -> None:
+            return None
+
+        def __exit__(self, *_args: object) -> None:
+            return None
+
+    task_manager = MagicMock()
+    task_manager.db = object()
+    task_manager.release_task_claim.side_effect = TypeError("release failed")
+    handler = TaskRecoveryHandler(task_manager, _RunManager(), _Classifier())
+
+    with (
+        patch("gobby.agents.task_recovery.RuntimeDispatchMutex", return_value=_Mutex()),
+        pytest.raises(TypeError, match="release failed"),
+    ):
+        handler._release_task_claim_with_mutex("task-1")

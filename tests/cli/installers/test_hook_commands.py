@@ -169,6 +169,34 @@ def test_rewrite_leaves_foreign_commands_untouched() -> None:
     assert config["hooks"]["SessionStart"][0]["hooks"][0]["command"] == "some-user-script --foo"
 
 
+def test_rewrite_ignores_legacy_script_name_substrings() -> None:
+    config = {
+        "hooks": {
+            "SessionStart": [
+                {
+                    "hooks": [
+                        {
+                            "type": "command",
+                            "command": "python /tmp/my_hook.py.bak --flag",
+                        }
+                    ]
+                },
+            ]
+        }
+    }
+
+    rewrite_hook_template_commands(
+        config,
+        cli_name="claude",
+        hooks_dir=Path("/tmp/hooks"),
+        ghook_bin="/Users/test/.gobby/bin/ghook",
+    )
+
+    assert config["hooks"]["SessionStart"][0]["hooks"][0]["command"] == (
+        "python /tmp/my_hook.py.bak --flag"
+    )
+
+
 def test_gobby_hook_detection_accepts_ghook_marker() -> None:
     assert is_gobby_hook_command("/Users/test/.gobby/bin/ghook --gobby-owned --cli=codex")
     assert config_contains_gobby_hook(

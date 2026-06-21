@@ -93,7 +93,7 @@ git commit -m "[<project_name>-#<task_number>] <type>: <description>"
 
 Prefer staging specific files over `git add -A`. Include the task reference in the
 commit message. Use the project name from `.gobby/project.json` in the task
-reference, e.g. `[<project-name>-#N] type: description`. The placeholder is
+reference, e.g. `[<project_name>-#N] type: description`. The placeholder is
 never a literal prefix.
 
 ## Gate 3: Close with Commit SHA

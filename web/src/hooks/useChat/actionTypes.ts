@@ -71,6 +71,7 @@ export interface UseChatActionsParams {
   projectIdRef: MutableRefObject<string | null>;
   proxyDeliveryNotice: string | null;
   resetMainChatState: () => void;
+  restoreContinuationState: (snapshot: ContinuationRollbackSnapshot) => void;
   selectedProvider: string | null;
   selectedProviderRef: MutableRefObject<string | null>;
   sendMessageRef: MutableRefObject<SendMessageAction | null>;

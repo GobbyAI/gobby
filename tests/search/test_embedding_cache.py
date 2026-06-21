@@ -13,6 +13,7 @@ from gobby.ai.embeddings import (
     _cache,
     _cache_key,
     _reachability_cache,
+    _reachability_cache_key,
     _ReachabilityEntry,
     clear_cache,
 )
@@ -383,9 +384,11 @@ async def test_clear_cache() -> None:
 
 def test_clear_cache_clears_reachability_cache() -> None:
     """clear_cache() should empty reachability probes too."""
-    _reachability_cache[("http://localhost:1234/v1", False)] = _ReachabilityEntry(
-        reachable=True,
-        checked_at=1.0,
+    _reachability_cache[_reachability_cache_key("http://localhost:1234/v1", None)] = (
+        _ReachabilityEntry(
+            reachable=True,
+            checked_at=1.0,
+        )
     )
 
     clear_cache()

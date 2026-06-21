@@ -305,7 +305,7 @@ def delete_session(session_id: str) -> None:
     with session_manager_context() as manager:
         session = manager.get(session_id)
         if not session:
-            click.echo(f"Session not found: {session_id}")
+            click.echo(f"Session not found: {session_id}", err=True)
             return
 
         success = manager.delete(session.id)

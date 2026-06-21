@@ -10,12 +10,14 @@ Focuses on MCP client management operations including:
 """
 
 import asyncio
+import logging
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from gobby.mcp_proxy.bundled import CHROME_DEVTOOLS_NPM_PACKAGE, DEFAULT_EXTERNAL_MCP_SERVERS
+from gobby.mcp_proxy.client_manager.secrets import resolve_secrets_in_config
 from gobby.mcp_proxy.lazy import CircuitBreakerOpen, CircuitState
 from gobby.mcp_proxy.manager import MCPClientManager, truncate_tool_brief
 from gobby.mcp_proxy.models import (
@@ -52,6 +54,60 @@ def test_mcp_proxy_source_does_not_register_legacy_gobby_code_server() -> None:
     manager = MCPClientManager(server_configs=configs)
 
     assert "gobby-code" not in manager.get_available_servers()
+
+
+def test_resolve_secrets_in_config_resolves_args() -> None:
+    manager = MagicMock()
+    manager.mcp_db_manager = MagicMock(db=object())
+    config = MCPServerConfig(
+        name="context7",
+        transport="stdio",
+        command="npx",
+        args=["--api-key", "$secret:context7_api_key"],
+        project_id="proj-1",
+    )
+    store = MagicMock()
+    store.resolve.side_effect = lambda value: (
+        "resolved-token" if value == "$secret:context7_api_key" else value
+    )
+
+    with patch("gobby.storage.secrets.SecretStore", return_value=store):
+        resolved = resolve_secrets_in_config(manager, config, logging.getLogger("test"))
+
+    assert resolved.args == ["--api-key", "resolved-token"]
+    assert config.args == ["--api-key", "$secret:context7_api_key"]
+    assert resolved is not config
+    assert resolved.command == "npx"
+    assert store.resolve.call_args_list == [
+        call("--api-key"),
+        call("$secret:context7_api_key"),
+    ]
+
+
+def test_resolve_secrets_in_config_strips_unresolved_args(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    manager = MagicMock()
+    manager.mcp_db_manager = MagicMock(db=object())
+    config = MCPServerConfig(
+        name="context7",
+        transport="stdio",
+        command="npx",
+        args=["--api-key", "$secret:missing_key", "--token=$secret:missing_key", "serve"],
+        project_id="proj-1",
+    )
+    store = MagicMock()
+    store.resolve.side_effect = lambda value: value
+
+    with (
+        caplog.at_level("WARNING", logger="test"),
+        patch("gobby.storage.secrets.SecretStore", return_value=store),
+    ):
+        resolved = resolve_secrets_in_config(manager, config, logging.getLogger("test"))
+
+    assert resolved.args == ["serve"]
+    assert "Stripping unresolved secret ref from context7 args" in caplog.text
+    assert "missing_key" not in caplog.text
 
 
 @pytest.mark.asyncio

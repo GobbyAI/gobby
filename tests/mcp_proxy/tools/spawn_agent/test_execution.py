@@ -406,12 +406,13 @@ class TestSpawnAgentConcurrencyGuards:
     async def test_concurrent_spawn_for_same_task_creates_one_run(
         self,
         temp_db,
-        sample_project: dict[str, object],
+        sample_git_project: dict[str, object],
         mock_runner,
         agent_body,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
+        sample_project = sample_git_project
         task_manager = LocalTaskManager(temp_db)
         task = task_manager.create_task(
             project_id=str(sample_project["id"]),
@@ -447,11 +448,11 @@ class TestSpawnAgentConcurrencyGuards:
         ):
             mock_ctx.return_value = {
                 "id": str(sample_project["id"]),
-                "project_path": str(sample_project["repo_path"]),
+                "project_path": str(sample_git_project["repo_path"]),
             }
             mock_handler = MagicMock()
             mock_handler.prepare_environment = AsyncMock(
-                return_value=IsolationContext(cwd=str(sample_project["repo_path"]))
+                return_value=IsolationContext(cwd=str(sample_git_project["repo_path"]))
             )
             mock_handler.build_context_prompt.return_value = "Test prompt"
             mock_get_handler.return_value = mock_handler
@@ -665,12 +666,13 @@ class TestSpawnAgentPreRegistration:
     async def test_spawn_exception_fails_run_and_cleans_child_session(
         self,
         temp_db,
-        sample_project: dict[str, object],
+        sample_git_project: dict[str, object],
         mock_runner,
         agent_body,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
+        sample_project = sample_git_project
         session_manager = SessionManager(temp_db)
         parent_session_id = _register_parent_session(temp_db, sample_project, "parent-exception")
         child_manager = ChildSessionManager(session_manager)
@@ -723,12 +725,12 @@ class TestSpawnAgentPreRegistration:
         ):
             mock_ctx.return_value = {
                 "id": str(sample_project["id"]),
-                "project_path": str(sample_project["repo_path"]),
+                "project_path": str(sample_git_project["repo_path"]),
             }
             mock_handler = MagicMock()
             mock_handler.prepare_environment = AsyncMock(
                 return_value=IsolationContext(
-                    cwd=str(sample_project["repo_path"]),
+                    cwd=str(sample_git_project["repo_path"]),
                     worktree_id="wt-created",
                     isolation_type="worktree",
                 )
@@ -760,12 +762,13 @@ class TestSpawnAgentPreRegistration:
     async def test_spawn_attach_failure_fails_run_and_cleans_child_session(
         self,
         temp_db,
-        sample_project: dict[str, object],
+        sample_git_project: dict[str, object],
         mock_runner,
         agent_body,
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
+        sample_project = sample_git_project
         task_manager = LocalTaskManager(temp_db)
         task = task_manager.create_task(
             project_id=str(sample_project["id"]),
@@ -836,11 +839,11 @@ class TestSpawnAgentPreRegistration:
         ):
             mock_ctx.return_value = {
                 "id": str(sample_project["id"]),
-                "project_path": str(sample_project["repo_path"]),
+                "project_path": str(sample_git_project["repo_path"]),
             }
             mock_handler = MagicMock()
             mock_handler.prepare_environment = AsyncMock(
-                return_value=IsolationContext(cwd=str(sample_project["repo_path"]))
+                return_value=IsolationContext(cwd=str(sample_git_project["repo_path"]))
             )
             mock_handler.cleanup_environment = AsyncMock()
             mock_handler.build_context_prompt.return_value = "Test prompt"

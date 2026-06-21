@@ -286,6 +286,7 @@ class TestSessionRegistration:
         latest = load_index_sidecar(
             str(transcript),
             "codex",
+            "sid",
             seek_mode="byte",
             mtime_ns=transcript.stat().st_mtime_ns,
             size=transcript.stat().st_size,

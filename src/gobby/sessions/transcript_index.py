@@ -150,6 +150,7 @@ class TranscriptIndex:
     parsed_message_count: int
     raw_record_count: int
     source: str
+    session_id: str | None
     seek_mode: str  # "byte" | "line"
     mtime_ns: int
     size: int
@@ -337,6 +338,7 @@ class TranscriptIndexAppender:
             parsed_message_count=0,
             raw_record_count=0,
             source=source,
+            session_id=session_id,
             seek_mode=seek_mode,
             mtime_ns=0,
             size=0,

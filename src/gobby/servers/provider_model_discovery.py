@@ -129,7 +129,10 @@ async def discover_codex_models(
         raw_models = await client.list_models(include_hidden=True)
     finally:
         if owns_client or started_client:
-            await client.stop()
+            try:
+                await client.stop()
+            except Exception as exc:
+                logger.error("Failed to stop Codex model discovery client: %s", exc, exc_info=True)
 
     models: list[dict[str, Any]] = []
     for item in raw_models:
@@ -334,7 +337,15 @@ async def discover_acp_models(
         await client.start()
         session_info = client.session_info
     finally:
-        await client.stop()
+        try:
+            await client.stop()
+        except Exception as exc:
+            logger.error(
+                "Failed to stop %s model discovery client: %s",
+                client_cls.cli_name,
+                exc,
+                exc_info=True,
+            )
 
     return parse_acp_models(client_cls, session_info)
 

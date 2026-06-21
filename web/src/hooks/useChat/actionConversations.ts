@@ -58,6 +58,7 @@ export function useConversationActions(
     projectIdRef,
     proxyDeliveryNotice,
     resetMainChatState,
+    restoreContinuationState,
     selectedProvider,
     selectedProviderRef,
     sessionInteractionMode,
@@ -409,6 +410,10 @@ export function useConversationActions(
         chatLogger.warn("WebSocket unavailable before continue_in_chat send", {
           sourceSessionId: sourceDbSessionId,
         });
+        const rollback = continuationRollbackRef.current;
+        if (rollback) {
+          restoreContinuationState(rollback);
+        }
         continuingSessionIdRef.current = null;
         continuationRollbackRef.current = null;
         setIsContinuingSession(false);
@@ -439,6 +444,10 @@ export function useConversationActions(
           provider: continuationProvider,
           sourceSessionId: sourceDbSessionId,
         });
+        const rollback = continuationRollbackRef.current;
+        if (rollback) {
+          restoreContinuationState(rollback);
+        }
         continuingSessionIdRef.current = null;
         continuationRollbackRef.current = null;
         setIsContinuingSession(false);
@@ -463,6 +472,7 @@ export function useConversationActions(
       observedSessionId,
       proxyDeliveryNotice,
       resetMainChatState,
+      restoreContinuationState,
       selectedProvider,
       setContextUsage,
       setCurrentMode,

@@ -194,13 +194,13 @@ class LinearProjectOpsMixin:
                     tool_name="create_project",
                     arguments={"teamId": team_id, "name": project_name},
                 )
-            except Exception as e:
-                mcp_error = e
-            else:
                 project = _extract_record(result, "project")
-                if not project.get("id"):
+                mcp_project_id = project.get("id")
+                if not isinstance(mcp_project_id, str) or not mcp_project_id.strip():
                     raise LinearSyncError("Linear MCP create_project did not return a project id.")
                 return project, True
+            except Exception as e:
+                mcp_error = e
         else:
             mcp_error = LinearSyncError("Linear MCP server does not expose create_project.")
             create_failure_message = (
@@ -216,7 +216,8 @@ class LinearProjectOpsMixin:
         if not client:
             raise LinearSyncError(create_failure_message) from mcp_error
         project = await client.create_project(team_id, project_name)
-        if not project.get("id"):
+        graphql_project_id = project.get("id")
+        if not isinstance(graphql_project_id, str) or not graphql_project_id.strip():
             raise LinearSyncError("Linear GraphQL create_project did not return a project id.")
         return project, True
 

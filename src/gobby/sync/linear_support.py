@@ -114,7 +114,14 @@ def _extract_records(result: Any, key: str = "issues") -> list[dict[str, Any]]:
             f"Invalid Linear MCP response for {key}: expected object, got {type(result).__name__}"
         )
 
-    value = result.get(key) or result.get("nodes") or result.get("items")
+    if key in result:
+        value = result[key]
+    elif "nodes" in result:
+        value = result["nodes"]
+    elif "items" in result:
+        value = result["items"]
+    else:
+        value = None
     if isinstance(value, dict):
         return _extract_records(value, key)
     if isinstance(value, list):

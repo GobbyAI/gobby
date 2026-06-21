@@ -67,6 +67,7 @@ from .installers import (
     uninstall_claude,
     uninstall_codex,
     uninstall_droid,
+    uninstall_falkordb,
     uninstall_gemini,
     uninstall_grok,
     uninstall_qwen,
@@ -892,7 +893,8 @@ def uninstall(
         click.echo(f"\nScope: Project ({project_path})")
     else:
         click.echo("\nScope: Global")
-    click.echo(f"CLIs to uninstall from: {', '.join(clis_to_uninstall)}")
+    targets_to_uninstall = clis_to_uninstall + (["falkordb"] if falkordb_flag else [])
+    click.echo(f"Targets to uninstall: {', '.join(targets_to_uninstall)}")
     click.echo("")
 
     # For global uninstall, use Path.home() so uninstallers find ~/.{cli}/
@@ -922,6 +924,20 @@ def uninstall(
                 results,
                 **uninstall_kwargs,
             )
+
+    if falkordb_flag:
+        click.echo("-" * 40)
+        click.echo("FalkorDB Knowledge Graph")
+        click.echo("-" * 40)
+        result = uninstall_falkordb()
+        results["falkordb"] = result
+        if result["success"]:
+            if result.get("compose_stopped"):
+                click.echo("Stopped FalkorDB Docker service")
+            click.echo("Cleared FalkorDB config")
+        else:
+            click.echo(f"Failed: {result['error']}", err=True)
+        click.echo("")
 
     # Remove global hooks directory for global uninstall
     if not project_flag and all_flag:

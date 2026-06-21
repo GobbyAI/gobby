@@ -1794,7 +1794,7 @@ async def test_spawn_action_clears_missing_worktree_artifact_before_reuse(
 
 @pytest.mark.asyncio
 async def test_leaf_spawn_recovers_parent_integration_target_branch(
-    monkeypatch: pytest.MonkeyPatch, temp_db, sample_project
+    monkeypatch: pytest.MonkeyPatch, temp_db, sample_git_project
 ) -> None:
     """Leaf spawn recovers parent integration target branch."""
     from gobby.agents.sync import sync_bundled_agents
@@ -1802,6 +1802,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.sessions import SessionManager
 
+    sample_project = sample_git_project
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
@@ -1827,7 +1828,7 @@ async def test_leaf_spawn_recovers_parent_integration_target_branch(
     )
     subprocess.run(
         ["git", "branch", "gobby/integration/phase"],
-        cwd=sample_project["repo_path"],
+        cwd=sample_git_project["repo_path"],
         check=True,
     )
     action = SpawnAgentAction(
@@ -1989,7 +1990,7 @@ async def test_leaf_spawn_skips_stale_parent_integration_branch(
 async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
     monkeypatch: pytest.MonkeyPatch,
     temp_db,
-    sample_project,
+    sample_git_project,
     branch_sha: str | None,
     reason: str,
 ) -> None:
@@ -1998,6 +1999,7 @@ async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
     from gobby.dispatch.spawn import DispatchSpawnFailed, spawn_agent
     from gobby.storage.sessions import SessionManager
 
+    sample_project = sample_git_project
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
     session_manager = SessionManager(temp_db)
@@ -2024,7 +2026,7 @@ async def test_merge_ready_leaf_spawn_blocks_contaminated_task_branch(
     )
     subprocess.run(
         ["git", "branch", "gobby/integration/phase"],
-        cwd=sample_project["repo_path"],
+        cwd=sample_git_project["repo_path"],
         check=True,
     )
     task_artifacts.set_artifacts_atomic(leaf.id, target_branch="gobby/integration/phase")
@@ -3384,6 +3386,7 @@ def test_persist_spawn_artifacts_reraises_persistence_errors(
     """Artifact persistence failures propagate to dispatcher callers."""
     from gobby.dispatch import spawn as spawn_module
     from gobby.dispatch import spawn_artifacts
+    from gobby.dispatch.spawn import DispatchSpawnFailed
 
     task = _task(temp_db, sample_project, isolation="worktree")
 
@@ -3392,7 +3395,7 @@ def test_persist_spawn_artifacts_reraises_persistence_errors(
 
     monkeypatch.setattr(spawn_artifacts, "_set_artifacts_atomic", fail_set_artifacts_atomic)
 
-    with pytest.raises(ValueError, match="bad artifact"):
+    with pytest.raises(DispatchSpawnFailed, match="artifact_persistence_failed") as exc_info:
         spawn_module._persist_spawn_artifacts(
             temp_db,
             task.id,
@@ -3402,6 +3405,8 @@ def test_persist_spawn_artifacts_reraises_persistence_errors(
                 "base_commit_sha": "base-sha",
             },
         )
+    assert isinstance(exc_info.value.__cause__, ValueError)
+    assert str(exc_info.value.__cause__) == "bad artifact"
 
 
 def test_persist_spawn_artifacts_updates_standalone_base_commit_sha(

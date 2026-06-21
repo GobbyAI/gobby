@@ -27,5 +27,7 @@ class LocalPipelineExecutionManager(
             db: Database connection
             project_id: Project ID for scoping executions
         """
+        if project_id is None:
+            raise ValueError("project_id is required")
         self.db = db
         self.project_id = project_id

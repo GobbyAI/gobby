@@ -72,11 +72,12 @@ class _ReasoningEffortRejectedError(ValueError):
 
 def _all_candidates_rejected_reasoning(
     attempted_candidates: list[str],
-    candidate_errors: dict[str, str],
+    candidate_errors: list[tuple[str, str]],
 ) -> bool:
-    return bool(attempted_candidates) and all(
-        candidate_errors.get(candidate, "").startswith("_ReasoningEffortRejectedError:")
-        for candidate in attempted_candidates
+    return (
+        bool(attempted_candidates)
+        and len(candidate_errors) == len(attempted_candidates)
+        and all(error.startswith("_ReasoningEffortRejectedError:") for _, error in candidate_errors)
     )
 
 
@@ -218,7 +219,7 @@ class TextGenerationService:
         """Select a text_generate binding and invoke its adapter with usage."""
         candidates = self._candidate_requests(request)
         attempted_candidates: list[str] = []
-        candidate_errors: dict[str, str] = {}
+        candidate_errors: list[tuple[str, str]] = []
         candidate_unavailable_errors: list[CapabilityUnavailableError] = []
         text_result, last_error = await self._try_generate_result_candidates(
             candidates,
@@ -253,7 +254,7 @@ class TextGenerationService:
         """Select a text_generate binding and return structured JSON."""
         candidates = self._candidate_requests(request)
         attempted_candidates: list[str] = []
-        candidate_errors: dict[str, str] = {}
+        candidate_errors: list[tuple[str, str]] = []
         candidate_unavailable_errors: list[CapabilityUnavailableError] = []
         result, last_error = await self._try_generate_json_candidates(
             candidates,
@@ -289,7 +290,7 @@ class TextGenerationService:
         candidates: tuple[TextGenerationRequest, ...],
         *,
         attempted_candidates: list[str],
-        candidate_errors: dict[str, str],
+        candidate_errors: list[tuple[str, str]],
         candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[LLMTextResult | None, Exception | None]:
         last_error: Exception | None = None
@@ -344,7 +345,7 @@ class TextGenerationService:
                 last_error = exc
                 last_reasoning_error = exc
                 reasoning_rejections += 1
-                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                candidate_errors.append((candidate_label, f"{type(exc).__name__}: {exc}"))
                 self._log_generation_event(
                     request=candidate,
                     binding=binding,
@@ -356,7 +357,7 @@ class TextGenerationService:
                 continue
             except Exception as exc:
                 last_error = exc
-                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                candidate_errors.append((candidate_label, f"{type(exc).__name__}: {exc}"))
                 if isinstance(exc, CapabilityUnavailableError):
                     candidate_unavailable_errors.append(exc)
                 self._log_generation_event(
@@ -381,7 +382,7 @@ class TextGenerationService:
         candidates: tuple[TextGenerationRequest, ...],
         *,
         attempted_candidates: list[str],
-        candidate_errors: dict[str, str],
+        candidate_errors: list[tuple[str, str]],
         candidate_unavailable_errors: list[CapabilityUnavailableError],
     ) -> tuple[dict[str, Any] | None, Exception | None]:
         last_error: Exception | None = None
@@ -453,7 +454,7 @@ class TextGenerationService:
                 last_error = exc
                 last_reasoning_error = exc
                 reasoning_rejections += 1
-                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                candidate_errors.append((candidate_label, f"{type(exc).__name__}: {exc}"))
                 self._log_generation_event(
                     request=candidate,
                     binding=binding,
@@ -466,7 +467,7 @@ class TextGenerationService:
                 continue
             except Exception as exc:
                 last_error = exc
-                candidate_errors[candidate_label] = f"{type(exc).__name__}: {exc}"
+                candidate_errors.append((candidate_label, f"{type(exc).__name__}: {exc}"))
                 if isinstance(exc, CapabilityUnavailableError):
                     candidate_unavailable_errors.append(exc)
                 if parse_outcome == "not_attempted" and isinstance(
@@ -494,7 +495,7 @@ class TextGenerationService:
     def _aggregate_unavailable_candidates_error(
         *,
         attempted_candidates: list[str],
-        candidate_errors: dict[str, str],
+        candidate_errors: list[tuple[str, str]],
         candidate_unavailable_errors: list[CapabilityUnavailableError],
         operation: str,
     ) -> CapabilityUnavailableError | None:
@@ -503,11 +504,7 @@ class TextGenerationService:
         ):
             return None
 
-        details = "; ".join(
-            f"{candidate}: {candidate_errors[candidate]}"
-            for candidate in attempted_candidates
-            if candidate in candidate_errors
-        )
+        details = "; ".join(f"{candidate}: {error}" for candidate, error in candidate_errors)
         return CapabilityUnavailableError(
             AICapability.TEXT_GENERATE,
             reason=f"All {operation} candidates unavailable: {details}",

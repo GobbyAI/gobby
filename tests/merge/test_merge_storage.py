@@ -670,11 +670,15 @@ class TestMergeResolutionManagerUpdate:
             tier_used="conflict_only_ai",
         )
         stale_result = stale_manager.update_resolution(resolution.id, status="pending")
+        stale_failed_result = stale_manager.update_resolution(resolution.id, status="failed")
 
         assert resolved is not None
         assert stale_result is not None
         assert stale_result.status == "resolved"
         assert stale_result.tier_used == "conflict_only_ai"
+        assert stale_failed_result is not None
+        assert stale_failed_result.status == "resolved"
+        assert stale_failed_result.tier_used == "conflict_only_ai"
 
     def test_update_resolution_persists_changes(self, hub_db: HubDatabase) -> None:
         """Test that update_resolution saves changes to database."""
@@ -882,11 +886,15 @@ class TestMergeResolutionManagerUpdateConflict:
             resolved_content="merged code",
         )
         stale_result = stale_manager.update_conflict(conflict.id, status="pending")
+        stale_failed_result = stale_manager.update_conflict(conflict.id, status="failed")
 
         assert resolved is not None
         assert stale_result is not None
         assert stale_result.status == "resolved"
         assert stale_result.resolved_content == "merged code"
+        assert stale_failed_result is not None
+        assert stale_failed_result.status == "resolved"
+        assert stale_failed_result.resolved_content == "merged code"
 
 
 # =============================================================================

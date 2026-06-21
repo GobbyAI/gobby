@@ -39,7 +39,10 @@ from tests.storage.tasks._stage_test_helpers import stage_row
 
 pytestmark = pytest.mark.e2e
 
-configure_tmux(TmuxConfig())
+
+@pytest.fixture(scope="module", autouse=True)
+def _configure_tmux_for_module() -> None:
+    configure_tmux(TmuxConfig())
 
 
 class _MiniPipeline:

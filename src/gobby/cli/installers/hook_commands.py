@@ -127,8 +127,11 @@ def _rewrite_command_string(command: str, *, prefix: str, placeholder_command: s
 
 def _is_legacy_gobby_hook_script(command: str) -> bool:
     """Return whether a command references an old direct Gobby hook script."""
-    parts = command.replace("\\", "/")
-    return "hook_dispatcher.py" in parts or "hook.py" in parts
+    legacy_names = {"hook_dispatcher.py", "hook.py"}
+    for token in command.replace("\\", "/").split():
+        if any(part in legacy_names for part in token.split("/")):
+            return True
+    return False
 
 
 def _rewrite_commands(node: Any, *, prefix: str, placeholder_command: str) -> None:

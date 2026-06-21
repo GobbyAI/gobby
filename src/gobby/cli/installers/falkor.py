@@ -223,6 +223,54 @@ def install_falkordb(
     return response
 
 
+def uninstall_falkordb(*, gobby_home: Path | None = None) -> dict[str, Any]:
+    """Uninstall FalkorDB Docker service and clear persisted credentials."""
+    home = _normalize_home(gobby_home)
+    services_dir = home / "services"
+    compose_file = services_dir / "docker-compose.yml"
+    compose_stopped = False
+    error: str | None = None
+
+    if compose_file.exists():
+        if not shutil.which("docker"):
+            error = "Docker not found. Install Docker to remove the FalkorDB container."
+        else:
+            try:
+                result = subprocess.run(  # nosec B603 B607
+                    [
+                        "docker",
+                        "compose",
+                        "-f",
+                        str(compose_file),
+                        "--profile",
+                        "falkordb",
+                        "down",
+                    ],
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                    cwd=str(services_dir),
+                )
+                if result.returncode == 0:
+                    compose_stopped = True
+                else:
+                    error = f"Docker compose down failed: {result.stderr or result.stdout}"
+            except subprocess.TimeoutExpired:
+                error = "Docker compose down timed out after 120s"
+            except (OSError, subprocess.SubprocessError) as exc:
+                error = f"Docker compose execution failed: {exc}"
+
+    _clear_config(gobby_home=home)
+    _clear_bootstrap_password(home)
+    return {
+        "success": error is None,
+        "error": error,
+        "compose_stopped": compose_stopped,
+        "compose_file": str(compose_file) if compose_file.exists() else None,
+        "config_cleared": True,
+    }
+
+
 def _wait_for_health(
     compose_file: Path,
     services_dir: Path,

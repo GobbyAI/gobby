@@ -840,7 +840,15 @@ async def test_text_generation_service_profile_only_expands_profile_defaults() -
         ]
     )
     codex = RecordingAdapter("codex")
-    service = TextGenerationService(registry, {"codex": codex})
+    service = TextGenerationService(
+        registry,
+        {"codex": codex},
+        profile_defaults={
+            FeatureProfile.HIGH: (
+                FeatureCandidateConfig(candidate="codex/gpt-5.4", reasoning_effort="xhigh"),
+            )
+        },
+    )
 
     result = await service.generate_result(
         TextGenerationRequest(prompt="summarize", profile="feature_low")
@@ -933,7 +941,15 @@ async def test_text_generation_service_applies_candidate_reasoning_effort_to_tex
         ]
     )
     codex = RecordingAdapter("codex")
-    service = TextGenerationService(registry, {"codex": codex})
+    service = TextGenerationService(
+        registry,
+        {"codex": codex},
+        profile_defaults={
+            FeatureProfile.HIGH: (
+                FeatureCandidateConfig(candidate="codex/gpt-5.4", reasoning_effort="xhigh"),
+            )
+        },
+    )
 
     result = await service.generate_result(
         TextGenerationRequest(prompt="summarize", profile=FeatureProfile.HIGH.value)
@@ -1372,6 +1388,37 @@ async def test_text_generation_service_aggregates_all_unavailable_candidates() -
     assert error.reason.startswith("All text generation candidates unavailable:")
     assert "provider=claude" in error.reason
     assert "provider=codex" in error.reason
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_preserves_duplicate_candidate_errors() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding.unavailable(
+                AICapability.TEXT_GENERATE,
+                "claude",
+                adapter_style=AIAdapterStyle.LLM_PROVIDER,
+                reason="Claude CLI is not installed.",
+                models=("haiku", "sonnet"),
+            ),
+        ]
+    )
+    service = TextGenerationService(registry, {})
+
+    with pytest.raises(CapabilityUnavailableError) as exc_info:
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                profile="feature_low",
+                candidates=("claude/haiku", "claude/sonnet"),
+            )
+        )
+
+    error = exc_info.value
+    assert error.reason is not None
+    assert error.reason.count("provider=claude") == 2
+    assert "claude/haiku" in error.reason
+    assert "claude/sonnet" in error.reason
 
 
 @pytest.mark.asyncio

@@ -325,7 +325,7 @@ class MergeResolutionManager:
                         tier_used = COALESCE(%s, tier_used),
                         updated_at = %s
                     WHERE id = %s
-                      AND (%s::text IS NULL OR %s::text <> %s::text OR status = %s::text)
+                      AND (%s::text IS NULL OR status = %s::text OR status = %s::text)
                     """,
                     (
                         status,
@@ -334,7 +334,6 @@ class MergeResolutionManager:
                         resolution_id,
                         status,
                         status,
-                        ConflictStatus.PENDING.value,
                         ConflictStatus.PENDING.value,
                     ),
                 )
@@ -533,7 +532,7 @@ class MergeResolutionManager:
                         resolved_content = COALESCE(%s, resolved_content),
                         updated_at = %s
                     WHERE id = %s
-                      AND (%s::text IS NULL OR %s::text <> %s::text OR status = %s::text)
+                      AND (%s::text IS NULL OR status = %s::text OR status = %s::text)
                     """,
                     (
                         status,
@@ -544,7 +543,6 @@ class MergeResolutionManager:
                         conflict_id,
                         status,
                         status,
-                        ConflictStatus.PENDING.value,
                         ConflictStatus.PENDING.value,
                     ),
                 )

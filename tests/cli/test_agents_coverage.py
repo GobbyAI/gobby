@@ -322,7 +322,7 @@ class TestCheckAgent:
 
         result = runner.invoke(agents, ["check", "default"])
 
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Error: connection refused" in result.output
         assert "Start with: gobby start" in result.output
 
@@ -462,7 +462,7 @@ class TestShowStatusEdgeCases:
     ) -> None:
         mock_mgr_fn.return_value.get.return_value = None
         result = runner.invoke(agents, ["runs", "show", "run-1"])
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Agent run not found" in result.output
 
     @patch("gobby.cli.agents.resolve_agent_run_id", return_value="run-1")
@@ -472,7 +472,7 @@ class TestShowStatusEdgeCases:
     ) -> None:
         mock_mgr_fn.return_value.get.return_value = None
         result = runner.invoke(agents, ["status", "run-1"])
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Agent run not found" in result.output
 
     @patch("gobby.cli.agents.resolve_agent_run_id", return_value="run-1")
@@ -495,7 +495,7 @@ class TestShowStatusEdgeCases:
         run = _mock_run(status="success")
         mock_mgr_fn.return_value.get.return_value = run
         result = runner.invoke(agents, ["stop", "run-1", "--yes"])
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Cannot stop agent in status" in result.output
 
     @patch("gobby.cli.agents.resolve_agent_run_id", return_value="run-1")
@@ -505,7 +505,7 @@ class TestShowStatusEdgeCases:
     ) -> None:
         mock_mgr_fn.return_value.get.return_value = None
         result = runner.invoke(agents, ["stop", "run-1", "--yes"])
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Agent run not found" in result.output
 
 
@@ -694,7 +694,7 @@ class TestKillAgent:
             "error": "Process not found",
         }
         result = runner.invoke(agents, ["kill", "run-1", "--yes"])
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Failed:" in result.output
 
     @patch("gobby.cli.agents.resolve_agent_run_id", return_value="run-1")
@@ -704,7 +704,7 @@ class TestKillAgent:
     ) -> None:
         mock_client_cls.return_value.call_mcp_tool.side_effect = RuntimeError("conn refused")
         result = runner.invoke(agents, ["kill", "run-1", "--yes"])
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Error:" in result.output
 
     @patch("gobby.cli.agents.resolve_agent_run_id", return_value="run-1")

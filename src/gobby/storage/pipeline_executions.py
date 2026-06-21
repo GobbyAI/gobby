@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.utils.id import generate_prefixed_id
@@ -17,12 +17,10 @@ class PipelineExecutionStorageMixin:
     """Pipeline execution CRUD, queries, search, and recovery methods."""
 
     db: HubDatabase
-    project_id: str | None
+    project_id: str
 
     def _project_predicate(self, column_name: str = "project_id") -> tuple[str, tuple[str, ...]]:
-        """Return a NULL-aware project predicate for internally selected columns."""
-        if self.project_id is None:
-            return f"{column_name} IS NULL", ()
+        """Return the project predicate for internally selected columns."""
         return f"{column_name} = %s", (self.project_id,)
 
     def create_execution(
@@ -78,7 +76,7 @@ class PipelineExecutionStorageMixin:
         return PipelineExecution(
             id=execution_id,
             pipeline_name=pipeline_name,
-            project_id=cast(str, self.project_id),
+            project_id=self.project_id,
             status=ExecutionStatus.PENDING,
             inputs_json=inputs_json,
             session_id=session_id,
@@ -341,12 +339,8 @@ class PipelineExecutionStorageMixin:
         Returns:
             List of PipelineExecution instances awaiting review
         """
-        params: list[Any] = []
-        if self.project_id is None:
-            query = "SELECT * FROM pipeline_executions WHERE project_id IS NULL"
-        else:
-            query = "SELECT * FROM pipeline_executions WHERE project_id = %s"
-            params.append(self.project_id)
+        params: list[Any] = [self.project_id]
+        query = "SELECT * FROM pipeline_executions WHERE project_id = %s"
 
         query += " AND status IN (%s, %s, %s) AND review_json IS NULL ORDER BY completed_at DESC LIMIT %s"
         params.extend(

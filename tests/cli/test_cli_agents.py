@@ -1266,7 +1266,7 @@ class TestAgentsStopCommand:
 
         result = runner.invoke(cli, ["agents", "stop", mock_completed_run.id, "--yes"])
 
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Cannot stop agent in status" in result.output
 
     @patch("gobby.cli.agents.get_agent_run_manager")
@@ -1750,5 +1750,5 @@ class TestEdgeCases:
 
         result = runner.invoke(cli, ["agents", "stop", "ar-error", "--yes"])
 
-        assert result.exit_code == 0
+        assert result.exit_code != 0
         assert "Cannot stop agent in status: error" in result.output

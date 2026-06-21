@@ -49,7 +49,7 @@ def configure_project_mcp_server(project_path: Path, server_name: str = "gobby")
     existing_settings: dict[str, Any] = {}
     if settings_path.exists():
         try:
-            with open(settings_path) as f:
+            with open(settings_path, encoding="utf-8") as f:
                 existing_settings = json.load(f)
         except json.JSONDecodeError as e:
             result["error"] = f"Failed to parse {settings_path}: {e}"
@@ -91,7 +91,7 @@ def configure_project_mcp_server(project_path: Path, server_name: str = "gobby")
             server_config["command"] = _GOBBY_MCP_COMMAND
             server_config["args"] = [*_GOBBY_MCP_ARGS]
             try:
-                with open(settings_path, "w") as f:
+                with open(settings_path, "w", encoding="utf-8") as f:
                     json.dump(existing_settings, f, indent=2)
             except OSError as e:
                 result["error"] = f"Failed to write {settings_path}: {e}"
@@ -125,7 +125,7 @@ def configure_project_mcp_server(project_path: Path, server_name: str = "gobby")
 
     # Write updated settings
     try:
-        with open(settings_path, "w") as f:
+        with open(settings_path, "w", encoding="utf-8") as f:
             json.dump(existing_settings, f, indent=2)
     except OSError as e:
         result["error"] = f"Failed to write {settings_path}: {e}"
@@ -161,7 +161,7 @@ def remove_project_mcp_server(project_path: Path, server_name: str = "gobby") ->
         return result
 
     try:
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             settings = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         result["error"] = f"Failed to read {settings_path}: {e}"
@@ -191,7 +191,7 @@ def remove_project_mcp_server(project_path: Path, server_name: str = "gobby") ->
 
     # Write updated settings
     try:
-        with open(settings_path, "w") as f:
+        with open(settings_path, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=2)
     except OSError as e:
         result["error"] = f"Failed to write {settings_path}: {e}"
@@ -237,7 +237,7 @@ def configure_mcp_server_json(
     existing_settings: dict[str, Any] = {}
     if settings_path.exists():
         try:
-            with open(settings_path) as f:
+            with open(settings_path, encoding="utf-8") as f:
                 existing_settings = json.load(f)
         except json.JSONDecodeError as e:
             result["error"] = f"Failed to parse {settings_path}: {e}"
@@ -279,7 +279,7 @@ def configure_mcp_server_json(
 
                 server_config.update(updates)
                 try:
-                    with open(settings_path, "w") as f:
+                    with open(settings_path, "w", encoding="utf-8") as f:
                         json.dump(existing_settings, f, indent=2)
                 except OSError as e:
                     result["error"] = f"Failed to write {settings_path}: {e}"
@@ -331,7 +331,7 @@ def configure_mcp_server_json(
 
     # Write updated settings
     try:
-        with open(settings_path, "w") as f:
+        with open(settings_path, "w", encoding="utf-8") as f:
             json.dump(existing_settings, f, indent=2)
     except OSError as e:
         result["error"] = f"Failed to write {settings_path}: {e}"
@@ -364,7 +364,7 @@ def remove_mcp_server_json(settings_path: Path, server_name: str = "gobby") -> d
         return result
 
     try:
-        with open(settings_path) as f:
+        with open(settings_path, encoding="utf-8") as f:
             settings = json.load(f)
     except (json.JSONDecodeError, OSError) as e:
         result["error"] = f"Failed to read {settings_path}: {e}"
@@ -394,7 +394,7 @@ def remove_mcp_server_json(settings_path: Path, server_name: str = "gobby") -> d
 
     # Write updated settings
     try:
-        with open(settings_path, "w") as f:
+        with open(settings_path, "w", encoding="utf-8") as f:
             json.dump(settings, f, indent=2)
     except OSError as e:
         result["error"] = f"Failed to write {settings_path}: {e}"

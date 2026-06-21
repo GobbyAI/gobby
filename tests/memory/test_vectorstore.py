@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import uuid
 from collections.abc import AsyncGenerator
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -40,7 +41,7 @@ def test_qdrant_client_importable() -> None:
 
 
 @pytest.fixture
-async def vector_store(tmp_path) -> AsyncGenerator[VectorStore]:
+async def vector_store(tmp_path: Path) -> AsyncGenerator[VectorStore]:
     """Create a VectorStore using Qdrant embedded mode with a temp directory."""
     store = VectorStore(
         path=str(tmp_path / "qdrant"),

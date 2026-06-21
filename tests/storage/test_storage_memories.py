@@ -22,6 +22,14 @@ def memory_manager(db):
     return LocalMemoryManager(db)
 
 
+def _insert_session(db, session_id: str, project_id: str) -> None:
+    db.execute(
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at) "
+        "VALUES (%s, %s, 'machine-1', 'claude', %s, CURRENT_TIMESTAMP)",
+        (session_id, f"ext-{session_id}", project_id),
+    )
+
+
 def test_create_memory(memory_manager) -> None:
     memory = memory_manager.create_memory(
         content="Test memory",
@@ -212,6 +220,49 @@ def test_create_memory_dedup_scopes_to_project(memory_manager, db) -> None:
     assert memory1.project_id == "proj1"
     assert memory2.project_id == "proj2"
     assert memory3.project_id is None
+
+
+def test_source_session_proximity_dedup_scopes_to_project(memory_manager, db) -> None:
+    """Same-session proximity dedup does not cross project boundaries."""
+    db.execute("INSERT INTO projects (id, name) VALUES ('proj1', 'Project 1')")
+    db.execute("INSERT INTO projects (id, name) VALUES ('proj2', 'Project 2')")
+    _insert_session(db, "session-1", "proj1")
+
+    first = memory_manager.create_memory(
+        content="Same-session scoped memory",
+        project_id="proj1",
+        source_session_id="session-1",
+    )
+    second = memory_manager.create_memory(
+        content="Same-session scoped memory",
+        project_id="proj2",
+        source_session_id="session-1",
+    )
+
+    assert second.id != first.id
+    assert second.project_id == "proj2"
+
+
+def test_source_session_proximity_dedup_ignores_deleted(memory_manager, db) -> None:
+    """Deleted memories do not satisfy source-session proximity dedup."""
+    db.execute("INSERT INTO projects (id, name) VALUES ('proj-session', 'Session Project')")
+    _insert_session(db, "session-1", "proj-session")
+
+    created = memory_manager.create_memory(
+        content="Deleted same-session memory",
+        source_session_id="session-1",
+    )
+    assert memory_manager.delete_memory(created.id)
+
+    revived = memory_manager.create_memory(
+        content="Deleted same-session memory",
+        source_session_id="session-1",
+    )
+    row = db.fetchone("SELECT deleted_at FROM memories WHERE id = %s", (created.id,))
+
+    assert revived.id == created.id
+    assert row is not None
+    assert row["deleted_at"] is None
 
 
 def test_memory_exists(memory_manager) -> None:

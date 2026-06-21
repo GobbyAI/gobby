@@ -317,16 +317,12 @@ class MemoryLifecycleService:
         tags: list[str] | None = None,
     ) -> Memory:
         """Update an existing memory through the async backend."""
+        if content is not None:
+            raise ValueError("Memory content cannot be updated; create a new memory instead")
         record = await self.backend.update(
             memory_id=memory_id,
             content=content,
             tags=tags,
         )
         memory = self._record_to_memory(record)
-        if content is not None:
-            await self._embed_and_upsert(
-                memory_id,
-                content,
-                payload={"project_id": memory.project_id},
-            )
         return memory

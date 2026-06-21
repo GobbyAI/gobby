@@ -985,6 +985,36 @@ class TestInstallDefaultMCPServers:
         assert result["success"] is True
         assert len(result["servers_added"]) > 0
 
+    def test_optional_secret_args_store_secret_reference(self, tmp_path: Path) -> None:
+        """Existing optional secrets should be stored as references, not plaintext."""
+        mcp_path = tmp_path / ".gobby" / ".mcp.json"
+        mock_secret_store = MagicMock()
+        mock_secret_store.exists.return_value = True
+        mock_secret_store.get.return_value = "plain-secret"
+
+        with (
+            patch(
+                "gobby.cli.installers.mcp_config.Path.expanduser",
+                return_value=mcp_path,
+            ),
+            patch("gobby.storage.hub.runtime.open_runtime_hub_database"),
+            patch("gobby.storage.mcp.LocalMCPManager") as mock_mcp_mgr,
+            patch("gobby.storage.secrets.SecretStore", return_value=mock_secret_store),
+        ):
+            mock_mcp_mgr.return_value.import_from_mcp_json.return_value = 3
+            result = install_default_mcp_servers()
+
+        assert result["success"] is True
+        config = json.loads(mcp_path.read_text())
+        context7 = next(server for server in config["servers"] if server["name"] == "context7")
+        assert context7["args"] == [
+            "-y",
+            "@upstash/context7-mcp",
+            "--api-key",
+            "$secret:context7_api_key",
+        ]
+        mock_secret_store.get.assert_not_called()
+
     def test_secret_store_operational_error_skips_optional_args(
         self,
         tmp_path: Path,

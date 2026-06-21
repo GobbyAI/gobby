@@ -165,6 +165,7 @@ class ProcessorLifecycleMixin:
         index = load_index_sidecar(
             transcript_path,
             source,
+            session_id,
             seek_mode="byte",
             mtime_ns=st.st_mtime_ns,
             size=st.st_size,

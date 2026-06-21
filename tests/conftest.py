@@ -254,10 +254,7 @@ def mock_config_with_websocket() -> MagicMock:
     return apply_safe_runner_config_defaults(config)
 
 
-@pytest.fixture
-def sample_project(project_manager: "LocalProjectManager", tmp_path: Path) -> dict[str, Any]:
-    """Create a sample project for testing."""
-    repo_path = tmp_path / "test-project"
+def _init_git_repo(repo_path: Path) -> None:
     repo_path.mkdir()
     subprocess.run(
         ["git", "init", "-q", "-b", "main"],
@@ -281,11 +278,33 @@ def sample_project(project_manager: "LocalProjectManager", tmp_path: Path) -> di
         cwd=repo_path,
         check=True,
     )
+
+
+@pytest.fixture
+def sample_project(project_manager: "LocalProjectManager") -> dict[str, Any]:
+    """Create a sample DB project for testing."""
     project = project_manager.create(
         name="test-project",
+        github_url="https://github.com/test/test-project",
+    )
+    return project.to_dict()
+
+
+@pytest.fixture
+def sample_git_project(
+    project_manager: "LocalProjectManager",
+    sample_project: dict[str, Any],
+    tmp_path: Path,
+) -> dict[str, Any]:
+    """Create a sample project with a real git repo."""
+    repo_path = tmp_path / "test-project"
+    _init_git_repo(repo_path)
+    project = project_manager.update(
+        sample_project["id"],
         repo_path=str(repo_path),
         github_url="https://github.com/test/test-project",
     )
+    assert project is not None
     return project.to_dict()
 
 

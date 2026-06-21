@@ -143,7 +143,7 @@ class TaskRecoveryHandler:
             return None
 
         task = await self._run_db(self._task_manager.get_task, task_id)
-        expected_owner = db_run.child_session_id
+        expected_owner = db_run.child_session_id or db_run.claimed_session_id
         if not task or not is_task_actively_claimed(task, expected_owner):
             return None
 
@@ -401,20 +401,21 @@ class TaskRecoveryHandler:
         if db is None:
             return self._task_manager.release_task_claim(task_id, **kwargs)
         try:
-            with RuntimeDispatchMutex(
+            mutex = RuntimeDispatchMutex(
                 TaskDispatchMutexManager(db),
                 task_id,
                 "task_recovery",
                 "claim_release",
                 30,
-            ):
-                return self._task_manager.release_task_claim(task_id, **kwargs)
+            )
         except TypeError as exc:
             logger.debug(
                 "Skipping task recovery dispatch mutex for task %s: %s",
                 task_id,
                 exc,
             )
+            return self._task_manager.release_task_claim(task_id, **kwargs)
+        with mutex:
             return self._task_manager.release_task_claim(task_id, **kwargs)
 
     def _clear_claim_session_variables(self, db_run: _AgentRun, task_id: str) -> None:

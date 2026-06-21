@@ -807,8 +807,11 @@ class TestPurgeDreamHiddenMemories:
         store = MagicMock()
         store.prune_runs = MagicMock(return_value=2)
         with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store) as store_cls:
-            await manager._purge_dream_hidden_memories()
+            result = await manager._purge_dream_hidden_memories()
 
+        assert result is None
+        assert manager._memory_dream_config.purge_delete_after_days == 30
+        assert manager._memory_dream_config.purge_review_after_days == 90
         # Each action class purges with its own grace window.
         assert purge.await_args_list == [call("delete", 30), call("review", 90)]
         # Run/snapshot history pruned by run_retention_days against the same db.
@@ -824,7 +827,9 @@ class TestPurgeDreamHiddenMemories:
             mock_db, mock_config, memory_manager=memory_manager, dream_config=None
         )
         with patch("gobby.memory.dream.storage.MemoryDreamStore") as store_cls:
-            await manager._purge_dream_hidden_memories()
+            result = await manager._purge_dream_hidden_memories()
+        assert result is None
+        assert manager._memory_dream_config is None
         purge.assert_not_awaited()
         store_cls.assert_not_called()
 
@@ -842,7 +847,9 @@ class TestPurgeDreamHiddenMemories:
         store = MagicMock()
         store.prune_runs = MagicMock(return_value=0)
         with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store):
-            await manager._purge_dream_hidden_memories()
+            result = await manager._purge_dream_hidden_memories()
+        assert result is None
+        assert manager._memory_dream_config.enabled is False
         assert purge.await_count == 2  # delete + review still purged
         store.prune_runs.assert_called_once_with(45)
 
@@ -857,7 +864,9 @@ class TestPurgeDreamHiddenMemories:
         store = MagicMock()
         store.prune_runs = MagicMock(return_value=0)
         with patch("gobby.memory.dream.storage.MemoryDreamStore", return_value=store):
-            await manager._purge_dream_hidden_memories()  # must not raise
+            result = await manager._purge_dream_hidden_memories()  # must not raise
+        assert result is None
+        assert manager._memory_dream_config.run_retention_days == 45
         assert purge.await_count == 2
         store.prune_runs.assert_called_once_with(45)
 
@@ -974,6 +983,7 @@ class TestProcessSessionTranscriptParsers:
         index = load_index_sidecar(
             str(transcript_path),
             "droid",
+            "s1",
             seek_mode="byte",
             mtime_ns=st.st_mtime_ns,
             size=st.st_size,

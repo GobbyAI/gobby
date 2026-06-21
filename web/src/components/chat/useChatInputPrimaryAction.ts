@@ -196,11 +196,11 @@ export function useChatInputPrimaryAction({
   const handleMicKeyDown = useCallback(
     (event: KeyboardEvent<HTMLButtonElement>) => {
       if (event.key !== 'Enter' && event.key !== ' ') return
-      event.preventDefault()
       if (event.repeat || activeKeyRef.current !== null) return
       if (activePointerIdRef.current !== null) return
       if (disabled || primaryButtonKind === 'stop' || !startRecording) return
 
+      event.preventDefault()
       activeKeyRef.current = event.key
       if (!isRecording) {
         void startRecording()

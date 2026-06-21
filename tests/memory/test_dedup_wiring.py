@@ -1,6 +1,7 @@
 """Tests for DedupService wiring into MemoryManager."""
 
 import asyncio
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -12,7 +13,7 @@ from tests._timing import wait_for_async_condition, wait_forever
 pytestmark = pytest.mark.unit
 
 
-def _make_config(**overrides):
+def _make_config(**overrides: Any) -> MemoryConfig:
     """Create a concrete MemoryConfig."""
     return MemoryConfig(**overrides)
 

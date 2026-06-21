@@ -34,8 +34,6 @@ def _truncate_cron_run_error(error: str, *, context: str) -> str:
         len(error),
         CRON_RUN_ERROR_MAX_CHARS,
     )
-    if CRON_RUN_ERROR_MAX_CHARS <= len(TRUNCATED_MARKER):
-        return TRUNCATED_MARKER[-CRON_RUN_ERROR_MAX_CHARS:]
     return error[: CRON_RUN_ERROR_MAX_CHARS - len(TRUNCATED_MARKER)] + TRUNCATED_MARKER
 
 

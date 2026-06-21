@@ -29,7 +29,8 @@ class SpawnRunStorage(Protocol):
 
 
 class SpawnRuntimeRunner(Protocol):
-    run_storage: SpawnRunStorage
+    @property
+    def run_storage(self) -> SpawnRunStorage: ...
 
 
 def _normalize_string_list(value: Any) -> list[str]:
@@ -119,7 +120,9 @@ def _build_spawn_success_response(
     }
     if reasoning is not None:
         if not isinstance(reasoning, ReasoningPayload):
-            raise TypeError("spawn reasoning payload must implement to_dict()")
+            raise TypeError(
+                f"spawn reasoning payload must implement to_dict(); got {type(reasoning).__name__}"
+            )
         response["reasoning"] = reasoning.to_dict()
     if code_index_preflight_warning is not None:
         response["warnings"] = [code_index_preflight_warning]

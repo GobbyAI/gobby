@@ -95,6 +95,7 @@ def _index_to_payload(path: str, index: TranscriptIndex) -> dict[str, Any]:
         "schema_version": INDEX_SCHEMA_VERSION,
         "source_path": os.path.abspath(path),
         "source": index.source,
+        "session_id": index.session_id,
         "seek_mode": index.seek_mode,
         "mtime_ns": index.mtime_ns,
         "size": index.size,
@@ -210,6 +211,7 @@ def _payload_to_index(payload: dict[str, Any]) -> TranscriptIndex:
         parsed_message_count=int(payload["parsed_message_count"]),
         raw_record_count=int(payload["raw_record_count"]),
         source=str(payload["source"]),
+        session_id=(payload["session_id"] if isinstance(payload.get("session_id"), str) else None),
         seek_mode=str(payload["seek_mode"]),
         mtime_ns=int(payload["mtime_ns"]),
         size=int(payload["size"]),
@@ -239,6 +241,7 @@ def _sidecar_matches(
     *,
     path: str,
     source: str,
+    session_id: str | None,
     seek_mode: str,
     mtime_ns: int,
     size: int,
@@ -247,6 +250,7 @@ def _sidecar_matches(
         payload.get("schema_version") == INDEX_SCHEMA_VERSION
         and payload.get("source_path") == os.path.abspath(path)
         and payload.get("source") == source
+        and payload.get("session_id") == session_id
         and payload.get("seek_mode") == seek_mode
         and int(payload.get("mtime_ns", -1)) == mtime_ns
         and int(payload.get("size", -1)) == size
@@ -254,7 +258,13 @@ def _sidecar_matches(
 
 
 def load_index_sidecar(
-    path: str, source: str, *, seek_mode: str, mtime_ns: int, size: int
+    path: str,
+    source: str,
+    session_id: str | None = None,
+    *,
+    seek_mode: str,
+    mtime_ns: int,
+    size: int,
 ) -> TranscriptIndex | None:
     """Load a sidecar index if it exactly matches the requested snapshot."""
     sidecar = _sidecar_path(path)
@@ -272,7 +282,13 @@ def load_index_sidecar(
 
     try:
         if not isinstance(payload, dict) or not _sidecar_matches(
-            payload, path=path, source=source, seek_mode=seek_mode, mtime_ns=mtime_ns, size=size
+            payload,
+            path=path,
+            source=source,
+            session_id=session_id,
+            seek_mode=seek_mode,
+            mtime_ns=mtime_ns,
+            size=size,
         ):
             return None
         index = _payload_to_index(payload)
@@ -371,6 +387,7 @@ async def get_or_build_index(
                 load_index_sidecar,
                 path,
                 source,
+                session_id,
                 seek_mode=seek_mode,
                 mtime_ns=mtime_ns,
                 size=size,

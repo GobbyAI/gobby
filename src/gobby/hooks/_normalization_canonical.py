@@ -12,6 +12,7 @@ from gobby.hooks._normalization_shell import (
     _SHELL_CHAIN_TOKENS,
     _SHELL_CONTROL_TOKENS,
     _SHELL_INPUT_REDIRECTION_TOKENS,
+    _SHELL_OUTPUT_REDIRECTION_TOKENS,
     _SHELL_SEQUENCING_TOKENS,
     _extract_redirection_paths,
     _get_command_text,
@@ -43,6 +44,10 @@ _CANONICAL_WRITE_TOOL_NAMES = frozenset(
         "write_file",
     }
 )
+_GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
+    {"cat", "cut", "grep", "head", "jq", "rg", "sed", "sort", "tail", "tr", "uniq", "wc"}
+)
+_SHELL_REDIRECTION_PREFIXES = (">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>", "<", "<<", "<<<")
 
 
 def _build_canonical_tool_metadata(
@@ -100,6 +105,37 @@ def _truncate_positional_paths(parts: list[str]) -> list[str]:
     ]
 
 
+def _has_shell_redirection(parts: list[str]) -> bool:
+    return any(
+        token in _SHELL_INPUT_REDIRECTION_TOKENS
+        or token in _SHELL_OUTPUT_REDIRECTION_TOKENS
+        or token.startswith(_SHELL_REDIRECTION_PREFIXES)
+        for token in parts
+    )
+
+
+def _is_read_only_pipeline_stage(parts: list[str]) -> bool:
+    if not parts or _has_shell_redirection(parts):
+        return False
+    cmd = shell_command_name(parts[0])
+    if cmd == "sed" and _has_sed_inplace_option(parts):
+        return False
+    return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS
+
+
+def _gcode_pipeline_filters_are_read_only(parts: list[str]) -> bool:
+    stages: list[list[str]] = []
+    current_stage: list[str] = []
+    for token in parts[parts.index("|") + 1 :]:
+        if token == "|":
+            stages.append(current_stage)
+            current_stage = []
+        else:
+            current_stage.append(token)
+    stages.append(current_stage)
+    return bool(stages) and all(_is_read_only_pipeline_stage(stage) for stage in stages)
+
+
 def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     """Infer canonical semantics from simple shell read/search/write commands."""
     try:
@@ -116,7 +152,11 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     # Classify on the leading segment before the chain-token demotion below, but
     # only for pure ``|`` pipelines -- ``&&``/``||``/``;`` sequence in a separate,
     # possibly side-effecting command, so those still fall through to ``execute``.
-    if "|" in parts and not _SHELL_SEQUENCING_TOKENS.intersection(parts):
+    if (
+        "|" in parts
+        and not _SHELL_SEQUENCING_TOKENS.intersection(parts)
+        and _gcode_pipeline_filters_are_read_only(parts)
+    ):
         leading = parts[: parts.index("|")]
         gcode_metadata = gcode_navigation_metadata(leading)
         if gcode_metadata:

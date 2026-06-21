@@ -134,8 +134,6 @@ class TestProviderModelCatalog:
 
         assert models == [
             {"value": "sonnet", "label": "Sonnet", "canonical_id": "claude-sonnet"},
-            {"value": "opus", "label": "Opus", "canonical_id": "claude-opus"},
-            {"value": "fable", "label": "Fable", "canonical_id": "claude-fable"},
         ]
 
     @pytest.mark.asyncio
@@ -446,6 +444,50 @@ class TestProviderModelCatalog:
         assert client.stop.await_count == 1
         assert client.stop.await_args is not None
         assert models == [{"value": "gemini-test", "label": "Gemini Test"}]
+
+    @pytest.mark.asyncio
+    async def test_discover_codex_models_logs_stop_failure_without_masking_list_error(
+        self, temp_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+        client = MagicMock()
+        client.is_connected = False
+        client.start = AsyncMock()
+        client.list_models = AsyncMock(side_effect=RuntimeError("list failed"))
+        client.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
+
+        with (
+            caplog.at_level(logging.ERROR, logger="gobby.servers.provider_model_discovery"),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/codex"),
+            pytest.raises(RuntimeError, match="list failed"),
+        ):
+            await catalog._discover_codex_models(codex_client=client)
+
+        assert "Failed to stop Codex model discovery client" in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_discover_acp_models_logs_stop_failure_without_masking_start_error(
+        self, temp_dir: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
+        client = MagicMock()
+        client.start = AsyncMock(side_effect=RuntimeError("start failed"))
+        client.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
+        client_cls = MagicMock(return_value=client)
+        client_cls.cli_name = "gemini"
+
+        with (
+            caplog.at_level(logging.ERROR, logger="gobby.servers.provider_models"),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch(
+                "gobby.servers.provider_models.authorize_model_discovery_trust",
+                new=AsyncMock(),
+            ),
+            pytest.raises(RuntimeError, match="start failed"),
+        ):
+            await catalog._discover_acp_models(client_cls=client_cls)
+
+        assert "Failed to stop gemini model discovery client" in caplog.text
 
     @pytest.mark.asyncio
     async def test_discover_acp_models_removes_created_cwd_when_trust_fails(

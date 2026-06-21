@@ -84,4 +84,4 @@ class PipelineCompletionSubscriberMixin:
         """,  # nosec B608
             TERMINAL_AGENT_RUN_STATUSES,
         )
-        return cursor.rowcount if cursor else 0
+        return max(cursor.rowcount, 0) if cursor else 0

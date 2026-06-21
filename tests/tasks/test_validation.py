@@ -403,6 +403,7 @@ class TestInconsistentVerdictReconciliation:
         )
 
         assert result.status == "invalid"
+        assert result.blocking_reasons == ["No test covers the disabled-feature 404 branch."]
         assert mock_llm.call_json_feature.call_count == 1
 
     @pytest.mark.asyncio

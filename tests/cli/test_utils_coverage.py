@@ -16,6 +16,18 @@ import pytest
 pytestmark = pytest.mark.unit
 
 
+def test_process_start_matches_tolerates_subsecond_drift() -> None:
+    from gobby.cli.utils_ui import _process_start_matches
+
+    proc = MagicMock()
+    proc.create_time.return_value = 100.5
+
+    assert _process_start_matches(proc, 100.0) is True
+
+    proc.create_time.return_value = 101.0
+    assert _process_start_matches(proc, 100.0) is False
+
+
 @pytest.fixture(autouse=True)
 def _mock_shutdown_source_writes(request: pytest.FixtureRequest):
     """Keep daemon-path coverage tests from creating shutdown markers."""

@@ -54,9 +54,11 @@ class MemoryCrudMixin(MemoryStoreBase):
                 recent = conn.execute(
                     f"""SELECT * FROM memories
                        WHERE source_session_id = %s
+                         AND project_id IS NOT DISTINCT FROM %s
+                         AND deleted_at IS NULL
                          AND {recent_cutoff_sql}
                        ORDER BY created_at DESC, id DESC LIMIT 1""",
-                    (source_session_id, 60),
+                    (source_session_id, project_id, 60),
                 ).fetchone()
                 if recent and normalized_content == str(recent["content"]).strip():
                     return Memory.from_row(recent)

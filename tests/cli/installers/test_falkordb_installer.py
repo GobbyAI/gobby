@@ -371,3 +371,69 @@ class TestInstallFalkorDB:
 
         assert received_homes
         assert all(home == tmp_path for home in received_homes)
+
+
+class TestUninstallFalkorDB:
+    def test_uninstall_clears_config_and_bootstrap(
+        self,
+        tmp_path: Path,
+        hub_db: HubDatabase,
+    ) -> None:
+        module = _falkor_module()
+
+        with _patch_config_db(hub_db):
+            module._update_config(
+                host="127.0.0.1",
+                port=16379,
+                password="secret",
+                gobby_home=tmp_path,
+            )
+            assert module._write_bootstrap_password("secret", tmp_path) is True
+
+            result = module.uninstall_falkordb(gobby_home=tmp_path)
+
+            store = ConfigStore(hub_db)
+            secret_store = SecretStore(hub_db)
+            assert result["success"] is True
+            assert store.get("databases.falkordb.host") is None
+            assert store.get("databases.falkordb.port") is None
+            assert store.get("databases.falkordb.password") is None
+            assert secret_store.get("falkordb_password") is None
+
+        bootstrap = yaml.safe_load((tmp_path / "bootstrap.yaml").read_text(encoding="utf-8"))
+        assert "falkordb_password" not in bootstrap
+
+    def test_uninstall_runs_falkordb_compose_down(
+        self,
+        tmp_path: Path,
+        hub_db: HubDatabase,
+    ) -> None:
+        module = _falkor_module()
+        compose_file = module._refresh_unified_compose(tmp_path / "services")
+
+        with (
+            patch.object(shutil, "which", return_value="/usr/bin/docker"),
+            patch(
+                "gobby.cli.installers.falkor.subprocess.run", return_value=_successful_run()
+            ) as mock_run,
+            _patch_config_db(hub_db),
+        ):
+            result = module.uninstall_falkordb(gobby_home=tmp_path)
+
+        assert result["success"] is True
+        assert result["compose_stopped"] is True
+        mock_run.assert_called_once_with(
+            [
+                "docker",
+                "compose",
+                "-f",
+                str(compose_file),
+                "--profile",
+                "falkordb",
+                "down",
+            ],
+            capture_output=True,
+            text=True,
+            timeout=120,
+            cwd=str(tmp_path / "services"),
+        )

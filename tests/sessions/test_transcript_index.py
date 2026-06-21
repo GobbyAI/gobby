@@ -326,7 +326,12 @@ def test_droid_sidecar_usage_is_post_pass_adjustment(tmp_path: Path) -> None:
 
     persist_index_sidecar(str(transcript), index)
     loaded = load_index_sidecar(
-        str(transcript), "droid", seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+        str(transcript),
+        "droid",
+        SESSION,
+        seek_mode="byte",
+        mtime_ns=st.st_mtime_ns,
+        size=st.st_size,
     )
 
     assert loaded is not None
@@ -391,6 +396,7 @@ def test_nonserializable_adjustment_log_redacts_value(
     loaded = load_index_sidecar(
         str(transcript),
         "codex",
+        SESSION,
         seek_mode="byte",
         mtime_ns=st.st_mtime_ns,
         size=st.st_size,
@@ -622,7 +628,7 @@ def test_transcript_index_appender_persists_append_growth(tmp_path: Path) -> Non
     )
     persist_index_sidecar(path, appender.snapshot(mtime_ns=st.st_mtime_ns, size=st.st_size))
     loaded = load_index_sidecar(
-        path, "codex", seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+        path, "codex", SESSION, seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
     )
     rebuilt = build_index_from_file(
         path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size
@@ -667,10 +673,21 @@ def test_sidecar_round_trips_stats_and_resume_metadata(tmp_path: Path) -> None:
 
     persist_index_sidecar(path, index)
     loaded = load_index_sidecar(
-        path, "codex", seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+        path, "codex", SESSION, seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
     )
 
     assert loaded is not None
+    assert (
+        load_index_sidecar(
+            path,
+            "codex",
+            "other-session",
+            seek_mode="byte",
+            mtime_ns=st.st_mtime_ns,
+            size=st.st_size,
+        )
+        is None
+    )
     assert loaded.session_stats == index.session_stats
     assert loaded.session_stats == {
         "message_count": 7,
@@ -702,7 +719,7 @@ def test_legacy_sidecar_without_stats_loads_with_resume_fallbacks(tmp_path: Path
     sidecar.write_text(json.dumps(payload), encoding="utf-8")
 
     loaded = load_index_sidecar(
-        path, "codex", seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+        path, "codex", SESSION, seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
     )
 
     assert loaded is not None

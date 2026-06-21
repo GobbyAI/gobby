@@ -50,7 +50,7 @@ def _process_start_matches(proc: psutil.Process, started_at: float | None) -> bo
     if started_at is None:
         return True
     try:
-        return bool(abs(proc.create_time() - started_at) < 0.001)
+        return bool(abs(proc.create_time() - started_at) < 1.0)
     except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess, OSError):
         return False
 

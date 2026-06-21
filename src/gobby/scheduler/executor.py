@@ -197,7 +197,7 @@ class CronExecutor:
             limit,
         )
         if limit <= len(TRUNCATED_MARKER):
-            return TRUNCATED_MARKER[-limit:]
+            return "." * min(limit, 3)
         return value[: limit - len(TRUNCATED_MARKER)] + TRUNCATED_MARKER
 
     def _overlap_policy(self, job: CronJob) -> Literal["skip_if_active", "allow"]:

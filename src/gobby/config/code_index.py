@@ -170,6 +170,7 @@ class CodeIndexConfig(BaseModel):
                     if old_key in updated and new_key not in symbol_summary:
                         symbol_summary[new_key] = updated.pop(old_key)
                     else:
+                        # Drop the legacy flat key once an explicit nested value wins.
                         updated.pop(old_key, None)
                 updated["symbol_summary"] = symbol_summary
             return updated

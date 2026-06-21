@@ -475,11 +475,19 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "Codex" in result.output
 
-    def test_uninstall_rejects_falkordb_target(self, runner: CliRunner) -> None:
-        result = runner.invoke(uninstall, ["--falkordb", "--yes"])
+    @patch("gobby.cli.install.uninstall_falkordb")
+    def test_uninstall_falkordb_target(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
+        mock_uninstall.return_value = {
+            "success": True,
+            "compose_stopped": True,
+            "config_cleared": True,
+        }
+        result = runner.invoke(uninstall, ["--falkordb", "--yes"], catch_exceptions=False)
 
-        assert result.exit_code == 2
-        assert "No such option: --falkordb" in result.output
+        assert result.exit_code == 0
+        assert "FalkorDB Knowledge Graph" in result.output
+        assert "Stopped FalkorDB Docker service" in result.output
+        mock_uninstall.assert_called_once_with()
 
     def test_uninstall_all_nothing_found(self, runner: CliRunner, tmp_path: Path) -> None:
         """When --all is used but no CLI hooks are detected."""

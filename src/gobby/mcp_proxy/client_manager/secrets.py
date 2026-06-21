@@ -18,8 +18,8 @@ def resolve_secrets_in_config(
     config: MCPServerConfig,
     logger: logging.Logger,
 ) -> MCPServerConfig:
-    """Resolve ``$secret:NAME`` references in headers and env without mutating input."""
-    if not config.headers and not config.env:
+    """Resolve ``$secret:NAME`` references in headers, env, and args without mutating input."""
+    if not config.headers and not config.env and not config.args:
         return config
 
     try:
@@ -32,6 +32,8 @@ def resolve_secrets_in_config(
                     if SECRET_REF_PATTERN.search(value):
                         has_refs = True
                         break
+        if not has_refs and config.args:
+            has_refs = any(SECRET_REF_PATTERN.search(arg) for arg in config.args)
 
         if not has_refs:
             return config
@@ -57,11 +59,42 @@ def resolve_secrets_in_config(
                 resolved = {key: value for key, value in resolved.items() if key not in unresolved}
             return resolved
 
+        def strip_unresolved_secret_args(values: list[str]) -> list[str]:
+            resolved = [store.resolve(value) for value in values]
+            stripped: list[str] = []
+            skip_next = False
+            for index, value in enumerate(resolved):
+                if skip_next:
+                    skip_next = False
+                    continue
+                if not SECRET_REF_PATTERN.search(value):
+                    stripped.append(value)
+                    continue
+                if (
+                    SECRET_REF_PATTERN.fullmatch(value)
+                    and index > 0
+                    and resolved[index - 1].startswith("-")
+                    and stripped
+                    and stripped[-1] == resolved[index - 1]
+                ):
+                    stripped.pop()
+                elif value.startswith("-") and index + 1 < len(resolved):
+                    next_value = resolved[index + 1]
+                    if SECRET_REF_PATTERN.fullmatch(next_value):
+                        skip_next = True
+                logger.warning(
+                    "Stripping unresolved secret ref from %s args",
+                    config.name,
+                )
+            return stripped
+
         updates: dict[str, Any] = {}
         if config.headers:
             updates["headers"] = strip_unresolved_secrets(config.headers, "headers")
         if config.env:
             updates["env"] = strip_unresolved_secrets(config.env, "env")
+        if config.args:
+            updates["args"] = strip_unresolved_secret_args(config.args)
         return dataclasses.replace(config, **updates)
     except ImportError as exc:
         logger.debug("Secret resolution skipped for %s: %s", config.name, exc)

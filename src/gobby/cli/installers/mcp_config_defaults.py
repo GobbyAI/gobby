@@ -62,7 +62,7 @@ def install_default_mcp_servers() -> dict[str, Any]:
     # Get existing server names
     existing_names = {s.get("name") for s in existing_config["servers"]}
 
-    # Repair misconfigured servers: reconcile transport/command/args/env with defaults
+    # Repair misconfigured servers: reconcile canonical fields with defaults
     default_servers = _default_mcp_servers()
     servers_repaired: list[str] = []
     default_by_name = {s["name"]: s for s in default_servers}
@@ -72,17 +72,21 @@ def install_default_mcp_servers() -> dict[str, Any]:
         if not default:
             continue
         repaired = False
-        # Check if transport diverged from the canonical default
-        if existing_server.get("transport") != default["transport"]:
-            existing_server["transport"] = default["transport"]
-            existing_server["command"] = default.get("command")
-            existing_server["args"] = list(default.get("args") or [])
-            existing_server.pop("url", None)
-            repaired = True
-        # Overwrite env with canonical $secret: references
-        if "env" in default and existing_server.get("env") != default["env"]:
-            existing_server["env"] = dict(default["env"])
-            repaired = True
+        canonical_fields = {
+            "transport": default.get("transport"),
+            "command": default.get("command"),
+            "url": default.get("url"),
+            "args": list(default.get("args") or []) or None,
+            "env": dict(default["env"]) if "env" in default else None,
+        }
+        for field, canonical_value in canonical_fields.items():
+            if canonical_value is None:
+                if field in existing_server:
+                    existing_server.pop(field, None)
+                    repaired = True
+            elif existing_server.get(field) != canonical_value:
+                existing_server[field] = canonical_value
+                repaired = True
         if repaired:
             servers_repaired.append(name)
     result["servers_repaired"] = servers_repaired
@@ -122,9 +126,7 @@ def install_default_mcp_servers() -> dict[str, Any]:
                 if secret_store is not None:
                     try:
                         if secret_store.exists(secret_name):
-                            secret_value = secret_store.get(secret_name)
-                            if secret_value:
-                                args.extend(extra_args + [secret_value])
+                            args.extend(extra_args + [f"$secret:{secret_name}"])
                     except (OSError, RuntimeError, psycopg.Error):
                         logger.warning(
                             "Failed to read optional MCP secret",

@@ -37,6 +37,11 @@ def manager(db):
     return LocalPipelineExecutionManager(db, project_id="test-project")
 
 
+def test_manager_rejects_missing_project_id(db) -> None:
+    with pytest.raises(ValueError, match="project_id is required"):
+        LocalPipelineExecutionManager(db, project_id=None)  # type: ignore[arg-type]
+
+
 class TestCreateExecution:
     """Tests for create_execution method."""
 
@@ -483,8 +488,8 @@ class TestResolveExecutionReference:
         resolved = manager.resolve_execution_reference(prefix)
         assert resolved == execution.id
 
-    def test_resolve_uuid_prefix_without_project_filters_for_null_project(self) -> None:
-        """Test prefix resolution when a project-less manager is used."""
+    def test_resolve_uuid_prefix_filters_for_required_project(self) -> None:
+        """Prefix resolution includes the manager's required project scope."""
 
         class FakeDB:
             def __init__(self) -> None:
@@ -499,15 +504,16 @@ class TestResolveExecutionReference:
                 return [{"id": "pe-global-execution"}]
 
         fake_db = FakeDB()
-        manager = LocalPipelineExecutionManager(cast(HubDatabase, fake_db), project_id="unused")
-        manager.project_id = None  # type: ignore[assignment]
+        manager = LocalPipelineExecutionManager(
+            cast(HubDatabase, fake_db), project_id="test-project"
+        )
 
         resolved = manager.resolve_execution_reference("pe-global")
 
         assert resolved == "pe-global-execution"
         prefix_sql, prefix_params = fake_db.queries[-1]
-        assert "project_id IS NULL" in prefix_sql
-        assert prefix_params == ("pe-global%",)
+        assert "project_id = %s" in prefix_sql
+        assert prefix_params == ("pe-global%", "test-project")
 
     def test_resolve_uuid_prefix_rejects_ambiguous_matches(self, manager) -> None:
         manager.create_execution(pipeline_name="first-pipeline")
@@ -805,21 +811,20 @@ class TestPagination:
         assert manager.count_executions(status=ExecutionStatus.RUNNING) == 2
         assert manager.count_executions(status=ExecutionStatus.PENDING) == 1
 
-    def test_count_by_status_with_null_project_scope(self) -> None:
-        """count_by_status scopes global managers with project_id IS NULL."""
+    def test_count_by_status_with_required_project_scope(self) -> None:
+        """count_by_status scopes to the manager's required project id."""
         db = MagicMock()
         db.fetchall.return_value = [
             {"status": "pending", "cnt": 1},
             {"status": "running", "cnt": 1},
         ]
         manager = LocalPipelineExecutionManager(cast(HubDatabase, db), project_id="test-project")
-        manager.project_id = None  # type: ignore[assignment]
 
         result = manager.count_by_status()
 
         sql, params = db.fetchall.call_args.args
-        assert "project_id IS NULL" in sql
-        assert params == ()
+        assert "project_id = %s" in sql
+        assert params == ("test-project",)
         assert result == {"pending": 1, "running": 1}
 
     def test_count_executions_respects_pipeline_name_filter(self, manager) -> None:

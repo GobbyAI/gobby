@@ -547,6 +547,7 @@ export function useChat() {
     projectIdRef,
     proxyDeliveryNotice,
     resetMainChatState,
+    restoreContinuationState,
     selectedProvider,
     selectedProviderRef,
     sendMessageRef,
