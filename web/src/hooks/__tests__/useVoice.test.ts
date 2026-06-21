@@ -985,16 +985,18 @@ describe('useVoice', () => {
       lastVADConfig?.onSpeechEnd?.(new Float32Array(8_000).fill(0.2))
     })
 
-    expect(voiceMocks.mockEncodeWAV).toHaveBeenCalledWith(expect.any(Float32Array), 1, 16_000, 1, 16)
-    const payloads = wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw))
-    expect(payloads).toEqual(expect.arrayContaining([
-      expect.objectContaining({ type: 'tts_stop', conversation_id: 'conv-vad' }),
-      expect.objectContaining({
-        type: 'voice_audio',
-        conversation_id: 'conv-vad',
-        project_id: 'project-vad',
-      }),
-    ]))
+    await waitFor(() => {
+      expect(voiceMocks.mockEncodeWAV).toHaveBeenCalledWith(expect.any(Float32Array), 1, 16_000, 1, 16)
+      const payloads = wsRef.current?.send.mock.calls.map(([raw]) => JSON.parse(raw))
+      expect(payloads).toEqual(expect.arrayContaining([
+        expect.objectContaining({ type: 'tts_stop', conversation_id: 'conv-vad' }),
+        expect.objectContaining({
+          type: 'voice_audio',
+          conversation_id: 'conv-vad',
+          project_id: 'project-vad',
+        }),
+      ]))
+    })
     expectVoiceLog('vad_speech_start')
     expectVoiceLog('vad_misfire')
     expectVoiceLog('vad_speech_end', {
