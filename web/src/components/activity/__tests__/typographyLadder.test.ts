@@ -20,6 +20,16 @@ function readCssSource(rel: string, seen = new Set<string>()): string {
   )
 }
 
+function readSessionsSurfaceSource(): string {
+  return [
+    'src/components/activity/SessionsTab.tsx',
+    'src/components/activity/SessionsTabList.tsx',
+    'src/components/activity/SessionsTabDetail.tsx',
+  ]
+    .map(readSource)
+    .join('\n')
+}
+
 describe('activity-panel typography ladder (#14245)', () => {
   it('exposes shared row-title and row-meta utility classes locked to the ladder', () => {
     const source = readSource('src/components/chat/styles/activity-panel.css')
@@ -36,7 +46,7 @@ describe('activity-panel typography ladder (#14245)', () => {
     const rootSource = readSource('src/styles/tokens.css')
     const activitySource = readSource('src/components/chat/styles/activity-panel.css')
     const taskSource = readSource('src/components/tasks/task-execution.css')
-    const sessionsSource = readSource('src/components/activity/SessionsTab.tsx')
+    const sessionsSource = readSessionsSurfaceSource()
 
     // Canonical token lives in :root (src/styles/tokens.css) so .command-bar,
     // .agent-status-bar, .voice-status-bar, and the activity-panel bars all
@@ -111,7 +121,7 @@ describe('activity-panel typography ladder (#14245)', () => {
   })
 
   it('routes Sessions/Pipelines/Cron row titles through activity-row-title', () => {
-    const sessions = readSource('src/components/activity/SessionsTab.tsx')
+    const sessions = readSessionsSurfaceSource()
     const pipelines = readSource('src/components/activity/PipelinesTab.tsx')
     const cron = readSource('src/components/activity/CronTab.tsx')
 

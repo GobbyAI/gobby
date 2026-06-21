@@ -3,62 +3,38 @@ import { memo, useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { useSessionDetail } from "../../hooks/useSessionDetail";
 import type { GobbySession } from "../../types/sessions";
 import type { SwappedSessionTarget } from "../../types/chat";
-import { getSessionTitleText } from "../../lib/sessionTitle";
-import { SegmentedControl } from "../ui/SegmentedControl";
-import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
-import { ArtifactContext } from "../chat/artifacts/ArtifactContext";
-import { MemoizedMarkdown } from "../shared/MemoizedMarkdown";
-import { SourceIcon } from "../shared/SourceIcon";
-import {
-  ClipboardListIcon,
-  PlayIcon,
-  SwapIcon,
-  TranscriptIcon,
-} from "../icons";
-import {
-  SessionInteractionModal,
-  type InteractionMode,
-} from "./SessionInteractionModal";
-import { SessionsFilterDropdown } from "./SessionsFilterDropdown";
 import {
   countActiveFilters,
-  DEFAULT_LIVE_STATUSES,
   defaultSessionsFilters,
-  type SessionStatus,
   type SessionsFilters,
 } from "./sessionsFilters";
-import { getVisibleActivitySessions } from "./activitySessionVisibility";
 import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { ActivityPanelEmpty, SessionsEmptyIcon } from "./ActivityPanelEmpty";
-import { ActivityPanelSearch } from "./ActivityPanelSearch";
-import { ActivityRowStatusDot } from "./ActivityRowStatusDot";
 import {
-  type RunningAgent,
   type WatchingSessionEntry,
   type SessionContextMenu,
   WATCHING_SESSION_ID_KEY,
-  getBaseUrl,
-  resolveLocalFlag,
-  renderBadges,
-  entryTimestamp,
 } from "./SessionsTab.helpers";
-import { WatchingTranscript } from "./WatchingTranscript";
-
-// Canonical session-providers — sessions can exist for any of these regardless
-// of current local availability, so the filter affordance reflects what was
-// used historically rather than what is installable right now.
-const SESSION_PROVIDERS: readonly string[] = [
-  "claude",
-  "codex",
-  "droid",
-  "gemini",
-  "qwen",
-];
-
-const STATUS_MODE_OPTIONS = [
-  { value: "live" as const, label: "Live" },
-  { value: "expired" as const, label: "Expired" },
-] as const;
+import {
+  resolveSessionStatusMode,
+  statusesForMode,
+  useRunningAgents,
+  useWatchingSessionEntries,
+} from "./SessionsTab.entries";
+import {
+  SessionsEntryList,
+  SessionsTabToolbar,
+} from "./SessionsTabList";
+import {
+  SessionsTabDetailPane,
+  SessionsTabResizeHandle,
+  type WatchingContentMode,
+} from "./SessionsTabDetail";
+import {
+  SessionsContextMenu,
+  SessionsInteractionModalHost,
+  type InteractionMode,
+} from "./SessionsTabMenu";
 
 function resolveSessionSummaryMarkdown(
   ...sessions: Array<
@@ -125,8 +101,6 @@ function FilterEmptyState({
   );
 }
 
-type WatchingContentMode = "transcript" | "summary";
-
 export const SessionsTab = memo(function SessionsTab({
   sessions = [],
   isLoadingSessions = false,
@@ -140,9 +114,7 @@ export const SessionsTab = memo(function SessionsTab({
   onFocusHandled,
   onSwapSession,
 }: SessionsTabProps) {
-  const [agents, setAgents] = useState<RunningAgent[]>([]);
-  const [agentsLoading, setAgentsLoading] = useState(true);
-  const [fetchError, setFetchError] = useState<string | null>(null);
+  const { agents, agentsLoading, fetchError } = useRunningAgents();
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [contentMode, setContentMode] = useState<WatchingContentMode>("transcript");
@@ -197,35 +169,6 @@ export const SessionsTab = memo(function SessionsTab({
     return () => window.clearTimeout(timeout);
   }, [searchInput]);
 
-  const fetchAgents = useCallback(async () => {
-    const baseUrl = getBaseUrl();
-    try {
-      const response = await fetch(`${baseUrl}/api/agents/running`);
-      const data = response.ok ? await response.json() : { agents: [] };
-      setAgents(data.agents ?? data ?? []);
-      setFetchError(null);
-    } catch (error) {
-      console.error("Failed to fetch running agents:", error);
-      setFetchError("Failed to load running agents");
-    } finally {
-      setAgentsLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    const fetchNow = () => {
-      void fetchAgents();
-    };
-    const timeout = window.setTimeout(fetchNow, 0);
-    const interval = window.setInterval(() => {
-      void fetchAgents();
-    }, 5000);
-    return () => {
-      window.clearTimeout(timeout);
-      window.clearInterval(interval);
-    };
-  }, [fetchAgents]);
-
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       setExpiringIds((prev) => {
@@ -246,112 +189,27 @@ export const SessionsTab = memo(function SessionsTab({
   // writes filters.statuses and matchesSessionsFilters runs the predicate. The
   // agent-entries block below also gates on this — agents are by definition
   // live, so hide them when the user is looking at Expired only.
-  const statusMode: "live" | "expired" =
-    filters.statuses.size === 1 && filters.statuses.has("expired")
-      ? "expired"
-      : "live";
+  const statusMode = resolveSessionStatusMode(filters);
 
   const setStatusMode = useCallback(
-    (mode: "live" | "expired") => {
+    (mode: typeof statusMode) => {
       setFilters({
         ...filters,
-        statuses:
-          mode === "expired"
-            ? new Set<SessionStatus>(["expired"])
-            : new Set<SessionStatus>(DEFAULT_LIVE_STATUSES),
+        statuses: statusesForMode(mode),
       });
     },
     [filters, setFilters],
   );
 
-  const visibleSessions = useMemo(
-    () =>
-      getVisibleActivitySessions(sessions, {
-        chatSessionId,
-        expiringIds,
-        search,
-        filters,
-      }),
-    [chatSessionId, expiringIds, search, sessions, filters],
-  );
-
-  const entries: WatchingSessionEntry[] = useMemo(() => {
-    const agentEntries: WatchingSessionEntry[] =
-      statusMode === "live"
-        ? agents.reduce<WatchingSessionEntry[]>((nextEntries, agent) => {
-            const matchedSession = agent.session_id
-              ? visibleSessions.find((session) => session.id === agent.session_id)
-              : undefined;
-            if (!matchedSession) {
-              return nextEntries;
-            }
-            const sessionIsLocal = resolveLocalFlag(
-              matchedSession.is_local,
-              matchedSession.source,
-              matchedSession.model,
-            );
-            const agentIsLocal = resolveLocalFlag(
-              agent.is_local,
-              agent.provider,
-              agent.model,
-            );
-            nextEntries.push({
-              id: matchedSession.id,
-              type: "agent",
-              label: getSessionTitleText(matchedSession.title),
-              provider: matchedSession.source ?? agent.provider,
-              status: matchedSession.status,
-              sessionType: matchedSession.session_type,
-              externalId: matchedSession.external_id,
-              agentRunId: matchedSession.agent_run_id ?? agent.run_id,
-              runId: agent.run_id,
-              startedAt: agent.started_at,
-              updatedAt: matchedSession.updated_at,
-              seqNum: matchedSession.seq_num,
-              inputTokens: matchedSession.usage_input_tokens ?? 0,
-              outputTokens: matchedSession.usage_output_tokens ?? 0,
-              totalTokens:
-                (matchedSession.usage_input_tokens ?? 0) +
-                (matchedSession.usage_output_tokens ?? 0),
-              hasTmux: Boolean(matchedSession.terminal_context),
-              sandboxEnabled: matchedSession.sandbox_enabled ?? false,
-              isLocal: sessionIsLocal || agentIsLocal,
-            });
-            return nextEntries;
-          }, [])
-        : [];
-
-    const agentSessionIds = new Set(agentEntries.map((entry) => entry.id));
-    const sessionEntries = visibleSessions
-      .filter((session) => !agentSessionIds.has(session.id))
-      .map((session) => ({
-        id: session.id,
-        type: "session" as const,
-        label: getSessionTitleText(session.title),
-        provider: session.source,
-        status: session.status,
-        sessionType: session.session_type,
-        externalId: session.external_id,
-        agentRunId: session.agent_run_id,
-        updatedAt: session.updated_at,
-        seqNum: session.seq_num,
-        inputTokens: session.usage_input_tokens ?? 0,
-        outputTokens: session.usage_output_tokens ?? 0,
-        totalTokens: (session.usage_input_tokens ?? 0) + (session.usage_output_tokens ?? 0),
-        hasTmux: Boolean(session.terminal_context),
-        sandboxEnabled: session.sandbox_enabled ?? false,
-        isLocal: resolveLocalFlag(session.is_local, session.source, session.model),
-      }));
-
-    return [...agentEntries, ...sessionEntries].sort((a, b) => {
-      // Sort by ref (#N) descending. Entries without a seq (some agent rows)
-      // fall to the bottom and tiebreak by recency among themselves.
-      const aSeq = a.seqNum ?? -1;
-      const bSeq = b.seqNum ?? -1;
-      if (bSeq !== aSeq) return bSeq - aSeq;
-      return entryTimestamp(b) - entryTimestamp(a);
-    });
-  }, [agents, statusMode, visibleSessions]);
+  const entries = useWatchingSessionEntries({
+    agents,
+    chatSessionId,
+    expiringIds,
+    filters,
+    search,
+    sessions,
+    statusMode,
+  });
 
   const isLoading = isLoadingSessions || agentsLoading;
 
@@ -627,344 +485,87 @@ export const SessionsTab = memo(function SessionsTab({
 
   return (
     <div className="flex flex-col h-full">
-      <div className="activity-panel-toolbar">
-        <ActivityPanelSearch
-          value={searchInput}
-          onChange={setSearchInput}
-          placeholder="Search"
-        />
-        <SegmentedControl<"live" | "expired">
-          value={statusMode}
-          onChange={setStatusMode}
-          options={STATUS_MODE_OPTIONS}
-          ariaLabel="Session status filter"
-          size="md"
-          controlHeight="sm"
-          className="activity-panel-toolbar-segmented"
-        />
-        <button
-          type="button"
-          className="btn btn-accent btn-sm activity-panel-action-btn activity-filter-button"
-          onClick={() => setShowFilterDropdown((v) => !v)}
-          title="Filter sessions"
-          aria-label="Filter sessions"
-          aria-expanded={showFilterDropdown}
-        >
-          <svg
-            width="14"
-            height="14"
-            viewBox="0 0 24 24"
-            fill="none"
-            stroke="currentColor"
-            strokeWidth="2"
-            strokeLinecap="round"
-            strokeLinejoin="round"
-            aria-hidden="true"
-          >
-            <polygon points="22 3 2 3 10 12.46 10 19 14 21 14 12.46 22 3" />
-          </svg>
-          <span className="activity-panel-action-btn__label">Filter</span>
-          {activeFilterCount > 0 && (
-            <span className="activity-filter-badge">{activeFilterCount}</span>
-          )}
-        </button>
-        {showFilterDropdown && (
-          <SessionsFilterDropdown
-            filters={filters}
-            onChange={setFilters}
-            providerOptions={SESSION_PROVIDERS}
-            onClose={() => setShowFilterDropdown(false)}
-          />
-        )}
-      </div>
+      <SessionsTabToolbar
+        activeFilterCount={activeFilterCount}
+        filters={filters}
+        onFiltersChange={setFilters}
+        onSearchChange={setSearchInput}
+        onStatusModeChange={setStatusMode}
+        searchInput={searchInput}
+        showFilterDropdown={showFilterDropdown}
+        statusMode={statusMode}
+        toggleFilterDropdown={() => setShowFilterDropdown((v) => !v)}
+        closeFilterDropdown={() => setShowFilterDropdown(false)}
+      />
 
-      <div
-        className={`overflow-y-auto ${selectedSessionId ? "border-b border-border" : "flex-1"}`}
-        style={selectedSessionId ? { height: `${topHeight}%` } : undefined}
-      >
-        {isLoading && entries.length === 0 ? (
-          <ActivityPanelEmpty body="Loading sessions…" />
-        ) : fetchError && entries.length === 0 ? (
-          <ActivityPanelEmpty body={fetchError} />
-        ) : entries.length === 0 ? (
+      <SessionsEntryList
+        emptyState={
           <FilterEmptyState
             message={emptyListMessage}
             hasActiveFilters={hasActiveFilters}
             activeFilterCount={activeFilterCount}
             onClear={() => setFilters(defaultSessionsFilters())}
           />
-        ) : (
-          entries.map((entry) => {
-            const isSelected = entry.id === selectedSessionId;
-            const isPaused = entry.status !== "active";
-            const displayLabel = entry.seqNum
-              ? `#${entry.seqNum}: ${entry.label}`
-              : entry.label;
+        }
+        entries={entries}
+        fetchError={fetchError}
+        isLoading={isLoading}
+        onMenuButtonClick={handleMenuButtonClick}
+        onSelect={handleSelect}
+        selectedSessionId={selectedSessionId}
+        topHeight={topHeight}
+      />
 
-            return (
-              <div
-                key={`${entry.type}-${entry.id}`}
-                role="button"
-                tabIndex={0}
-                className={`session-entry${isSelected ? " session-entry--active" : ""}${isPaused ? " session-entry--paused" : ""}`}
-                onClick={() => handleSelect(entry.id)}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter" || e.key === " ") {
-                    e.preventDefault();
-                    handleSelect(entry.id);
-                  }
-                }}
-              >
-                <div className="flex items-center gap-2 min-w-0 flex-1">
-                  <ActivityRowStatusDot
-                    kind={
-                      entry.status === "active"
-                        ? "active"
-                        : entry.status === "expired"
-                          ? "stopped"
-                          : entry.status === "paused"
-                            ? "paused"
-                            : "warning"
-                    }
-                    pulse={entry.status === "active"}
-                    label={`Session ${entry.status}`}
-                  />
-                  <SourceIcon source={entry.provider} size={14} />
-                  <span className="activity-row-title">
-                    {displayLabel}
-                  </span>
-                </div>
-                <div className="flex items-center gap-1.5">
-                  {renderBadges(entry)}
-                  {entry.status !== "expired" && (
-                    <button
-                      className="session-more-btn"
-                      onClick={(event) => handleMenuButtonClick(event, entry)}
-                      title="Session actions"
-                      aria-label="Session actions"
-                    >
-                      <svg
-                        width="12"
-                        height="12"
-                        viewBox="0 0 24 24"
-                        fill="currentColor"
-                      >
-                        <circle cx="12" cy="5" r="2" />
-                        <circle cx="12" cy="12" r="2" />
-                        <circle cx="12" cy="19" r="2" />
-                      </svg>
-                    </button>
-                  )}
-                </div>
-              </div>
-            );
-          })
-        )}
-      </div>
-
-      {selectedSessionId && entries.length > 0 && (
-        <ResizeHandle
-          direction="vertical"
-          onResize={setTopHeight}
-          panelHeight={topHeight}
-          minHeight={15}
-          maxHeight={80}
-        />
-      )}
+      <SessionsTabResizeHandle
+        selectedSessionId={selectedSessionId}
+        entriesLength={entries.length}
+        topHeight={topHeight}
+        onResize={setTopHeight}
+      />
 
       {selectedSessionId && (
-        <div className="flex-1 flex flex-col min-h-0">
-          <div className="activity-panel-status-bar activity-panel-status-bar--detail">
-            <div className="min-w-0 flex-1">
-              <span className="activity-panel-status-bar__title">
-                <span className="activity-panel-status-bar__watching-prefix">
-                  Watching{" "}
-                </span>
-                {selectedEntry
-                  ? selectedEntry.seqNum
-                    ? `#${selectedEntry.seqNum}: ${selectedEntry.label}`
-                    : selectedEntry.label
-                  : "session"}
-              </span>
-            </div>
-            <div className="activity-panel-status-bar__actions">
-              {showSummaryButton && (
-                <button
-                  type="button"
-                  className="btn btn-accent btn-sm activity-panel-action-btn"
-                  onClick={() =>
-                    setContentMode((current) =>
-                      current === "summary" ? "transcript" : "summary",
-                    )
-                  }
-                  aria-label={contentMode === "summary" ? "Transcript" : "Summary"}
-                  title={contentMode === "summary" ? "Transcript" : "Summary"}
-                >
-                  {contentMode === "summary" ? (
-                    <>
-                      <TranscriptIcon />
-                      <span className="activity-panel-action-btn__label">
-                        Transcript
-                      </span>
-                    </>
-                  ) : (
-                    <>
-                      <ClipboardListIcon />
-                      <span className="activity-panel-action-btn__label">
-                        Summary
-                      </span>
-                    </>
-                  )}
-                </button>
-              )}
-              {showResumeButton && (
-                <button
-                  type="button"
-                  className="btn btn-accent btn-sm activity-panel-action-btn"
-                  onClick={() => {
-                    if (selectedSessionId) {
-                      void onResumeSession?.(selectedSessionId);
-                    }
-                  }}
-                  aria-label="Resume"
-                  title="Resume"
-                >
-                  <PlayIcon />
-                  <span className="activity-panel-action-btn__label">Resume</span>
-                </button>
-              )}
-              {showSwapButton && selectedEntry && (
-                <button
-                  type="button"
-                  className="btn btn-accent btn-sm activity-panel-action-btn"
-                  onClick={handleSwapSelectedSession}
-                  aria-label="Swap"
-                  title="Swap"
-                >
-                  <SwapIcon />
-                  <span className="activity-panel-action-btn__label">Swap</span>
-                </button>
-              )}
-            </div>
-          </div>
-
-          {sessionError && (
-            <div
-              role="alert"
-              className="flex items-center gap-2 border-b border-border px-3 py-2 text-sm text-[var(--color-error)]"
-            >
-              <span className="min-w-0 flex-1">{sessionError}</span>
-              <button
-                type="button"
-                className="flex h-6 w-6 shrink-0 items-center justify-center rounded text-[var(--color-error)] hover:bg-[color-mix(in_srgb,var(--color-error)_12%,transparent)]"
-                onClick={clearSessionError}
-                aria-label="Dismiss session error"
-                title="Dismiss"
-              >
-                &times;
-              </button>
-            </div>
-          )}
-
-          <ArtifactContext.Provider value={noopArtifactCtx}>
-            {contentMode === "summary" ? (
-              <div className="flex-1 overflow-y-auto p-4">
-                {summaryMarkdown ? (
-                  <div className="message-content">
-                    <MemoizedMarkdown
-                      content={summaryMarkdown}
-                      id={`watch-summary-${selectedSessionId}`}
-                    />
-                  </div>
-                ) : (
-                  <ActivityPanelEmpty body="No summary available" />
-                )}
-              </div>
-            ) : (
-              <WatchingTranscript
-                sessionId={selectedSessionId}
-                messages={messages}
-                isLoading={isLoadingDetail}
-                emptyStateMessage={transcriptEmptyStateMessage}
-                hasMore={hasMoreMessages}
-                loadMore={loadMoreMessages}
-                hasNewer={hasNewerMessages}
-                loadNewer={loadNewerMessages}
-                isLoadingOlder={isLoadingOlder}
-                isLoadingNewer={isLoadingNewer}
-                setTranscriptAtBottom={setTranscriptAtBottom}
-                firstItemIndex={firstItemIndex}
-                transcriptDegradedReason={transcriptDegradedReason}
-              />
-            )}
-          </ArtifactContext.Provider>
-        </div>
-      )}
-
-      {ctxMenu && (
-        <>
-          <div className="session-ctx-backdrop" onClick={closeCtxMenu} />
-          <div
-            className="session-ctx-menu"
-            style={{ position: "fixed", left: ctxMenu.x, top: ctxMenu.y }}
-          >
-            <button
-              className="session-ctx-item"
-              onClick={() => openModal("context", ctxMenu.entry)}
-            >
-              Send Context
-            </button>
-            {ctxMenu.entry.hasTmux && (
-              <>
-                <button
-                  className="session-ctx-item"
-                  onClick={() => openModal("keys", ctxMenu.entry)}
-                >
-                  Send Keys
-                </button>
-                <button
-                  className="session-ctx-item"
-                  onClick={() => openModal("pane", ctxMenu.entry)}
-                >
-                  Capture Pane
-                </button>
-              </>
-            )}
-            {ctxMenu.entry.status !== "expired" && (
-              <>
-                <div className="session-ctx-divider" />
-                <button
-                  className="session-ctx-item session-ctx-item--destructive"
-                  onClick={() => {
-                    const entry = ctxMenu.entry;
-                    closeCtxMenu();
-                    void handleExpire(entry);
-                  }}
-                >
-                  Expire Session
-                </button>
-              </>
-            )}
-          </div>
-        </>
-      )}
-
-      {modalMode && modalEntry && (
-        <SessionInteractionModal
-          open={true}
-          onClose={closeModal}
-          mode={modalMode}
-          entry={{
-            id: modalEntry.id,
-            type: modalEntry.type === "agent" ? "agent" : "cli",
-            label: modalEntry.label,
-            hasTmux: modalEntry.hasTmux,
-            runId: modalEntry.runId,
-            seqNum: modalEntry.seqNum,
-          }}
-          fromSessionId={chatSessionId ?? undefined}
+        <SessionsTabDetailPane
+          clearSessionError={clearSessionError}
+          contentMode={contentMode}
+          firstItemIndex={firstItemIndex}
+          hasMoreMessages={hasMoreMessages}
+          hasNewerMessages={hasNewerMessages}
+          isLoadingDetail={isLoadingDetail}
+          isLoadingNewer={isLoadingNewer}
+          isLoadingOlder={isLoadingOlder}
+          loadMoreMessages={loadMoreMessages}
+          loadNewerMessages={loadNewerMessages}
+          messages={messages}
+          noopArtifactCtx={noopArtifactCtx}
+          onResumeSession={onResumeSession}
+          onSwapSelectedSession={handleSwapSelectedSession}
+          selectedEntry={selectedEntry}
+          selectedSessionId={selectedSessionId}
+          sessionError={sessionError}
+          setContentMode={setContentMode}
+          setTranscriptAtBottom={setTranscriptAtBottom}
+          showResumeButton={showResumeButton}
+          showSummaryButton={showSummaryButton}
+          showSwapButton={showSwapButton}
+          summaryMarkdown={summaryMarkdown}
+          transcriptDegradedReason={transcriptDegradedReason}
+          transcriptEmptyStateMessage={transcriptEmptyStateMessage}
         />
       )}
+
+      <SessionsContextMenu
+        closeCtxMenu={closeCtxMenu}
+        ctxMenu={ctxMenu}
+        handleExpire={handleExpire}
+        openModal={openModal}
+      />
+
+      <SessionsInteractionModalHost
+        chatSessionId={chatSessionId}
+        closeModal={closeModal}
+        modalEntry={modalEntry}
+        modalMode={modalMode}
+      />
     </div>
   );
 });
