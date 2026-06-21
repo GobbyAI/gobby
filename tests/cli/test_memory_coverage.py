@@ -166,7 +166,7 @@ class TestUpdateMemoryError:
     ) -> None:
         mock_manager.update_memory = AsyncMock(side_effect=ValueError("not found"))
         result = runner.invoke(memory, ["update", "mem-1", "--content", "new"])
-        assert result.exit_code == 0
+        assert result.exit_code == 1
         assert "Error: not found" in result.output
 
 

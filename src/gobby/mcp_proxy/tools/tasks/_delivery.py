@@ -172,11 +172,16 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
             effective_target_repo = normalize_github_repo(
                 target_repo or campaign.get("target_repo") or effective_source_repo
             )
-            effective_source_branch = _resolve_source_branch(
-                source_branch=source_branch,
-                worktree=worktree,
-                repo_path=_repo_path(ctx, project_id, worktree),
-            )
+            repo_path: str | None = None
+            if source_branch:
+                effective_source_branch = source_branch
+            else:
+                repo_path = _repo_path(ctx, project_id, worktree)
+                effective_source_branch = _resolve_source_branch(
+                    source_branch=source_branch,
+                    worktree=worktree,
+                    repo_path=repo_path,
+                )
             effective_target_branch = (
                 target_branch
                 or getattr(worktree, "base_branch", None)
@@ -207,9 +212,10 @@ def create_delivery_registry(ctx: RegistryContext) -> InternalToolRegistry:
                     "pushed": False,
                 }
 
-            repo_path = _repo_path(ctx, project_id, worktree)
             pushed = False
             if push:
+                if repo_path is None:
+                    repo_path = _repo_path(ctx, project_id, worktree)
                 _push_branch(
                     repo_path=repo_path,
                     source_branch=effective_source_branch,

@@ -101,6 +101,7 @@ class TestGobbyRunnerInit:
             api_base=None,
             api_key="sk-secret",
             dim=1536,
+            query_prefix=None,
         )
         mock_vector_store.assert_called_once_with(
             url="http://qdrant:6333",

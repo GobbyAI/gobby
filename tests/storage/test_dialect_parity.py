@@ -84,19 +84,21 @@ class _VectorStoreStub:
 
     async def search(
         self,
-        _embedding: list[float],
+        query_embedding: list[float],
         *,
         limit: int,
         filters: dict[str, Any] | None = None,
     ) -> list[tuple[str, float]]:
+        _ = (query_embedding, filters)
         return self.hits[:limit]
 
     async def upsert(
         self,
-        _memory_id: str,
-        _embedding: list[float],
-        _payload: dict[str, Any],
+        memory_id: str,
+        embedding: list[float],
+        payload: dict[str, Any],
     ) -> None:
+        _ = (memory_id, embedding, payload)
         return None
 
 

@@ -318,17 +318,11 @@ class ChatSessionMessagesMixin:
                                     needs_spacing_before_text = True
 
             except ExceptionGroup as eg:
-                expected_errors, unexpected_errors = eg.split(_EXPECTED_CHAT_ERRORS)
-                if unexpected_errors is not None:
-                    raise unexpected_errors from eg
-                assert expected_errors is not None
-                yield TextChunk(
-                    content=f"Generation failed: {format_exception_group(expected_errors)}"
-                )
+                yield TextChunk(content=f"Generation failed: {format_exception_group(eg)}")
                 if context_window is None:
                     context_window = self._resolve_context_window_fallback()
                 yield DoneEvent(tool_calls_count=tool_calls_count, context_window=context_window)
-            except _EXPECTED_CHAT_ERRORS as e:
+            except Exception as e:
                 logger.error("ChatSession %s error: %s", self.conversation_id, e, exc_info=True)
                 yield TextChunk(content=f"Generation failed: {sanitize_error(e)}")
                 if context_window is None:

@@ -92,6 +92,8 @@ async def _web_origin_session_id(
     target_id = getattr(target_session, "id", None)
     if isinstance(target_id, str) and target_id:
         return target_id
+    if web_session_id and web_session_id != "web-ui":
+        return web_session_id
     raise RuntimeError("target session has no id")
 
 

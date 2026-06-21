@@ -68,7 +68,7 @@ def _validate_memory_embedding_config(
         api_base=emb_cfg.api_base,
         api_key=api_key if api_key is not None else emb_cfg.api_key,
         dim=emb_cfg.dim,
-        query_prefix=emb_cfg.query_prefix,
+        query_prefix=_embedding_query_prefix(emb_cfg),
     )
     if service.is_configured():
         return
@@ -93,6 +93,11 @@ def _resolve_embedding_api_key(runner: GobbyRunner, emb_cfg: EmbeddingsConfig) -
     return None
 
 
+def _embedding_query_prefix(emb_cfg: EmbeddingsConfig) -> str | None:
+    value = getattr(emb_cfg, "query_prefix", None)
+    return value if isinstance(value, str) and value else None
+
+
 def _init_memory_stack(runner: GobbyRunner) -> None:
     runner.vector_store = None
     runner.memory_manager = None
@@ -115,7 +120,7 @@ def _init_memory_stack(runner: GobbyRunner) -> None:
                     api_base=emb_cfg.api_base,
                     api_key=embedding_api_key,
                     dim=emb_cfg.dim,
-                    query_prefix=emb_cfg.query_prefix,
+                    query_prefix=_embedding_query_prefix(emb_cfg),
                 )
                 embed_fn = embedding_service.generate_embedding
 

@@ -11,6 +11,7 @@ from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 from gobby.storage.sessions import _crud as session_crud
 from gobby.storage.sessions import _field_update as session_field_update
 from gobby.storage.sessions import _upsert as session_upsert
+from gobby.storage.sessions import _web_chat_crud as session_web_chat_crud
 from gobby.storage.sessions._title_defaults import PROVISIONAL_TITLE_SOURCE
 
 pytestmark = pytest.mark.unit
@@ -19,10 +20,11 @@ pytestmark = pytest.mark.unit
 def test_session_registration_boolean_case_is_postgres_safe() -> None:
     source = inspect.getsource(session_crud)
     upsert_source = inspect.getsource(session_upsert)
+    web_chat_source = inspect.getsource(session_web_chat_crud)
 
     assert "CASE WHEN ? THEN 1 ELSE is_local END" not in source
     assert "CASE WHEN ? THEN TRUE ELSE is_local END" not in source
-    assert "is_local = %s" in source
+    assert "is_local = %s" in web_chat_source
     assert "WHEN ? = -1 THEN is_local" not in upsert_source
     assert "WHEN ? THEN TRUE" not in upsert_source
     assert "WHEN %s THEN %s" in upsert_source

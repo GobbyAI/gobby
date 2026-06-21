@@ -56,6 +56,7 @@ class _TableConfig:
     # visibility gate cannot be expressed there. Memory keyword search uses this to keep
     # soft-hidden rows (``deleted_at IS NOT NULL``) out of recall.
     active_clause: str | None = None
+    tie_break_columns: tuple[str, ...] = ("id",)
 
 
 _TABLE_CONFIGS: dict[str, _TableConfig] = {
@@ -77,6 +78,7 @@ _TABLE_CONFIGS: dict[str, _TableConfig] = {
         postgres_columns=("content", "tags_text"),
         filters={"project_id": "project_id"},
         active_clause="deleted_at IS NULL",
+        tie_break_columns=("created_at", "id"),
     ),
     "skills": _TableConfig(
         table="skills",
@@ -157,11 +159,14 @@ class BM25SearchBackend:
             where.append(self._config.active_clause)
 
         limit_placeholder = _add_param(self._hub, params, limit)
+        order_by = ", ".join(
+            ["score DESC", *(f"{column} ASC" for column in self._config.tie_break_columns)]
+        )
         sql = f"""
             SELECT id, pdb.score(id) AS score
               FROM {self._config.table}
              WHERE {" AND ".join(where)}
-             ORDER BY score DESC, id ASC
+             ORDER BY {order_by}
              LIMIT {limit_placeholder}
         """
 

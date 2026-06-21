@@ -126,6 +126,7 @@ def canonicalize_call_tool_wrapper(
 
     # Only unwrap nested payloads when routing came from the nested wrapper; top-level
     # server/tool values preserve malformed target arguments for downstream validation.
+    unwrapped_nested_arguments = False
     if wrapper_route_from_nested and isinstance(canonical_arguments, dict):
         for field in CALL_TOOL_ARGUMENT_FIELDS:
             if field in canonical_arguments:
@@ -136,9 +137,14 @@ def canonicalize_call_tool_wrapper(
                     canonical_arguments = dict(raw_nested_arguments)
                 else:
                     canonical_arguments = raw_nested_arguments
+                unwrapped_nested_arguments = True
                 break
 
-    if isinstance(canonical_arguments, dict):
+    if (
+        isinstance(canonical_arguments, dict)
+        and wrapper_route_from_nested
+        and not unwrapped_nested_arguments
+    ):
         for field in CALL_TOOL_WRAPPER_FIELDS:
             canonical_arguments.pop(field, None)
 

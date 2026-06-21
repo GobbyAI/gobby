@@ -21,9 +21,7 @@ from gobby.storage.tasks._models import (
     TaskClosedError,
 )
 from gobby.storage.tasks._read import get_task
-from gobby.storage.tasks._stage_states import (
-    StageStatesManager,
-)
+from gobby.storage.tasks._stage_states import StageStatesManager
 from gobby.storage.tasks._stage_types import NoCurrentStageError
 from gobby.storage.tasks._stage_utils import _close_task_in_txn
 from gobby.storage.tasks._updates import update_task

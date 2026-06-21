@@ -1,3 +1,0 @@
-name: pipeline-worker
-deprecated: true
-replacement: pipeline-runner

@@ -181,9 +181,9 @@ class GobbyDaemonTools:
         Args:
             server_name: Target MCP server name.
             tool_name: Tool to call on the server.
-            arguments: Tool arguments (dict or JSON string). Nested wrapper
-                copies of server_name/tool_name/project_id are stripped before
-                target dispatch; arguments.session_id remains a target argument.
+            arguments: Tool arguments (dict or JSON string). When routing fields
+                are supplied at top level, route-like names inside arguments
+                belong to the target tool.
             session_id: Wrapper context for context resolution and workflow checks.
                 Use arguments.session_id only to target a different session.
                 Local #N refs resolve in the caller project; cross-project

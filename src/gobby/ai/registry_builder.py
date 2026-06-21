@@ -104,6 +104,8 @@ def _feature_candidate_models_by_provider(
                 continue
             normalized_provider = _normalize_provider(provider)
             normalized_model = _normalize_binding_model(normalized_provider, model)
+            if normalized_provider == "claude" and normalized_model not in {"haiku", "sonnet"}:
+                continue
             provider_models = models_by_provider.setdefault(normalized_provider, [])
             if normalized_model not in provider_models:
                 provider_models.append(normalized_model)

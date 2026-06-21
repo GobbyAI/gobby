@@ -51,7 +51,10 @@ class TmuxPaneMonitor:
         if config is None:
             from gobby.agents.tmux import get_configured_tmux_config
 
-            config = get_configured_tmux_config()
+            try:
+                config = get_configured_tmux_config()
+            except RuntimeError:
+                config = TmuxConfig()
         self._config = config
         self._poll_interval = poll_interval
         self._session_manager = session_manager

@@ -53,19 +53,19 @@ def _expanded_epic(
 @pytest.mark.asyncio
 async def test_build_readiness_cascades_manifests_and_current_stage_projection(
     temp_db,
-    sample_project,
+    sample_git_project,
 ) -> None:
     from gobby.agents.sync import sync_bundled_agents
 
     sync_bundled_agents(temp_db)
     task_manager = LocalTaskManager(temp_db)
-    epic, leaves = _expanded_epic(task_manager, sample_project["id"])
+    epic, leaves = _expanded_epic(task_manager, sample_git_project["id"])
 
     result = await build(
         f"#{epic.seq_num}",
         _options(),
         db=temp_db,
-        project_id=sample_project["id"],
+        project_id=sample_git_project["id"],
     )
 
     subtree = [task_manager.get_task(epic.id), *[task_manager.get_task(leaf.id) for leaf in leaves]]
@@ -91,6 +91,6 @@ async def test_build_readiness_cascades_manifests_and_current_stage_projection(
         )
 
     candidate_ids = {
-        task.id for task in list_automation_candidates(temp_db, project_id=sample_project["id"])
+        task.id for task in list_automation_candidates(temp_db, project_id=sample_git_project["id"])
     }
     assert {task.id for task in subtree} <= candidate_ids

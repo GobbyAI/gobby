@@ -11,7 +11,6 @@ from typing import Any, Protocol
 from urllib.parse import urlparse
 
 import httpx
-from openai import BadRequestError
 
 from gobby.config.ai import LocalGenerationEndpointConfig
 from gobby.llm.base import LLMTextResult
@@ -110,7 +109,7 @@ def _is_unsupported_parameter_error(error: BaseException, parameter: str) -> boo
     )
 
 
-def _is_unsupported_json_mode_error(error: BadRequestError) -> bool:
+def _is_unsupported_json_mode_error(error: BaseException) -> bool:
     message = str(error).lower()
     mentions_json_mode = (
         "response_format" in message or "json_object" in message or "json mode" in message
@@ -294,7 +293,7 @@ class OpenAICompatibleLocalProviderAdapter:
             request["reasoning_effort"] = reasoning_effort
         try:
             response = await self._client.chat.completions.create(**request)
-        except BadRequestError as json_mode_err:
+        except Exception as json_mode_err:
             if not _is_unsupported_json_mode_error(json_mode_err):
                 raise
             logger.debug(

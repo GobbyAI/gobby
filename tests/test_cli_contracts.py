@@ -317,7 +317,7 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     contract = _contract("gcode")
     commands = {command["name"] for command in contract["commands"]}
 
-    assert contract["contract_version"] == 1
+    assert contract["contract_version"] == 2
     assert {
         "index",
         "search",

@@ -129,7 +129,8 @@ def _is_legacy_gobby_hook_script(command: str) -> bool:
     """Return whether a command references an old direct Gobby hook script."""
     legacy_names = {"hook_dispatcher.py", "hook.py"}
     for token in command.replace("\\", "/").split():
-        if any(part in legacy_names for part in token.split("/")):
+        filename = token.strip("\"'").rsplit("/", 1)[-1]
+        if filename in legacy_names:
             return True
     return False
 
