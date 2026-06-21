@@ -117,9 +117,9 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
     let index = rendered_doc(&docs, "code/concepts/index.md");
     assert!(index.contains("type: code_concept_tree"));
     assert!(index.contains("## Concept Tree"));
-    assert!(index.contains("[[code/concepts/query-engine|Query Engine]]"));
+    assert!(index.contains("[[code/concepts/src|Query Engine]]"));
 
-    let concept = rendered_doc(&docs, "code/concepts/query-engine.md");
+    let concept = rendered_doc(&docs, "code/concepts/src.md");
     assert!(concept.contains("type: code_concept"));
     // Content pass: a multi-section body with a table row and a real citation.
     assert!(concept.contains("## Purpose"), "{concept}");
@@ -135,10 +135,10 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
     // Curated frontmatter is range-free (bounded provenance, commit 5).
     assert!(!concept.contains("ranges:"), "{concept}");
 
-    let narrative = rendered_doc(&docs, "code/narrative/introduction.md");
+    let narrative = rendered_doc(&docs, "code/narrative/01-introduction.md");
     assert!(narrative.contains("type: code_narrative"));
     assert!(narrative.contains("## Why this matters"), "{narrative}");
-    assert!(narrative.contains("[[code/concepts/query-engine|Query Engine]]"));
+    assert!(narrative.contains("[[code/concepts/src|Query Engine]]"));
     assert!(narrative.contains("[[code/modules/src|src]]"));
 }
 
@@ -147,11 +147,11 @@ fn curated_navigation_falls_back_to_structural_concepts_without_ai() {
     let docs = generate_hierarchical_docs(&concept_input(), None);
     let repo = rendered_doc(&docs, "code/repo.md");
     let index = rendered_doc(&docs, "code/concepts/index.md");
-    let introduction = rendered_doc(&docs, "code/narrative/introduction.md");
+    let introduction = rendered_doc(&docs, "code/narrative/01-introduction.md");
 
     assert!(repo.contains("[[code/concepts/index|Concept tree and narrative tours]]"));
     assert!(index.contains("## Concept Tree"));
-    assert!(index.contains("[[code/narrative/introduction|Introduction]]"));
+    assert!(index.contains("[[code/narrative/01-introduction|Introduction]]"));
     assert!(introduction.contains("type: code_narrative"));
     assert!(introduction.contains("provenance:"));
     // --ai off still yields a structural multi-section body, not a bare summary.
@@ -174,7 +174,7 @@ fn repo_leads_with_start_here_and_demotes_reference_appendix() {
 
     // The guided tour entry point is the first link a reader sees.
     assert!(
-        repo.contains("[[code/narrative/introduction|Introduction]]"),
+        repo.contains("[[code/narrative/01-introduction|Introduction]]"),
         "{repo}"
     );
 
@@ -203,20 +203,20 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
         assert!(doc.contains("## Start here — guided tour"), "{path}: {doc}");
         assert!(
             doc.contains(
-                "New to this codebase? Begin with [[code/narrative/introduction|Introduction]]."
+                "New to this codebase? Begin with [[code/narrative/01-introduction|Introduction]]."
             ),
             "{path}: {doc}"
         );
         assert!(
-            doc.contains("1. [[code/narrative/introduction|Introduction]]"),
+            doc.contains("1. [[code/narrative/01-introduction|Introduction]]"),
             "{path}: {doc}"
         );
         assert!(
-            doc.contains("2. [[code/narrative/architecture|Architecture]]"),
+            doc.contains("2. [[code/narrative/02-architecture|Architecture]]"),
             "{path}: {doc}"
         );
         assert!(
-            doc.contains("3. [[code/narrative/data-flow|Data Flow]]"),
+            doc.contains("3. [[code/narrative/03-data-flow|Data Flow]]"),
             "{path}: {doc}"
         );
         assert!(doc.contains("`gwiki ask"), "{path}: {doc}");
@@ -224,27 +224,27 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
     }
 
     // Sequential reciprocal chapter nav along the spine.
-    let intro = rendered_doc(&docs, "code/narrative/introduction.md");
+    let intro = rendered_doc(&docs, "code/narrative/01-introduction.md");
     assert!(!intro.contains("← Previous"), "{intro}");
     assert!(
-        intro.contains("Next →: [[code/narrative/architecture|Architecture]]"),
+        intro.contains("Next →: [[code/narrative/02-architecture|Architecture]]"),
         "{intro}"
     );
 
-    let arch = rendered_doc(&docs, "code/narrative/architecture.md");
+    let arch = rendered_doc(&docs, "code/narrative/02-architecture.md");
     assert!(arch.contains("## Continue the tour"), "{arch}");
     assert!(
-        arch.contains("← Previous: [[code/narrative/introduction|Introduction]]"),
+        arch.contains("← Previous: [[code/narrative/01-introduction|Introduction]]"),
         "{arch}"
     );
     assert!(
-        arch.contains("Next →: [[code/narrative/data-flow|Data Flow]]"),
+        arch.contains("Next →: [[code/narrative/03-data-flow|Data Flow]]"),
         "{arch}"
     );
 
-    let data_flow = rendered_doc(&docs, "code/narrative/data-flow.md");
+    let data_flow = rendered_doc(&docs, "code/narrative/03-data-flow.md");
     assert!(
-        data_flow.contains("← Previous: [[code/narrative/architecture|Architecture]]"),
+        data_flow.contains("← Previous: [[code/narrative/02-architecture|Architecture]]"),
         "{data_flow}"
     );
 }
@@ -312,7 +312,7 @@ fn verify_pass_records_notes_without_stripping_curated_page() {
 
     let concept = docs
         .iter()
-        .find(|doc| doc.path == "code/concepts/query-engine.md")
+        .find(|doc| doc.path == "code/concepts/src.md")
         .map(|doc| doc.content.as_str())
         .expect("concept page");
 

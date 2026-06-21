@@ -463,6 +463,11 @@ pub struct CodewikiRunSummary {
     pub modules: usize,
     pub symbols: usize,
     pub ai_enabled: bool,
+    /// Pages whose AI content pass failed and fell back to the structural body
+    /// this run (#900). Empty on a fully healthy run. Surfaced here (and logged
+    /// to stderr) so curated/page degradation is visible instead of silently
+    /// cached as healthy.
+    pub degraded_pages: Vec<String>,
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize)]

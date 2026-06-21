@@ -105,7 +105,10 @@ pub(super) fn render_curated_navigation_docs(
         docs.push(BuiltDoc {
             path: concept_doc_path(&concept.slug),
             content: render_concept_page(concept, &spans, degraded),
-            degraded,
+            // A failed content pass falls back to the structural body — record
+            // that honestly so the meta cache and the run summary surface it
+            // instead of caching the page as healthy (#900).
+            degraded: degraded || concept.body_degraded,
             summary: Some(concept.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
             invalidation_key: None,
@@ -122,7 +125,9 @@ pub(super) fn render_curated_navigation_docs(
         docs.push(BuiltDoc {
             path: narrative_doc_path(&page.slug),
             content: render_narrative_page(page, &spans, &concept_titles, degraded, prev, next),
-            degraded,
+            // See the concept page above: a structural-fallback narrative is
+            // degraded, not healthy, so the cache and summary must say so (#900).
+            degraded: degraded || page.body_degraded,
             summary: Some(page.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
             invalidation_key: None,

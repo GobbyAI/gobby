@@ -190,6 +190,7 @@ fn run_summary_serializes_daemon_contract_keys() {
         modules: 1,
         symbols: 4,
         ai_enabled: false,
+        degraded_pages: Vec::new(),
     };
 
     let value = serde_json::to_value(summary).expect("summary json");

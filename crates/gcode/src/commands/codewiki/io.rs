@@ -106,6 +106,11 @@ pub(crate) struct DocSink<'a> {
     generated_docs: Vec<String>,
     previous_snapshot: Option<CodewikiIndexSnapshot>,
     prune_scope: DocPruneScope,
+    /// Pages actually written with `degraded = true` this run (a failed AI pass
+    /// fell back to the structural body, #900). Excludes unchanged skips, which
+    /// keep their previous healthy meta. Surfaced via `degraded_docs()` so the
+    /// run reports degradation instead of silently caching it.
+    degraded_docs: Vec<String>,
     /// Files git reported as possibly-changed since the `--since` ref (Leaf H,
     /// #893). When `Some`, a source-provenance page whose own sources and
     /// neighbors are all outside the diff is left exactly as it is on disk —
@@ -145,6 +150,7 @@ impl<'a> DocSink<'a> {
             generated_docs: Vec::new(),
             previous_snapshot: previous.index_snapshot,
             prune_scope,
+            degraded_docs: Vec::new(),
             since: None,
         })
     }
@@ -222,6 +228,9 @@ impl<'a> DocSink<'a> {
         } else {
             write_doc(self.out_dir, &doc.path, &doc.content)?;
             self.generated_docs.push(doc.path.clone());
+            if doc.degraded {
+                self.degraded_docs.push(doc.path.clone());
+            }
             CodewikiDocMeta {
                 source_hashes,
                 degraded: doc.degraded,
@@ -244,6 +253,12 @@ impl<'a> DocSink<'a> {
         Ok(!unchanged)
     }
 
+    /// Pages written with a degraded structural fallback this run (#900), in
+    /// build order. Read before `finish` consumes the sink.
+    pub(crate) fn degraded_docs(&self) -> &[String] {
+        &self.degraded_docs
+    }
+
     fn flush(&self) -> anyhow::Result<()> {
         let meta = CodewikiMeta {
             docs: self.next_docs.clone(),
@@ -263,12 +278,28 @@ impl<'a> DocSink<'a> {
         mut self,
         index_snapshot: Option<CodewikiIndexSnapshot>,
     ) -> anyhow::Result<Vec<String>> {
-        let stale = self
+        // Reclaim every page the completed run did not (re)produce, unioning
+        // two sources both gated by `prune_scope` (so a scoped run still only
+        // touches in-scope pages):
+        //   1. tracked meta entries carried over from the previous run that
+        //      were not regenerated this run — slug churn, a deleted source.
+        //   2. on-disk `code/**.md` pages absent from the meta entirely — a
+        //      cleared `_meta/codewiki.json` (the "delete the cache to force a
+        //      clean run" workflow) or a narrative chapter whose AI-derived slug
+        //      changed before the deterministic-slug scheme landed. The cache-
+        //      only prune (1) can never see these, so a churned page used to
+        //      linger as a broken-link / degraded orphan (#900).
+        let mut stale = self
             .next_docs
             .keys()
             .filter(|key| !self.seen.contains(*key) && self.prune_scope.should_prune(key))
             .cloned()
-            .collect::<Vec<_>>();
+            .collect::<BTreeSet<_>>();
+        for doc_path in collect_generated_doc_pages(self.out_dir)? {
+            if !self.seen.contains(&doc_path) && self.prune_scope.should_prune(&doc_path) {
+                stale.insert(doc_path);
+            }
+        }
         for stale_path in stale {
             let target = safe_doc_path(self.out_dir, &stale_path)?;
             reject_symlinked_doc_path(self.out_dir, &target)?;
@@ -288,6 +319,44 @@ impl<'a> DocSink<'a> {
         write_codewiki_meta(self.out_dir, &meta)?;
         Ok(self.generated_docs)
     }
+}
+
+/// On-disk `.md` pages under the codewiki-owned `code/` tree, as out-dir-relative
+/// slash paths (e.g. `code/narrative/01-introduction.md`). Drives `finish`'s
+/// cache-independent orphan GC (#900): a page on disk but absent from this run's
+/// `seen` set is reclaimed even when the meta log never listed it. Scoped to
+/// `code/` so the rest of the vault — the gwiki research notes, `.obsidian/`,
+/// `_meta/` — is never walked. Symlinks are not followed and never returned,
+/// matching `reject_symlinked_doc_path`.
+fn collect_generated_doc_pages(out_dir: &Path) -> anyhow::Result<Vec<String>> {
+    let code_root = out_dir.join("code");
+    if !code_root.is_dir() {
+        return Ok(Vec::new());
+    }
+    let mut pages = Vec::new();
+    let mut stack = vec![code_root];
+    while let Some(dir) = stack.pop() {
+        for entry in std::fs::read_dir(&dir)? {
+            let entry = entry?;
+            let file_type = entry.file_type()?;
+            if file_type.is_symlink() {
+                continue;
+            }
+            let path = entry.path();
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file()
+                && path.extension().is_some_and(|ext| ext == "md")
+                && let Ok(rel) = path.strip_prefix(out_dir)
+            {
+                pages.push(
+                    rel.to_string_lossy()
+                        .replace(std::path::MAIN_SEPARATOR, "/"),
+                );
+            }
+        }
+    }
+    Ok(pages)
 }
 
 fn scoped_file_doc(doc_path: &str) -> Option<&str> {

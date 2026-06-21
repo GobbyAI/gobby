@@ -151,16 +151,11 @@ pub(super) fn normalize_concepts(
         .map(|file| file.path.as_str())
         .collect::<std::collections::BTreeSet<_>>();
 
-    concepts
+    let mut concepts = concepts
         .into_iter()
         .filter_map(|mut concept| {
             concept.title = concept.title.trim().to_string();
             concept.summary = concept.summary.trim().to_string();
-            concept.slug = slugify(if concept.slug.trim().is_empty() {
-                &concept.title
-            } else {
-                &concept.slug
-            });
             concept
                 .modules
                 .retain(|module| known_modules.contains(module.as_str()));
@@ -171,13 +166,38 @@ pub(super) fn normalize_concepts(
             concept.files.truncate(MAX_CONCEPT_LINKS);
             if concept.title.is_empty() || (concept.modules.is_empty() && concept.files.is_empty())
             {
-                None
-            } else {
-                Some(concept)
+                return None;
             }
+            // Stable, churn-free slug (#900): derive the slug from the concept's
+            // members, not the volatile AI title. The lexicographically smallest
+            // member module/file is a deterministic identity that survives the
+            // planner re-titling or re-grouping this concept, so cross-page links
+            // to it stay valid across regens instead of dangling when the title
+            // changes. (Mirrors the module-derived slug the fallback plan uses.)
+            concept.slug = concept
+                .modules
+                .iter()
+                .chain(concept.files.iter())
+                .min()
+                .map(|member| slugify(member))
+                .unwrap_or_else(|| slugify(&concept.title));
+            Some(concept)
         })
         .take(MAX_CONCEPT_MODULES)
-        .collect()
+        .collect::<Vec<_>>();
+
+    // Deterministic de-duplication: if two concepts resolve to the same member
+    // slug, later ones (in plan order) take a stable numeric suffix so a link
+    // never resolves to the wrong concept page.
+    let mut seen = std::collections::BTreeMap::<String, usize>::new();
+    for concept in &mut concepts {
+        let count = seen.entry(concept.slug.clone()).or_insert(0);
+        if *count > 0 {
+            concept.slug = format!("{}-{}", concept.slug, *count + 1);
+        }
+        *count += 1;
+    }
+    concepts
 }
 
 pub(super) fn normalize_sections(
@@ -302,14 +322,111 @@ pub(super) fn normalize_narrative_pages(
         }
     }
     ordered.extend(extras);
+    // Deterministic, reading-ordered slugs (#900). The in-memory tour order is
+    // the canonical sequence, so pin each chapter's on-disk slug to its 1-based
+    // position. This sorts the narrative folder in tour order instead of
+    // alphabetically and — paired with the orphan GC in `DocSink::finish` —
+    // reclaims a churned chapter's old page instead of leaving a broken-link /
+    // degraded orphan.
+    //
+    // Every chapter gets a readable, position-ordered slug `NN-<title>`
+    // (`01-introduction`, `04-getting-started-setup-configuration`, ...). The
+    // ordinal prefix pins tour order on disk and keeps slugs unique across
+    // chapters. The fixed spine titles never churn; an *extra* chapter's title
+    // is volatile, so a re-title moves it to a new `NN-<title>` page — but the
+    // orphan GC in `DocSink::finish` reclaims the old one, and the curated layer
+    // (the only thing that links extras) is regenerated in the same run, so no
+    // cross-page link dangles. A title that slugifies to nothing falls back to
+    // the bare ordinal so a page is never named `NN-`.
+    for (index, page) in ordered.iter_mut().enumerate() {
+        let ordinal = index + 1;
+        page.slug = if page.slug.is_empty() {
+            format!("{ordinal:02}")
+        } else {
+            format!("{ordinal:02}-{}", page.slug)
+        };
+    }
     ordered
 }
 
-fn concept_key_map(concepts: &[ConceptModule]) -> std::collections::BTreeMap<&str, String> {
+fn concept_key_map(concepts: &[ConceptModule]) -> std::collections::BTreeMap<String, String> {
     let mut map = std::collections::BTreeMap::new();
     for concept in concepts {
-        map.insert(concept.title.as_str(), concept.slug.clone());
-        map.insert(concept.slug.as_str(), concept.slug.clone());
+        // Map every identifier the planner might use to reference a concept in a
+        // narrative page to its final member-derived slug: the title, the
+        // title-derived slug (the planner's previous default identifier, still
+        // emitted by some plans), and the final slug itself. Keeps narrative ->
+        // concept links resolving now that the slug no longer comes from the
+        // title (#900).
+        map.insert(concept.title.clone(), concept.slug.clone());
+        map.insert(slugify(&concept.title), concept.slug.clone());
+        map.insert(concept.slug.clone(), concept.slug.clone());
     }
     map
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn narrative_page(slug: &str, title: &str) -> NarrativePage {
+        NarrativePage {
+            slug: slug.to_string(),
+            title: title.to_string(),
+            summary: "Tour summary linking into the reference.".to_string(),
+            concepts: Vec::new(),
+            modules: Vec::new(),
+            files: Vec::new(),
+            body: None,
+            body_degraded: false,
+            verify_notes: Vec::new(),
+        }
+    }
+
+    // Every chapter — spine and extra alike — gets a readable, position-ordered
+    // `NN-<title>` slug. The ordinal prefix fixes tour order on disk; the title
+    // suffix keeps the file name legible (#900).
+    #[test]
+    fn narrative_extras_get_readable_ordinal_slugs() {
+        let pages = vec![
+            narrative_page("introduction", "Introduction"),
+            narrative_page("cli-entrypoints", "CLI Entrypoints"),
+            narrative_page("indexing-pipeline", "Indexing Pipeline"),
+        ];
+        let ordered = normalize_narrative_pages(pages, &[], &[], &[]);
+        let slugs: Vec<&str> = ordered.iter().map(|page| page.slug.as_str()).collect();
+        assert_eq!(
+            slugs,
+            vec![
+                "01-introduction",
+                "02-architecture",
+                "03-data-flow",
+                "04-cli-entrypoints",
+                "05-indexing-pipeline"
+            ]
+        );
+    }
+
+    // Re-titling an extra chapter moves it to a new readable slug while the
+    // ordinal prefix holds its tour position: position 4 stays `04-*`, but the
+    // suffix tracks the title. The orphan GC reclaims the old page and the
+    // curated layer (the only linker of extras) regenerates in the same run, so
+    // nothing dangles (#900).
+    #[test]
+    fn re_titled_extra_tracks_its_title_slug() {
+        let before = normalize_narrative_pages(
+            vec![narrative_page("cli-entrypoints", "CLI Entrypoints")],
+            &[],
+            &[],
+            &[],
+        );
+        let after = normalize_narrative_pages(
+            vec![narrative_page("cli-runtime", "CLI Runtime")],
+            &[],
+            &[],
+            &[],
+        );
+        assert_eq!(before[3].slug, "04-cli-entrypoints");
+        assert_eq!(after[3].slug, "04-cli-runtime");
+    }
 }

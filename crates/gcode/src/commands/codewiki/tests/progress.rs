@@ -109,6 +109,7 @@ fn codewiki_verbose_progress_not_serialized_in_summary_json() {
         modules: 1,
         symbols: 3,
         ai_enabled: true,
+        degraded_pages: Vec::new(),
     };
 
     let value = serde_json::to_value(summary).expect("summary json");

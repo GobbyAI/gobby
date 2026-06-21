@@ -186,6 +186,17 @@ pub fn run(
         .iter()
         .filter(|symbol| is_core_file(&symbol.file_path))
         .count();
+    // Surface degraded pages (a failed AI pass fell back to the structural
+    // body, #900) instead of letting them hide silently in the meta cache. Read
+    // before `finish` consumes the sink.
+    let degraded_pages = sink.degraded_docs().to_vec();
+    if !degraded_pages.is_empty() {
+        progress.emit(format!(
+            "{} page(s) degraded to structural fallback: {}",
+            degraded_pages.len(),
+            degraded_pages.join(", ")
+        ));
+    }
     let changed_paths = sink.finish(index_snapshot)?;
     let skipped = generated_pages.saturating_sub(changed_paths.len());
 
@@ -201,6 +212,7 @@ pub fn run(
         modules: module_count,
         symbols: symbol_count,
         ai_enabled,
+        degraded_pages,
     };
     match format {
         Format::Json => output::print_json(&summary),

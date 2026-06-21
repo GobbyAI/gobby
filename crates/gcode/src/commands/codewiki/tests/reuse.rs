@@ -565,3 +565,49 @@ fn missing_page_on_disk_regenerates_that_doc() {
         .expect("restored module page");
     assert!(restored.contains("Restored prose."));
 }
+
+#[test]
+fn finish_reclaims_on_disk_orphans_absent_from_a_cleared_cache() {
+    // A churned narrative slug left on disk after the meta log was deleted to
+    // force a clean run must still be reclaimed by `finish` — even though the
+    // cache never listed it, so the cache-only prune could never see it (#900).
+    let (project, _input) = reuse_project();
+    let out_dir = project.path().join("codewiki");
+
+    // Plant a stale page on disk with NO meta entry: exactly the state left by
+    // `rm _meta/codewiki.json` before a regen.
+    write_doc(
+        &out_dir,
+        "code/narrative/from-files-to-code-facts.md",
+        "stale orphan",
+    )
+    .expect("plant orphan");
+    // A sibling vault file outside the codewiki-owned `code/` tree (e.g. the
+    // gwiki research notes) must never be walked or deleted.
+    std::fs::create_dir_all(out_dir.join("research")).expect("research dir");
+    std::fs::write(out_dir.join("research/notes.md"), "user note").expect("plant vault note");
+
+    // A completed run that produces one healthy page and nothing else.
+    let mut sink = DocSink::open(project.path(), &out_dir, "symbols").expect("sink opens");
+    sink.persist(&BuiltDoc::healthy(
+        "code/narrative/01-introduction.md",
+        "fresh chapter".to_string(),
+    ))
+    .expect("persist fresh page");
+    sink.finish(None).expect("run completes");
+
+    assert!(
+        !out_dir
+            .join("code/narrative/from-files-to-code-facts.md")
+            .exists(),
+        "cache-independent GC must reclaim the on-disk orphan"
+    );
+    assert!(
+        out_dir.join("code/narrative/01-introduction.md").exists(),
+        "the freshly produced page must survive"
+    );
+    assert!(
+        out_dir.join("research/notes.md").exists(),
+        "GC must not walk or delete outside the `code/` tree"
+    );
+}
