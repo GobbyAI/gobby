@@ -134,6 +134,11 @@ const SCHEMA: Record<string, unknown> = {
         poll_interval: { type: 'number' },
         ignore_globs: { type: 'array', items: { type: 'string' } },
         codewiki_on_commit: { type: 'boolean' },
+        codewiki_nightly_enabled: { type: 'boolean' },
+        codewiki_nightly_schedule_cron: { type: 'string' },
+        codewiki_nightly_timezone: {
+          anyOf: [{ type: 'string' }, { type: 'null' }],
+        },
       },
     },
   },
@@ -234,6 +239,9 @@ function makeConfigValues(): Record<string, unknown> {
       poll_interval: 0.25,
       ignore_globs: ['outputs/**'],
       codewiki_on_commit: false,
+      codewiki_nightly_enabled: false,
+      codewiki_nightly_schedule_cron: '0 3 * * *',
+      codewiki_nightly_timezone: null,
     },
   }
 }
@@ -363,6 +371,15 @@ describe('MemoryKnowledgeSection', () => {
     expect(
       screen.getByRole('switch', { name: 'Refresh codewiki on commit' }),
     ).not.toBeChecked()
+    expect(
+      screen.getByRole('switch', { name: 'Refresh codewiki nightly' }),
+    ).not.toBeChecked()
+    expect(screen.getByLabelText('Nightly codewiki refresh schedule')).toHaveValue(
+      '0 3 * * *',
+    )
+    expect(screen.getByLabelText('Nightly codewiki refresh timezone')).toHaveValue(
+      '',
+    )
   })
 
   it('persists an edited draft row through the section Save', async () => {

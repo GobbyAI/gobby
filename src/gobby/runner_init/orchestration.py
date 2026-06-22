@@ -333,6 +333,26 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 runner.code_index_pruner = None
                 logger.error("Failed to register code index prune cron handler: %s", e)
 
+            try:
+                from gobby.code_index.codewiki_nightly import register_codewiki_nightly_cron
+
+                current_project = pm.get(runner.project_id) if runner.project_id else None
+                if current_project is None or not current_project.repo_path:
+                    logger.debug(
+                        "Skipping nightly codewiki cron registration; current project has no repo path"
+                    )
+                else:
+                    register_codewiki_nightly_cron(
+                        cron_storage=runner.cron_storage,
+                        cron_executor=cron_executor,
+                        project_id=current_project.id,
+                        repo_path=current_project.repo_path,
+                        wiki_config=runner.config.wiki,
+                    )
+                    logger.debug("Codewiki nightly cron handler registered")
+            except Exception as e:
+                logger.error("Failed to register codewiki nightly cron handler: %s", e)
+
         runner.cron_scheduler = CronScheduler(
             storage=runner.cron_storage,
             executor=cron_executor,

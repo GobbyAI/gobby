@@ -5,28 +5,24 @@ from __future__ import annotations
 import asyncio
 import logging
 from collections.abc import Callable
-from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 import psycopg
 
-from gobby.code_index.gcode_gateway import GcodeGateway, GcodeGatewayError
-from gobby.gwiki_gateway import GwikiGateway, GwikiGatewayError
+from gobby.code_index.codewiki_refresh import (
+    CodewikiGatewayConstructionError,
+    CodewikiGenerator,
+    CodewikiRefreshRequest,
+    CodewikiRefreshService,
+    WikiIndexer,
+    normalize_codewiki_ai,
+)
+from gobby.code_index.gcode_gateway import GcodeGatewayError
+from gobby.gwiki_gateway import GwikiGatewayError
 
 logger = logging.getLogger(__name__)
 
 _CONFIG_KEY = "wiki.codewiki_on_commit"
-_DEFAULT_OUT_DIR = "gobby-wiki"
-_AI_VALUES = {"auto", "daemon", "direct", "off"}
-
-
-@dataclass(frozen=True)
-class CodewikiRefreshRequest:
-    root_path: str
-    project_id: str | None = None
-    out_dir: str | None = None
-    ai: str = "auto"
 
 
 def codewiki_on_commit_enabled(config_store: object | None) -> bool:
@@ -61,13 +57,6 @@ def _coerce_bool(value: object) -> bool:
     return bool(value)
 
 
-def _normalize_ai(value: str | None) -> str:
-    ai = (value or "auto").strip().lower()
-    if ai not in _AI_VALUES:
-        raise ValueError("ai must be one of auto, daemon, direct, off")
-    return ai
-
-
 class CodewikiRefreshTrigger:
     """Debounced async trigger for post-commit codewiki generation and ingest."""
 
@@ -76,18 +65,24 @@ class CodewikiRefreshTrigger:
         *,
         loop: asyncio.AbstractEventLoop,
         config_store_provider: Callable[[], object | None],
-        gcode_gateway_factory: Callable[[], GcodeGateway] = GcodeGateway,
-        gwiki_gateway_factory: Callable[[Path], GwikiGateway] | None = None,
+        gcode_gateway_factory: Callable[[], CodewikiGenerator] | None = None,
+        gwiki_gateway_factory: Callable[[Path], WikiIndexer] | None = None,
         debounce_seconds: float = 2.0,
+        refresh_service: CodewikiRefreshService | None = None,
     ) -> None:
         self._loop = loop
         self._config_store_provider = config_store_provider
-        self._gcode_gateway_factory = gcode_gateway_factory
-        self._gwiki_gateway_factory = gwiki_gateway_factory or (
-            # Background codewiki refresh can ingest many generated docs; keep the
-            # longer timeout local to this path instead of widening route defaults.
-            lambda root: GwikiGateway(project_root=root, timeout_seconds=120.0)
-        )
+        if refresh_service is not None:
+            self._refresh_service = refresh_service
+        elif gcode_gateway_factory is None:
+            self._refresh_service = CodewikiRefreshService(
+                gwiki_gateway_factory=gwiki_gateway_factory,
+            )
+        else:
+            self._refresh_service = CodewikiRefreshService(
+                gcode_gateway_factory=gcode_gateway_factory,
+                gwiki_gateway_factory=gwiki_gateway_factory,
+            )
         self._debounce_seconds = debounce_seconds
         self._pending_by_root: dict[str, CodewikiRefreshRequest] = {}
         self._flush_timers_by_root: dict[str, asyncio.TimerHandle] = {}
@@ -110,7 +105,7 @@ class CodewikiRefreshTrigger:
             root_path=root_path,
             project_id=project_id,
             out_dir=out_dir,
-            ai=_normalize_ai(ai),
+            ai=normalize_codewiki_ai(ai),
         )
         self._loop.call_soon_threadsafe(self._schedule_request, request)
         return True
@@ -171,70 +166,20 @@ class CodewikiRefreshTrigger:
             )
 
     async def _run_refresh(self, request: CodewikiRefreshRequest) -> None:
-        root = Path(request.root_path).resolve(strict=False)
-        out_dir = self._resolve_out_dir(root, request.out_dir)
         try:
-            gcode = self._gcode_gateway_factory()
-            gwiki = self._gwiki_gateway_factory(root)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "codewiki refresh gateway construction failed for %s: %s",
-                request.project_id or root,
-                exc,
-            )
-            return
-
-        try:
-            result = await gcode.codewiki(root, out_dir, ai=request.ai)
-            changed_paths = _changed_doc_paths(out_dir, result)
-            if changed_paths:
-                if not out_dir.is_relative_to(self._default_out_dir(root)):
-                    # Default vault state is already tracked; gwiki.index() completes that refresh.
-                    for path in changed_paths:
-                        await gwiki.ingest_file(path)
-                await gwiki.index()
+            result = await self._refresh_service.refresh(request)
             logger.debug(
                 "codewiki refresh completed for %s with %d changed docs",
-                root,
-                len(changed_paths),
+                result.root,
+                result.changed_count,
             )
         except asyncio.CancelledError:
             raise
+        except CodewikiGatewayConstructionError as exc:
+            logger.warning("%s", exc)
         except (GcodeGatewayError, GwikiGatewayError) as exc:
             logger.warning(
                 "codewiki refresh failed for %s: %s",
-                request.project_id or root,
+                request.project_id or request.root_path,
                 exc,
             )
-
-    @staticmethod
-    def _resolve_out_dir(root: Path, out_dir: str | None) -> Path:
-        value = out_dir or _DEFAULT_OUT_DIR
-        path = Path(value)
-        if not path.is_absolute():
-            path = root / path
-        return path.resolve(strict=False)
-
-    @staticmethod
-    def _default_out_dir(root: Path) -> Path:
-        return (root / _DEFAULT_OUT_DIR).resolve(strict=False)
-
-
-def _changed_doc_paths(out_dir: Path, result: dict[str, Any]) -> list[Path]:
-    changed = result.get("changed_paths")
-    if not isinstance(changed, list):
-        return []
-
-    paths: list[Path] = []
-    for value in changed:
-        if not isinstance(value, str) or not value.strip():
-            continue
-        path = Path(value)
-        if not path.is_absolute():
-            path = out_dir / path
-        resolved = path.resolve(strict=False)
-        if resolved.is_relative_to(out_dir):
-            paths.append(resolved)
-    return paths

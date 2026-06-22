@@ -52,6 +52,24 @@ class WikiConfig(BaseModel):
             "config key wiki.codewiki_on_commit is canonical after startup."
         ),
     )
+    codewiki_nightly_enabled: bool = Field(
+        default=False,
+        description="Refresh generated codewiki docs on a nightly daemon cron schedule.",
+    )
+    codewiki_nightly_schedule_cron: str = Field(
+        default="0 3 * * *",
+        description=(
+            "Cron expression for nightly codewiki refresh, interpreted in the configured "
+            "or host-local timezone. Execution timestamps are stored in UTC."
+        ),
+    )
+    codewiki_nightly_timezone: str | None = Field(
+        default=None,
+        description=(
+            "IANA timezone for nightly codewiki refresh scheduling. Unset uses the "
+            "daemon host's local timezone when it can be resolved, otherwise UTC."
+        ),
+    )
 
     @field_validator("debounce_interval", "poll_interval")
     @classmethod

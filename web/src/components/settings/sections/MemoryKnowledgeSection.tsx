@@ -112,6 +112,9 @@ const WIKI_PATHS = [
   'wiki.poll_interval',
   'wiki.ignore_globs',
   'wiki.codewiki_on_commit',
+  'wiki.codewiki_nightly_enabled',
+  'wiki.codewiki_nightly_schedule_cron',
+  'wiki.codewiki_nightly_timezone',
 ] as const
 
 const OWNED_PATHS: readonly string[] = [
@@ -691,6 +694,27 @@ function WikiGroup({ fields }: { fields: SettingsSectionFields }) {
         path="wiki.codewiki_on_commit"
         label="Refresh codewiki on commit"
         ariaLabel="Refresh codewiki on commit"
+      />
+      <SwitchConfigField
+        fields={fields}
+        path="wiki.codewiki_nightly_enabled"
+        label="Refresh codewiki nightly"
+        ariaLabel="Refresh codewiki nightly"
+      />
+      <TextConfigField
+        fields={fields}
+        path="wiki.codewiki_nightly_schedule_cron"
+        label="Nightly refresh schedule"
+        ariaLabel="Nightly codewiki refresh schedule"
+        placeholder="0 3 * * *"
+      />
+      <TextConfigField
+        fields={fields}
+        path="wiki.codewiki_nightly_timezone"
+        label="Nightly refresh timezone"
+        ariaLabel="Nightly codewiki refresh timezone"
+        placeholder="Host local timezone"
+        nullable
       />
     </Subsection>
   )
