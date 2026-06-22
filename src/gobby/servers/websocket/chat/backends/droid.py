@@ -25,30 +25,21 @@ from gobby.llm.claude_models import (
     ToolCallEvent,
     ToolResultEvent,
 )
-from gobby.servers.chat_session_helpers import (
-    _BASH_WRITE_PATTERNS,
-    _PLAN_FILE_PATTERN,
-    PendingApproval,
-    build_compaction_context,
-)
-from gobby.servers.tool_approvals import (
-    DEFAULT_GLOBAL_APPROVAL_RULES,
-    find_out_of_repo_write_path,
-    get_global_approval_rules,
-    is_gcode_shell_command,
-    is_tool_auto_allowed,
-    load_project_approval_rules_async,
-    normalize_approved_tool_keys,
-)
+from gobby.servers.chat_session_helpers import PendingApproval, build_compaction_context
 from gobby.servers.websocket.chat.backends.base import (
     ManagedChatSessionBase,
     ProviderBackendHealth,
     _extract_text,
     _log_upstream_error_event,
 )
+from gobby.servers.websocket.chat.backends.droid_permissions import DroidPermissionResolver
+from gobby.servers.websocket.chat.backends.droid_plan import (
+    _closes_plan_capture,
+    _extract_plan_from_tool_args,
+    _is_plan_exit_tool,
+)
 from gobby.servers.websocket.chat.backends.droid_stream import parse_droid_stream_line
 from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
-from gobby.storage.config_store import ConfigStore
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +47,6 @@ DROID_JSONRPC_VERSION = "2.0"
 DROID_FACTORY_API_VERSION = "1.0.0"
 DROID_FACTORY_PROTOCOL_VERSION = "1.25.0"
 DROID_MACHINE_ID = "gobby-web-chat"
-DROID_PERMISSION_CANCEL = "cancel"
-DROID_PERMISSION_PROCEED_ONCE = "proceed_once"
 DROID_STDERR_MAX_CHARS = 1000
 _DROID_STDERR_REDACTIONS = (
     re.compile(r"(?i)\b(bearer\s+)[^\s]+"),
@@ -90,88 +79,6 @@ def _redact_droid_stderr(text: str) -> str:
     if len(redacted) <= DROID_STDERR_MAX_CHARS:
         return redacted
     return f"{redacted[:DROID_STDERR_MAX_CHARS]}... [truncated]"
-
-
-# Plan-exit / spec tools whose argument carries the structured plan body. Droid
-# presents a plan via ``ExitSpecMode`` (Factory "spec mode"); the others cover
-# Claude-style ``ExitPlanMode`` and Codex-style ``update_plan`` should Droid ever
-# surface them. Compared as alphanumeric-only lowercase so separators/casing in
-# the upstream tool name don't matter.
-_PLAN_EXIT_TOOL_KEYS = frozenset({"exitspecmode", "exitplanmode", "updateplan"})
-
-# Argument keys, in priority order, that may hold the plan/spec body.
-_PLAN_TOOL_ARG_KEYS: tuple[str, ...] = ("plan", "spec", "content", "markdown", "text")
-
-# Tools that execute a command or mutate state. Droid narrates their output as
-# assistant content *after* they run (e.g. reformatting ``git status`` into a
-# results table). That post-execution narration is not plan content, so once
-# such a tool completes the prose-plan capture stops (see ``_closes_plan_capture``).
-# Compared as alphanumeric-only lowercase so separators/casing/namespacing in the
-# upstream tool name don't matter.
-_PLAN_CAPTURE_CLOSING_TOOLS = frozenset(
-    {
-        "bash",
-        "shell",
-        "sh",
-        "exec",
-        "execcommand",
-        "runcommand",
-        "command",
-        "edit",
-        "write",
-        "multiedit",
-        "notebookedit",
-        "applypatch",
-        "strreplace",
-        "strreplaceeditor",
-        "strreplacebasededittool",
-    }
-)
-
-# A plan body is "present" once the captured prose has a markdown heading or
-# enough substance. Guards capture-close so a research-first turn (run a read
-# command, then present the plan) still surfaces the plan.
-_PLAN_HEADING_RE = re.compile(r"(?m)^\s{0,3}#{1,6}\s")
-_PLAN_CAPTURE_MIN_CHARS = 160
-
-
-def _is_plan_exit_tool(tool_name: str) -> bool:
-    """Whether ``tool_name`` is a plan-exit/spec tool carrying a plan body."""
-    key = "".join(ch for ch in tool_name.lower() if ch.isalnum())
-    return key in _PLAN_EXIT_TOOL_KEYS
-
-
-def _closes_plan_capture(tool_name: str, captured: str) -> bool:
-    """Whether a completed tool ends prose-plan capture for this turn.
-
-    Command/mutation tools narrate their output as assistant content *after*
-    they run, which is execution narration rather than plan. Once such a tool
-    completes and a plan body is already captured, stop accumulating prose so
-    the post-execution narration does not leak into the broadcast plan
-    (#15724). Guarded on a plan already being present so a research-first turn
-    (read command, then present the plan) still surfaces the plan.
-    """
-    key = "".join(ch for ch in tool_name.lower() if ch.isalnum())
-    if key not in _PLAN_CAPTURE_CLOSING_TOOLS:
-        return False
-    return (
-        bool(_PLAN_HEADING_RE.search(captured)) or len(captured.strip()) >= _PLAN_CAPTURE_MIN_CHARS
-    )
-
-
-def _extract_plan_from_tool_args(arguments: dict[str, Any]) -> str | None:
-    """Pull the plan/spec body from a plan-exit tool's arguments.
-
-    Tries the known plan argument keys in priority order and returns the first
-    non-empty string. Returns ``None`` when the tool carries no plan body (some
-    CLIs use the tool purely as an exit signal), so the caller falls back to the
-    accumulated assistant prose.
-    """
-    for key in _PLAN_TOOL_ARG_KEYS:
-        value = arguments.get(key)
-        if isinstance(value, str) and value.strip():
-            return value
-    return None
 
 
 @dataclass
@@ -465,6 +372,7 @@ class DroidWebChatBackend:
         self._default_model = default_model
         self._health = ProviderBackendHealth(provider=self.provider, available=False)
         self._handles: dict[str, _DroidProcessHandle] = {}
+        self._permission_resolver = DroidPermissionResolver(droid_tool_name_adapter)
 
     async def start(self, *, background: bool = False) -> None:
         del background
@@ -766,24 +674,6 @@ class DroidWebChatBackend:
                 if event.event_type in {"result", "error"}:
                     return
 
-    @staticmethod
-    def _global_rules_for_session(session: DroidManagedChatSession) -> list[str]:
-        session_manager = getattr(session, "_session_manager_ref", None)
-        db = getattr(session_manager, "db", None) if session_manager else None
-        if db is None:
-            return list(DEFAULT_GLOBAL_APPROVAL_RULES)
-        return get_global_approval_rules(ConfigStore(db))
-
-    @staticmethod
-    def _permission_tool_payload(event: StreamEvent) -> tuple[str, dict[str, Any], str]:
-        raw_name = event.data.get("tool_name") or event.data.get("name") or "unknown"
-        tool_name = droid_tool_name_adapter(str(raw_name))
-        tool_input = event.data.get("tool_input") or event.data.get("input") or {}
-        if not isinstance(tool_input, dict):
-            tool_input = {}
-        tool_id = event.data.get("call_id") or event.data.get("id") or "unknown"
-        return tool_name, tool_input, str(tool_id)
-
     async def _handle_permission_request(
         self,
         handle: _DroidProcessHandle,
@@ -795,7 +685,7 @@ class DroidWebChatBackend:
             logger.warning("Droid permission request missing JSON-RPC request id")
             return
 
-        selected_option = await self._resolve_permission_request(session, events)
+        selected_option = await self._permission_resolver.resolve(session, events)
         await self._send_jsonrpc_response(
             handle,
             request_id,
@@ -807,116 +697,7 @@ class DroidWebChatBackend:
         session: DroidManagedChatSession,
         events: list[StreamEvent],
     ) -> str:
-        tool_payloads = [self._permission_tool_payload(event) for event in events]
-        if not tool_payloads:
-            return DROID_PERMISSION_CANCEL
-
-        for tool_name, tool_input, _tool_id in tool_payloads:
-            lifecycle_response = await session._apply_pre_tool_lifecycle(tool_name, tool_input)
-            if (
-                isinstance(lifecycle_response, dict)
-                and lifecycle_response.get("decision") == "block"
-            ):
-                return DROID_PERMISSION_CANCEL
-
-            if find_out_of_repo_write_path(
-                tool_name,
-                tool_input,
-                project_path=session.project_path,
-            ):
-                return DROID_PERMISSION_CANCEL
-
-            if session.chat_mode == "plan" and self._plan_mode_blocks_tool(tool_name, tool_input):
-                return DROID_PERMISSION_CANCEL
-
-        if session.chat_mode == "bypass":
-            return DROID_PERMISSION_PROCEED_ONCE
-
-        project_rules = await load_project_approval_rules_async(session.project_path)
-        global_rules = self._global_rules_for_session(session)
-        session_rules = normalize_approved_tool_keys(session._approved_tools)
-        if all(
-            is_tool_auto_allowed(
-                tool_name,
-                tool_input,
-                session_rules=session_rules,
-                project_rules=project_rules,
-                global_rules=global_rules,
-            )
-            for tool_name, tool_input, _tool_id in tool_payloads
-        ):
-            return DROID_PERMISSION_PROCEED_ONCE
-
-        if session.chat_mode == "plan":
-            # Tool-plan model (#15682): Droid presents its finalized plan via the
-            # ExitSpecMode plan-exit tool, riding the spec in the tool input.
-            # ExitSpecMode arrives only as a permission request and is filtered
-            # out of the session stream (_read_until_terminal), so this resolver
-            # is the only place that sees it. Broadcast the spec and BLOCK on the
-            # user's decision here — mirroring the native ExitPlanMode gate —
-            # instead of cancelling and dropping it (which left the card never
-            # surfacing). proceed_once exits Spec Mode and executes; cancel keeps
-            # Droid in Spec Mode for revision (request_changes / reject /
-            # timeout). Queued feedback rides the next turn's plan-mode context.
-            for tool_name, tool_input, _tool_id in tool_payloads:
-                if not _is_plan_exit_tool(tool_name):
-                    continue
-                spec = _extract_plan_from_tool_args(tool_input)
-                if not spec:
-                    # No spec body to show; fall through to the cancel below
-                    # rather than blocking on an invisible plan card.
-                    break
-                await session._maybe_broadcast_pending_plan(spec, True, structured=True)
-                session._plan_exit_blocked_this_turn = True
-                decision = await session._wait_for_plan_decision()
-                if decision == "approve":
-                    return DROID_PERMISSION_PROCEED_ONCE
-                return DROID_PERMISSION_CANCEL
-
-            # Read-only planning mode (#15664): destructive tools were cancelled
-            # in the per-tool loop above and auto-allowed reads already
-            # proceeded. Any non-plan-exit tool still here needs interactive
-            # approval, which cannot be granted during the headless plan turn;
-            # cancel deterministically so the turn completes.
-            return DROID_PERMISSION_CANCEL
-
-        approval_tool_name, approval_input = self._approval_prompt_payload(tool_payloads)
-        approval = await session._wait_for_tool_approval(approval_tool_name, approval_input)
-        if isinstance(approval, dict) and approval.get("decision") == "accept":
-            return DROID_PERMISSION_PROCEED_ONCE
-        return DROID_PERMISSION_CANCEL
-
-    @staticmethod
-    def _approval_prompt_payload(
-        tool_payloads: list[tuple[str, dict[str, Any], str]],
-    ) -> tuple[str, dict[str, Any]]:
-        if len(tool_payloads) == 1:
-            tool_name, tool_input, _tool_id = tool_payloads[0]
-            return tool_name, tool_input
-        return (
-            "DroidToolBatch",
-            {
-                "tool_uses": [
-                    {"tool_name": tool_name, "tool_input": tool_input, "tool_id": tool_id}
-                    for tool_name, tool_input, tool_id in tool_payloads
-                ]
-            },
-        )
-
-    @staticmethod
-    def _plan_mode_blocks_tool(tool_name: str, tool_input: dict[str, Any]) -> bool:
-        if tool_name in {"Write", "Edit", "NotebookEdit"}:
-            file_path = tool_input.get("file_path", "")
-            return (
-                not isinstance(file_path, str)
-                or not file_path
-                or not _PLAN_FILE_PATTERN.match(file_path)
-            )
-        if tool_name == "Bash":
-            if is_gcode_shell_command(tool_input):
-                return False
-            return bool(_BASH_WRITE_PATTERNS.search(str(tool_input.get("command", ""))))
-        return False
+        return await self._permission_resolver.resolve(session, events)
 
     async def _terminate_handle(self, handle: _DroidProcessHandle) -> None:
         if handle.process.stdin is not None:
