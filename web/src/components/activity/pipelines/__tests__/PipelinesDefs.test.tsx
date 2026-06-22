@@ -102,4 +102,57 @@ describe('Pipelines defs segment', () => {
     expect(workflowCall).toContain('include_deleted=true')
     expect(workflowCall).toContain('project_id=project-1')
   })
+
+  it('adds and saves a pipeline editor step', async () => {
+    mockFetch.mockJsonResponse('/api/workflows/wf-1', {
+      definition: {
+        id: 'wf-1',
+        name: 'deploy-prod',
+        workflow_type: 'pipeline',
+        description: 'Deploy production services with staged approvals.',
+        definition_json: JSON.stringify({
+          name: 'deploy-prod',
+          description: 'Deploy production services with staged approvals.',
+          steps: [{ id: 'step-1', exec: 'npm test -- --runInBand' }],
+        }),
+        enabled: true,
+        source: 'installed',
+        priority: 2,
+        version: '1.0',
+        tags: ['release'],
+      },
+    })
+    render(<PipelinesTab projectId="project-1" />)
+
+    fireEvent.click(screen.getByRole('radio', { name: 'Defs' }))
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Edit' }))
+    fireEvent.click(screen.getByRole('button', { name: '+ Add Step' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Exec' }))
+    fireEvent.change(screen.getByPlaceholderText('shell command'), {
+      target: { value: 'npm test -- --runInBand' },
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Save' }))
+
+    await waitFor(() => {
+      const saveCall = mockFetch.fn.mock.calls.find(
+        ([url, init]) =>
+          String(url).includes('/api/workflows/wf-1') &&
+          (init as RequestInit | undefined)?.method === 'PUT',
+      )
+      expect(saveCall).toBeDefined()
+    })
+
+    const saveCall = mockFetch.fn.mock.calls.find(
+      ([url, init]) =>
+        String(url).includes('/api/workflows/wf-1') &&
+        (init as RequestInit | undefined)?.method === 'PUT',
+    )
+    const requestBody = JSON.parse((saveCall?.[1] as RequestInit).body as string)
+    const definition = JSON.parse(requestBody.definition_json)
+
+    expect(requestBody.name).toBe('deploy-prod')
+    expect(requestBody.description).toBe('Deploy production services with staged approvals.')
+    expect(definition.steps).toEqual([{ id: 'step-1', exec: 'npm test -- --runInBand' }])
+  })
 })
