@@ -135,5 +135,5 @@ class TestEventTypeMapping:
         for event_type in HookEventType:
             assert event_type in EVENT_TYPE_CLI_SUPPORT
             assert "claude" in EVENT_TYPE_CLI_SUPPORT[event_type]
-            assert "gemini" in EVENT_TYPE_CLI_SUPPORT[event_type]
+            assert "agy" in EVENT_TYPE_CLI_SUPPORT[event_type]
             assert "codex" in EVENT_TYPE_CLI_SUPPORT[event_type]

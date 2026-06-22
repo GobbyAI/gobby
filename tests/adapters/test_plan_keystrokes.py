@@ -259,16 +259,6 @@ def _droid(digit: str) -> PlanKeystrokeSequence:
     return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
 
 
-def _gemini(digit: str) -> PlanKeystrokeSequence:
-    """Expected Gemini approval-menu selection: the digit activates with no Enter."""
-    return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
-
-
-def _gemini_escape() -> PlanKeystrokeSequence:
-    """Expected Gemini reject: the shape-independent Escape ('(esc)') shortcut."""
-    return PlanKeystrokeSequence((PlanKeystroke("Escape"),))
-
-
 def _grok(digit: str) -> PlanKeystrokeSequence:
     """Expected Grok approval-menu selection: the digit activates with no Enter."""
     return PlanKeystrokeSequence((PlanKeystroke(digit, literal=True),))
@@ -494,74 +484,6 @@ _GEMINI_SHELL_MENU_PANE = """\
 """
 
 
-class TestGeminiPlanMenu:
-    """Gemini's per-action approval menu -- a static (non-pane) map whose reject
-    uses the shape-independent Esc key (the reject digit varies by tool type)."""
-
-    def test_gemini_is_registered_static(self) -> None:
-        assert DEFAULT_PLAN_KEYSTROKES.has_source("gemini") is True
-        assert DEFAULT_PLAN_KEYSTROKES.requires_pane("gemini") is True
-
-    def test_registered_options(self) -> None:
-        assert DEFAULT_PLAN_KEYSTROKES.registered_options("gemini") == frozenset(
-            {"approve_yolo", "approve_act", REQUEST_CHANGES_OPTION_ID}
-        )
-
-    @pytest.mark.parametrize(
-        ("option_id", "expected"),
-        [
-            # "Allow once" (1) keeps prompting -> approve_act/normal; "Allow for
-            # this session" (2) stops prompting -> approve_yolo/bypass.
-            ("approve_act", _gemini("1")),
-            ("approve_yolo", _gemini("2")),
-            # Reject via Esc: the reject digit is not stable across menu shapes.
-            (REQUEST_CHANGES_OPTION_ID, _gemini_escape()),
-        ],
-    )
-    def test_plan_menu_mapping(self, option_id: str, expected: PlanKeystrokeSequence) -> None:
-        assert DEFAULT_PLAN_KEYSTROKES.resolve("gemini", option_id) == expected
-
-    @pytest.mark.parametrize(
-        ("option_id", "digit"),
-        [("approve_act", "1"), ("approve_yolo", "2")],
-    )
-    def test_approve_digit_activates_without_enter(self, option_id: str, digit: str) -> None:
-        # Verified live: the item number selects AND activates with no trailing
-        # Enter (the footer's Enter hint applies only to arrow-key nav).
-        seq = DEFAULT_PLAN_KEYSTROKES.resolve("gemini", option_id)
-        assert seq is not None
-        assert [s.keys for s in seq.strokes] == [digit]
-        assert all(s.literal for s in seq.strokes)
-
-    def test_reject_uses_named_escape_key(self) -> None:
-        # request-changes is the named Esc key (literal=False so tmux interprets
-        # the key name), NOT a digit -- the reject item's number varies by tool
-        # type (4 for edits, 3 for shell) while "(esc)" is constant.
-        seq = DEFAULT_PLAN_KEYSTROKES.resolve("gemini", REQUEST_CHANGES_OPTION_ID)
-        assert seq is not None
-        assert [s.keys for s in seq.strokes] == ["Escape"]
-        assert all(not s.literal for s in seq.strokes)
-
-    def test_static_resolution_requires_matching_pane_text(self) -> None:
-        assert (
-            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane(
-                "gemini", "approve_yolo", _GEMINI_EDIT_MENU_PANE
-            )
-            == DEFAULT_PLAN_KEYSTROKES.resolve_for_pane(
-                "gemini", "approve_yolo", _GEMINI_SHELL_MENU_PANE
-            )
-            == DEFAULT_PLAN_KEYSTROKES.resolve("gemini", "approve_yolo")
-            == _gemini("2")
-        )
-        assert (
-            DEFAULT_PLAN_KEYSTROKES.resolve_for_pane("gemini", REQUEST_CHANGES_OPTION_ID, "")
-            is None
-        )
-
-    def test_unknown_option_returns_none(self) -> None:
-        assert DEFAULT_PLAN_KEYSTROKES.resolve("gemini", "approve_bogus") is None
-
-
 # Verbatim captures from Grok ("Grok Build" Beta 0.2.38, xAI) driven on a pty in
 # `--permission-mode default`: the per-action approval menus. The option numbers
 # (1 always-approve / 3 single-approve / 4 reject) stay positionally stable; only
@@ -739,7 +661,7 @@ class TestQwenPlanMenu:
 class TestDefaultRegistry:
     def test_all_clis_registered(self) -> None:
         # Every managed CLI now has a captured native plan-menu mapping: claude
-        # (#15727), codex (#15728), droid (#15729), gemini (#15730), grok
-        # (#15731), and qwen (#15732). No per-CLI source remains pending.
-        for source in ("claude", "codex", "droid", "gemini", "grok", "qwen"):
+        # (#15727), codex (#15728), droid (#15729), grok (#15731), and qwen
+        # (#15732). Gemini CLI was removed. No per-CLI source remains pending.
+        for source in ("claude", "codex", "droid", "grok", "qwen"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is True

@@ -15,11 +15,11 @@ class TestTranslateToHookEvent:
     def test_session_start_with_dispatcher_wrapper(self, adapter) -> None:
         """Translates SessionStart event with dispatcher wrapper format."""
         native_event = {
-            "source": "gemini",
+            "source": "qwen",
             "hook_type": "SessionStart",
             "input_data": {
                 "hook_event_name": "SessionStart",
-                "session_id": "gemini-sess-123",
+                "session_id": "qwen-sess-123",
                 "cwd": "/home/user/project",
                 "timestamp": "2025-01-15T10:30:00Z",
             },
@@ -28,8 +28,8 @@ class TestTranslateToHookEvent:
         event = adapter.translate_to_hook_event(native_event)
 
         assert event.event_type == HookEventType.SESSION_START
-        assert event.session_id == "gemini-sess-123"
-        assert event.source == SessionSource.UNKNOWN
+        assert event.session_id == "qwen-sess-123"
+        assert event.source == SessionSource.QWEN
         assert event.cwd == "/home/user/project"
         assert event.data == native_event["input_data"]
 
@@ -371,8 +371,8 @@ class TestTranslateFromHookResponse:
         assert result["continue"] is False
         assert result["reason"] == "Blocked by workflow"
 
-    def test_before_tool_block_decision_hard_stops_for_neutral_source(self, adapter) -> None:
-        """Neutralized Gemini adapter has no recoverable tool-hook capability."""
+    def test_before_tool_block_decision_is_recoverable(self, adapter) -> None:
+        """ACP adapter keeps the turn alive on a BeforeTool block (recoverable)."""
         reason = (
             "Rule enforced by Gobby: [require-code-index-skill]\n"
             'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ '
@@ -384,18 +384,18 @@ class TestTranslateFromHookResponse:
 
         assert result == {
             "decision": "block",
-            "continue": False,
+            "continue": True,
             "reason": reason,
         }
 
-    def test_after_tool_deny_decision_hard_stops_for_neutral_source(self, adapter) -> None:
-        """Neutralized Gemini adapter has no recoverable tool-hook capability."""
+    def test_after_tool_deny_decision_is_recoverable(self, adapter) -> None:
+        """ACP adapter keeps the turn alive on an AfterTool deny (recoverable)."""
         response = HookResponse(decision="deny", reason="Post-tool gate failed")
 
         result = adapter.translate_from_hook_response(response, hook_type="AfterTool")
 
         assert result["decision"] == "deny"
-        assert result["continue"] is False
+        assert result["continue"] is True
         assert result["reason"] == "Post-tool gate failed"
 
     def test_unknown_hook_block_decision_hard_stops(self, adapter) -> None:
