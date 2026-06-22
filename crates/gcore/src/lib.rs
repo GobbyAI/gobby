@@ -20,6 +20,7 @@ pub mod config;
 pub mod degradation;
 mod libpq;
 pub mod setup;
+pub mod token_budget;
 
 /// Return Gobby home, respecting `GOBBY_HOME` when set.
 pub fn gobby_home() -> anyhow::Result<std::path::PathBuf> {
