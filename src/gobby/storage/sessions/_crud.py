@@ -92,14 +92,14 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
         """
         Register a new session or return existing one.
 
-        Looks up by (external_id, machine_id, project_id, source) to find if this
-        exact session already exists (e.g., daemon restarted mid-session). If found,
-        returns the existing session. Otherwise creates a new one.
+        Looks up by (external_id, machine_id, project_id, source) to find if this exact
+        session already exists (e.g., daemon restarted mid-session). If found, returns
+        the existing session. Otherwise creates a new one.
 
         Args:
             external_id: External session identifier (e.g., Claude Code session ID)
             machine_id: Machine identifier
-    source: CLI source (claude, qwen, codex, droid)
+            source: CLI source (claude, qwen, codex, droid)
             project_id: Project ID (None if project context unavailable)
             title: Optional session title
             transcript_path: Path to transcript file

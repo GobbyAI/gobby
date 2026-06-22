@@ -1,0 +1,69 @@
+"""Keyword search helpers for memory search."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from typing import Any, cast
+
+from gobby.storage.memories import LocalMemoryManager, Memory
+
+RunStorage = Callable[..., Awaitable[Any]]
+KeywordSearch = Callable[[str, int, str | None], list[tuple[str, float]]]
+
+
+async def keyword_ranked(
+    *,
+    run_storage: RunStorage,
+    keyword_search: KeywordSearch,
+    query: str,
+    limit: int,
+    project_id: str | None,
+) -> list[str]:
+    """Run keyword search and return ranked memory IDs for RRF merge."""
+    results = cast(
+        list[tuple[str, float]], await run_storage(keyword_search, query, limit, project_id)
+    )
+    return [memory_id for memory_id, _ in results]
+
+
+async def keyword_fallback(
+    *,
+    run_storage: RunStorage,
+    storage: LocalMemoryManager,
+    keyword_search: KeywordSearch,
+    query: str,
+    limit: int,
+    project_id: str | None,
+    memory_type: str | None,
+    tags_all: list[str] | None,
+    tags_any: list[str] | None,
+    tags_none: list[str] | None,
+) -> list[Memory]:
+    """Keyword search fallback when vector search is unavailable."""
+    keyword_results = cast(
+        list[tuple[str, float]],
+        await run_storage(keyword_search, query, limit * 2, project_id),
+    )
+    if not keyword_results:
+        return []
+
+    memories: list[Memory] = []
+    for memory_id, score in keyword_results:
+        try:
+            mem = cast(Memory, await run_storage(storage.get_memory, memory_id))
+        except ValueError:
+            continue
+        if memory_type and mem.memory_type != memory_type:
+            continue
+        if tags_all and not all(tag in (mem.tags or []) for tag in tags_all):
+            continue
+        if tags_any and not any(tag in (mem.tags or []) for tag in tags_any):
+            continue
+        if tags_none and any(tag in (mem.tags or []) for tag in tags_none):
+            continue
+        mem.similarity = score
+        mem.search_via = "keyword"
+        memories.append(mem)
+        if len(memories) >= limit:
+            break
+    return memories

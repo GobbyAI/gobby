@@ -332,13 +332,13 @@ def create_spawn_agent_registry(
             clone_id: Existing clone ID to reuse
             worktree_id: Existing worktree ID to reuse
             workflow: Workflow/pipeline to use
-    provider: AI provider (claude/qwen/codex/droid)
+            provider: AI provider (claude/qwen/codex/droid)
             model: Model to use
             reasoning_effort: Optional reasoning override for supported providers/models
-            reasoning_required: Fail instead of warning when the requested reasoning is unsupported
+            reasoning_required: Fail instead of warning when requested reasoning is unsupported
             timeout: Timeout in seconds
             max_turns: Maximum conversation turns
-            parent_session_id: Session reference (accepts #N, N, UUID, or prefix) for the parent session
+            parent_session_id: Session reference (#N, N, UUID, or prefix) for the parent
             project_path: Project path override
             notify_parent_on_completion: Whether to notify the parent when the agent completes
 

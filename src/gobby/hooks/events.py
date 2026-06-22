@@ -22,7 +22,7 @@ class HookEventType(str, Enum):
     These map to CLI-specific hook names via adapters:
     - Claude Code: kebab-case (session-start, pre-tool-use)
     - Droid CLI: PascalCase (SessionStart, PreToolUse)
-- ACP CLIs: PascalCase (SessionStart, BeforeTool)
+    - ACP CLIs: PascalCase (SessionStart, BeforeTool)
     - Codex CLI: PascalCase hooks.json names (SessionStart, PreToolUse)
     """
 

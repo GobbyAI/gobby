@@ -1,0 +1,62 @@
+"""Debug snapshot emission for memory search."""
+
+from __future__ import annotations
+
+import logging
+from collections.abc import Callable
+
+from gobby.memory.services._search_models import SearchDebugHit, SearchDebugSnapshot
+from gobby.storage.memories import Memory
+
+logger = logging.getLogger(__name__)
+
+
+def emit_search_debug(
+    *,
+    search_debug_sink: Callable[[SearchDebugSnapshot], None] | None,
+    query: str,
+    project_id: str | None,
+    session_id: str | None,
+    recall_request_id: str | None,
+    caller: str,
+    merged_ids: list[str],
+    returned: list[Memory],
+    ranking_score_map: dict[str, float],
+    rrf_applied: bool,
+    graph_score_map: dict[str, float] | None = None,
+) -> None:
+    """Emit a best-effort search diagnostics snapshot."""
+    if search_debug_sink is None:
+        return
+
+    graph_scores = dict(graph_score_map or {})
+    snapshot = SearchDebugSnapshot(
+        merged_ids=list(merged_ids),
+        returned_ids=[mem.id for mem in returned],
+        ranking_score_map=dict(ranking_score_map),
+        rrf_applied=rrf_applied,
+        query=query,
+        project_id=project_id,
+        session_id=session_id,
+        recall_request_id=recall_request_id,
+        caller=caller,
+        graph_score_map=graph_scores,
+        returned_hits=[
+            SearchDebugHit(
+                memory_id=mem.id,
+                rank=rank,
+                search_via=mem.search_via,
+                similarity=mem.similarity,
+                raw_semantic_score=mem.raw_semantic_score,
+                temporal_decay_factor=mem.temporal_decay_factor,
+                ranking_score=mem.ranking_score,
+                ranking_mode=mem.ranking_mode,
+                graph_score=graph_scores.get(mem.id),
+            )
+            for rank, mem in enumerate(returned)
+        ],
+    )
+    try:
+        search_debug_sink(snapshot)
+    except Exception:
+        logger.debug("Search debug sink failed", exc_info=True)

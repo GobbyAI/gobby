@@ -67,7 +67,7 @@ class BeforeModelInput(HookInput):
     """
     Input model for before-model hook.
 
-Triggered before model inference. Can be used to
+    Triggered before model inference. Can be used to
     modify or inspect prompts before they are sent to the model.
     """
 
@@ -88,7 +88,7 @@ class AfterModelInput(HookInput):
     """
     Input model for after-model hook.
 
-Triggered after model inference. Can be used to
+    Triggered after model inference. Can be used to
     inspect or log model responses.
     """
 

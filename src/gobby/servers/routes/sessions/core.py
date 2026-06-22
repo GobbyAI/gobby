@@ -211,8 +211,7 @@ def register_core_routes(
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Invalid provider. Must be one of: claude, grok, "
-                        "qwen, codex, droid, agy"
+                        "Invalid provider. Must be one of: claude, grok, qwen, codex, droid, agy"
                     ),
                 )
 

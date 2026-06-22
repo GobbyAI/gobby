@@ -204,9 +204,7 @@ class TmuxPaneMonitor:
                 event_type=HookEventType.SESSION_END,
                 session_id=session.external_id,
                 source=(
-                    parse_session_source(session.source)
-                    if session.source
-                    else SessionSource.CLAUDE
+                    parse_session_source(session.source) if session.source else SessionSource.CLAUDE
                 ),
                 timestamp=datetime.now(UTC),
                 data={"cwd": None},

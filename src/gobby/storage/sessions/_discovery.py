@@ -84,15 +84,15 @@ class _DiscoveryMixin:
         """
         Find session by external_id, machine_id, project_id, and source.
 
-        This is the primary lookup for reconnecting to an existing session
-        after daemon restart. The external_id (e.g., Claude Code's session ID)
-        is stable within a session.
+        This is the primary lookup for reconnecting to an existing session after daemon
+        restart. The external_id (e.g., Claude Code's session ID) is stable within a
+        session.
 
         Args:
             external_id: External session identifier
             machine_id: Machine identifier
             project_id: Project identifier
-    source: CLI source (claude, qwen, codex, droid)
+            source: CLI source (claude, qwen, codex, droid)
             session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:
@@ -125,7 +125,7 @@ class _DiscoveryMixin:
 
         Args:
             external_id: External session identifier (e.g., Claude Code session ID)
-    source: CLI source (claude, qwen, etc.)
+            source: CLI source (claude, qwen, etc.)
 
         Returns:
             Most recently updated matching session, or None.
@@ -150,13 +150,13 @@ class _DiscoveryMixin:
     ) -> Session | None:
         """Find session by external_id, machine_id, source — ignoring project_id.
 
-        Fallback lookup for daemon restart recovery when the caller may not
-        know the correct project_id.  Returns the most recently updated match.
+        Fallback lookup for daemon restart recovery when the caller may not know the
+        correct project_id. Returns the most recently updated match.
 
         Args:
             external_id: External session identifier
             machine_id: Machine identifier
-    source: CLI source (claude, qwen, codex, droid)
+            source: CLI source (claude, qwen, codex, droid)
             session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:

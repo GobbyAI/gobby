@@ -218,12 +218,11 @@ async def _handle_request_permission_request(
 ) -> None:
     """Answer an ACP ``session/request_permission`` request.
 
-A spec-compliant ACP agent blocks the tool call on this
-    request. If the client never answers — or answers with a JSON-RPC error —
-    the Node CLI surfaces the rejected permission to the model as the literal
-    string ``[object Object]`` and spirals into a runaway diagnostic loop
-    (gobby #15705). Always return a well-formed outcome so the agent can
-    proceed cleanly.
+    A spec-compliant ACP agent blocks the tool call on this request. If the client
+    never answers — or answers with a JSON-RPC error — the Node CLI surfaces the
+    rejected permission to the model as the literal string ``[object Object]`` and
+    spirals into a runaway diagnostic loop (gobby #15705). Always return a well-formed
+    outcome so the agent can proceed cleanly.
     """
     params = request.get("params")
     options = params.get("options") if isinstance(params, dict) else None

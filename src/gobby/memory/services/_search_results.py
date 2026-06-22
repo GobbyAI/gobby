@@ -1,0 +1,113 @@
+"""Memory result hydration, filtering, scoring, and ordering."""
+
+from __future__ import annotations
+
+from gobby.memory.scoring import temporal_decay
+from gobby.memory.services._search_constants import (
+    _GRAPH_SYNTHETIC_SIM_DISCOUNT,
+    _USER_SOURCE_BOOST,
+)
+from gobby.storage.memories import LocalMemoryManager, Memory
+
+
+def build_results(
+    *,
+    storage: LocalMemoryManager,
+    merged_ids: list[str],
+    ranking_score_map: dict[str, float],
+    qdrant_score_map: dict[str, float],
+    qdrant_set: set[str],
+    keyword_set: set[str],
+    graph_set: set[str] | None,
+    graph_score_map: dict[str, float] | None = None,
+    rrf_applied: bool,
+    project_id: str | None,
+    memory_type: str | None,
+    tags_all: list[str] | None,
+    tags_any: list[str] | None,
+    tags_none: list[str] | None,
+    half_life: float,
+    effective_min_score: float,
+    limit: int,
+) -> list[Memory]:
+    """Hydrate ranked IDs into active memories and apply search metadata."""
+    scored: list[tuple[Memory, float, float | None]] = []
+    memories_by_id = {
+        mem.id: mem for mem in storage.get_memories(merged_ids, project_id=project_id)
+    }
+
+    for memory_id in merged_ids:
+        mem = memories_by_id.get(memory_id)
+        if mem is None:
+            try:
+                mem = storage.get_memory(memory_id, project_id=project_id)
+            except ValueError:
+                continue
+
+        if memory_type and mem.memory_type != memory_type:
+            continue
+        if tags_all and not all(tag in (mem.tags or []) for tag in tags_all):
+            continue
+        if tags_any and not any(tag in (mem.tags or []) for tag in tags_any):
+            continue
+        if tags_none and any(tag in (mem.tags or []) for tag in tags_none):
+            continue
+
+        raw_semantic_score = qdrant_score_map.get(memory_id)
+        decay_factor: float | None = None
+        similarity: float | None = None
+        synthetic_similarity = False
+        if raw_semantic_score is not None:
+            similarity = raw_semantic_score
+            if mem.source_type == "user":
+                similarity *= _USER_SOURCE_BOOST
+            decay_factor = temporal_decay(mem.updated_at, half_life)
+            similarity *= decay_factor
+        elif graph_score_map is not None:
+            # Recall expander (#17104): graph-only hits use a discounted entity-match
+            # cosine so they can fill weak semantic slots without outranking stronger
+            # semantic matches on the same similarity axis.
+            graph_confidence = graph_score_map.get(memory_id)
+            if graph_confidence is not None:
+                decay_factor = temporal_decay(mem.updated_at, half_life)
+                similarity = graph_confidence * _GRAPH_SYNTHETIC_SIM_DISCOUNT * decay_factor
+                synthetic_similarity = True
+
+        if effective_min_score > 0 and similarity is not None and similarity < effective_min_score:
+            continue
+
+        sources = []
+        if memory_id in qdrant_set:
+            sources.append("semantic")
+        if graph_set and memory_id in graph_set:
+            sources.append("graph")
+        if memory_id in keyword_set:
+            sources.append("keyword")
+
+        mem.search_via = "|".join(sources) or "unknown"
+        mem.raw_semantic_score = raw_semantic_score
+        mem.temporal_decay_factor = decay_factor
+        mem.similarity = similarity
+        mem.ranking_score = ranking_score_map.get(memory_id, 0.0)
+        if synthetic_similarity:
+            mem.ranking_mode = "graph_synthetic"
+        elif rrf_applied:
+            mem.ranking_mode = "rrf"
+        elif raw_semantic_score is not None:
+            mem.ranking_mode = "semantic_only"
+        else:
+            mem.ranking_mode = "nonsemantic_fallback"
+
+        scored.append((mem, mem.ranking_score, similarity))
+
+    # Semantic-first ordering on the cosine axis. RRF is only a tiebreak; making it
+    # primary regressed the default graph_search=True path in #17105.
+    scored.sort(
+        key=lambda item: (
+            item[2] is not None,
+            item[2] if item[2] is not None else float("-inf"),
+            item[1],
+        ),
+        reverse=True,
+    )
+    return [mem for mem, _, _ in scored[:limit]]

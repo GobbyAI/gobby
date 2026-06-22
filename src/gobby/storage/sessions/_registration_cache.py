@@ -93,12 +93,12 @@ class _RegistrationCacheMixin:
         """
         Find parent session marked as 'handoff_ready' for this machine and project.
 
-        Polls for up to max_attempts seconds waiting for the session-end hook
-        to mark the previous session as handoff_ready.
+        Polls for up to max_attempts seconds waiting for the session-end hook to mark the
+        previous session as handoff_ready.
 
         Args:
             machine_id: Machine identifier
-    source: CLI source identifier (e.g., "claude", "qwen", "codex") - REQUIRED
+            source: CLI source identifier (e.g., "claude", "qwen", "codex") - REQUIRED
             project_id: Project ID (required for matching)
             max_attempts: Maximum polling attempts (1 per second)
 
@@ -184,7 +184,7 @@ class _RegistrationCacheMixin:
 
         Args:
             external_id: External session identifier
-    source: CLI source identifier (e.g., "claude", "qwen", "codex")
+            source: CLI source identifier (e.g., "claude", "qwen", "codex")
             machine_id: Machine identifier
             project_id: Project identifier
 
@@ -280,7 +280,7 @@ class _RegistrationCacheMixin:
 
         Args:
             external_id: External session identifier
-    source: CLI source identifier (e.g., "claude", "qwen", "codex")
+            source: CLI source identifier (e.g., "claude", "qwen", "codex")
 
         Returns:
             session_id or None if not cached

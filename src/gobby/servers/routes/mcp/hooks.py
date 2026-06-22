@@ -544,8 +544,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"Unsupported source: {source}. "
-                        "Supported: claude, grok, qwen, codex, droid"
+                        f"Unsupported source: {source}. Supported: claude, grok, qwen, codex, droid"
                     ),
                 )
 
@@ -612,8 +611,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"Unsupported source: {source}. "
-                        "Supported: claude, grok, qwen, codex, droid"
+                        f"Unsupported source: {source}. Supported: claude, grok, qwen, codex, droid"
                     ),
                 )
 

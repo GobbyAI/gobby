@@ -177,7 +177,7 @@ class SandboxResolver(ABC):
     """
     Abstract base class for CLI-specific sandbox configuration resolution.
 
-Each CLI (Claude Code, Codex, Qwen) has different mechanisms for
+    Each CLI (Claude Code, Codex, Qwen) has different mechanisms for
     enabling sandboxing. Subclasses implement the resolve() method to
     convert a SandboxConfig and ResolvedSandboxPaths into CLI-specific
     arguments and environment variables.

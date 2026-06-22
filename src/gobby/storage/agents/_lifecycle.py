@@ -49,7 +49,7 @@ class _AgentRunLifecycleMixin:
 
         Args:
             parent_session_id: Session that spawned this agent.
-    provider: LLM provider (claude, qwen, etc.)
+            provider: LLM provider (claude, qwen, etc.)
             prompt: The prompt given to the agent.
             workflow_name: Optional workflow being executed.
             agent_name: Agent definition name used to spawn the run.
