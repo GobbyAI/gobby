@@ -1,7 +1,8 @@
 """Canonical tool metadata inference."""
 
-import shlex as _shlex
+import posixpath
 from collections.abc import Mapping
+from dataclasses import dataclass
 from typing import Any
 
 from gobby.hooks._normalization_paths import (
@@ -13,14 +14,18 @@ from gobby.hooks._normalization_shell import (
     _SHELL_CONTROL_TOKENS,
     _SHELL_INPUT_REDIRECTION_TOKENS,
     _SHELL_OUTPUT_REDIRECTION_TOKENS,
-    _SHELL_SEQUENCING_TOKENS,
-    _extract_redirection_paths,
+    ShellToken,
     _get_command_text,
     _has_perl_inplace_option,
     _has_sed_inplace_option,
     _looks_file_like,
     _looks_path_target,
     _shell_positional_args,
+    extract_redirection_paths,
+    has_shell_input_redirection,
+    has_shell_redirection,
+    shell_token_values,
+    tokenize_shell_command,
 )
 from gobby.hooks.code_navigation import (
     count_option_line_count,
@@ -48,6 +53,23 @@ _GCODE_PIPELINE_READ_ONLY_FILTERS = frozenset(
     {"cat", "cut", "grep", "head", "jq", "rg", "sed", "sort", "tail", "tr", "uniq", "wc"}
 )
 _SHELL_REDIRECTION_PREFIXES = (">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>", "<", "<<", "<<<")
+
+
+@dataclass(frozen=True, slots=True)
+class _ShellSegment:
+    tokens: list[ShellToken]
+    separator_before: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class _ShellSegmentMetadata:
+    kind: str
+    paths: tuple[str, ...] = ()
+    extra: Mapping[str, Any] | None = None
+    repo_mutation: bool = False
+    neutral_setup: bool = False
+    pure_gcode_navigation: bool = False
+    read_only_pipeline_filter: bool = False
 
 
 def _build_canonical_tool_metadata(
@@ -123,84 +145,326 @@ def _is_read_only_pipeline_stage(parts: list[str]) -> bool:
     return cmd in _GCODE_PIPELINE_READ_ONLY_FILTERS
 
 
-def _gcode_pipeline_filters_are_read_only(parts: list[str]) -> bool:
-    stages: list[list[str]] = []
-    current_stage: list[str] = []
-    for token in parts[parts.index("|") + 1 :]:
-        if token == "|":
-            stages.append(current_stage)
-            current_stage = []
-        else:
-            current_stage.append(token)
-    stages.append(current_stage)
-    return bool(stages) and all(_is_read_only_pipeline_stage(stage) for stage in stages)
+def _split_shell_segments(tokens: list[ShellToken]) -> list[_ShellSegment]:
+    segments: list[_ShellSegment] = []
+    current: list[ShellToken] = []
+    separator_before: str | None = None
+    for token in tokens:
+        if not token.quoted and token.value in _SHELL_CHAIN_TOKENS:
+            if current:
+                segments.append(_ShellSegment(current, separator_before))
+                current = []
+            separator_before = token.value
+            continue
+        current.append(token)
+    if current:
+        segments.append(_ShellSegment(current, separator_before))
+    return segments
+
+
+def _is_env_assignment(part: str) -> bool:
+    name, separator, _value = part.partition("=")
+    return bool(
+        separator
+        and name
+        and (name[0].isalpha() or name[0] == "_")
+        and all(char.isalnum() or char == "_" for char in name)
+    )
+
+
+def _strip_shell_wrappers(parts: list[str]) -> list[str]:
+    stripped = list(parts)
+    while stripped:
+        while stripped and _is_env_assignment(stripped[0]):
+            stripped = stripped[1:]
+        if stripped[:1] == ["command"]:
+            stripped = stripped[1:]
+            continue
+        if stripped[:1] == ["env"]:
+            stripped = stripped[1:]
+            continue
+        break
+    return stripped
+
+
+def _literal_cd_target(parts: list[str]) -> str | None:
+    if not parts or shell_command_name(parts[0]) != "cd":
+        return None
+    positional = [part for part in parts[1:] if part and not part.startswith("-")]
+    if len(positional) != 1:
+        return None
+    target = positional[0]
+    if any(char in target for char in "$`*?[]{};"):
+        return None
+    return target
+
+
+def _rebase_shell_path(path: str, cwd: str | None) -> str:
+    if not cwd or path.startswith("/") or "://" in path:
+        return path
+    return posixpath.normpath(posixpath.join(cwd, path))
+
+
+def _rebase_shell_paths(paths: list[str], cwd: str | None) -> list[str]:
+    return [_rebase_shell_path(path, cwd) for path in paths]
+
+
+def _apply_cd(cwd: str | None, target: str) -> str:
+    if target.startswith("/"):
+        return posixpath.normpath(target)
+    if not cwd:
+        return posixpath.normpath(target)
+    return posixpath.normpath(posixpath.join(cwd, target))
+
+
+def _shell_positional_args_after(parts: list[str], start: int) -> list[str]:
+    positional: list[str] = []
+    skip_next = False
+    after_options = False
+    option_args = {
+        "-A",
+        "-B",
+        "-C",
+        "-e",
+        "-f",
+        "-g",
+        "-m",
+        "--after-context",
+        "--before-context",
+        "--context",
+        "--file",
+        "--glob",
+        "--max-count",
+        "--regexp",
+    }
+    for part in parts[start:]:
+        if skip_next:
+            skip_next = False
+            continue
+        if part in _SHELL_CONTROL_TOKENS or not part:
+            continue
+        if not after_options and part == "--":
+            after_options = True
+            continue
+        if not after_options and part in option_args:
+            skip_next = True
+            continue
+        if not after_options and part.startswith("--") and "=" in part:
+            continue
+        if not after_options and part.startswith("-") and part != "-":
+            continue
+        positional.append(part)
+    return positional
+
+
+def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
+    if cmd in {"rg", "grep"}:
+        positional = _shell_positional_args_after(parts, 1)
+        return [path for path in positional[1:] if _looks_path_target(path)]
+
+    if cmd == "git":
+        if len(parts) <= 1 or parts[1] != "grep":
+            return []
+        if "--" in parts:
+            separator_index = parts.index("--")
+            return [path for path in parts[separator_index + 1 :] if _looks_path_target(path)]
+        positional = _shell_positional_args_after(parts, 2)
+        return [path for path in positional[1:] if _looks_path_target(path)]
+
+    if cmd == "find":
+        paths: list[str] = []
+        for part in parts[1:]:
+            if part == "--":
+                continue
+            if part in _SHELL_CONTROL_TOKENS or not part:
+                continue
+            if part.startswith("-") or part in {"!", "(", ")"}:
+                break
+            if _looks_path_target(part):
+                paths.append(part)
+        return paths
+
+    return []
+
+
+def _without_code_index_navigation(extra: Mapping[str, Any] | None) -> dict[str, Any]:
+    if not extra:
+        return {}
+    data = dict(extra)
+    data.pop("canonical_code_index_navigation", None)
+    data.pop("canonical_code_index_command", None)
+    return data
+
+
+def _merge_code_navigation_extra(metadata: list[_ShellSegmentMetadata]) -> dict[str, Any]:
+    extras = [dict(item.extra) for item in metadata if item.extra]
+    if not extras:
+        return {}
+
+    merged: dict[str, Any] = {}
+    for extra in extras:
+        merged.update(extra)
+
+    actions = [extra.get("canonical_code_navigation_action") for extra in extras]
+    if "search" in actions:
+        merged.update(search_navigation_metadata())
+    elif "read" in actions:
+        merged["canonical_code_navigation_action"] = "read"
+        broad_values = [
+            extra.get("canonical_code_navigation_broad")
+            for extra in extras
+            if "canonical_code_navigation_broad" in extra
+        ]
+        if broad_values:
+            merged["canonical_code_navigation_broad"] = any(bool(value) for value in broad_values)
+    return merged
+
+
+def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict[str, Any]:
+    active = [
+        item for item in metadata if not item.neutral_setup and not item.read_only_pipeline_filter
+    ]
+    if not active:
+        return _build_canonical_tool_metadata("execute")
+
+    paths: list[str] = []
+    for item in active:
+        for path in item.paths:
+            if path not in paths:
+                paths.append(path)
+
+    pure_gcode_navigation = sum(1 for item in metadata if item.pure_gcode_navigation) == 1 and all(
+        item.neutral_setup or item.pure_gcode_navigation or item.read_only_pipeline_filter
+        for item in metadata
+    )
+
+    if any(item.kind == "write" for item in active):
+        kind = "write"
+    elif any(item.kind == "search" for item in active):
+        kind = "search"
+    elif any(item.kind == "read" for item in active):
+        kind = "read"
+    else:
+        kind = "execute"
+
+    extra = _merge_code_navigation_extra(active)
+    if not pure_gcode_navigation:
+        extra = _without_code_index_navigation(extra)
+
+    return _build_canonical_tool_metadata(
+        kind,
+        paths=paths or None,
+        repo_mutation=any(item.repo_mutation for item in active),
+        extra=extra or None,
+    )
 
 
 def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
-    """Infer canonical semantics from simple shell read/search/write commands."""
+    """Infer canonical semantics from visible shell command segments."""
     try:
-        parts = _shlex.split(command)
+        tokens = tokenize_shell_command(command)
     except ValueError:
         return {}
 
-    if not parts:
+    if not tokens:
         return {}
 
-    # A gcode navigation piped into read-only filters (``gcode symbol <id> | jq``,
-    # ``gcode outline f | head``) is still navigation: pipelines are the documented
-    # way to read symbol source, and only the leading command touches the index.
-    # Classify on the leading segment before the chain-token demotion below, but
-    # only for pure ``|`` pipelines -- ``&&``/``||``/``;`` sequence in a separate,
-    # possibly side-effecting command, so those still fall through to ``execute``.
-    if (
-        "|" in parts
-        and not _SHELL_SEQUENCING_TOKENS.intersection(parts)
-        and _gcode_pipeline_filters_are_read_only(parts)
-    ):
-        leading = parts[: parts.index("|")]
-        gcode_metadata = (
-            gcode_navigation_metadata(leading) if not _has_shell_redirection(leading) else None
-        )
-        if gcode_metadata:
-            kind, extra = gcode_metadata
-            return _build_canonical_tool_metadata(kind, extra=extra)
+    cwd: str | None = None
+    metadata: list[_ShellSegmentMetadata] = []
+    for segment in _split_shell_segments(tokens):
+        raw_parts = shell_token_values(segment.tokens)
+        parts = _strip_shell_wrappers(raw_parts)
+        if not parts:
+            metadata.append(_ShellSegmentMetadata("execute", neutral_setup=True))
+            continue
 
-    if any(token in _SHELL_CHAIN_TOKENS for token in parts):
-        return _build_canonical_tool_metadata("execute")
+        cd_target = _literal_cd_target(parts)
+        if cd_target is not None:
+            cwd = _apply_cd(cwd, cd_target)
+            metadata.append(_ShellSegmentMetadata("execute", neutral_setup=True))
+            continue
 
-    if any(token in _SHELL_INPUT_REDIRECTION_TOKENS for token in parts):
-        return _build_canonical_tool_metadata("execute")
+        if segment.separator_before == "|" and _is_read_only_pipeline_stage(parts):
+            metadata.append(
+                _ShellSegmentMetadata(
+                    "execute",
+                    read_only_pipeline_filter=True,
+                )
+            )
+            continue
 
-    cmd = shell_command_name(parts[0])
+        metadata.append(_classify_shell_segment(segment.tokens, parts, cwd))
+
+    return _merge_shell_segment_metadata(metadata)
+
+
+def _classify_shell_segment(
+    tokens: list[ShellToken],
+    parts: list[str],
+    cwd: str | None,
+) -> _ShellSegmentMetadata:
+    redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
+
     gcode_metadata = gcode_navigation_metadata(parts)
-    if gcode_metadata:
+    if gcode_metadata and not has_shell_redirection(tokens):
         kind, extra = gcode_metadata
-        return _build_canonical_tool_metadata(kind, extra=extra)
+        gcode_paths = _rebase_shell_paths(
+            [path for path in parts[2:] if _looks_file_like(path)],
+            cwd,
+        )
+        return _ShellSegmentMetadata(
+            kind,
+            paths=tuple(gcode_paths),
+            extra=extra,
+            pure_gcode_navigation=True,
+        )
 
-    redirection_paths = _extract_redirection_paths(parts)
     if redirection_paths:
-        return _build_canonical_tool_metadata(
+        base_metadata = _classify_shell_segment_without_redirection(parts, cwd)
+        extra = _without_code_index_navigation(base_metadata.extra)
+        base_paths = list(base_metadata.paths)
+        return _ShellSegmentMetadata(
             "write",
-            paths=redirection_paths,
+            paths=tuple(
+                base_paths + [path for path in redirection_paths if path not in base_paths]
+            ),
+            extra=extra,
             repo_mutation=True,
         )
 
-    if cmd in {"rg", "grep", "git"}:
-        if cmd == "git" and len(parts) > 1 and parts[1] != "grep":
-            return _build_canonical_tool_metadata("execute")
-        return _build_canonical_tool_metadata("search", extra=search_navigation_metadata())
+    if has_shell_input_redirection(tokens):
+        return _ShellSegmentMetadata("execute")
 
-    if cmd == "find":
-        return _build_canonical_tool_metadata("search", extra=search_navigation_metadata())
+    return _classify_shell_segment_without_redirection(parts, cwd)
+
+
+def _classify_shell_segment_without_redirection(
+    parts: list[str],
+    cwd: str | None,
+) -> _ShellSegmentMetadata:
+    cmd = shell_command_name(parts[0])
+
+    if cmd in {"rg", "grep", "git", "find"}:
+        if cmd == "git" and (len(parts) <= 1 or parts[1] != "grep"):
+            return _ShellSegmentMetadata("execute")
+        paths = _rebase_shell_paths(_search_command_paths(cmd, parts), cwd)
+        return _ShellSegmentMetadata(
+            "search",
+            paths=tuple(paths),
+            extra=search_navigation_metadata(),
+        )
 
     if cmd in {"cat", "head", "tail", "bat", "nl"}:
         positional = _shell_positional_args(parts)
-        paths = [candidate for candidate in positional if _looks_file_like(candidate)]
+        paths = _rebase_shell_paths(
+            [candidate for candidate in positional if _looks_file_like(candidate)],
+            cwd,
+        )
         line_count = count_option_line_count(parts) if cmd in {"head", "tail"} else None
         read_scope = "line_range" if line_count is not None else "full_file"
-        return _build_canonical_tool_metadata(
+        return _ShellSegmentMetadata(
             "read",
-            paths=paths or None,
+            paths=tuple(paths),
             extra=source_read_navigation_metadata(
                 paths,
                 line_count=line_count,
@@ -213,17 +477,20 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         candidate = positional[-1] if positional else None
         if _has_sed_inplace_option(parts):
             paths = [candidate] if candidate and _looks_path_target(candidate) else []
-            return _build_canonical_tool_metadata(
+            return _ShellSegmentMetadata(
                 "write",
-                paths=paths or None,
+                paths=tuple(_rebase_shell_paths(paths, cwd)),
                 repo_mutation=True,
             )
-        paths = [item for item in positional if _looks_file_like(item)]
+        paths = _rebase_shell_paths(
+            [item for item in positional if _looks_file_like(item)],
+            cwd,
+        )
         line_count = sed_line_count(parts, positional)
         read_scope = "line_range" if line_count is not None else "full_file"
-        return _build_canonical_tool_metadata(
+        return _ShellSegmentMetadata(
             "read",
-            paths=paths or None,
+            paths=tuple(paths),
             extra=source_read_navigation_metadata(
                 paths,
                 line_count=line_count,
@@ -235,27 +502,27 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         positional = _shell_positional_args(parts)
         candidate = positional[-1] if positional else None
         paths = [candidate] if candidate and _looks_path_target(candidate) else []
-        return _build_canonical_tool_metadata(
+        return _ShellSegmentMetadata(
             "write",
-            paths=paths or None,
+            paths=tuple(_rebase_shell_paths(paths, cwd)),
             repo_mutation=True,
         )
 
     if cmd == "tee":
         positional = _shell_positional_args(parts)
         paths = [candidate for candidate in positional if _looks_path_target(candidate)]
-        return _build_canonical_tool_metadata(
+        return _ShellSegmentMetadata(
             "write",
-            paths=paths or None,
+            paths=tuple(_rebase_shell_paths(paths, cwd)),
             repo_mutation=True,
         )
 
     if cmd in {"touch", "rm", "mkdir", "rmdir"}:
         positional = _shell_positional_args(parts)
         paths = [candidate for candidate in positional if _looks_path_target(candidate)]
-        return _build_canonical_tool_metadata(
+        return _ShellSegmentMetadata(
             "write",
-            paths=paths or None,
+            paths=tuple(_rebase_shell_paths(paths, cwd)),
             repo_mutation=True,
         )
 
@@ -263,21 +530,21 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
         positional = _shell_positional_args(parts)
         candidate = positional[-1] if positional else None
         paths = [candidate] if candidate and _looks_path_target(candidate) else []
-        return _build_canonical_tool_metadata(
+        return _ShellSegmentMetadata(
             "write",
-            paths=paths or None,
+            paths=tuple(_rebase_shell_paths(paths, cwd)),
             repo_mutation=True,
         )
 
     if cmd == "truncate":
-        paths = _truncate_positional_paths(parts)
-        return _build_canonical_tool_metadata(
+        paths = _rebase_shell_paths(_truncate_positional_paths(parts), cwd)
+        return _ShellSegmentMetadata(
             "write",
-            paths=paths or None,
+            paths=tuple(paths),
             repo_mutation=True,
         )
 
-    return _build_canonical_tool_metadata("execute")
+    return _ShellSegmentMetadata("execute")
 
 
 def _set_canonical_tool_metadata(data: dict[str, Any]) -> None:

@@ -1,5 +1,7 @@
 """Shell tool identity and command-token helpers."""
 
+import re
+from dataclasses import dataclass
 from typing import Any
 
 from gobby.hooks._normalization_paths import _append_unique_path
@@ -20,20 +22,183 @@ _SHELL_TOOLS = frozenset(
     }
 )
 
-_SHELL_CHAIN_TOKENS = frozenset({"&&", "||", ";", "|"})
+_SHELL_CHAIN_TOKENS = frozenset({"&&", "||", ";", "|", "\n"})
 # Chain tokens that sequence a *separate* command, unlike ``|`` which only pipes
 # the leading command's output into a filter. A gcode navigation piped to a
 # read-only filter (``gcode symbol <id> | jq``) is still navigation; one joined to
 # another command via these is not, so those stay classified as ``execute``.
-_SHELL_SEQUENCING_TOKENS = frozenset({"&&", "||", ";"})
+_SHELL_SEQUENCING_TOKENS = frozenset({"&&", "||", ";", "\n"})
 _SHELL_INPUT_REDIRECTION_TOKENS = frozenset({"<", "<<", "<<<"})
-_SHELL_OUTPUT_REDIRECTION_TOKENS = frozenset({">", ">>", "1>", "1>>"})
+_SHELL_OUTPUT_REDIRECTION_TOKENS = frozenset({">", ">>", "1>", "1>>", "2>", "2>>", "&>", "&>>"})
 _SHELL_CONTROL_TOKENS = (
     _SHELL_CHAIN_TOKENS | _SHELL_INPUT_REDIRECTION_TOKENS | _SHELL_OUTPUT_REDIRECTION_TOKENS
 )
+_FD_OUTPUT_REDIRECTION_RE = re.compile(r"^\d+>>?$")
 
 # Characters that strongly imply an inline sed/awk script rather than a file path.
 _SCRIPT_LIKE_CHARS = frozenset({"{", "}", "$", ";", "(", ")"})
+
+
+@dataclass(frozen=True, slots=True)
+class ShellToken:
+    """A shell token plus whether quoting or escaping changed its literal value."""
+
+    value: str
+    quoted: bool = False
+
+
+def tokenize_shell_command(command: str) -> list[ShellToken]:
+    """Split a shell command into tokens while preserving quoted operator literals."""
+    tokens: list[ShellToken] = []
+    current: list[str] = []
+    quoted = False
+    in_single_quote = False
+    in_double_quote = False
+    escaped = False
+
+    def flush() -> None:
+        nonlocal quoted
+        if current or quoted:
+            tokens.append(ShellToken("".join(current), quoted=quoted))
+            current.clear()
+            quoted = False
+
+    index = 0
+    while index < len(command):
+        char = command[index]
+
+        if in_single_quote:
+            if char == "'":
+                in_single_quote = False
+            else:
+                current.append(char)
+            index += 1
+            continue
+
+        if in_double_quote:
+            if escaped:
+                current.append(char)
+                escaped = False
+            elif char == "\\":
+                quoted = True
+                escaped = True
+            elif char == '"':
+                in_double_quote = False
+            else:
+                current.append(char)
+            index += 1
+            continue
+
+        if escaped:
+            current.append(char)
+            escaped = False
+            index += 1
+            continue
+
+        if char == "\\":
+            quoted = True
+            escaped = True
+            index += 1
+            continue
+
+        if char == "'":
+            quoted = True
+            in_single_quote = True
+            index += 1
+            continue
+
+        if char == '"':
+            quoted = True
+            in_double_quote = True
+            index += 1
+            continue
+
+        operator = _scan_unquoted_shell_operator(command, index)
+        if operator:
+            flush()
+            tokens.append(ShellToken(operator))
+            index += len(operator)
+            continue
+
+        if char.isspace():
+            flush()
+            index += 1
+            continue
+
+        current.append(char)
+        index += 1
+
+    if in_single_quote or in_double_quote or escaped:
+        raise ValueError("Unclosed shell quote or escape")
+
+    flush()
+    return tokens
+
+
+def _scan_unquoted_shell_operator(command: str, index: int) -> str | None:
+    char = command[index]
+    if char == "\n":
+        return "\n"
+    if char.isdigit():
+        cursor = index
+        while cursor < len(command) and command[cursor].isdigit():
+            cursor += 1
+        if command.startswith(">>", cursor):
+            return f"{command[index:cursor]}>>"
+        if command.startswith(">", cursor):
+            return f"{command[index:cursor]}>"
+        return None
+    for operator in ("<<<", "&>>", "&&", "||", "<<", ">>", "&>", ";", "|", "<", ">"):
+        if command.startswith(operator, index):
+            return operator
+    return None
+
+
+def shell_token_values(tokens: list[ShellToken]) -> list[str]:
+    return [token.value for token in tokens]
+
+
+def is_unquoted_shell_control_token(token: ShellToken) -> bool:
+    return not token.quoted and (
+        token.value in _SHELL_CONTROL_TOKENS
+        or _FD_OUTPUT_REDIRECTION_RE.match(token.value) is not None
+    )
+
+
+def is_shell_input_redirection_token(token: ShellToken) -> bool:
+    return not token.quoted and token.value in _SHELL_INPUT_REDIRECTION_TOKENS
+
+
+def is_shell_output_redirection_token(token: ShellToken) -> bool:
+    return not token.quoted and (
+        token.value in _SHELL_OUTPUT_REDIRECTION_TOKENS
+        or _FD_OUTPUT_REDIRECTION_RE.match(token.value) is not None
+    )
+
+
+def has_shell_input_redirection(tokens: list[ShellToken]) -> bool:
+    return any(is_shell_input_redirection_token(token) for token in tokens)
+
+
+def has_shell_redirection(tokens: list[ShellToken]) -> bool:
+    return any(
+        is_shell_input_redirection_token(token) or is_shell_output_redirection_token(token)
+        for token in tokens
+    )
+
+
+def extract_redirection_paths(tokens: list[ShellToken]) -> list[str]:
+    """Extract explicit output redirection targets from quote-aware shell tokens."""
+    paths: list[str] = []
+    for idx, token in enumerate(tokens[:-1]):
+        if not is_shell_output_redirection_token(token):
+            continue
+        candidate = tokens[idx + 1]
+        if is_unquoted_shell_control_token(candidate):
+            continue
+        if _looks_path_target(candidate.value):
+            _append_unique_path(paths, candidate.value)
+    return paths
 
 
 def is_shell_tool(tool_name: Any) -> bool:
@@ -126,7 +291,9 @@ def _extract_redirection_paths(parts: list[str]) -> list[str]:
     """Extract explicit output redirection targets from shell tokens."""
     paths: list[str] = []
     for idx, token in enumerate(parts[:-1]):
-        if token not in _SHELL_OUTPUT_REDIRECTION_TOKENS:
+        if token not in _SHELL_OUTPUT_REDIRECTION_TOKENS and not _FD_OUTPUT_REDIRECTION_RE.match(
+            token
+        ):
             continue
         candidate = parts[idx + 1]
         if _looks_path_target(candidate):

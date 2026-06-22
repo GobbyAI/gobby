@@ -7,9 +7,12 @@ sync correctly, have valid structure, and evaluate conditions properly.
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 
 import pytest
 
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody
@@ -37,6 +40,18 @@ def _sync_bundled(db):
     result = sync_bundled_rules(db, get_bundled_rules_path())
     db.execute("UPDATE workflow_definitions SET source = 'installed' WHERE source = 'template'")
     return result
+
+
+def _normalized_bash_event(command: str, event_type: HookEventType) -> HookEvent:
+    data: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": command}}
+    normalize_tool_fields(data)
+    return HookEvent(
+        event_type=event_type,
+        session_id="test-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+    )
 
 
 TDD_ENFORCEMENT_RULES = {
@@ -117,7 +132,7 @@ class TestEnforceTddBlockStructure:
         sv_effect = body.resolved_effects[0]
         assert sv_effect.variable == "tdd_nudged_files"
         assert "tdd_nudged_files" in sv_effect.value
-        assert "tool_input" in sv_effect.value
+        assert "first_tdd_code_path" in sv_effect.value
 
     def test_mcp_call_updates_task(self, db, manager) -> None:
         _sync_bundled(db)
@@ -139,13 +154,13 @@ class TestEnforceTddBlockStructure:
         assert mcp_effect.when is not None
         assert "task_claimed" in mcp_effect.when
 
-    def test_block_targets_write_only(self, db, manager) -> None:
+    def test_block_targets_write_and_bash(self, db, manager) -> None:
         _sync_bundled(db)
         row = manager.get_by_name("enforce-tdd-block")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         block_effect = body.resolved_effects[2]
-        assert block_effect.tools == ["Write"]
+        assert block_effect.tools == ["Write", "Bash"]
 
     def test_when_checks_enforce_tdd(self, db, manager) -> None:
         _sync_bundled(db)
@@ -154,6 +169,8 @@ class TestEnforceTddBlockStructure:
 
         assert body.when is not None
         assert "enforce_tdd" in body.when
+        assert "canonical_tool_kind" in body.when
+        assert "first_tdd_code_path" in body.when
         assert "tdd_nudged_files" in body.when
 
 
@@ -165,14 +182,10 @@ class TestEnforceTddBlockCondition:
 
     CONDITION = (
         "variables.get('enforce_tdd') "
-        "and event.data.get('tool_name') == 'Write' "
-        "and tool_input.get('file_path', '').endswith('.py') "
-        "and not tool_input.get('file_path', '').endswith('__init__.py') "
-        "and not tool_input.get('file_path', '').endswith('conftest.py') "
-        "and '/tests/' not in tool_input.get('file_path', '') "
-        "and not tool_input.get('file_path', '').split('/')[-1].startswith('test_') "
-        "and not tool_input.get('file_path', '').endswith('_test.py') "
-        "and tool_input.get('file_path', '') not in variables.get('tdd_nudged_files', [])"
+        "and event.data.get('canonical_tool_kind') == 'write' "
+        "and first_tdd_code_path(event.data, tool_input) "
+        "and first_tdd_code_path(event.data, tool_input) "
+        "not in variables.get('tdd_nudged_files', [])"
     )
 
     def _eval(
@@ -180,15 +193,20 @@ class TestEnforceTddBlockCondition:
         file_path: str,
         *,
         enforce_tdd: bool = True,
-        tool_name: str = "Write",
+        canonical_tool_kind: str = "write",
         nudged: list[str] | None = None,
     ) -> bool:
+        event_data = {
+            "canonical_tool_kind": canonical_tool_kind,
+            "canonical_file_path": file_path,
+            "canonical_file_paths": [file_path],
+        }
         context = {
             "variables": {
                 "enforce_tdd": enforce_tdd,
                 "tdd_nudged_files": nudged or [],
             },
-            "event": type("E", (), {"data": {"tool_name": tool_name}})(),
+            "event": type("E", (), {"data": event_data})(),
             "tool_input": {"file_path": file_path},
         }
         allowed_funcs = build_condition_helpers(context=context)
@@ -228,11 +246,11 @@ class TestEnforceTddBlockCondition:
         assert self._eval("/project/README.md") is False
         assert self._eval("/project/data.json") is False
 
-    def test_skips_edit_tool(self) -> None:
-        assert self._eval("/project/src/main.py", tool_name="Edit") is False
+    def test_blocks_canonical_write_from_bash(self) -> None:
+        assert self._eval("/project/src/main.py", canonical_tool_kind="write") is True
 
-    def test_skips_notebook_edit(self) -> None:
-        assert self._eval("/project/src/main.py", tool_name="NotebookEdit") is False
+    def test_skips_non_write_kind(self) -> None:
+        assert self._eval("/project/src/main.py", canonical_tool_kind="read") is False
 
 
 # --- enforce-tdd-track-tests structure ---
@@ -257,6 +275,7 @@ class TestEnforceTddTrackTestsStructure:
         assert body.effects[0].type == "set_variable"
         assert body.effects[0].variable == "tdd_tests_written"
         assert "tdd_tests_written" in body.effects[0].value
+        assert "first_tdd_test_path" in body.effects[0].value
 
     def test_when_checks_enforce_tdd_and_tool(self, db, manager) -> None:
         _sync_bundled(db)
@@ -265,8 +284,8 @@ class TestEnforceTddTrackTestsStructure:
 
         assert body.when is not None
         assert "enforce_tdd" in body.when
-        assert "Write" in body.when
-        assert "Edit" in body.when
+        assert "canonical_tool_kind" in body.when
+        assert "first_tdd_test_path" in body.when
 
 
 # --- enforce-tdd-track-tests condition evaluation ---
@@ -277,11 +296,9 @@ class TestEnforceTddTrackTestsCondition:
 
     CONDITION = (
         "variables.get('enforce_tdd') "
-        "and event.data.get('tool_name') in ('Write', 'Edit') "
+        "and event.data.get('canonical_tool_kind') == 'write' "
         "and not event.data.get('error') "
-        "and (tool_input.get('file_path', '').split('/')[-1].startswith('test_') "
-        "or '/tests/' in tool_input.get('file_path', '') "
-        "or tool_input.get('file_path', '').endswith('_test.py'))"
+        "and first_tdd_test_path(event.data, tool_input)"
     )
 
     def _eval(
@@ -289,12 +306,18 @@ class TestEnforceTddTrackTestsCondition:
         file_path: str,
         *,
         enforce_tdd: bool = True,
-        tool_name: str = "Write",
+        canonical_tool_kind: str = "write",
         error: bool = False,
     ) -> bool:
+        event_data = {
+            "canonical_tool_kind": canonical_tool_kind,
+            "canonical_file_path": file_path,
+            "canonical_file_paths": [file_path],
+            "error": error,
+        }
         context = {
             "variables": {"enforce_tdd": enforce_tdd},
-            "event": type("E", (), {"data": {"tool_name": tool_name, "error": error}})(),
+            "event": type("E", (), {"data": event_data})(),
             "tool_input": {"file_path": file_path},
         }
         allowed_funcs = build_condition_helpers(context=context)
@@ -323,11 +346,11 @@ class TestEnforceTddTrackTestsCondition:
     def test_skips_on_error(self) -> None:
         assert self._eval("/project/test_main.py", error=True) is False
 
-    def test_tracks_edit_tool(self) -> None:
-        assert self._eval("/project/tests/test_main.py", tool_name="Edit") is True
+    def test_tracks_bash_canonical_write(self) -> None:
+        assert self._eval("/project/tests/test_main.py", canonical_tool_kind="write") is True
 
-    def test_skips_non_write_edit_tool(self) -> None:
-        assert self._eval("/project/tests/test_main.py", tool_name="Read") is False
+    def test_skips_non_write_kind(self) -> None:
+        assert self._eval("/project/tests/test_main.py", canonical_tool_kind="read") is False
 
 
 # --- Variable definitions ---

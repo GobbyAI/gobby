@@ -8,12 +8,10 @@ rules:
     priority: 30
     when: >-
       variables.get('enforce_tdd')
-      and event.data.get('tool_name') in ('Write', 'Edit')
+      and event.data.get('canonical_tool_kind') == 'write'
       and not event.data.get('error')
-      and (normalize_path(tool_input.get('file_path', '')).split('/')[-1].startswith('test_')
-      or '/tests/' in normalize_path(tool_input.get('file_path', ''))
-      or normalize_path(tool_input.get('file_path', '')).endswith('_test.py'))
+      and first_tdd_test_path(event.data, tool_input)
     effects:
       - type: set_variable
         variable: tdd_tests_written
-        value: "variables.get('tdd_tests_written', []) + [tool_input.get('file_path', '')]"
+        value: "variables.get('tdd_tests_written', []) + [first_tdd_test_path(event.data, tool_input)]"

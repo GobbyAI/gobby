@@ -10,7 +10,7 @@ import ast
 import logging
 import re
 import textwrap
-from collections.abc import Iterable, Mapping, Sequence
+from collections.abc import Callable, Iterable, Mapping, Sequence
 from typing import Any, Protocol
 from uuid import UUID
 
@@ -135,6 +135,114 @@ def _touches_task_commit_guard_file(
         logger.debug("Unable to derive touched paths for task commit guardrail", exc_info=True)
 
     return any(_is_task_commit_guard_file(path) for path in touched_paths)
+
+
+def first_tdd_code_path(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+) -> str:
+    """Return the first touched Python source path that should trigger TDD blocking."""
+    return _first_matching_path(event_data, tool_input, _is_tdd_code_path)
+
+
+def first_tdd_test_path(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+) -> str:
+    """Return the first touched test path for TDD observability."""
+    return _first_matching_path(event_data, tool_input, _is_tdd_test_path)
+
+
+def touches_claude_memory_path(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+) -> bool:
+    """Return True when canonical or native path fields touch Claude file memory."""
+    return any(
+        _is_claude_memory_path(path) for path in _event_and_tool_paths(event_data, tool_input)
+    )
+
+
+def _first_matching_path(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+    predicate: Callable[[str], bool],
+) -> str:
+    for path in _event_and_tool_paths(event_data, tool_input):
+        if predicate(path):
+            return path
+    return ""
+
+
+def _event_and_tool_paths(
+    event_data: Mapping[str, Any] | None,
+    tool_input: Any,
+) -> list[str]:
+    paths: list[str] = []
+    if event_data:
+        _append_condition_path(paths, event_data.get("canonical_file_path"))
+        canonical_paths = event_data.get("canonical_file_paths")
+        if isinstance(canonical_paths, list | tuple):
+            for path in canonical_paths:
+                _append_condition_path(paths, path)
+
+    if isinstance(tool_input, Mapping):
+        for key in ("file_path", "path", "pattern"):
+            _append_condition_path(paths, tool_input.get(key))
+        file_paths = tool_input.get("file_paths")
+        if isinstance(file_paths, list | tuple):
+            for path in file_paths:
+                _append_condition_path(paths, path)
+
+    try:
+        from gobby.workflows.enforcement.blocking import get_touched_file_paths
+
+        for path in get_touched_file_paths(tool_input):
+            _append_condition_path(paths, path)
+    except (AttributeError, TypeError, ValueError):
+        logger.debug("Unable to derive condition helper paths", exc_info=True)
+
+    return paths
+
+
+def _append_condition_path(paths: list[str], candidate: Any) -> None:
+    if isinstance(candidate, str) and candidate and candidate not in paths:
+        paths.append(candidate)
+
+
+def _normalize_condition_path(path: str) -> str:
+    return path.replace("\\", "/")
+
+
+def _path_has_segment(path: str, segment: str) -> bool:
+    return segment in [part for part in _normalize_condition_path(path).split("/") if part]
+
+
+def _is_tdd_code_path(path: str) -> bool:
+    normalized = _normalize_condition_path(path)
+    name = normalized.rsplit("/", 1)[-1]
+    return (
+        normalized.endswith(".py")
+        and name not in {"__init__.py", "conftest.py"}
+        and not _path_has_segment(normalized, "tests")
+        and not name.startswith("test_")
+        and not normalized.endswith("_test.py")
+    )
+
+
+def _is_tdd_test_path(path: str) -> bool:
+    normalized = _normalize_condition_path(path)
+    name = normalized.rsplit("/", 1)[-1]
+    return (
+        _path_has_segment(normalized, "tests")
+        or name.startswith("test_")
+        or normalized.endswith("_test.py")
+    )
+
+
+def _is_claude_memory_path(path: str) -> bool:
+    normalized = _normalize_condition_path(path).rstrip("/")
+    return ".claude/" in normalized and ("/memory/" in normalized or normalized.endswith("/memory"))
 
 
 def _is_task_commit_guard_file(path: str) -> bool:

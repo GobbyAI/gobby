@@ -11,12 +11,15 @@ from gobby.storage.tasks import LocalTaskManager
 from gobby.workflows.condition_helpers import (
     _normalize_task_id,
     completion_evidence_ready,
+    first_tdd_code_path,
+    first_tdd_test_path,
     is_gobby_build_command,
     is_task_complete,
     task_commit_project_path_allowlist_violation,
     task_needs_human_review,
     task_tree_complete,
     task_type_in,
+    touches_claude_memory_path,
 )
 
 pytestmark = pytest.mark.unit
@@ -574,3 +577,63 @@ class TestTaskCommitProjectPathAllowlistViolation:
         }
 
         assert task_commit_project_path_allowlist_violation(event_data, tool_input) is False
+
+
+class TestTddPathHelpers:
+    def test_first_tdd_code_path_uses_canonical_paths(self) -> None:
+        event_data = {
+            "canonical_file_paths": ["tests/test_app.py", "src/app.py"],
+        }
+
+        assert first_tdd_code_path(event_data, {}) == "src/app.py"
+
+    def test_first_tdd_code_path_skips_test_and_special_python_files(self) -> None:
+        event_data = {
+            "canonical_file_paths": [
+                "src/__init__.py",
+                "tests/helper.py",
+                "src/conftest.py",
+                "src/test_helper.py",
+                "src/helper_test.py",
+            ],
+        }
+
+        assert first_tdd_code_path(event_data, {}) == ""
+
+    def test_first_tdd_test_path_uses_canonical_paths(self) -> None:
+        event_data = {
+            "canonical_file_paths": ["src/app.py", "tests/helper.py"],
+        }
+
+        assert first_tdd_test_path(event_data, {}) == "tests/helper.py"
+
+    def test_tdd_helpers_fall_back_to_native_tool_input(self) -> None:
+        tool_input = {"file_path": "src/new_module.py"}
+
+        assert first_tdd_code_path({}, tool_input) == "src/new_module.py"
+
+
+class TestTouchesClaudeMemoryPath:
+    def test_matches_canonical_path(self) -> None:
+        event_data = {
+            "canonical_file_path": ".claude/memory/project.md",
+        }
+
+        assert touches_claude_memory_path(event_data, {}) is True
+
+    def test_matches_search_path_field(self) -> None:
+        tool_input = {"path": ".claude/memory"}
+
+        assert touches_claude_memory_path({}, tool_input) is True
+
+    def test_skips_non_memory_claude_path(self) -> None:
+        tool_input = {"file_path": ".claude/plans/design.md"}
+
+        assert touches_claude_memory_path({}, tool_input) is False
+
+    def test_skips_non_claude_memory_path(self) -> None:
+        event_data = {
+            "canonical_file_paths": ["docs/memory/project.md"],
+        }
+
+        assert touches_claude_memory_path(event_data, {}) is False

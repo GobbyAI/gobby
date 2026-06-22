@@ -670,7 +670,8 @@ class TestCanonicalToolMetadata:
 
         assert data["tool_name"] == "Bash"
         assert data["canonical_tool_kind"] == "search"
-        assert "canonical_file_path" not in data
+        assert data["canonical_file_path"] == "src"
+        assert data["canonical_file_paths"] == ["src"]
         assert data["canonical_code_navigation_action"] == "search"
         assert data["canonical_code_navigation_broad"] is True
 
@@ -730,7 +731,7 @@ class TestCanonicalToolMetadata:
             "gcode symbol 00000000-0000-0000-0000-000000000000 > out.txt | head -1",
         ],
     )
-    def test_exec_command_gcode_with_sequencing_stays_execute(self, command: str) -> None:
+    def test_exec_command_gcode_with_side_effects_loses_pure_navigation(self, command: str) -> None:
         # `&&`/`;`/`||` join a *separate* command (possibly side-effecting), so a
         # gcode-led sequence is not treated as pure navigation -- only a `|`
         # pipeline of read-only filters is.
@@ -739,7 +740,21 @@ class TestCanonicalToolMetadata:
         normalize_tool_fields(data)
 
         assert data["tool_name"] == "Bash"
-        assert data["canonical_tool_kind"] == "execute"
+        assert data["canonical_tool_kind"] in {"read", "search", "write"}
+        assert "canonical_code_index_navigation" not in data
+
+    def test_exec_command_gcode_with_broad_read_loses_pure_navigation(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "gcode outline src/app.py && cat src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["tool_name"] == "Bash"
+        assert data["canonical_tool_kind"] == "read"
+        assert data["canonical_file_paths"] == ["src/app.py"]
+        assert data["canonical_code_navigation_broad"] is True
         assert "canonical_code_index_navigation" not in data
 
     def test_exec_command_git_grep_sets_broad_search(self) -> None:
@@ -763,8 +778,24 @@ class TestCanonicalToolMetadata:
         normalize_tool_fields(data)
 
         assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_file_path"] == "src"
         assert data["canonical_code_navigation_action"] == "search"
         assert data["canonical_code_navigation_broad"] is True
+
+    def test_exec_command_search_populates_visible_paths(self) -> None:
+        examples = [
+            ("rg foo .claude/memory", ".claude/memory"),
+            ("grep foo .claude/memory/file.md", ".claude/memory/file.md"),
+            ("git grep foo -- .claude/memory", ".claude/memory"),
+            ("find .claude/memory -type f", ".claude/memory"),
+        ]
+        for command, expected_path in examples:
+            data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+            normalize_tool_fields(data)
+
+            assert data["canonical_tool_kind"] == "search"
+            assert data["canonical_file_path"] == expected_path
 
     def test_exec_command_tight_sed_source_read_sets_narrow_context(self) -> None:
         data = {
@@ -779,6 +810,41 @@ class TestCanonicalToolMetadata:
         assert data["canonical_source_line_count"] == 40
         assert data["canonical_code_navigation_broad"] is False
         assert data["canonical_narrow_source_context"] is True
+
+    def test_exec_command_compound_cd_rebases_search_paths(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "cd dir && rg pattern src"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "search"
+        assert data["canonical_file_path"] == "dir/src"
+        assert data["canonical_file_paths"] == ["dir/src"]
+
+    def test_exec_command_compound_cd_rebases_newline_sed_path(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "cd dir\nsed -n '1,60p' app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "read"
+        assert data["canonical_file_path"] == "dir/app.py"
+        assert data["canonical_code_navigation_broad"] is True
+
+    def test_exec_command_compound_cd_rebases_semicolon_cat_path(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "cd dir; cat app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "read"
+        assert data["canonical_file_path"] == "dir/app.py"
 
     def test_exec_command_wide_sed_source_read_sets_broad_context(self) -> None:
         data = {
@@ -819,6 +885,29 @@ class TestCanonicalToolMetadata:
         assert data["canonical_file_path"] == "src/app.py"
         assert data["tool_input"]["file_path"] == "src/app.py"
 
+    def test_exec_command_pipeline_tee_sets_canonical_write_fields(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "printf hello | tee src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_repo_mutation"] is True
+        assert data["canonical_file_path"] == "src/app.py"
+
+    def test_exec_command_heredoc_with_output_redirection_sets_write(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "cat <<'EOF' > src/app.py\nhello\nEOF"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_path"] == "src/app.py"
+
     def test_exec_command_sed_in_place_sets_canonical_write_fields(self) -> None:
         data = {
             "tool_name": "exec_command",
@@ -831,6 +920,44 @@ class TestCanonicalToolMetadata:
         assert data["canonical_tool_kind"] == "write"
         assert data["canonical_repo_mutation"] is True
         assert data["canonical_file_path"] == "src/app.py"
+
+    def test_exec_command_cd_sed_in_place_rebases_write_path(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "cd src && sed -i 's/old/new/' app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "write"
+        assert data["canonical_file_path"] == "src/app.py"
+
+    def test_exec_command_quoted_output_operator_is_plain_argument(self) -> None:
+        data = {
+            "tool_name": "exec_command",
+            "tool_input": {"command": "echo '>' src/app.py"},
+        }
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert "canonical_file_path" not in data
+
+    @pytest.mark.parametrize(
+        "command",
+        [
+            "echo 'src/app.py'",
+            "git commit -m 'touch src/app.py'",
+            "cargo test path.rs",
+        ],
+    )
+    def test_exec_command_source_like_arguments_do_not_false_positive(self, command: str) -> None:
+        data = {"tool_name": "exec_command", "tool_input": {"command": command}}
+
+        normalize_tool_fields(data)
+
+        assert data["canonical_tool_kind"] == "execute"
+        assert "canonical_file_path" not in data
 
     def test_write_tool_sets_canonical_write_fields(self) -> None:
         data = {"tool_name": "Write", "tool_input": {"file_path": "/repo/main.py"}}

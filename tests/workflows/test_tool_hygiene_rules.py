@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
 from gobby.workflows.definitions import RuleDefinitionBody, RuleEffect
@@ -15,6 +16,12 @@ from gobby.workflows.engine.core import RuleEngine
 from gobby.workflows.sync_rules import sync_bundled_rules
 
 pytestmark = pytest.mark.unit
+
+CLAUDE_MEMORY_RULES = {
+    "block-claude-memory-read",
+    "block-claude-memory-search",
+    "block-claude-memory-write",
+}
 
 
 @pytest.fixture
@@ -48,6 +55,7 @@ class TestToolHygieneSync:
         assert "block-escaped-quotes" not in rule_names
         assert "require-uv" in rule_names
         assert "track-pending-memory-review" in rule_names
+        assert CLAUDE_MEMORY_RULES.issubset(rule_names)
 
     def test_all_rules_have_group(self, db, manager) -> None:
         """All tool-hygiene rules should have group='tool-hygiene'."""
@@ -55,7 +63,7 @@ class TestToolHygieneSync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"require-uv", "track-pending-memory-review"}:
+            if row.name in {"require-uv", "track-pending-memory-review"} | CLAUDE_MEMORY_RULES:
                 body = json.loads(row.definition_json)
                 assert body.get("group") == "tool-hygiene", f"{row.name} missing group"
 
@@ -65,7 +73,7 @@ class TestToolHygieneSync:
 
         rules = manager.list_all(workflow_type="rule")
         for row in rules:
-            if row.name in {"require-uv", "track-pending-memory-review"}:
+            if row.name in {"require-uv", "track-pending-memory-review"} | CLAUDE_MEMORY_RULES:
                 body = RuleDefinitionBody.model_validate_json(row.definition_json)
                 effect_types = {e.type for e in body.resolved_effects}
                 assert effect_types <= {"block", "set_variable", "rewrite_input", "inject_context"}
@@ -208,6 +216,76 @@ class TestTrackPendingMemoryReview:
 
         assert body.when is not None
         assert "canonical_repo_mutation" in body.when
+
+
+def _make_normalized_bash_event(command: str) -> HookEvent:
+    data: dict[str, object] = {"tool_name": "Bash", "tool_input": {"command": command}}
+    normalize_tool_fields(data)
+    return HookEvent(
+        event_type=HookEventType.BEFORE_TOOL,
+        session_id="test-session",
+        source=SessionSource.CLAUDE,
+        timestamp=datetime.now(UTC),
+        data=data,
+    )
+
+
+class TestClaudeMemoryHygieneRules:
+    """Verify Claude file-memory hygiene uses canonical kind/path metadata."""
+
+    def test_block_effects_include_bash(self, db, manager) -> None:
+        _sync_bundled(db)
+        expected_tools = {
+            "block-claude-memory-read": ["Read", "Bash"],
+            "block-claude-memory-search": ["Glob", "Grep", "Bash"],
+            "block-claude-memory-write": ["Write", "Edit", "Bash"],
+        }
+
+        for rule_name, tools in expected_tools.items():
+            row = manager.get_by_name(rule_name)
+            assert row is not None
+            body = RuleDefinitionBody.model_validate_json(row.definition_json)
+            assert body.when is not None
+            assert "canonical_tool_kind" in body.when
+            assert "touches_claude_memory_path" in body.when
+            assert body.resolved_effects[0].tools == tools
+
+    @pytest.mark.asyncio
+    async def test_blocks_shell_read_workaround(self, db) -> None:
+        _sync_bundled(db)
+        event = _make_normalized_bash_event("cat .claude/memory/project.md")
+
+        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "Do not read from Claude Code's file-based memory" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_blocks_shell_search_workaround(self, db) -> None:
+        _sync_bundled(db)
+        event = _make_normalized_bash_event("rg project .claude/memory")
+
+        response = await RuleEngine(db).evaluate(event, session_id="sess-1", variables={})
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "Do not search Claude Code's file-based memory" in response.reason
+
+    @pytest.mark.asyncio
+    async def test_blocks_shell_write_workaround(self, db) -> None:
+        _sync_bundled(db)
+        event = _make_normalized_bash_event("printf hello > .claude/memory/project.md")
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id="sess-1",
+            variables={"task_claimed": True},
+        )
+
+        assert response.decision == "block"
+        assert response.reason is not None
+        assert "Do not use Claude Code's file-based memory system" in response.reason
 
 
 def _make_bash_event(command: str, source: SessionSource = SessionSource.CLAUDE) -> HookEvent:

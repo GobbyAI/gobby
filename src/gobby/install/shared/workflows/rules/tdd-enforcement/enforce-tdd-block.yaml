@@ -8,18 +8,13 @@ rules:
     priority: 32
     when: >-
       variables.get('enforce_tdd')
-      and event.data.get('tool_name') == 'Write'
-      and normalize_path(tool_input.get('file_path', '')).endswith('.py')
-      and not normalize_path(tool_input.get('file_path', '')).endswith('__init__.py')
-      and not normalize_path(tool_input.get('file_path', '')).endswith('conftest.py')
-      and '/tests/' not in normalize_path(tool_input.get('file_path', ''))
-      and not normalize_path(tool_input.get('file_path', '')).split('/')[-1].startswith('test_')
-      and not normalize_path(tool_input.get('file_path', '')).endswith('_test.py')
-      and normalize_path(tool_input.get('file_path', '')) not in variables.get('tdd_nudged_files', [])
+      and event.data.get('canonical_tool_kind') == 'write'
+      and first_tdd_code_path(event.data, tool_input)
+      and first_tdd_code_path(event.data, tool_input) not in variables.get('tdd_nudged_files', [])
     effects:
       - type: set_variable
         variable: tdd_nudged_files
-        value: "variables.get('tdd_nudged_files', []) + [tool_input.get('file_path', '')]"
+        value: "variables.get('tdd_nudged_files', []) + [first_tdd_code_path(event.data, tool_input)]"
       - type: mcp_call
         when: "variables.get('task_claimed')"
         server: gobby-tasks
@@ -28,7 +23,7 @@ rules:
           task_id: "{{ variables.get('claimed_tasks', {}).values() | list | first | default('') }}"
           validation_criteria: "TDD: Test files required for: {{ variables.get('tdd_nudged_files', []) | join(', ') }}"
       - type: block
-        tools: [Write]
+        tools: [Write, Bash]
         reason: |
-          TDD enforcement: Write a test first before creating {{ tool_input.get('file_path', '').split('/')[-1] }}.
+          TDD enforcement: Write a test first before creating {{ first_tdd_code_path(event.data, tool_input).split('/')[-1] }}.
           Create a test file (in tests/ directory or with test_ prefix) that covers the expected behavior, then retry creating this file.

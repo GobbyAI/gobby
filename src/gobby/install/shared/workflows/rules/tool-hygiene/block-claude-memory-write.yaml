@@ -7,12 +7,11 @@ rules:
     enabled: true
     priority: 10
     when: >-
-      event.data.get('tool_name') in ('Write', 'Edit')
-      and '.claude/' in normalize_path(tool_input.get('file_path', ''))
-      and '/memory/' in normalize_path(tool_input.get('file_path', ''))
+      event.data.get('canonical_tool_kind') == 'write'
+      and touches_claude_memory_path(event.data, tool_input)
     effect:
       type: block
-      tools: [Write, Edit]
+      tools: [Write, Edit, Bash]
       reason: |
         Do not use Claude Code's file-based memory system.
         Use gobby-memory MCP instead:

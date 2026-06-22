@@ -7,12 +7,11 @@ rules:
     enabled: true
     priority: 10
     when: >-
-      event.data.get('tool_name') in ('Glob', 'Grep')
-      and '.claude/' in tool_input.get('path', tool_input.get('pattern', ''))
-      and '/memory/' in tool_input.get('path', tool_input.get('pattern', ''))
+      event.data.get('canonical_tool_kind') == 'search'
+      and touches_claude_memory_path(event.data, tool_input)
     effect:
       type: block
-      tools: [Glob, Grep]
+      tools: [Glob, Grep, Bash]
       reason: |
         Do not search Claude Code's file-based memory.
         Use gobby-memory MCP instead:

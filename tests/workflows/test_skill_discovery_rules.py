@@ -14,6 +14,7 @@ from typing import Any
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -2834,6 +2835,12 @@ class TestCodeIndexNavigationRules:
             data=data,
         )
 
+    @classmethod
+    def _normalized_bash_event(cls, command: str) -> HookEvent:
+        data: dict[str, Any] = {"tool_name": "Bash", "tool_input": {"command": command}}
+        normalize_tool_fields(data)
+        return cls._event(HookEventType.BEFORE_TOOL, data)
+
     @pytest.mark.asyncio
     async def test_first_rg_requires_code_index_skill(self, db) -> None:
         _sync_bundled(db)
@@ -2966,6 +2973,39 @@ class TestCodeIndexNavigationRules:
             "`gcode symbol <id>` to retrieve a target symbol before broad source reads."
         ) in broad_response.reason
         assert narrow_response.decision == "allow"
+
+    @pytest.mark.asyncio
+    async def test_compound_broad_shell_read_and_search_block(self, db) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = self._variables(loaded=True)
+
+        search_response = await engine.evaluate(
+            self._normalized_bash_event("cd dir && rg pattern src"),
+            session_id="sess-1",
+            variables=variables,
+        )
+        read_response = await engine.evaluate(
+            self._normalized_bash_event("cd dir; cat app.py"),
+            session_id="sess-1",
+            variables=variables,
+        )
+
+        assert search_response.decision == "block"
+        assert read_response.decision == "block"
+
+    @pytest.mark.asyncio
+    async def test_compound_narrow_shell_read_allows(self, db) -> None:
+        _sync_bundled(db)
+        event = self._normalized_bash_event("cd dir\nsed -n '1,40p' app.py")
+
+        response = await RuleEngine(db).evaluate(
+            event,
+            session_id="sess-1",
+            variables=self._variables(loaded=True),
+        )
+
+        assert response.decision == "allow"
 
     @pytest.mark.asyncio
     async def test_wide_line_read_requires_prior_gcode_navigation(self, db) -> None:

@@ -500,6 +500,8 @@ def build_condition_helpers(
     """
     from .condition_helpers import (
         completion_evidence_ready,
+        first_tdd_code_path,
+        first_tdd_test_path,
         is_gobby_build_command,
         is_validation_command,
         task_commit_project_path_allowlist_violation,
@@ -507,6 +509,7 @@ def build_condition_helpers(
         task_state_in,
         task_tree_complete,
         task_type_in,
+        touches_claude_memory_path,
     )
 
     ctx = context or {}
@@ -521,11 +524,14 @@ def build_condition_helpers(
         "all": all,
         "normalize_path": lambda p: p.replace("\\", "/"),
         "completion_evidence_ready": completion_evidence_ready,
+        "first_tdd_code_path": first_tdd_code_path,
+        "first_tdd_test_path": first_tdd_test_path,
         "is_gobby_build_command": is_gobby_build_command,
         "is_validation_command": is_validation_command,
         "task_commit_project_path_allowlist_violation": (
             task_commit_project_path_allowlist_violation
         ),
+        "touches_claude_memory_path": touches_claude_memory_path,
     }
 
     # --- Task helpers ---

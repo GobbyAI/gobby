@@ -14,6 +14,7 @@ from unittest.mock import patch
 import pytest
 
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.normalization import normalize_tool_fields
 from gobby.skills.formatting import skill_fetch_directive
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.workflow_definitions import LocalWorkflowDefinitionManager
@@ -317,6 +318,39 @@ class TestRequireTaskBeforeEdit:
         evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
         result = evaluator.evaluate(condition)
         assert result is True, "Should block non-plan file without task"
+
+    def test_when_condition_blocks_shell_write_workaround(self) -> None:
+        """Shell writes should carry canonical mutation/path metadata into task gating."""
+        from gobby.workflows.enforcement.blocking import requires_task_for_any_touched_file
+        from gobby.workflows.safe_evaluator import SafeExpressionEvaluator, build_condition_helpers
+
+        condition = (
+            "variables.get('require_task_before_edit') and not variables.get('task_claimed') "
+            "and event.data.get('canonical_repo_mutation') "
+            "and requires_task_for_any_touched_file(tool_input, source, variables.get('plan_mode'))"
+        )
+        data: dict[str, object] = {
+            "tool_name": "Bash",
+            "tool_input": {"command": "printf hello > src/main.py"},
+        }
+        normalize_tool_fields(data)
+
+        context = {
+            "variables": {
+                "require_task_before_edit": True,
+                "task_claimed": False,
+                "plan_mode": False,
+            },
+            "event": type("Event", (), {"data": data})(),
+            "tool_input": data["tool_input"],
+            "source": "claude_code",
+        }
+        allowed_funcs = build_condition_helpers(context=context)
+        allowed_funcs["requires_task_for_any_touched_file"] = requires_task_for_any_touched_file
+
+        evaluator = SafeExpressionEvaluator(context=context, allowed_funcs=allowed_funcs)
+        result = evaluator.evaluate(condition)
+        assert result is True, "Should block shell write to source file without task"
 
     def test_plan_mode_exempts_markdown(self) -> None:
         """In plan mode, writing .md files should not be blocked."""
