@@ -1,8 +1,8 @@
 {
   "provider": "agy",
   "capture_type": "command_captures",
-  "cli_version": "1.0.1",
-  "captured_at": "2026-05-22T22:17:00Z",
+  "cli_version": "1.0.10",
+  "captured_at": "2026-06-22T10:00:00Z",
   "commands": [
     {
       "command": "command -v agy",
@@ -12,7 +12,7 @@
     {
       "command": "agy --version",
       "exit_code": 0,
-      "stdout_summary": "1.0.1"
+      "stdout_summary": "1.0.10"
     },
     {
       "command": "agy --help",
@@ -44,12 +44,11 @@
       "command": "agy changelog",
       "exit_code": 0,
       "stdout_summary": {
-        "latest": "1.0.1",
+        "latest": "1.0.10",
         "highlights": [
-          "Fixed OAuth token persistence and authentication hangs.",
-          "Added proceed-in-sandbox tool permission mode.",
-          "Added consumer/free-tier onboarding.",
-          "Added plugin discovery for skills and agents."
+          "No ACP or stream-json transport was advertised.",
+          "Print mode retained --sandbox and --print-timeout support.",
+          "Agentapi remained launcher-oriented rather than daemon-grade."
         ]
       }
     },
@@ -71,10 +70,34 @@
       "contract_status": "unsupported"
     },
     {
-      "command": "agy --print \"Reply with exactly: agy direct ok\"",
+      "command": "agy --sandbox --print-timeout 30s --print \"Reply with exactly: agy direct ok\"",
       "exit_code": 0,
       "stdout_summary": "agy direct ok",
       "contract_status": "fresh_print_supported"
+    },
+    {
+      "command": "agy --sandbox --print-timeout 30s --print \"Return JSON: {\\\"ok\\\": true}\"",
+      "exit_code": 0,
+      "stdout_summary": "{\"ok\":true}",
+      "contract_status": "json_via_directive_supported"
+    },
+    {
+      "command": "agy --sandbox --print-timeout 30s --model \"Gemini 3.5 Flash (Low)\" --print \"Reply with exactly: model ok\"",
+      "exit_code": 0,
+      "stdout_summary": "model ok",
+      "contract_status": "display_model_supported"
+    },
+    {
+      "command": "agy --sandbox --print-timeout 1ms --print \"Wait before answering\"",
+      "exit_code": 0,
+      "stdout_summary": "Error: timed out waiting for response",
+      "contract_status": "timeout_returns_exit_zero_stdout_error"
+    },
+    {
+      "command": "agy --sandbox --print-timeout 30s --model \"definitely-not-a-model\" --print \"Reply with model name\"",
+      "exit_code": 0,
+      "stdout_summary": "Ran with the account default model; no unknown-model error was emitted.",
+      "contract_status": "unknown_model_silently_defaults"
     },
     {
       "command": "agy --print --conversation <conversation-id> \"Reply with exactly: agy resumed ok\"",

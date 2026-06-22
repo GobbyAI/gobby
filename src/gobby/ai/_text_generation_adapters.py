@@ -20,10 +20,13 @@ from gobby.ai._text_generation_contracts import TextGenerateAdapter, TextGenerat
 from gobby.ai._text_generation_helpers import (
     _compose_prompt,
     _decode,
+    _json_request,
+    _parse_json_text,
     _with_one_shot_directive,
 )
 from gobby.config.app import DaemonConfig
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
+from gobby.servers.provider_model_defaults import AGY_MODELS
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -57,6 +60,7 @@ _DROID_FACTORY_ALLOWED_PLUGIN_DIRS = frozenset({("plugins", "marketplaces")})
 _DROID_FACTORY_ALLOWED_FILE_KEYWORDS = frozenset(
     {"auth", "cert", "config", "credential", "hint", "host", "mcp", "setting", "token"}
 )
+_AGY_ERROR_STDOUT_PREFIX = "Error:"
 
 
 def _extend_reasoning_args(command: list[str], provider: str, reasoning_effort: str | None) -> None:
@@ -397,6 +401,78 @@ class _GrokCLITextGenerateAdapter:
                 timeout_seconds=self._timeout_seconds,
                 env_overrides=self._env,
             )
+
+
+class AgyCLITextGenerateAdapter:
+    """One-shot text_generate adapter for AGY's print-only CLI contract."""
+
+    def __init__(
+        self,
+        *,
+        command_path: str | None = None,
+        timeout_seconds: float = 600.0,
+        env: Mapping[str, str] | None = None,
+    ) -> None:
+        self._command_path = command_path
+        self._timeout_seconds = timeout_seconds
+        self._env = dict(env or {})
+
+    def build_command(self, request: TextGenerationRequest) -> list[str]:
+        path = self._command_path or shutil.which("agy")
+        if not path:
+            raise FileNotFoundError("AGY CLI not found in PATH")
+
+        command = [
+            path,
+            "--sandbox",
+            "--print-timeout",
+            _agy_go_duration(self._timeout_seconds),
+        ]
+        if request.model:
+            command.extend(["--model", _agy_display_for_model(request.model)])
+        command.extend(["--print", _compose_prompt(request)])
+        return command
+
+    async def generate(self, request: TextGenerationRequest) -> str:
+        request = _with_one_shot_directive(request)
+        with neutral_textgen_cwd() as cwd:
+            stdout = await _run_cli_text_generation_command(
+                "AGY",
+                self.build_command(request),
+                neutral_cwd=cwd,
+                timeout_seconds=self._timeout_seconds,
+                env_overrides=self._env,
+            )
+        return _validate_agy_stdout(stdout)
+
+    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
+        return _parse_json_text(await self.generate(_json_request(request)))
+
+
+def _agy_go_duration(timeout_seconds: float) -> str:
+    if timeout_seconds <= 0:
+        raise ValueError("AGY timeout_seconds must be positive")
+    return f"{timeout_seconds:g}s"
+
+
+def _agy_display_for_model(model: str) -> str:
+    entry = AGY_MODELS.get(model.strip())
+    if entry is None:
+        supported = ", ".join(sorted(AGY_MODELS))
+        raise ValueError(f"Unsupported AGY model {model!r}. Supported models: {supported}")
+    display = entry.get("agy_display")
+    if not isinstance(display, str) or not display.strip():
+        raise RuntimeError(f"AGY model {model!r} is missing an AGY display string")
+    return display.strip()
+
+
+def _validate_agy_stdout(stdout: str) -> str:
+    text = stdout.strip()
+    if not text:
+        raise RuntimeError("AGY CLI returned empty stdout")
+    if text.startswith(_AGY_ERROR_STDOUT_PREFIX):
+        raise RuntimeError(f"AGY CLI failed: {text}")
+    return text
 
 
 class CodexCLITextGenerateAdapter:

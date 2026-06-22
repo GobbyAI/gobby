@@ -28,6 +28,58 @@ GEMINI_FAMILY_MODELS: list[dict[str, Any]] = [
     },
 ]
 
+
+# Static AGY 1.0.10 text-generation catalog. AGY accepts model display strings on
+# the CLI, while daemon callers route by canonical IDs so unknown values fail closed.
+AGY_MODELS: dict[str, dict[str, Any]] = {
+    "gemini-3.5-flash-low": {
+        "value": "gemini-3.5-flash-low",
+        "canonical_id": "gemini-3.5-flash-low",
+        "label": "Gemini 3.5 Flash (Low)",
+        "agy_display": "Gemini 3.5 Flash (Low)",
+        "model_family": "gemini",
+        "context_lookup_key": "gemini-3.5-flash",
+        "availability_source": "agy-1.0.10-static",
+        "reasoning": {
+            "supported_efforts": ["minimal", "low", "medium", "high"],
+            "default_effort": "low",
+        },
+    },
+    "gemini-3.1-pro-high": {
+        "value": "gemini-3.1-pro-high",
+        "canonical_id": "gemini-3.1-pro-high",
+        "label": "Gemini 3.1 Pro (High)",
+        "agy_display": "Gemini 3.1 Pro (High)",
+        "model_family": "gemini",
+        "context_lookup_key": "gemini-3.1-pro-preview",
+        "availability_source": "agy-1.0.10-static",
+        "reasoning": {
+            "supported_efforts": ["low", "medium", "high"],
+            "default_effort": "high",
+        },
+    },
+    "claude-sonnet-4-6-thinking": {
+        "value": "claude-sonnet-4-6-thinking",
+        "canonical_id": "claude-sonnet-4-6-thinking",
+        "label": "Claude Sonnet 4.6 (Thinking)",
+        "agy_display": "Claude Sonnet 4.6 (Thinking)",
+        "model_family": "claude",
+        "context_lookup_key": "claude-sonnet-4-6",
+        "availability_source": "agy-1.0.10-static",
+    },
+    "gpt-oss-120b-medium": {
+        "value": "gpt-oss-120b-medium",
+        "canonical_id": "gpt-oss-120b-medium",
+        "label": "GPT-OSS 120B (Medium)",
+        "agy_display": "GPT-OSS 120B (Medium)",
+        "model_family": "gpt-oss",
+        "context_lookup_key": "gpt-oss-120b",
+        "availability_source": "agy-1.0.10-static",
+        "context_length": 131_072,
+        "context_length_source": "provider_catalog",
+    },
+}
+
 # Mirrors `droid exec --help` from Factory Droid 0.106.0 and docs.factory.ai/cli.
 DROID_MODEL_CATALOG: list[dict[str, Any]] = [
     {
@@ -184,4 +236,4 @@ DROID_MODEL_CATALOG: list[dict[str, Any]] = [
     },
 ]
 
-__all__ = ["DROID_MODEL_CATALOG", "GEMINI_FAMILY_MODELS"]
+__all__ = ["AGY_MODELS", "DROID_MODEL_CATALOG", "GEMINI_FAMILY_MODELS"]

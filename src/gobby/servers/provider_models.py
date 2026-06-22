@@ -26,6 +26,7 @@ from gobby.llm.context_windows import (
     static_context_length_for_model,
 )
 from gobby.providers import provider_metadata
+from gobby.servers.provider_model_defaults import AGY_MODELS as _AGY_MODELS
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
 from gobby.servers.provider_model_discovery import (
     discover_acp_models as _discover_acp_models_impl,
@@ -79,7 +80,7 @@ def context_length_for_model(provider: str | None, model: str | None) -> int | N
 
 def _model_identifiers(model: dict[str, Any]) -> list[str]:
     identifiers: list[str] = []
-    for key in ("value", "canonical_id", "id", "model"):
+    for key in ("value", "canonical_id", "id", "model", "agy_display", "context_lookup_key"):
         value = model.get(key)
         if isinstance(value, str) and value.strip():
             identifiers.append(value)
@@ -145,11 +146,17 @@ def _cached_models(provider: str, models: Any) -> list[dict[str, Any]]:
 
 
 DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths("droid", _DROID_MODEL_CATALOG)
+AGY_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths(
+    "agy",
+    list(_AGY_MODELS.values()),
+)
 
 
 def _static_provider_models(provider: str) -> list[dict[str, Any]]:
     if provider == "droid":
         return copy.deepcopy(DROID_MODEL_CATALOG)
+    if provider == "agy":
+        return copy.deepcopy(AGY_MODEL_CATALOG)
     return []
 
 
@@ -445,11 +452,12 @@ class ProviderModelCatalog:
             cli_version = await self._get_cli_version(provider)
             metadata = _PROVIDER_METADATA[provider]
             if not metadata.live_model_discovery:
+                static_models = _static_provider_models(provider)
                 results[provider] = {
-                    "source": "unsupported",
+                    "source": "static" if static_models else "unsupported",
                     "cli_version": cli_version or (previous or {}).get("cli_version"),
                     "error": metadata.unavailable_reason,
-                    "models": [],
+                    "models": static_models,
                     "generated_at": generated_at,
                 }
                 continue
@@ -523,7 +531,7 @@ class ProviderModelCatalog:
         if provider == "droid":
             return _static_provider_models(provider)
         if provider == "agy":
-            return []
+            return _static_provider_models(provider)
         raise ValueError(f"Unknown provider: {provider}")
 
     async def _discover_codex_models(

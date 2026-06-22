@@ -1,8 +1,8 @@
 {
   "provider": "agy",
   "capture_type": "model_cache_summary",
-  "cli_version": "1.0.1",
-  "captured_at": "2026-05-22T22:17:00Z",
+  "cli_version": "1.0.10",
+  "captured_at": "2026-06-22T10:00:00Z",
   "settings_json_keys": [
     "colorScheme",
     "enableTelemetry",
@@ -12,7 +12,21 @@
     {
       "source": "runtime_log",
       "path_template": "~/.gemini/antigravity-cli/log/cli-YYYYMMDD_HHMMSS.log",
-      "observed_model_label": "Gemini 3.5 Flash (High)"
+      "observed_model_label": "Gemini 3.5 Flash (Low)"
+    },
+    {
+      "source": "print_probe",
+      "observed_model_label": "Gemini 3.5 Flash (Low)",
+      "contract_status": "exact_display_string_supported"
+    },
+    {
+      "source": "static_catalog",
+      "observed_model_labels": [
+        "Gemini 3.5 Flash (Low)",
+        "Gemini 3.1 Pro (High)",
+        "Claude Sonnet 4.6 (Thinking)",
+        "GPT-OSS 120B (Medium)"
+      ]
     }
   ],
   "stable_json_model_cache_found": false,

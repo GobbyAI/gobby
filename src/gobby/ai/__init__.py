@@ -25,6 +25,7 @@ from gobby.ai.registry import (
     normalize_capability,
 )
 from gobby.ai.text_generation import (
+    AgyCLITextGenerateAdapter,
     ClaudeTextGenerateAdapter,
     CodexCLITextGenerateAdapter,
     DroidCLITextGenerateAdapter,
@@ -55,6 +56,7 @@ __all__ = [
     "AIAdapterStyle",
     "AICapability",
     "AICapabilityRegistry",
+    "AgyCLITextGenerateAdapter",
     "CANONICAL_AI_CAPABILITIES",
     "CapabilityBinding",
     "CapabilityStatus",

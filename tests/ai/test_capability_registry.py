@@ -19,6 +19,7 @@ from gobby.config.persistence import EmbeddingsConfig
 from gobby.config.voice import OpenAICompatibleAudioBindingConfig, VoiceConfig
 from gobby.llm.service import LLMService
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata
+from gobby.servers.provider_model_defaults import AGY_MODELS
 
 pytestmark = pytest.mark.unit
 
@@ -143,6 +144,33 @@ def test_select_explicit_cli_backed_provider_model_bypasses_feature_model_list(
     )
 
 
+def test_strict_model_binding_rejects_explicit_model_override() -> None:
+    binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider="agy",
+        adapter_style=AIAdapterStyle.CLI,
+        available=True,
+        models=("gemini-3.5-flash-low",),
+        strict_models=True,
+    )
+    registry = AICapabilityRegistry([binding])
+
+    assert (
+        registry.select(
+            AICapability.TEXT_GENERATE,
+            provider="agy",
+            model="gemini-3.5-flash-low",
+        )
+        is binding
+    )
+    assert binding.accepts_explicit_model_override("unknown-model") is False
+
+    with pytest.raises(CapabilityUnavailableError, match="requires an explicit supported model"):
+        registry.select(AICapability.TEXT_GENERATE, provider="agy")
+    with pytest.raises(CapabilityUnavailableError, match="does not support requested model"):
+        registry.select(AICapability.TEXT_GENERATE, provider="agy", model="unknown-model")
+
+
 def test_daemon_registry_keeps_web_chat_and_text_generate_separate() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(),
@@ -190,7 +218,6 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
         "codex": AIAdapterStyle.DAEMON,
         "local:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
         "local:ollama": AIAdapterStyle.OPENAI_COMPATIBLE,
-        "gemini": AIAdapterStyle.CLI,
         "grok": AIAdapterStyle.CLI,
         "qwen": AIAdapterStyle.CLI,
         "droid": AIAdapterStyle.CLI,
@@ -220,6 +247,22 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
     assert codex.models == ("gpt-5.4-mini", "gpt-5.5")
     assert "default_model" not in codex.metadata
     assert "auth_mode" not in codex.metadata
+
+    agy = registry.binding(AICapability.TEXT_GENERATE, "agy")
+    assert agy is not None
+    assert agy.available is True
+    assert agy.adapter_style == AIAdapterStyle.CLI
+    assert agy.strict_models is True
+    assert agy.models == tuple(AGY_MODELS)
+    assert agy.metadata["model_catalog_source"] == "agy-1.0.10-static"
+    assert (
+        registry.select(
+            AICapability.TEXT_GENERATE,
+            provider="agy",
+            model="gemini-3.5-flash-low",
+        )
+        is agy
+    )
 
 
 def test_daemon_registry_matches_configured_claude_model_aliases() -> None:
@@ -309,7 +352,7 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
     assert codex.reason is not None
     assert "proven image payload support" in codex.reason
 
-    for provider in ("droid", "gemini", "grok", "qwen"):
+    for provider in ("droid", "grok", "qwen"):
         binding = registry.binding(AICapability.VISION_EXTRACT, provider)
         assert binding is not None
         assert binding.available is False
@@ -317,14 +360,25 @@ def test_daemon_registry_reports_only_proven_vision_extract_bindings_available()
         assert "proven image payload support" in binding.reason
 
 
-def test_daemon_registry_marks_agy_unavailable_even_when_provider_probe_succeeds() -> None:
+def test_daemon_registry_scopes_agy_to_strict_text_generation_when_installed() -> None:
     registry = build_daemon_ai_capability_registry(
         DaemonConfig(),
         provider_installed=lambda _entry: True,
     )
 
+    text_generate = registry.binding(AICapability.TEXT_GENERATE, "agy")
+    assert text_generate is not None
+    assert text_generate.available is True
+    assert text_generate.adapter_style == AIAdapterStyle.CLI
+    assert text_generate.strict_models is True
+    assert text_generate.models == tuple(AGY_MODELS)
+
+    with pytest.raises(CapabilityUnavailableError, match="requires an explicit supported model"):
+        registry.select(AICapability.TEXT_GENERATE, provider="agy")
+    with pytest.raises(CapabilityUnavailableError, match="does not support requested model"):
+        registry.select(AICapability.TEXT_GENERATE, provider="agy", model="bad-model")
+
     for capability in (
-        AICapability.TEXT_GENERATE,
         AICapability.VISION_EXTRACT,
         AICapability.AGENT_SPAWN,
         AICapability.WEB_CHAT,
@@ -333,6 +387,20 @@ def test_daemon_registry_marks_agy_unavailable_even_when_provider_probe_succeeds
         assert binding is not None
         assert binding.available is False
         assert binding.reason == AGY_UNAVAILABLE_REASON
+
+
+def test_daemon_registry_marks_agy_text_generation_unavailable_when_cli_absent() -> None:
+    registry = build_daemon_ai_capability_registry(
+        DaemonConfig(),
+        provider_installed=lambda entry: entry.provider != "agy",
+    )
+
+    binding = registry.binding(AICapability.TEXT_GENERATE, "agy")
+    assert binding is not None
+    assert binding.available is False
+    assert binding.reason == "AGY CLI is not installed."
+    assert binding.strict_models is True
+    assert binding.models == tuple(AGY_MODELS)
 
 
 def test_daemon_registry_reports_embedding_configured_state() -> None:

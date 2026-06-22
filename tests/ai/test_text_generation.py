@@ -12,6 +12,7 @@ import pytest
 import gobby.ai._text_generation_adapters as text_generation_adapters
 from gobby.adapters.acp_client import StreamEvent
 from gobby.ai import (
+    AgyCLITextGenerateAdapter,
     AIAdapterStyle,
     AICapability,
     AICapabilityRegistry,
@@ -537,6 +538,7 @@ async def test_text_generation_service_falls_back_when_candidate_echoes_prompt()
     assert result.model == "sonnet"
     assert qwen.requests[0].model == "qwen-model"
     assert claude.requests[0].model == "sonnet"
+
 
 @pytest.mark.asyncio
 async def test_text_generation_service_falls_back_when_long_output_starts_with_prompt() -> None:
@@ -1754,7 +1756,7 @@ async def test_text_generation_service_rejects_none_factory_result() -> None:
 
 
 def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> None:
-    providers = ("claude", "codex", "local:lm-studio", "grok", "qwen", "droid")
+    providers = ("claude", "codex", "local:lm-studio", "agy", "grok", "qwen", "droid")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -1813,10 +1815,12 @@ def test_daemon_text_generation_builder_maps_feature_providers_to_one_shot_adapt
     factories = _daemon_text_generation_adapter_factories(config)
 
     codex_adapter = factories["codex"]()
+    agy_adapter = factories["agy"]()
     grok_adapter = factories["grok"]()
     qwen_adapter = factories["qwen"]()
 
     assert isinstance(codex_adapter, CodexCLITextGenerateAdapter)
+    assert isinstance(agy_adapter, AgyCLITextGenerateAdapter)
     assert isinstance(grok_adapter, text_generation_adapters._GrokCLITextGenerateAdapter)
     assert isinstance(qwen_adapter, text_generation_adapters._QwenCLITextGenerateAdapter)
     qwen_command = qwen_adapter.build_command(
@@ -3029,6 +3033,153 @@ async def test_qwen_cli_text_generate_adapter_uses_configured_openai_endpoint(
     assert envs[0]["OPENAI_API_KEY"] == "not-needed"
     assert envs[0]["OPENAI_BASE_URL"] == "http://localhost:11434/v1"
     assert envs[0]["OPENAI_MODEL"] == "llama3.2"
+
+
+@pytest.mark.asyncio
+async def test_agy_cli_text_generate_adapter_uses_hardened_print_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[tuple[str, ...]] = []
+    cwds: list[str | None] = []
+    envs: list[dict[str, str]] = []
+
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        assert start_new_session is True
+        commands.append(command)
+        cwds.append(cwd)
+        envs.append(env)
+        return FakeProcess(b"agy text\n")
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = AgyCLITextGenerateAdapter(
+        command_path="/usr/local/bin/agy",
+        timeout_seconds=12.5,
+        env={"EXTRA": "1"},
+    )
+
+    response = await adapter.generate(
+        TextGenerationRequest(
+            prompt="explain",
+            system_prompt="system",
+            model="gemini-3.5-flash-low",
+            cwd="/tmp/project",
+        )
+    )
+
+    assert response == "agy text"
+    assert commands == [
+        (
+            "/usr/local/bin/agy",
+            "--sandbox",
+            "--print-timeout",
+            "12.5s",
+            "--model",
+            "Gemini 3.5 Flash (Low)",
+            "--print",
+            f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain",
+        )
+    ]
+    assert {"--continue", "--conversation", "--prompt-interactive"}.isdisjoint(commands[0])
+    assert cwds[0] != "/tmp/project"
+    assert cwds[0] is not None and "gobby-textgen-" in cwds[0]
+    assert envs[0]["EXTRA"] == "1"
+    assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
+
+
+def test_agy_cli_text_generate_adapter_omits_model_when_not_requested() -> None:
+    adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy", timeout_seconds=90.0)
+
+    command = adapter.build_command(TextGenerationRequest(prompt="explain"))
+
+    assert command == [
+        "/usr/local/bin/agy",
+        "--sandbox",
+        "--print-timeout",
+        "90s",
+        "--print",
+        "explain",
+    ]
+
+
+def test_agy_cli_text_generate_adapter_rejects_unmapped_explicit_model() -> None:
+    adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
+
+    with pytest.raises(ValueError, match="Unsupported AGY model"):
+        adapter.build_command(TextGenerationRequest(prompt="explain", model="not-real"))
+
+
+@pytest.mark.parametrize(
+    "stdout_bytes",
+    [
+        b"",
+        b"Error: timed out waiting for response\n",
+    ],
+)
+@pytest.mark.asyncio
+async def test_agy_cli_text_generate_adapter_rejects_empty_or_error_stdout(
+    monkeypatch: pytest.MonkeyPatch,
+    stdout_bytes: bytes,
+) -> None:
+    async def fake_create_subprocess_exec(
+        *command: str,
+        stdin: int,
+        stdout: int,
+        stderr: int,
+        cwd: str | None,
+        env: dict[str, str],
+        start_new_session: bool,
+    ) -> FakeProcess:
+        return FakeProcess(stdout_bytes)
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+    adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
+
+    with pytest.raises(RuntimeError):
+        await adapter.generate(
+            TextGenerationRequest(prompt="explain", model="gemini-3.5-flash-low")
+        )
+
+
+@pytest.mark.asyncio
+async def test_agy_cli_text_generate_adapter_generate_json_uses_directive(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    commands: list[list[str]] = []
+
+    async def fake_run_cli(
+        provider_name: str,
+        command: list[str],
+        *,
+        neutral_cwd: Path,
+        timeout_seconds: float,
+        env_overrides: dict[str, str],
+    ) -> str:
+        commands.append(command)
+        assert provider_name == "AGY"
+        assert timeout_seconds == 600.0
+        assert neutral_cwd.name.startswith("gobby-textgen-")
+        assert env_overrides == {}
+        return '{"ok": true}'
+
+    monkeypatch.setattr(text_generation_adapters, "_run_cli_text_generation_command", fake_run_cli)
+    adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
+
+    result = await adapter.generate_json(
+        TextGenerationRequest(prompt="return json", model="gemini-3.5-flash-low")
+    )
+
+    assert result == {"ok": True}
+    prompt = commands[0][-1]
+    assert "Respond with a single valid JSON object" in prompt
+    assert ONE_SHOT_DIRECTIVE in prompt
 
 
 @pytest.mark.asyncio

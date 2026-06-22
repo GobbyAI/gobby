@@ -15,6 +15,7 @@ from gobby.servers.local_provider_models import (
     discover_local_endpoint_model_group,
 )
 from gobby.servers.provider_models import (
+    AGY_MODEL_CATALOG,
     DROID_MODEL_CATALOG,
     with_context_lengths,
 )
@@ -74,7 +75,7 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
         ],
     ),
     "droid": DROID_MODEL_CATALOG,
-    "agy": [],
+    "agy": AGY_MODEL_CATALOG,
 }
 
 _PROVIDER_DEFS = [(entry.provider, entry.binary) for entry in provider_metadata()]
@@ -119,13 +120,14 @@ def _build_model_catalog(
         catalog: dict[str, tuple[list[dict[str, Any]], str]] = {}
         for provider, _binary in _PROVIDER_DEFS:
             meta = _PROVIDER_META[provider]
+            static_models = _BASE_MODEL_CATALOG.get(provider, [])
             if not meta.live_model_discovery:
-                catalog[provider] = ([], "unsupported")
+                source = "static" if static_models else "unsupported"
+                catalog[provider] = ([*static_models], source)
                 continue
             snapshot = provider_model_catalog.get_provider_snapshot(provider)
             models = snapshot.get("models", [])
             source = snapshot.get("source", "failed")
-            static_models = _BASE_MODEL_CATALOG.get(provider, [])
             if isinstance(models, list) and models:
                 catalog[provider] = (
                     with_context_lengths(
@@ -141,7 +143,9 @@ def _build_model_catalog(
         catalog = {
             provider: (
                 [*models],
-                "static" if _PROVIDER_META[provider].live_model_discovery else "unsupported",
+                "static"
+                if models or _PROVIDER_META[provider].live_model_discovery
+                else "unsupported",
             )
             for provider, models in _BASE_MODEL_CATALOG.items()
         }

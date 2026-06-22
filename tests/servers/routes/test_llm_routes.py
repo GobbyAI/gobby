@@ -120,7 +120,7 @@ def test_create_llm_router_does_not_run_vision_temp_cleanup(
     cleanup.assert_not_called()
 
 
-def test_generate_selects_acp_backed_provider(
+def test_generate_selects_explicit_provider_model(
     client: TestClient,
     server_with_llm: MagicMock,
 ) -> None:
@@ -129,22 +129,22 @@ def test_generate_selects_acp_backed_provider(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
-                adapter_style=AIAdapterStyle.ACP,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-pro",),
+                models=("qwen3-coder",),
             )
         ]
     )
-    service = TextGenerationService(registry, {"gemini": adapter})
+    service = TextGenerationService(registry, {"qwen": adapter})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
         "/api/llm/generate",
         json={
             "prompt": "Summarize this",
-            "provider": "gemini",
-            "model": "gemini-pro",
+            "provider": "qwen",
+            "model": "qwen3-coder",
             "system_prompt": "Be concise",
             "max_tokens": 128,
             "cwd": "/tmp/project",
@@ -155,14 +155,14 @@ def test_generate_selects_acp_backed_provider(
     assert response.json() == {
         "text": "Generated text",
         "capability": "text_generate",
-        "provider": "gemini",
-        "model": "gemini-pro",
+        "provider": "qwen",
+        "model": "qwen3-coder",
     }
     assert adapter.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
-            provider="gemini",
-            model="gemini-pro",
+            provider="qwen",
+            model="qwen3-coder",
             system_prompt="Be concise",
             max_tokens=128,
             caller="llm-generate-route",
@@ -182,6 +182,7 @@ def test_generate_returns_503_without_text_generation_service(client: TestClient
     "payload",
     [
         {"prompt": "Summarize this", "provider": "droid"},
+        {"prompt": "Summarize this", "provider": "agy"},
         {"prompt": "Summarize this", "model": "qwen/qwen3.6-35b-a3b"},
     ],
 )
@@ -383,17 +384,17 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
     server_with_llm: MagicMock,
 ) -> None:
     prompt = "Summarize this module once from lower-level summaries."
-    candidates = ("gemini/gemini-3.5-flash", "claude/sonnet")
-    gemini = _FakeTextAdapter(text=prompt)
+    candidates = ("qwen/qwen3-coder", "claude/sonnet")
+    qwen = _FakeTextAdapter(text=prompt)
     claude = _FakeTextAdapter(text="Fallback prose")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
-                adapter_style=AIAdapterStyle.ACP,
+                provider="qwen",
+                adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-3.5-flash",),
+                models=("qwen3-coder",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -404,7 +405,7 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
             ),
         ]
     )
-    service = TextGenerationService(registry, {"gemini": gemini, "claude": claude})
+    service = TextGenerationService(registry, {"qwen": qwen, "claude": claude})
     server_with_llm.services.text_generation_service = service
 
     response = client.post(
@@ -423,13 +424,13 @@ def test_generate_falls_back_when_feature_mid_candidate_echoes_prompt(
         "provider": "claude",
         "model": "sonnet",
     }
-    assert gemini.requests == [
+    assert qwen.requests == [
         TextGenerationRequest(
             prompt=prompt,
-            provider="gemini",
+            provider="qwen",
             profile="feature_mid",
             candidates=candidates,
-            model="gemini-3.5-flash",
+            model="qwen3-coder",
             caller="llm-generate-route",
         )
     ]
@@ -641,9 +642,10 @@ def test_generate_returns_deterministic_unavailable_error(
         [
             CapabilityBinding.unavailable(
                 AICapability.TEXT_GENERATE,
-                "gemini",
-                adapter_style=AIAdapterStyle.ACP,
-                reason="Gemini CLI is not installed.",
+                "agy",
+                adapter_style=AIAdapterStyle.CLI,
+                reason="AGY CLI is not installed.",
+                models=("gemini-3.5-flash-low",),
             )
         ]
     )
@@ -652,17 +654,101 @@ def test_generate_returns_deterministic_unavailable_error(
 
     response = client.post(
         "/api/llm/generate",
-        json={"prompt": "Summarize this", "provider": "gemini", "model": "gemini-pro"},
+        json={
+            "prompt": "Summarize this",
+            "provider": "agy",
+            "model": "gemini-3.5-flash-low",
+        },
     )
 
     assert response.status_code == 400
     assert response.json() == {
         "code": "capability_unavailable",
         "capability": "text_generate",
-        "provider": "gemini",
-        "model": "gemini-pro",
-        "reason": "Gemini CLI is not installed.",
+        "provider": "agy",
+        "model": "gemini-3.5-flash-low",
+        "reason": "AGY CLI is not installed.",
     }
+
+
+def test_generate_explicit_agy_model_succeeds(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    adapter = _FakeTextAdapter(text="AGY text")
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="agy",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-3.5-flash-low",),
+                strict_models=True,
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"agy": adapter})
+    server_with_llm.services.text_generation_service = service
+
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "agy",
+            "model": "gemini-3.5-flash-low",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "text": "AGY text",
+        "capability": "text_generate",
+        "provider": "agy",
+        "model": "gemini-3.5-flash-low",
+    }
+    assert adapter.requests == [
+        TextGenerationRequest(
+            prompt="Summarize this",
+            provider="agy",
+            model="gemini-3.5-flash-low",
+            caller="llm-generate-route",
+        )
+    ]
+
+
+def test_generate_explicit_agy_bad_model_fails_before_adapter(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    adapter = _FakeTextAdapter(text="should not run")
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="agy",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-3.5-flash-low",),
+                strict_models=True,
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"agy": adapter})
+    server_with_llm.services.text_generation_service = service
+
+    response = client.post(
+        "/api/llm/generate",
+        json={"prompt": "Summarize this", "provider": "agy", "model": "bad-model"},
+    )
+
+    assert response.status_code == 400
+    body = response.json()
+    assert body["code"] == "capability_unavailable"
+    assert body["provider"] == "agy"
+    assert body["model"] == "bad-model"
+    assert "does not support requested model" in body["reason"]
+    assert adapter.requests == []
 
 
 def test_generate_returns_aggregated_unavailable_error_for_profile_candidates(
@@ -726,7 +812,7 @@ def test_vision_status_lists_only_proven_providers_as_available(
     providers = {binding["provider"] for binding in data["bindings"]}
     assert "local:lm-studio" in available_providers
     assert "local" not in providers
-    assert not {"codex", "droid", "gemini", "grok", "qwen"} & available_providers
+    assert not {"codex", "droid", "grok", "qwen"} & available_providers
 
 
 def test_vision_extract_upload_executes_service(

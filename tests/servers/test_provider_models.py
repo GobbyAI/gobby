@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from gobby.config.app import DaemonConfig
+from gobby.servers.provider_model_defaults import AGY_MODELS
 from gobby.servers.provider_models import (
     ProviderModelCatalog,
     _model_discovery_cwd_path,
@@ -381,7 +382,9 @@ class TestProviderModelCatalog:
         assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "failed"
 
-        droid = {model["value"]: model for model in catalog.get_provider_snapshot("droid")["models"]}
+        droid = {
+            model["value"]: model for model in catalog.get_provider_snapshot("droid")["models"]
+        }
         gemini_flash = droid["gemini-3.5-flash"]
         assert gemini_flash["label"] == "Gemini 3.5 Flash"
         assert gemini_flash["context_length"] == 1_048_576
@@ -405,8 +408,8 @@ class TestProviderModelCatalog:
         client.start = AsyncMock(side_effect=start)
         client.stop = AsyncMock()
         client.session_info = {
-                "models": {
-                    "availableModels": [
+            "models": {
+                "availableModels": [
                     {"modelId": "qwen-test", "name": "Qwen Test"},
                 ]
             }
@@ -805,8 +808,10 @@ class TestProviderModelCatalog:
         assert static_models[0]["context_length_source"] == "static_default"
 
     @pytest.mark.asyncio
-    async def test_refresh_marks_agy_unsupported(self, temp_dir: Path) -> None:
-        """AGY should be visible but unsupported for model discovery."""
+    async def test_refresh_uses_static_agy_catalog_without_live_discovery(
+        self, temp_dir: Path
+    ) -> None:
+        """AGY should expose static one-shot models while live discovery stays disabled."""
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
 
         with (
@@ -820,9 +825,11 @@ class TestProviderModelCatalog:
         ):
             status = await catalog.refresh()
 
-        assert status["agy"]["source"] == "unsupported"
-        assert status["agy"]["model_count"] == 0
+        assert status["agy"]["source"] == "static"
+        assert status["agy"]["model_count"] == len(AGY_MODELS)
         assert "machine transport" in (status["agy"]["error"] or "")
+        snapshot = catalog.get_provider_snapshot("agy")
+        assert [model["value"] for model in snapshot["models"]] == list(AGY_MODELS)
 
     def test_load_qwen_settings_merges_global_and_project_files(self, temp_dir: Path) -> None:
         """Qwen settings should merge global providers with project overrides."""

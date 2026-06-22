@@ -1,8 +1,8 @@
 {
   "provider": "agy",
   "capture_type": "transcript_manifest",
-  "cli_version": "1.0.1",
-  "captured_at": "2026-05-22T22:17:00Z",
+  "cli_version": "1.0.10",
+  "captured_at": "2026-06-22T10:00:00Z",
   "workspace": "/private/tmp/gobby-contract-probe-15038",
   "project_config": {
     "path_template": "~/.gemini/config/projects/<PROJECT_ID>.json",
@@ -29,7 +29,7 @@
       "observed_log": "~/.gemini/antigravity-cli/log/cli-20260522_171625.log",
       "scrubbed_findings": [
         "Silent auth via keyring succeeded.",
-        "Selected model label propagated as Gemini 3.5 Flash (High).",
+        "Selected model label propagated as Gemini 3.5 Flash (Low).",
         "Created conversation c27f2817-0ce1-4b68-b246-0afe6a8160ce.",
         "Conversation payload written under conversations/<conversation-id>.pb."
       ]

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from gobby.ai._text_generation_adapters import (
+    AgyCLITextGenerateAdapter,
     ClaudeTextGenerateAdapter,
     CodexCLITextGenerateAdapter,
     DroidCLITextGenerateAdapter,
@@ -23,6 +24,7 @@ from gobby.ai._text_generation_helpers import (
 from gobby.ai._text_generation_service import TextGenerationService
 
 __all__ = [
+    "AgyCLITextGenerateAdapter",
     "ClaudeTextGenerateAdapter",
     "CodexCLITextGenerateAdapter",
     "DroidCLITextGenerateAdapter",

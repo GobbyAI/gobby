@@ -26,6 +26,7 @@ from gobby.config.feature_base import (
     parse_feature_candidate,
 )
 from gobby.providers import AGY_UNAVAILABLE_REASON, ProviderMetadata, provider_metadata
+from gobby.servers.provider_model_defaults import AGY_MODELS
 
 if TYPE_CHECKING:
     from gobby.config.app import DaemonConfig
@@ -49,8 +50,6 @@ def build_daemon_ai_capability_registry(
     bindings.extend(_audio_bindings(config, whisper_runtime_available))
 
     for entry in provider_metadata():
-        if entry.provider == "agy":
-            continue
         text_binding = _text_generate_binding(
             entry,
             installed,
@@ -59,6 +58,8 @@ def build_daemon_ai_capability_registry(
         )
         if text_binding is not None:
             bindings.append(text_binding)
+        if entry.provider == "agy":
+            continue
         vision_binding = _vision_extract_binding(
             entry,
             installed,
@@ -297,7 +298,13 @@ def _text_generate_binding(
     provider_install_probe_ttl_seconds: float,
 ) -> CapabilityBinding | None:
     metadata = _metadata_for_generation_binding(entry)
-    models = feature_models_by_provider.get(_normalize_provider(entry.provider), ())
+    if entry.provider == "agy":
+        models = tuple(AGY_MODELS)
+        metadata["model_catalog_source"] = "agy-1.0.10-static"
+        strict_models = True
+    else:
+        models = feature_models_by_provider.get(_normalize_provider(entry.provider), ())
+        strict_models = False
 
     adapter_style = _text_generate_adapter_style(entry.provider)
     if adapter_style is None:
@@ -311,6 +318,7 @@ def _text_generate_binding(
         available=installed,
         reason=f"{entry.display_name} CLI is not installed.",
         models=models,
+        strict_models=strict_models,
         metadata=metadata,
         availability_probe=partial(provider_installed, entry),
         availability_probe_ttl_seconds=provider_install_probe_ttl_seconds,
@@ -447,7 +455,7 @@ def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
         return AIAdapterStyle.DAEMON
     if provider in {"grok", "qwen"}:
         return AIAdapterStyle.CLI
-    if provider == "droid":
+    if provider in {"agy", "droid"}:
         return AIAdapterStyle.CLI
     return None
 
@@ -524,7 +532,6 @@ def _agy_unavailable_bindings() -> tuple[CapabilityBinding, ...]:
             reason=AGY_UNAVAILABLE_REASON,
         )
         for capability in (
-            AICapability.TEXT_GENERATE,
             AICapability.VISION_EXTRACT,
             AICapability.AGENT_SPAWN,
             AICapability.WEB_CHAT,

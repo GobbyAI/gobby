@@ -12,6 +12,7 @@ from fastapi.testclient import TestClient
 from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.servers.local_provider_models import LocalEndpointModelGroup
+from gobby.servers.provider_model_defaults import AGY_MODELS
 from gobby.servers.routes.providers import create_providers_router
 
 pytestmark = pytest.mark.unit
@@ -116,7 +117,9 @@ class TestProviderRoutes:
 
         providers = {p["name"]: p for p in response.json()["providers"]}
         assert providers["qwen"]["available"] is True
-        assert providers["qwen"]["startup_error"] == "Timed out starting Qwen ACP backend after 15.0s"
+        assert (
+            providers["qwen"]["startup_error"] == "Timed out starting Qwen ACP backend after 15.0s"
+        )
 
 
 class TestProviderModelsRoute:
@@ -164,9 +167,16 @@ class TestProviderModelsRoute:
         ]
         assert grok[1]["context_length"] == 512_000
 
-        assert providers["agy"]["models"] == []
-        assert providers["agy"]["source"] == "unsupported"
+        agy_models = providers["agy"]["models"]
+        assert [model["value"] for model in agy_models] == list(AGY_MODELS)
+        assert providers["agy"]["source"] == "static"
         assert providers["agy"]["supports_web_chat"] is False
+        assert providers["agy"]["available"] is False
+        agy_by_id = {model["value"]: model for model in agy_models}
+        assert agy_by_id["gemini-3.5-flash-low"]["agy_display"] == ("Gemini 3.5 Flash (Low)")
+        assert agy_by_id["gemini-3.5-flash-low"]["context_lookup_key"] == "gemini-3.5-flash"
+        assert agy_by_id["gemini-3.5-flash-low"]["context_length"] == 1_048_576
+        assert agy_by_id["gpt-oss-120b-medium"]["context_length"] == 131_072
 
         # Codex should expose the hardcoded web-chat defaults, not a placeholder
         codex = providers["codex"]["models"]
@@ -220,7 +230,7 @@ class TestProviderModelsRoute:
 
         # Each entry should have source field
         for p in data["providers"]:
-            assert p["source"] == ("unsupported" if p["provider"] == "agy" else "static")
+            assert p["source"] == "static"
 
     def test_availability_reflects_binary_presence(self, client: TestClient) -> None:
         """Provider availability matches shutil.which results."""
@@ -288,7 +298,9 @@ class TestProviderModelsRoute:
 
         providers = {p["provider"]: p for p in response.json()["providers"]}
         assert providers["grok"]["available"] is True
-        assert providers["grok"]["startup_error"] == "Timed out starting Grok ACP backend after 15.0s"
+        assert (
+            providers["grok"]["startup_error"] == "Timed out starting Grok ACP backend after 15.0s"
+        )
         assert providers["grok"]["models"]
 
     def test_models_route_prefers_provider_model_catalog_when_available(self) -> None:
@@ -327,8 +339,8 @@ class TestProviderModelsRoute:
         assert providers["codex"]["models"][0]["context_length"] == 258_400
         assert providers["codex"]["models"][0]["context_length_source"] == "static_default"
         assert providers["droid"]["models"][0]["value"] == "droid-model"
-        assert providers["agy"]["models"] == []
-        assert providers["agy"]["source"] == "unsupported"
+        assert [model["value"] for model in providers["agy"]["models"]] == list(AGY_MODELS)
+        assert providers["agy"]["source"] == "static"
         assert providers["codex"]["source"] == "live"
 
     def test_models_route_merges_live_droid_gemini_family_models_with_static_metadata(

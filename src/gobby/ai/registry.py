@@ -135,6 +135,7 @@ class CapabilityBinding:
     provider: str
     adapter_style: AIAdapterStyle
     models: tuple[str, ...] = ()
+    strict_models: bool = False
     metadata: Mapping[str, Any] = field(default_factory=dict)
     _available: bool = field(repr=False)
     _reason: str | None = field(default=None, repr=False)
@@ -152,6 +153,7 @@ class CapabilityBinding:
         available: bool,
         reason: str | None = None,
         models: Sequence[str] = (),
+        strict_models: bool = False,
         metadata: Mapping[str, Any] | None = None,
         availability_probe: Callable[[], bool] | None = None,
         availability_probe_ttl_seconds: float | None = None,
@@ -173,6 +175,7 @@ class CapabilityBinding:
         object.__setattr__(self, "provider", normalized_provider)
         object.__setattr__(self, "adapter_style", normalized_adapter_style)
         object.__setattr__(self, "models", normalized_models)
+        object.__setattr__(self, "strict_models", strict_models)
         object.__setattr__(self, "metadata", normalized_metadata)
         object.__setattr__(self, "_available", available)
         object.__setattr__(self, "_reason", normalized_reason)
@@ -249,14 +252,14 @@ class CapabilityBinding:
 
     def supports_model(self, model: str | None) -> bool:
         """Return whether this binding can satisfy the requested model."""
-        return (
-            model is None
-            or not self.models
-            or _normalize_binding_model(self.provider, model) in self.models
-        )
+        if model is None:
+            return not self.strict_models
+        return not self.models or _normalize_binding_model(self.provider, model) in self.models
 
     def accepts_explicit_model_override(self, model: str | None) -> bool:
         """Return whether explicit routing may pass an off-list model to the adapter."""
+        if self.strict_models:
+            return False
         return model is not None and self.adapter_style in {
             AIAdapterStyle.ACP,
             AIAdapterStyle.CLI,
@@ -273,6 +276,7 @@ class CapabilityBinding:
             "available": self.available,
             "reason": self.reason,
             "models": list(self.models),
+            "strict_models": self.strict_models,
             "metadata": dict(self.metadata),
         }
 
@@ -427,6 +431,19 @@ class AICapabilityRegistry:
     ) -> str:
         if provider and not provider_bindings:
             return f"No {capability.value} binding registered for provider {provider!r}."
+        if provider and model is None and provider_bindings and not candidates:
+            strict_models = sorted(
+                {model_name for binding in provider_bindings for model_name in binding.models}
+            )
+            suffix = (
+                f" Supported models: {', '.join(repr(name) for name in strict_models)}."
+                if strict_models
+                else ""
+            )
+            return (
+                f"{capability.value} binding for provider {provider!r} requires "
+                f"an explicit supported model.{suffix}"
+            )
         if provider and model and provider_bindings and not candidates:
             configured_models = sorted(
                 {model_name for binding in provider_bindings for model_name in binding.models}
