@@ -129,7 +129,12 @@ def test_auto_advance_first_stage_emits_start_stage_action() -> None:
 
 
 def test_attempt_caps_are_read_from_stage_rows_and_registry_defaults() -> None:
-    source = source_text("src/gobby/dispatch/rules.py")
+    source = source_texts(
+        (
+            "src/gobby/dispatch/rules.py",
+            "src/gobby/dispatch/_rule_state.py",
+        )
+    )
 
     assert "work_attempt_count" in source
     assert "review_round_count" in source
@@ -140,7 +145,14 @@ def test_attempt_caps_are_read_from_stage_rows_and_registry_defaults() -> None:
 
 
 def test_no_rule_invokes_stage_states_manager_directly() -> None:
-    source = source_text("src/gobby/dispatch/rules.py")
+    source = source_texts(
+        (
+            "src/gobby/dispatch/rules.py",
+            "src/gobby/dispatch/_rule_state.py",
+            "src/gobby/dispatch/_rule_actions.py",
+            "src/gobby/dispatch/_rule_merge.py",
+        )
+    )
 
     assert "StageStatesManager" not in source
     forbidden = re.compile(

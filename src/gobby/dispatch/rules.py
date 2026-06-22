@@ -2,43 +2,61 @@
 
 from __future__ import annotations
 
-import json
-import logging
 from collections.abc import Callable, Sequence
-from typing import Any, cast
 
 from gobby.dispatch._planning_enhancement import planning_enhancement_rule
+from gobby.dispatch._rule_actions import (
+    _complete_review_approved_stage,
+    _complete_stage_on_state,
+    _spawn_configured_stage_agent,
+    _spawn_required_stage_agent,
+    _spawn_stage_agent,
+    _start_configured_stage_pipeline,
+)
+from gobby.dispatch._rule_actions import (
+    _dispatch_inputs as _rule_dispatch_inputs,
+)
+from gobby.dispatch._rule_merge import _has_workspace_merge_source, _workspace_merge_action
+from gobby.dispatch._rule_state import (
+    _agent_dispatchable,
+    _children,
+    _current_stage,
+    _default_agent,
+    _development_agent,
+    _field,
+    _has_merge_agent,
+    _holistic_descendant_gate,
+    _holistic_descendant_gate_body,
+    _is_closed,
+    _is_epic,
+    _is_leaf,
+    _isolation,
+    _matching_current_stage,
+    _previous_stage_done,
+    _registry_entry,
+    _stage_name,
+    _stage_review_exhausted,
+    _stage_state,
+    _stage_work_exhausted,
+    _task_id,
+    current_stage,
+    is_blocked_by_deps,
+    is_child_parked,
+    stage_agent_available,
+    task_has_stage,
+)
 from gobby.dispatch.actions import (
     Action,
     AdvanceStageAction,
     AppendAuditMarkerAction,
     EscalateAction,
-    MergeWorkspaceAction,
-    SpawnAgentAction,
-    StartPipelineAction,
     StartStageAction,
 )
 from gobby.dispatch.audit import audit_marker_text
 from gobby.dispatch.discovery_artifacts import discovery_artifact_ready
-from gobby.dispatch.merge_recovery import WORKSPACE_MERGE_CONFLICT_LABEL
-from gobby.dispatch.prompts import PROMPT_BUILDERS
-from gobby.tasks.categories import AGENT_BY_IMPLEMENTATION_DOMAIN, IMPLEMENTATION_DOMAINS
-
-logger = logging.getLogger(__name__)
+from gobby.dispatch.prompts import PROMPT_BUILDERS as PROMPT_BUILDERS
 
 Rule = Callable[[object, object], Action | None]
-
-_STAGE_AGENT_SLUGS: dict[tuple[str, str], str] = {
-    ("ideation", "in_progress"): "analyst",
-    ("research", "in_progress"): "researcher",
-    ("architecture", "in_progress"): "architect",
-    ("prd", "in_progress"): "product-manager",
-    ("planning", "in_progress"): "planner",
-    ("planning", "needs_review"): "plan-adversary",
-    ("expansion", "needs_review"): "expansion-qa",
-    ("holistic_qa", "in_progress"): "holistic-reviewer",
-    ("merge", "in_progress"): "merge-orchestrator",
-}
 
 NON_MERGE_TERMINAL_MANIFEST_EXHAUSTION = {
     "research_spike": ("ideation.ready", "research.ready", "prd.done", "manifest_exhausted"),
@@ -61,6 +79,8 @@ _DISABLED_AGENT_EXCLUDED_STAGES = {
     "development",
     "holistic_qa",
 }
+
+_dispatch_inputs = _rule_dispatch_inputs
 
 
 def evaluate(task: object, context: object, rules: Sequence[Rule] | None = None) -> Action | None:
@@ -344,129 +364,6 @@ def merge_rule(task: object, context: object) -> Action | None:
     )
 
 
-def _workspace_merge_action(task: object, context: object) -> MergeWorkspaceAction | None:
-    stage = _matching_current_stage(task, context, "merge", "in_progress")
-    if stage is None or not _has_workspace_merge_source(task, context):
-        return None
-    if _task_has_label(task, WORKSPACE_MERGE_CONFLICT_LABEL):
-        return None
-    artifacts = _artifacts(task, context)
-    target_branch = _field(artifacts, "target_branch")
-    assert isinstance(target_branch, str)
-
-    integration_branch = _field(artifacts, "integration_branch")
-    integration_workspace_id = _field(artifacts, "integration_workspace_id")
-    integration_clone_id = _field(artifacts, "integration_clone_id")
-    worktree_id = _field(artifacts, "worktree_id")
-    clone_id = _field(artifacts, "clone_id")
-
-    if isinstance(integration_branch, str) and isinstance(integration_clone_id, str):
-        return MergeWorkspaceAction(
-            task_id=_task_id(task),
-            task_ref=_task_ref(task),
-            backend="clone",
-            target_branch=target_branch,
-            source_branch=integration_branch,
-            source_clone_id=integration_clone_id,
-        )
-    if isinstance(integration_branch, str) and isinstance(integration_workspace_id, str):
-        return MergeWorkspaceAction(
-            task_id=_task_id(task),
-            task_ref=_task_ref(task),
-            backend="worktree",
-            target_branch=target_branch,
-            source_branch=integration_branch,
-            source_workspace_id=integration_workspace_id,
-        )
-    if isinstance(clone_id, str):
-        return MergeWorkspaceAction(
-            task_id=_task_id(task),
-            task_ref=_task_ref(task),
-            backend="clone",
-            target_branch=target_branch,
-            source_clone_id=clone_id,
-        )
-    if isinstance(worktree_id, str):
-        return MergeWorkspaceAction(
-            task_id=_task_id(task),
-            task_ref=_task_ref(task),
-            backend="worktree",
-            target_branch=target_branch,
-            source_workspace_id=worktree_id,
-        )
-    return None
-
-
-def _has_workspace_merge_source(task: object, context: object) -> bool:
-    artifacts = _artifacts(task, context)
-    target_branch = _field(artifacts, "target_branch")
-    if not isinstance(target_branch, str) or not target_branch:
-        return False
-    has_parent = bool(_field(task, "parent_task_id"))
-    source_fields = (
-        (
-            "integration_workspace_id",
-            "integration_clone_id",
-            "worktree_id",
-            "clone_id",
-        )
-        if has_parent
-        else ("integration_workspace_id", "integration_clone_id")
-    )
-    return any(isinstance(_field(artifacts, field_name), str) for field_name in source_fields)
-
-
-def task_has_stage(task: object, stage_name: str) -> bool:
-    """True when the task manifest contains stage_name."""
-    return any(_stage_name(stage) == stage_name for stage in _stages(task))
-
-
-def current_stage(task: object) -> object | None:
-    """Return the leftmost manifest row whose state is not done."""
-    pending = [stage for stage in _stages(task) if _stage_state(stage) != "done"]
-    if not pending:
-        return None
-    return min(pending, key=_stage_position)
-
-
-def is_child_parked(child: object) -> bool:
-    """True when a leaf child is no longer blocking parent holistic QA."""
-    return (
-        _is_leaf(child)
-        and not bool(_field(child, "is_escalated", False))
-        and (_is_closed(child) or current_stage(child) is None)
-    )
-
-
-def stage_agent_available(context: object, stage_name: str) -> bool:
-    agent_slug = _default_agent(_field(context, "current_stage"), context, stage_name)
-    if not agent_slug:
-        return False
-    return _agent_dispatchable(context, str(agent_slug))
-
-
-def _has_merge_agent(context: object) -> bool:
-    return _agent_dispatchable(context, "merge-orchestrator")
-
-
-def _agent_dispatchable(context: object, agent_slug: str) -> bool:
-    return _has_agent(context, agent_slug) and agent_slug in PROMPT_BUILDERS
-
-
-def _has_agent(context: object, agent_slug: str) -> bool:
-    agent = _agent_definition(context, agent_slug)
-    if agent is None:
-        return False
-    return bool(_field(agent, "enabled", True))
-
-
-def is_blocked_by_deps(task: object) -> bool:
-    blocked_by = _field(task, "active_blocked_by", None)
-    if blocked_by is None:
-        blocked_by = _field(task, "blocked_by", ())
-    return bool(blocked_by)
-
-
 BASE_RULES: list[Rule] = [
     auto_advance_ready_rule,
     disabled_agent_escalation_rule,
@@ -499,413 +396,6 @@ BASE_RULES: list[Rule] = [
 ]
 
 RULES: list[Rule] = [*BASE_RULES, merge_rule]
-
-
-def _spawn_on_stage(
-    task: object,
-    context: object,
-    stage_name: str,
-    state: str,
-    agent_slug: str,
-) -> Action | None:
-    stage = _matching_current_stage(task, context, stage_name, state)
-    if stage is None:
-        return None
-    if state == "needs_review" and _stage_review_exhausted(stage, context):
-        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_max_review_rounds")
-    if (
-        state == "in_progress"
-        and _stage_work_exhausted(stage, context)
-        and not _stage_revision_review_budget_open(stage, context)
-    ):
-        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_max_work_attempts")
-    if not _agent_dispatchable(context, agent_slug):
-        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_no_agent")
-    return _spawn_stage_agent(task, stage, context, agent_slug)
-
-
-def _spawn_configured_stage_agent(
-    task: object,
-    context: object,
-    stage_name: str,
-    state: str,
-) -> Action | None:
-    return _spawn_on_stage(
-        task, context, stage_name, state, _STAGE_AGENT_SLUGS[(stage_name, state)]
-    )
-
-
-def _start_configured_stage_pipeline(
-    task: object,
-    stage: object,
-    context: object,
-) -> Action | None:
-    stage_name = _stage_name(stage)
-    registry_entry = _registry_entry(context, stage_name, stage)
-    dispatch_type = _field(registry_entry, "dispatch_type")
-    if dispatch_type not in {None, "agent", "pipeline"}:
-        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_invalid_dispatch_type")
-    if dispatch_type != "pipeline":
-        return None
-    pipeline_name = _field(registry_entry, "dispatch_target")
-    if not pipeline_name:
-        return EscalateAction(task_id=_task_id(task), reason=f"{stage_name}_missing_pipeline")
-    return StartPipelineAction(
-        task_id=_task_id(task),
-        task_ref=_task_ref(task),
-        stage_name=stage_name,
-        pipeline_name=str(pipeline_name),
-        dispatch_inputs=_dispatch_inputs(registry_entry),
-    )
-
-
-def _dispatch_inputs(registry_entry: object | None) -> dict[str, object]:
-    raw = _field(registry_entry, "dispatch_inputs_json")
-    if not raw:
-        return {}
-    if isinstance(raw, dict):
-        return cast(dict[str, object], raw)
-    if not isinstance(raw, str):
-        _log_invalid_dispatch_inputs(registry_entry, raw, TypeError("expected str or dict"))
-        return {}
-    try:
-        parsed = json.loads(raw)
-    except json.JSONDecodeError as exc:
-        _log_invalid_dispatch_inputs(registry_entry, raw, exc)
-        return {}
-    if not isinstance(parsed, dict):
-        _log_invalid_dispatch_inputs(registry_entry, raw, TypeError("expected JSON object"))
-        return {}
-    return cast(dict[str, object], parsed)
-
-
-def _log_invalid_dispatch_inputs(
-    registry_entry: object | None,
-    raw: object,
-    exc: Exception,
-) -> None:
-    logger.debug(
-        "Invalid stage registry dispatch_inputs_json; ignoring",
-        extra={
-            "registry_entry": _registry_entry_identity(registry_entry),
-            "raw_dispatch_inputs_json": raw,
-            "error": str(exc),
-        },
-        exc_info=(type(exc), exc, exc.__traceback__),
-    )
-
-
-def _registry_entry_identity(registry_entry: object | None) -> object | None:
-    if registry_entry is None:
-        return None
-    identity: dict[str, object] = {}
-    for field_name in ("id", "name", "stage_name"):
-        value = _field(registry_entry, field_name)
-        if value:
-            identity[field_name] = value
-    return identity or repr(registry_entry)
-
-
-def _spawn_required_stage_agent(
-    task: object,
-    context: object,
-    stage_name: str,
-    state: str,
-    *,
-    agent_slug: str,
-    has_agent: Callable[[object], bool],
-    missing_agent_reason: str,
-) -> Action | None:
-    stage = _matching_current_stage(task, context, stage_name, state)
-    if stage is None:
-        return None
-    if not has_agent(context):
-        return EscalateAction(task_id=_task_id(task), reason=missing_agent_reason)
-    return _spawn_stage_agent(task, stage, context, agent_slug)
-
-
-def _complete_stage_on_state(
-    task: object,
-    context: object,
-    stage_name: str,
-    state: str,
-) -> AdvanceStageAction | None:
-    if _matching_current_stage(task, context, stage_name, state) is None:
-        return None
-    return AdvanceStageAction(
-        task_id=_task_id(task),
-        stage_name=stage_name,
-        method="complete_stage",
-    )
-
-
-def _complete_review_approved_stage(
-    task: object,
-    context: object,
-    stage_name: str,
-) -> AdvanceStageAction | None:
-    return _complete_stage_on_state(task, context, stage_name, "review_approved")
-
-
-def _spawn_stage_agent(
-    task: object,
-    stage: object,
-    context: object,
-    agent_slug: str,
-    *,
-    resume_review: bool = False,
-) -> SpawnAgentAction:
-    prompt_context = _prompt_context(context)
-    prompt_context["stage_name"] = _stage_name(stage)
-    prompt_context["stage_state"] = _stage_state(stage)
-    if resume_review:
-        prompt_context["reason"] = "holistic_qa_resume_review"
-        prompt_context["resume_review"] = True
-    builder = PROMPT_BUILDERS.get(agent_slug) or PROMPT_BUILDERS["default"]
-    initial_variables: dict[str, object] = {
-        "stage_name": _stage_name(stage),
-        "stage_state": _stage_state(stage),
-    }
-    if resume_review:
-        initial_variables["resume_review"] = True
-    return SpawnAgentAction(
-        task_id=_task_id(task),
-        task_ref=_task_ref(task),
-        agent_slug=agent_slug,
-        prompt=builder(task, prompt_context),
-        initial_variables=initial_variables,
-        additional_skills=tuple(_field(task, "additional_skills", ()) or ()),
-    )
-
-
-def _matching_current_stage(
-    task: object,
-    context: object,
-    stage_name: str,
-    state: str,
-) -> object | None:
-    stage = _current_stage(task, context)
-    if stage is None:
-        return None
-    if _stage_name(stage) == stage_name and _stage_state(stage) == state:
-        return stage
-    return None
-
-
-def _current_stage(task: object, context: object) -> object | None:
-    return current_stage(task) or _field(context, "current_stage")
-
-
-def _previous_stage_done(task: object, stage: object) -> bool:
-    position = _stage_position(stage)
-    if position == 0:
-        return True
-    for candidate in _stages(task):
-        if _stage_position(candidate) == position - 1:
-            return _stage_state(candidate) == "done"
-    return False
-
-
-def _stage_work_exhausted(stage: object, context: object) -> bool:
-    cap = _stage_cap(stage, context, "max_work_attempts", "default_max_work_attempts")
-    return cap is not None and int(_field(stage, "work_attempt_count", 0) or 0) > cap
-
-
-def _stage_revision_review_budget_open(stage: object, context: object) -> bool:
-    if _field(stage, "review_policy") != "required":
-        return False
-    review_rounds = int(_field(stage, "review_round_count", 0) or 0)
-    work_attempts = int(_field(stage, "work_attempt_count", 0) or 0)
-    if review_rounds <= 0 or work_attempts <= review_rounds:
-        return False
-    return not _stage_review_exhausted(stage, context)
-
-
-def _stage_review_exhausted(stage: object, context: object) -> bool:
-    cap = _stage_cap(stage, context, "max_review_rounds", "default_max_review_rounds")
-    return cap is not None and int(_field(stage, "review_round_count", 0) or 0) >= cap
-
-
-def _stage_cap(
-    stage: object,
-    context: object,
-    stage_cap_name: str,
-    registry_cap_name: str,
-) -> int | None:
-    value = _field(stage, stage_cap_name)
-    if value is None:
-        registry_entry = _registry_entry(context, _stage_name(stage), stage)
-        value = _field(registry_entry, registry_cap_name)
-    return int(value) if value is not None else None
-
-
-def _default_agent(
-    stage: object | None,
-    context: object,
-    stage_name: str | None = None,
-) -> str | None:
-    resolved_stage_name = stage_name or (_stage_name(stage) if stage is not None else None)
-    registry_entry = _registry_entry(context, resolved_stage_name, stage)
-    value = _field(registry_entry, "default_agent", _field(stage, "default_agent"))
-    return str(value) if value else None
-
-
-def _development_agent(task: object, stage: object, context: object) -> str:
-    assigned_agent = _field(task, "assigned_agent")
-    if assigned_agent:
-        assigned_slug = str(assigned_agent)
-        if _agent_dispatchable(context, assigned_slug):
-            return assigned_slug
-        logger.warning(
-            "Ignoring unavailable assigned development agent; falling back",
-            extra={
-                "task_id": _task_id(task),
-                "task_ref": _task_ref(task),
-                "assigned_agent": assigned_slug,
-            },
-        )
-    if _field(task, "category") == "code":
-        implementation_domain = _field(task, "implementation_domain")
-        if implementation_domain is not None and implementation_domain in IMPLEMENTATION_DOMAINS:
-            return AGENT_BY_IMPLEMENTATION_DOMAIN[str(implementation_domain)]
-    if _field(task, "category") == "docs" and _agent_dispatchable(context, "tech-writer"):
-        return "tech-writer"
-    return _default_agent(stage, context) or "backend-developer"
-
-
-def _registry_entry(
-    context: object, stage_name: str | None, stage: object | None = None
-) -> object | None:
-    if not stage_name:
-        return stage
-    registry = _field(context, "stage_registry", {})
-    if isinstance(registry, dict):
-        entry = registry.get(stage_name)
-        return cast(object, entry) if entry is not None else stage
-    if isinstance(registry, Sequence) and not isinstance(registry, str):
-        for entry in registry:
-            if str(_field(entry, "name", "")) == stage_name:
-                return cast(object, entry)
-    mapped = _mapping_field(registry, stage_name)
-    return mapped if mapped is not None else stage
-
-
-def _artifacts(task: object, context: object) -> object:
-    return _field(context, "artifacts", _field(task, "artifacts", {}))
-
-
-def _holistic_descendant_gate(context: object) -> object | None:
-    return cast(object | None, _field(context, "holistic_descendant_gate", None))
-
-
-def _holistic_descendant_gate_body(gate: object) -> str:
-    blockers = tuple(_field(gate, "blockers", ()) or ())
-    lines = ["Holistic QA is waiting for nonterminal descendants:"]
-    for blocker in blockers:
-        ref = _field(blocker, "task_ref", _field(blocker, "task_id", "unknown"))
-        path = _field(blocker, "task_path", "no-path") or "no-path"
-        title = _field(blocker, "title", "")
-        stage_name = _field(blocker, "stage_name", "none") or "none"
-        stage_state = _field(blocker, "stage_state", "none") or "none"
-        escalated = str(bool(_field(blocker, "is_escalated", False))).lower()
-        lines.append(
-            f"- {ref} ({path}): {title} [stage={stage_name}:{stage_state}, escalated={escalated}]"
-        )
-    return "\n".join(lines)
-
-
-def _children(task: object, context: object) -> Sequence[object]:
-    return tuple(_field(context, "children", _field(task, "children", ())) or ())
-
-
-def _is_leaf(task: object) -> bool:
-    return str(_field(task, "task_type", "")) != "epic" and not bool(_field(task, "children", ()))
-
-
-def _is_epic(task: object) -> bool:
-    return str(_field(task, "task_type", "")) == "epic"
-
-
-def _is_closed(task: object) -> bool:
-    state = _field(task, "state")
-    if isinstance(state, dict) and state.get("is_closed"):
-        return True
-    return bool(_field(task, "is_closed", False) or _field(task, "closed_at"))
-
-
-def _isolation(task: object) -> str:
-    return str(_field(task, "isolation", "worktree"))
-
-
-def _task_has_label(task: object, label: str) -> bool:
-    return label in set(_field(task, "labels", ()) or ())
-
-
-def _has_isolation_pair(artifacts: object, isolation: str) -> bool:
-    if isolation == "clone":
-        return bool(_field(artifacts, "clone_path")) and bool(_field(artifacts, "clone_id"))
-    return bool(_field(artifacts, "worktree_path")) and bool(_field(artifacts, "worktree_id"))
-
-
-def _stages(task: object) -> Sequence[object]:
-    return tuple(_field(task, "stages", ()) or ())
-
-
-def _stage_name(stage: object | None) -> str:
-    if stage is None:
-        return ""
-    value = _field(stage, "stage_name", _field(stage, "name", ""))
-    return str(value)
-
-
-def _stage_state(stage: object) -> str:
-    return str(_field(stage, "state", ""))
-
-
-def _stage_position(stage: object) -> int:
-    return int(_field(stage, "position", 0) or 0)
-
-
-def _task_id(task: object) -> str:
-    return str(_field(task, "id"))
-
-
-def _task_ref(task: object) -> str:
-    value = _field(task, "ref") or _field(task, "task_ref")
-    if value:
-        return str(value)
-    seq_num = _field(task, "seq_num")
-    if seq_num not in (None, ""):
-        return f"#{seq_num}"
-    return _task_id(task)
-
-
-def _prompt_context(context: object) -> dict[str, object]:
-    return {
-        "artifacts": _field(context, "artifacts"),
-        "build_config": _field(context, "build_config"),
-        "failure_context": _field(context, "failure_context"),
-        "reason": _field(context, "reason"),
-    }
-
-
-def _field(obj: object, name: str, default: Any = None) -> Any:
-    if isinstance(obj, dict):
-        return obj.get(name, default)
-    return getattr(obj, name, default)
-
-
-def _mapping_field(obj: object, key: str) -> object | None:
-    if isinstance(obj, dict):
-        return obj.get(key)
-    return getattr(obj, key, None)
-
-
-def _agent_definition(context: object, agent_slug: str) -> object | None:
-    agent = _mapping_field(_field(context, "agents", {}), agent_slug)
-    if agent is not None:
-        return agent
-    return _mapping_field(_field(context, "agent_definitions", {}), agent_slug)
 
 
 __all__ = [
