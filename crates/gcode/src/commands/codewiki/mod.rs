@@ -37,11 +37,14 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 /// `<details>` provenance) cannot be reused from disk: the new shape renders a
 /// verified narrative body plus a human Key components table. (5 was the
 /// grounded verification pass; 4 the pre-verify pages.)
+// 13 (#905): curated concept/narrative pages strip a duplicate leading `# H1`
+// the model writes at the top of its body (the renderer owns the canonical
+// `# {title}`), so prior on-disk pages with two H1s re-render with one.
 // 12 (#904): repo overview links the analysis/catalog pages (feature catalog,
 // infrastructure, deprecations, dead-code candidates) from a new "Analysis &
 // catalogs" section, narrative extra chapters carry readable `NN-<title>` slugs,
 // and aggregate prose is written opus-first — so prior on-disk pages re-render.
-const CODEWIKI_RENDER_VERSION: u32 = 12;
+const CODEWIKI_RENDER_VERSION: u32 = 13;
 
 /// Default daemon feature profile for the grounded verification pass (#904):
 /// `feature_mid` (sonnet) runs the "is this claim supported by the cited

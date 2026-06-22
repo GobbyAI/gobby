@@ -262,6 +262,10 @@ fn append_curated_body(
     fallback_heading: &str,
     fallback_text: &str,
 ) {
+    // The renderer already emitted the canonical `# {title}` H1, so drop a
+    // duplicate H1 the model may have written at the top of its own body
+    // (#905). If stripping leaves the body empty, fall back to the section.
+    let body = body.map(strip_leading_model_h1);
     match body {
         Some(body) if !body.trim().is_empty() => {
             doc.push_str(body);
@@ -271,6 +275,43 @@ fn append_curated_body(
             doc.push('\n');
         }
         _ => write_section(doc, fallback_heading, fallback_text),
+    }
+}
+
+/// Strip a single leading level-1 ATX heading from a model-authored curated
+/// body.
+///
+/// Concept and narrative pages render a canonical `# {title}` H1 from the page
+/// title (see [`render_concept_page`]/[`render_narrative_page`]); when the model
+/// opens its body with its own top-level `# ...` the page shows two H1s (#905).
+/// The renderer owns the title H1, so a leading H1 in the body is dropped. Only
+/// a true level-1 heading (`#` followed by space/tab/end-of-line, with up to the
+/// three leading spaces CommonMark allows) that is the body's first non-blank
+/// line is removed; `##`+ subsections and bodies that do not open with a heading
+/// are returned unchanged.
+fn strip_leading_model_h1(body: &str) -> &str {
+    // Ignore blank lines before the first content line.
+    let trimmed = body.trim_start_matches(['\n', '\r']);
+    let indent = trimmed.len() - trimmed.trim_start_matches(' ').len();
+    if indent > 3 {
+        return body;
+    }
+    let Some(after_hash) = trimmed[indent..].strip_prefix('#') else {
+        return body;
+    };
+    let is_h1 = match after_hash.chars().next() {
+        None => true,                                     // bare "#"
+        Some('#') => false,                               // "##..." is level 2+
+        Some(c) => matches!(c, ' ' | '\t' | '\n' | '\r'), // "# text"
+    };
+    if !is_h1 {
+        return body;
+    }
+    // Drop the heading line, then any blank lines after it, so the body starts
+    // at its first real paragraph.
+    match trimmed.find('\n') {
+        Some(newline) => trimmed[newline + 1..].trim_start_matches(['\n', '\r']),
+        None => "",
     }
 }
 
@@ -325,4 +366,70 @@ fn narrative_members(
     files.sort();
     files.dedup();
     (modules, files)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn strips_a_leading_model_h1() {
+        assert_eq!(
+            strip_leading_model_h1("# Introduction\n\nReal grounded prose.\n"),
+            "Real grounded prose.\n"
+        );
+    }
+
+    #[test]
+    fn strips_a_leading_h1_after_blank_lines() {
+        assert_eq!(strip_leading_model_h1("\n\n# Title\n\nBody.\n"), "Body.\n");
+    }
+
+    #[test]
+    fn keeps_a_body_without_a_leading_h1() {
+        let body = "Real grounded prose.\n\n## Section\n";
+        assert_eq!(strip_leading_model_h1(body), body);
+    }
+
+    #[test]
+    fn leaves_subheadings_and_only_strips_the_first_h1() {
+        // `##` is level 2+, not an H1, so a body that opens with one is untouched.
+        let body = "## Overview\n\ntext\n";
+        assert_eq!(strip_leading_model_h1(body), body);
+        // Only the first top-level H1 is removed; a later one survives.
+        assert_eq!(
+            strip_leading_model_h1("# Title\n\nintro\n\n# Later\n"),
+            "intro\n\n# Later\n"
+        );
+    }
+
+    #[test]
+    fn append_curated_body_drops_the_duplicate_h1() {
+        let mut doc = String::from("# Introduction\n\n");
+        append_curated_body(
+            &mut doc,
+            Some("# Introduction\n\nGrounded narrative.\n"),
+            "Guide",
+            "fallback",
+        );
+        // The model body repeated the page title; only the renderer's H1 survives.
+        assert_eq!(doc.matches("# Introduction").count(), 1);
+        assert!(doc.contains("Grounded narrative."));
+        assert!(!doc.contains("fallback"));
+    }
+
+    #[test]
+    fn append_curated_body_falls_back_when_body_is_only_a_heading() {
+        let mut doc = String::new();
+        append_curated_body(
+            &mut doc,
+            Some("# Only A Title\n"),
+            "Guide",
+            "Fallback text.",
+        );
+        // Stripping the lone heading leaves nothing, so the fallback section renders.
+        assert!(doc.contains("Guide"));
+        assert!(doc.contains("Fallback text."));
+        assert!(!doc.contains("# Only A Title"));
+    }
 }
