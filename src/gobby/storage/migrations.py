@@ -249,4 +249,13 @@ def _row_value(row: Any, key: str, index: int = 0) -> Any:
 
 def latest_known_version() -> int:
     """Return the newest schema version known to this build."""
-    return BASELINE_VERSION
+    versions = [BASELINE_VERSION]
+    migrations_dir = importlib.resources.files("gobby.storage").joinpath("migrations")
+    if migrations_dir.is_dir():
+        for path in migrations_dir.iterdir():
+            if not path.is_file():
+                continue
+            match = _MIGRATION_FILE_RE.match(path.name)
+            if match is not None:
+                versions.append(int(match.group("version")))
+    return max(versions)

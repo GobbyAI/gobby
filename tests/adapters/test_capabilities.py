@@ -15,7 +15,6 @@ from gobby.adapters.claude_contract import CLAUDE_NATIVE_HOOK_NAMES
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
 from gobby.adapters.droid import DroidAdapter
 from gobby.adapters.droid_contract import DROID_PASCAL_HOOK_NAMES
-from gobby.adapters.gemini import GeminiAdapter
 from gobby.adapters.grok import GrokAdapter
 from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookResponse, SessionSource
@@ -47,9 +46,6 @@ def test_capability_registry_covers_current_http_adapters() -> None:
     assert get_provider_capabilities(SessionSource.CODEX).hook_events.keys() == (
         CodexHooksAdapter.EVENT_MAP.keys()
     )
-    assert get_provider_capabilities(SessionSource.GEMINI).hook_events.keys() == (
-        GeminiAdapter.EVENT_MAP.keys()
-    )
     assert get_provider_capabilities(SessionSource.QWEN).hook_events.keys() == (
         QwenAdapter.EVENT_MAP.keys()
     )
@@ -65,7 +61,7 @@ def test_capability_registry_covers_current_http_adapters() -> None:
 def test_current_context_and_decision_capabilities_are_declared() -> None:
     claude_pre_tool = get_provider_capabilities("claude").get_hook("pre-tool-use")
     codex_pre_tool = get_provider_capabilities("codex").get_hook("PreToolUse")
-    gemini_before_model = get_provider_capabilities("gemini").get_hook("BeforeModel")
+    qwen_before_model = get_provider_capabilities("qwen").get_hook("BeforeModel")
     grok_pre_tool = get_provider_capabilities("grok").get_hook("pre_tool_use")
     droid_pre_tool = get_provider_capabilities("droid").get_hook("PreToolUse")
 
@@ -77,9 +73,9 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert codex_pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
     assert codex_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
-    assert gemini_before_model is not None
-    assert gemini_before_model.context_channel is ContextChannel.ADDITIONAL_CONTEXT
-    assert gemini_before_model.supports_response_field("modify_args")
+    assert qwen_before_model is not None
+    assert qwen_before_model.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert qwen_before_model.supports_response_field("modify_args")
 
     assert grok_pre_tool is not None
     assert grok_pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
@@ -130,7 +126,7 @@ def test_unsupported_elicitation_fields_are_dropped_with_telemetry(
 ) -> None:
     calls = _capture_degradations(monkeypatch)
 
-    result = GeminiAdapter().translate_from_hook_response(
+    result = QwenAdapter().translate_from_hook_response(
         HookResponse(
             decision="allow",
             elicitation_action="accept",
@@ -186,7 +182,7 @@ def test_claude_reason_compaction_records_degradation(
     assert any(call["kind"] == "reason_compacted" for call in calls)
 
 
-def test_gemini_tool_block_preserves_native_recoverable_reason(
+def test_qwen_tool_block_preserves_native_recoverable_reason(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     calls = _capture_degradations(monkeypatch)
@@ -196,7 +192,7 @@ def test_gemini_tool_block_preserves_native_recoverable_reason(
         "progressive discovery"
     )
 
-    result = GeminiAdapter().translate_from_hook_response(
+    result = QwenAdapter().translate_from_hook_response(
         HookResponse(decision="block", reason=reason),
         hook_type="BeforeTool",
     )
@@ -249,10 +245,10 @@ def test_graceful_error_uses_provider_capability_shape(
 ) -> None:
     calls = _capture_degradations(monkeypatch)
 
-    gemini_result = _graceful_error_response(
+    qwen_result = _graceful_error_response(
         "BeforeTool",
         "database unavailable",
-        source="gemini",
+        source="qwen",
     )
     droid_result = _graceful_error_response(
         "PreToolUse",
@@ -260,8 +256,8 @@ def test_graceful_error_uses_provider_capability_shape(
         source="droid",
     )
 
-    assert gemini_result["decision"] == "allow"
-    assert "database unavailable" in gemini_result["hookSpecificOutput"]["additionalContext"]
+    assert qwen_result["decision"] == "allow"
+    assert "database unavailable" in qwen_result["hookSpecificOutput"]["additionalContext"]
     assert droid_result["continue"] is True
     assert "database unavailable" in droid_result["systemMessage"]
     assert any(call["kind"] == "graceful_error" for call in calls)
@@ -272,7 +268,6 @@ def test_graceful_error_uses_provider_capability_shape(
     [
         (ClaudeCodeAdapter(), "session-start"),
         (CodexHooksAdapter(), "SessionStart"),
-        (GeminiAdapter(), "SessionStart"),
         (QwenAdapter(), "SessionStart"),
         (DroidAdapter(), "SessionStart"),
     ],

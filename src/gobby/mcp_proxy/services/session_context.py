@@ -75,7 +75,7 @@ def resolve_tool_event_context(
     "HookManager | None", Any | None, Any | None, Any, dict[str, Any], str | None, str | None
 ]:
     """Resolve shared session metadata for direct tool lifecycle events."""
-    from gobby.hooks.events import SessionSource
+    from gobby.hooks.events import SessionSource, parse_session_source
     from gobby.utils.project_context import get_project_context
 
     project_ctx = get_project_context()
@@ -101,11 +101,10 @@ def resolve_tool_event_context(
             if session is not None:
                 session_source = getattr(session, "source", None)
                 if isinstance(session_source, str):
-                    try:
-                        source = SessionSource(session_source)
-                    except ValueError:
+                    source = parse_session_source(session_source)
+                    if source is SessionSource.UNKNOWN:
                         logger.debug(
-                            "Unknown session source %r for %s; defaulting to codex",
+                            "Unknown session source %r for %s; using unknown source",
                             session_source,
                             effective_session_id,
                         )

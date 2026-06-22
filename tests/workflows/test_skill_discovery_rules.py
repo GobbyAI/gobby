@@ -353,7 +353,7 @@ class TestBrevityRules:
         turn_end = HookEvent(
             event_type=HookEventType.AFTER_AGENT,
             session_id="test-session",
-            source=SessionSource.GEMINI,
+            source=SessionSource.QWEN,
             timestamp=datetime.now(UTC),
             data={"response": "In summary, the fix is applied."},
         )
@@ -387,7 +387,7 @@ class TestBrevityRules:
         event = HookEvent(
             event_type=HookEventType.AFTER_AGENT,
             session_id="test-session",
-            source=SessionSource.GEMINI,
+            source=SessionSource.QWEN,
             timestamp=datetime.now(UTC),
             data={"response": "In summary, the fix is applied."},
         )

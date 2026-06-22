@@ -11,7 +11,7 @@ class GeminiAdapter(ACPHookAdapter):
 
     @property
     def source(self) -> SessionSource:
-        return SessionSource.GEMINI
+        return SessionSource.UNKNOWN
 
 
 __all__ = ["GeminiAdapter"]

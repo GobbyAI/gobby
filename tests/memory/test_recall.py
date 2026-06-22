@@ -178,7 +178,6 @@ def test_recall_eligibility_only_accepts_real_parent_user_turns(
         SessionSource.CLAUDE,
         SessionSource.CODEX,
         SessionSource.DROID,
-        SessionSource.GEMINI,
         SessionSource.GROK,
         SessionSource.QWEN,
     ],

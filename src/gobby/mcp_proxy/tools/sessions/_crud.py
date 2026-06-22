@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from gobby.mcp_proxy.tools.internal import InternalToolRegistry
     from gobby.storage.sessions import SessionManager
 
-_SUPPORTED_SESSION_SOURCES = ("claude", "gemini", "grok", "qwen", "codex", "droid", "agy")
+_SUPPORTED_SESSION_SOURCES = ("claude", "grok", "qwen", "codex", "droid", "agy", "unknown")
 
 
 def register_crud_tools(

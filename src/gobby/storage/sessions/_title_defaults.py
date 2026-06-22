@@ -11,10 +11,10 @@ _PROVIDER_LABELS = {
     "claude": "claude",
     "codex": "codex",
     "droid": "droid",
-    "gemini": "gemini",
     "grok": "grok",
     "pipeline": "pipeline",
     "qwen": "qwen",
+    "unknown": "unknown",
 }
 _UNKNOWN_PROVIDER_RE = re.compile(r"[^a-z0-9._-]+")
 

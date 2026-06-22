@@ -29,7 +29,7 @@ class TestTranslateToHookEvent:
 
         assert event.event_type == HookEventType.SESSION_START
         assert event.session_id == "gemini-sess-123"
-        assert event.source == SessionSource.GEMINI
+        assert event.source == SessionSource.UNKNOWN
         assert event.cwd == "/home/user/project"
         assert event.data == native_event["input_data"]
 
@@ -371,8 +371,8 @@ class TestTranslateFromHookResponse:
         assert result["continue"] is False
         assert result["reason"] == "Blocked by workflow"
 
-    def test_before_tool_block_decision_is_recoverable(self, adapter) -> None:
-        """BeforeTool blocks deny only the tool call, not the agent loop."""
+    def test_before_tool_block_decision_hard_stops_for_neutral_source(self, adapter) -> None:
+        """Neutralized Gemini adapter has no recoverable tool-hook capability."""
         reason = (
             "Rule enforced by Gobby: [require-code-index-skill]\n"
             'Call get_skill(name="code-index") on gobby-skills through mcp__gobby__ '
@@ -384,18 +384,18 @@ class TestTranslateFromHookResponse:
 
         assert result == {
             "decision": "block",
-            "continue": True,
+            "continue": False,
             "reason": reason,
         }
 
-    def test_after_tool_deny_decision_is_recoverable(self, adapter) -> None:
-        """AfterTool denials report reason without stopping the agent loop."""
+    def test_after_tool_deny_decision_hard_stops_for_neutral_source(self, adapter) -> None:
+        """Neutralized Gemini adapter has no recoverable tool-hook capability."""
         response = HookResponse(decision="deny", reason="Post-tool gate failed")
 
         result = adapter.translate_from_hook_response(response, hook_type="AfterTool")
 
         assert result["decision"] == "deny"
-        assert result["continue"] is True
+        assert result["continue"] is False
         assert result["reason"] == "Post-tool gate failed"
 
     def test_unknown_hook_block_decision_hard_stops(self, adapter) -> None:

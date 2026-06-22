@@ -60,7 +60,7 @@ class TestSessionSource:
         """Test session source values."""
         assert SessionSource.CLAUDE.value == "claude"
         assert SessionSource.DROID.value == "droid"
-        assert SessionSource.GEMINI.value == "gemini"
+        assert SessionSource.UNKNOWN.value == "unknown"
         assert SessionSource.CODEX.value == "codex"
 
 
@@ -88,7 +88,7 @@ class TestHookEvent:
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id="full-session",
-            source=SessionSource.GEMINI,
+            source=SessionSource.UNKNOWN,
             timestamp=now,
             data={"tool_name": "bash", "args": ["ls", "-la"]},
             machine_id="machine-abc",

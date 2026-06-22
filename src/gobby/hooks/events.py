@@ -78,11 +78,27 @@ class SessionSource(str, Enum):
     AGY = "agy"
     CLAUDE = "claude"
     DROID = "droid"
-    GEMINI = "gemini"
     GROK = "grok"
     QWEN = "qwen"
     CODEX = "codex"
     PIPELINE = "pipeline"
+    UNKNOWN = "unknown"
+
+
+def parse_session_source(
+    value: SessionSource | str | None,
+    *,
+    default: SessionSource = SessionSource.UNKNOWN,
+) -> SessionSource:
+    """Return a known session source, falling back for stale or unknown values."""
+    if isinstance(value, SessionSource):
+        return value
+    if not isinstance(value, str) or not value.strip():
+        return default
+    try:
+        return SessionSource(value.strip().lower())
+    except ValueError:
+        return default
 
 
 @dataclass

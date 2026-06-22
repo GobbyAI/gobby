@@ -425,21 +425,21 @@ PROVIDER_CAPABILITIES: dict[SessionSource, ProviderCapabilities] = {
     SessionSource.AGY: _unsupported_capabilities(SessionSource.AGY),
     SessionSource.CLAUDE: _claude_capabilities(),
     SessionSource.CODEX: _codex_capabilities(),
-    SessionSource.GEMINI: _acp_capabilities(SessionSource.GEMINI),
     SessionSource.GROK: _grok_capabilities(),
     SessionSource.QWEN: _acp_capabilities(SessionSource.QWEN),
     SessionSource.DROID: _droid_capabilities(),
+    SessionSource.UNKNOWN: _unsupported_capabilities(SessionSource.UNKNOWN),
 }
 
 SOURCE_ALIASES: dict[str, SessionSource] = {
     "claude_code": SessionSource.CLAUDE,
     "claude": SessionSource.CLAUDE,
     "codex": SessionSource.CODEX,
-    "gemini": SessionSource.GEMINI,
     "grok": SessionSource.GROK,
     "qwen": SessionSource.QWEN,
     "droid": SessionSource.DROID,
     "agy": SessionSource.AGY,
+    "unknown": SessionSource.UNKNOWN,
 }
 
 

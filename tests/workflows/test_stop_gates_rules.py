@@ -282,7 +282,7 @@ class TestManualCompactionTurnEndBypass:
 
         after_agent = _make_event(
             HookEventType.AFTER_AGENT,
-            source=SessionSource.GEMINI,
+            source=SessionSource.QWEN,
         )
         response = await engine.evaluate(after_agent, "sess-1", variables)
 
@@ -403,7 +403,7 @@ class TestRequireTaskClose:
 
     @pytest.mark.asyncio
     async def test_blocks_on_after_agent_turn_end(self, db, manager) -> None:
-        """Bundled turn_end gate should also fire for Gemini/Codex after-agent hooks."""
+        """Bundled turn_end gate should also fire for Qwen/Codex after-agent hooks."""
         _sync_bundled(db)
 
         engine = RuleEngine(db)
@@ -416,7 +416,7 @@ class TestRequireTaskClose:
 
         event = _make_event(
             HookEventType.AFTER_AGENT,
-            source=SessionSource.GEMINI,
+            source=SessionSource.QWEN,
         )
         response = await engine.evaluate(event, "sess-1", variables)
 

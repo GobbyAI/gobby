@@ -25,6 +25,6 @@ class TestGeminiAdapterInit:
         assert adapter._hook_manager is mock_manager
 
     def test_source_is_gemini(self) -> None:
-        """GeminiAdapter reports GEMINI as source."""
+        """GeminiAdapter is neutral while the provider surface is being removed."""
         adapter = GeminiAdapter()
-        assert adapter.source == SessionSource.GEMINI
+        assert adapter.source == SessionSource.UNKNOWN

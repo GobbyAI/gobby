@@ -335,7 +335,7 @@ async def test_broadcast_event_backfills_external_id_from_metadata(
     ("session_id", "source", "reason"),
     [
         ("codex-thread", SessionSource.CODEX, "resume"),
-        ("gemini-thread", SessionSource.GEMINI, "exit"),
+        ("unknown-thread", SessionSource.UNKNOWN, "exit"),
     ],
 )
 async def test_broadcast_event_session_end_runtime_reason(

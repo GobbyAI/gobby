@@ -157,7 +157,7 @@ def test_pending_tool_context_matches_direct_proxy_event(
     "source",
     # CODEX keeps dedicated coverage below because its tool transcript shape
     # differs from the shared CLI adapter path exercised here.
-    [SessionSource.CLAUDE, SessionSource.GEMINI, SessionSource.QWEN, SessionSource.DROID],
+    [SessionSource.CLAUDE, SessionSource.QWEN, SessionSource.DROID],
 )
 @pytest.mark.asyncio
 async def test_cli_after_tool_rehydrates_schema_lookup_context(

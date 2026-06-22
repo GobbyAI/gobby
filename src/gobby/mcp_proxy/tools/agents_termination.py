@@ -26,7 +26,7 @@ def _fire_synthetic_stop(
         if hook_mgr is None:
             return
 
-        from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+        from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
 
         source = SessionSource.CLAUDE
         if session_manager is not None:
@@ -34,7 +34,7 @@ def _fire_synthetic_stop(
                 session = session_manager.get(session_id)
                 session_source = getattr(session, "source", None) if session else None
                 if isinstance(session_source, str) and session_source:
-                    source = SessionSource(session_source)
+                    source = parse_session_source(session_source)
             except (AttributeError, ValueError) as exc:
                 agents.logger.debug(
                     "Failed to resolve source for synthetic stop session %s: %s",

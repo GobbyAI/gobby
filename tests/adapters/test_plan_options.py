@@ -24,12 +24,12 @@ pytestmark = pytest.mark.unit
 _SOURCES = [
     SessionSource.CLAUDE,
     SessionSource.CODEX,
-    SessionSource.GEMINI,
     SessionSource.QWEN,
     SessionSource.GROK,
     SessionSource.DROID,
     SessionSource.AGY,
     SessionSource.PIPELINE,
+    SessionSource.UNKNOWN,
     "droid",
     "droid_web_chat",
     "totally-unknown-cli",

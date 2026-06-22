@@ -429,7 +429,7 @@ class AgentEventHandlerMixin(EventHandlersBase):
     def handle_pre_compact(self, event: HookEvent) -> HookResponse:
         """Handle PRE_COMPACT event.
 
-        Note: Gemini- and Qwen-compatible CLIs fire PreCompress constantly
+        Note: Qwen-compatible ACP CLIs fire PreCompress constantly
         during normal operation, unlike Claude which fires it only when
         approaching context limits. We skip handoff logic and workflow
         execution for those CLIs to avoid excessive state changes and
@@ -438,8 +438,8 @@ class AgentEventHandlerMixin(EventHandlersBase):
         trigger = event.data.get("trigger", "auto")
         session_id = event.metadata.get("_platform_session_id")
 
-        # Skip handoff logic for Gemini/Qwen - they fire PreCompress too frequently
-        if event.source in {SessionSource.GEMINI, SessionSource.QWEN}:
+        # Skip handoff logic for Qwen - it fires PreCompress too frequently.
+        if event.source is SessionSource.QWEN:
             self.logger.debug(
                 f"PRE_COMPACT ({trigger}): session {session_id} "
                 f"[{event.source.value.title()} - skipped]"

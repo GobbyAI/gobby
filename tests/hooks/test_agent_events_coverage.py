@@ -739,11 +739,11 @@ class TestHandleStop:
 class TestHandlePreCompact:
     """Tests for handle_pre_compact."""
 
-    def test_gemini_skipped(self) -> None:
+    def test_qwen_skipped(self) -> None:
         handler = _TestHandler()
         event = _make_event(
             event_type=HookEventType.PRE_COMPACT,
-            source=SessionSource.GEMINI,
+            source=SessionSource.QWEN,
             metadata={"_platform_session_id": "sess-1"},
         )
 

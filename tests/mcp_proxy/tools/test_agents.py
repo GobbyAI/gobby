@@ -1410,6 +1410,25 @@ class TestFireSyntheticStop:
         assert event_arg.event_type == HookEventType.STOP
         assert event_arg.metadata["_platform_session_id"] == "sess-123"
 
+    def test_legacy_gemini_source_becomes_unknown(self):
+        """Synthetic stop tolerates stale persisted Gemini sources."""
+        from gobby.hooks.events import SessionSource
+        from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop
+
+        mock_hook_mgr = MagicMock()
+        mock_hook_mgr.evaluate_workflow_rules.return_value = (None, None)
+        session_manager = MagicMock()
+        session_manager.get.return_value = MagicMock(source="gemini")
+
+        _fire_synthetic_stop(
+            lambda: mock_hook_mgr,
+            "sess-123",
+            session_manager=session_manager,
+        )
+
+        event_arg = mock_hook_mgr.evaluate_workflow_rules.call_args[0][0]
+        assert event_arg.source is SessionSource.UNKNOWN
+
     def test_catches_exceptions(self):
         """Test that _fire_synthetic_stop catches and logs exceptions."""
         from gobby.mcp_proxy.tools.agents import _fire_synthetic_stop

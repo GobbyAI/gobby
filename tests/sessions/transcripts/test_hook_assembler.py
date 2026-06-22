@@ -113,15 +113,15 @@ class TestAfterTool:
         assert msgs[0].tool_result == {"text": "file contents"}
         assert msgs[0].content == "file contents"
 
-    def test_gemini_tool_result(self, assembler: HookTranscriptAssembler) -> None:
-        """Gemini provides tool result as plain string output."""
+    def test_qwen_tool_result(self, assembler: HookTranscriptAssembler) -> None:
+        """Qwen provides tool result as plain string output."""
         event = _make_event(
             HookEventType.AFTER_TOOL,
             {
                 "tool_name": "readFile",
                 "tool_output": "file contents here",
             },
-            source=SessionSource.GEMINI,
+            source=SessionSource.QWEN,
         )
         msgs = assembler.process_event("sess-1", event)
 
@@ -168,9 +168,9 @@ class TestIndexTracking:
         assert msgs_a2[0].index == 1  # second message in sess-a
 
 
-class TestGeminiToolInfo:
-    def test_gemini_post_write(self, assembler: HookTranscriptAssembler) -> None:
-        """Gemini post-write provides tool_name and tool_output."""
+class TestQwenToolInfo:
+    def test_qwen_post_write(self, assembler: HookTranscriptAssembler) -> None:
+        """Qwen post-write provides tool_name and tool_output."""
         event = _make_event(
             HookEventType.AFTER_TOOL,
             {
@@ -178,7 +178,7 @@ class TestGeminiToolInfo:
                 "tool_input": {"file": "app.py", "content": "print('hi')"},
                 "tool_output": {"text": "File written successfully"},
             },
-            source=SessionSource.GEMINI,
+            source=SessionSource.QWEN,
         )
         msgs = assembler.process_event("sess-1", event)
 

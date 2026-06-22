@@ -689,7 +689,7 @@ class TestVariablePersistence:
     def _make_after_agent_event(
         self,
         session_id: str = "test-session",
-        source: SessionSource = SessionSource.GEMINI,
+        source: SessionSource = SessionSource.QWEN,
     ) -> HookEvent:
         return HookEvent(
             event_type=HookEventType.AFTER_AGENT,
@@ -1519,10 +1519,10 @@ class TestCodexToolContextRehydration:
     @pytest.mark.asyncio
     @pytest.mark.parametrize(
         "source",
-        [SessionSource.GEMINI, SessionSource.QWEN, SessionSource.DROID],
+        [SessionSource.CLAUDE, SessionSource.QWEN, SessionSource.DROID],
     )
     async def test_rehydrates_supported_cli_sources(self, source: SessionSource) -> None:
-        """Gemini, Qwen, and Droid share the same tool-context rehydration path."""
+        """Claude, Qwen, and Droid share the same tool-context rehydration path."""
         handler, rule_engine = self._make_handler()
 
         before_event = self._make_event(
@@ -1549,8 +1549,8 @@ class TestCodexToolContextRehydration:
         assert evaluated_event.data["tool_input"] == {"file_path": "src/main.py"}
 
     @pytest.mark.asyncio
-    async def test_gemini_get_skill_output_envelope_tracks_loaded_skill(self) -> None:
-        """Gemini get_skill results wrapped in output JSON still update loaded_skills."""
+    async def test_qwen_get_skill_output_envelope_tracks_loaded_skill(self) -> None:
+        """Qwen get_skill results wrapped in output JSON still update loaded_skills."""
         handler, rule_engine = self._make_handler()
 
         before_event = self._make_event(
@@ -1558,21 +1558,21 @@ class TestCodexToolContextRehydration:
             data={
                 "tool_name": "mcp_gobby-skills_get_skill",
                 "tool_input": {"name": "brevity"},
-                "tool_use_id": "gemini-skill-1",
+                "tool_use_id": "qwen-skill-1",
             },
-            source=SessionSource.GEMINI,
+            source=SessionSource.QWEN,
         )
         await handler._evaluate_rules(before_event)
 
         after_event = self._make_event(
             HookEventType.AFTER_TOOL,
             data={
-                "tool_use_id": "gemini-skill-1",
+                "tool_use_id": "qwen-skill-1",
                 "tool_response": {
                     "output": '{"result": {"success": true, "skill": {"name": "brevity"}}}',
                 },
             },
-            source=SessionSource.GEMINI,
+            source=SessionSource.QWEN,
         )
         await handler._evaluate_rules(after_event)
 

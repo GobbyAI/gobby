@@ -40,7 +40,6 @@ _TOOL_CONTEXT_REHYDRATION_SOURCES = frozenset(
     {
         SessionSource.CLAUDE,
         SessionSource.CODEX,
-        SessionSource.GEMINI,
         SessionSource.QWEN,
         SessionSource.DROID,
     }

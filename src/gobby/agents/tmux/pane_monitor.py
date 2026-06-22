@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TMUX_COMMAND_TIMEOUT_SECONDS, TmuxSessionManager
 from gobby.config.tmux import TmuxConfig
-from gobby.hooks.events import HookEvent, HookEventType, SessionSource
+from gobby.hooks.events import HookEvent, HookEventType, SessionSource, parse_session_source
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -203,7 +203,11 @@ class TmuxPaneMonitor:
             event = HookEvent(
                 event_type=HookEventType.SESSION_END,
                 session_id=session.external_id,
-                source=SessionSource(session.source) if session.source else SessionSource.CLAUDE,
+                source=(
+                    parse_session_source(session.source)
+                    if session.source
+                    else SessionSource.CLAUDE
+                ),
                 timestamp=datetime.now(UTC),
                 data={"cwd": None},
                 metadata={

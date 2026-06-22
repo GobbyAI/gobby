@@ -62,7 +62,7 @@ class ConcreteAdapter(BaseAdapter):
 class IncompleteAdapter(BaseAdapter):
     """Adapter that only implements some abstract methods (for testing)."""
 
-    source = SessionSource.GEMINI
+    source = SessionSource.QWEN
 
     def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
         """Only implement one abstract method."""
@@ -140,8 +140,8 @@ class TestBaseAdapterSubclassing:
     def test_different_sources_can_be_defined(self) -> None:
         """Different adapters can define different sources."""
 
-        class GeminiTestAdapter(BaseAdapter):
-            source = SessionSource.GEMINI
+        class QwenTestAdapter(BaseAdapter):
+            source = SessionSource.QWEN
 
             def translate_to_hook_event(self, native_event: dict) -> HookEvent | None:
                 return None
@@ -158,10 +158,10 @@ class TestBaseAdapterSubclassing:
             def translate_from_hook_response(self, response: HookResponse) -> dict:
                 return {}
 
-        gemini_adapter = GeminiTestAdapter()
+        qwen_adapter = QwenTestAdapter()
         codex_adapter = CodexTestAdapter()
 
-        assert gemini_adapter.source == SessionSource.GEMINI
+        assert qwen_adapter.source == SessionSource.QWEN
         assert codex_adapter.source == SessionSource.CODEX
 
 

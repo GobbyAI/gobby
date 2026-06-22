@@ -8,6 +8,7 @@ from gobby.hooks.events import (
     HookEventType,
     HookResponse,
     SessionSource,
+    parse_session_source,
 )
 
 pytestmark = pytest.mark.unit
@@ -30,7 +31,16 @@ class TestSessionSource:
         """Test that source values exist."""
         assert SessionSource.CLAUDE == "claude"
         assert SessionSource.DROID == "droid"
-        assert SessionSource.GEMINI == "gemini"
+        assert SessionSource.UNKNOWN == "unknown"
+
+    def test_parse_session_source_tolerates_unknown_values(self) -> None:
+        assert parse_session_source("claude") is SessionSource.CLAUDE
+        assert parse_session_source(" CLAUDE ") is SessionSource.CLAUDE
+        assert parse_session_source(SessionSource.QWEN) is SessionSource.QWEN
+        assert parse_session_source("gemini") is SessionSource.UNKNOWN
+        assert parse_session_source("future-cli") is SessionSource.UNKNOWN
+        assert parse_session_source(None) is SessionSource.UNKNOWN
+        assert parse_session_source(None, default=SessionSource.CLAUDE) is SessionSource.CLAUDE
 
 
 class TestHookEvent:
@@ -64,7 +74,7 @@ class TestHookEvent:
         event = HookEvent(
             event_type=HookEventType.BEFORE_TOOL,
             session_id="sess-456",
-            source=SessionSource.GEMINI,
+            source=SessionSource.UNKNOWN,
             timestamp=now,
             data={"tool": "ls"},
             machine_id="machine-1",

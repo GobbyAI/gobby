@@ -185,14 +185,16 @@ def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
 def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
-    assert _tracked_migration_names(migrations_dir) == []
+    assert _tracked_migration_names(migrations_dir) == [
+        "295_relabel_gemini_sessions.postgres.sql"
+    ]
 
 
 def test_postgres_baseline_version_is_flattened_to_294() -> None:
     import gobby.storage.migrations as module
 
     assert module.BASELINE_VERSION == 294
-    assert module.latest_known_version() == 294
+    assert module.latest_known_version() == 295
 
 
 def test_postgres_baseline_defines_implementation_domain_and_current_config_state() -> None:

@@ -8,7 +8,13 @@ import re
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
-from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
+from gobby.hooks.events import (
+    HookEvent,
+    HookEventType,
+    HookResponse,
+    SessionSource,
+    parse_session_source,
+)
 from gobby.hooks.logging_utils import block_tool_name_from_event_data, log_structured_block
 from gobby.servers.chat_session_base import ChatSessionProtocol
 from gobby.servers.websocket.db import run_db
@@ -131,14 +137,12 @@ class ChatLifecycleMixin:
 
         # Source is determined by session's provider (default claude)
         provider_value = getattr(session, "provider", "claude")
-        try:
-            source = SessionSource(provider_value)
-        except ValueError:
+        source = parse_session_source(provider_value)
+        if source is SessionSource.UNKNOWN:
             logger.warning(
-                "Invalid session provider %r; defaulting lifecycle source to 'claude'",
+                "Invalid session provider %r; using lifecycle source 'unknown'",
                 provider_value,
             )
-            source = SessionSource("claude")
 
         metadata: dict[str, Any] = {
             "_platform_session_id": db_session_id,

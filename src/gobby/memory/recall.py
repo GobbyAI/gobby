@@ -32,7 +32,6 @@ PARENT_USER_PROMPT_SOURCES = frozenset(
         SessionSource.CLAUDE,
         SessionSource.CODEX,
         SessionSource.DROID,
-        SessionSource.GEMINI,
         SessionSource.GROK,
         SessionSource.QWEN,
     }
