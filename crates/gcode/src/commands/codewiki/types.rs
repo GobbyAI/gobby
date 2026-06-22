@@ -316,38 +316,6 @@ pub(crate) struct DeprecationsDoc {
     pub(crate) degraded_sources: Vec<String>,
 }
 
-/// One dead-code CANDIDATE (not a verdict) on the deterministic
-/// `code/dead-code-candidates.md` page (#889): a real definition with zero
-/// inbound Call edges that survived every exclusion (entry points, test-gated,
-/// trait impls/methods). Carries its defining `file:line` for the grouped list.
-#[derive(Debug, Clone)]
-pub(crate) struct DeadCodeCandidate {
-    pub(crate) file: String,
-    pub(crate) name: String,
-    pub(crate) kind: String,
-    pub(crate) line: usize,
-}
-
-/// The deterministic dead-code-candidates page (#889). When the code graph was
-/// unavailable, `skipped` is `true` and `candidates` is empty: the page renders
-/// only a skip note and is NEVER degraded. When the graph was truncated,
-/// `truncated` is `true` and the page adds an "may be incomplete" caveat.
-/// `degraded_sources` is always empty.
-#[derive(Debug, Clone)]
-pub(crate) struct DeadCodeDoc {
-    pub(crate) candidates: Vec<DeadCodeCandidate>,
-    /// True when the code graph was unavailable for this run; the page renders a
-    /// skip note instead of a candidate list. Never sets `degraded`.
-    pub(crate) skipped: bool,
-    /// True when the code graph was truncated; the candidate list may be
-    /// incomplete, so the page adds an explicit caveat.
-    pub(crate) truncated: bool,
-    /// True when the candidate list was capped at the bounded maximum; the page
-    /// notes the cap.
-    pub(crate) capped: bool,
-    pub(crate) degraded_sources: Vec<String>,
-}
-
 #[derive(Debug, Clone)]
 pub(crate) struct OnboardingDoc {
     pub(crate) source_spans: Vec<SourceSpan>,

@@ -8,11 +8,10 @@ use super::{
     AiDepth, AuditContext, BuiltDoc, CodewikiInput, CodewikiProgress, DocPruneScope,
     FeatureCatalogDoc, FileDocPosition, OwnershipMeta, OwnershipOptions, ReusePlan, SystemModel,
     TextGenerator, TextVerifier, build_architecture_doc, build_curated_navigation_docs,
-    build_dead_code_doc, build_deprecations_doc, build_file_doc, build_hotspots_doc,
-    build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
-    build_ownership_doc, build_repo_doc, cluster, cluster_file_modules, file_doc_path,
-    is_core_file, module_doc_path, module_for_file, relationship_facts_for_file,
-    render_architecture_doc, render_dead_code_doc, render_deprecations_doc,
+    build_deprecations_doc, build_file_doc, build_hotspots_doc, build_infrastructure_doc,
+    build_module_docs_with_filter, build_onboarding_doc, build_ownership_doc, build_repo_doc,
+    cluster, cluster_file_modules, file_doc_path, is_core_file, module_doc_path, module_for_file,
+    relationship_facts_for_file, render_architecture_doc, render_deprecations_doc,
     render_feature_catalog_doc, render_file_doc, render_hotspots_doc, render_infrastructure_doc,
     render_module_doc, render_onboarding_doc, span_files,
 };
@@ -188,7 +187,6 @@ fn repo_audit_links(
     }
     if has_audit {
         links.push(("Deprecations", "code/deprecations"));
-        links.push(("Dead-code candidates", "code/dead-code-candidates"));
     }
     links
 }
@@ -212,9 +210,9 @@ pub(crate) fn generate_hierarchical_docs_core(
     feature_catalog: Option<&FeatureCatalogDoc>,
     // Deterministic audit context (#889): the deprecation index (stamped into
     // each file doc's symbols for the badge + the `code/deprecations.md` page)
-    // and the contract-handler entry-point set (the dead-code exclusion). The
-    // CLI runtime passes the real context; test/AI-off entry points pass `None`
-    // to omit the deprecations + dead-code pages, exactly like `system_model`.
+    // and the test-gated symbol index (for the file page's test-count collapse).
+    // The CLI runtime passes the real context; test/AI-off entry points pass
+    // `None` to omit the deprecations page, exactly like `system_model`.
     audit: Option<&AuditContext>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
@@ -466,16 +464,14 @@ pub(crate) fn generate_hierarchical_docs_core(
         let key = hasher::content_hash(content.as_bytes());
         emit(BuiltDoc::derived("code/features.md", content, key))?;
     }
-    // Deterministic audit pages (#889): deprecation aggregate + dead-code
-    // candidates. Built straight from the source scan + Call graph edges — no
-    // LLM, NEVER degraded (the dead-code page renders only a skip note when the
-    // graph was unavailable). Omitted when no audit context was supplied
-    // (AI-off / test entry points), exactly like the feature catalog.
+    // Deterministic audit page (#889): the deprecation aggregate. Built straight
+    // from the source scan — no LLM, NEVER degraded. Omitted when no audit
+    // context was supplied (AI-off / test entry points), exactly like the
+    // feature catalog.
     if let Some(audit) = audit {
-        // Faithful "deprecation-set + graph-edge hash" (Leaf H, #893): both
-        // audit pages are deterministic projections of the deprecation scan and
-        // the Call graph, so a digest of their rendered output invalidates
-        // exactly on those input changes.
+        // Faithful "deprecation-set hash" (Leaf H, #893): the page is a
+        // deterministic projection of the deprecation scan, so a digest of its
+        // rendered output invalidates exactly on those input changes.
         progress.emit("generating deprecations docs");
         let deprecations =
             render_deprecations_doc(&build_deprecations_doc(input, &audit.deprecations));
@@ -484,14 +480,6 @@ pub(crate) fn generate_hierarchical_docs_core(
             "code/deprecations.md",
             deprecations,
             deprecations_key,
-        ))?;
-        progress.emit("generating dead-code candidate docs");
-        let dead_code = render_dead_code_doc(&build_dead_code_doc(input, audit));
-        let dead_code_key = hasher::content_hash(dead_code.as_bytes());
-        emit(BuiltDoc::derived(
-            "code/dead-code-candidates.md",
-            dead_code,
-            dead_code_key,
         ))?;
     }
     progress.emit("generating onboarding docs");

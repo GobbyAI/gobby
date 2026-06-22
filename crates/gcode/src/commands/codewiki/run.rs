@@ -78,12 +78,11 @@ pub fn run(
     // unparseable contracts simply omit that binary's section — never an error.
     let feature_catalog = build_feature_catalog_doc(&ctx.project_root, &input.files);
     // Deterministic audit context (#889): scans the documented source for
-    // deprecation markers and derives the contract-handler entry-point set from
-    // the feature catalog. Drives the per-symbol deprecation badge plus the
-    // `code/deprecations.md` and `code/dead-code-candidates.md` pages. Read
-    // straight off the project root; unreadable files are skipped — never an
-    // error, never degrading.
-    let audit_context = build_audit_context(&ctx.project_root, &input, feature_catalog.as_ref());
+    // deprecation markers and the test-gated symbol set. Drives the per-symbol
+    // deprecation badge, the `code/deprecations.md` page, and the file page's
+    // test-count collapse. Read straight off the project root; unreadable files
+    // are skipped — never an error, never degrading.
+    let audit_context = build_audit_context(&ctx.project_root, &input);
     let mut generator = resolve_text_generator(ctx, &ai);
     let mut verifier = resolve_text_verifier(ctx, &ai);
     let ai_enabled = generator.is_some();
