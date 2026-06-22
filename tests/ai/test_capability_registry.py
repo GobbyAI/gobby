@@ -150,7 +150,7 @@ def test_strict_model_binding_rejects_explicit_model_override() -> None:
         provider="agy",
         adapter_style=AIAdapterStyle.CLI,
         available=True,
-        models=("gemini-3.5-flash-low",),
+        models=("gemini-3.5-flash",),
         strict_models=True,
     )
     registry = AICapabilityRegistry([binding])
@@ -159,11 +159,12 @@ def test_strict_model_binding_rejects_explicit_model_override() -> None:
         registry.select(
             AICapability.TEXT_GENERATE,
             provider="agy",
-            model="gemini-3.5-flash-low",
+            model="gemini-3.5-flash",
         )
         is binding
     )
     assert binding.accepts_explicit_model_override("unknown-model") is False
+    assert binding.accepts_explicit_model_override("gemini-3.5-flash-low") is False
 
     with pytest.raises(CapabilityUnavailableError, match="requires an explicit supported model"):
         registry.select(AICapability.TEXT_GENERATE, provider="agy")
@@ -259,7 +260,7 @@ def test_daemon_registry_reports_text_generate_provider_bindings() -> None:
         registry.select(
             AICapability.TEXT_GENERATE,
             provider="agy",
-            model="gemini-3.5-flash-low",
+            model="gemini-3.5-flash",
         )
         is agy
     )

@@ -30,53 +30,96 @@ GEMINI_FAMILY_MODELS: list[dict[str, Any]] = [
 
 
 # Static AGY 1.0.10 text-generation catalog. AGY accepts model display strings on
-# the CLI, while daemon callers route by canonical IDs so unknown values fail closed.
+# the CLI, while daemon callers route by base canonical IDs and choose the AGY
+# display string via reasoning_effort at the adapter boundary.
 AGY_MODELS: dict[str, dict[str, Any]] = {
-    "gemini-3.5-flash-low": {
-        "value": "gemini-3.5-flash-low",
-        "canonical_id": "gemini-3.5-flash-low",
-        "label": "Gemini 3.5 Flash (Low)",
-        "agy_display": "Gemini 3.5 Flash (Low)",
+    "gemini-3.5-flash": {
+        "value": "gemini-3.5-flash",
+        "canonical_id": "gemini-3.5-flash",
+        "label": "Gemini 3.5 Flash",
         "model_family": "gemini",
         "context_lookup_key": "gemini-3.5-flash",
+        "context_length": 1_048_576,
+        "context_length_source": "provider_catalog",
         "availability_source": "agy-1.0.10-static",
+        "effort_display": {
+            "low": "Gemini 3.5 Flash (Low)",
+            "medium": "Gemini 3.5 Flash (Medium)",
+            "high": "Gemini 3.5 Flash (High)",
+        },
         "reasoning": {
-            "supported_efforts": ["minimal", "low", "medium", "high"],
+            "supported_efforts": ["low", "medium", "high"],
             "default_effort": "low",
         },
     },
-    "gemini-3.1-pro-high": {
-        "value": "gemini-3.1-pro-high",
-        "canonical_id": "gemini-3.1-pro-high",
-        "label": "Gemini 3.1 Pro (High)",
-        "agy_display": "Gemini 3.1 Pro (High)",
+    "gemini-3.1-pro": {
+        "value": "gemini-3.1-pro",
+        "canonical_id": "gemini-3.1-pro",
+        "label": "Gemini 3.1 Pro",
         "model_family": "gemini",
         "context_lookup_key": "gemini-3.1-pro-preview",
+        "context_length": 1_000_000,
+        "context_length_source": "provider_catalog",
         "availability_source": "agy-1.0.10-static",
+        "effort_display": {
+            "low": "Gemini 3.1 Pro (Low)",
+            "high": "Gemini 3.1 Pro (High)",
+        },
         "reasoning": {
-            "supported_efforts": ["low", "medium", "high"],
+            "supported_efforts": ["low", "high"],
             "default_effort": "high",
         },
     },
-    "claude-sonnet-4-6-thinking": {
-        "value": "claude-sonnet-4-6-thinking",
-        "canonical_id": "claude-sonnet-4-6-thinking",
-        "label": "Claude Sonnet 4.6 (Thinking)",
-        "agy_display": "Claude Sonnet 4.6 (Thinking)",
+    "claude-sonnet-4-6": {
+        "value": "claude-sonnet-4-6",
+        "canonical_id": "claude-sonnet-4-6",
+        "label": "Claude Sonnet 4.6",
         "model_family": "claude",
         "context_lookup_key": "claude-sonnet-4-6",
+        "context_length": 200_000,
+        "context_length_source": "provider_catalog",
         "availability_source": "agy-1.0.10-static",
+        "effort_display": {
+            "thinking": "Claude Sonnet 4.6 (Thinking)",
+        },
+        "reasoning": {
+            "supported_efforts": ["thinking"],
+            "default_effort": "thinking",
+        },
     },
-    "gpt-oss-120b-medium": {
-        "value": "gpt-oss-120b-medium",
-        "canonical_id": "gpt-oss-120b-medium",
-        "label": "GPT-OSS 120B (Medium)",
-        "agy_display": "GPT-OSS 120B (Medium)",
+    "claude-opus-4-6": {
+        "value": "claude-opus-4-6",
+        "canonical_id": "claude-opus-4-6",
+        "label": "Claude Opus 4.6",
+        "model_family": "claude",
+        "context_lookup_key": "claude-opus-4-6",
+        "context_length": 1_000_000,
+        "context_length_source": "provider_catalog",
+        "availability_source": "agy-1.0.10-static",
+        "effort_display": {
+            "thinking": "Claude Opus 4.6 (Thinking)",
+        },
+        "reasoning": {
+            "supported_efforts": ["thinking"],
+            "default_effort": "thinking",
+        },
+    },
+    "gpt-oss-120b": {
+        "value": "gpt-oss-120b",
+        "canonical_id": "gpt-oss-120b",
+        "label": "GPT-OSS 120B",
         "model_family": "gpt-oss",
         "context_lookup_key": "gpt-oss-120b",
         "availability_source": "agy-1.0.10-static",
         "context_length": 131_072,
         "context_length_source": "provider_catalog",
+        "effort_display": {
+            "medium": "GPT-OSS 120B (Medium)",
+        },
+        "reasoning": {
+            "supported_efforts": ["medium"],
+            "default_effort": "medium",
+        },
     },
 }
 

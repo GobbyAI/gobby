@@ -23,10 +23,13 @@ pytestmark = pytest.mark.unit
         ("gemini-3.5-flash", 1_048_576),
         ("gemini/gemini-3.5-flash", 1_048_576),
         ("Gemini 3.5 Flash (Medium)", 1_048_576),
+        ("gemini-3.1-pro", 1_000_000),
         ("Gemini 3.1 Pro (High)", 1_000_000),
         ("claude-sonnet-4-6", 200_000),
         ("Claude Sonnet 4.6 (Thinking)", 200_000),
+        ("claude-opus-4-6", 1_000_000),
         ("Claude Opus 4.6 (Thinking)", 1_000_000),
+        ("gpt-oss-120b", 131_072),
         ("GPT-OSS 120B (Medium)", 131_072),
     ],
 )

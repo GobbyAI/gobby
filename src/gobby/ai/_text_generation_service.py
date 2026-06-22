@@ -16,6 +16,7 @@ from gobby.agents.provider_capabilities import (
     provider_reasoning_flag,
 )
 from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.ai._agy_models import resolve_agy_effort
 from gobby.ai._text_generation_contracts import (
     TextGenerateAdapter,
     TextGenerateAdapterFactory,
@@ -96,6 +97,18 @@ def _gate_reasoning_effort(
     *,
     binding: CapabilityBinding,
 ) -> TextGenerationRequest:
+    if binding.provider == "agy":
+        model = request.model or next(iter(binding.models), None)
+        if model is None:
+            return request
+        try:
+            resolved = resolve_agy_effort(model, request.reasoning_effort)
+        except ValueError as exc:
+            raise _ReasoningEffortRejectedError(str(exc)) from exc
+        if request.reasoning_effort == resolved:
+            return request
+        return replace(request, reasoning_effort=resolved)
+
     normalized = normalize_reasoning_effort(request.reasoning_effort)
     if normalized is None:
         if request.reasoning_effort is None:

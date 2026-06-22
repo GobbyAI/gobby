@@ -4,6 +4,9 @@ from __future__ import annotations
 
 import json
 import logging
+import os
+import shutil
+import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -830,6 +833,44 @@ class TestProviderModelCatalog:
         assert "machine transport" in (status["agy"]["error"] or "")
         snapshot = catalog.get_provider_snapshot("agy")
         assert [model["value"] for model in snapshot["models"]] == list(AGY_MODELS)
+
+    def test_static_agy_display_strings_match_captured_agy_models_fixture(self) -> None:
+        fixture = (
+            Path(__file__).resolve().parents[1]
+            / "fixtures/provider_contracts/agy/agy_models_v1.0.10.txt"
+        )
+        captured = {
+            line.strip()
+            for line in fixture.read_text(encoding="utf-8").splitlines()
+            if line.strip() and not line.startswith("#")
+        }
+        catalog_displays = {
+            display for model in AGY_MODELS.values() for display in model["effort_display"].values()
+        }
+
+        assert catalog_displays <= captured
+
+    @pytest.mark.integration
+    @pytest.mark.skipif(
+        os.environ.get("GOBBY_RUN_AGY_MODELS_LIVE") != "1",
+        reason="set GOBBY_RUN_AGY_MODELS_LIVE=1 to check live agy models",
+    )
+    def test_static_agy_display_strings_exist_in_live_agy_models(self) -> None:
+        agy = shutil.which("agy")
+        if agy is None:
+            pytest.skip("agy CLI not installed")
+        result = subprocess.run(
+            [agy, "models"],
+            check=True,
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        catalog_displays = {
+            display for model in AGY_MODELS.values() for display in model["effort_display"].values()
+        }
+
+        assert all(display in result.stdout for display in catalog_displays)
 
     def test_load_qwen_settings_merges_global_and_project_files(self, temp_dir: Path) -> None:
         """Qwen settings should merge global providers with project overrides."""

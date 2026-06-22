@@ -1116,6 +1116,150 @@ async def test_text_generation_service_accepts_valid_effort_for_reasoning_provid
     assert codex.requests[0].reasoning_effort == "high"
 
 
+@pytest.mark.parametrize(
+    ("model", "effort", "expected"),
+    [
+        ("gemini-3.5-flash", None, "low"),
+        ("gemini-3.5-flash", "auto", "low"),
+        ("gemini-3.5-flash", "medium", "medium"),
+        ("gemini-3.1-pro", None, "high"),
+        ("gemini-3.1-pro", "auto", "high"),
+        ("claude-sonnet-4-6", None, "thinking"),
+        ("claude-sonnet-4-6", "auto", "thinking"),
+        ("claude-opus-4-6", None, "thinking"),
+        ("gpt-oss-120b", "auto", "medium"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_text_generation_service_resolves_agy_effort_before_adapter(
+    model: str,
+    effort: str | None,
+    expected: str,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="agy",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=(model,),
+                strict_models=True,
+            ),
+        ]
+    )
+    agy = RecordingAdapter("agy")
+    service = TextGenerationService(registry, {"agy": agy})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="agy",
+            model=model,
+            reasoning_effort=effort,
+        )
+    )
+
+    assert result.provider == "agy"
+    assert result.model == model
+    assert result.applied_reasoning_effort == expected
+    assert agy.requests == [
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="agy",
+            model=model,
+            reasoning_effort=expected,
+        )
+    ]
+
+
+@pytest.mark.asyncio
+async def test_text_generation_service_rejects_invalid_agy_effort_pair_and_falls_back(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="agy",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-3.1-pro",),
+                strict_models=True,
+            ),
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
+                available=True,
+                models=("codex-model",),
+            ),
+        ]
+    )
+    agy = RecordingAdapter("agy")
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"agy": agy, "codex": codex})
+    caplog.set_level(logging.WARNING, logger=TEXT_GENERATION_LOGGER)
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            candidates=(
+                FeatureCandidateConfig(
+                    candidate="agy/gemini-3.1-pro",
+                    reasoning_effort="medium",
+                ),
+                FeatureCandidateConfig(candidate="codex/codex-model", reasoning_effort="high"),
+            ),
+        )
+    )
+
+    assert result.provider == "codex"
+    assert agy.requests == []
+    assert codex.requests[0].reasoning_effort == "high"
+    assert "Unsupported AGY reasoning_effort 'medium' for model 'gemini-3.1-pro'" in caplog.text
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [
+        ("gemini-3.1-pro", "medium"),
+        ("claude-sonnet-4-6", "low"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_text_generation_service_rejects_invalid_agy_effort_pair(
+    model: str,
+    effort: str,
+) -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="agy",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=(model,),
+                strict_models=True,
+            ),
+        ]
+    )
+    agy = RecordingAdapter("agy")
+    service = TextGenerationService(registry, {"agy": agy})
+
+    with pytest.raises(ValueError, match="Unsupported AGY reasoning_effort"):
+        await service.generate_result(
+            TextGenerationRequest(
+                prompt="summarize",
+                provider="agy",
+                model=model,
+                reasoning_effort=effort,
+            )
+        )
+
+    assert agy.requests == []
+
+
 @pytest.mark.asyncio
 async def test_text_generation_service_rejects_known_effort_when_provider_efforts_empty(
     caplog: pytest.LogCaptureFixture,
@@ -3069,7 +3213,8 @@ async def test_agy_cli_text_generate_adapter_uses_hardened_print_contract(
         TextGenerationRequest(
             prompt="explain",
             system_prompt="system",
-            model="gemini-3.5-flash-low",
+            model="gemini-3.5-flash",
+            reasoning_effort="low",
             cwd="/tmp/project",
         )
     )
@@ -3109,6 +3254,58 @@ def test_agy_cli_text_generate_adapter_omits_model_when_not_requested() -> None:
     ]
 
 
+@pytest.mark.parametrize(
+    ("model", "effort", "display"),
+    [
+        ("gemini-3.5-flash", "low", "Gemini 3.5 Flash (Low)"),
+        ("gemini-3.5-flash", "medium", "Gemini 3.5 Flash (Medium)"),
+        ("gemini-3.5-flash", "high", "Gemini 3.5 Flash (High)"),
+        ("gemini-3.5-flash", None, "Gemini 3.5 Flash (Low)"),
+        ("gemini-3.5-flash", "auto", "Gemini 3.5 Flash (Low)"),
+        ("gemini-3.1-pro", "low", "Gemini 3.1 Pro (Low)"),
+        ("gemini-3.1-pro", "high", "Gemini 3.1 Pro (High)"),
+        ("gemini-3.1-pro", None, "Gemini 3.1 Pro (High)"),
+        ("gemini-3.1-pro", "auto", "Gemini 3.1 Pro (High)"),
+        ("claude-sonnet-4-6", None, "Claude Sonnet 4.6 (Thinking)"),
+        ("claude-sonnet-4-6", "auto", "Claude Sonnet 4.6 (Thinking)"),
+        ("claude-sonnet-4-6", "thinking", "Claude Sonnet 4.6 (Thinking)"),
+        ("claude-opus-4-6", "thinking", "Claude Opus 4.6 (Thinking)"),
+        ("gpt-oss-120b", None, "GPT-OSS 120B (Medium)"),
+    ],
+)
+def test_agy_cli_text_generate_adapter_composes_effort_model_display(
+    model: str,
+    effort: str | None,
+    display: str,
+) -> None:
+    adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
+
+    command = adapter.build_command(
+        TextGenerationRequest(prompt="explain", model=model, reasoning_effort=effort)
+    )
+
+    assert command[command.index("--model") + 1] == display
+
+
+@pytest.mark.parametrize(
+    ("model", "effort"),
+    [
+        ("gemini-3.1-pro", "medium"),
+        ("claude-sonnet-4-6", "low"),
+    ],
+)
+def test_agy_cli_text_generate_adapter_rejects_invalid_effort_model_pair(
+    model: str,
+    effort: str,
+) -> None:
+    adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
+
+    with pytest.raises(ValueError, match="Unsupported AGY reasoning_effort"):
+        adapter.build_command(
+            TextGenerationRequest(prompt="explain", model=model, reasoning_effort=effort)
+        )
+
+
 def test_agy_cli_text_generate_adapter_rejects_unmapped_explicit_model() -> None:
     adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
 
@@ -3143,9 +3340,7 @@ async def test_agy_cli_text_generate_adapter_rejects_empty_or_error_stdout(
     adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
 
     with pytest.raises(RuntimeError):
-        await adapter.generate(
-            TextGenerationRequest(prompt="explain", model="gemini-3.5-flash-low")
-        )
+        await adapter.generate(TextGenerationRequest(prompt="explain", model="gemini-3.5-flash"))
 
 
 @pytest.mark.asyncio
@@ -3173,7 +3368,7 @@ async def test_agy_cli_text_generate_adapter_generate_json_uses_directive(
     adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
 
     result = await adapter.generate_json(
-        TextGenerationRequest(prompt="return json", model="gemini-3.5-flash-low")
+        TextGenerationRequest(prompt="return json", model="gemini-3.5-flash")
     )
 
     assert result == {"ok": True}

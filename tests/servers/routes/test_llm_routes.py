@@ -645,7 +645,7 @@ def test_generate_returns_deterministic_unavailable_error(
                 "agy",
                 adapter_style=AIAdapterStyle.CLI,
                 reason="AGY CLI is not installed.",
-                models=("gemini-3.5-flash-low",),
+                models=("gemini-3.5-flash",),
             )
         ]
     )
@@ -657,7 +657,7 @@ def test_generate_returns_deterministic_unavailable_error(
         json={
             "prompt": "Summarize this",
             "provider": "agy",
-            "model": "gemini-3.5-flash-low",
+            "model": "gemini-3.5-flash",
         },
     )
 
@@ -666,7 +666,7 @@ def test_generate_returns_deterministic_unavailable_error(
         "code": "capability_unavailable",
         "capability": "text_generate",
         "provider": "agy",
-        "model": "gemini-3.5-flash-low",
+        "model": "gemini-3.5-flash",
         "reason": "AGY CLI is not installed.",
     }
 
@@ -683,7 +683,7 @@ def test_generate_explicit_agy_model_succeeds(
                 provider="agy",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-3.5-flash-low",),
+                models=("gemini-3.5-flash",),
                 strict_models=True,
             )
         ]
@@ -696,7 +696,7 @@ def test_generate_explicit_agy_model_succeeds(
         json={
             "prompt": "Summarize this",
             "provider": "agy",
-            "model": "gemini-3.5-flash-low",
+            "model": "gemini-3.5-flash",
         },
     )
 
@@ -705,13 +705,15 @@ def test_generate_explicit_agy_model_succeeds(
         "text": "AGY text",
         "capability": "text_generate",
         "provider": "agy",
-        "model": "gemini-3.5-flash-low",
+        "model": "gemini-3.5-flash",
+        "applied_reasoning_effort": "low",
     }
     assert adapter.requests == [
         TextGenerationRequest(
             prompt="Summarize this",
             provider="agy",
-            model="gemini-3.5-flash-low",
+            model="gemini-3.5-flash",
+            reasoning_effort="low",
             caller="llm-generate-route",
         )
     ]
@@ -729,7 +731,7 @@ def test_generate_explicit_agy_bad_model_fails_before_adapter(
                 provider="agy",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-3.5-flash-low",),
+                models=("gemini-3.5-flash",),
                 strict_models=True,
             )
         ]
@@ -749,6 +751,55 @@ def test_generate_explicit_agy_bad_model_fails_before_adapter(
     assert body["model"] == "bad-model"
     assert "does not support requested model" in body["reason"]
     assert adapter.requests == []
+
+
+def test_generate_explicit_agy_reasoning_effort_reaches_adapter(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    adapter = _FakeTextAdapter(text="AGY text")
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="agy",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-3.5-flash",),
+                strict_models=True,
+            )
+        ]
+    )
+    service = TextGenerationService(registry, {"agy": adapter})
+    server_with_llm.services.text_generation_service = service
+
+    response = client.post(
+        "/api/llm/generate",
+        json={
+            "prompt": "Summarize this",
+            "provider": "agy",
+            "model": "gemini-3.5-flash",
+            "reasoning_effort": "medium",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "text": "AGY text",
+        "capability": "text_generate",
+        "provider": "agy",
+        "model": "gemini-3.5-flash",
+        "applied_reasoning_effort": "medium",
+    }
+    assert adapter.requests == [
+        TextGenerationRequest(
+            prompt="Summarize this",
+            provider="agy",
+            model="gemini-3.5-flash",
+            reasoning_effort="medium",
+            caller="llm-generate-route",
+        )
+    ]
 
 
 def test_generate_returns_aggregated_unavailable_error_for_profile_candidates(

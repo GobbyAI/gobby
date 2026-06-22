@@ -173,10 +173,26 @@ class TestProviderModelsRoute:
         assert providers["agy"]["supports_web_chat"] is False
         assert providers["agy"]["available"] is False
         agy_by_id = {model["value"]: model for model in agy_models}
-        assert agy_by_id["gemini-3.5-flash-low"]["agy_display"] == ("Gemini 3.5 Flash (Low)")
-        assert agy_by_id["gemini-3.5-flash-low"]["context_lookup_key"] == "gemini-3.5-flash"
-        assert agy_by_id["gemini-3.5-flash-low"]["context_length"] == 1_048_576
-        assert agy_by_id["gpt-oss-120b-medium"]["context_length"] == 131_072
+        assert "gemini-3.5-flash-low" not in agy_by_id
+        assert agy_by_id["gemini-3.5-flash"]["effort_display"] == {
+            "low": "Gemini 3.5 Flash (Low)",
+            "medium": "Gemini 3.5 Flash (Medium)",
+            "high": "Gemini 3.5 Flash (High)",
+        }
+        assert agy_by_id["gemini-3.5-flash"]["reasoning"] == {
+            "supported_efforts": ["low", "medium", "high"],
+            "default_effort": "low",
+        }
+        assert agy_by_id["gemini-3.5-flash"]["context_lookup_key"] == "gemini-3.5-flash"
+        assert agy_by_id["gemini-3.5-flash"]["context_length"] == 1_048_576
+        assert agy_by_id["gemini-3.1-pro"]["reasoning"] == {
+            "supported_efforts": ["low", "high"],
+            "default_effort": "high",
+        }
+        assert agy_by_id["claude-opus-4-6"]["effort_display"] == {
+            "thinking": "Claude Opus 4.6 (Thinking)",
+        }
+        assert agy_by_id["gpt-oss-120b"]["context_length"] == 131_072
 
         # Codex should expose the hardcoded web-chat defaults, not a placeholder
         codex = providers["codex"]["models"]

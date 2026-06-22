@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.provider_capabilities import provider_reasoning_flag
 from gobby.agents.reasoning import normalize_reasoning_effort
+from gobby.ai._agy_models import resolve_agy_display
 from gobby.ai._text_generation_contracts import TextGenerateAdapter, TextGenerationRequest
 from gobby.ai._text_generation_helpers import (
     _compose_prompt,
@@ -26,7 +27,6 @@ from gobby.ai._text_generation_helpers import (
 )
 from gobby.config.app import DaemonConfig
 from gobby.llm.textgen_cwd import neutral_textgen_cwd
-from gobby.servers.provider_model_defaults import AGY_MODELS
 
 if TYPE_CHECKING:
     from gobby.llm.base import LLMTextResult
@@ -429,7 +429,9 @@ class AgyCLITextGenerateAdapter:
             _agy_go_duration(self._timeout_seconds),
         ]
         if request.model:
-            command.extend(["--model", _agy_display_for_model(request.model)])
+            command.extend(
+                ["--model", resolve_agy_display(request.model, request.reasoning_effort)]
+            )
         command.extend(["--print", _compose_prompt(request)])
         return command
 
@@ -453,17 +455,6 @@ def _agy_go_duration(timeout_seconds: float) -> str:
     if timeout_seconds <= 0:
         raise ValueError("AGY timeout_seconds must be positive")
     return f"{timeout_seconds:g}s"
-
-
-def _agy_display_for_model(model: str) -> str:
-    entry = AGY_MODELS.get(model.strip())
-    if entry is None:
-        supported = ", ".join(sorted(AGY_MODELS))
-        raise ValueError(f"Unsupported AGY model {model!r}. Supported models: {supported}")
-    display = entry.get("agy_display")
-    if not isinstance(display, str) or not display.strip():
-        raise RuntimeError(f"AGY model {model!r} is missing an AGY display string")
-    return display.strip()
 
 
 def _validate_agy_stdout(stdout: str) -> str:
