@@ -5,7 +5,6 @@ import {
   useCallback,
   useRef,
   useMemo,
-  type MouseEvent,
 } from "react";
 import { ResizeHandle } from "../chat/artifacts/ResizeHandle";
 import { useWebSocketEvent } from "../../hooks/useWebSocketEvent";
@@ -25,11 +24,9 @@ import {
   collectExpandableNodeIds,
   collectVisibleTaskRows,
   compareTasksForDisplay,
-  DEFAULT_FILTERS,
   filterTreeBySearch,
   matchesTaskFilter,
   RECENT_CLOSED_TASK_LIMIT,
-  type TaskFilterKey,
 } from "./TasksTabModel";
 import {
   TasksTabDetailPanel,
@@ -40,25 +37,16 @@ import { DEFAULT_TOP_PANEL_PERCENT } from "./constants";
 import { ActivityPanelEmpty } from "./ActivityPanelEmpty";
 import { TaskCloseDialog } from "./TaskCloseDialog";
 import {
-  type ActiveTaskAction,
   TaskQuickMenu,
-  type TaskContextMenu,
-  type TaskMenuAction,
 } from "./TaskQuickMenu";
 import { TasksTabToolbar } from "./TasksTabToolbar";
 import { TasksTabList } from "./TasksTabList";
 import { TaskCreateForm } from "../tasks/TaskCreateForm";
 import {
-  claimTaskForSession,
   patchTaskFields,
   type PatchTaskFields,
-  postBuildControl,
-  postTaskLifecycleAction,
-  startBuild,
-  startQuickBuild,
 } from "./TasksTabActions";
 import {
-  areSetsEqual,
   extractTaskPayload,
   fetchMissingTaskAncestors,
   getBaseUrl,
@@ -67,6 +55,8 @@ import {
   normalizeActivityTask,
 } from "./TasksTabData";
 import { useTaskActions } from "./useTaskActions";
+import { useTasksTabFilters } from "./useTasksTabFilters";
+import { useTasksTabMenuActions } from "./useTasksTabMenuActions";
 
 interface TasksTabProps {
   projectId?: string | null;
@@ -100,89 +90,25 @@ export const TasksTab = memo(function TasksTab({
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState("");
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
-  const [selectedStageFilters, setSelectedStageFilters] = useState<Set<string>>(
-    () => new Set(),
-  );
-  const registryStageNames = useMemo(
-    () => stagesRegistry.map((stage) => stage.name).sort(),
-    [stagesRegistry],
-  );
-  const defaultStageFilters = useMemo(
-    () => new Set(registryStageNames),
-    [registryStageNames],
-  );
-  const [statusFilters, setStatusFilters] = useState<Set<TaskFilterKey>>(
-    () => new Set(DEFAULT_FILTERS),
-  );
-  const [showFilterDropdown, setShowFilterDropdown] = useState(false);
-  const [showCreateTask, setShowCreateTask] = useState(false);
-  const previousDefaultStageFiltersRef = useRef<Set<string>>(new Set());
-  const stageFiltersInitializedRef = useRef(false);
-  useEffect(() => {
-    const previousDefaultStageFilters = previousDefaultStageFiltersRef.current;
-    setSelectedStageFilters((prev) => {
-      const shouldUseDefault =
-        !stageFiltersInitializedRef.current ||
-        areSetsEqual(prev, previousDefaultStageFilters);
-      stageFiltersInitializedRef.current = true;
-
-      if (shouldUseDefault) {
-        return areSetsEqual(prev, defaultStageFilters)
-          ? prev
-          : new Set(defaultStageFilters);
-      }
-
-      const next = new Set(
-        [...prev].filter((stageName) => defaultStageFilters.has(stageName)),
-      );
-      return areSetsEqual(prev, next) ? prev : next;
-    });
-    previousDefaultStageFiltersRef.current = new Set(defaultStageFilters);
-  }, [defaultStageFilters]);
-  const stageSelectionMatchesDefault = useMemo(
-    () => areSetsEqual(selectedStageFilters, defaultStageFilters),
-    [defaultStageFilters, selectedStageFilters],
-  );
-  const selectedRegistryStageNames = useMemo(
-    () => registryStageNames.filter((stageName) => selectedStageFilters.has(stageName)),
-    [registryStageNames, selectedStageFilters],
-  );
-  const stageQueryKey = useMemo(
-    () =>
-      !stageSelectionMatchesDefault && selectedRegistryStageNames.length > 0
-        ? selectedRegistryStageNames.join("\u0000")
-        : "",
-    [selectedRegistryStageNames, stageSelectionMatchesDefault],
-  );
-  const stageQueryList = useMemo(
-    () => (stageQueryKey ? stageQueryKey.split("\u0000") : []),
-    [stageQueryKey],
-  );
-  const includeClosedTasks = statusFilters.has("closed");
-  const activeFilterCount = useMemo(() => {
-    const symmetricDifference = new Set([...DEFAULT_FILTERS, ...statusFilters]);
-    const statusFilterCount = [...symmetricDifference].filter(
-      (key) => DEFAULT_FILTERS.has(key) !== statusFilters.has(key),
-    ).length;
-    const stageFilterCount = registryStageNames.filter(
-      (stageName) => !selectedStageFilters.has(stageName),
-    ).length;
-    return statusFilterCount + (stageSelectionMatchesDefault ? 0 : stageFilterCount);
-  }, [
-    registryStageNames,
+  const {
+    activeFilterCount,
+    defaultStageFilters,
+    handleFiltersApply,
+    includeClosedTasks,
     selectedStageFilters,
+    setShowFilterDropdown,
+    showFilterDropdown,
+    stageQueryList,
     stageSelectionMatchesDefault,
     statusFilters,
-  ]);
+  } = useTasksTabFilters(stagesRegistry);
+  const [showCreateTask, setShowCreateTask] = useState(false);
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [taskDetail, setTaskDetail] = useState<GobbyTaskDetail | null>(null);
   const [detailLoading, setDetailLoading] = useState(false);
   const [taskDependencies, setTaskDependencies] = useState<DependencyTree | null>(null);
   const [taskSubtasks, setTaskSubtasks] = useState<GobbyTask[]>([]);
-  const [activeTaskAction, setActiveTaskAction] = useState<ActiveTaskAction | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [taskMenu, setTaskMenu] = useState<TaskContextMenu | null>(null);
-  const [closeDialogTask, setCloseDialogTask] = useState<GobbyTask | null>(null);
   const [collapsedTaskIds, setCollapsedTaskIds] = useState<Set<string>>(
     () => new Set(),
   );
@@ -433,14 +359,6 @@ export const TasksTab = memo(function TasksTab({
     };
   }, [selectedTaskId]);
 
-  const handleFiltersApply = useCallback(
-    (nextFilters: Set<TaskFilterKey>, nextStages: Set<string>) => {
-      setStatusFilters(nextFilters);
-      setSelectedStageFilters(nextStages);
-    },
-    [],
-  );
-
   // Client-side filter + display ordering. The activity Tasks tree should read
   // like a prioritized work queue: highest priority first, then oldest first.
   const filtered = useMemo(() => {
@@ -575,8 +493,6 @@ export const TasksTab = memo(function TasksTab({
     }
   }, [visibleRows]);
 
-  const closeTaskMenu = useCallback(() => setTaskMenu(null), []);
-
   const applyRawTaskUpdate = useCallback(
     (taskId: string, rawTask: RawTaskPayload | null) => {
       if (!rawTask) {
@@ -636,193 +552,31 @@ export const TasksTab = memo(function TasksTab({
     reconcileInlineEditRef.current = inlineEdit.reconcile;
   }, [inlineEdit.reconcile]);
 
-  const runMenuAction = useCallback(
-    async (
-      task: GobbyTask,
-      action: TaskMenuAction,
-      operation: () => Promise<RawTaskPayload | null>,
-      errorPrefix: string,
-      refetchAfter = false,
-    ) => {
-      closeTaskMenu();
-      setActiveTaskAction({ taskId: task.id, action });
-      setActionError(null);
-      try {
-        const rawTask = await operation();
-        applyRawTaskUpdate(task.id, rawTask);
-        if (refetchAfter) fetchTasks();
-      } catch (error) {
-        setActionError(
-          error instanceof Error
-            ? `${errorPrefix}: ${error.message}`
-            : `${errorPrefix}.`,
-        );
-      } finally {
-        setActiveTaskAction(null);
-      }
-    },
-    [applyRawTaskUpdate, closeTaskMenu, fetchTasks],
-  );
-
-  useEffect(() => {
-    if (!taskMenu) return;
-    const handleWindowClick = () => setTaskMenu(null);
-    window.addEventListener("click", handleWindowClick);
-    return () => window.removeEventListener("click", handleWindowClick);
-  }, [taskMenu]);
-
-  const handleMenuButtonClick = useCallback(
-    (event: MouseEvent<HTMLButtonElement>, task: GobbyTask) => {
-      event.stopPropagation();
-      const rect = event.currentTarget.getBoundingClientRect();
-      setTaskMenu({
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-        task,
-      });
-    },
-    [],
-  );
-
-  const handleAssignToMainChat = useCallback(() => {
-    if (!taskMenu?.task.id || !chatSessionId) {
-      return;
-    }
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "assign",
-      () => claimTaskForSession(getBaseUrl(), task.id, chatSessionId),
-      "Failed to assign task to main chat",
-    );
-  }, [chatSessionId, runMenuAction, taskMenu]);
-
-  const handleBuild = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "build",
-      async () => {
-        await startBuild(getBaseUrl(), task);
-        return null;
-      },
-      "Failed to start build",
-      true,
-    );
-  }, [runMenuAction, taskMenu]);
-
-  const handleBuildQuick = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "buildQuick",
-      async () => {
-        await startQuickBuild(getBaseUrl(), task);
-        return null;
-      },
-      "Failed to start quick build",
-      true,
-    );
-  }, [runMenuAction, taskMenu]);
-
-  const handleStopBuild = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "stopBuild",
-      async () => {
-        await postBuildControl(getBaseUrl(), "stop", task);
-        return null;
-      },
-      "Failed to stop build",
-      true,
-    );
-  }, [runMenuAction, taskMenu]);
-
-  const handleResumeBuild = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "resumeBuild",
-      async () => {
-        await postBuildControl(getBaseUrl(), "resume", task);
-        return null;
-      },
-      "Failed to resume build",
-      true,
-    );
-  }, [runMenuAction, taskMenu]);
-
-  const handleReleaseClaim = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "releaseClaim",
-      () => postTaskLifecycleAction(getBaseUrl(), task.id, "release-claim"),
-      "Failed to release task claim",
-    );
-  }, [runMenuAction, taskMenu]);
-
-  const handleDetailClaim = useCallback(() => {
-    if (!taskDetail || !chatSessionId) return;
-    const detail = taskDetail;
-    void runMenuAction(
-      detail,
-      "assign",
-      () => claimTaskForSession(getBaseUrl(), detail.id, chatSessionId),
-      "Failed to claim task",
-    );
-  }, [chatSessionId, runMenuAction, taskDetail]);
-
-  const handleDetailRelease = useCallback(() => {
-    if (!taskDetail) return;
-    const detail = taskDetail;
-    void runMenuAction(
-      detail,
-      "releaseClaim",
-      () => postTaskLifecycleAction(getBaseUrl(), detail.id, "release-claim"),
-      "Failed to release task claim",
-    );
-  }, [runMenuAction, taskDetail]);
-
-  const handleOpenCloseTaskDialog = useCallback(() => {
-    if (!taskMenu?.task) return;
-    setCloseDialogTask(taskMenu.task);
-    closeTaskMenu();
-  }, [closeTaskMenu, taskMenu]);
-
-  const handleCloseTask = useCallback(
-    (reason: string) => {
-      if (!closeDialogTask) return;
-      const task = closeDialogTask;
-      void runMenuAction(
-        task,
-        "close",
-        () => postTaskLifecycleAction(getBaseUrl(), task.id, "close", { reason }),
-        "Failed to close task",
-      );
-      setCloseDialogTask(null);
-    },
-    [closeDialogTask, runMenuAction],
-  );
-
-  const handleReopenTask = useCallback(() => {
-    if (!taskMenu?.task) return;
-    const task = taskMenu.task;
-    void runMenuAction(
-      task,
-      "reopen",
-      () => postTaskLifecycleAction(getBaseUrl(), task.id, "reopen"),
-      "Failed to reopen task",
-    );
-  }, [runMenuAction, taskMenu]);
+  const {
+    activeTaskAction,
+    closeDialogTask,
+    closeTaskMenu,
+    handleAssignToMainChat,
+    handleBuild,
+    handleBuildQuick,
+    handleCloseTask,
+    handleDetailClaim,
+    handleDetailRelease,
+    handleMenuButtonClick,
+    handleOpenCloseTaskDialog,
+    handleReleaseClaim,
+    handleReopenTask,
+    handleResumeBuild,
+    handleStopBuild,
+    setCloseDialogTask,
+    taskMenu,
+  } = useTasksTabMenuActions({
+    applyRawTaskUpdate,
+    chatSessionId,
+    fetchTasks,
+    setActionError,
+    taskDetail,
+  });
 
   const toggleTaskOpen = useCallback((taskId: string) => {
     setCollapsedTaskIds((prev) => {
