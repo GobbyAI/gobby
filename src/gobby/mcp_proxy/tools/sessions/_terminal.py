@@ -7,14 +7,53 @@ to interact with running terminal sessions.
 
 from __future__ import annotations
 
-import asyncio
+import asyncio as asyncio
 import logging
-import os
 from collections.abc import Callable
-from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.agents.tmux.session_manager import TmuxSessionManager
+from gobby.mcp_proxy.tools.sessions._terminal_handoff import (
+    _COMPACT_HANDOFF_FALLBACK_MAX_CHARS,
+    _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS,
+    _compact_handoff_digest_fallback_markdown,
+    _compact_handoff_refresh_timeout_seconds,
+    _compact_handoff_transcript_tail_markdown,
+    _has_summary_refresh_source,
+    _mark_compact_handoff_ready,
+    _persist_compact_handoff_fallback,
+    _refresh_compact_handoff_context,
+    _run_compact_handoff_background_refresh,
+    _schedule_compact_handoff_background_refresh,
+    _valid_existing_summary_markdown,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+    _CLI_COMPACT_COMMANDS,
+    _CLI_COMPACT_INTERRUPT_KEYS,
+    _CODEX_INTERRUPT_SETTLE_SECONDS,
+    _COMPACTION_REJECTION_CAPTURE_LINES,
+    _COMPACTION_REJECTION_ERROR_CODE,
+    _COMPACTION_REJECTION_SETTLE_SECONDS,
+    _DEFAULT_COMPACT_INTERRUPT_KEY,
+    _capture_pane_snapshot,
+    _compact_interrupt_key,
+    _detect_compaction_rejection,
+    _fresh_output_delta,
+    _send_compaction_command,
+    _send_tmux_keys,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+    _resolve_tmux_target as _resolve_tmux_target_impl,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_tmux import (
+    _send_terminal_compaction_command as _send_terminal_compaction_command_impl,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_transcripts import (
+    _TRANSCRIPT_TAIL_MAX_BYTES,
+    _capture_transcript_tail,
+    _read_transcript_tail_lines,
+)
+from gobby.mcp_proxy.tools.sessions._terminal_webchat import _compact_live_web_chat_fallback
 from gobby.sessions.compact_continuation import (
     build_compact_self_continue_prompt,
     clear_compact_self_continuation_pending,
@@ -22,7 +61,7 @@ from gobby.sessions.compact_continuation import (
     persist_compact_resume_required_skills,
     schedule_compact_self_continuation_fallback,
 )
-from gobby.sessions.tmux_context import get_tmux_manager_for_context, parse_terminal_context_value
+from gobby.sessions.tmux_context import get_tmux_manager_for_context
 from gobby.storage.agents import LocalAgentRunManager
 
 if TYPE_CHECKING:
@@ -32,141 +71,85 @@ if TYPE_CHECKING:
     from gobby.storage.sessions import SessionManager
 
 logger = logging.getLogger(__name__)
-_TRANSCRIPT_TAIL_MAX_BYTES = 256 * 1024
+
+__all__ = [
+    "_CLI_COMPACT_COMMANDS",
+    "_CLI_COMPACT_INTERRUPT_KEYS",
+    "_CODEX_INTERRUPT_SETTLE_SECONDS",
+    "_COMPACT_HANDOFF_FALLBACK_MAX_CHARS",
+    "_COMPACTION_REJECTION_CAPTURE_LINES",
+    "_COMPACTION_REJECTION_ERROR_CODE",
+    "_COMPACTION_REJECTION_SETTLE_SECONDS",
+    "_DEFAULT_COMPACT_INTERRUPT_KEY",
+    "_DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS",
+    "_TRANSCRIPT_TAIL_MAX_BYTES",
+    "_capture_pane_snapshot",
+    "_capture_transcript_tail",
+    "_compact_handoff_digest_fallback_markdown",
+    "_compact_handoff_refresh_timeout_seconds",
+    "_compact_handoff_transcript_tail_markdown",
+    "_compact_interrupt_key",
+    "_compact_live_web_chat_fallback",
+    "_detect_compaction_rejection",
+    "_fresh_output_delta",
+    "_has_summary_refresh_source",
+    "_mark_compact_handoff_ready",
+    "_persist_compact_handoff_fallback",
+    "_read_transcript_tail_lines",
+    "_refresh_compact_handoff_context",
+    "_resolve_session_for_compaction",
+    "_resolve_tmux_target",
+    "_run_compact_handoff_background_refresh",
+    "_schedule_compact_handoff_background_refresh",
+    "_send_codex_compaction_command",
+    "_send_compaction_command",
+    "_send_terminal_compaction_command",
+    "_send_tmux_keys",
+    "_valid_existing_summary_markdown",
+    "asyncio",
+    "get_tmux_manager_for_context",
+    "LocalAgentRunManager",
+    "register_terminal_tools",
+]
 
 
-def _read_transcript_tail_lines(path: Path, max_lines: int) -> list[str]:
-    with path.open("rb") as handle:
-        handle.seek(0, os.SEEK_END)
-        size = handle.tell()
-        start = max(0, size - _TRANSCRIPT_TAIL_MAX_BYTES)
-        handle.seek(start)
-        data = handle.read()
-
-    text = data.decode("utf-8", errors="replace")
-    lines = text.splitlines()
-    if start > 0 and len(lines) > 1:
-        lines = lines[1:]
-    return lines[-max_lines:]
-
-
-# Maps session.source (CLI provider name) to the slash command that triggers
-# context compaction in the running CLI subprocess.
-_CLI_COMPACT_COMMANDS: dict[str, str] = {
-    "claude": "/compact",
-    "codex": "/compact",
-    "gemini": "/compress",
-    "qwen": "/compress",
-    "droid": "/compress",
-}
-_DEFAULT_COMPACT_INTERRUPT_KEY = "Escape"
-_CLI_COMPACT_INTERRUPT_KEYS: dict[str, str] = {
-    "codex": "C-c",
-}
-_CODEX_INTERRUPT_SETTLE_SECONDS = 0.2
-_COMPACTION_REJECTION_SETTLE_SECONDS = 0.1
-_COMPACTION_REJECTION_CAPTURE_LINES = 30
-_COMPACTION_REJECTION_ERROR_CODE = "compaction_command_rejected"
-_DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS = 300.0
-_COMPACT_HANDOFF_FALLBACK_MAX_CHARS = 20_000
+def _resolve_tmux_target(
+    session_id: str,
+    session_manager: SessionManager,
+    agent_run_manager: LocalAgentRunManager,
+) -> tuple[str | None, TmuxSessionManager | None, str | None]:
+    """Resolve a session ID to a tmux target through this module's patchable facade."""
+    return _resolve_tmux_target_impl(
+        session_id,
+        session_manager,
+        agent_run_manager,
+        tmux_manager_factory=get_tmux_manager_for_context,
+    )
 
 
-def _compact_interrupt_key(source: str | None) -> str:
-    if source is None:
-        return _DEFAULT_COMPACT_INTERRUPT_KEY
-    return _CLI_COMPACT_INTERRUPT_KEYS.get(source, _DEFAULT_COMPACT_INTERRUPT_KEY)
-
-
-def _fresh_output_delta(before: str, after: str) -> str:
-    if not before:
-        return after
-    if after.startswith(before):
-        return after[len(before) :]
-
-    before_lines = before.splitlines()
-    after_lines = after.splitlines()
-    max_overlap = min(len(before_lines), len(after_lines))
-    for overlap in range(max_overlap, 0, -1):
-        if before_lines[-overlap:] == after_lines[:overlap]:
-            return "\n".join(after_lines[overlap:])
-    return ""
-
-
-async def _capture_pane_snapshot(tmux: TmuxSessionManager, target: str) -> str | None:
-    try:
-        output = await tmux.capture_pane(target, lines=_COMPACTION_REJECTION_CAPTURE_LINES)
-    except Exception:
-        logger.debug("Failed to capture tmux target %s for compaction rejection check", target)
-        return None
-    if isinstance(output, str):
-        return output
-    return None
-
-
-def _detect_compaction_rejection(
-    before: str | None,
-    after: str | None,
-    command: str,
-) -> dict[str, str] | None:
-    if before is None or after is None:
-        return None
-
-    rejection_message = f"'{command}' is disabled while a task is in progress"
-    if rejection_message not in _fresh_output_delta(before, after):
-        return None
-    return {
-        "error_code": _COMPACTION_REJECTION_ERROR_CODE,
-        "rejected_command": command,
-        "rejection_message": rejection_message,
-    }
-
-
-async def _send_tmux_keys(
+async def _send_terminal_compaction_command(
     tmux: TmuxSessionManager,
     target: str,
-    keys: str,
+    command: str,
     session_id: str,
     *,
-    literal: bool,
-    action: str,
-) -> tuple[bool, str | None]:
-    """Send tmux keys and keep failures structured for MCP callers."""
-    try:
-        ok = await tmux.send_keys(target, keys, literal=literal)
-    except TimeoutError:
-        logger.warning("Timed out %s to tmux target %s for %s", action, target, session_id)
-        return False, f"tmux send-keys timed out for session {session_id} while {action}"
-    except Exception as exc:
-        detail = str(exc) or type(exc).__name__
-        logger.warning(
-            "Failed %s to tmux target %s for %s: %s",
-            action,
-            target,
-            session_id,
-            detail,
-            exc_info=True,
-        )
-        return False, f"tmux send-keys failed for session {session_id} while {action}: {detail}"
-
-    if not ok:
-        return False, f"tmux send-keys failed for session {session_id} while {action}"
-    return True, None
-
-
-async def _send_compaction_command(
-    tmux: TmuxSessionManager,
-    target: str,
-    command: str,
-    session_id: str,
-) -> tuple[bool, str | None]:
-    """Send a compaction command through tmux and keep failures structured."""
-    return await _send_tmux_keys(
+    cli_source: str | None,
+    mark_continuation_pending: Callable[[], bool],
+    clear_continuation_pending: Callable[[], bool],
+    settle_seconds: float | None = None,
+) -> tuple[bool, str | None, bool, dict[str, str] | None]:
+    """Interrupt the active prompt, mark continuation pending, then compact."""
+    return await _send_terminal_compaction_command_impl(
         tmux,
         target,
-        f"{command}\n",
+        command,
         session_id,
-        literal=True,
-        action="sending compaction command",
+        cli_source=cli_source,
+        mark_continuation_pending=mark_continuation_pending,
+        clear_continuation_pending=clear_continuation_pending,
+        settle_seconds=settle_seconds,
+        interrupt_settle_seconds=_CODEX_INTERRUPT_SETTLE_SECONDS,
+        rejection_settle_seconds=_COMPACTION_REJECTION_SETTLE_SECONDS,
     )
 
 
@@ -190,110 +173,6 @@ async def _send_codex_compaction_command(
         settle_seconds=settle_seconds,
     )
     return ok, reason
-
-
-async def _send_terminal_compaction_command(
-    tmux: TmuxSessionManager,
-    target: str,
-    command: str,
-    session_id: str,
-    *,
-    cli_source: str | None,
-    mark_continuation_pending: Callable[[], bool],
-    clear_continuation_pending: Callable[[], bool],
-    settle_seconds: float | None = None,
-) -> tuple[bool, str | None, bool, dict[str, str] | None]:
-    """Interrupt the active prompt, mark continuation pending, then compact."""
-    ok, reason = await _send_tmux_keys(
-        tmux,
-        target,
-        _compact_interrupt_key(cli_source),
-        session_id,
-        literal=False,
-        action="sending compaction interrupt",
-    )
-    if not ok:
-        return False, reason, False, None
-
-    delay = _CODEX_INTERRUPT_SETTLE_SECONDS if settle_seconds is None else settle_seconds
-    if delay > 0:
-        await asyncio.sleep(delay)
-
-    before_command = await _capture_pane_snapshot(tmux, target)
-    continuation_pending = bool(mark_continuation_pending())
-    ok, reason = await _send_compaction_command(tmux, target, command, session_id)
-    if not ok:
-        if continuation_pending:
-            clear_continuation_pending()
-        return False, reason, False, None
-
-    rejection_delay = (
-        _COMPACTION_REJECTION_SETTLE_SECONDS if settle_seconds is None else settle_seconds
-    )
-    if rejection_delay > 0:
-        await asyncio.sleep(rejection_delay)
-
-    rejection = _detect_compaction_rejection(
-        before_command,
-        await _capture_pane_snapshot(tmux, target),
-        command,
-    )
-    if rejection is not None:
-        if continuation_pending:
-            clear_continuation_pending()
-        return False, rejection["rejection_message"], False, rejection
-    return True, None, continuation_pending, None
-
-
-def _resolve_tmux_target(
-    session_id: str,
-    session_manager: SessionManager,
-    agent_run_manager: LocalAgentRunManager,
-) -> tuple[str | None, TmuxSessionManager | None, str | None]:
-    """Resolve a session ID to a tmux target.
-
-    Returns:
-        (tmux_target, tmux_manager, error_message).
-    """
-    # Try agent run first (agent sessions have tmux_session_name on the run)
-    agent_run = agent_run_manager.get_by_session(session_id)
-    if agent_run is not None:
-        if agent_run.status not in ("running", "pending"):
-            return None, None, f"Agent session is not running (status={agent_run.status})"
-        if not agent_run.tmux_session_name:
-            return None, None, "Agent session has no tmux terminal (mode may be autonomous)"
-        from gobby.agents.tmux import get_tmux_session_manager
-
-        return agent_run.tmux_session_name, get_tmux_session_manager(), None
-
-    # Fallback: interactive CLI session with terminal_context
-    session = session_manager.get(session_id)
-    if session is None:
-        return None, None, f"Session {session_id} not found"
-
-    if session.terminal_context:
-        ctx = parse_terminal_context_value(session.terminal_context)
-        if ctx is None:
-            raw_type = type(session.terminal_context).__name__
-            return (
-                None,
-                None,
-                f"Session {session_id} has invalid terminal_context ({raw_type}); "
-                "expected object or JSON object",
-            )
-        # terminal_context may contain tmux_pane or tmux_session
-        tmux_target = ctx.get("tmux_pane") or ctx.get("tmux_session")
-        if tmux_target:
-            return tmux_target, get_tmux_manager_for_context(ctx), None
-        keys = ", ".join(sorted(str(key) for key in ctx.keys())) or "none"
-        return (
-            None,
-            None,
-            f"Session {session_id} terminal_context has no tmux_pane or tmux_session "
-            f"(keys: {keys})",
-        )
-
-    return None, None, f"Session {session_id} has no tmux terminal"
 
 
 def _resolve_session_for_compaction(
@@ -328,386 +207,6 @@ def _resolve_session_for_compaction(
     if session is None:
         return resolved_id, None, f"Session {session_id} not found"
     return resolved_id, session, None
-
-
-def _has_summary_refresh_source(session: Any) -> bool:
-    """Return whether summary generation has current session content to read."""
-    digest_markdown = getattr(session, "digest_markdown", None)
-    if isinstance(digest_markdown, str) and digest_markdown.strip():
-        return True
-
-    transcript_path = getattr(session, "transcript_path", None)
-    return isinstance(transcript_path, str) and bool(transcript_path.strip())
-
-
-def _compact_handoff_refresh_timeout_seconds() -> float:
-    try:
-        from gobby.config.app import load_config
-    except ImportError as exc:
-        logger.debug("Using default compact handoff refresh timeout: %s", exc)
-        return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
-
-    config = load_config()
-    compact_handoff = getattr(config, "compact_handoff", None)
-    value = getattr(
-        compact_handoff,
-        "refresh_timeout_seconds",
-        _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS,
-    )
-    try:
-        return float(value)
-    except (TypeError, ValueError) as exc:
-        logger.debug("Using default compact handoff refresh timeout: %s", exc)
-        return _DEFAULT_COMPACT_HANDOFF_REFRESH_TIMEOUT_SECONDS
-
-
-def _compact_handoff_digest_fallback_markdown(session: Any, *, reason: str) -> str | None:
-    """Build a bounded digest handoff fallback."""
-    digest_markdown = getattr(session, "digest_markdown", None)
-    if not isinstance(digest_markdown, str) or not digest_markdown.strip():
-        return None
-
-    digest = digest_markdown.strip()
-    if len(digest) > _COMPACT_HANDOFF_FALLBACK_MAX_CHARS:
-        digest = digest[-_COMPACT_HANDOFF_FALLBACK_MAX_CHARS:].lstrip()
-        digest = "[older digest content truncated]\n\n" + digest
-    return (
-        "# Compact Handoff\n\n"
-        f"Archival handoff refresh is running in the background ({reason}). "
-        "Continuing with the latest session digest.\n\n"
-        f"{digest}"
-    )
-
-
-async def _compact_handoff_transcript_tail_markdown(session: Any, *, reason: str) -> str | None:
-    """Build a bounded transcript-tail fallback when no digest is available."""
-    transcript_path = getattr(session, "transcript_path", None)
-    if not isinstance(transcript_path, str) or not transcript_path.strip():
-        return None
-
-    path = Path(transcript_path)
-    if not path.is_file():
-        return None
-
-    try:
-        tail_lines = await asyncio.to_thread(_read_transcript_tail_lines, path, 80)
-    except OSError as exc:
-        logger.debug("Failed reading compact_self transcript tail for %s: %s", path, exc)
-        return None
-
-    tail = "\n".join(tail_lines).strip()
-    if not tail:
-        return None
-    if len(tail) > _COMPACT_HANDOFF_FALLBACK_MAX_CHARS:
-        tail = tail[-_COMPACT_HANDOFF_FALLBACK_MAX_CHARS:].lstrip()
-        tail = "[older transcript content truncated]\n\n" + tail
-
-    return (
-        "# Compact Handoff\n\n"
-        f"Archival handoff refresh is running in the background ({reason}). "
-        "No digest was available, so this handoff uses a bounded transcript tail.\n\n"
-        "```text\n"
-        f"{tail}\n"
-        "```"
-    )
-
-
-def _valid_existing_summary_markdown(session: Any) -> str | None:
-    from gobby.sessions.summary_validity import is_summary_markdown_valid
-
-    summary_markdown = getattr(session, "summary_markdown", None)
-    if isinstance(summary_markdown, str) and is_summary_markdown_valid(summary_markdown):
-        return summary_markdown.strip()
-    return None
-
-
-def _mark_compact_handoff_ready(
-    session_id: str,
-    session: Any,
-    session_manager: SessionManager,
-    *,
-    fallback: bool,
-) -> dict[str, Any]:
-    summary_markdown = getattr(session, "summary_markdown", None)
-    summary_length = len(summary_markdown) if isinstance(summary_markdown, str) else 0
-    try:
-        session_manager.update_status(session_id, "handoff_ready")
-    except Exception as exc:
-        detail = str(exc) or type(exc).__name__
-        logger.warning(
-            "Failed marking compact_self handoff ready for %s: %s",
-            session_id,
-            detail,
-            exc_info=True,
-        )
-        return {"success": False, "error": detail}
-
-    return {
-        "success": True,
-        "refreshed": False,
-        "fallback": fallback,
-        "summary_length": summary_length,
-    }
-
-
-async def _persist_compact_handoff_fallback(
-    session_id: str,
-    session: Any,
-    session_manager: SessionManager,
-    *,
-    reason: str,
-) -> dict[str, Any]:
-    from gobby.sessions.summary_refresh import digest_turn_count
-
-    fallback = _compact_handoff_digest_fallback_markdown(session, reason=reason)
-    if fallback is None:
-        fallback = await _compact_handoff_transcript_tail_markdown(session, reason=reason)
-    if not fallback:
-        return {
-            "success": False,
-            "error": f"handoff refresh {reason} and no digest/summary/transcript fallback exists",
-        }
-
-    try:
-        persist_summary_state = getattr(session_manager, "persist_summary_state", None)
-        if callable(persist_summary_state):
-            persist_summary_state(
-                session_id,
-                summary_markdown=fallback,
-                generation_mode="digest_fallback",
-                source_context_hash=None,
-                source_digest_turn_count=digest_turn_count(
-                    getattr(session, "digest_markdown", None)
-                ),
-                metadata_json={"reason": reason, "source": "compact_self"},
-            )
-        else:
-            session_manager.update_summary(session_id, summary_markdown=fallback)
-        session_manager.update_status(session_id, "handoff_ready")
-    except Exception as exc:
-        detail = str(exc) or type(exc).__name__
-        logger.warning(
-            "Failed persisting compact_self handoff fallback for %s: %s",
-            session_id,
-            detail,
-            exc_info=True,
-        )
-        return {"success": False, "error": detail}
-
-    return {
-        "success": True,
-        "refreshed": True,
-        "fallback": True,
-        "summary_length": len(fallback),
-        "background_refresh_needed": _has_summary_refresh_source(session),
-    }
-
-
-async def _run_compact_handoff_background_refresh(
-    session_id: str,
-    session_manager: SessionManager,
-    db: HubDatabase,
-    llm_service: Any | None,
-    session_summary_config: Any | None,
-) -> None:
-    from gobby.sessions.summarize import generate_session_summaries
-
-    timeout_seconds = _compact_handoff_refresh_timeout_seconds()
-    try:
-        result = await asyncio.wait_for(
-            generate_session_summaries(
-                session_id=session_id,
-                session_manager=session_manager,
-                llm_service=llm_service,
-                session_summary_config=session_summary_config,
-                db=db,
-                set_handoff_ready=True,
-            ),
-            timeout=timeout_seconds,
-        )
-    except TimeoutError:
-        logger.debug(
-            "Timed out refreshing compact_self archival handoff context for %s after %.1fs",
-            session_id,
-            timeout_seconds,
-        )
-        return
-    except asyncio.CancelledError:
-        raise
-    except Exception as exc:
-        detail = str(exc) or type(exc).__name__
-        logger.debug(
-            "Failed refreshing compact_self archival handoff context for %s: %s",
-            session_id,
-            detail,
-            exc_info=True,
-        )
-        return
-
-    if not result.get("success"):
-        logger.debug(
-            "compact_self archival handoff refresh for %s did not succeed: %s",
-            session_id,
-            result.get("error") or result.get("full_error") or "unknown error",
-        )
-
-
-def _schedule_compact_handoff_background_refresh(
-    session_id: str,
-    session_manager: SessionManager,
-    db: HubDatabase,
-    llm_service: Any | None,
-    session_summary_config: Any | None,
-) -> bool:
-    coro = _run_compact_handoff_background_refresh(
-        session_id,
-        session_manager,
-        db,
-        llm_service,
-        session_summary_config,
-    )
-    try:
-        asyncio.create_task(coro, name=f"compact-handoff-refresh-{session_id[:8]}")
-    except RuntimeError as exc:
-        coro.close()
-        logger.debug(
-            "Failed scheduling compact_self archival handoff refresh for %s: %s",
-            session_id,
-            exc,
-        )
-        return False
-    return True
-
-
-async def _refresh_compact_handoff_context(
-    session_id: str,
-    session: Any,
-    session_manager: SessionManager,
-    db: HubDatabase,
-    llm_service: Any | None,
-    session_summary_config: Any | None,
-) -> dict[str, Any]:
-    """Prepare summary_markdown quickly before compact_self sends /compact."""
-    from gobby.mcp_proxy.tools.sessions._summary_metadata import (
-        compact_summary_metadata_matches,
-    )
-
-    if await compact_summary_metadata_matches(
-        session=session,
-        session_manager=session_manager,
-        db=db,
-        session_summary_config=session_summary_config,
-    ):
-        return _mark_compact_handoff_ready(
-            session_id,
-            session,
-            session_manager,
-            fallback=False,
-        )
-
-    digest_markdown = getattr(session, "digest_markdown", None)
-    if isinstance(digest_markdown, str) and digest_markdown.strip():
-        return await _persist_compact_handoff_fallback(
-            session_id,
-            session,
-            session_manager,
-            reason="summary metadata stale or missing",
-        )
-
-    existing_summary = _valid_existing_summary_markdown(session)
-    if existing_summary:
-        result = _mark_compact_handoff_ready(
-            session_id,
-            session,
-            session_manager,
-            fallback=True,
-        )
-        if result.get("success"):
-            result["background_refresh_needed"] = _has_summary_refresh_source(session)
-        return result
-
-    return await _persist_compact_handoff_fallback(
-        session_id,
-        session,
-        session_manager,
-        reason="digest missing",
-    )
-
-
-async def _capture_transcript_tail(
-    session_id: str,
-    session_manager: SessionManager,
-    lines: int,
-    *,
-    tmux_error: str,
-) -> tuple[dict[str, Any] | None, str | None]:
-    """Return transcript tail fallback when no live tmux target is available."""
-    session = session_manager.get(session_id)
-    if session is None:
-        return None, "session_not_found"
-
-    transcript_path = getattr(session, "transcript_path", None)
-    if not isinstance(transcript_path, str) or not transcript_path:
-        return None, "missing_transcript_path"
-
-    path = Path(transcript_path)
-    if not path.is_file():
-        return None, "transcript_not_found"
-
-    max_lines = max(1, lines)
-    try:
-        tail = await asyncio.to_thread(_read_transcript_tail_lines, path, max_lines)
-    except OSError as exc:
-        detail = str(exc) or type(exc).__name__
-        return None, f"transcript_read_failed: {detail}"
-
-    return (
-        {
-            "success": True,
-            "output": "\n".join(tail),
-            "via": "transcript",
-            "transcript_path": transcript_path,
-            "note": "No live tmux pane was capturable; returned transcript tail instead.",
-            "tmux_error": tmux_error,
-        },
-        None,
-    )
-
-
-async def _compact_live_web_chat_fallback(
-    web_chat_session_registry: WebChatSessionRegistry | None,
-    *session_ids: str | None,
-) -> dict[str, Any] | None:
-    """Compact a live web-chat session when DB-backed session lookup is unavailable."""
-    if web_chat_session_registry is None:
-        return None
-
-    seen: set[str] = set()
-    for session_id in session_ids:
-        if not session_id or session_id in seen:
-            continue
-        seen.add(session_id)
-        try:
-            live_session = web_chat_session_registry.find_session(session_id)[1]
-        except (LookupError, KeyError, RuntimeError):
-            logger.debug(
-                "Failed to look up live web_chat session %s for compaction fallback",
-                session_id,
-                exc_info=True,
-            )
-            continue
-        if live_session is None:
-            continue
-        try:
-            return await web_chat_session_registry.compact_session(session_id)
-        except (LookupError, KeyError, RuntimeError):
-            logger.warning(
-                "Failed to compact live web_chat session %s via fallback",
-                session_id,
-                exc_info=True,
-            )
-            continue
-    return None
 
 
 def register_terminal_tools(
@@ -755,8 +254,8 @@ def register_terminal_tools(
             "Trigger context compaction in the current MCP caller's CLI by firing "
             "the appropriate slash command (/compact for Claude Code, "
             "/compact for Codex, /compress for other supported CLIs). Designed "
-            "to be called at workflow handoff boundaries — e.g. /gobby plan calls this after spawning "
-            "plan-adversary so the coordinator's bulky requirements-gathering "
+            "to be called at workflow handoff boundaries — e.g. /gobby plan calls this after "
+            "spawning plan-adversary so the coordinator's bulky requirements-gathering "
             "context is summarized away while the sub-agent runs. Web-chat "
             "sessions use the live daemon ChatSession registry. Terminal sessions "
             "interrupt the active turn before sending the slash command. A rejected "
