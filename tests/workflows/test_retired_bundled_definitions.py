@@ -25,7 +25,7 @@ RETIRED_PIPELINES = (
     "dev-orchestrator",
     "delivery-orchestrator",
 )
-RETIRED_AGENTS = ("developer", "pipeline-worker")
+RETIRED_AGENTS = ("developer", "pipeline-worker", "gemini-image-gen")
 
 
 def test_no_external_conductor_imports_remain() -> None:
@@ -101,17 +101,18 @@ def test_removed_bundled_pipeline_sync_soft_deletes_installed_row(
     assert "deprecated" not in json.loads(row.definition_json)
 
 
+@pytest.mark.parametrize("name", RETIRED_AGENTS)
 def test_removed_bundled_agent_sync_soft_deletes_installed_row(
-    tmp_path: Path, temp_db: HubDatabase
+    name: str, tmp_path: Path, temp_db: HubDatabase
 ) -> None:
     db = temp_db
     manager = LocalWorkflowDefinitionManager(db)
     manager.create(
-        name="developer",
+        name=name,
         workflow_type="agent",
         definition_json=json.dumps(
             {
-                "name": "developer",
+                "name": name,
                 "description": "old definition",
                 "enabled": True,
             }
@@ -130,14 +131,14 @@ def test_removed_bundled_agent_sync_soft_deletes_installed_row(
     assert result["errors"] == []
     assert result["orphaned"] == 1
 
-    assert manager.get_by_name("developer") is None
-    row = manager.get_by_name("developer", include_deleted=True)
+    assert manager.get_by_name(name) is None
+    row = manager.get_by_name(name, include_deleted=True)
     assert row is not None
     assert row.deleted_at is not None
     assert row.enabled is True
     definition = json.loads(row.definition_json)
     assert definition == {
-        "name": "developer",
+        "name": name,
         "description": "old definition",
         "enabled": True,
     }

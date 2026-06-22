@@ -3,7 +3,7 @@ type: pipeline
 version: "1.2"
 description: |
   Nightly code quality fix pipeline. Checks for reports from pre-push-test.sh,
-  then dispatches a linter agent (Gemini) followed by a test fixer agent (Claude Opus).
+  then dispatches a linter agent (Codex) followed by a test fixer agent (Claude Opus).
   Sequential execution ensures lint fixes reduce test failures.
 
 steps:
@@ -40,7 +40,7 @@ steps:
       arguments:
         message: "No reports found — skipping nightly fixes"
 
-  # --- LINTER AGENT (Gemini) ---
+  # --- LINTER AGENT (Codex) ---
   - id: create_linter_task
     mcp:
       server: gobby-tasks
@@ -61,7 +61,7 @@ steps:
         prompt: "Fix lint, type, and security errors from reports in ./reports/"
         agent: "nightly-linter"
         task_id: "${{ steps.create_linter_task.output.id }}"
-        provider: "gemini"
+        provider: "codex"
         timeout: 1200
         parent_session_id: "${{ session_id }}"
 

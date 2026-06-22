@@ -2,7 +2,7 @@ tags: [context-handoff, context, handoff, lifecycle, gobby, default]
 
 rules:
   clear-pending-context-reset-on-start:
-    description: "Clear pending_context_reset flag after use (Gemini resume flow)"
+    description: "Clear pending_context_reset flag after use"
     event: session_start
     enabled: true
     priority: 5

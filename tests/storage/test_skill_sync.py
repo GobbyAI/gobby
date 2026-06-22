@@ -16,6 +16,7 @@ REMOVED_BUNDLED_SKILLS = (
     "automate",
     "test-battery",
     "agent-" + "monitoring",
+    "nano-banana",
 )
 
 

@@ -35,7 +35,7 @@ is exposed, use `gobby-sessions.send_keys(session_id, keys, literal=true)` to
 send the provider's native Gobby plan command:
 
 - Codex: `$gobby plan\n`
-- Claude, Gemini, or Qwen sessions whose installed router is slash-based:
+- Claude or Qwen sessions whose installed router is slash-based:
   `/gobby plan\n`
 - Unsupported or unknown provider: stop with a blocker instead of guessing.
 
