@@ -136,9 +136,8 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 if RuleTriggerEvent.TURN_START in resolved_rule_events:
                     if variables.get(_COMPACT_TURN_END_BYPASS_PENDING):
                         variables[_COMPACT_TURN_END_BYPASS_PENDING] = False
-                elif (
-                    RuleTriggerEvent.TURN_END in resolved_rule_events
-                    and variables.get(_COMPACT_TURN_END_BYPASS_PENDING, False)
+                elif RuleTriggerEvent.TURN_END in resolved_rule_events and variables.get(
+                    _COMPACT_TURN_END_BYPASS_PENDING, False
                 ):
                     variables[_COMPACT_TURN_END_BYPASS_PENDING] = False
                     resolved_rule_events = [
