@@ -7,21 +7,38 @@ This module provides CLI commands for managing skills:
 - remove: Remove an installed skill
 """
 
-import json
-import sys
-from pathlib import Path
+from __future__ import annotations
+
 from typing import Any
 
 import click
 
-from gobby.config.app import DaemonConfig
-from gobby.skills.metadata import (
-    get_nested_value,
-    get_skill_category,
-    get_skill_tags,
-    set_nested_value,
-    unset_nested_value,
+from gobby.cli._skills_daemon import (
+    install_skill as _install_skill,
 )
+from gobby.cli._skills_daemon import (
+    remove_skill as _remove_skill,
+)
+from gobby.cli._skills_daemon import (
+    search_hub as _search_hub,
+)
+from gobby.cli._skills_daemon import (
+    update_skill as _update_skill,
+)
+from gobby.cli._skills_hubs import add_hub as _add_hub
+from gobby.cli._skills_hubs import list_hubs as _list_hubs
+from gobby.cli._skills_local import generate_docs as _generate_docs
+from gobby.cli._skills_local import list_skills as _list_skills
+from gobby.cli._skills_local import output_json as _default_output_json
+from gobby.cli._skills_local import set_skill_enabled as _set_skill_enabled
+from gobby.cli._skills_local import show_skill as _show_skill
+from gobby.cli._skills_metadata import get_metadata as _get_metadata
+from gobby.cli._skills_metadata import set_metadata as _set_metadata
+from gobby.cli._skills_metadata import unset_metadata as _unset_metadata
+from gobby.cli._skills_scaffold import create_skill as _create_skill
+from gobby.cli._skills_scaffold import init_skills as _init_skills
+from gobby.cli._skills_validation import validate_skill as _validate_skill
+from gobby.config.app import DaemonConfig
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.skills import LocalSkillManager
 from gobby.utils.daemon_client import DaemonClient
@@ -64,8 +81,6 @@ def call_skills_tool(
             arguments=arguments,
             timeout=timeout,
         )
-        # Response format is {"success": true, "result": ...}. Preserve non-dict
-        # payloads so a successful tool call is not mistaken for daemon failure.
         if response.get("success") and "result" in response:
             return response["result"]
 
@@ -74,14 +89,14 @@ def call_skills_tool(
         if isinstance(response, dict):
             return dict(response)
         return None
-    except Exception as e:
-        click.echo(f"Error: {e}", err=True)
+    except Exception as exc:
+        click.echo(f"Error: {exc}", err=True)
         return None
 
 
 def check_daemon(client: DaemonClient) -> bool:
     """Check if daemon is running."""
-    is_healthy, error = client.check_health()
+    is_healthy, _error = client.check_health()
     if not is_healthy:
         click.echo("Error: Daemon not running. Start with: gobby start", err=True)
         return False
@@ -110,56 +125,12 @@ def list_skills(
     json_output: bool,
 ) -> None:
     """List installed skills."""
-    storage = get_skill_storage()
-
-    # When filtering by tags, fetch all skills first, then filter and apply limit
-    # This ensures the limit applies to filtered results, not pre-filter
-    fetch_limit = 10000 if tags else limit
-
-    skills_list = storage.list_skills(
-        category=category,
-        enabled=enabled,
-        limit=fetch_limit,
-        include_global=True,
-    )
-
-    # Filter by tags if specified
-    if tags:
-        tags_list = [t.strip() for t in tags.split(",") if t.strip()]
-        if tags_list:
-            filtered_skills = []
-            for skill in skills_list:
-                skill_tags = get_skill_tags(skill)
-                if any(tag in skill_tags for tag in tags_list):
-                    filtered_skills.append(skill)
-            # Apply limit after tag filtering
-            skills_list = filtered_skills[:limit]
-
-    if json_output:
-        _output_json(skills_list)
-        return
-
-    if not skills_list:
-        click.echo("No skills found.")
-        return
-
-    for skill in skills_list:
-        # Get category from metadata if available
-        cat_str = ""
-        skill_category = get_skill_category(skill)
-        if skill_category:
-            cat_str = f" [{skill_category}]"
-
-        status = "✓" if skill.enabled else "✗"
-        desc = skill.description[:60] if skill.description else ""
-        click.echo(f"{status} {skill.name}{cat_str} - {desc}")
+    _list_skills(get_skill_storage, _output_json, category, tags, enabled, limit, json_output)
 
 
 def _output_json(skills_list: list[Any]) -> None:
     """Output skills as JSON."""
-    from gobby.skills.formatting import format_skills_json
-
-    click.echo(format_skills_json(skills_list))
+    _default_output_json(skills_list)
 
 
 @skills.command()
@@ -168,48 +139,7 @@ def _output_json(skills_list: list[Any]) -> None:
 @click.pass_context
 def show(ctx: click.Context, name: str, json_output: bool) -> None:
     """Show details of a specific skill."""
-    storage = get_skill_storage()
-    skill = storage.get_by_name(name)
-
-    if skill is None:
-        if json_output:
-            click.echo(json.dumps({"error": "Skill not found", "name": name}))
-        else:
-            click.echo(f"Skill not found: {name}")
-        sys.exit(1)
-
-    if json_output:
-        output = {
-            "name": skill.name,
-            "description": skill.description,
-            "version": skill.version,
-            "license": skill.license,
-            "enabled": skill.enabled,
-            "source_type": skill.source_type,
-            "source_path": skill.source_path,
-            "compatibility": skill.compatibility if hasattr(skill, "compatibility") else None,
-            "content": skill.content,
-            "category": get_skill_category(skill),
-            "tags": get_skill_tags(skill),
-        }
-        click.echo(json.dumps(output, indent=2))
-        return
-
-    click.echo(f"Name: {skill.name}")
-    click.echo(f"Description: {skill.description}")
-    if skill.version:
-        click.echo(f"Version: {skill.version}")
-    if skill.license:
-        click.echo(f"License: {skill.license}")
-    click.echo(f"Enabled: {skill.enabled}")
-    if skill.source_type:
-        click.echo(f"Source: {skill.source_type}")
-    if skill.source_path:
-        click.echo(f"Path: {skill.source_path}")
-    click.echo("")
-    click.echo("Content:")
-    click.echo("-" * 40)
-    click.echo(skill.content)
+    _show_skill(get_skill_storage, name, json_output)
 
 
 @skills.command()
@@ -233,29 +163,7 @@ def install(ctx: click.Context, source: str, project: bool) -> None:
 
     Requires daemon to be running.
     """
-    client = get_daemon_client(ctx)
-    if not check_daemon(client):
-        sys.exit(1)
-
-    result = call_skills_tool(
-        client,
-        "install_skill",
-        {
-            "source": source,
-            "project_scoped": project,
-        },
-    )
-
-    if result is None:
-        click.echo("Error: Failed to communicate with daemon", err=True)
-        sys.exit(1)
-    elif result.get("success"):
-        click.echo(
-            f"Installed skill: {result.get('skill_name', '<unknown>')} ({result.get('source_type', 'unknown')})"
-        )
-    else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
-        sys.exit(1)
+    _install_skill(ctx, get_daemon_client, check_daemon, call_skills_tool, source, project)
 
 
 @skills.command()
@@ -268,20 +176,7 @@ def remove(ctx: click.Context, name: str) -> None:
 
     Requires daemon to be running.
     """
-    client = get_daemon_client(ctx)
-    if not check_daemon(client):
-        sys.exit(1)
-
-    result = call_skills_tool(client, "remove_skill", {"name": name})
-
-    if result is None:
-        click.echo("Error: Failed to communicate with daemon", err=True)
-        sys.exit(1)
-    elif result.get("success"):
-        click.echo(f"Removed skill: {result.get('skill_name', name)}")
-    else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
-        sys.exit(1)
+    _remove_skill(ctx, get_daemon_client, check_daemon, call_skills_tool, name)
 
 
 @skills.command()
@@ -299,58 +194,7 @@ def update(ctx: click.Context, name: str | None, update_all: bool) -> None:
 
     Requires daemon to be running.
     """
-    client = get_daemon_client(ctx)
-    if not check_daemon(client):
-        sys.exit(1)
-
-    if not name and not update_all:
-        click.echo("Error: Provide a skill name or use --all to update all skills")
-        sys.exit(1)
-
-    if update_all:
-        # Get all skills and update each via MCP
-        result = call_skills_tool(client, "list_skills", {"limit": 1000})
-        if not result or not result.get("success"):
-            click.echo(
-                f"Error: {result.get('error', 'Failed to list skills') if result else 'No response'}",
-                err=True,
-            )
-            sys.exit(1)
-
-        updated = 0
-        skipped = 0
-        for skill in result.get("skills", []):
-            update_result = call_skills_tool(client, "update_skill", {"name": skill["name"]})
-            if update_result and update_result.get("success"):
-                if update_result.get("updated"):
-                    click.echo(f"Updated: {skill['name']}")
-                    updated += 1
-                else:
-                    click.echo(
-                        f"Skipped: {skill['name']} ({update_result.get('skip_reason', 'up to date')})"
-                    )
-                    skipped += 1
-            else:
-                click.echo(f"Failed: {skill['name']}")
-                skipped += 1
-
-        click.echo(f"\nUpdated {updated} skill(s), skipped {skipped}")
-        return
-
-    # Single skill update
-    result = call_skills_tool(client, "update_skill", {"name": name})
-
-    if result is None:
-        click.echo("Error: Failed to communicate with daemon", err=True)
-        sys.exit(1)
-    elif result.get("success"):
-        if result.get("updated"):
-            click.echo(f"Updated skill: {name}")
-        else:
-            click.echo(f"Skipped: {result.get('skip_reason', 'already up to date')}")
-    else:
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
-        sys.exit(1)
+    _update_skill(ctx, get_daemon_client, check_daemon, call_skills_tool, name, update_all)
 
 
 @skills.command()
@@ -369,63 +213,9 @@ def validate(ctx: click.Context, path: str, json_output: bool) -> None:
     - category: lowercase alphanumeric + hyphens (if provided)
     - tags: list of strings, each max 64 chars (if provided)
     """
-    from gobby.skills.loader import SkillLoader, SkillLoadError
-    from gobby.skills.validator import SkillValidator
-
-    source_path = Path(path)
-
-    if not source_path.exists():
-        if json_output:
-            click.echo(json.dumps({"error": "Path not found", "path": path}))
-        else:
-            click.echo(f"Error: Path not found: {path}")
-        sys.exit(1)
-
-    # Load the skill
-    loader = SkillLoader()
-    try:
-        # Don't validate during load - we want to do it ourselves
-        parsed_skill = loader.load_skill(source_path, validate=False, check_dir_name=False)
-    except SkillLoadError as e:
-        if json_output:
-            click.echo(json.dumps({"error": str(e), "path": path}))
-        else:
-            click.echo(f"Error loading skill: {e}")
-        sys.exit(1)
-
-    # Validate the skill
-    validator = SkillValidator()
-    result = validator.validate(parsed_skill)
-
-    if json_output:
-        output = result.to_dict()
-        output["path"] = path
-        output["skill_name"] = parsed_skill.name
-        click.echo(json.dumps(output, indent=2))
-        if not result.valid:
-            sys.exit(1)
-        return
-
-    # Human-readable output
-    if result.valid:
-        click.echo(f"✓ Valid: {parsed_skill.name}")
-        if result.warnings:
-            click.echo("\nWarnings:")
-            for warning in result.warnings:
-                click.echo(f"  - {warning}")
-    else:
-        click.echo(f"✗ Invalid: {parsed_skill.name}")
-        click.echo("\nErrors:")
-        for error in result.errors:
-            click.echo(f"  - {error}")
-        if result.warnings:
-            click.echo("\nWarnings:")
-            for warning in result.warnings:
-                click.echo(f"  - {warning}")
-        sys.exit(1)
+    _validate_skill(path, json_output)
 
 
-# Meta subcommand group
 @skills.group()
 def meta() -> None:
     """Manage skill metadata fields."""
@@ -446,25 +236,7 @@ def meta_get(ctx: click.Context, name: str, key: str) -> None:
         gobby skills meta get my-skill author
         gobby skills meta get my-skill skillport.category
     """
-    storage = get_skill_storage()
-    skill = storage.get_by_name(name)
-
-    if skill is None:
-        click.echo(f"Skill not found: {name}", err=True)
-        sys.exit(1)
-
-    if not skill.metadata:
-        click.echo("null")
-        return
-
-    value = get_nested_value(skill.metadata, key)
-    if value is None:
-        click.echo(f"Key not found: {key}")
-        sys.exit(1)
-    elif isinstance(value, dict | list):
-        click.echo(json.dumps(value, indent=2))
-    else:
-        click.echo(str(value))
+    _get_metadata(get_skill_storage, name, key)
 
 
 @meta.command("set")
@@ -483,26 +255,7 @@ def meta_set(ctx: click.Context, name: str, key: str, value: str) -> None:
         gobby skills meta set my-skill author "John Doe"
         gobby skills meta set my-skill skillport.category git
     """
-    storage = get_skill_storage()
-    skill = storage.get_by_name(name)
-
-    if skill is None:
-        click.echo(f"Skill not found: {name}", err=True)
-        sys.exit(1)
-
-    # Try to parse value as JSON for complex types
-    try:
-        parsed_value = json.loads(value)
-    except json.JSONDecodeError:
-        parsed_value = value
-
-    new_metadata = set_nested_value(skill.metadata or {}, key, parsed_value)
-    try:
-        storage.update_skill(skill.id, metadata=new_metadata)
-    except Exception as e:
-        click.echo(f"Error updating skill metadata: {e}", err=True)
-        sys.exit(1)
-    click.echo(f"Set {key} = {value}")
+    _set_metadata(get_skill_storage, name, key, value)
 
 
 @meta.command("unset")
@@ -519,24 +272,7 @@ def meta_unset(ctx: click.Context, name: str, key: str) -> None:
         gobby skills meta unset my-skill author
         gobby skills meta unset my-skill skillport.tags
     """
-    storage = get_skill_storage()
-    skill = storage.get_by_name(name)
-
-    if skill is None:
-        click.echo(f"Skill not found: {name}", err=True)
-        sys.exit(1)
-
-    if not skill.metadata:
-        click.echo(f"Key not found: {key}")
-        return
-
-    new_metadata = unset_nested_value(skill.metadata, key)
-    try:
-        storage.update_skill(skill.id, metadata=new_metadata)
-    except Exception as e:
-        click.echo(f"Error updating skill metadata: {e}", err=True)
-        sys.exit(1)
-    click.echo(f"Unset {key}")
+    _unset_metadata(get_skill_storage, name, key)
 
 
 @skills.command()
@@ -547,25 +283,7 @@ def init(ctx: click.Context) -> None:
     Creates .gobby/skills/ directory and config file for local skill management.
     This is idempotent - running init multiple times is safe.
     """
-    from gobby.skills.scaffold import init_skills_directory
-
-    base_path = Path(".")
-    skills_dir = base_path / ".gobby" / "skills"
-    config_file = skills_dir / "config.yaml"
-
-    result = init_skills_directory(base_path)
-
-    if result["dir_created"]:
-        click.echo(f"Created {skills_dir}/")
-    else:
-        click.echo(f"Skills directory already exists: {skills_dir}/")
-
-    if result["config_created"]:
-        click.echo(f"Created {config_file}")
-    else:
-        click.echo(f"Config already exists: {config_file}")
-
-    click.echo("\nSkills initialized successfully!")
+    _init_skills()
 
 
 @skills.command()
@@ -583,22 +301,7 @@ def new(ctx: click.Context, name: str, description: str | None) -> None:
     - assets/ directory for images and files
     - references/ directory for documentation
     """
-    from gobby.skills.scaffold import scaffold_skill
-
-    try:
-        scaffold_skill(name, Path("."), description)
-    except ValueError as e:
-        click.echo(f"Error: {e}", err=True)
-        sys.exit(1)
-    except FileExistsError as e:
-        click.echo(str(e), err=True)
-        sys.exit(1)
-
-    click.echo(f"Created skill scaffold: {name}/")
-    click.echo(f"  - {name}/SKILL.md")
-    click.echo(f"  - {name}/scripts/")
-    click.echo(f"  - {name}/assets/")
-    click.echo(f"  - {name}/references/")
+    _create_skill(name, description)
 
 
 @skills.command()
@@ -617,30 +320,7 @@ def doc(ctx: click.Context, output: str | None, output_format: str) -> None:
     Creates a markdown table or JSON list of all installed skills.
     Use --output to write to a file instead of stdout.
     """
-    storage = get_skill_storage()
-    skills_list = storage.list_skills(include_global=True)
-
-    if not skills_list:
-        click.echo("No skills installed.")
-        return
-
-    from gobby.skills.formatting import format_skills_json, format_skills_markdown_table
-
-    if output_format == "json":
-        content = format_skills_json(skills_list)
-    else:
-        content = format_skills_markdown_table(skills_list)
-
-    if output:
-        try:
-            with open(output, "w", encoding="utf-8") as f:
-                f.write(content)
-        except OSError as e:
-            click.echo(f"Error: Failed to write documentation to {output}: {e}", err=True)
-            sys.exit(1)
-        click.echo(f"Written to {output}")
-    else:
-        click.echo(content)
+    _generate_docs(get_skill_storage, output, output_format)
 
 
 @skills.command()
@@ -651,19 +331,7 @@ def enable(ctx: click.Context, name: str) -> None:
 
     NAME is the skill name to enable.
     """
-    storage = get_skill_storage()
-    skill = storage.get_by_name(name)
-
-    if skill is None:
-        click.echo(f"Skill not found: {name}", err=True)
-        sys.exit(1)
-
-    try:
-        storage.update_skill(skill.id, enabled=True)
-    except Exception as e:
-        click.echo(f"Error enabling skill: {e}", err=True)
-        sys.exit(1)
-    click.echo(f"Enabled skill: {name}")
+    _set_skill_enabled(get_skill_storage, name, True)
 
 
 @skills.command()
@@ -674,19 +342,7 @@ def disable(ctx: click.Context, name: str) -> None:
 
     NAME is the skill name to disable.
     """
-    storage = get_skill_storage()
-    skill = storage.get_by_name(name)
-
-    if skill is None:
-        click.echo(f"Skill not found: {name}", err=True)
-        sys.exit(1)
-
-    try:
-        storage.update_skill(skill.id, enabled=False)
-    except Exception as e:
-        click.echo(f"Error disabling skill: {e}", err=True)
-        sys.exit(1)
-    click.echo(f"Disabled skill: {name}")
+    _set_skill_enabled(get_skill_storage, name, False)
 
 
 @skills.command()
@@ -710,47 +366,18 @@ def search(
 
     Requires daemon to be running.
     """
-    client = get_daemon_client(ctx)
-    if not check_daemon(client):
-        sys.exit(1)
-
-    arguments: dict[str, Any] = {"query": query, "limit": limit}
-    if hub_name:
-        arguments["hub_name"] = hub_name
-
-    result = call_skills_tool(client, "search_hub", arguments)
-
-    if result is None:
-        click.echo("Error: Failed to communicate with daemon", err=True)
-        sys.exit(1)
-    elif not result.get("success"):
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
-        sys.exit(1)
-
-    results_list = result.get("results", [])
-
-    if json_output:
-        click.echo(json.dumps(results_list, indent=2))
-        return
-
-    if not results_list:
-        click.echo("No skills found matching your query.")
-        return
-
-    click.echo(f"Found {len(results_list)} skill(s):\n")
-    for skill in results_list:
-        hub = skill.get("hub_name", "unknown")
-        slug = skill.get("slug", "unknown")
-        name = skill.get("display_name", slug)
-        desc = skill.get("description", "")[:60]
-        click.echo(f"  [{hub}] {name}")
-        if desc:
-            click.echo(f"          {desc}")
-        click.echo(f"          Install: gobby skills install {hub}:{slug}")
-        click.echo("")
+    _search_hub(
+        ctx,
+        get_daemon_client,
+        check_daemon,
+        call_skills_tool,
+        query,
+        hub_name,
+        limit,
+        json_output,
+    )
 
 
-# Hub subcommand group
 @skills.group()
 def hub() -> None:
     """Manage skill hubs (registries)."""
@@ -767,37 +394,7 @@ def hub_list(ctx: click.Context, json_output: bool) -> None:
 
     Requires daemon to be running.
     """
-    client = get_daemon_client(ctx)
-    if not check_daemon(client):
-        sys.exit(1)
-
-    result = call_skills_tool(client, "list_hubs", {})
-
-    if result is None:
-        click.echo("Error: Failed to communicate with daemon", err=True)
-        sys.exit(1)
-    elif not result.get("success"):
-        click.echo(f"Error: {result.get('error', 'Unknown error')}", err=True)
-        sys.exit(1)
-
-    hubs_list = result.get("hubs", [])
-
-    if json_output:
-        click.echo(json.dumps(hubs_list, indent=2))
-        return
-
-    if not hubs_list:
-        click.echo("No hubs configured.")
-        click.echo("\nTo add hubs, use: gobby skills hub add <name> --type <type>")
-        return
-
-    click.echo("Configured hubs:\n")
-    for h in hubs_list:
-        name = h.get("name", "unknown")
-        hub_type = h.get("type", "unknown")
-        base_url = h.get("base_url", "")
-        url_str = f" ({base_url})" if base_url else ""
-        click.echo(f"  {name} [{hub_type}]{url_str}")
+    _list_hubs(ctx, get_daemon_client, check_daemon, call_skills_tool, json_output)
 
 
 @hub.command("add")
@@ -838,64 +435,4 @@ def hub_add(
         gobby skills hub add my-skillsmp --type skillsmp --url https://skillsmp.com/api/v1
         gobby skills hub add company-skills --type github --repo myorg/skills
     """
-
-    # Validate hub type
-    valid_types = ["clawdhub", "skillsmp", "github", "claude-plugins"]
-    if hub_type not in valid_types:
-        click.echo(
-            f"Error: Invalid hub type '{hub_type}'. Must be one of: {', '.join(valid_types)}",
-            err=True,
-        )
-        sys.exit(1)
-
-    # Validate required options for each type
-    if hub_type == "skillsmp" and not base_url:
-        click.echo("Error: --url is required for skillsmp type", err=True)
-        sys.exit(1)
-
-    if hub_type == "claude-plugins" and not base_url:
-        click.echo("Error: --url is required for claude-plugins type", err=True)
-        sys.exit(1)
-
-    if hub_type == "github" and not repo:
-        click.echo("Error: --repo is required for github type", err=True)
-        sys.exit(1)
-
-    # Build hub config
-    hub_config: dict[str, Any] = {"type": hub_type}
-    if base_url:
-        hub_config["base_url"] = base_url
-    if repo:
-        hub_config["repo"] = repo
-    if branch:
-        hub_config["branch"] = branch
-    if auth_key_name:
-        hub_config["auth_key_name"] = auth_key_name
-
-    # Write hub config via ConfigStore (DB-first)
-    try:
-        from gobby.storage.config_store import ConfigStore
-
-        db = open_runtime_hub_database(apply_migrations=False)
-        try:
-            store = ConfigStore(db)
-            # Check if hub already exists
-            existing = store.get(f"skills.hubs.{name}.type")
-            if existing is not None:
-                click.echo(
-                    f"Error: Hub '{name}' already exists. Use 'hub remove' first to replace it.",
-                    err=True,
-                )
-                sys.exit(1)
-
-            # Write each hub config field as a dotted key
-            for key, value in hub_config.items():
-                store.set(f"skills.hubs.{name}.{key}", value, source="cli")
-        finally:
-            db.close()
-    except Exception as e:
-        click.echo(f"Error: Failed to save hub config: {e}", err=True)
-        sys.exit(1)
-
-    click.echo(f"Added hub: {name} [{hub_type}]")
-    click.echo("\nRestart the daemon for changes to take effect: gobby restart")
+    _add_hub(open_runtime_hub_database, name, hub_type, base_url, repo, branch, auth_key_name)
