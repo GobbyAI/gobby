@@ -190,12 +190,17 @@ pub fn run(
     // body, #900) instead of letting them hide silently in the meta cache. Read
     // before `finish` consumes the sink.
     let degraded_pages = sink.degraded_docs().to_vec();
-    if !degraded_pages.is_empty() {
-        progress.emit(format!(
-            "{} page(s) degraded to structural fallback: {}",
+    if !degraded_pages.is_empty() && !ctx.quiet {
+        // Warn on stderr at parity with the per-file "text generation failed ...
+        // record degraded: true" line (text/generation.rs), so a degraded
+        // curated/aggregate pass is visible regardless of --verbose rather than
+        // only summarized in the run result.
+        eprintln!(
+            "codewiki: {} page(s) degraded to structural fallback (AI content \
+             pass failed): {}",
             degraded_pages.len(),
             degraded_pages.join(", ")
-        ));
+        );
     }
     let changed_paths = sink.finish(index_snapshot)?;
     let skipped = generated_pages.saturating_sub(changed_paths.len());
