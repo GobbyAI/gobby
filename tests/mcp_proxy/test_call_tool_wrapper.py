@@ -78,7 +78,7 @@ def test_top_level_project_id_stays_wrapper_context() -> None:
     assert canonical.arguments == {"project_id": "target-project"}
 
 
-def test_top_level_route_strips_nested_wrapper_route_but_preserves_session() -> None:
+def test_top_level_route_preserves_target_route_like_arguments() -> None:
     canonical = canonicalize_call_tool_wrapper(
         server_name="outer-server",
         tool_name="outer-tool",
@@ -98,7 +98,10 @@ def test_top_level_route_strips_nested_wrapper_route_but_preserves_session() -> 
     assert canonical.session_id == "outer-session"
     assert canonical.project_id == "outer-project"
     assert canonical.arguments == {
+        "server_name": "inner-server",
+        "tool_name": "inner-tool",
         "session_id": "inner-session",
+        "project_id": "inner-project",
         "value": "ok",
     }
 

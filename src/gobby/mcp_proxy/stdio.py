@@ -1,18 +1,18 @@
 """
 Stdio MCP server implementation.
 
-This server runs as a stdio process for Claude Code and proxies
-tool calls to the HTTP daemon.
+This module is the public compatibility facade for the stdio MCP wrapper.
+Implementation lives in focused stdio_* modules.
 """
+
+from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
-from typing import Any
 
 import httpx
-from mcp.server.fastmcp import Context, FastMCP
+from mcp.server.fastmcp import FastMCP
 
 from gobby.config.app import load_config
 from gobby.mcp_proxy._call_tool_wrapper import (
@@ -29,899 +29,159 @@ from gobby.mcp_proxy.daemon_control import (
 )
 from gobby.mcp_proxy.instructions import build_gobby_instructions
 from gobby.mcp_proxy.registries import setup_internal_registries
-from gobby.mcp_proxy.server_list import compact_mcp_server_list
 from gobby.mcp_proxy.session_bootstrap import (
     read_project_id,
     resolve_session_id_from_terminal_context,
 )
+from gobby.mcp_proxy.stdio_daemon import (
+    DaemonStartupDependencies,
+)
+from gobby.mcp_proxy.stdio_daemon import (
+    ensure_daemon_running as _ensure_daemon_running,
+)
+from gobby.mcp_proxy.stdio_daemon import (
+    main as _daemon_main,
+)
+from gobby.mcp_proxy.stdio_proxy import (
+    DaemonProxy as _DaemonProxy,
+)
+from gobby.mcp_proxy.stdio_proxy import (
+    DaemonProxyDependencies,
+)
+from gobby.mcp_proxy.stdio_results import (
+    DAEMON_HEALTH_ATTEMPTS,
+    DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
+    DAEMON_HEALTH_RETRY_DELAY_SECONDS,
+    DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS,
+    DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
+    REMOVED_WORKFLOW_WAIT_TOOL,
+    _daemon_unavailable_result,
+    _removed_wait_for_completion_result,
+    _request_timeout_result,
+    _strip_none,
+)
+from gobby.mcp_proxy.stdio_server import (
+    StdioServerDependencies,
+)
+from gobby.mcp_proxy.stdio_server import (
+    create_stdio_mcp_server as _create_stdio_mcp_server,
+)
+from gobby.mcp_proxy.stdio_tools import (
+    ToolRegistrationDependencies,
+)
+from gobby.mcp_proxy.stdio_tools import (
+    register_proxy_tools as _register_proxy_tools,
+)
 from gobby.mcp_proxy.wait_tools import (
-    EXTENDED_TIMEOUT_TOOL_NAMES,
-    MCP_WRAPPER_FINGERPRINT_HEADER,
-    WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS,
-    WAIT_TOOL_NAMES,
     call_with_wait_heartbeat,
-    mcp_wrapper_process_fingerprint,
     mcp_wrapper_source_stale_result,
     prepare_client_guard,
 )
 
-
-def _strip_none(obj: Any) -> Any:
-    """Recursively strip None values from dicts.
-
-    Prevents ``null`` fields in JSON payloads sent over MCP, which break
-    strict Jinja prompt templates (e.g. Nemotron Super in LMStudio).
-    The MCP SDK's ``exclude_none`` only covers Pydantic model fields —
-    raw dicts like ``inputSchema`` pass through unchanged.
-    """
-    if isinstance(obj, dict):
-        return {k: _strip_none(v) for k, v in obj.items() if v is not None}
-    if isinstance(obj, list):
-        return [_strip_none(item) for item in obj]
-    return obj
-
-
-REMOVED_WORKFLOW_WAIT_TOOL = "wait_for_completion"
-DAEMON_HEALTH_ATTEMPTS = 30
-DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS = 2.0
-DAEMON_HEALTH_RETRY_DELAY_SECONDS = 1.0
-DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS = 2.0
-DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS = 5.0
-
-
-__all__ = [
-    "create_stdio_mcp_server",
-    "check_daemon_http_health",
-    "get_daemon_pid",
-    "is_daemon_running",
-    "restart_daemon_process",
-    "start_daemon_process",
-    "stop_daemon_process",
-]
-
 logger = logging.getLogger("gobby.mcp.stdio")
 
+__all__ = [
+    "DAEMON_HEALTH_ATTEMPTS",
+    "DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS",
+    "DAEMON_HEALTH_RETRY_DELAY_SECONDS",
+    "DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS",
+    "DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS",
+    "DaemonProxy",
+    "REMOVED_WORKFLOW_WAIT_TOOL",
+    "_daemon_unavailable_result",
+    "_removed_wait_for_completion_result",
+    "_request_timeout_result",
+    "_strip_none",
+    "call_with_wait_heartbeat",
+    "canonicalize_call_tool_wrapper",
+    "check_daemon_http_health",
+    "create_stdio_mcp_server",
+    "ensure_daemon_running",
+    "get_daemon_pid",
+    "httpx",
+    "is_daemon_running",
+    "load_config",
+    "main",
+    "mcp_wrapper_source_stale_result",
+    "prepare_client_guard",
+    "read_project_id",
+    "register_proxy_tools",
+    "resolve_session_id_from_terminal_context",
+    "restart_daemon_process",
+    "setup_internal_registries",
+    "start_daemon_process",
+    "stop_daemon_process",
+    "time",
+]
 
-def _daemon_unavailable_result(port: int, detail: str) -> dict[str, Any]:
-    return {
-        "success": False,
-        "error": (
-            f"Gobby daemon HTTP control plane is unavailable at localhost:{port}: {detail}. "
-            "Check `gobby status` or restart with `gobby restart --verbose`."
-        ),
-        "error_code": "DAEMON_UNAVAILABLE",
-    }
+
+def _proxy_dependencies() -> DaemonProxyDependencies:
+    return DaemonProxyDependencies(
+        load_config=load_config,
+        check_daemon_http_health=check_daemon_http_health,
+        read_project_id=read_project_id,
+        resolve_session_id_from_terminal_context=resolve_session_id_from_terminal_context,
+        logger=logger,
+    )
 
 
-def _request_timeout_result(path: str, timeout: float) -> dict[str, Any]:
-    return {
-        "success": False,
-        "error": f"Gobby daemon request timed out after {timeout:g}s while calling {path}.",
-        "error_code": "REQUEST_TIMEOUT",
-    }
-
-
-def _removed_wait_for_completion_result() -> dict[str, Any]:
-    return {
-        "success": False,
-        "error": (
-            "gobby-workflows.wait_for_completion was removed. Start the agent or pipeline, "
-            "persist its run_id or execution_id, then resume from the daemon's durable "
-            "completion notification and inspect get_task, get_agent_result, or "
-            "get_pipeline_status."
-        ),
-        "error_code": "TOOL_REMOVED",
-        "server_name": "gobby-workflows",
-        "tool_name": REMOVED_WORKFLOW_WAIT_TOOL,
-    }
-
-
-class DaemonProxy:
-    """Proxy for HTTP daemon API calls."""
+class DaemonProxy(_DaemonProxy):
+    """Compatibility proxy using dependency names from this facade."""
 
     def __init__(self, port: int):
-        self.port = port
-        self.base_url = f"http://localhost:{port}"
-        self._project_id: str | None = read_project_id()
-        self._session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
-        self._session_bootstrap_attempted = bool(self._session_id)
-        self._last_health_ok_at = 0.0
+        super().__init__(port, deps_factory=_proxy_dependencies)
 
-    async def _resolve_session_id(self) -> str | None:
-        if self._session_id or self._session_bootstrap_attempted or not self._project_id:
-            return self._session_id
 
-        resolved_session_id = await resolve_session_id_from_terminal_context(
-            self.base_url,
-            self._project_id,
-        )
-        self._session_bootstrap_attempted = True
-        if resolved_session_id is not None:
-            self._session_id = resolved_session_id
-        return self._session_id
+def _tool_registration_dependencies() -> ToolRegistrationDependencies:
+    return ToolRegistrationDependencies(
+        canonicalize_call_tool_wrapper=canonicalize_call_tool_wrapper,
+        input_error_type=CallToolWrapperInputError,
+        mcp_wrapper_source_stale_result=mcp_wrapper_source_stale_result,
+        prepare_client_guard=prepare_client_guard,
+        call_with_wait_heartbeat=call_with_wait_heartbeat,
+    )
 
-    async def _request(
-        self,
-        method: str,
-        path: str,
-        json: dict[str, Any] | None = None,
-        timeout: float = 30.0,
-        project_id: str | None = None,
-        session_id: str | None = None,
-        preflight: bool = False,
-    ) -> dict[str, Any]:
-        """Make HTTP request to daemon."""
-        if session_id:
-            self._session_id = session_id
-            self._session_bootstrap_attempted = True
 
-        if preflight:
-            now = time.monotonic()
-            if now - self._last_health_ok_at >= DAEMON_PROXY_PREFLIGHT_CACHE_SECONDS:
-                if not await check_daemon_http_health(
-                    self.port,
-                    timeout=DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS,
-                ):
-                    return _daemon_unavailable_result(
-                        self.port,
-                        "health check did not respond within "
-                        f"{DAEMON_PROXY_PREFLIGHT_TIMEOUT_SECONDS:g}s",
-                    )
-                self._last_health_ok_at = time.monotonic()
+def register_proxy_tools(mcp: FastMCP, proxy: _DaemonProxy) -> None:
+    """Register proxy tools on the MCP server."""
+    _register_proxy_tools(mcp, proxy, deps_factory=_tool_registration_dependencies)
 
-        # Build context headers so the daemon resolves the correct project
-        headers: dict[str, str] = {
-            MCP_WRAPPER_FINGERPRINT_HEADER: mcp_wrapper_process_fingerprint(),
-        }
-        effective_project_id = project_id or self._project_id
-        caller_project_id = self._project_id
-        effective_session_id = session_id or await self._resolve_session_id()
-        if effective_project_id:
-            headers["X-Gobby-Project-Id"] = effective_project_id
-        if caller_project_id:
-            headers["X-Gobby-Caller-Project-Id"] = caller_project_id
-        if effective_session_id:
-            headers["X-Gobby-Session-Id"] = effective_session_id
 
-        try:
-            async with httpx.AsyncClient() as client:
-                resp = await client.request(
-                    method,
-                    f"{self.base_url}{path}",
-                    json=json,
-                    headers=headers,
-                    timeout=timeout,
-                )
-                if resp.status_code == 200:
-                    data: dict[str, Any] = resp.json()
-                    result: dict[str, Any] = _strip_none(data)
-                    return result
-                else:
-                    return {"success": False, "error": f"HTTP {resp.status_code}: {resp.text}"}
-        except httpx.ConnectError:
-            return _daemon_unavailable_result(self.port, "connection failed")
-        except httpx.TimeoutException:
-            return _request_timeout_result(path, timeout)
-        except Exception as e:
-            error_msg = str(e) or f"{type(e).__name__}: (no message)"
-            return {"success": False, "error": error_msg}
-
-    async def get_status(self, session_id: str | None = None) -> dict[str, Any]:
-        """Get daemon status."""
-        return await self._request("GET", "/api/admin/status", session_id=session_id)
-
-    async def list_tools(
-        self,
-        server_name: str | None = None,
-        session_id: str | None = None,
-    ) -> dict[str, Any]:
-        """List tools from MCP servers."""
-        if server_name:
-            return await self._request(
-                "GET",
-                f"/api/mcp/{server_name}/tools",
-                session_id=session_id,
-            )
-        # List all - need to get server list first
-        status = await self.get_status(session_id=session_id)
-        if status.get("success") is False:
-            return status
-        servers = status.get("mcp_servers", {})
-        all_tools: dict[str, list[dict[str, Any]]] = {}
-        for srv_name in servers:
-            result = await self._request(
-                "GET",
-                f"/api/mcp/{srv_name}/tools",
-                session_id=session_id,
-            )
-            if result.get("success"):
-                all_tools[srv_name] = result.get("tools", [])
-        return {
-            "success": True,
-            "servers": [{"name": n, "tools": t} for n, t in all_tools.items()],
-        }
-
-    async def call_tool(
-        self,
-        server_name: str,
-        tool_name: str,
-        arguments: str | dict[str, Any] | None = None,
-        project_id: str | None = None,
-        session_id: str | None = None,
-        preflight_enabled: bool = True,
-    ) -> dict[str, Any]:
-        if server_name == "gobby-workflows" and tool_name == REMOVED_WORKFLOW_WAIT_TOOL:
-            return _removed_wait_for_completion_result()
-
-        # Tool-specific timeouts. Proxying should still work if the local MCP
-        # stdio process cannot load bootstrap config; only timeout overrides are optional.
-        try:
-            config = load_config()
-            tool_timeouts = config.mcp_client_proxy.tool_timeouts
-        except Exception as exc:
-            logger.warning(f"Failed to load config for MCP tool timeout overrides: {exc}")
-            tool_timeouts = {}
-
-        # Default to standard timeout
-        timeout = 30.0
-        # Check for tool-specific override in config
-        if tool_timeouts and tool_name in tool_timeouts:
-            timeout = tool_timeouts[tool_name]
-        # Fallback for slow LLM-backed/coordinator tools if not explicit in config
-        elif tool_name in EXTENDED_TIMEOUT_TOOL_NAMES:
-            timeout = 300.0
-        # Wait tools: use the requested timeout plus a buffer
-        elif tool_name in WAIT_TOOL_NAMES:
-            # Extract timeout from arguments, default to 300s if not specified
-            arg_map = arguments if isinstance(arguments, dict) else {}
-            raw_timeout = arg_map.get("timeout")
-            if raw_timeout is None:
-                raw_timeout = arg_map.get("timeout_seconds", 300.0)
-            arg_timeout = float(raw_timeout)
-            timeout = arg_timeout + WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS
-        request_path = f"/api/mcp/{server_name}/tools/{tool_name}"
-        request_payload: Any = arguments if arguments is not None else {}
-        if tool_name in WAIT_TOOL_NAMES:
-            request_path = "/api/mcp/tools/call"
-            request_payload = {
-                "server_name": server_name,
-                "tool_name": tool_name,
-                "arguments": arguments if arguments is not None else {},
-            }
-
-        request_kwargs: dict[str, Any] = {
-            "json": request_payload,
-            "timeout": timeout,
-        }
-        if project_id:
-            request_kwargs["project_id"] = project_id
-        if session_id:
-            request_kwargs["session_id"] = session_id
-        return await self._request(
-            "POST",
-            request_path,
-            **request_kwargs,
-            preflight=preflight_enabled,
-        )
-
-    async def get_tool_schema(
-        self,
-        server_name: str,
-        tool_name: str,
-        session_id: str | None = None,
-    ) -> dict[str, Any]:
-        """Get schema for a specific tool."""
-        result = await self._request(
-            "POST",
-            "/api/mcp/tools/schema",
-            json={"server_name": server_name, "tool_name": tool_name},
-            session_id=session_id,
-        )
-        if "error" in result:
-            return {"success": False, "error": result["error"]}
-        return {
-            "success": True,
-            "tool": {
-                "name": result.get("name"),
-                "description": result.get("description"),
-                "inputSchema": result.get("inputSchema"),
-            },
-        }
-
-    async def list_mcp_servers(self, session_id: str | None = None) -> dict[str, Any]:
-        """List configured MCP servers (includes internal gobby-* servers)."""
-        result = await self._request("GET", "/api/mcp/servers", session_id=session_id)
-        return compact_mcp_server_list(result)
-
-    async def recommend_tools(
-        self,
-        task_description: str,
-        agent_id: str | None = None,
-        search_mode: str = "llm",
-        top_k: int = 10,
-        min_similarity: float = 0.3,
-        cwd: str | None = None,
-    ) -> dict[str, Any]:
-        """Get tool recommendations for a task."""
-        return await self._request(
-            "POST",
-            "/api/mcp/tools/recommend",
-            json={
-                "task_description": task_description,
-                "agent_id": agent_id,
-                "search_mode": search_mode,
-                "top_k": top_k,
-                "min_similarity": min_similarity,
-                "cwd": cwd,
-            },
-            timeout=60.0,
-        )
-
-    async def search_tools(
-        self,
-        query: str,
-        top_k: int = 10,
-        min_similarity: float = 0.0,
-        server_name: str | None = None,
-        cwd: str | None = None,
-    ) -> dict[str, Any]:
-        """Search for tools using semantic similarity."""
-        return await self._request(
-            "POST",
-            "/api/mcp/tools/search",
-            json={
-                "query": query,
-                "top_k": top_k,
-                "min_similarity": min_similarity,
-                "server": server_name,
-                "cwd": cwd,
-            },
-            timeout=60.0,
-        )
-
-    async def add_mcp_server(
-        self,
-        name: str,
-        transport: str,
-        url: str | None = None,
-        headers: dict[str, str] | None = None,
-        command: str | None = None,
-        args: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        enabled: bool = True,
-    ) -> dict[str, Any]:
-        """Add a new MCP server to the daemon's configuration."""
-        return await self._request(
-            "POST",
-            "/api/mcp/servers",
-            json={
-                "name": name,
-                "transport": transport,
-                "url": url,
-                "headers": headers,
-                "command": command,
-                "args": args,
-                "env": env,
-                "enabled": enabled,
-            },
-        )
-
-    async def remove_mcp_server(self, name: str) -> dict[str, Any]:
-        """Remove an MCP server from the daemon's configuration."""
-        return await self._request("DELETE", f"/api/mcp/servers/{name}")
-
-    async def import_mcp_server(
-        self,
-        from_project: str | None = None,
-        servers: list[str] | None = None,
-        github_url: str | None = None,
-        query: str | None = None,
-    ) -> dict[str, Any]:
-        """Import MCP servers from various sources."""
-        return await self._request(
-            "POST",
-            "/api/mcp/servers/import",
-            json={
-                "from_project": from_project,
-                "servers": servers,
-                "github_url": github_url,
-                "query": query,
-            },
-        )
-
-    async def set_variable(
-        self,
-        name: str,
-        value: str | int | float | bool | None,
-        session_id: str,
-    ) -> dict[str, Any]:
-        """Set a session-scoped variable."""
-        return await self._request(
-            "POST",
-            "/api/workflows/variables/set",
-            json={"name": name, "value": value, "session_id": session_id},
-            session_id=session_id,
-        )
-
-    async def get_variable(
-        self,
-        name: str | None = None,
-        *,
-        session_id: str,
-    ) -> dict[str, Any]:
-        """Get session-scoped variable(s)."""
-        return await self._request(
-            "POST",
-            "/api/workflows/variables/get",
-            json={"name": name, "session_id": session_id},
-            session_id=session_id,
-        )
-
-    async def init_project(self, name: str, project_path: str | None = None) -> dict[str, Any]:
-        """Initialize a new Gobby project.
-
-        Note: Project initialization requires CLI access and cannot be done
-        via the MCP proxy. Use 'gobby init' command instead.
-        """
-        return {
-            "success": False,
-            "error": "Project initialization requires CLI access. Use 'gobby init' command instead.",
-        }
+def _server_dependencies() -> StdioServerDependencies:
+    return StdioServerDependencies(
+        load_config=load_config,
+        setup_internal_registries=setup_internal_registries,
+        build_gobby_instructions=build_gobby_instructions,
+        fast_mcp_factory=FastMCP,
+        proxy_factory=DaemonProxy,
+        register_proxy_tools=register_proxy_tools,
+    )
 
 
 def create_stdio_mcp_server() -> FastMCP:
     """Create stdio MCP server."""
-    # Load configuration
-    config = load_config()
+    return _create_stdio_mcp_server(deps=_server_dependencies())
 
-    # Initialize basic managers (mocked/simplified for this refactor example)
-    session_manager = None
-    memory_manager = None
 
-    # Setup internal registries using extracted function
-    _ = setup_internal_registries(
-        _config=config,
-        session_manager=session_manager,
-        memory_manager=memory_manager,
+def _daemon_dependencies() -> DaemonStartupDependencies:
+    return DaemonStartupDependencies(
+        load_config=load_config,
+        is_daemon_running=is_daemon_running,
+        check_daemon_http_health=check_daemon_http_health,
+        start_daemon_process=start_daemon_process,
+        get_daemon_pid=get_daemon_pid,
+        logger=logger,
     )
-
-    # Initialize MCP server and daemon proxy
-    mcp = FastMCP("gobby", instructions=build_gobby_instructions())
-    proxy = DaemonProxy(config.daemon_port)
-
-    register_proxy_tools(mcp, proxy)
-
-    # Strip null values from tool inputSchemas to prevent Jinja template
-    # errors in LMStudio with strict models (e.g., Nemotron Super).
-    # The MCP SDK's exclude_none doesn't recurse into raw dict fields.
-    for tool in mcp._tool_manager._tools.values():
-        if tool.parameters:
-            tool.parameters = _strip_none(tool.parameters)
-
-    return mcp
-
-
-def register_proxy_tools(mcp: FastMCP, proxy: DaemonProxy) -> None:
-    """Register proxy tools on the MCP server."""
-
-    @mcp.tool()
-    async def list_mcp_servers(session_id: str | None = None) -> dict[str, Any]:
-        """
-        List all MCP servers configured in the daemon.
-
-        Returns details about each MCP server including connection status,
-        available tools, and resources.
-
-        Returns:
-            Dict with servers list, total count, and connected count
-        """
-        if session_id:
-            return await proxy.list_mcp_servers(session_id=session_id)
-        return await proxy.list_mcp_servers()
-
-    @mcp.tool()
-    async def list_tools(server_name: str, session_id: str | None = None) -> dict[str, Any]:
-        """
-        List tools from MCP servers.
-
-        Use this to discover tools available on servers.
-
-        Args:
-            server_name: Server name (e.g., "context7", "supabase").
-                   Use list_mcp_servers() first to discover available servers.
-
-        Returns:
-            Dict with tool listings
-        """
-        if session_id:
-            return await proxy.list_tools(server_name, session_id=session_id)
-        return await proxy.list_tools(server_name)
-
-    @mcp.tool()
-    async def get_tool_schema(
-        server_name: str,
-        tool_name: str,
-        session_id: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Get full schema (inputSchema) for a specific MCP tool.
-
-        Use list_tools() first to discover available tools, then use this to get
-        full details before calling the tool.
-
-        Args:
-            server_name: Name of the MCP server (e.g., "context7", "supabase")
-            tool_name: Name of the tool (e.g., "get-library-docs", "list_tables")
-
-        Returns:
-            Dict with tool name, description, and full inputSchema
-        """
-        if session_id:
-            return await proxy.get_tool_schema(server_name, tool_name, session_id=session_id)
-        return await proxy.get_tool_schema(server_name, tool_name)
-
-    @mcp.tool()
-    async def call_tool(
-        server_name: str | None = None,
-        tool_name: str | None = None,
-        arguments: str | dict[str, Any] | None = None,
-        args: str | dict[str, Any] | None = None,
-        session_id: str | None = None,
-        project_id: str | None = None,
-        preflight_enabled: bool = True,
-        ctx: Context[Any, Any, Any] | None = None,
-    ) -> dict[str, Any]:
-        """
-        Execute a tool on a connected MCP server.
-
-        This is the primary way to interact with MCP servers (Supabase, memory, etc.)
-        through the Gobby daemon.
-
-        Args:
-            server_name: Name of the MCP server
-            tool_name: Name of the specific tool to execute
-            arguments: Dictionary of arguments required by the tool (optional)
-            args: Alias for arguments. Accepts dict or JSON string. Use 'arguments' preferred.
-            session_id: Wrapper context (accepts #N, N, UUID, or prefix).
-                Propagated to the daemon via X-Gobby-Session-Id header and used
-                for Gobby context/workflow resolution. Same-repo calls can rely
-                on wrapper or ambient session context; if the target schema
-                requires session_id, the resolved UUID is supplied to the target
-                arguments before validation. Use arguments.session_id only to
-                target a different session. Local #N refs resolve in the caller
-                project; cross-project target sessions should use UUIDs.
-            project_id: Optional project UUID or name for cross-project tool calls.
-            preflight_enabled: Whether to perform daemon health preflight before proxying.
-
-        Returns:
-            Dictionary with success status and tool execution result
-        """
-        try:
-            canonical = canonicalize_call_tool_wrapper(
-                server_name=server_name,
-                tool_name=tool_name,
-                arguments=arguments,
-                args=args,
-                session_id=session_id,
-                project_id=project_id,
-            )
-        except CallToolWrapperInputError as exc:
-            return {"success": False, "error": str(exc)}
-
-        server_name = canonical.server_name
-        tool_name = canonical.tool_name
-        final_args = canonical.arguments
-        session_id = canonical.session_id
-        project_id = canonical.project_id
-
-        if not server_name or not tool_name:
-            return {
-                "success": False,
-                "error": "Missing required parameters: server_name, tool_name",
-            }
-
-        if stale_result := mcp_wrapper_source_stale_result(tool_name):
-            return stale_result
-
-        guard = prepare_client_guard(tool_name=tool_name, arguments=final_args)
-        final_args = guard.arguments
-
-        call_kwargs: dict[str, Any] = {}
-        if project_id:
-            call_kwargs["project_id"] = project_id
-        if session_id:
-            call_kwargs["session_id"] = session_id
-
-        result = await call_with_wait_heartbeat(
-            proxy.call_tool(
-                server_name,
-                tool_name,
-                final_args,
-                **call_kwargs,
-                preflight_enabled=preflight_enabled,
-            ),
-            ctx=ctx,
-            tool_name=tool_name,
-            timeout=guard.timeout,
-        )
-        if guard.wait_timeout_capped:
-            result["requested_timeout_seconds"] = guard.requested_timeout_seconds
-            result["effective_timeout_seconds"] = guard.effective_timeout_seconds
-            result["wait_timeout_capped_by_mcp_wrapper"] = True
-        return result
-
-    @mcp.tool()
-    async def recommend_tools(
-        task_description: str,
-        agent_id: str | None = None,
-        search_mode: str = "llm",
-        top_k: int = 10,
-        min_similarity: float = 0.3,
-    ) -> dict[str, Any]:
-        """
-        Get intelligent tool recommendations for a given task.
-
-        Args:
-            task_description: Description of what you're trying to accomplish
-            agent_id: Optional agent profile ID to filter tools by assigned permissions
-            search_mode: How to search - "llm" (default), "semantic", or "hybrid"
-            top_k: Maximum recommendations to return (semantic/hybrid modes)
-            min_similarity: Minimum similarity threshold (semantic/hybrid modes)
-
-        Returns:
-            Dict with tool recommendations and usage suggestions
-        """
-        import os
-
-        cwd = os.getcwd()
-        return await proxy.recommend_tools(
-            task_description,
-            agent_id,
-            search_mode=search_mode,
-            top_k=top_k,
-            min_similarity=min_similarity,
-            cwd=cwd,
-        )
-
-    @mcp.tool()
-    async def search_tools(
-        query: str,
-        top_k: int = 10,
-        min_similarity: float = 0.0,
-        server_name: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Search for tools using semantic similarity.
-
-        Uses embedding-based search to find tools matching a natural language query.
-        Requires embeddings to be generated first (happens automatically on first search).
-
-        Args:
-            query: Natural language description of the tool you need
-            top_k: Maximum number of results to return (default: 10)
-            min_similarity: Minimum similarity threshold 0-1 (default: 0.0)
-            server_name: Optional server name to filter results
-
-        Returns:
-            Dict with matching tools sorted by similarity
-        """
-        import os
-
-        cwd = os.getcwd()
-        return await proxy.search_tools(
-            query,
-            top_k=top_k,
-            min_similarity=min_similarity,
-            server_name=server_name,
-            cwd=cwd,
-        )
-
-    @mcp.tool()
-    async def add_mcp_server(
-        name: str,
-        transport: str,
-        url: str | None = None,
-        headers: dict[str, str] | None = None,
-        command: str | None = None,
-        args: list[str] | None = None,
-        env: dict[str, str] | None = None,
-        enabled: bool = True,
-    ) -> dict[str, Any]:
-        """
-        Add a new MCP server to the daemon's configuration.
-
-        Args:
-            name: Unique server name
-            transport: Transport type - "http", "stdio", or "websocket"
-            url: Server URL (required for http/websocket)
-            headers: Custom HTTP headers (optional)
-            command: Command to run (required for stdio)
-            args: Command arguments (optional for stdio)
-            env: Environment variables (optional for stdio)
-            enabled: Whether server is enabled (default: True)
-
-        Returns:
-            Result dict with success status
-        """
-        return await proxy.add_mcp_server(
-            name=name,
-            transport=transport,
-            url=url,
-            headers=headers,
-            command=command,
-            args=args,
-            env=env,
-            enabled=enabled,
-        )
-
-    @mcp.tool()
-    async def remove_mcp_server(name: str) -> dict[str, Any]:
-        """
-        Remove an MCP server from the daemon's configuration.
-
-        Args:
-            name: Server name to remove
-
-        Returns:
-            Result dict with success status
-        """
-        return await proxy.remove_mcp_server(name)
-
-    @mcp.tool()
-    async def import_mcp_server(
-        from_project: str | None = None,
-        servers: list[str] | None = None,
-        github_url: str | None = None,
-        query: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Import MCP servers from various sources.
-
-        Args:
-            from_project: Source project name to import servers from
-            servers: Optional list of specific server names to import
-            github_url: GitHub repository URL to parse for MCP server config
-            query: Natural language search query
-
-        Returns:
-            Result dict with imported servers or config to fill in
-        """
-        return await proxy.import_mcp_server(
-            from_project=from_project,
-            servers=servers,
-            github_url=github_url,
-            query=query,
-        )
-
-    @mcp.tool()
-    async def init_project(
-        name: str,
-        project_path: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Initialize a new Gobby project.
-
-        Note: Project initialization requires CLI access and cannot be done
-        via the MCP proxy. Use 'gobby init' command instead.
-
-        Args:
-            name: Project name
-            project_path: Path to project directory (optional)
-
-        Returns:
-            Result dict with error (CLI access required)
-        """
-        return await proxy.init_project(name, project_path)
-
-    @mcp.tool()
-    async def set_variable(
-        name: str,
-        value: str | int | float | bool | None,
-        session_id: str,
-    ) -> dict[str, Any]:
-        """
-        Set a session-scoped variable. Top-level shortcut — no progressive discovery needed.
-
-        Args:
-            name: Variable name
-            value: Variable value (string, number, boolean, or null)
-            session_id: Session ID (accepts #N, N, UUID, or prefix)
-
-        Returns:
-            Dict with ok status and stored value
-        """
-        return await proxy.set_variable(name=name, value=value, session_id=session_id)
-
-    @mcp.tool()
-    async def get_variable(
-        session_id: str,
-        name: str | None = None,
-    ) -> dict[str, Any]:
-        """
-        Get session-scoped variable(s). Top-level shortcut — no progressive discovery needed.
-
-        Args:
-            session_id: Session ID (accepts #N, N, UUID, or prefix)
-            name: Variable name (omit to get all variables)
-
-        Returns:
-            Dict with variable value(s)
-        """
-        return await proxy.get_variable(name=name, session_id=session_id)
 
 
 async def ensure_daemon_running() -> None:
     """Ensure the Gobby daemon is running and healthy."""
-    config = load_config()
-    port = config.daemon_port
-    ws_port = config.websocket.port
-
-    # Check if running
-    if is_daemon_running():
-        for attempt in range(DAEMON_HEALTH_ATTEMPTS):
-            if await check_daemon_http_health(port, timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS):
-                return
-            if attempt < DAEMON_HEALTH_ATTEMPTS - 1:
-                logger.warning(
-                    "Daemon health check failed "
-                    f"(attempt {attempt + 1}/{DAEMON_HEALTH_ATTEMPTS}), "
-                    f"retrying in {DAEMON_HEALTH_RETRY_DELAY_SECONDS:.1f}s...",
-                )
-                await asyncio.sleep(DAEMON_HEALTH_RETRY_DELAY_SECONDS)
-
-        pid = get_daemon_pid()
-        logger.error(
-            "Daemon is running but did not become healthy "
-            f"(pid={pid}, port={port}) after {DAEMON_HEALTH_ATTEMPTS} attempts. "
-            "Refusing to restart it from a stdio MCP client because that can interrupt "
-            "active dispatch agents.",
-        )
-        return
-    else:
-        if os.environ.get("GOBBY_AGENT_RUN_ID"):
-            logger.error(
-                "Daemon is not running for managed agent MCP client; refusing to auto-start "
-                "from an agent process.",
-            )
-            return
-
-        # Start
-        result = await start_daemon_process(port, ws_port)
-        if not result.get("success"):
-            logger.error(
-                f"Failed to start daemon: {result.get('error', 'unknown error')} (port={port}, ws_port={ws_port})",
-            )
-            return
-
-    # Wait for health
-    last_health_response = None
-    for _i in range(DAEMON_HEALTH_ATTEMPTS):
-        last_health_response = await check_daemon_http_health(
-            port,
-            timeout=DAEMON_HEALTH_CHECK_TIMEOUT_SECONDS,
-        )
-        if last_health_response:
-            return
-        await asyncio.sleep(DAEMON_HEALTH_RETRY_DELAY_SECONDS)
-
-    # Health check timed out
-    pid = get_daemon_pid()
-    logger.error(
-        "Daemon failed to become healthy after "
-        f"{DAEMON_HEALTH_ATTEMPTS} attempts "
-        f"(pid={pid}, port={port}, ws_port={ws_port}, last_health={last_health_response})",
-    )
-    return
+    await _ensure_daemon_running(deps=_daemon_dependencies())
 
 
 async def main() -> None:
     """Main entry point for stdio MCP server."""
-    # Ensure daemon is running first
-    await ensure_daemon_running()
-
-    # Create and run the MCP server
-    mcp = create_stdio_mcp_server()
-    await mcp.run_stdio_async()
+    await _daemon_main(deps=_daemon_dependencies(), create_server=create_stdio_mcp_server)
 
 
 if __name__ == "__main__":
