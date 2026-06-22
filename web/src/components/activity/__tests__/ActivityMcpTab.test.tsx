@@ -1,7 +1,7 @@
 import { useState, type ReactNode } from "react";
 import { render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { ActivityMcpTab, type ActivityMcpTabProps } from "../ActivityMcpTab";
 import {
@@ -113,6 +113,22 @@ function listItemFor(text: string) {
 describe("ActivityMcpTab", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL): Promise<Response> => {
+        if (String(input) === "/api/projects") {
+          return new Response(JSON.stringify([]), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+        throw new Error(`Unhandled fetch: ${String(input)}`);
+      }),
+    );
+  });
+
+  afterEach(() => {
+    vi.unstubAllGlobals();
   });
 
   it("renders a two-level server/tool tree and supports expansion", async () => {

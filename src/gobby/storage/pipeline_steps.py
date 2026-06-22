@@ -14,7 +14,7 @@ class PipelineStepStorageMixin:
     """Pipeline step execution CRUD and query methods."""
 
     db: HubDatabase
-    project_id: str
+    project_id: str | None
 
     def create_step_execution(
         self,

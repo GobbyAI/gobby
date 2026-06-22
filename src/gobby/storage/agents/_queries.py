@@ -270,7 +270,7 @@ class _AgentRunQueryMixin:
         sql = (
             "SELECT child_session_id FROM agent_runs "
             f"WHERE status = 'cancelled' AND child_session_id IS NOT NULL AND {recency_sql}"
-        )  # nosec B608 - recency_sql is selected by storage dialect.
+        )  # nosec B608 # recency_sql is selected by storage dialect.
         params: list[int | str] = [since_hours]
         if agent_name is not None:
             sql += " AND agent_name = %s"

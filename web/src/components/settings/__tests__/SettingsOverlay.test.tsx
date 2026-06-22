@@ -5,6 +5,7 @@ import {
   fireEvent,
   render,
   screen,
+  waitFor,
   within,
 } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -57,9 +58,13 @@ function Harness({ confirmDiscard, dirtySections = NO_DIRTY }: HarnessProps) {
   )
 }
 
-function openOverlay(): HTMLElement {
+async function openOverlay(): Promise<HTMLElement> {
   fireEvent.click(screen.getByRole('button', { name: 'Open settings' }))
-  return screen.getByRole('dialog')
+  const dialog = screen.getByRole('dialog')
+  await waitFor(() =>
+    expect(vi.mocked(globalThis.fetch).mock.calls.length).toBeGreaterThanOrEqual(7),
+  )
+  return dialog
 }
 
 function openSectionMenu(dialog: HTMLElement): void {
@@ -99,18 +104,18 @@ describe('SettingsOverlay', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('opens as a labelled modal dialog and moves focus inside it', () => {
+  it('opens as a labelled modal dialog and moves focus inside it', async () => {
     render(<Harness />)
-    const dialog = openOverlay()
+    const dialog = await openOverlay()
 
     expect(dialog).toHaveAttribute('aria-modal', 'true')
     expect(dialog).toHaveAccessibleName('Settings')
     expect(dialog.contains(document.activeElement)).toBe(true)
   })
 
-  it('traps Tab focus within the dialog', () => {
+  it('traps Tab focus within the dialog', async () => {
     render(<Harness />)
-    const dialog = openOverlay()
+    const dialog = await openOverlay()
     const focusables = Array.from(
       dialog.querySelectorAll<HTMLElement>(
         'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])',
@@ -130,21 +135,21 @@ describe('SettingsOverlay', () => {
     expect(document.activeElement).toBe(last)
   })
 
-  it('closes on Escape and restores focus to the trigger', () => {
+  it('closes on Escape and restores focus to the trigger', async () => {
     render(<Harness />)
     const trigger = screen.getByRole('button', { name: 'Open settings' })
     trigger.focus()
 
-    const dialog = openOverlay()
+    const dialog = await openOverlay()
     fireEvent.keyDown(dialog, { key: 'Escape' })
 
     expect(screen.queryByRole('dialog')).toBeNull()
     expect(document.activeElement).toBe(trigger)
   })
 
-  it('ignores Escape already consumed by an inner control (defaultPrevented)', () => {
+  it('ignores Escape already consumed by an inner control (defaultPrevented)', async () => {
     render(<Harness />)
-    const dialog = openOverlay()
+    const dialog = await openOverlay()
 
     const consumed = createEvent.keyDown(dialog, { key: 'Escape' })
     consumed.preventDefault()
@@ -155,21 +160,21 @@ describe('SettingsOverlay', () => {
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('closes when the backdrop is clicked', () => {
+  it('closes when the backdrop is clicked', async () => {
     const { container } = render(<Harness />)
-    openOverlay()
+    await openOverlay()
     const backdrop = container.querySelector('.settings-overlay-shell__backdrop')
     expect(backdrop).not.toBeNull()
     fireEvent.click(backdrop as Element)
     expect(screen.queryByRole('dialog')).toBeNull()
   })
 
-  it('preserves sibling chat state across open and close', () => {
+  it('preserves sibling chat state across open and close', async () => {
     render(<Harness />)
     const chat = screen.getByLabelText('chat draft') as HTMLInputElement
     fireEvent.change(chat, { target: { value: 'unsent message' } })
 
-    const dialog = openOverlay()
+    const dialog = await openOverlay()
     fireEvent.keyDown(dialog, { key: 'Escape' })
 
     expect((screen.getByLabelText('chat draft') as HTMLInputElement).value).toBe(
@@ -179,9 +184,9 @@ describe('SettingsOverlay', () => {
 })
 
 describe('SettingsOverlay section dropdown', () => {
-  it('lists every audit-IA section in the dropdown with the active one selected', () => {
+  it('lists every audit-IA section in the dropdown with the active one selected', async () => {
     render(<Harness />)
-    const dialog = openOverlay()
+    const dialog = await openOverlay()
     const trigger = dialog.querySelector<HTMLElement>('[aria-haspopup="listbox"]')
     expect(trigger).not.toBeNull()
     expect(trigger).toHaveAttribute('aria-expanded', 'false')
@@ -204,9 +209,9 @@ describe('SettingsOverlay section dropdown', () => {
     expect(selected?.textContent).toBe(defaultSection?.label)
   })
 
-  it('switches the content pane when a section is selected', () => {
+  it('switches the content pane when a section is selected', async () => {
     render(<Harness />)
-    const dialog = openOverlay()
+    const dialog = await openOverlay()
     selectSection(dialog, 'Observability')
     expect(
       within(dialog).getByRole('heading', { name: 'Observability' }),
@@ -215,12 +220,12 @@ describe('SettingsOverlay section dropdown', () => {
 })
 
 describe('useSettingsOverlay dirty-section guard', () => {
-  it('blocks leaving a dirty section when discard is declined', () => {
+  it('blocks leaving a dirty section when discard is declined', async () => {
     const confirmDiscard = vi.fn(() => false)
     render(
       <Harness confirmDiscard={confirmDiscard} dirtySections={[DEFAULT_SETTINGS_SECTION]} />,
     )
-    const dialog = openOverlay()
+    const dialog = await openOverlay()
     selectSection(dialog, 'Observability')
 
     expect(confirmDiscard).toHaveBeenCalledTimes(1)
@@ -232,12 +237,12 @@ describe('useSettingsOverlay dirty-section guard', () => {
     ).not.toBeNull()
   })
 
-  it('allows leaving a dirty section when discard is confirmed', () => {
+  it('allows leaving a dirty section when discard is confirmed', async () => {
     const confirmDiscard = vi.fn(() => true)
     render(
       <Harness confirmDiscard={confirmDiscard} dirtySections={[DEFAULT_SETTINGS_SECTION]} />,
     )
-    const dialog = openOverlay()
+    const dialog = await openOverlay()
     selectSection(dialog, 'Observability')
 
     expect(confirmDiscard).toHaveBeenCalledTimes(1)

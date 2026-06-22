@@ -624,17 +624,18 @@ async def test_failed_promote_rolls_back_scope_and_resyncs_secondary_scope() -> 
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
 
-    with pytest.raises(OSError, match="stamp failed"):
-        await apply_dream_plan(
-            memory_manager=manager,
-            store=store,
-            run_id=run_id,
-            actions=[DreamAction(action="promote", memory_id="promote-me", confidence=0.9)],
-            candidates=[_candidate("promote-me")],
-            dry_run=False,
-            reconcile_after_apply=False,
-        )
+    result = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[DreamAction(action="promote", memory_id="promote-me", confidence=0.9)],
+        candidates=[_candidate("promote-me")],
+        dry_run=False,
+        reconcile_after_apply=False,
+    )
 
+    assert result["errors"] == 1
+    assert result["error_details"][0]["error"] == "stamp failed"
     assert db.memories["promote-me"]["project_id"] == "proj-1"
     manager.sync_memory_scope_indices.assert_any_await("promote-me", None)
     manager.sync_memory_scope_indices.assert_any_await("promote-me", "proj-1")
@@ -651,11 +652,8 @@ async def test_failed_promote_logs_rollback_failure_without_masking_original(
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
 
-    with (
-        patch.object(store, "restore_memory_row", side_effect=RuntimeError("rollback failed")),
-        pytest.raises(OSError, match="stamp failed"),
-    ):
-        await apply_dream_plan(
+    with patch.object(store, "restore_memory_row", side_effect=RuntimeError("rollback failed")):
+        result = await apply_dream_plan(
             memory_manager=manager,
             store=store,
             run_id=run_id,
@@ -665,6 +663,8 @@ async def test_failed_promote_logs_rollback_failure_without_masking_original(
             reconcile_after_apply=False,
         )
 
+    assert result["errors"] == 1
+    assert result["error_details"][0]["error"] == "stamp failed"
     assert "Memory dream promote rollback restore failed: rollback failed" in caplog.text
 
 
@@ -795,23 +795,24 @@ async def test_merge_rolls_back_keeper_update_when_duplicate_delete_fails() -> N
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
 
-    with pytest.raises(OSError, match="delete failed"):
-        await apply_dream_plan(
-            memory_manager=manager,
-            store=store,
-            run_id=run_id,
-            actions=[
-                DreamAction(
-                    action="merge",
-                    memory_ids=["merge-keep", "merge-drop"],
-                    content="merged",
-                )
-            ],
-            candidates=[],
-            dry_run=False,
-            reconcile_after_apply=False,
-        )
+    result = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[
+            DreamAction(
+                action="merge",
+                memory_ids=["merge-keep", "merge-drop"],
+                content="merged",
+            )
+        ],
+        candidates=[],
+        dry_run=False,
+        reconcile_after_apply=False,
+    )
 
+    assert result["errors"] == 1
+    assert result["error_details"][0]["error"] == "delete failed"
     assert db.memories["merge-keep"]["content"] == "old"
     assert db.memories["merge-drop"]["content"] == "old"
     assert store.list_snapshots(run_id) == []
@@ -834,17 +835,18 @@ async def test_supersede_deletes_created_replacement_when_original_delete_fails(
     store = MemoryDreamStore(db)
     run_id = store.create_run(project_id="proj-1", dry_run=False, options={})
 
-    with pytest.raises(OSError, match="delete failed"):
-        await apply_dream_plan(
-            memory_manager=manager,
-            store=store,
-            run_id=run_id,
-            actions=[DreamAction(action="supersede", memory_id="supersede-me", content="new")],
-            candidates=[_candidate("supersede-me")],
-            dry_run=False,
-            reconcile_after_apply=False,
-        )
+    result = await apply_dream_plan(
+        memory_manager=manager,
+        store=store,
+        run_id=run_id,
+        actions=[DreamAction(action="supersede", memory_id="supersede-me", content="new")],
+        candidates=[_candidate("supersede-me")],
+        dry_run=False,
+        reconcile_after_apply=False,
+    )
 
+    assert result["errors"] == 1
+    assert result["error_details"][0]["error"] == "delete failed"
     assert set(db.memories) == {"supersede-me"}
     assert db.memories["supersede-me"]["content"] == "old"
 

@@ -878,6 +878,7 @@ class TestWorktreeIsolationHandler:
 
         await handler.cleanup_environment(config)
 
+        assert handler._partial_worktrees == {}
         mock_git_manager.delete_worktree.assert_called_once()
         mock_worktree_storage.delete.assert_called_once_with("wt-123")
 
@@ -917,7 +918,10 @@ class TestWorktreeIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        await handler.prepare_environment(config)
+        context = await handler.prepare_environment(config)
+
+        assert context.isolation_type == "worktree"
+        assert context.worktree_id == "wt-123"
 
         await handler.cleanup_environment(config)
 
@@ -1350,6 +1354,7 @@ class TestCloneIsolationHandler:
 
         await handler.cleanup_environment(config)
 
+        assert handler._partial_clones == {}
         mock_clone_manager.delete_clone.assert_called_once()
         mock_clone_storage.delete.assert_called_once_with("clone-123")
 
@@ -1386,7 +1391,10 @@ class TestCloneIsolationHandler:
             parent_session_id="sess-456",
         )
 
-        await handler.prepare_environment(config)
+        context = await handler.prepare_environment(config)
+
+        assert context.isolation_type == "clone"
+        assert context.clone_id == "clone-123"
 
         await handler.cleanup_environment(config)
 

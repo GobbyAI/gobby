@@ -1095,7 +1095,7 @@ class TestCodexAppServerClientRunTurn:
 
             assert (await anext(stream))["type"] == "turn/created"
             pending_event = asyncio.create_task(anext(stream))
-            await asyncio.sleep(0)
+            await asyncio.wait({pending_event}, timeout=0)
 
             pending_event.cancel()
 

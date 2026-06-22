@@ -108,6 +108,7 @@ describe("TasksTab", () => {
   });
 
   it("surfaces create task API errors in the task alert banner", async () => {
+    const consoleError = vi.spyOn(console, "error").mockImplementation(() => {});
     mockFetch.mockJsonResponse(
       "/api/tasks",
       { detail: "Task category is required" },
@@ -136,6 +137,7 @@ describe("TasksTab", () => {
         "Task category is required",
       );
     });
+    expect(consoleError).toHaveBeenCalled();
   });
 
   it("separates review-rejected tasks from ordinary ready tasks", async () => {

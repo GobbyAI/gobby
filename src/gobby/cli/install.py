@@ -67,6 +67,7 @@ from .installers import (
     uninstall_claude,
     uninstall_codex,
     uninstall_droid,
+    uninstall_falkordb,
     uninstall_gemini,
     uninstall_grok,
     uninstall_qwen,
@@ -752,6 +753,13 @@ def install(
     help="Uninstall Qwen CLI hooks only",
 )
 @click.option(
+    "--falkordb",
+    "falkordb_flag",
+    is_flag=True,
+    default=False,
+    help="Uninstall the FalkorDB service only",
+)
+@click.option(
     "--all",
     "all_flag",
     is_flag=True,
@@ -788,6 +796,7 @@ def uninstall(
     codex_flag: bool,
     droid_flag: bool,
     qwen_flag: bool,
+    falkordb_flag: bool,
     all_flag: bool,
     project_flag: bool,
     working_dir: Path | None,
@@ -809,6 +818,7 @@ def uninstall(
         and not qwen_flag
         and not codex_flag
         and not droid_flag
+        and not falkordb_flag
         and not all_flag
     ):
         all_flag = True
@@ -883,7 +893,10 @@ def uninstall(
         click.echo(f"\nScope: Project ({project_path})")
     else:
         click.echo("\nScope: Global")
-    click.echo(f"Targets to uninstall: {', '.join(clis_to_uninstall)}")
+    targets = [*clis_to_uninstall]
+    if falkordb_flag:
+        targets.append("falkordb")
+    click.echo(f"Targets to uninstall: {', '.join(targets)}")
     click.echo("")
 
     # For global uninstall, use Path.home() so uninstallers find ~/.{cli}/
@@ -913,6 +926,9 @@ def uninstall(
                 results,
                 **uninstall_kwargs,
             )
+
+    if falkordb_flag:
+        results["falkordb"] = uninstall_falkordb()
 
     # Remove global hooks directory for global uninstall
     if not project_flag and all_flag:

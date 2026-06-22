@@ -17,11 +17,19 @@ class PipelineExecutionStorageMixin:
     """Pipeline execution CRUD, queries, search, and recovery methods."""
 
     db: HubDatabase
-    project_id: str
+    project_id: str | None
 
     def _project_predicate(self, column_name: str = "project_id") -> tuple[str, tuple[str, ...]]:
         """Return the project predicate for internally selected columns."""
+        if self.project_id is None:
+            return "1 = 1", ()
         return f"{column_name} = %s", (self.project_id,)
+
+    def _require_project_id(self) -> str:
+        """Return project id for write paths that must be project-scoped."""
+        if self.project_id is None:
+            raise ValueError("project_id is required")
+        return self.project_id
 
     def create_execution(
         self,
@@ -45,6 +53,7 @@ class PipelineExecutionStorageMixin:
         Returns:
             Created PipelineExecution instance
         """
+        project_id = self._require_project_id()
         execution_id = generate_prefixed_id("pe")
         now = datetime.now(UTC).isoformat()
 
@@ -61,7 +70,7 @@ class PipelineExecutionStorageMixin:
                 (
                     execution_id,
                     pipeline_name,
-                    self.project_id,
+                    project_id,
                     ExecutionStatus.PENDING.value,
                     inputs_json,
                     session_id,
@@ -76,7 +85,7 @@ class PipelineExecutionStorageMixin:
         return PipelineExecution(
             id=execution_id,
             pipeline_name=pipeline_name,
-            project_id=self.project_id,
+            project_id=project_id,
             status=ExecutionStatus.PENDING,
             inputs_json=inputs_json,
             session_id=session_id,

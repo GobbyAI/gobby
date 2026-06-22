@@ -343,6 +343,7 @@ class TestAttachedPlanApprovalClaude:
         tmux_manager.capture_pane.assert_awaited_once()
         # Bare confirm menu activates on the digit alone -- no trailing Enter.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "2", literal=True)
+        assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
             "type": "plan_approval_dispatched",
@@ -351,7 +352,6 @@ class TestAttachedPlanApprovalClaude:
             "option_id": REQUEST_CHANGES_OPTION_ID,
             "ok": True,
         }
-        server._send_error.assert_not_awaited()
         server._send_error.assert_not_awaited()
 
     @pytest.mark.asyncio
@@ -437,6 +437,7 @@ class TestAttachedPlanApprovalCodex:
         tmux_manager.capture_pane.assert_awaited_once()
         # request-changes maps to "3" (No, stay in Plan mode), digit only.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "3", literal=True)
+        assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
             "type": "plan_approval_dispatched",
@@ -527,6 +528,7 @@ class TestAttachedPlanApprovalDroid:
         tmux_manager.capture_pane.assert_awaited_once()
         # request-changes maps to "4" (No and explain why), digit only.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "4", literal=True)
+        assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
             "type": "plan_approval_dispatched",
@@ -619,6 +621,7 @@ class TestAttachedPlanApprovalGemini:
         # request-changes is the named Esc key (literal=False) -- the reject digit
         # varies by tool type, but "(esc)" always rejects.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "Escape", literal=False)
+        assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
             "type": "plan_approval_dispatched",
@@ -712,6 +715,7 @@ class TestAttachedPlanApprovalGrok:
         # request-changes is the stable reject digit "4" (literal) -- grok's "No,
         # reject" item is identical across menu shapes; Esc only unselects.
         tmux_manager.send_keys.assert_awaited_once_with("%11", "4", literal=True)
+        assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
             "type": "plan_approval_dispatched",
@@ -804,6 +808,7 @@ class TestAttachedPlanApprovalQwen:
         # request-changes is the named Esc key (literal=False) -- the reject digit
         # varies by tool type, but "(esc)" always rejects (matches gemini).
         tmux_manager.send_keys.assert_awaited_once_with("%11", "Escape", literal=False)
+        assert ws.send.await_count == 1
         msg = json.loads(ws.send.await_args.args[0])
         assert msg == {
             "type": "plan_approval_dispatched",
@@ -862,4 +867,5 @@ class TestPlanApprovalRouting:
         # Routing went to the conversation/recovery branch, not the attached one.
         recovered.assert_awaited_once()
         assert recovered.await_args.args[2] == "conv-1"
+        assert ws.send.await_count == 0
         attached.assert_not_awaited()

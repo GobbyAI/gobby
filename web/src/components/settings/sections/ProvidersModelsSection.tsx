@@ -141,6 +141,7 @@ function ModelProviderControls({
   const [catalog, setCatalog] = useState<ProviderModelEntry[]>([])
 
   useEffect(() => {
+    if (!clientSettings || !providerSelection) return undefined
     let cancelled = false
     void fetchProviderModelCatalog().then((entries) => {
       if (!cancelled) setCatalog(entries)
@@ -148,7 +149,7 @@ function ModelProviderControls({
     return () => {
       cancelled = true
     }
-  }, [])
+  }, [clientSettings, providerSelection])
 
   if (!clientSettings || !providerSelection) {
     return (

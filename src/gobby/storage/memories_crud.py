@@ -69,8 +69,12 @@ class MemoryCrudMixin(MemoryStoreBase):
                 memory_id = legacy_memory_id
             else:
                 legacy_row = conn.execute(
-                    "SELECT 1 FROM memories WHERE id = %s",
-                    (legacy_memory_id,),
+                    """
+                    SELECT 1 FROM memories
+                     WHERE id = %s
+                       AND project_id IS NOT DISTINCT FROM %s
+                    """,
+                    (legacy_memory_id, project_id),
                 ).fetchone()
                 if legacy_row is not None:
                     memory_id = legacy_memory_id

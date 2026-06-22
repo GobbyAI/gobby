@@ -205,6 +205,9 @@ class TestCLISession:
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
             await session.start()
 
+        assert session._process is mock_process
+        assert mock_process.pid == 12345
+
         with patch("gobby.llm.claude_cli._signal_process_group", return_value=True) as signal_group:
             await session.interrupt()
 
@@ -247,6 +250,9 @@ class TestCLISession:
 
         with patch("asyncio.create_subprocess_exec", return_value=mock_process):
             await session.start()
+
+        assert session._process is mock_process
+        assert mock_process.pid == 12345
 
         with patch("gobby.llm.claude_cli._signal_process_group", return_value=True) as signal_group:
             await session.stop()

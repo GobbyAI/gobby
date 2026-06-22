@@ -182,7 +182,7 @@ def has_holistic_ancestor_gate(
            AND current_stage.stage_name = %s
            AND current_stage.state IN ({state_placeholders})
          LIMIT 1
-        """,  # nosec B608 - placeholders are generated from an internal fixed-size state set.
+        """,  # nosec B608 # placeholders are generated from an internal fixed-size state set.
         (task.id, HOLISTIC_QA_STAGE, *gate_states),
     )
     return row is not None

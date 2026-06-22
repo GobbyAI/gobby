@@ -147,7 +147,10 @@ def canonicalize_call_tool_wrapper(
 
     if (
         isinstance(canonical_arguments, dict)
-        and wrapper_route_from_nested
+        and (
+            wrapper_route_from_nested
+            or (complete_top_level_route and nested_has_server_name and nested_has_tool_name)
+        )
         and not unwrapped_nested_arguments
     ):
         for field in CALL_TOOL_WRAPPER_FIELDS:

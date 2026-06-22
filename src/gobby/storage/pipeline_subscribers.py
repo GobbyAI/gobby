@@ -9,7 +9,7 @@ class PipelineCompletionSubscriberMixin:
     """Completion subscriber CRUD methods."""
 
     db: HubDatabase
-    project_id: str
+    project_id: str | None
 
     def add_completion_subscriber(self, completion_id: str, session_id: str) -> None:
         """Add a subscriber for a completion event (idempotent).

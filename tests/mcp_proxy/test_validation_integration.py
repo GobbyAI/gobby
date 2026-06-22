@@ -112,6 +112,9 @@ def _seed_session_context() -> Generator:
 def mock_task_manager():
     manager = MagicMock(spec=LocalTaskManager)
     manager.db = MagicMock()  # Needed for dep_manager init
+    conn = MagicMock()
+    conn.execute.return_value.fetchone.return_value = None
+    manager.db.transaction.return_value.__enter__.return_value = conn
     return manager
 
 
@@ -1351,8 +1354,14 @@ async def test_close_task_commit_diff_excludes_uncommitted_changes(
             task_validator=mock_task_validator,
         )
 
-        await registry.call("close_task", {"task_id": "t1", "changes_summary": "test changes"})
+        result = await registry.call(
+            "close_task",
+            {"task_id": "t1", "changes_summary": "test changes"},
+        )
 
+        assert result == {"success": True}
+        changes_summary = mock_task_validator.validate_task.call_args.kwargs["changes_summary"]
+        assert "Commit-based diff (1 commits, 5 files):" in changes_summary
         mock_diff.assert_called_once_with(
             task_id="t1",
             task_manager=mock_task_manager,

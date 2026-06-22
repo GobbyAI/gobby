@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from uuid import uuid4
 
-from gobby.agents.kill import kill_agent
+from gobby.agents import kill as agent_kill
 from gobby.agents.sandbox import web_chat_sandbox_config, web_chat_sandbox_policy_hash
 from gobby.servers.websocket.db import run_db
 from gobby.servers.websocket.handlers.session_observe_support import (
@@ -19,7 +19,7 @@ from gobby.servers.websocket.handlers.session_observe_support import (
     _resolve_requested_fallback_context,
 )
 from gobby.sessions.transcript_archive import restore_transcript
-from gobby.storage.agents import LocalAgentRunManager
+from gobby.storage import agents as agent_storage
 
 if TYPE_CHECKING:
     from gobby.servers.websocket.session_control import SessionControlMixin
@@ -46,11 +46,11 @@ async def _release_source_session(
 
     if session_manager:
         try:
-            arm = LocalAgentRunManager(session_manager.db)
+            arm = agent_storage.LocalAgentRunManager(session_manager.db)
             run = arm.get_by_session(source_session_id)
             if run:
                 logger.info("Killing agent %s before resume", run.id)
-                await kill_agent(run, session_manager.db, close_terminal=True)
+                await agent_kill.kill_agent(run, session_manager.db, close_terminal=True)
                 killed = True
                 await asyncio.sleep(_POST_KILL_SETTLE_SECONDS)
         except Exception as exc:
@@ -109,7 +109,7 @@ async def handle_continue_in_chat(
         return
     requested_conversation_id = requested_conversation_id or str(uuid4())
     conversation_id = requested_conversation_id
-    project_id = _as_str(data.get("project_id"))
+    requested_project_id = _as_str(data.get("project_id"))
     target_provider = _as_str(data.get("provider"))
     target_model = _as_str(data.get("model"))
     target_reasoning_effort = _as_str(data.get("reasoning_effort"))
@@ -135,8 +135,7 @@ async def handle_continue_in_chat(
             code="NOT_FOUND",
         )
         return
-    if project_id is None:
-        project_id = source_session.project_id
+    project_id = _as_str(getattr(source_session, "project_id", None)) or requested_project_id
 
     resume_in_place = bool(source_session and _is_terminal_session(source_session))
     if resume_in_place:

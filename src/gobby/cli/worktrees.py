@@ -140,7 +140,11 @@ def create_worktree(
         if str(e).startswith("Cannot connect to Gobby daemon"):
             e.show()
             return
-        raise
+        e.show()
+        raise SystemExit(1) from e
+    except Exception as e:
+        click.ClickException(str(e)).show()
+        raise SystemExit(1) from e
 
     if json_format:
         click.echo(json.dumps(result, indent=2, default=str))

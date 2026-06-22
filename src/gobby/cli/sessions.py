@@ -190,7 +190,8 @@ def show_session(session_id: str, json_format: bool) -> None:
         session = manager.get(session_id)
 
     if not session:
-        raise click.ClickException(f"Session not found: {session_id}")
+        click.echo(f"Session not found: {session_id}", err=True)
+        return
 
     if json_format:
         click.echo(json.dumps(session.to_dict(), indent=2, default=str))
@@ -438,7 +439,8 @@ def create_handoff(
                 raise SystemExit(1) from e
             session = manager.get(session_id)
             if not session:
-                raise click.ClickException(f"Session not found: {session_id}")
+                click.echo(f"Session not found: {session_id}", err=True)
+                return
         else:
             # Get most recent active session
             try:
@@ -447,7 +449,8 @@ def create_handoff(
                 raise SystemExit(1) from e
             session = manager.get(session_id)
             if not session:
-                raise click.ClickException(f"Session not found: {session_id}")
+                click.echo(f"Session not found: {session_id}", err=True)
+                return
 
     # Check for transcript
     if not session.transcript_path:

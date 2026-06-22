@@ -127,6 +127,13 @@ function renderSection(ctx: SettingsSectionContextValue) {
   )
 }
 
+async function waitForProviderCatalog() {
+  const provider = screen.getByLabelText('Default provider') as HTMLSelectElement
+  await waitFor(() =>
+    expect(provider.querySelector('option[value="codex"]')).not.toBeNull(),
+  )
+}
+
 describe('ProvidersModelsSection', () => {
   it('wires the live provider and model selects to App state and client settings', async () => {
     const ctx = makeContext()
@@ -135,9 +142,7 @@ describe('ProvidersModelsSection', () => {
     const provider = screen.getByLabelText('Default provider') as HTMLSelectElement
     expect(provider).toHaveValue('claude')
     // Provider options derive from the (async) catalog.
-    await waitFor(() =>
-      expect(provider.querySelector('option[value="codex"]')).not.toBeNull(),
-    )
+    await waitForProviderCatalog()
     fireEvent.change(provider, { target: { value: 'codex' } })
     expect(ctx.providerSelection?.onSelectProvider).toHaveBeenCalledWith('codex')
 
@@ -145,8 +150,9 @@ describe('ProvidersModelsSection', () => {
     expect(screen.getByLabelText('Default model')).toHaveValue('opus')
   })
 
-  it('renders a feature profile select bound to nested config with enum options', () => {
+  it('renders a feature profile select bound to nested config with enum options', async () => {
     renderSection(makeContext())
+    await waitForProviderCatalog()
 
     const profile = screen.getByLabelText('Tool recommendation profile')
     // Proves nested configValues are read by dotted path (pickPaths traversal).
@@ -154,8 +160,9 @@ describe('ProvidersModelsSection', () => {
     expect(within(profile).getAllByRole('option')).toHaveLength(3)
   })
 
-  it('reads feature candidates, toggles, generation numbers, and maps from nested config', () => {
+  it('reads feature candidates, toggles, generation numbers, and maps from nested config', async () => {
     renderSection(makeContext())
+    await waitForProviderCatalog()
 
     expect(screen.getByLabelText('Tool recommendation candidates item 1')).toHaveValue(
       'claude/sonnet',

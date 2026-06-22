@@ -28,6 +28,12 @@ UV_EXTRA_FLAGS=()
 if [ "${GOBBY_UV_ALL_EXTRAS:-}" = "1" ]; then
     UV_EXTRA_FLAGS=(--all-extras)
 fi
+PIP_AUDIT_IGNORE_ARGS=(
+    # Keep local reports aligned with .github/workflows/ci.yml no-fix advisories.
+    --ignore-vuln CVE-2025-69872
+    --ignore-vuln CVE-2026-4539
+    --ignore-vuln CVE-2025-3000
+)
 POSTGRES_SKIP_REASONS=(
     "DATABASE_URL or configured bootstrap database_url is required"
     "PostgreSQL DSN required for hub runtime surface tests"
@@ -245,7 +251,7 @@ echo ""
 
 # pip-audit - dependency CVE scanning
 echo ">>> Running pip-audit..."
-if uv_run pip-audit 2>&1 | tee "$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"; then
+if uv_run pip-audit "${PIP_AUDIT_IGNORE_ARGS[@]}" 2>&1 | tee "$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"; then
     echo "✓ pip-audit passed"
 else
     echo "✗ pip-audit failed"
@@ -312,7 +318,7 @@ echo ""
 # CodeRabbit - AI code review report (informational, not a gate)
 echo ">>> Running coderabbit review..."
 if command -v coderabbit &> /dev/null; then
-    coderabbit review --prompt-only --type all > "$REPORTS_DIR/coderabbit-$TIMESTAMP.md" 2>&1
+    coderabbit review --agent --type all > "$REPORTS_DIR/coderabbit-$TIMESTAMP.md" 2>&1
     echo "✓ CodeRabbit report saved to $REPORTS_DIR/coderabbit-$TIMESTAMP.md"
 else
     echo "⊘ CodeRabbit not installed, skipping"

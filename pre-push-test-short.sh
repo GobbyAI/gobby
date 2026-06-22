@@ -19,6 +19,12 @@ UV_EXTRA_FLAGS=()
 if [ "${GOBBY_UV_ALL_EXTRAS:-}" = "1" ]; then
     UV_EXTRA_FLAGS=(--all-extras)
 fi
+PIP_AUDIT_IGNORE_ARGS=(
+    # Keep local reports aligned with .github/workflows/ci.yml no-fix advisories.
+    --ignore-vuln CVE-2025-69872
+    --ignore-vuln CVE-2026-4539
+    --ignore-vuln CVE-2025-3000
+)
 
 uv_run() {
     if [ "${#UV_EXTRA_FLAGS[@]}" -gt 0 ]; then
@@ -97,7 +103,7 @@ echo ""
 
 # pip-audit - dependency CVE scanning
 echo ">>> Running pip-audit..."
-uv_run pip-audit 2>&1 | tee "$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"
+uv_run pip-audit "${PIP_AUDIT_IGNORE_ARGS[@]}" 2>&1 | tee "$REPORTS_DIR/pip-audit-$TIMESTAMP.txt"
 pipaudit_status=${PIPESTATUS[0]}
 if [ "$pipaudit_status" -eq 0 ]; then
     echo "✓ pip-audit passed"

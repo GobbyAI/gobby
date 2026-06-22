@@ -338,7 +338,7 @@ class TestInstallCodex:
         # Verify $HOOKS_DIR was substituted
         hooks_str = hooks_path.read_text()
         assert "$HOOKS_DIR" not in hooks_str
-        assert "hook_dispatcher.py" in hooks_str
+        assert "ghook --gobby-owned" in hooks_str
         assert "--cli=codex" in hooks_str
 
         # Verify config.toml has feature flag
@@ -986,7 +986,7 @@ class TestHooksTemplateFormat:
         hooks_content = hooks_path.read_text()
 
         assert "$HOOKS_DIR" not in hooks_content
-        assert "hook_dispatcher.py" in hooks_content
+        assert "ghook --gobby-owned" in hooks_content
         assert "--cli=codex" in hooks_content
 
     def test_hooks_use_codex_cli_flag(
