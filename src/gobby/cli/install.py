@@ -9,23 +9,19 @@ import shutil
 import socket
 import subprocess  # nosec B404 # fixed install preflight/start commands
 import sys
-import time
 import webbrowser
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 import click
 
 from gobby.config.bootstrap import (
     DEFAULT_DAEMON_PORT,
     DEFAULT_WEBSOCKET_PORT,
-    BootstrapConfigError,
 )
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.secrets import SecretStore
-from gobby.utils.project_init import initialize_project
 
 from ._detectors import (
     _is_agy_cli_installed,
@@ -35,6 +31,20 @@ from ._detectors import (
     _is_gemini_cli_installed,
     _is_grok_cli_installed,
     _is_qwen_cli_installed,
+)
+from ._install_daemon import (
+    _ci_environment,
+    _daemon_already_running,
+    _daemon_url,
+    _headless_or_remote,
+)
+from ._install_daemon import (
+    maybe_start_daemon_after_install as _daemon_maybe_start_daemon_after_install,
+)
+from ._install_legacy import _raise_graph_backend_removed
+from ._install_project import (
+    _initialize_project_after_setup,
+    _should_initialize_project,
 )
 from ._install_prompts import (
     _API_KEY_PROMPTS,
@@ -67,7 +77,6 @@ from .installers import (
     uninstall_claude,
     uninstall_codex,
     uninstall_droid,
-    uninstall_falkordb,
     uninstall_gemini,
     uninstall_grok,
     uninstall_qwen,
@@ -96,18 +105,6 @@ __all__ = [
     "install",
     "uninstall",
 ]
-
-
-_GRAPH_BACKEND_REMOVED_MESSAGE = """--neo4j / --neo4j-password has been removed in 0.4.0.
-
-The knowledge graph backend has been replaced with FalkorDB.
-- Install (auto-runs as part of gobby install; tune with): gobby install [--falkordb-password <pw>] (or service-only: gobby install --falkordb)
-- Uninstall: gobby uninstall
-- Migration notes: see CHANGELOG.md for the full upgrade path."""
-
-
-def _raise_graph_backend_removed() -> None:
-    raise click.UsageError(_GRAPH_BACKEND_REMOVED_MESSAGE)
 
 
 def _is_source_checkout_install(install_dir: Path) -> bool:
@@ -195,117 +192,16 @@ def _run_install_preflight(
     return errors, warnings
 
 
-def _is_git_root_without_gobby_project(project_path: Path) -> bool:
-    if not (project_path / ".git").exists():
-        return False
-    return not (project_path / ".gobby" / "project.json").exists()
-
-
-def _should_initialize_project(project_path: Path, *, no_interactive: bool) -> bool:
-    if not _is_git_root_without_gobby_project(project_path):
-        return False
-    if no_interactive:
-        return True
-    if not sys.stdin.isatty():
-        return False
-    return click.confirm(
-        "This git root is not a Gobby project yet. Initialize it now?",
-        default=True,
-    )
-
-
-def _initialize_project_after_setup(project_path: Path) -> None:
-    result = initialize_project(cwd=project_path)
-    if result.already_existed:
-        click.echo(f"Gobby project already initialized: {result.project_name}")
-    else:
-        click.echo(f"Initialized Gobby project: {result.project_name}")
-    click.echo(f"  Project ID: {result.project_id}")
-
-
-def _headless_or_remote() -> bool:
-    if os.environ.get("SSH_CONNECTION") or os.environ.get("SSH_TTY"):
-        return True
-    if sys.platform.startswith("linux"):
-        return not (os.environ.get("DISPLAY") or os.environ.get("WAYLAND_DISPLAY"))
-    return False
-
-
-def _ci_environment() -> bool:
-    return any(os.environ.get(name) for name in ("CI", "GITHUB_ACTIONS", "BUILDKITE"))
-
-
-def _daemon_url() -> str:
-    try:
-        from gobby.config.app import load_config
-
-        port = load_config(resolve_database_url=False).daemon_port
-    except (BootstrapConfigError, FileNotFoundError, PermissionError, OSError, ValueError):
-        port = DEFAULT_DAEMON_PORT
-    return f"http://localhost:{port}/"
-
-
-def _daemon_already_running() -> bool:
-    try:
-        from gobby.cli.daemon import _is_daemon_healthy
-
-        port = urlparse(_daemon_url()).port
-        if port is None:
-            return False
-        return _is_daemon_healthy(port)
-    except (ConnectionError, OSError, ValueError):
-        return False
-
-
 def _maybe_start_daemon_after_install(*, no_interactive: bool) -> None:
-    url = _daemon_url()
-    if no_interactive or _ci_environment() or _headless_or_remote():
-        click.echo(f"Gobby UI: {url}")
-        click.echo("Run `/gobby intro` in your first agent session.")
-        return
-    if _daemon_already_running():
-        click.echo(f"Gobby daemon already running: {url}")
-        click.echo("Run `/gobby intro` in your first agent session.")
-        return
-
-    click.echo("Starting Gobby daemon...")
-    try:
-        process = subprocess.Popen(  # nosec B603 # command uses current interpreter/module
-            [sys.executable, "-m", "gobby.cli", "start"],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            start_new_session=True,
-        )
-    except (OSError, subprocess.SubprocessError) as exc:
-        click.echo(f"Warning: failed to start daemon automatically: {exc}")
-        click.echo(f"Start manually with `gobby start`, then open {url}")
-        return
-
-    deadline = time.monotonic() + 5
-    while time.monotonic() < deadline:
-        if _daemon_already_running():
-            click.echo(f"Gobby daemon started: {url}")
-            if not webbrowser.open(url):
-                click.echo(f"Open {url}")
-            click.echo("Run `/gobby intro` in your first agent session.")
-            return
-        returncode = process.poll()
-        if returncode is not None:
-            if returncode != 0:
-                click.echo(f"Warning: failed to start daemon automatically: exited {returncode}")
-                click.echo(f"Start manually with `gobby start`, then open {url}")
-                return
-            break
-        time.sleep(0.25)
-
-    if _daemon_already_running():
-        click.echo(f"Gobby daemon started: {url}")
-        if not webbrowser.open(url):
-            click.echo(f"Open {url}")
-    else:
-        click.echo("Warning: daemon did not become healthy automatically.")
-        click.echo(f"Start manually with `gobby start`, then open {url}")
-    click.echo("Run `/gobby intro` in your first agent session.")
+    _daemon_maybe_start_daemon_after_install(
+        no_interactive=no_interactive,
+        daemon_url=_daemon_url,
+        daemon_already_running=_daemon_already_running,
+        ci_environment=_ci_environment,
+        headless_or_remote=_headless_or_remote,
+        subprocess_popen=subprocess.Popen,
+        browser_open=webbrowser.open,
+    )
 
 
 @click.command("install")
@@ -753,13 +649,6 @@ def install(
     help="Uninstall Qwen CLI hooks only",
 )
 @click.option(
-    "--falkordb",
-    "falkordb_flag",
-    is_flag=True,
-    default=False,
-    help="Uninstall the FalkorDB service only",
-)
-@click.option(
     "--all",
     "all_flag",
     is_flag=True,
@@ -796,7 +685,6 @@ def uninstall(
     codex_flag: bool,
     droid_flag: bool,
     qwen_flag: bool,
-    falkordb_flag: bool,
     all_flag: bool,
     project_flag: bool,
     working_dir: Path | None,
@@ -818,7 +706,6 @@ def uninstall(
         and not qwen_flag
         and not codex_flag
         and not droid_flag
-        and not falkordb_flag
         and not all_flag
     ):
         all_flag = True
@@ -894,8 +781,6 @@ def uninstall(
     else:
         click.echo("\nScope: Global")
     targets = [*clis_to_uninstall]
-    if falkordb_flag:
-        targets.append("falkordb")
     click.echo(f"Targets to uninstall: {', '.join(targets)}")
     click.echo("")
 
@@ -926,9 +811,6 @@ def uninstall(
                 results,
                 **uninstall_kwargs,
             )
-
-    if falkordb_flag:
-        results["falkordb"] = uninstall_falkordb()
 
     # Remove global hooks directory for global uninstall
     if not project_flag and all_flag:
