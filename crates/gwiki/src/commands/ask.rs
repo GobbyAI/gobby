@@ -23,6 +23,7 @@ pub(crate) fn execute(
     llm: bool,
     ai: AiRouting,
     require_ai: bool,
+    token_budget: Option<usize>,
 ) -> Result<CommandOutcome, WikiError> {
     if llm && ai == AiRouting::Off {
         return Err(WikiError::InvalidInput {
@@ -31,7 +32,7 @@ pub(crate) fn execute(
         });
     }
 
-    let retrieval = search::retrieve(query, selection, DEFAULT_ASK_HIT_LIMIT, true)?;
+    let retrieval = search::retrieve(query, selection, DEFAULT_ASK_HIT_LIMIT, true, token_budget)?;
     let plan = evidence::plan_evidence(&retrieval);
     let mut output = assembly::ask_output_from_retrieval(retrieval.output, &plan);
     if llm {
@@ -52,6 +53,7 @@ mod tests {
             true,
             AiRouting::Off,
             false,
+            None,
         )
         .expect_err("ask --llm --ai off should fail before retrieval");
 

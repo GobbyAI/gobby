@@ -233,6 +233,10 @@ struct SearchArgs {
     /// Disable semantic vector search for this query.
     #[arg(long = "no-semantic")]
     no_semantic: bool,
+
+    /// Trim results to fit an approximate token budget, emitting a narrowing hint.
+    #[arg(long = "token-budget", value_name = "N", value_parser = parse_positive_usize)]
+    token_budget: Option<usize>,
 }
 
 #[derive(Debug, Args)]
@@ -251,6 +255,10 @@ struct AskArgs {
     /// Fail if synthesis is requested but no AI route succeeds.
     #[arg(long = "require-ai")]
     require_ai: bool,
+
+    /// Trim retrieval hits to fit an approximate token budget, emitting a narrowing hint.
+    #[arg(long = "token-budget", value_name = "N", value_parser = parse_positive_usize)]
+    token_budget: Option<usize>,
 }
 
 #[derive(Debug, Args)]
@@ -648,6 +656,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             scope,
             limit: args.limit,
             include_semantic: !args.no_semantic,
+            token_budget: args.token_budget,
         }),
         CliCommand::Ask(args) => Ok(Command::Ask {
             query: args.question,
@@ -655,6 +664,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             llm: args.llm,
             ai: args.ai,
             require_ai: args.require_ai,
+            token_budget: args.token_budget,
         }),
         CliCommand::Read(args) => {
             let target = match (args.path, args.title) {

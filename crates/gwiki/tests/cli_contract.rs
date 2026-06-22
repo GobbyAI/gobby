@@ -136,6 +136,7 @@ fn representative_ask_output() -> AskOutput {
         truncated: true,
         truncated_components: vec!["evidence".to_string()],
         warnings: vec!["semantic search degraded".to_string()],
+        hint: None,
         ai: Some(AskAiOutput {
             requested: true,
             requested_mode: "auto",
@@ -223,7 +224,7 @@ fn json_contains_key(value: &Value, key: &str) -> bool {
 #[test]
 fn parity_contract_tracks_code_grounding_and_dependency_classification() {
     let contract = pinned_contract();
-    assert_eq!(contract["contract_version"], 5);
+    assert_eq!(contract["contract_version"], 6);
 
     let ask = command(&contract, "ask");
     assert_classification(

@@ -33,6 +33,7 @@ pub(super) fn ask_output_from_retrieval(search: SearchOutput, plan: &EvidencePla
             Vec::new()
         },
         warnings,
+        hint: search.hint,
         ai: None,
         synthesis: None,
     }

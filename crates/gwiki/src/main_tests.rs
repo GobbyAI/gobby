@@ -62,6 +62,8 @@ fn search_flag_surface_supports_limit_and_semantic_toggle() {
         "--limit",
         "5",
         "--no-semantic",
+        "--token-budget",
+        "1500",
         "ownership",
     ])
     .expect("search flags parse");
@@ -70,6 +72,7 @@ fn search_flag_surface_supports_limit_and_semantic_toggle() {
     };
     assert_eq!(args.limit, 5);
     assert!(args.no_semantic);
+    assert_eq!(args.token_budget, Some(1500));
     assert_eq!(args.query, "ownership");
 }
 
@@ -156,6 +159,7 @@ fn ask_cli_flags_map_to_command_options() {
             llm: true,
             ai: AiRouting::Direct,
             require_ai: true,
+            token_budget: Some(2000),
         }),
         ScopeSelection::topic("docs"),
     )
@@ -167,6 +171,7 @@ fn ask_cli_flags_map_to_command_options() {
         llm,
         ai,
         require_ai,
+        token_budget,
     } = command
     else {
         panic!("expected ask command");
@@ -176,6 +181,7 @@ fn ask_cli_flags_map_to_command_options() {
     assert!(llm);
     assert_eq!(ai, AiRouting::Direct);
     assert!(require_ai);
+    assert_eq!(token_budget, Some(2000));
 }
 
 #[test]

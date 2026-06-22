@@ -1,6 +1,6 @@
 {
   "tool": "gwiki",
-  "contract_version": 5,
+  "contract_version": 6,
   "summary": "Local-first wiki CLI for capture, search, upkeep, and synthesis.",
   "global_flags": [
     {
@@ -118,6 +118,14 @@
           "allowed_values": [],
           "required": false,
           "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
         }
       ],
       "json_output_keys": [
@@ -176,6 +184,14 @@
           "name": "--require-ai",
           "takes_value": false,
           "value_name": null,
+          "allowed_values": [],
+          "required": false,
+          "repeatable": false
+        },
+        {
+          "name": "--token-budget",
+          "takes_value": true,
+          "value_name": "N",
           "allowed_values": [],
           "required": false,
           "repeatable": false

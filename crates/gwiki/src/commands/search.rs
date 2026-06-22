@@ -7,6 +7,7 @@ use gobby_core::config::{
     AiCapability, AiRouting, resolve_embedding_config, resolve_falkordb_config,
     resolve_qdrant_config,
 };
+use gobby_core::token_budget;
 
 use crate::output::{SearchOutput, SearchResultOutput, SearchResultType};
 use crate::search as wiki_search;
@@ -29,13 +30,17 @@ pub(crate) struct SearchRetrieval {
     pub(crate) evidence: Vec<String>,
 }
 
+/// Narrowing levers suggested when `--token-budget` trims the result set.
+const SEARCH_TOKEN_BUDGET_REFINE_HINT: &str = "--limit, a narrower query, or a topic scope";
+
 pub(crate) fn execute(
     query: String,
     selection: ScopeSelection,
     limit: usize,
     include_semantic: bool,
+    token_budget: Option<usize>,
 ) -> Result<CommandOutcome, WikiError> {
-    render(retrieve(query, selection, limit, include_semantic)?.output)
+    render(retrieve(query, selection, limit, include_semantic, token_budget)?.output)
 }
 
 pub(crate) fn retrieve(
@@ -43,6 +48,7 @@ pub(crate) fn retrieve(
     selection: ScopeSelection,
     limit: usize,
     include_semantic: bool,
+    token_budget: Option<usize>,
 ) -> Result<SearchRetrieval, WikiError> {
     if let Some(database_url) = database_url_for("gwiki search")? {
         let scope = resolve_command_scope(&selection)?;
@@ -53,6 +59,7 @@ pub(crate) fn retrieve(
             query,
             limit,
             include_semantic,
+            token_budget,
         );
     }
 
@@ -73,6 +80,7 @@ pub(crate) fn retrieve(
             query,
             limit,
             include_semantic,
+            token_budget,
         },
     )
 }
@@ -84,6 +92,7 @@ fn run_search_attached(
     query: String,
     limit: usize,
     include_semantic: bool,
+    token_budget: Option<usize>,
 ) -> Result<SearchRetrieval, WikiError> {
     let mut conn = gobby_core::postgres::connect_readonly(database_url).map_err(|error| {
         WikiError::Config {
@@ -138,6 +147,7 @@ fn run_search_attached(
             query,
             limit,
             include_semantic,
+            token_budget,
         },
     )
 }
@@ -245,6 +255,7 @@ struct SearchExecutionInput {
     query: String,
     limit: usize,
     include_semantic: bool,
+    token_budget: Option<usize>,
 }
 
 fn run_search_with_backends<B, S, G>(
@@ -304,16 +315,37 @@ where
         .iter()
         .map(degradation_label)
         .collect::<Vec<_>>();
-    Ok(SearchRetrieval {
-        output: SearchOutput::new(
-            input.output_scope,
-            input.query,
-            input.limit,
-            results,
-            degradations,
-        ),
-        evidence,
-    })
+    // Trim the ranked hits to the caller's token budget via the shared
+    // gobby-core helper, then keep `evidence[i]` aligned with the kept prefix.
+    let budgeted = token_budget::trim_results(
+        results,
+        input.token_budget,
+        SEARCH_TOKEN_BUDGET_REFINE_HINT,
+        format_search_result_line,
+    );
+    let results = budgeted.results;
+    evidence.truncate(results.len());
+    let mut output = SearchOutput::new(
+        input.output_scope,
+        input.query,
+        input.limit,
+        results,
+        degradations,
+    );
+    output.hint = budgeted.hint;
+    Ok(SearchRetrieval { output, evidence })
+}
+
+/// Render one search hit as a single line for `ceil(chars/4)` token estimation.
+/// The snippet dominates each row's size, so the budget tracks roughly what the
+/// agent-facing JSON costs per result.
+fn format_search_result_line(result: &SearchResultOutput) -> String {
+    format!(
+        "- {} | {} | {}",
+        result.wiki_page.display(),
+        result.title.as_deref().unwrap_or(""),
+        result.snippet
+    )
 }
 
 /// Max characters of a search display snippet (query-token window).
@@ -463,5 +495,59 @@ mod tests {
 
         assert!(window.contains("enqueue"));
         assert!(window.chars().count() <= 30);
+    }
+
+    fn sample_hit(page: &str, snippet: &str) -> SearchResultOutput {
+        SearchResultOutput {
+            title: Some(page.to_string()),
+            fusion_key: format!("topic:docs:{page}"),
+            wiki_page: std::path::PathBuf::from(page),
+            source_path: std::path::PathBuf::from(page),
+            result_type: SearchResultType::Wiki,
+            snippet: snippet.to_string(),
+            score: 1.0,
+            sources: vec!["bm25".to_string()],
+            explanations: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn token_budget_trims_hits_via_shared_helper_and_emits_hint() {
+        // Each rendered line is `- a.md | a.md | ` (16 chars) + 80 snippet chars
+        // = 96 chars => ceil(96/4) = 24 tokens, so a 30-token budget keeps one hit.
+        let hits = vec![
+            sample_hit("a.md", &"x".repeat(80)),
+            sample_hit("b.md", &"y".repeat(80)),
+            sample_hit("c.md", &"z".repeat(80)),
+        ];
+
+        let trimmed = token_budget::trim_results(
+            hits,
+            Some(30),
+            SEARCH_TOKEN_BUDGET_REFINE_HINT,
+            format_search_result_line,
+        );
+
+        assert_eq!(trimmed.results.len(), 1);
+        let hint = trimmed
+            .hint
+            .expect("narrowing hint when results are dropped");
+        assert!(hint.contains("1 of 3 results"));
+        assert!(hint.contains(SEARCH_TOKEN_BUDGET_REFINE_HINT));
+    }
+
+    #[test]
+    fn token_budget_none_keeps_all_hits_without_hint() {
+        let hits = vec![sample_hit("a.md", "short"), sample_hit("b.md", "short")];
+
+        let trimmed = token_budget::trim_results(
+            hits,
+            None,
+            SEARCH_TOKEN_BUDGET_REFINE_HINT,
+            format_search_result_line,
+        );
+
+        assert_eq!(trimmed.results.len(), 2);
+        assert!(trimmed.hint.is_none());
     }
 }

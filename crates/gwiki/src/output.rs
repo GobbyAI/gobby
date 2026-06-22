@@ -78,6 +78,9 @@ pub struct SearchOutput {
     pub results: Vec<SearchResultOutput>,
     pub code_citations: Vec<CodeCitationOutput>,
     pub degradations: Vec<String>,
+    /// Narrowing hint emitted when `--token-budget` trimmed the result set.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
 }
 
 impl SearchOutput {
@@ -97,6 +100,7 @@ impl SearchOutput {
             results,
             code_citations,
             degradations,
+            hint: None,
         }
     }
 }
@@ -144,6 +148,9 @@ pub struct AskOutput {
     pub truncated: bool,
     pub truncated_components: Vec<String>,
     pub warnings: Vec<String>,
+    /// Narrowing hint emitted when `--token-budget` trimmed the retrieval hits.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub hint: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub ai: Option<AskAiOutput>,
     #[serde(skip_serializing_if = "Option::is_none")]
