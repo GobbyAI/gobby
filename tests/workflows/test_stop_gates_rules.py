@@ -223,7 +223,35 @@ class TestManualCompactionTurnEndBypass:
 
         assert response.decision == "allow"
         assert variables.get("stop_attempts") == 0
-        assert COMPACT_TURN_END_BYPASS_PENDING not in variables
+        assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is False
+
+    @pytest.mark.asyncio
+    async def test_consumed_manual_compact_bypass_does_not_skip_later_stop(
+        self,
+        db,
+    ) -> None:
+        _sync_bundled(db)
+        engine = RuleEngine(db)
+        variables = _claimed_task_variables()
+
+        precompact = _make_event(HookEventType.PRE_COMPACT, data={"trigger": "manual"})
+        await engine.evaluate(precompact, "sess-1", variables)
+        assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is True
+
+        compact_stop = _make_event(HookEventType.STOP)
+        compact_response = await engine.evaluate(compact_stop, "sess-1", variables)
+
+        assert compact_response.decision == "allow"
+        assert variables.get("stop_attempts") == 0
+        assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is False
+
+        normal_stop = _make_event(HookEventType.STOP)
+        normal_response = await engine.evaluate(normal_stop, "sess-1", variables)
+
+        assert normal_response.decision == "block"
+        assert "require-task-close" in (normal_response.reason or "")
+        assert variables.get("stop_attempts") == 1
+        assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is False
 
     @pytest.mark.asyncio
     async def test_manual_pre_compact_after_agent_allows_but_keeps_raw_event(
@@ -261,7 +289,7 @@ class TestManualCompactionTurnEndBypass:
         assert response.decision == "allow"
         assert variables.get("stop_attempts") == 0
         assert variables.get("raw_after_agent_seen") is True
-        assert COMPACT_TURN_END_BYPASS_PENDING not in variables
+        assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is False
 
     @pytest.mark.parametrize(
         "precompact_data",
@@ -305,7 +333,7 @@ class TestManualCompactionTurnEndBypass:
         before_agent = _make_event(HookEventType.BEFORE_AGENT)
         await engine.evaluate(before_agent, "sess-1", variables)
 
-        assert COMPACT_TURN_END_BYPASS_PENDING not in variables
+        assert variables.get(COMPACT_TURN_END_BYPASS_PENDING) is False
 
         stop = _make_event(HookEventType.STOP)
         response = await engine.evaluate(stop, "sess-1", variables)

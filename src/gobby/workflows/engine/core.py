@@ -134,10 +134,13 @@ class RuleEngine(EvaluationMixin, EffectsMixin, TemplatingMixin, EnforcementMixi
                 raw_event_value = _event_value(event.event_type)
                 resolved_rule_events = _resolve_rule_events(event.event_type)
                 if RuleTriggerEvent.TURN_START in resolved_rule_events:
-                    variables.pop(_COMPACT_TURN_END_BYPASS_PENDING, None)
-                elif RuleTriggerEvent.TURN_END in resolved_rule_events and variables.pop(
-                    _COMPACT_TURN_END_BYPASS_PENDING, False
+                    if variables.get(_COMPACT_TURN_END_BYPASS_PENDING):
+                        variables[_COMPACT_TURN_END_BYPASS_PENDING] = False
+                elif (
+                    RuleTriggerEvent.TURN_END in resolved_rule_events
+                    and variables.get(_COMPACT_TURN_END_BYPASS_PENDING, False)
                 ):
+                    variables[_COMPACT_TURN_END_BYPASS_PENDING] = False
                     resolved_rule_events = [
                         trigger
                         for trigger in resolved_rule_events
