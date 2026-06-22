@@ -19,16 +19,7 @@ import { useProjects } from "./hooks/useProjects";
 import { useSessionCatalog } from "./hooks/useSessionCatalog";
 import { normalizeChatMode } from "./types/chat";
 import type { QueuedFile } from "./types/chat";
-import type { GobbySession } from "./types/sessions";
 import type { ActivityTab } from "./components/activity/ActivityPanelTabs";
-import {
-  defaultSessionsFilters,
-  deserializeFromStorage,
-  serializeForStorage,
-  type SessionsFilters,
-} from "./components/activity/sessionsFilters";
-
-const SESSIONS_FILTERS_STORAGE_KEY = "gobby-sessions-filters";
 import { Settings } from "./components/Settings";
 import { ChatPage } from "./components/chat/ChatPage";
 import { LoginPage } from "./components/auth/LoginPage";
@@ -42,6 +33,10 @@ import { AppErrorBoundary } from "./components/app/AppErrorBoundary";
 import { GobbyLogo } from "./components/shared/GobbyLogo";
 import { useAppCommandPalette } from "./components/app/useAppCommandPalette";
 import { useAppKeyboardShortcuts } from "./components/app/useAppKeyboardShortcuts";
+import { useAppProjectSelection } from "./components/app/useAppProjectSelection";
+import { useAppSessionActions } from "./components/app/useAppSessionActions";
+import { useAppToast } from "./components/app/useAppToast";
+import { usePersistedSessionsFilters } from "./components/app/usePersistedSessionsFilters";
 import { useReasoningPreferences } from "./components/app/useReasoningPreferences";
 import { useSessionReconciliation } from "./components/app/useSessionReconciliation";
 import { LogoutIcon, SettingsCogIcon } from "./components/icons";
@@ -51,8 +46,6 @@ import { useSettingsOverlay } from "./components/settings/useSettingsOverlay";
 const SettingsOverlay = lazy(
   () => import("./components/settings/SettingsOverlay"),
 );
-
-const HIDDEN_PROJECTS = new Set(["_orphaned", "_migrated"]);
 
 export default function App() {
   const {
@@ -209,15 +202,10 @@ export default function App() {
   useEffect(() => {
     window.location.hash = activeTab;
   }, [activeTab]);
-  const [selectedProjectId, setSelectedProjectId] = useState<string | null>(
-    null,
-  );
-  const [uiSettingsLoaded, setUiSettingsLoaded] = useState(false);
   const showPlanRef = useRef<(() => void) | null>(null);
   const [quickCaptureOpen, setQuickCaptureOpen] = useState(false);
   const [resumeModalOpen, setResumeModalOpen] = useState(false);
-  const [toastMessage, setToastMessage] = useState<string | null>(null);
-  const toastTimerRef = useRef<number | null>(null);
+  const { toastMessage, setToastMessage, showToast } = useAppToast();
 
   const handleOpenActivityTab = useCallback((tab: ActivityTab) => {
     setActivityTabRequest(tab);
@@ -226,77 +214,24 @@ export default function App() {
 
   useAppKeyboardShortcuts({ setQuickCaptureOpen });
 
-  // Build project options for the selector (exclude internal system projects)
-  const projectOptions = useMemo(
-    () =>
-      projectsHook.allProjects
-        .filter((p) => !HIDDEN_PROJECTS.has(p.name))
-        .map((p) => ({
-          id: p.id,
-          name:
-            p.name === "_personal"
-              ? "Personal"
-              : p.display_name || p.name,
-        })),
-    [projectsHook.allProjects],
-  );
-
-  // Default to first repo-backed project, fall back to Personal
-  const defaultProjectId = useMemo(() => {
-    const repoProject = projectOptions.find((p) => p.name !== "Personal");
-    return (
-      repoProject?.id ??
-      projectOptions.find((p) => p.name === "Personal")?.id ??
-      projectOptions[0]?.id ??
-      null
-    );
-  }, [projectOptions]);
-
-  const projectReady = uiSettingsLoaded && projectOptions.length > 0;
-  const resolvedSelectedProjectId =
-    selectedProjectId &&
-    projectOptions.some((project) => project.id === selectedProjectId)
-      ? selectedProjectId
-      : null;
-  const effectiveProjectId = resolvedSelectedProjectId ?? defaultProjectId;
-  const isPersonalProject =
-    projectOptions.find((p) => p.id === effectiveProjectId)?.name ===
-    "Personal";
-  // Threaded into the settings overlay so the Projects & Sessions section's
-  // active-project control drives the same selection (and the same persist
-  // effect) as the chrome's ProjectSelector.
-  const projectSelection = useMemo(
-    () => ({
-      selectedProjectId: effectiveProjectId,
-      onSelectProject: setSelectedProjectId,
-    }),
-    [effectiveProjectId, setSelectedProjectId],
-  );
-  const [sessionsFilters, setSessionsFilters] = useState<SessionsFilters>(
-    () => {
-      try {
-        return deserializeFromStorage(
-          localStorage.getItem(SESSIONS_FILTERS_STORAGE_KEY),
-        );
-      } catch {
-        return defaultSessionsFilters();
-      }
-    },
-  );
-
-  // Persist sessions-filter state so a reload restores the user's narrowed
-  // view. The filter badge on the SessionsTab funnel button is the visible
-  // cue that something is filtering.
-  useEffect(() => {
-    try {
-      localStorage.setItem(
-        SESSIONS_FILTERS_STORAGE_KEY,
-        JSON.stringify(serializeForStorage(sessionsFilters)),
-      );
-    } catch {
-      // Best-effort — disabled storage just means filters are per-tab-load.
-    }
-  }, [sessionsFilters]);
+  const {
+    effectiveProjectId,
+    initialReconciliationDoneRef,
+    isPersonalProject,
+    projectOptions,
+    projectReady,
+    projectSelection,
+    setSelectedProjectId,
+  } = useAppProjectSelection({
+    allProjects: projectsHook.allProjects,
+    selectedProvider,
+    setSelectedProvider,
+    startNewChat,
+    setProjectIdRef,
+    sendProjectChange,
+  });
+  const { sessionsFilters, setSessionsFilters } =
+    usePersistedSessionsFilters();
 
   // Two catalog instances: the unfiltered one feeds the resume modal, web-chat
   // sidebar list, and session-reconciliation hook (consumers that must see
@@ -327,83 +262,6 @@ export default function App() {
     updateModel,
   });
 
-  // On mount: fetch persisted project from API (DB is source of truth)
-  useEffect(() => {
-    let cancelled = false;
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/config/ui-settings`)
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (cancelled) return;
-        if (data?.selectedProjectId) setSelectedProjectId(data.selectedProjectId);
-        if (data?.selectedProvider) setSelectedProvider(data.selectedProvider);
-        setUiSettingsLoaded(true);
-      })
-      .catch(() => {
-        if (!cancelled) setUiSettingsLoaded(true);
-      });
-    return () => {
-      cancelled = true;
-    };
-  }, [setSelectedProvider]);
-
-  // Persist selected provider to API after the initial UI settings hydrate.
-  const isFirstProviderRender = useRef(true);
-  useEffect(() => {
-    if (!uiSettingsLoaded) return;
-    if (isFirstProviderRender.current) {
-      isFirstProviderRender.current = false;
-      return;
-    }
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/config/ui-settings`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedProvider }),
-    }).catch((error) => {
-      console.warn("Failed to persist selected provider", error);
-    });
-  }, [selectedProvider, uiSettingsLoaded]);
-
-  // Persist project selection to API (only after initial resolution)
-  const isFirstProjectRender = useRef(true);
-  useEffect(() => {
-    if (!projectReady) return;
-    if (isFirstProjectRender.current) {
-      isFirstProjectRender.current = false;
-      return;
-    }
-    const baseUrl = import.meta.env.VITE_API_BASE_URL || "";
-    fetch(`${baseUrl}/api/config/ui-settings`, {
-      method: "PUT",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ selectedProjectId }),
-    }).catch(() => {});
-  }, [selectedProjectId, projectReady]);
-
-  // When project changes, start fresh chat context for the new project.
-  const prevProjectRef = useRef<string | null>(null);
-  useEffect(() => {
-    if (!projectReady) return;
-    if (
-      effectiveProjectId &&
-      prevProjectRef.current !== null &&
-      effectiveProjectId !== prevProjectRef.current
-    ) {
-      startNewChat();
-      initialReconciliationDoneRef.current = false;
-    }
-    prevProjectRef.current = effectiveProjectId ?? null;
-  }, [effectiveProjectId, startNewChat, projectReady]);
-
-  // Keep useChat's projectIdRef in sync with App's effectiveProjectId
-  useEffect(() => {
-    setProjectIdRef(effectiveProjectId);
-    if (effectiveProjectId) {
-      sendProjectChange(effectiveProjectId);
-    }
-  }, [effectiveProjectId, setProjectIdRef, sendProjectChange]);
-
   const allProjectSessions = sessionCatalog.sessions;
 
   // Web-chat sessions for main conversation list
@@ -412,8 +270,6 @@ export default function App() {
     [allProjectSessions],
   );
 
-  // Auto-select most recent server session on initial load (cross-device sync)
-  const initialReconciliationDoneRef = useRef(false);
   useSessionReconciliation({
     initialReconciliationDoneRef,
     projectReady,
@@ -472,134 +328,27 @@ export default function App() {
     ],
   );
 
-  // Chat page: only web-chat sessions are selectable
-  const handleSelectConversation = useCallback(
-    (session: GobbySession) => {
-      // Clear terminal session viewing state before switching
-      if (viewingSessionId) {
-        clearViewingSession();
-      } else if (attachedSessionId) {
-        detachFromSession();
-      }
-      switchConversation(session.id);
-    },
-    [
-      switchConversation,
-      viewingSessionId,
-      attachedSessionId,
-      clearViewingSession,
-      detachFromSession,
-    ],
-  );
-
-  const showToast = useCallback((msg: string, durationMs = 3000) => {
-    if (toastTimerRef.current) clearTimeout(toastTimerRef.current);
-    setToastMessage(msg);
-    toastTimerRef.current = window.setTimeout(
-      () => setToastMessage(null),
-      durationMs,
-    );
-  }, []);
-
-  // Track pending delete timeouts: sessionId → timerId
-  const deleteTimeoutsRef = useRef<
-    Map<string, { sessionId: string; timerId: number }>
-  >(new Map());
-
-  // Wire backend chat_deleted ACK to confirmed removal
-  useEffect(() => {
-    setOnChatDeleted((sessionId: string) => {
-      const entry = deleteTimeoutsRef.current.get(sessionId);
-      if (entry) {
-        window.clearTimeout(entry.timerId);
-        deleteTimeoutsRef.current.delete(sessionId);
-      }
-      confirmSessionDeleted(sessionId);
-    });
-  }, [confirmSessionDeleted, setOnChatDeleted]);
-
-  const handleDeleteConversation = useCallback(
-    (session: GobbySession) => {
-      const sent = deleteConversation(session.id, session.id);
-      if (!sent) {
-        showToast("Cannot delete: disconnected from server");
-        return;
-      }
-      // Mark as deleting (visually dimmed) while waiting for backend ACK
-      markSessionDeleting(session.id);
-      // Timeout: if backend doesn't confirm within 5s, restore and show error
-      const timerId = window.setTimeout(() => {
-        restoreSession(session.id);
-        deleteTimeoutsRef.current.delete(session.id);
-        showToast("Delete failed: server did not respond");
-      }, 5000);
-      deleteTimeoutsRef.current.set(session.id, {
-        sessionId: session.id,
-        timerId,
-      });
-    },
-    [
-      deleteConversation,
-      markSessionDeleting,
-      restoreSession,
-      showToast,
-    ],
-  );
-
-  /* Kill a running agent via the cancel endpoint */
-  const handleKillAgent = useCallback(
-    async (runId: string) => {
-      try {
-        const res = await fetch(
-          `/api/agents/runs/${encodeURIComponent(runId)}/cancel`,
-          { method: "POST" },
-        );
-        if (res.ok) {
-          showToast("Agent cancelled");
-          return true;
-        } else {
-          showToast("Failed to cancel agent");
-          return false;
-        }
-      } catch {
-        showToast("Failed to cancel agent");
-        return false;
-      }
-    },
-    [showToast],
-  );
-
-  /* Expire a session (CLI sessions — kills tmux + marks expired) */
-  const handleExpireSession = useCallback(
-    async (sessionId: string) => {
-      try {
-        const res = await fetch(
-          `/api/sessions/${encodeURIComponent(sessionId)}/expire`,
-          { method: "POST" },
-        );
-        if (!res.ok) {
-          showToast("Failed to expire session");
-          return false;
-        }
-        return true;
-      } catch {
-        showToast("Failed to expire session");
-        return false;
-      }
-    },
-    [showToast],
-  );
-
-  /* "Resume Session" from Sessions page — continue CLI session in web chat */
-  const handleContinueInChat = useCallback(
-    async (session: GobbySession) => {
-      setActiveTab("chat");
-      await continueSessionInChat(session.id, session.project_id, {
-        fallbackContext: "auto",
-      });
-    },
-    [continueSessionInChat],
-  );
+  const {
+    handleContinueInChat,
+    handleDeleteConversation,
+    handleExpireSession,
+    handleKillAgent,
+    handleSelectConversation,
+  } = useAppSessionActions({
+    attachedSessionId,
+    clearViewingSession,
+    confirmSessionDeleted,
+    continueSessionInChat,
+    deleteConversation,
+    detachFromSession,
+    markSessionDeleting,
+    restoreSession,
+    setActiveTab,
+    setOnChatDeleted,
+    showToast,
+    switchConversation,
+    viewingSessionId,
+  });
 
   // Wire voice message handlers into useChat's WebSocket routing
   useEffect(() => {
