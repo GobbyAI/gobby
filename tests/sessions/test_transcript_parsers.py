@@ -15,7 +15,6 @@ from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
-from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
@@ -1559,14 +1558,14 @@ class TestCodexTranscriptParser:
         assert msg.usage.output_tokens == 12
 
 
-class TestGeminiTranscriptParser:
-    """Tests for Gemini transcript parser."""
+class TestQwenTranscriptParser:
+    """Tests for Qwen typed JSON transcript parser."""
 
     @pytest.fixture
     def parser(self):
-        return GeminiTranscriptParser()
+        return QwenTranscriptParser()
 
-    def test_gemini_parser_generic_message(self, parser) -> None:
+    def test_qwen_parser_generic_message(self, parser) -> None:
         # Test simple user message via type-based format
         line = json.dumps(
             {
@@ -1584,13 +1583,13 @@ class TestGeminiTranscriptParser:
         assert msg.index == 0
         assert msg.timestamp.year == 2023
 
-    def test_gemini_parser_model_response(self, parser) -> None:
+    def test_qwen_parser_model_response(self, parser) -> None:
         # Test model response via type-based format
         line = json.dumps(
             {
                 "type": "message",
                 "role": "model",
-                "content": "I am Gemini",
+                "content": "I am Qwen",
                 "timestamp": "2023-01-01T12:00:01Z",
             }
         )
@@ -1598,9 +1597,9 @@ class TestGeminiTranscriptParser:
         msg = parser.parse_line(line, 1)
         assert msg is not None
         assert msg.role == "assistant"  # Normalized
-        assert msg.content == "I am Gemini"
+        assert msg.content == "I am Qwen"
 
-    def test_gemini_parser_nested_message_structure_skipped(self, parser) -> None:
+    def test_qwen_parser_nested_message_structure_skipped(self, parser) -> None:
         # Legacy nested message structure without type field is now skipped
         line = json.dumps(
             {
@@ -1612,7 +1611,7 @@ class TestGeminiTranscriptParser:
         msg = parser.parse_line(line, 2)
         assert msg is None
 
-    def test_gemini_parser_list_content(self, parser) -> None:
+    def test_qwen_parser_list_content(self, parser) -> None:
         # Test content as list of parts via type-based format
         line = json.dumps({"type": "model", "content": [{"text": "Part 1"}, "Part 2"]})
 
@@ -1621,37 +1620,37 @@ class TestGeminiTranscriptParser:
         assert "Part 1" in msg.content
         assert "Part 2" in msg.content
 
-    def test_gemini_parse_line_empty(self, parser) -> None:
+    def test_qwen_parse_line_empty(self, parser) -> None:
         """Test handling of empty/whitespace lines."""
         assert parser.parse_line("", 0) is None
         assert parser.parse_line("   ", 0) is None
 
-    def test_gemini_parse_line_invalid_json(self, parser) -> None:
+    def test_qwen_parse_line_invalid_json(self, parser) -> None:
         """Test handling of invalid JSON."""
         msg = parser.parse_line("not valid json", 0)
         assert msg is None
 
-    def test_gemini_parse_line_unknown_type(self, parser) -> None:
+    def test_qwen_parse_line_unknown_type(self, parser) -> None:
         """Test handling of messages without role."""
         line = json.dumps({"data": "something"})
         msg = parser.parse_line(line, 0)
         assert msg is None
 
-    def test_gemini_parse_line_type_field_user(self, parser) -> None:
+    def test_qwen_parse_line_type_field_user(self, parser) -> None:
         """Test parsing with type field as 'user'."""
         line = json.dumps({"type": "user", "content": "From type field"})
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.role == "user"
 
-    def test_gemini_parse_line_type_field_model(self, parser) -> None:
+    def test_qwen_parse_line_type_field_model(self, parser) -> None:
         """Test parsing with type field as 'model'."""
         line = json.dumps({"type": "model", "content": "Model response"})
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.role == "assistant"
 
-    def test_gemini_parse_line_tool_result(self, parser) -> None:
+    def test_qwen_parse_line_tool_result(self, parser) -> None:
         """Test parsing tool_result event."""
         line = json.dumps(
             {
@@ -1667,7 +1666,7 @@ class TestGeminiTranscriptParser:
         assert msg.content_type == "tool_result"
         assert "some result" in msg.content
 
-    def test_gemini_parse_line_function_call(self, parser) -> None:
+    def test_qwen_parse_line_function_call(self, parser) -> None:
         """Test parsing functionCall in content via type-based format."""
         line = json.dumps(
             {
@@ -1685,7 +1684,7 @@ class TestGeminiTranscriptParser:
         assert msg.tool_input == {"path": "test.txt"}
         assert "Let me call a function" in msg.content
 
-    def test_gemini_extract_last_messages(self, parser) -> None:
+    def test_qwen_extract_last_messages(self, parser) -> None:
         """Test extract_last_messages with type-based format."""
         turns = [
             {"type": "message", "role": "user", "content": "1"},
@@ -1701,7 +1700,7 @@ class TestGeminiTranscriptParser:
         assert msgs[1]["content"] == "4"
         assert msgs[1]["role"] == "assistant"  # Normalized from model
 
-    def test_gemini_extract_last_messages_list_content(self, parser) -> None:
+    def test_qwen_extract_last_messages_list_content(self, parser) -> None:
         """Test extract_last_messages with list content."""
         turns = [
             {"type": "message", "role": "user", "content": ["part1", "part2"]},
@@ -1713,7 +1712,7 @@ class TestGeminiTranscriptParser:
         assert "part1" in msgs[0]["content"]
         assert "part2" in msgs[0]["content"]
 
-    def test_gemini_extract_last_messages_nested_message_skipped(self, parser) -> None:
+    def test_qwen_extract_last_messages_nested_message_skipped(self, parser) -> None:
         """Test extract_last_messages skips legacy nested message structure."""
         turns = [
             {"message": {"role": "user", "content": "nested user"}},
@@ -1723,7 +1722,7 @@ class TestGeminiTranscriptParser:
         msgs = parser.extract_last_messages(turns, num_pairs=1)
         assert len(msgs) == 0  # Legacy format is now skipped
 
-    def test_gemini_extract_turns_since_clear(self, parser) -> None:
+    def test_qwen_extract_turns_since_clear(self, parser) -> None:
         """Test extract_turns_since_clear."""
         turns = [{"role": "user"}] * 100
 
@@ -1734,8 +1733,8 @@ class TestGeminiTranscriptParser:
         extracted = parser.extract_turns_since_clear(small_turns, max_turns=50)
         assert len(extracted) == 10
 
-    def test_gemini_extract_last_messages_json_session_format(self, parser) -> None:
-        """Test extract_last_messages with Gemini JSON session format (type: user/gemini)."""
+    def test_qwen_extract_last_messages_json_session_format(self, parser) -> None:
+        """Test extract_last_messages with Qwen typed JSON session format (type: user/gemini)."""
         turns = [
             {
                 "id": "msg-1",
@@ -1771,12 +1770,12 @@ class TestGeminiTranscriptParser:
         assert msgs[1]["role"] == "assistant"
         assert "all done" in msgs[1]["content"]
 
-    def test_gemini_is_session_boundary(self, parser) -> None:
-        """Test is_session_boundary always returns False for Gemini."""
+    def test_qwen_is_session_boundary(self, parser) -> None:
+        """Test is_session_boundary always returns False for Qwen."""
         assert parser.is_session_boundary({}) is False
         assert parser.is_session_boundary({"role": "user"}) is False
 
-    def test_gemini_parse_lines(self, parser) -> None:
+    def test_qwen_parse_lines(self, parser) -> None:
         """Test batch parsing with parse_lines."""
         lines = [
             json.dumps({"type": "message", "role": "user", "content": "First"}),
@@ -1791,7 +1790,7 @@ class TestGeminiTranscriptParser:
         assert msgs[1].index == 1
         assert msgs[1].role == "assistant"
 
-    def test_gemini_extract_usage(self, parser) -> None:
+    def test_qwen_extract_usage(self, parser) -> None:
         """Test _extract_usage with usageMetadata."""
         line = json.dumps(
             {
@@ -1810,7 +1809,7 @@ class TestGeminiTranscriptParser:
         assert msg.usage.input_tokens == 100
         assert msg.usage.output_tokens == 50
 
-    def test_gemini_extract_usage_splits_cached_content_and_thought_tokens(
+    def test_qwen_extract_usage_splits_cached_content_and_thought_tokens(
         self,
         parser,
     ) -> None:
@@ -1836,7 +1835,7 @@ class TestGeminiTranscriptParser:
         assert msg.usage.cache_read_tokens == 750
         assert msg.usage.output_tokens == 100
 
-    def test_gemini_parse_session_json_consumes_usage_once(self, parser) -> None:
+    def test_qwen_parse_session_json_consumes_usage_once(self, parser) -> None:
         data = {
             "sessionId": "abc-123",
             "messages": [
@@ -1864,14 +1863,14 @@ class TestGeminiTranscriptParser:
         assert usage_messages[0].usage is not None
         assert usage_messages[0].usage.input_tokens == 600
 
-    def test_gemini_extract_usage_no_usage(self, parser) -> None:
+    def test_qwen_extract_usage_no_usage(self, parser) -> None:
         """Test _extract_usage returns None without usageMetadata."""
         line = json.dumps({"type": "message", "role": "model", "content": "Response"})
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.usage is None
 
-    def test_gemini_timestamp_invalid_format(self, parser) -> None:
+    def test_qwen_timestamp_invalid_format(self, parser) -> None:
         """Test handling of invalid timestamp format."""
         line = json.dumps(
             {
@@ -1886,14 +1885,14 @@ class TestGeminiTranscriptParser:
         # Should use default timestamp without crashing
         assert msg.timestamp is not None
 
-    def test_gemini_content_none(self, parser) -> None:
+    def test_qwen_content_none(self, parser) -> None:
         """Test handling of None content."""
         line = json.dumps({"type": "message", "role": "user", "content": None})
         msg = parser.parse_line(line, 0)
         assert msg is not None
         assert msg.content == ""
 
-    def test_gemini_content_list_with_non_dict_function_call(self, parser) -> None:
+    def test_qwen_content_list_with_non_dict_function_call(self, parser) -> None:
         """Test parse_line handles functionCall that is not a dict (e.g. list)."""
         line = json.dumps(
             {
@@ -1912,7 +1911,7 @@ class TestGeminiTranscriptParser:
         assert msg.content_type == "text"
         assert msg.tool_name is None
 
-    def test_gemini_parse_session_json_basic(self, parser) -> None:
+    def test_qwen_parse_session_json_basic(self, parser) -> None:
         """Test parse_session_json with basic user/gemini messages."""
         data = {
             "sessionId": "abc-123",
@@ -1924,13 +1923,13 @@ class TestGeminiTranscriptParser:
                     "id": "msg-1",
                     "timestamp": "2024-01-01T10:00:00Z",
                     "type": "user",
-                    "content": "Hello Gemini",
+                    "content": "Hello Qwen",
                 },
                 {
                     "id": "msg-2",
                     "timestamp": "2024-01-01T10:00:01Z",
                     "type": "gemini",
-                    "content": "Hello! How can I help?",
+                    "content": "Hello from Qwen.",
                 },
             ],
         }
@@ -1938,13 +1937,13 @@ class TestGeminiTranscriptParser:
         msgs = parser.parse_session_json(data)
         assert len(msgs) == 2
         assert msgs[0].role == "user"
-        assert msgs[0].content == "Hello Gemini"
+        assert msgs[0].content == "Hello Qwen"
         assert msgs[0].index == 0
         assert msgs[1].role == "assistant"
-        assert msgs[1].content == "Hello! How can I help?"
+        assert msgs[1].content == "Hello from Qwen."
         assert msgs[1].index == 1
 
-    def test_gemini_parse_session_json_with_tool_calls(self, parser) -> None:
+    def test_qwen_parse_session_json_with_tool_calls(self, parser) -> None:
         """Test parse_session_json with gemini message containing toolCalls."""
         data = {
             "sessionId": "abc-123",
@@ -1979,7 +1978,7 @@ class TestGeminiTranscriptParser:
         assert msgs[2].content_type == "tool_result"
         assert msgs[2].tool_name == "read_file"
 
-    def test_gemini_parse_session_json_skips_info_warning(self, parser) -> None:
+    def test_qwen_parse_session_json_skips_info_warning(self, parser) -> None:
         """Test that info and warning messages are skipped."""
         data = {
             "sessionId": "abc-123",
@@ -2011,19 +2010,19 @@ class TestGeminiTranscriptParser:
         assert msgs[0].role == "user"
         assert msgs[1].role == "assistant"
 
-    def test_gemini_parse_session_json_empty_messages(self, parser) -> None:
+    def test_qwen_parse_session_json_empty_messages(self, parser) -> None:
         """Test parse_session_json with no messages."""
         data = {"sessionId": "abc-123", "messages": []}
         msgs = parser.parse_session_json(data)
         assert msgs == []
 
-    def test_gemini_parse_session_json_no_messages_key(self, parser) -> None:
+    def test_qwen_parse_session_json_no_messages_key(self, parser) -> None:
         """Test parse_session_json with missing messages key."""
         data = {"sessionId": "abc-123"}
         msgs = parser.parse_session_json(data)
         assert msgs == []
 
-    def test_gemini_parse_session_json_gemini_no_content(self, parser) -> None:
+    def test_qwen_parse_session_json_gemini_no_content(self, parser) -> None:
         """Test gemini message with no text content but with toolCalls."""
         data = {
             "sessionId": "abc-123",
@@ -2046,7 +2045,7 @@ class TestGeminiTranscriptParser:
         assert msgs[0].content_type == "tool_use"
         assert msgs[0].tool_name == "bash"
 
-    def test_gemini_parse_session_json_indexes_are_sequential(self, parser) -> None:
+    def test_qwen_parse_session_json_indexes_are_sequential(self, parser) -> None:
         """Test that indexes across messages with tool calls are sequential."""
         data = {
             "sessionId": "abc-123",
@@ -2082,8 +2081,8 @@ class TestGeminiTranscriptParser:
         for i, msg in enumerate(msgs):
             assert msg.index == i, f"Expected index {i}, got {msg.index} for {msg.content_type}"
 
-    def test_gemini_parse_session_json_message_ids_stay_unique(self, parser) -> None:
-        """A single Gemini message can expand into multiple parsed messages."""
+    def test_qwen_parse_session_json_message_ids_stay_unique(self, parser) -> None:
+        """A single Qwen typed JSON message can expand into multiple parsed messages."""
         data = {
             "sessionId": "abc-123",
             "messages": [
@@ -2113,7 +2112,7 @@ class TestGeminiTranscriptParser:
         assert all(message_ids)
         assert len(message_ids) == len(set(message_ids))
 
-    def test_gemini_parse_session_json_result_as_dict(self, parser) -> None:
+    def test_qwen_parse_session_json_result_as_dict(self, parser) -> None:
         """Test parse_session_json handles result as dict (backwards compat)."""
         data = {
             "sessionId": "abc-123",
@@ -2182,7 +2181,7 @@ class TestParserRegistry:
     def test_registry_has_correct_parsers(self) -> None:
         """Verify each source maps to the correct parser class."""
         assert PARSER_REGISTRY["claude"] is ClaudeTranscriptParser
-        assert PARSER_REGISTRY["gemini"] is GeminiTranscriptParser
+        assert "gemini" not in PARSER_REGISTRY
         assert PARSER_REGISTRY["grok"] is GrokTranscriptParser
         assert PARSER_REGISTRY["qwen"] is QwenTranscriptParser
         assert PARSER_REGISTRY["codex"] is CodexTranscriptParser
@@ -2191,7 +2190,6 @@ class TestParserRegistry:
     def test_get_parser_returns_correct_instances(self) -> None:
         """get_parser should return instances of the correct parser class."""
         assert isinstance(get_parser("claude"), ClaudeTranscriptParser)
-        assert isinstance(get_parser("gemini"), GeminiTranscriptParser)
         assert isinstance(get_parser("grok"), GrokTranscriptParser)
         assert isinstance(get_parser("qwen"), QwenTranscriptParser)
         assert isinstance(get_parser("codex"), CodexTranscriptParser)

@@ -62,20 +62,6 @@ def _find_transcript_on_disk(
                         if match:
                             return str(match)
 
-    elif source == "gemini":
-        gemini_tmp = Path.home() / ".gemini" / "tmp"
-        prefix = glob_escape(external_id[:8]) if len(external_id) >= 8 else ""
-        if _safe_exists(gemini_tmp) and prefix:
-            for proj_dir in _safe_iterdir(gemini_tmp):
-                chats_dir = proj_dir / "chats"
-                if not _safe_is_dir(chats_dir):
-                    continue
-                match = _first_recent_file(
-                    _safe_glob(chats_dir, f"session-*-{prefix}.json", reverse=True),
-                    source_max_days,
-                )
-                if match:
-                    return str(match)
     elif source == "qwen":
         qwen_projects = Path.home() / ".qwen" / "projects"
         if _safe_exists(qwen_projects):

@@ -192,7 +192,6 @@ async def test_text_generation_service_selects_available_registry_binding() -> N
         "claude": AIAdapterStyle.LLM_PROVIDER,
         "codex": AIAdapterStyle.DAEMON,
         "local:lm-studio": AIAdapterStyle.OPENAI_COMPATIBLE,
-        "gemini": AIAdapterStyle.CLI,
         "grok": AIAdapterStyle.CLI,
         "qwen": AIAdapterStyle.CLI,
         "droid": AIAdapterStyle.CLI,
@@ -507,10 +506,10 @@ async def test_text_generation_service_falls_back_when_candidate_echoes_prompt()
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
+                provider="qwen",
                 adapter_style=AIAdapterStyle.ACP,
                 available=True,
-                models=("gemini-3.5-flash",),
+                models=("qwen-model",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -521,24 +520,23 @@ async def test_text_generation_service_falls_back_when_candidate_echoes_prompt()
             ),
         ]
     )
-    gemini = StaticTextAdapter(prompt)
+    qwen = StaticTextAdapter(prompt)
     claude = RecordingAdapter("claude")
-    service = TextGenerationService(registry, {"gemini": gemini, "claude": claude})
+    service = TextGenerationService(registry, {"qwen": qwen, "claude": claude})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt=prompt,
             profile="feature_mid",
-            candidates=("gemini/gemini-3.5-flash", "claude/sonnet"),
+            candidates=("qwen/qwen-model", "claude/sonnet"),
         )
     )
 
     assert result.text == f"claude:{prompt}"
     assert result.provider == "claude"
     assert result.model == "sonnet"
-    assert gemini.requests[0].model == "gemini-3.5-flash"
+    assert qwen.requests[0].model == "qwen-model"
     assert claude.requests[0].model == "sonnet"
-
 
 @pytest.mark.asyncio
 async def test_text_generation_service_falls_back_when_long_output_starts_with_prompt() -> None:
@@ -549,10 +547,10 @@ async def test_text_generation_service_falls_back_when_long_output_starts_with_p
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
+                provider="qwen",
                 adapter_style=AIAdapterStyle.ACP,
                 available=True,
-                models=("gemini-3.5-flash",),
+                models=("qwen-model",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -563,23 +561,23 @@ async def test_text_generation_service_falls_back_when_long_output_starts_with_p
             ),
         ]
     )
-    gemini = StaticTextAdapter(f"{echoed_prefix}\n\nGenerated prose after an echoed prompt.")
+    qwen = StaticTextAdapter(f"{echoed_prefix}\n\nGenerated prose after an echoed prompt.")
     claude = RecordingAdapter("claude")
-    service = TextGenerationService(registry, {"gemini": gemini, "claude": claude})
+    service = TextGenerationService(registry, {"qwen": qwen, "claude": claude})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt=prompt,
             system_prompt=system_prompt,
             profile="feature_mid",
-            candidates=("gemini/gemini-3.5-flash", "claude/sonnet"),
+            candidates=("qwen/qwen-model", "claude/sonnet"),
         )
     )
 
     assert result.text == f"claude:{prompt}"
     assert result.provider == "claude"
     assert result.model == "sonnet"
-    assert gemini.requests[0].model == "gemini-3.5-flash"
+    assert qwen.requests[0].model == "qwen-model"
     assert claude.requests[0].model == "sonnet"
 
 
@@ -1087,33 +1085,33 @@ async def test_text_generation_service_normalizes_auto_reasoning_effort_to_unset
 
 
 @pytest.mark.asyncio
-async def test_text_generation_service_accepts_valid_effort_for_emit_nothing_provider() -> None:
+async def test_text_generation_service_accepts_valid_effort_for_reasoning_provider() -> None:
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
-                adapter_style=AIAdapterStyle.CLI,
+                provider="codex",
+                adapter_style=AIAdapterStyle.DAEMON,
                 available=True,
-                models=("gemini-pro",),
+                models=("codex-model",),
             ),
         ]
     )
-    gemini = RecordingAdapter("gemini")
-    service = TextGenerationService(registry, {"gemini": gemini})
+    codex = RecordingAdapter("codex")
+    service = TextGenerationService(registry, {"codex": codex})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
             candidates=(
-                FeatureCandidateConfig(candidate="gemini/gemini-pro", reasoning_effort="high"),
+                FeatureCandidateConfig(candidate="codex/codex-model", reasoning_effort="high"),
             ),
         )
     )
 
-    assert result.provider == "gemini"
-    assert result.applied_reasoning_effort is None
-    assert gemini.requests[0].reasoning_effort is None
+    assert result.provider == "codex"
+    assert result.applied_reasoning_effort == "high"
+    assert codex.requests[0].reasoning_effort == "high"
 
 
 @pytest.mark.asyncio
@@ -1131,30 +1129,30 @@ async def test_text_generation_service_rejects_known_effort_when_provider_effort
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
+                provider="droid",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-pro",),
+                models=("droid-model",),
             ),
         ]
     )
     qwen = RecordingAdapter("qwen")
-    gemini = RecordingAdapter("gemini")
-    service = TextGenerationService(registry, {"qwen": qwen, "gemini": gemini})
+    droid = RecordingAdapter("droid")
+    service = TextGenerationService(registry, {"qwen": qwen, "droid": droid})
 
     result = await service.generate_result(
         TextGenerationRequest(
             prompt="summarize",
             candidates=(
                 FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="high"),
-                FeatureCandidateConfig(candidate="gemini/gemini-pro", reasoning_effort="high"),
+                FeatureCandidateConfig(candidate="droid/droid-model", reasoning_effort="high"),
             ),
         )
     )
 
-    assert result.provider == "gemini"
+    assert result.provider == "droid"
     assert not qwen.requests
-    assert gemini.requests[0].reasoning_effort is None
+    assert droid.requests[0].reasoning_effort == "high"
     assert (
         "Unsupported reasoning_effort 'high' for provider 'qwen'; accepted: <none>" in caplog.text
     )
@@ -1175,16 +1173,16 @@ async def test_text_generation_service_skips_unknown_reasoning_effort_even_witho
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
+                provider="droid",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-pro",),
+                models=("droid-model",),
             ),
         ]
     )
     qwen = RecordingAdapter("qwen")
-    gemini = RecordingAdapter("gemini")
-    service = TextGenerationService(registry, {"qwen": qwen, "gemini": gemini})
+    droid = RecordingAdapter("droid")
+    service = TextGenerationService(registry, {"qwen": qwen, "droid": droid})
     caplog.set_level(logging.WARNING, logger=TEXT_GENERATION_LOGGER)
 
     result = await service.generate_result(
@@ -1192,14 +1190,14 @@ async def test_text_generation_service_skips_unknown_reasoning_effort_even_witho
             prompt="summarize",
             candidates=(
                 FeatureCandidateConfig(candidate="qwen/qwen-model", reasoning_effort="banana"),
-                FeatureCandidateConfig(candidate="gemini/gemini-pro", reasoning_effort="high"),
+                FeatureCandidateConfig(candidate="droid/droid-model", reasoning_effort="high"),
             ),
         )
     )
 
-    assert result.provider == "gemini"
+    assert result.provider == "droid"
     assert qwen.requests == []
-    assert gemini.requests[0].reasoning_effort is None
+    assert droid.requests[0].reasoning_effort == "high"
     assert "Unknown reasoning_effort 'banana'" in caplog.text
 
 
@@ -1262,16 +1260,16 @@ async def test_text_generation_service_raises_last_reasoning_effort_error_when_a
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
+                provider="grok",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-pro",),
+                models=("grok-model",),
             ),
         ]
     )
     qwen = RecordingAdapter("qwen")
-    gemini = RecordingAdapter("gemini")
-    service = TextGenerationService(registry, {"qwen": qwen, "gemini": gemini})
+    grok = RecordingAdapter("grok")
+    service = TextGenerationService(registry, {"qwen": qwen, "grok": grok})
 
     with pytest.raises(ValueError, match="Unknown reasoning_effort 'kumquat'"):
         await service.generate_result(
@@ -1283,7 +1281,7 @@ async def test_text_generation_service_raises_last_reasoning_effort_error_when_a
                         reasoning_effort="banana",
                     ),
                     FeatureCandidateConfig(
-                        candidate="gemini/gemini-pro",
+                        candidate="grok/grok-model",
                         reasoning_effort="kumquat",
                     ),
                 ),
@@ -1291,7 +1289,7 @@ async def test_text_generation_service_raises_last_reasoning_effort_error_when_a
         )
 
     assert qwen.requests == []
-    assert gemini.requests == []
+    assert grok.requests == []
 
 
 def test_coerce_text_result_applies_reasoning_effort_to_raw_string() -> None:
@@ -1661,19 +1659,19 @@ async def test_text_generation_service_json_parse_failure_reports_raw_preview() 
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
+                provider="qwen",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-3.5-flash",),
+                models=("qwen-model",),
             )
         ]
     )
-    adapter = EmptyTextAdapter("gemini")
-    service = TextGenerationService(registry, {"gemini": adapter})
+    adapter = EmptyTextAdapter("qwen")
+    service = TextGenerationService(registry, {"qwen": adapter})
 
     with pytest.raises(ValueError) as exc_info:
         await service.generate_json(
-            TextGenerationRequest(prompt="classify", provider="gemini", model="gemini-3.5-flash")
+            TextGenerationRequest(prompt="classify", provider="qwen", model="qwen-model")
         )
 
     message = str(exc_info.value)
@@ -1684,7 +1682,7 @@ async def test_text_generation_service_json_parse_failure_reports_raw_preview() 
 
 @pytest.mark.asyncio
 async def test_text_generation_service_resolves_only_selected_adapter() -> None:
-    providers = ("claude", "codex", "local:lm-studio", "gemini", "grok", "qwen", "droid")
+    providers = ("claude", "codex", "local:lm-studio", "grok", "qwen", "droid")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -1756,7 +1754,7 @@ async def test_text_generation_service_rejects_none_factory_result() -> None:
 
 
 def test_build_daemon_text_generation_service_defers_adapter_instantiation() -> None:
-    providers = ("claude", "codex", "local:lm-studio", "gemini", "grok", "qwen", "droid")
+    providers = ("claude", "codex", "local:lm-studio", "grok", "qwen", "droid")
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
@@ -1815,12 +1813,10 @@ def test_daemon_text_generation_builder_maps_feature_providers_to_one_shot_adapt
     factories = _daemon_text_generation_adapter_factories(config)
 
     codex_adapter = factories["codex"]()
-    gemini_adapter = factories["gemini"]()
     grok_adapter = factories["grok"]()
     qwen_adapter = factories["qwen"]()
 
     assert isinstance(codex_adapter, CodexCLITextGenerateAdapter)
-    assert isinstance(gemini_adapter, text_generation_adapters._GeminiCLITextGenerateAdapter)
     assert isinstance(grok_adapter, text_generation_adapters._GrokCLITextGenerateAdapter)
     assert isinstance(qwen_adapter, text_generation_adapters._QwenCLITextGenerateAdapter)
     qwen_command = qwen_adapter.build_command(
@@ -2190,7 +2186,6 @@ def test_cli_text_generate_adapters_treat_auto_reasoning_effort_as_unset() -> No
 
 
 def test_emit_nothing_cli_text_generate_adapters_ignore_reasoning_effort() -> None:
-    gemini = text_generation_adapters._GeminiCLITextGenerateAdapter(command_path="/bin/gemini")
     qwen = text_generation_adapters._QwenCLITextGenerateAdapter(command_path="/bin/qwen")
     request = TextGenerationRequest(
         prompt="prompt",
@@ -2198,12 +2193,9 @@ def test_emit_nothing_cli_text_generate_adapters_ignore_reasoning_effort() -> No
         reasoning_effort="high",
     )
 
-    gemini_command = gemini.build_command(request)
     qwen_command = qwen.build_command(request)
 
-    assert "--reasoning-effort" not in gemini_command
     assert "--reasoning-effort" not in qwen_command
-    assert "model_reasoning_effort" not in " ".join(gemini_command)
     assert "model_reasoning_effort" not in " ".join(qwen_command)
 
 
@@ -2264,10 +2256,10 @@ async def test_text_generation_service_falls_back_when_candidate_errors() -> Non
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
+                provider="qwen",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-pro",),
+                models=("qwen-model",),
             ),
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
@@ -2282,7 +2274,7 @@ async def test_text_generation_service_falls_back_when_candidate_errors() -> Non
     service = TextGenerationService(
         registry,
         {
-            "gemini": FailingAdapter(),
+            "qwen": FailingAdapter(),
             "claude": claude,
         },
     )
@@ -2291,7 +2283,7 @@ async def test_text_generation_service_falls_back_when_candidate_errors() -> Non
         TextGenerationRequest(
             prompt="summarize",
             profile="feature_low",
-            candidates=("gemini/gemini-pro", "claude/haiku"),
+            candidates=("qwen/qwen-model", "claude/haiku"),
         )
     )
 
@@ -2312,22 +2304,22 @@ async def test_json_text_generation_composes_json_instruction() -> None:
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
+                provider="qwen",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
-                models=("gemini-pro",),
+                models=("qwen-model",),
             )
         ]
     )
     adapter = RecordingJSONTextAdapter()
-    service = TextGenerationService(registry, {"gemini": adapter})
+    service = TextGenerationService(registry, {"qwen": adapter})
 
     result = await service.generate_json(
         TextGenerationRequest(
             prompt="classify",
             system_prompt="caller prompt",
-            provider="gemini",
-            model="gemini-pro",
+            provider="qwen",
+            model="qwen-model",
         )
     )
 
@@ -2380,16 +2372,16 @@ async def test_spawn_cold_same_provider_calls_respect_global_concurrency_cap() -
     prompts = {f"hold-{index}" for index in range(5)}
     state = GateProbeState(expected_started=3)
     service = TextGenerationService(
-        _registry_for_text_generation(("gemini", AIAdapterStyle.CLI, "gemini-pro")),
-        {"gemini": GateProbeAdapter(state, wait_prompts=prompts)},
+        _registry_for_text_generation(("qwen", AIAdapterStyle.CLI, "qwen-model")),
+        {"qwen": GateProbeAdapter(state, wait_prompts=prompts)},
         spawn_cold_max_concurrency=3,
     )
     tasks = [
         asyncio.create_task(
             service.generate_result(
                 TextGenerationRequest(
-                    provider="gemini",
-                    model="gemini-pro",
+                    provider="qwen",
+                    model="qwen-model",
                     prompt=f"hold-{index}",
                 )
             )
@@ -2416,11 +2408,11 @@ async def test_spawn_cold_same_provider_calls_respect_global_concurrency_cap() -
 @pytest.mark.asyncio
 async def test_spawn_cold_mixed_provider_calls_share_global_concurrency_cap() -> None:
     requests = [
-        ("gemini", "gemini-pro", "hold-gemini-1"),
+        ("qwen", "qwen-model", "hold-qwen-1"),
         ("codex", "gpt-5", "hold-codex-1"),
-        ("gemini", "gemini-pro", "hold-gemini-2"),
+        ("qwen", "qwen-model", "hold-qwen-2"),
         ("codex", "gpt-5", "hold-codex-2"),
-        ("gemini", "gemini-pro", "hold-gemini-3"),
+        ("qwen", "qwen-model", "hold-qwen-3"),
     ]
     state = GateProbeState(expected_started=3)
     adapter = GateProbeAdapter(
@@ -2429,10 +2421,10 @@ async def test_spawn_cold_mixed_provider_calls_share_global_concurrency_cap() ->
     )
     service = TextGenerationService(
         _registry_for_text_generation(
-            ("gemini", AIAdapterStyle.CLI, "gemini-pro"),
+            ("qwen", AIAdapterStyle.CLI, "qwen-model"),
             ("codex", AIAdapterStyle.DAEMON, "gpt-5"),
         ),
-        {"gemini": adapter, "codex": adapter},
+        {"qwen": adapter, "codex": adapter},
         spawn_cold_max_concurrency=3,
     )
     tasks = [
@@ -2447,7 +2439,7 @@ async def test_spawn_cold_mixed_provider_calls_share_global_concurrency_cap() ->
     try:
         await asyncio.wait_for(state.started_event.wait(), timeout=1)
         assert len(state.started) == 3
-        assert set(state.started) == {"gemini", "codex"}
+        assert set(state.started) == {"qwen", "codex"}
         assert state.max_active == 3
         with pytest.raises(TimeoutError):
             await asyncio.wait_for(state.over_expected_event.wait(), timeout=0.02)
@@ -2498,14 +2490,14 @@ async def test_fast_generation_lanes_bypass_spawn_cold_gate() -> None:
 async def test_spawn_cold_queue_wait_does_not_consume_candidate_timeout() -> None:
     state = GateProbeState(expected_started=1)
     service = TextGenerationService(
-        _registry_for_text_generation(("gemini", AIAdapterStyle.CLI, "gemini-pro")),
-        {"gemini": GateProbeAdapter(state, delays={"slow": 30.0, "fast": 0.02})},
+        _registry_for_text_generation(("qwen", AIAdapterStyle.CLI, "qwen-model")),
+        {"qwen": GateProbeAdapter(state, delays={"slow": 30.0, "fast": 0.02})},
         cli_candidate_timeout_seconds=0.05,
         spawn_cold_max_concurrency=1,
     )
     slow_task = asyncio.create_task(
         service.generate_result(
-            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="slow")
+            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="slow")
         )
     )
     await asyncio.wait_for(state.started_event.wait(), timeout=1)
@@ -2513,7 +2505,7 @@ async def test_spawn_cold_queue_wait_does_not_consume_candidate_timeout() -> Non
     started_waiting_at = asyncio.get_running_loop().time()
     fast_task = asyncio.create_task(
         service.generate_result(
-            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="fast")
+            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="fast")
         )
     )
 
@@ -2522,43 +2514,43 @@ async def test_spawn_cold_queue_wait_does_not_consume_candidate_timeout() -> Non
     result = await asyncio.wait_for(fast_task, timeout=1)
 
     assert asyncio.get_running_loop().time() - started_waiting_at >= 0.05
-    assert result.text == "gemini:fast"
+    assert result.text == "qwen:fast"
 
 
 @pytest.mark.asyncio
 async def test_spawn_cold_gate_releases_slot_after_provider_error() -> None:
     state = GateProbeState(expected_started=1)
     service = TextGenerationService(
-        _registry_for_text_generation(("gemini", AIAdapterStyle.CLI, "gemini-pro")),
-        {"gemini": GateProbeAdapter(state, failures={"error"})},
+        _registry_for_text_generation(("qwen", AIAdapterStyle.CLI, "qwen-model")),
+        {"qwen": GateProbeAdapter(state, failures={"error"})},
         spawn_cold_max_concurrency=1,
     )
 
     with pytest.raises(RuntimeError, match="boom"):
         await service.generate_result(
-            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="error")
+            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="error")
         )
     result = await asyncio.wait_for(
         service.generate_result(
-            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="success")
+            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="success")
         ),
         timeout=1,
     )
 
-    assert result.text == "gemini:success"
+    assert result.text == "qwen:success"
 
 
 @pytest.mark.asyncio
 async def test_spawn_cold_gate_releases_slot_after_cancellation() -> None:
     state = GateProbeState(expected_started=1)
     service = TextGenerationService(
-        _registry_for_text_generation(("gemini", AIAdapterStyle.CLI, "gemini-pro")),
-        {"gemini": GateProbeAdapter(state, wait_prompts={"wait"})},
+        _registry_for_text_generation(("qwen", AIAdapterStyle.CLI, "qwen-model")),
+        {"qwen": GateProbeAdapter(state, wait_prompts={"wait"})},
         spawn_cold_max_concurrency=1,
     )
     cancelled_task = asyncio.create_task(
         service.generate_result(
-            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="wait")
+            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="wait")
         )
     )
     await asyncio.wait_for(state.started_event.wait(), timeout=1)
@@ -2568,12 +2560,12 @@ async def test_spawn_cold_gate_releases_slot_after_cancellation() -> None:
         await cancelled_task
     result = await asyncio.wait_for(
         service.generate_result(
-            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="success")
+            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="success")
         ),
         timeout=1,
     )
 
-    assert result.text == "gemini:success"
+    assert result.text == "qwen:success"
 
 
 @pytest.mark.asyncio
@@ -2679,20 +2671,20 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     slow_adapter = SlowAdapter()
     monkeypatch.setattr(
         text_generation_adapters,
-        "_GeminiCLITextGenerateAdapter",
+        "_QwenCLITextGenerateAdapter",
         lambda **_kwargs: slow_adapter,
     )
     registry = AICapabilityRegistry(
         [
             CapabilityBinding(
                 capability=AICapability.TEXT_GENERATE,
-                provider="gemini",
+                provider="qwen",
                 adapter_style=AIAdapterStyle.CLI,
                 available=True,
             )
         ]
     )
-    # The gemini binding is a spawn-cold CLI lane, so it is bounded by
+    # The qwen binding is a spawn-cold CLI lane, so it is bounded by
     # cli_candidate_timeout_seconds (not the fast-lane candidate_timeout_seconds).
     service = build_daemon_text_generation_service(
         DaemonConfig(
@@ -2709,7 +2701,7 @@ async def test_build_daemon_text_generation_service_plumbs_candidate_timeout(
     assert service._spawn_cold_max_concurrency == 1
     with pytest.raises(RuntimeError, match="candidate timed out after 0.01s"):
         await service.generate(
-            TextGenerationRequest(provider="gemini", model="gemini-pro", prompt="never completes")
+            TextGenerationRequest(provider="qwen", model="qwen-model", prompt="never completes")
         )
 
 
@@ -2778,8 +2770,8 @@ async def test_run_cli_text_generation_command_cleans_up_process_when_cancelled(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
     task = asyncio.create_task(
         text_generation_adapters._run_cli_text_generation_command(
-            "Gemini",
-            ("/usr/local/bin/gemini", "--prompt", "slow"),
+            "Qwen",
+            ("/usr/local/bin/qwen", "--prompt", "slow"),
             neutral_cwd=Path("/tmp"),
             timeout_seconds=30,
             env_overrides={},
@@ -2913,198 +2905,6 @@ def _assert_droid_isolated_env(env: dict[str, str]) -> Path:
     assert Path(env["XDG_CACHE_HOME"]) == temp_home / ".cache"
     assert env["GOBBY_HOOKS_DISABLED"] == "1"
     return temp_home
-
-
-@pytest.mark.asyncio
-async def test_gemini_cli_text_generate_adapter_runs_non_session_prompt(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    commands: list[tuple[str, ...]] = []
-    cwds: list[str | None] = []
-    envs: list[dict[str, str]] = []
-
-    async def fake_create_subprocess_exec(
-        *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
-        env: dict[str, str],
-        start_new_session: bool,
-    ) -> FakeProcess:
-        commands.append(command)
-        cwds.append(cwd)
-        envs.append(env)
-        return FakeProcess(b"gemini text\n")
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
-        command_path="/usr/local/bin/gemini",
-    )
-
-    response = await adapter.generate(
-        TextGenerationRequest(
-            prompt="explain",
-            system_prompt="system",
-            model="gemini-3-pro",
-            cwd="/tmp/project",
-        )
-    )
-
-    assert response == "gemini text"
-    assert commands == [
-        (
-            "/usr/local/bin/gemini",
-            "--output-format",
-            "text",
-            "--model",
-            "gemini-3-pro",
-            "--prompt",
-            f"system\n\n{ONE_SHOT_DIRECTIVE}\n\nexplain",
-        ),
-    ]
-    # One-shot generation runs in a neutral temp dir, never the request's project cwd.
-    assert cwds[0] != "/tmp/project"
-    assert cwds[0] is not None and "gobby-textgen-" in cwds[0]
-    assert envs[0]["GOBBY_HOOKS_DISABLED"] == "1"
-    # The neutral temp cwd is untrusted; trust it so headless Gemini does not
-    # exit with FatalUntrustedWorkspaceError when Folder Trust is enabled.
-    assert envs[0]["GEMINI_CLI_TRUST_WORKSPACE"] == "true"
-
-
-@pytest.mark.asyncio
-async def test_gemini_cli_text_generate_adapter_parses_json_output_wrapper(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    commands: list[tuple[str, ...]] = []
-
-    async def fake_create_subprocess_exec(
-        *command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
-        env: dict[str, str],
-        start_new_session: bool,
-    ) -> FakeProcess:
-        commands.append(command)
-        return FakeProcess(b'{"response":"{\\"ok\\":true,\\"name\\":\\"Ada\\"}","stats":{}}\n')
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
-        command_path="/usr/local/bin/gemini",
-    )
-
-    response = await adapter.generate_json(
-        TextGenerationRequest(prompt="extract", model="gemini-3-pro")
-    )
-
-    assert response == {"ok": True, "name": "Ada"}
-    assert commands == [
-        (
-            "/usr/local/bin/gemini",
-            "--output-format",
-            "json",
-            "--model",
-            "gemini-3-pro",
-            "--prompt",
-            (
-                "Respond with a single valid JSON object. Do not include markdown."
-                f"\n\n{ONE_SHOT_DIRECTIVE}\n\nextract"
-            ),
-        ),
-    ]
-
-
-@pytest.mark.asyncio
-async def test_gemini_cli_text_generate_adapter_reports_json_wrapper_error(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    async def fake_create_subprocess_exec(
-        *_command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
-        env: dict[str, str],
-        start_new_session: bool,
-    ) -> FakeProcess:
-        return FakeProcess(b'{"error":{"message":"quota exceeded"}}\n')
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
-        command_path="/usr/local/bin/gemini",
-    )
-
-    with pytest.raises(RuntimeError, match="quota exceeded"):
-        await adapter.generate_json(TextGenerationRequest(prompt="extract"))
-
-
-@pytest.mark.asyncio
-async def test_gemini_cli_text_generate_adapter_retries_empty_json_output(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    outputs = [
-        b"\n",  # transient empty stdout -> JSONDecodeError -> retry once
-        b'{"response":"{\\"ok\\":true}","stats":{}}\n',
-    ]
-    calls = 0
-
-    async def fake_create_subprocess_exec(
-        *_command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
-        env: dict[str, str],
-        start_new_session: bool,
-    ) -> FakeProcess:
-        nonlocal calls
-        process = FakeProcess(outputs[calls])
-        calls += 1
-        return process
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
-        command_path="/usr/local/bin/gemini",
-    )
-
-    response = await adapter.generate_json(
-        TextGenerationRequest(prompt="extract", model="gemini-3-pro")
-    )
-
-    assert response == {"ok": True}
-    assert calls == 2  # retried once after the empty wrapper
-
-
-@pytest.mark.asyncio
-async def test_gemini_cli_text_generate_adapter_raises_after_two_invalid_json_outputs(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    calls = 0
-
-    async def fake_create_subprocess_exec(
-        *_command: str,
-        stdin: int,
-        stdout: int,
-        stderr: int,
-        cwd: str | None,
-        env: dict[str, str],
-        start_new_session: bool,
-    ) -> FakeProcess:
-        nonlocal calls
-        calls += 1
-        return FakeProcess(b"\n")
-
-    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
-    adapter = text_generation_adapters._GeminiCLITextGenerateAdapter(
-        command_path="/usr/local/bin/gemini",
-    )
-
-    with pytest.raises(ValueError, match="invalid JSON wrapper"):
-        await adapter.generate_json(TextGenerationRequest(prompt="extract"))
-
-    assert calls == 2  # one retry, then surface the error
 
 
 @pytest.mark.asyncio
@@ -3703,8 +3503,8 @@ async def test_run_cli_text_generation_command_closes_stdin(
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
 
     result = await text_generation_adapters._run_cli_text_generation_command(
-        "Gemini",
-        ("/usr/local/bin/gemini", "--prompt", "hi"),
+        "Qwen",
+        ("/usr/local/bin/qwen", "--prompt", "hi"),
         neutral_cwd=tmp_path,
         timeout_seconds=5,
         env_overrides={},

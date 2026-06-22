@@ -14,7 +14,6 @@ from gobby.sessions.processor_types import ProcessorHost
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
 from gobby.sessions.transcripts.base import ParsedMessage
-from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 
 logger = logging.getLogger(__name__)
 
@@ -25,7 +24,7 @@ class ProcessorTranscriptMixin:
         Process a single session.
 
         Dispatches to format-specific processing based on file extension:
-        - .json: Full-file parsing with mtime change detection (Gemini native)
+        - .json: Full-file parsing with mtime change detection for typed-JSON CLIs
         - .jsonl/.ndjson/other: Incremental line-by-line with byte offset tracking
         """
         if not await asyncio.to_thread(os.path.exists, transcript_path):
@@ -141,7 +140,7 @@ class ProcessorTranscriptMixin:
         self: ProcessorHost, session_id: str, transcript_path: str
     ) -> None:
         """
-        Process a JSON session file (e.g., Gemini native format).
+        Process a JSON session file.
 
         Uses mtime to detect changes, reads the entire file, and parses
         all messages. Only stores messages newer than last_message_index.
@@ -170,8 +169,8 @@ class ProcessorTranscriptMixin:
         self._revive_expired_terminal_session(session_id)
 
         parser = self._parsers.get(session_id)
-        if not parser or not isinstance(parser, GeminiTranscriptParser):
-            logger.warning("No GeminiTranscriptParser for JSON session %s", session_id)
+        if not parser or not hasattr(parser, "parse_session_json"):
+            logger.warning("No JSON-session transcript parser for session %s", session_id)
             return
 
         source = getattr(parser, "cli_name", None)

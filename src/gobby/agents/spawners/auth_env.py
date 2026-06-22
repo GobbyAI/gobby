@@ -59,14 +59,6 @@ CLI_ENV_ALLOWLIST: dict[str, frozenset[str]] = {
             "OPENAI_MODEL",
         }
     ),
-    "gemini": frozenset(
-        {
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
-            "GOOGLE_APPLICATION_CREDENTIALS",
-            "GOOGLE_CLOUD_PROJECT",
-        }
-    ),
     "grok": frozenset(
         {
             "XAI_API_KEY",
@@ -106,13 +98,6 @@ CLI_CREDENTIAL_KEYS: dict[str, frozenset[str]] = {
         }
     ),
     "codex": frozenset({"OPENAI_API_KEY"}),
-    "gemini": frozenset(
-        {
-            "GEMINI_API_KEY",
-            "GOOGLE_API_KEY",
-            "GOOGLE_APPLICATION_CREDENTIALS",
-        }
-    ),
     "grok": frozenset({"XAI_API_KEY", "GROK_API_KEY"}),
     "qwen": frozenset({"DASHSCOPE_API_KEY", "OPENAI_API_KEY", "QWEN_API_KEY"}),
     "droid": frozenset({"FACTORY_API_KEY"}),

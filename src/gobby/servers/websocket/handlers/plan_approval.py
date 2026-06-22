@@ -76,7 +76,7 @@ async def _inject_turn(
 ) -> bool:
     """Inject a synthetic user turn through the normal chat-message path.
 
-    Managed CLIs (Codex, Droid, Gemini, Grok, Qwen) present a plan as a
+    Managed CLIs (Codex, Droid, Grok, Qwen) present a plan as a
     completed assistant turn -- there is no in-flight ExitPlanMode tool to
     unblock -- so auto-continue-after-approval drives the agent by posting a new
     user turn.

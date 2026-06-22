@@ -13,7 +13,7 @@ from gobby.mcp_proxy.tools.worktrees._helpers import (
     install_provider_hooks,
     resolve_project_context,
 )
-from gobby.sessions.token_usage import gemini_token_usage
+from gobby.sessions.token_usage import typed_json_token_usage
 from gobby.storage.token_events import build_session_usage_payload
 from gobby.utils.project_context import get_workflow_project_path
 from gobby.worktrees.git import WorktreeGitManager
@@ -65,7 +65,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
         return HookResponse(decision="allow")
 
     def handle_before_model(self, event: HookEvent) -> HookResponse:
-        """Handle BEFORE_MODEL event (Gemini only)."""
+        """Handle BEFORE_MODEL events for ACP-style providers."""
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:
@@ -76,7 +76,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
         return HookResponse(decision="allow")
 
     def handle_after_model(self, event: HookEvent) -> HookResponse:
-        """Handle AFTER_MODEL event (Gemini only)."""
+        """Handle AFTER_MODEL events for ACP-style providers."""
         session_id = event.metadata.get("_platform_session_id")
         input_data = event.data
 
@@ -84,7 +84,8 @@ class MiscEventHandlerMixin(EventHandlersBase):
             self.logger.debug(f"AFTER_MODEL: session {session_id}")
 
             # Extract usage metadata from response
-            # Gemini CLI payload structure: {"response": {"usageMetadata": {...}}, "model_name": "..."}
+            # Typed-JSON payload structure:
+            # {"response": {"usageMetadata": {...}}, "model_name": "..."}
             response_data = input_data.get("response")
             model_name = input_data.get("model_name") or input_data.get("model")
 
@@ -94,7 +95,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                     # De-overlap cached input and fold thinking tokens into output
                     # via the shared helper so live usage matches replayed
                     # transcripts (Gemini has no cache_creation split here → 0).
-                    tokens = gemini_token_usage(usage)
+                    tokens = typed_json_token_usage(usage)
 
                     # Update session usage in DB
                     try:
@@ -107,7 +108,7 @@ class MiscEventHandlerMixin(EventHandlersBase):
                             model=model_name,
                         )
                         self.logger.debug(
-                            "Updated Gemini session usage: "
+                            "Updated typed-JSON session usage: "
                             f"{tokens.input_tokens} in, {tokens.output_tokens} out"
                         )
                         refreshed = self._session_manager.get(session_id)

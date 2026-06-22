@@ -207,11 +207,11 @@ def register_core_routes(
                 raise HTTPException(status_code=503, detail="Session manager not available")
 
             provider = body.provider or "claude"
-            if provider not in {"claude", "gemini", "grok", "qwen", "codex", "droid", "agy"}:
+            if provider not in {"claude", "grok", "qwen", "codex", "droid", "agy"}:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        "Invalid provider. Must be one of: claude, gemini, grok, "
+                        "Invalid provider. Must be one of: claude, grok, "
                         "qwen, codex, droid, agy"
                     ),
                 )
@@ -556,7 +556,7 @@ def register_core_routes(
         Args:
             project_id: Filter by project ID
             status: Filter by status (active, archived, etc)
-            source: Filter by source (Claude Code, Gemini, etc)
+            source: Filter by source (Claude Code, Qwen, etc)
             limit: Max results (default 100)
             exclude_subagents: If true, only return top-level sessions
             include_resumability: If true, enrich with resumability and filter non-resumable

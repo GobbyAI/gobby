@@ -1,7 +1,7 @@
 """Unified hook event models for multi-CLI session management.
 
 This module defines the unified internal representation for hook events across
-all supported CLIs (Claude Code, Droid CLI, Gemini CLI, Qwen CLI, Codex CLI).
+all supported CLIs (Claude Code, Droid CLI, Qwen CLI, Grok CLI, Codex CLI).
 Adapters translate between CLI-specific formats and these unified types.
 
 Design Decision: This file coexists with hook_types.py. The existing HookType enum
@@ -22,7 +22,7 @@ class HookEventType(str, Enum):
     These map to CLI-specific hook names via adapters:
     - Claude Code: kebab-case (session-start, pre-tool-use)
     - Droid CLI: PascalCase (SessionStart, PreToolUse)
-    - Gemini CLI: PascalCase (SessionStart, BeforeTool)
+- ACP CLIs: PascalCase (SessionStart, BeforeTool)
     - Codex CLI: PascalCase hooks.json names (SessionStart, PreToolUse)
     """
 
@@ -38,14 +38,14 @@ class HookEventType(str, Enum):
     # Tool lifecycle
     BEFORE_TOOL = "before_tool"
     AFTER_TOOL = "after_tool"
-    BEFORE_TOOL_SELECTION = "before_tool_selection"  # Gemini only
+    BEFORE_TOOL_SELECTION = "before_tool_selection"
 
-    # Model lifecycle (Gemini only)
+    # Model lifecycle
     BEFORE_MODEL = "before_model"
     AFTER_MODEL = "after_model"
 
     # Context management
-    PRE_COMPACT = "pre_compact"  # Claude/Codex: PreCompact, Gemini: PreCompress
+    PRE_COMPACT = "pre_compact"  # Claude/Codex: PreCompact, ACP CLIs: PreCompress
     POST_COMPACT = "post_compact"  # Claude/Codex: PostCompact
 
     # Subagent lifecycle (Claude Code only)
@@ -192,175 +192,146 @@ class HookResponse:
 EVENT_TYPE_CLI_SUPPORT: dict[HookEventType, dict[str, str | None]] = {
     HookEventType.SESSION_START: {
         "claude": "SessionStart",
-        "gemini": "SessionStart",
         "qwen": "SessionStart",
         "codex": "SessionStart",
     },
     HookEventType.SESSION_END: {
         "claude": "SessionEnd",
-        "gemini": "SessionEnd",
         "qwen": "SessionEnd",
         "codex": None,
     },
     HookEventType.BEFORE_AGENT: {
         "claude": "UserPromptSubmit",
-        "gemini": "BeforeAgent",
         "qwen": "BeforeAgent",
         "codex": "UserPromptSubmit",
     },
     HookEventType.AFTER_AGENT: {
         "claude": "Stop",
-        "gemini": "AfterAgent",
         "qwen": "AfterAgent",
         "codex": None,
     },
     HookEventType.STOP: {
         "claude": "Stop",
-        "gemini": None,
         "qwen": None,
         "codex": "Stop",
     },
     HookEventType.BEFORE_TOOL: {
         "claude": "PreToolUse",
-        "gemini": "BeforeTool",
         "qwen": "BeforeTool",
         "codex": "PreToolUse",
     },
     HookEventType.AFTER_TOOL: {
         "claude": "PostToolUse",
-        "gemini": "AfterTool",
         "qwen": "AfterTool",
         "codex": "PostToolUse",
     },
     HookEventType.BEFORE_TOOL_SELECTION: {
         "claude": None,
-        "gemini": "BeforeToolSelection",
         "qwen": "BeforeToolSelection",
         "codex": None,
     },
     HookEventType.BEFORE_MODEL: {
         "claude": None,
-        "gemini": "BeforeModel",
         "qwen": "BeforeModel",
         "codex": None,
     },
     HookEventType.AFTER_MODEL: {
         "claude": None,
-        "gemini": "AfterModel",
         "qwen": "AfterModel",
         "codex": None,
     },
     HookEventType.PRE_COMPACT: {
         "claude": "PreCompact",
-        "gemini": "PreCompress",
         "qwen": "PreCompress",
         "codex": "PreCompact",
     },
     HookEventType.POST_COMPACT: {
         "claude": "PostCompact",
-        "gemini": None,
         "qwen": None,
         "codex": "PostCompact",
     },
     HookEventType.SUBAGENT_START: {
         "claude": "SubagentStart",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.SUBAGENT_STOP: {
         "claude": "SubagentStop",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.PERMISSION_REQUEST: {
         "claude": "PermissionRequest",
-        "gemini": None,
         "qwen": None,
         "codex": "PermissionRequest",
     },
     HookEventType.PERMISSION_DENIED: {
         "claude": "PermissionDenied",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.NOTIFICATION: {
         "claude": "Notification",
-        "gemini": "Notification",
         "qwen": "Notification",
         "codex": None,
     },
     HookEventType.STOP_FAILURE: {
         "claude": "StopFailure",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.TASK_CREATED: {
         "claude": "TaskCreated",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.TASK_COMPLETED: {
         "claude": "TaskCompleted",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.TEAMMATE_IDLE: {
         "claude": "TeammateIdle",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.INSTRUCTIONS_LOADED: {
         "claude": "InstructionsLoaded",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.CONFIG_CHANGE: {
         "claude": "ConfigChange",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.CWD_CHANGED: {
         "claude": "CwdChanged",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.FILE_CHANGED: {
         "claude": "FileChanged",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.WORKTREE_CREATE: {
         "claude": "WorktreeCreate",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.WORKTREE_REMOVE: {
         "claude": "WorktreeRemove",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.ELICITATION: {
         "claude": "Elicitation",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },
     HookEventType.ELICITATION_RESULT: {
         "claude": "ElicitationResult",
-        "gemini": None,
         "qwen": None,
         "codex": None,
     },

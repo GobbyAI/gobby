@@ -46,7 +46,7 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
         create_branch: bool = True,
         use_local: bool | None = None,
         project_path: str | None = None,
-        provider: Literal["claude", "gemini", "qwen", "codex", "droid"] | None = None,
+        provider: Literal["claude", "qwen", "codex", "droid"] | None = None,
     ) -> dict[str, Any]:
         """Create a new git worktree.
 
@@ -59,7 +59,7 @@ def create_create_registry(ctx: RegistryContext) -> InternalToolRegistry:
             use_local: If True, branch from local ref instead of origin/ (preserves unpushed commits).
                        If None (default), auto-detects: uses local when base_branch has unpushed commits.
             project_path: Path to project directory (pass cwd from CLI).
-            provider: CLI provider to install hooks for (claude, gemini, qwen, codex, droid).
+            provider: CLI provider to install hooks for (claude, qwen, codex, droid).
                      If specified, installs hooks so agents can communicate with daemon.
 
         Returns:

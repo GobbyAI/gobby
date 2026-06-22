@@ -13,13 +13,11 @@ if TYPE_CHECKING:
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
     from gobby.sessions.transcripts.droid import DroidTranscriptParser
-    from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
     from gobby.sessions.transcripts.grok import GrokTranscriptParser
     from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
     TranscriptParser = (
         ClaudeTranscriptParser
-        | GeminiTranscriptParser
         | GrokTranscriptParser
         | QwenTranscriptParser
         | CodexTranscriptParser
@@ -36,12 +34,9 @@ def _get_parser(
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
     from gobby.sessions.transcripts.codex import CodexTranscriptParser
     from gobby.sessions.transcripts.droid import DroidTranscriptParser
-    from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
     from gobby.sessions.transcripts.grok import GrokTranscriptParser
     from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
-    if source == "gemini":
-        return GeminiTranscriptParser(session_id=session_id)
     if source == "grok":
         return GrokTranscriptParser(session_id=session_id)
     if source == "qwen":
@@ -73,16 +68,8 @@ def _parse_json_session(
     transcript_path: str | Path | None = None,
 ) -> list[ParsedMessage]:
     """Parse a native JSON session file."""
-    from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
     from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
-    if source == "gemini":
-        gemini_parser = GeminiTranscriptParser(session_id=session_id)
-        return [
-            r
-            for r in normalize_transcript_records(gemini_parser.parse_session_json(data), source)
-            if isinstance(r, ParsedMessage)
-        ]
     if source == "qwen":
         qwen_parser = QwenTranscriptParser(session_id=session_id)
         return [

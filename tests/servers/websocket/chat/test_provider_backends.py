@@ -13,9 +13,9 @@ from gobby.servers.websocket.chat.backends.codex import (
     CodexManagedChatSession,
     CodexWebChatBackend,
 )
-from gobby.servers.websocket.chat.backends.gemini import (
-    GeminiManagedChatSession,
-    GeminiWebChatBackend,
+from gobby.servers.websocket.chat.backends.qwen import (
+    QwenManagedChatSession,
+    QwenWebChatBackend,
 )
 from tests._timing import drain_asyncio_tasks
 
@@ -92,9 +92,9 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
     client.create_session = AsyncMock(side_effect=create_session)
     client.load_session = AsyncMock(side_effect=load_session)
 
-    backend = GeminiWebChatBackend(client=client, default_model="gemini-default")
-    backend._health = ProviderBackendHealth(provider="gemini", available=True)
-    session = GeminiManagedChatSession(conversation_id="conv-gemini", _backend=backend)
+    backend = QwenWebChatBackend(client=client, default_model="qwen-default")
+    backend._health = ProviderBackendHealth(provider="qwen", available=True)
+    session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
     session.project_path = "workspace"
     session.resume_session_id = resume_session_id
 
@@ -104,11 +104,11 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
     ) as pre_approve:
         await backend.attach_session(session)
 
-    pre_approve.assert_called_once_with("gemini", expected_cwd)
+    pre_approve.assert_called_once_with("qwen", expected_cwd)
     assert order == ["trust", expected_request]
     if expected_request == "create":
         client.create_session.assert_awaited_once_with(
-            model="gemini-default",
+            model="qwen-default",
             cwd=expected_cwd,
             reasoning_effort=None,
         )
@@ -117,7 +117,7 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
     else:
         client.load_session.assert_awaited_once_with(
             "prev",
-            model="gemini-default",
+            model="qwen-default",
             cwd=expected_cwd,
             reasoning_effort=None,
         )
@@ -133,9 +133,9 @@ async def test_acp_attach_session_requires_resolved_model_before_session_request
     client.create_session = AsyncMock()
     client.load_session = AsyncMock()
 
-    backend = GeminiWebChatBackend(client=client, default_model=None)
-    backend._health = ProviderBackendHealth(provider="gemini", available=True)
-    session = GeminiManagedChatSession(conversation_id="conv-gemini", _backend=backend)
+    backend = QwenWebChatBackend(client=client, default_model=None)
+    backend._health = ProviderBackendHealth(provider="qwen", available=True)
+    session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=backend)
 
     with pytest.raises(RuntimeError, match="model could not be resolved"):
         await backend.attach_session(session)

@@ -35,7 +35,7 @@ class TestHookEventType:
         assert HookEventType.BEFORE_TOOL_SELECTION.value == "before_tool_selection"
 
     def test_model_lifecycle_events(self) -> None:
-        """Test model lifecycle event types (Gemini only)."""
+        """Test model lifecycle event types."""
         assert HookEventType.BEFORE_MODEL.value == "before_model"
         assert HookEventType.AFTER_MODEL.value == "after_model"
 
@@ -200,12 +200,12 @@ class TestEventTypeCLISupport:
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["claude"] == "PreToolUse"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.AFTER_TOOL]["claude"] == "PostToolUse"
 
-    def test_gemini_support(self) -> None:
-        """Test Gemini CLI support in mapping."""
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["gemini"] == "SessionStart"
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["gemini"] == "BeforeTool"
+    def test_qwen_support(self) -> None:
+        """Test Qwen support in mapping."""
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SESSION_START]["qwen"] == "SessionStart"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL]["qwen"] == "BeforeTool"
         assert (
-            EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL_SELECTION]["gemini"]
+            EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_TOOL_SELECTION]["qwen"]
             == "BeforeToolSelection"
         )
 
@@ -217,12 +217,12 @@ class TestEventTypeCLISupport:
 
     def test_cli_specific_events(self) -> None:
         """Test CLI-specific event support."""
-        # Gemini-only events
+        # ACP-only events
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["claude"] is None
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["gemini"] == "BeforeModel"
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["qwen"] == "BeforeModel"
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.BEFORE_MODEL]["codex"] is None
 
         # Claude-only events
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["claude"] == "SubagentStart"
-        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["gemini"] is None
+        assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["qwen"] is None
         assert EVENT_TYPE_CLI_SUPPORT[HookEventType.SUBAGENT_START]["codex"] is None

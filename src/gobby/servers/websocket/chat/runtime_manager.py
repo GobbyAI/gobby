@@ -30,8 +30,6 @@ from gobby.servers.websocket.chat.backends import (
     CodexWebChatBackend,
     DroidManagedChatSession,
     DroidWebChatBackend,
-    GeminiManagedChatSession,
-    GeminiWebChatBackend,
     GrokManagedChatSession,
     GrokWebChatBackend,
     ProviderBackendHealth,
@@ -47,7 +45,6 @@ class WebChatRuntimeManager:
         self,
         *,
         codex_client: CodexAppServerClient | None = None,
-        gemini_default_model: str | None = None,
         codex_transcript_retry_attempts: int = 5,
         codex_transcript_retry_delay_seconds: float = 0.1,
         daemon_config: DaemonConfig | None = None,
@@ -82,10 +79,6 @@ class WebChatRuntimeManager:
                 transcript_retry_delay_seconds=codex_transcript_retry_delay_seconds,
                 sandbox_config=self._sandbox_config.model_copy(deep=True),
             )
-        self._gemini_backend = GeminiWebChatBackend(
-            default_model=gemini_default_model,
-            sandbox_config=self._sandbox_config.model_copy(deep=True),
-        )
         self._grok_backend = GrokWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
@@ -146,7 +139,6 @@ class WebChatRuntimeManager:
         await self._codex_backend.start()
         for backend in self._codex_local_backends.values():
             await backend.start()
-        await self._gemini_backend.start()
         await self._grok_backend.start()
         await self._qwen_backend.start()
         await self._droid_backend.start()
@@ -156,7 +148,6 @@ class WebChatRuntimeManager:
         await self._droid_backend.stop()
         await self._qwen_backend.stop()
         await self._grok_backend.stop()
-        await self._gemini_backend.stop()
         for backend in self._codex_local_backends.values():
             await backend.stop()
         await self._codex_backend.stop()
@@ -165,8 +156,6 @@ class WebChatRuntimeManager:
         """Return provider backend health for picker availability and status."""
         if provider == "codex":
             return self._codex_backend.health()
-        if provider == "gemini":
-            return self._gemini_backend.health()
         if provider == "grok":
             return self._grok_backend.health()
         if provider == "qwen":
@@ -187,7 +176,6 @@ class WebChatRuntimeManager:
         """Return all provider health states as plain dicts."""
         return {
             "claude": self.health("claude").to_dict(),
-            "gemini": self.health("gemini").to_dict(),
             "grok": self.health("grok").to_dict(),
             "qwen": self.health("qwen").to_dict(),
             "agy": self.health("agy").to_dict(),
@@ -204,13 +192,6 @@ class WebChatRuntimeManager:
         reasoning_effort: str | None = None,
     ) -> ChatSessionProtocol:
         """Create a provider-specific session wrapper for web chat."""
-        if provider == "gemini":
-            return GeminiManagedChatSession(
-                conversation_id=conversation_id,
-                _backend=self._gemini_backend,
-                _model=model,
-                reasoning_effort=reasoning_effort,
-            )
         if provider == "qwen":
             return QwenManagedChatSession(
                 conversation_id=conversation_id,
@@ -225,6 +206,8 @@ class WebChatRuntimeManager:
                 _model=model,
                 reasoning_effort=reasoning_effort,
             )
+        if provider == "gemini":
+            raise RuntimeError("Gemini web chat is no longer supported by Gobby")
         if provider == "agy":
             raise RuntimeError("AGY has no documented machine transport for live web chat yet")
         if provider == "codex":

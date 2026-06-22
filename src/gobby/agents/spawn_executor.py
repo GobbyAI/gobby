@@ -42,6 +42,7 @@ from gobby.config.tmux import TmuxConfig
 # Gobby-managed Claude agents must use Gobby's spawn/session controls. Native Claude
 # delegation bypasses project context, depth limits, sandbox metadata, and task ownership.
 _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS = ["Workflow", "Task"]
+_GEMINI_UNAVAILABLE_REASON = "Gemini provider is no longer supported by Gobby."
 
 __all__ = [
     "SpawnRequest",
@@ -79,9 +80,7 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
     if unsupported_sandbox := _unsupported_sandbox_request_error(request):
         return unsupported_sandbox
 
-    if request.provider == "gemini":
-        return await _spawn_gemini_terminal(request)
-    elif request.provider == "grok":
+    if request.provider == "grok":
         return await _spawn_grok_terminal(request)
     elif request.provider == "qwen":
         return await _spawn_qwen_terminal(request)
@@ -96,6 +95,14 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
             child_session_id=None,
             status="failed",
             error=AGY_UNAVAILABLE_REASON,
+        )
+    elif request.provider == "gemini":
+        return SpawnResult(
+            success=False,
+            run_id=request.run_id,
+            child_session_id=None,
+            status="failed",
+            error=_GEMINI_UNAVAILABLE_REASON,
         )
     # Unknown providers intentionally preserve the historical Claude fallback.
     return await _spawn_claude_terminal(request)
@@ -240,135 +247,6 @@ async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:
         tmux_socket_name=terminal_result.tmux_socket_name,
         tmux_socket_path=terminal_result.tmux_socket_path,
         message=f"Claude agent spawned in {terminal_result.terminal_type} with session {gobby_session_id}",
-    )
-
-
-async def _spawn_gemini_terminal(request: SpawnRequest) -> SpawnResult:
-    """
-    Spawn Gemini agent in terminal with direct spawn (no preflight).
-
-    Session linkage approach:
-    1. Pre-create Gobby session with parent linkage (no external_id yet)
-    2. Pass GOBBY_SESSION_ID and other env vars to the terminal
-    3. Gemini's hook dispatcher reads env vars and includes in SessionStart
-    4. Daemon updates external_id when SessionStart fires with Gemini's native session_id
-
-    This avoids the preflight+resume approach which failed because Gemini
-    doesn't persist sessions when terminated.
-    """
-    if validation_error := _session_manager_validation_error(request, "Gemini"):
-        return validation_error
-
-    # Prepare spawn context (creates child session, builds env vars)
-    spawn_context = prepare_terminal_spawn(
-        session_manager=cast("ChildSessionManager", request.session_manager),
-        parent_session_id=request.parent_session_id,
-        project_id=request.project_id,
-        machine_id=request.machine_id or "unknown",
-        source="gemini",
-        workflow_name=request.workflow,
-        initial_variables=request.initial_variables,
-        prompt=request.prompt,
-        max_agent_depth=request.max_agent_depth,
-        git_branch=request.branch_name,
-        agent_run_id=request.agent_run_id,
-        task_id=request.task_id,
-        claimed_session_id=request.claimed_session_id,
-        title=request.title,
-        agent_name=request.agent_name,
-        model=request.model,
-        is_local=request.is_local,
-        timeout_seconds=request.timeout_seconds,
-        sandbox_enabled=False,
-        requested_reasoning_effort=request.requested_reasoning_effort,
-        effective_reasoning_effort=request.effective_reasoning_effort,
-        reasoning_required=request.reasoning_required,
-        reasoning_status=request.reasoning_status,
-        reasoning_message=request.reasoning_message,
-        resume_metadata_json=request.resume_metadata_json,
-    )
-
-    gobby_session_id = spawn_context.session_id
-
-    sandbox_config = _sandbox_config_for_spawn(request.sandbox_config, spawn_context.env_vars)
-    sandbox_args: list[str] = []
-    sandbox_env: dict[str, str] = {}
-    if sandbox_config and sandbox_config.enabled:
-        resolver = get_sandbox_resolver("gemini")
-        paths = compute_sandbox_paths(
-            config=sandbox_config,
-            workspace_path=request.cwd,
-        )
-        sandbox_args, sandbox_env = resolver.resolve(sandbox_config, paths)
-    _record_actual_sandbox_enforcement(request, spawn_context, sandbox_args, sandbox_env)
-
-    # Build command for fresh Gemini session (not resume)
-    # Session context is injected via additionalContext at SessionStart by the daemon.
-    cmd, _cmd_env = build_cli_command(
-        cli="gemini",
-        prompt=request.prompt,
-        auto_approve=True,
-        model=request.model,
-        reasoning_effort=request.effective_reasoning_effort,
-        sandbox_args=sandbox_args or None,
-    )
-
-    # Merge env vars: spawn context + sandbox
-    env = spawn_context.env_vars.copy()
-    if sandbox_env:
-        env.update(sandbox_env)
-    _apply_extra_env(env, request)
-
-    # Map api_base/api_token to Gemini-specific env vars
-    if request.api_base:
-        env["GEMINI_API_BASE"] = request.api_base
-    if request.api_token:
-        env["GEMINI_API_KEY"] = request.api_token
-
-    # Pass machine_id as env var for sandboxed agents that can't read ~/.gobby/machine_id
-    if request.machine_id:
-        env["GOBBY_MACHINE_ID"] = request.machine_id
-
-    _record_resume_launch_details(
-        request,
-        agent_run_id=spawn_context.agent_run_id,
-        sandbox_args=sandbox_args,
-        sandbox_env=sandbox_env,
-        env=env,
-    )
-
-    # Pre-approve workspace trust so the CLI doesn't show an interactive prompt
-    pre_approve_directory("gemini", request.cwd)
-
-    # Spawn in terminal with env vars
-    terminal_spawner = _tmux_spawner_for_request(request)
-    terminal_result = await _spawn_terminal(
-        terminal_spawner,
-        command=cmd,
-        cwd=request.cwd,
-        env=env,
-    )
-
-    if not terminal_result.success:
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=gobby_session_id,
-            status="failed",
-            error=terminal_result.error or terminal_result.message,
-        )
-
-    return SpawnResult(
-        success=True,
-        run_id=spawn_context.agent_run_id,
-        child_session_id=gobby_session_id,
-        status="pending",
-        pid=terminal_result.pid,
-        terminal_type=terminal_result.terminal_type,
-        tmux_session_name=terminal_result.tmux_session_name,
-        tmux_socket_name=terminal_result.tmux_socket_name,
-        tmux_socket_path=terminal_result.tmux_socket_path,
-        message=f"Gemini agent spawned in terminal with session {gobby_session_id}",
     )
 
 
@@ -606,7 +484,7 @@ async def _spawn_codex_terminal(request: SpawnRequest) -> SpawnResult:
     """
     Spawn Codex agent in terminal with direct spawn (no preflight).
 
-    Session linkage approach (matches Gemini/Qwen):
+    Session linkage approach:
     1. Pre-create Gobby child session with parent linkage (no external_id yet).
     2. Pass GOBBY_SESSION_ID and other env vars to the terminal.
     3. Codex's hooks.json dispatcher reads env vars and includes them in SessionStart.

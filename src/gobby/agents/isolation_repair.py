@@ -75,7 +75,7 @@ async def _copy_cli_hooks(
     Args:
         source_path: Path to the source repository
         target_path: Path to the isolated environment (worktree or clone)
-        provider: CLI provider (gemini, claude, codex, droid)
+    provider: CLI provider (claude, qwen, codex, droid)
     """
     import shutil
 
@@ -84,7 +84,6 @@ async def _copy_cli_hooks(
         return
 
     cli_dirs = {
-        "gemini": ".gemini",
         "claude": ".claude",
         "codex": ".codex",
     }

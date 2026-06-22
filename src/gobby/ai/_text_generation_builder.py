@@ -33,9 +33,6 @@ def _daemon_text_generation_adapter_factories(
         "codex": lambda: _adapters.CodexCLITextGenerateAdapter(
             timeout_seconds=config.ai.generation.timeout_seconds,
         ),
-        "gemini": lambda: _adapters._GeminiCLITextGenerateAdapter(
-            timeout_seconds=config.ai.generation.timeout_seconds,
-        ),
         "grok": lambda: _adapters._GrokCLITextGenerateAdapter(
             timeout_seconds=config.ai.generation.timeout_seconds,
         ),

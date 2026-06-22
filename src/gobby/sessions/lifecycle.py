@@ -37,7 +37,6 @@ from gobby.sessions.transcripts.base import ParsedMessage
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
-from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.grok import GrokTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.hub.protocol import HubDatabase
@@ -574,11 +573,7 @@ class SessionLifecycleManager:
         # Default to Claude for backward compatibility or safety
         # But we should rely on session.source if possible
         parser: Any = ClaudeTranscriptParser(session_id=session_id)
-        if session.source == "gemini":
-            parser = GeminiTranscriptParser(session_id=session_id)
-        elif session.source == "agy":
-            parser = GeminiTranscriptParser(session_id=session_id)
-        elif session.source == "grok":
+        if session.source == "grok":
             parser = GrokTranscriptParser(session_id=session_id)
         elif session.source == "qwen":
             parser = QwenTranscriptParser(session_id=session_id)
@@ -591,7 +586,7 @@ class SessionLifecycleManager:
             )
         # Default (claude or unknown) uses Claude transcript format
 
-        # Gemini/Qwen store sessions as single JSON files, not JSONL.
+        # Qwen stores sessions as single JSON files, not JSONL.
         # Dispatch to parse_session_json() for .json files so the parser
         # can iterate the messages array instead of treating the whole
         # file as one malformed JSONL line.
@@ -649,8 +644,7 @@ class SessionLifecycleManager:
             # Index sidecars are a seek optimization; transcript token processing must continue.
             try:
                 st = os.stat(transcript_path)
-                session_source = session.source if isinstance(session.source, str) else None
-                index_source = "gemini" if session_source == "agy" else session_source
+                index_source = session.source if isinstance(session.source, str) else None
                 await asyncio.to_thread(
                     rebuild_and_persist_index,
                     transcript_path,

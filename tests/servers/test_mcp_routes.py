@@ -2821,8 +2821,11 @@ class TestHooksEndpoints:
             "input_data": {"session_id": "claude-envelope"},
         }
 
-    def test_execute_hook_gemini_source(self, session_storage: SessionManager) -> None:
-        """Test execute hook with Gemini source."""
+    def test_execute_hook_rejects_removed_gemini_source(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """Gemini is no longer a hook provider surface."""
         server = create_http_server(
             port=60887,
             test_mode=True,
@@ -2831,20 +2834,14 @@ class TestHooksEndpoints:
         mock_hook_manager = _mock_hook_manager()
         server.app.state.hook_manager = mock_hook_manager
 
-        with (
-            TestClient(server.app) as client,
-            patch("gobby.adapters.gemini.GeminiAdapter") as MockAdapter,
-        ):
-            mock_adapter = MagicMock()
-            mock_adapter.handle_native.return_value = {"continue": True}
-            MockAdapter.return_value = mock_adapter
-
+        with TestClient(server.app) as client:
             response = client.post(
                 "/api/hooks/execute",
                 json=_hook_envelope(hook_type="session-start", source="gemini"),
             )
 
-        assert response.status_code == 200
+        assert response.status_code == 400
+        assert "Unsupported source: gemini" in response.json()["detail"]
 
     def test_execute_hook_droid_source(self, session_storage: SessionManager) -> None:
         """Test execute hook with Droid source."""
@@ -2916,7 +2913,6 @@ class TestHooksEndpoints:
         ("source", "hook_type", "adapter_patch"),
         [
             ("claude", "pre-tool-use", "gobby.adapters.claude_code.ClaudeCodeAdapter"),
-            ("gemini", "BeforeTool", "gobby.adapters.gemini.GeminiAdapter"),
             ("qwen", "BeforeTool", "gobby.adapters.qwen.QwenAdapter"),
             ("droid", "PreToolUse", "gobby.adapters.droid.DroidAdapter"),
         ],

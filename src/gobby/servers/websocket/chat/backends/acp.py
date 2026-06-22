@@ -2,7 +2,7 @@
 
 Hosts a single subprocess speaking the Agent Communication Protocol and
 multiplexes session attach/detach/send across managed chat sessions. Per-CLI
-concretes (``GeminiWebChatBackend``, ``GrokWebChatBackend``, ``QwenWebChatBackend``) override the
+concretes (``GrokWebChatBackend``, ``QwenWebChatBackend``) override the
 class attributes ``provider``, ``display_name``, ``start_timeout_seconds``,
 and ``acp_client_cls``.
 """
@@ -55,7 +55,7 @@ class ACPWebChatBackend:
 
         self._sandbox_config = sandbox_config
         self._local_generation_endpoints = dict(local_generation_endpoints or {})
-        # Gemini-compatible CLI ACP bootstrap currently hangs on macOS when launched
+        # ACP CLI bootstrap currently hangs on macOS when launched
         # with daemon-wide Seatbelt flags. Keep daemon-owned ACP startup unsandboxed
         # and let the upstream CLI's own tool sandboxing handle tool execution.
         self._client: ACPClient = client or self.acp_client_cls()

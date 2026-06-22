@@ -14,7 +14,6 @@ from gobby.cli.install import (
     _echo_uninstall_details,
     _is_claude_code_installed,
     _is_codex_cli_installed,
-    _is_gemini_cli_installed,
     install,
     uninstall,
 )
@@ -90,14 +89,6 @@ class TestDetectionHelpers:
     @patch("gobby.cli._detectors.shutil.which", return_value=None)
     def test_claude_not_installed(self, _mock_which: MagicMock) -> None:
         assert _is_claude_code_installed() is False
-
-    @patch("gobby.cli._detectors.shutil.which", return_value="/usr/bin/gemini")
-    def test_gemini_installed(self, _mock_which: MagicMock) -> None:
-        assert _is_gemini_cli_installed() is True
-
-    @patch("gobby.cli._detectors.shutil.which", return_value=None)
-    def test_gemini_not_installed(self, _mock_which: MagicMock) -> None:
-        assert _is_gemini_cli_installed() is False
 
     @patch("gobby.cli._detectors.shutil.which", return_value="/usr/bin/codex")
     def test_codex_installed(self, _mock_which: MagicMock) -> None:
@@ -180,29 +171,6 @@ class TestInstallCommand:
         "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
     )
     @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
-    @patch("gobby.cli.install.install_gemini")
-    def test_install_gemini_only(
-        self,
-        mock_install: MagicMock,
-        _install_dir: MagicMock,
-        _config: MagicMock,
-        _setup: MagicMock,
-        runner: CliRunner,
-    ) -> None:
-        mock_install.return_value = {
-            "success": True,
-            "hooks_installed": ["hook1"],
-            "mcp_configured": True,
-        }
-        result = runner.invoke(install, ["--gemini"], catch_exceptions=False)
-        assert result.exit_code == 0
-        assert "Gemini CLI" in result.output
-
-    @patch("gobby.cli.install.run_daemon_setup")
-    @patch(
-        "gobby.cli.install._ensure_daemon_config", return_value={"created": False, "path": "/fake"}
-    )
-    @patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install"))
     @patch("gobby.cli.install.install_git_hooks")
     def test_install_git_hooks(
         self,
@@ -269,7 +237,6 @@ class TestInstallCommand:
             ),
             patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
             patch("gobby.cli.install._is_claude_code_installed", return_value=True),
-            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
             patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
             patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
@@ -311,7 +278,6 @@ class TestInstallCommand:
             ),
             patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
             patch("gobby.cli.install._is_claude_code_installed", return_value=True),
-            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
             patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
             patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
@@ -385,7 +351,6 @@ class TestInstallCommand:
             ),
             patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/src/install")),
             patch("gobby.cli.install._is_claude_code_installed", return_value=False),
-            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
             patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
             patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
@@ -451,17 +416,6 @@ class TestUninstallCommand:
         result = runner.invoke(uninstall, ["--claude", "--yes"], catch_exceptions=False)
         assert result.exit_code == 1
         assert "Permission denied" in result.output
-
-    @patch("gobby.cli.install.uninstall_gemini")
-    def test_uninstall_gemini(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:
-        mock_uninstall.return_value = {
-            "success": True,
-            "hooks_removed": ["hook1"],
-            "files_removed": [],
-        }
-        result = runner.invoke(uninstall, ["--gemini", "--yes"], catch_exceptions=False)
-        assert result.exit_code == 0
-        assert "Gemini" in result.output
 
     @patch("gobby.cli.install.uninstall_codex")
     def test_uninstall_codex(self, mock_uninstall: MagicMock, runner: CliRunner) -> None:

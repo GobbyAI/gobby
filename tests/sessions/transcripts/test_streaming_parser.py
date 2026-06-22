@@ -29,7 +29,7 @@ from gobby.sessions.transcripts.base import (
 )
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
-from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
+from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
 
 def _raw_lines_with_offsets(lines: list[str]) -> list[RawLine]:
@@ -176,7 +176,7 @@ def _claude_lines() -> list[str]:
     return [user("hi"), assistant_multi(), user_results(), user("bye")]
 
 
-def _gemini_lines() -> list[str]:
+def _qwen_lines() -> list[str]:
     def line(role: str, text: str) -> str:
         return json.dumps({"type": role, "content": text, "timestamp": "2024-01-01T12:00:00Z"})
 
@@ -186,7 +186,7 @@ def _gemini_lines() -> list[str]:
 PARSERS = {
     "codex": (CodexTranscriptParser, _codex_lines),
     "claude": (ClaudeTranscriptParser, _claude_lines),
-    "gemini": (GeminiTranscriptParser, _gemini_lines),
+    "qwen": (QwenTranscriptParser, _qwen_lines),
 }
 
 

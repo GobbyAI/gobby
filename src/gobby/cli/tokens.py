@@ -12,7 +12,6 @@ from gobby.cli.utils import resolve_project_ref, resolve_session_id
 from gobby.sessions.model_family import normalize_model
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
-from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.sessions import SessionManager
@@ -37,9 +36,7 @@ def _load_session_messages(session_id: str, session: Any) -> list[Any]:
     source = getattr(session, "source", None)
 
     parser: Any = ClaudeTranscriptParser(session_id=session_id)
-    if source == "gemini":
-        parser = GeminiTranscriptParser(session_id=session_id)
-    elif source == "qwen":
+    if source == "qwen":
         parser = QwenTranscriptParser(session_id=session_id)
     elif source == "codex":
         parser = CodexTranscriptParser(session_id=session_id)

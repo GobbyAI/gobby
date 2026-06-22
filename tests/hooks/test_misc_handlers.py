@@ -55,24 +55,24 @@ class TestOtherHandlers:
         assert response.decision == "allow"
 
 
-class TestGeminiOnlyHandlers:
-    """Test Gemini-only event handlers."""
+class TestAcpOnlyHandlers:
+    """Test ACP-style event handlers."""
 
     def test_before_tool_selection_allows(self, event_handlers: EventHandlers) -> None:
-        """Test BEFORE_TOOL_SELECTION allows (Gemini only)."""
-        event = make_event(HookEventType.BEFORE_TOOL_SELECTION, source="gemini")
+        """Test BEFORE_TOOL_SELECTION allows for ACP providers."""
+        event = make_event(HookEventType.BEFORE_TOOL_SELECTION, source="qwen")
         response = event_handlers.handle_before_tool_selection(event)
         assert response.decision == "allow"
 
     def test_before_model_allows(self, event_handlers: EventHandlers) -> None:
-        """Test BEFORE_MODEL allows (Gemini only)."""
-        event = make_event(HookEventType.BEFORE_MODEL, source="gemini")
+        """Test BEFORE_MODEL allows for ACP providers."""
+        event = make_event(HookEventType.BEFORE_MODEL, source="qwen")
         response = event_handlers.handle_before_model(event)
         assert response.decision == "allow"
 
     def test_after_model_allows(self, event_handlers: EventHandlers) -> None:
-        """Test AFTER_MODEL allows (Gemini only)."""
-        event = make_event(HookEventType.AFTER_MODEL, source="gemini")
+        """Test AFTER_MODEL allows for ACP providers."""
+        event = make_event(HookEventType.AFTER_MODEL, source="qwen")
         response = event_handlers.handle_after_model(event)
         assert response.decision == "allow"
 
@@ -111,16 +111,16 @@ class TestPreCompactHandlerEdgeCases:
         assert response.decision == "allow"
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
 
-    def test_pre_compact_gemini_skips_handoff(self, mock_dependencies: dict) -> None:
-        """Test PRE_COMPACT skips handoff logic for Gemini source.
+    def test_pre_compact_qwen_skips_handoff(self, mock_dependencies: dict) -> None:
+        """Test PRE_COMPACT skips handoff logic for Qwen source.
 
-        Gemini fires PreCompress constantly during normal operation,
+        Qwen fires PreCompress constantly during normal operation,
         unlike Claude which fires it only when approaching context limits.
         """
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.PRE_COMPACT,
-            source="gemini",
+            source="qwen",
             data={"trigger": "auto"},
             metadata={"_platform_session_id": "sess-123"},
         )
@@ -128,9 +128,9 @@ class TestPreCompactHandlerEdgeCases:
         response = handlers.handle_pre_compact(event)
 
         assert response.decision == "allow"
-        # Should NOT update session status for Gemini
+        # Should NOT update session status for Qwen
         mock_dependencies["session_manager"].update_session_status.assert_not_called()
-        # Should NOT execute workflow handler for Gemini
+        # Should NOT execute workflow handler for Qwen
         mock_dependencies["workflow_handler"].evaluate.assert_not_called()
 
 
@@ -375,15 +375,15 @@ class TestPermissionRequestEdgeCases:
         assert response.decision == "allow"
 
 
-class TestGeminiHandlerEdgeCases:
-    """Test Gemini-only handler edge cases."""
+class TestAcpHandlerEdgeCases:
+    """Test ACP-style handler edge cases."""
 
     def test_before_tool_selection_with_session_id(self, mock_dependencies: dict) -> None:
         """Test BEFORE_TOOL_SELECTION with session_id."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.BEFORE_TOOL_SELECTION,
-            source="gemini",
+            source="qwen",
             metadata={"_platform_session_id": "sess-123"},
         )
 
@@ -396,7 +396,7 @@ class TestGeminiHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.BEFORE_TOOL_SELECTION,
-            source="gemini",
+            source="qwen",
             metadata={},
         )
 
@@ -409,7 +409,7 @@ class TestGeminiHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.BEFORE_MODEL,
-            source="gemini",
+            source="qwen",
             metadata={"_platform_session_id": "sess-123"},
         )
 
@@ -422,7 +422,7 @@ class TestGeminiHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.BEFORE_MODEL,
-            source="gemini",
+            source="qwen",
             metadata={},
         )
 
@@ -435,7 +435,7 @@ class TestGeminiHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.AFTER_MODEL,
-            source="gemini",
+            source="qwen",
             metadata={"_platform_session_id": "sess-123"},
         )
 
@@ -448,7 +448,7 @@ class TestGeminiHandlerEdgeCases:
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.AFTER_MODEL,
-            source="gemini",
+            source="qwen",
             metadata={},
         )
 
@@ -459,11 +459,11 @@ class TestGeminiHandlerEdgeCases:
     def test_after_model_de_overlaps_cached_and_thinking_tokens(
         self, mock_dependencies: dict
     ) -> None:
-        """Live Gemini usage must de-overlap cached input and fold thinking into output."""
+        """Typed-JSON usage must de-overlap cached input and fold thinking into output."""
         handlers = EventHandlers(**mock_dependencies)
         event = make_event(
             HookEventType.AFTER_MODEL,
-            source="gemini",
+            source="qwen",
             data={
                 "response": {
                     "usageMetadata": {
@@ -473,7 +473,7 @@ class TestGeminiHandlerEdgeCases:
                         "thoughtsTokenCount": 20,
                     }
                 },
-                "model_name": "gemini-2.5-pro",
+                "model_name": "qwen3-coder",
             },
             metadata={"_platform_session_id": "sess-123"},
         )
@@ -488,7 +488,7 @@ class TestGeminiHandlerEdgeCases:
             output_tokens=100,
             cache_creation_tokens=0,
             cache_read_tokens=750,
-            model="gemini-2.5-pro",
+            model="qwen3-coder",
         )
 
 

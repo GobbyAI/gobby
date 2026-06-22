@@ -445,7 +445,7 @@ def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
         return AIAdapterStyle.LLM_PROVIDER
     if provider == "codex":
         return AIAdapterStyle.DAEMON
-    if provider in {"gemini", "grok", "qwen"}:
+    if provider in {"grok", "qwen"}:
         return AIAdapterStyle.CLI
     if provider == "droid":
         return AIAdapterStyle.CLI
@@ -457,7 +457,7 @@ def _vision_extract_adapter_style(provider: str) -> AIAdapterStyle | None:
         return AIAdapterStyle.LLM_PROVIDER
     if provider == "codex":
         return AIAdapterStyle.DAEMON
-    if provider in {"gemini", "grok", "qwen"}:
+    if provider in {"grok", "qwen"}:
         return AIAdapterStyle.ACP
     if provider == "droid":
         return AIAdapterStyle.CLI
@@ -509,7 +509,7 @@ def _provider_binding(
 
 
 def _adapter_style_for_provider(capability: AICapability, provider: str) -> AIAdapterStyle:
-    if capability == AICapability.WEB_CHAT and provider in {"gemini", "grok", "qwen"}:
+    if capability == AICapability.WEB_CHAT and provider in {"grok", "qwen"}:
         return AIAdapterStyle.ACP
     if capability == AICapability.WEB_CHAT and provider == "codex":
         return AIAdapterStyle.DAEMON

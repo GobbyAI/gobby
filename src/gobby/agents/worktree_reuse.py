@@ -22,7 +22,6 @@ GENERATED_ISOLATION_UNTRACKED_STATUS_PREFIXES = (
     ".claude/",
     ".codex/",
     ".factory/",
-    ".gemini/",
 )
 
 

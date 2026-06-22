@@ -542,18 +542,8 @@ class ChatSessionPermissionsMixin:
             plan_dirs = [_resolve(d) for d in plan_dirs]
 
             home = Path.home()
-            for cli in (".claude", ".gemini", ".qwen", ".codex"):
+            for cli in (".claude", ".qwen", ".codex"):
                 plan_dirs.append(home / cli / "plans")
-            # Gemini also uses ~/.gemini/tmp/{hash}/plans/
-            gemini_tmp = home / ".gemini" / "tmp"
-            if gemini_tmp.is_dir():
-                try:
-                    for sub in gemini_tmp.iterdir():
-                        plans = sub / "plans"
-                        if plans.is_dir():
-                            plan_dirs.append(plans)
-                except (PermissionError, OSError) as e:
-                    logger.warning(f"Could not scan {gemini_tmp}: {e}")
 
             candidates: list[Path] = []
             for d in plan_dirs:
@@ -611,7 +601,7 @@ class ChatSessionPermissionsMixin:
             '<plan-mode status="active">',
             "You are in PLAN MODE. Your role is to research and design, not execute.",
             "",
-            "ALLOWED: Read, Glob, Grep, gcode via Bash for code navigation (gcode outline/search/symbol), read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .gemini/, .qwen/, .codex/)",
+            "ALLOWED: Read, Glob, Grep, gcode via Bash for code navigation (gcode outline/search/symbol), read-only Bash (ls, cat, grep, git status/log/diff, find), Write/Edit to .md files under CLI config dirs (.gobby/, .claude/, .qwen/, .codex/)",
             "BLOCKED: Edit, Write, NotebookEdit, write/destructive Bash (rm, mv, git add/commit/push, redirects)",
             "",
             "Present a structured plan with:",

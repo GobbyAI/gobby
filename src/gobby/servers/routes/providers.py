@@ -16,7 +16,6 @@ from gobby.servers.local_provider_models import (
 )
 from gobby.servers.provider_models import (
     DROID_MODEL_CATALOG,
-    GEMINI_MODEL_CATALOG,
     with_context_lengths,
 )
 from gobby.servers.provider_models_grok import static_models as grok_static_models
@@ -42,7 +41,6 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
             },
         ],
     ),
-    "gemini": GEMINI_MODEL_CATALOG,
     "grok": grok_static_models(),
     "qwen": [],
     "codex": with_context_lengths(
@@ -81,7 +79,7 @@ _BASE_MODEL_CATALOG: dict[str, list[dict[str, Any]]] = {
 
 _PROVIDER_DEFS = [(entry.provider, entry.binary) for entry in provider_metadata()]
 _PROVIDER_META = {entry.provider: entry for entry in provider_metadata()}
-_LAZY_ACP_PROVIDERS = frozenset({"gemini", "grok", "qwen"})
+_LAZY_ACP_PROVIDERS = frozenset({"grok", "qwen"})
 
 
 def _merge_static_model_metadata(

@@ -105,13 +105,6 @@ def test_get_claude_code_version() -> None:
         assert deps.get_claude_code_version() is None
 
 
-def test_get_gemini_cli_version() -> None:
-    with patch("gobby.utils.deps._run_cmd", return_value="gemini 2.1.0"):
-        assert deps.get_gemini_cli_version() == "2.1.0"
-    with patch("gobby.utils.deps._run_cmd", return_value=None):
-        assert deps.get_gemini_cli_version() is None
-
-
 def test_get_codex_cli_version() -> None:
     with patch("gobby.utils.deps._run_cmd", return_value="codex 3.0.0"):
         assert deps.get_codex_cli_version() == "3.0.0"
@@ -139,23 +132,19 @@ def test_coding_cli_hooks_status(tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 
     with patch.object(Path, "home", return_value=tmp_path):
         claude = tmp_path / ".claude" / "settings.json"
-        gemini = tmp_path / ".gemini" / "settings.json"
         qwen = tmp_path / ".qwen" / "settings.json"
         droid = tmp_path / ".factory" / "hooks" / "hooks.json"
 
         claude.parent.mkdir()
-        gemini.parent.mkdir()
         qwen.parent.mkdir()
         droid.parent.mkdir(parents=True)
 
         claude.write_text("ghook --gobby-owned --cli=claude")
-        gemini.write_text("other text")
         qwen.write_text("ghook --gobby-owned --cli=qwen")
         droid.write_text("ghook --gobby-owned --cli=droid")
 
         result = deps.get_coding_cli_hooks_status()
         assert result["claude"] is True
-        assert result["gemini"] is False
         assert result["codex"] is False
         assert result["qwen"] is True
         assert result["droid"] is True
@@ -535,7 +524,6 @@ def test_collect_all_deps() -> None:
         patch("gobby.utils.deps.get_ghook_version", return_value="3.5"),
         patch("gobby.utils.deps.get_gwiki_version", return_value="3.7"),
         patch("gobby.utils.deps.get_claude_code_version", return_value="4"),
-        patch("gobby.utils.deps.get_gemini_cli_version", return_value="5"),
         patch("gobby.utils.deps.get_codex_cli_version", return_value="6"),
         patch("gobby.utils.deps.get_droid_cli_version", return_value="6.5"),
         patch("gobby.utils.deps.get_qwen_cli_version", return_value="6.7"),

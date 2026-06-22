@@ -116,11 +116,11 @@ async def test_sync_reused_worktree_allows_generated_hook_status_lines(
     git = FakeGitManager(
         [
             _result(["git", "rev-parse"], 0, stdout="base-sha\n"),
-            _result(
-                ["git", "status"],
-                0,
-                stdout="?? .factory/\n?? .codex/\n?? .claude/\n?? .gemini/\n",
-            ),
+                _result(
+                    ["git", "status"],
+                    0,
+                    stdout="?? .factory/\n?? .codex/\n?? .claude/\n",
+                ),
             _result(["git", "merge-base"], 0),
         ]
     )

@@ -875,16 +875,16 @@ class TestProcessSessionTranscriptParsers:
     """Tests for _process_session_transcript parser selection."""
 
     @pytest.mark.asyncio
-    async def test_gemini_parser_selected(self, tmp_path, manager):
-        """Gemini source uses GeminiTranscriptParser."""
+    async def test_qwen_parser_selected(self, tmp_path, manager):
+        """Qwen source uses QwenTranscriptParser."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
 
         session = MagicMock()
-        session.source = "gemini"
+        session.source = "qwen"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.GeminiTranscriptParser") as MockParser:
+        with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.assert_called_once()
@@ -1073,8 +1073,8 @@ class TestProcessSessionTranscriptJsonDispatch:
     """Tests for .json file dispatch to parse_session_json."""
 
     @pytest.mark.asyncio
-    async def test_gemini_json_uses_parse_session_json(self, tmp_path, manager):
-        """Gemini .json transcript dispatches to parse_session_json, not parse_lines."""
+    async def test_qwen_json_uses_parse_session_json(self, tmp_path, manager):
+        """Qwen .json transcript dispatches to parse_session_json, not parse_lines."""
         import json
 
         transcript_path = tmp_path / "session-abc.json"
@@ -1085,10 +1085,10 @@ class TestProcessSessionTranscriptJsonDispatch:
         )
 
         session = MagicMock()
-        session.source = "gemini"
+        session.source = "qwen"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.GeminiTranscriptParser") as MockParser:
+        with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as MockParser:
             MockParser.return_value.parse_session_json.return_value = []
             # Ensure hasattr check passes
             MockParser.return_value.parse_session_json.__name__ = "parse_session_json"
@@ -1099,15 +1099,15 @@ class TestProcessSessionTranscriptJsonDispatch:
 
     @pytest.mark.asyncio
     async def test_jsonl_still_uses_parse_lines(self, tmp_path, manager):
-        """JSONL transcripts still use parse_lines even for Gemini."""
+        """JSONL transcripts still use parse_lines for typed-JSON sources."""
         transcript_path = tmp_path / "transcript.jsonl"
         transcript_path.write_text('{"type": "message"}\n')
 
         session = MagicMock()
-        session.source = "gemini"
+        session.source = "qwen"
         manager.session_manager.get.return_value = session
 
-        with patch("gobby.sessions.lifecycle.GeminiTranscriptParser") as MockParser:
+        with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as MockParser:
             MockParser.return_value.parse_lines.return_value = []
             await manager._process_session_transcript("s1", str(transcript_path))
             MockParser.return_value.parse_lines.assert_called_once()
@@ -1120,7 +1120,7 @@ class TestProcessSessionTranscriptJsonDispatch:
         transcript_path.write_text("{invalid json content")
 
         session = MagicMock()
-        session.source = "gemini"
+        session.source = "qwen"
         manager.session_manager.get.return_value = session
 
         # Should not raise
@@ -1139,14 +1139,14 @@ class TestProcessSessionTranscriptJsonDispatch:
         transcript_path.write_text(json.dumps({"sessionId": "tok", "messages": []}))
 
         session = MagicMock()
-        session.source = "gemini"
+        session.source = "qwen"
         manager.session_manager.get.return_value = session
 
         msg = MagicMock(spec=ParsedMessage)
-        msg.model = "gemini-2.5-pro"
+        msg.model = "qwen3-coder"
         msg.usage = TokenUsage(input_tokens=100, output_tokens=50)
 
-        with patch("gobby.sessions.lifecycle.GeminiTranscriptParser") as MockParser:
+        with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as MockParser:
             MockParser.return_value.parse_session_json.return_value = [msg]
             MockParser.return_value.parse_session_json.__name__ = "parse_session_json"
             await manager._process_session_transcript("s1", str(transcript_path))

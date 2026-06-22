@@ -31,7 +31,6 @@ from gobby.adapters.codex_impl.types import (
     CodexTurn,
 )
 from gobby.adapters.droid import DroidAdapter
-from gobby.adapters.gemini import GeminiAdapter
 from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.event_handlers import EventHandlers
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
@@ -46,7 +45,6 @@ pytestmark = pytest.mark.unit
     [
         ("codex", CodexHooksAdapter(), "SessionStart"),
         ("claude", ClaudeCodeAdapter(), "session-start"),
-        ("gemini", GeminiAdapter(), "SessionStart"),
         ("qwen", QwenAdapter(), "SessionStart"),
         ("droid", DroidAdapter(), "SessionStart"),
     ],

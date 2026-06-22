@@ -10,10 +10,6 @@ from __future__ import annotations
 import shutil
 from dataclasses import dataclass
 
-GEMINI_DEPRECATION_MESSAGE = (
-    "Gemini CLI support is deprecated in Gobby. Existing sessions and hooks still work; "
-    "prefer Grok, Qwen, Codex, Claude, or Droid for new launches."
-)
 AGY_UNAVAILABLE_REASON = (
     "AGY has no documented machine transport for live web chat or agent spawning yet."
 )
@@ -59,13 +55,6 @@ _PROVIDERS: tuple[ProviderMetadata, ...] = (
     ProviderMetadata("claude", "claude", "Claude Code"),
     ProviderMetadata("codex", "codex", "Codex"),
     ProviderMetadata("droid", "droid", "Droid"),
-    ProviderMetadata(
-        "gemini",
-        "gemini",
-        "Gemini CLI",
-        deprecated=True,
-        deprecation_message=GEMINI_DEPRECATION_MESSAGE,
-    ),
     ProviderMetadata("grok", "grok", "Grok"),
     ProviderMetadata("qwen", "qwen", "Qwen"),
     ProviderMetadata(

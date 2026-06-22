@@ -92,7 +92,7 @@ class _DiscoveryMixin:
             external_id: External session identifier
             machine_id: Machine identifier
             project_id: Project identifier
-            source: CLI source (claude, gemini, qwen, codex, droid)
+    source: CLI source (claude, qwen, codex, droid)
             session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:
@@ -125,7 +125,7 @@ class _DiscoveryMixin:
 
         Args:
             external_id: External session identifier (e.g., Claude Code session ID)
-            source: CLI source (claude, gemini, etc.)
+    source: CLI source (claude, qwen, etc.)
 
         Returns:
             Most recently updated matching session, or None.
@@ -156,7 +156,7 @@ class _DiscoveryMixin:
         Args:
             external_id: External session identifier
             machine_id: Machine identifier
-            source: CLI source (claude, gemini, qwen, codex, droid)
+    source: CLI source (claude, qwen, codex, droid)
             session_type: Optional session type filter ('terminal' or 'web_chat')
 
         Returns:

@@ -317,7 +317,7 @@ class ToolEventHandlerMixin(EventHandlersBase):
             logger.debug(f"Failed to track session edited file: {e}")
 
     def handle_before_tool_selection(self, event: HookEvent) -> HookResponse:
-        """Handle BEFORE_TOOL_SELECTION event (Gemini only)."""
+        """Handle BEFORE_TOOL_SELECTION events."""
         session_id = event.metadata.get("_platform_session_id")
 
         if session_id:

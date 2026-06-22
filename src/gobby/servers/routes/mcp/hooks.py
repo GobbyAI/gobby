@@ -53,7 +53,7 @@ SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 # that a stuck daemon cannot leave provider hooks hanging indefinitely.
 FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0
 FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
-SUPPORTED_HOOK_SOURCES: Final = ("claude", "gemini", "grok", "qwen", "codex", "droid")
+SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid")
 
 
 def _graceful_error_response(
@@ -114,16 +114,6 @@ def _graceful_error_response(
         )
         if isinstance(codex_response, dict):
             return codex_response
-
-    if provider == "gemini":
-        from gobby.adapters.gemini import GeminiAdapter
-
-        gemini_response = GeminiAdapter().translate_from_hook_response(
-            hook_response,
-            hook_type=hook_type,
-        )
-        if isinstance(gemini_response, dict):
-            return gemini_response
 
     if provider == "grok":
         from gobby.adapters.grok import GrokAdapter
@@ -555,7 +545,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     status_code=400,
                     detail=(
                         f"Unsupported source: {source}. "
-                        "Supported: claude, gemini, grok, qwen, codex, droid"
+                        "Supported: claude, grok, qwen, codex, droid"
                     ),
                 )
 
@@ -597,14 +587,11 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
             from gobby.adapters.claude_code import ClaudeCodeAdapter
             from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
             from gobby.adapters.droid import DroidAdapter
-            from gobby.adapters.gemini import GeminiAdapter
             from gobby.adapters.grok import GrokAdapter
             from gobby.adapters.qwen import QwenAdapter
 
             if source == "claude":
                 adapter: BaseAdapter = ClaudeCodeAdapter(hook_manager=hook_manager)
-            elif source == "gemini":
-                adapter = GeminiAdapter(hook_manager=hook_manager)
             elif source == "qwen":
                 adapter = QwenAdapter(hook_manager=hook_manager)
             elif source == "grok":
@@ -626,7 +613,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     status_code=400,
                     detail=(
                         f"Unsupported source: {source}. "
-                        "Supported: claude, gemini, grok, qwen, codex, droid"
+                        "Supported: claude, grok, qwen, codex, droid"
                     ),
                 )
 

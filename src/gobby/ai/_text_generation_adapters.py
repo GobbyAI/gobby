@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
-import json
 import logging
 import os
 import shlex
@@ -21,8 +20,6 @@ from gobby.ai._text_generation_contracts import TextGenerateAdapter, TextGenerat
 from gobby.ai._text_generation_helpers import (
     _compose_prompt,
     _decode,
-    _json_request,
-    _parse_json_text,
     _with_one_shot_directive,
 )
 from gobby.config.app import DaemonConfig
@@ -256,98 +253,6 @@ async def _cleanup_cli_process(provider_name: str, process: Any, *, reason: str)
         reason,
         process.returncode,
     )
-
-
-class _GeminiCLITextGenerateAdapter:
-    """One-shot text_generate adapter for Gemini headless CLI mode."""
-
-    def __init__(
-        self,
-        *,
-        command_path: str | None = None,
-        timeout_seconds: float = 600.0,
-        env: Mapping[str, str] | None = None,
-    ) -> None:
-        self._command_path = command_path
-        self._timeout_seconds = timeout_seconds
-        # One-shot generation runs in a neutral temp dir, which is untrusted. When
-        # Folder Trust is enabled, headless Gemini exits with
-        # FatalUntrustedWorkspaceError instead of generating; trusting the empty
-        # workspace for the session avoids that (it carries no project config).
-        self._env = {**dict(env or {}), "GEMINI_CLI_TRUST_WORKSPACE": "true"}
-
-    def _resolve_command_path(self) -> str:
-        path = self._command_path or shutil.which("gemini")
-        if not path:
-            raise FileNotFoundError("Gemini CLI not found in PATH")
-        return path
-
-    def build_command(
-        self, request: TextGenerationRequest, *, output_format: str = "text"
-    ) -> list[str]:
-        path = self._resolve_command_path()
-        command = [
-            path,
-            "--output-format",
-            output_format,
-        ]
-        if request.model:
-            command.extend(["--model", request.model])
-        command.extend(["--prompt", _compose_prompt(request)])
-        return command
-
-    async def generate(self, request: TextGenerationRequest) -> str:
-        request = _with_one_shot_directive(request)
-        with neutral_textgen_cwd() as cwd:
-            return await _run_cli_text_generation_command(
-                "Gemini",
-                self.build_command(request),
-                neutral_cwd=cwd,
-                timeout_seconds=self._timeout_seconds,
-                env_overrides=self._env,
-            )
-
-    async def generate_json(self, request: TextGenerationRequest) -> dict[str, Any]:
-        request = _with_one_shot_directive(_json_request(request))
-        wrapper = await self._run_json_wrapper_with_retry(request)
-        if not isinstance(wrapper, dict):
-            raise ValueError("Gemini CLI JSON output must be an object")
-        if error := wrapper.get("error"):
-            raise RuntimeError(f"Gemini CLI returned an error: {error}")
-        response = wrapper.get("response")
-        if not isinstance(response, str):
-            raise ValueError("Gemini CLI JSON output missing string response")
-        return _parse_json_text(response)
-
-    async def _run_json_wrapper_with_retry(self, request: TextGenerationRequest) -> Any:
-        """Run the Gemini JSON CLI, retrying once on empty/invalid wrapper output.
-
-        The CLI intermittently emits empty (or otherwise non-JSON) stdout for
-        JSON-mode one-shots; ``json.loads`` then raises ``JSONDecodeError`` and
-        instantly burns the candidate. A single transient hiccup should not fail
-        the run, so retry once with a fresh subprocess before surfacing the error.
-        """
-        attempts = 2
-        for attempt in range(attempts):
-            with neutral_textgen_cwd() as cwd:
-                raw = await _run_cli_text_generation_command(
-                    "Gemini",
-                    self.build_command(request, output_format="json"),
-                    neutral_cwd=cwd,
-                    timeout_seconds=self._timeout_seconds,
-                    env_overrides=self._env,
-                )
-            try:
-                return json.loads(raw)
-            except json.JSONDecodeError as exc:
-                if attempt + 1 < attempts:
-                    logger.warning(
-                        "Gemini CLI returned invalid JSON wrapper; retrying once: %s",
-                        exc,
-                    )
-                    continue
-                raise ValueError(f"Gemini CLI returned invalid JSON wrapper: {exc}") from exc
-        raise AssertionError("unreachable: retry loop returns or raises")
 
 
 class _QwenCLITextGenerateAdapter:

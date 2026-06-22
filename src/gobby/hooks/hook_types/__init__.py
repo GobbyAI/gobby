@@ -30,8 +30,8 @@ Hook Types (28 total):
 22. worktree-remove: Triggered when a worktree is being removed
 23. elicitation: Triggered when an MCP server requests user input
 24. elicitation-result: Triggered after a user responds to an elicitation
-25. before-model: Triggered before model inference (Gemini)
-26. after-model: Triggered after model inference (Gemini)
+25. before-model: Triggered before model inference
+26. after-model: Triggered after model inference
 27. permission-request: Triggered when permission is requested (Claude)
 28. permission-denied: Triggered when YOLO mode denies a tool (Claude)
 

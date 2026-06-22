@@ -41,16 +41,6 @@ class SessionStartMixin(EventHandlersBase):
 
         return derive_transcript_path(self, cli_source, input_data, external_id)
 
-    def _find_gemini_transcript(
-        self,
-        input_data: dict[str, Any],
-        external_id: str,
-    ) -> str | None:
-        """Locate a Gemini CLI JSON session transcript for the hook event."""
-        from .transcripts import find_gemini_transcript
-
-        return find_gemini_transcript(self, input_data, external_id)
-
     def _find_qwen_transcript(
         self,
         input_data: dict[str, Any],

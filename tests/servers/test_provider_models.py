@@ -158,8 +158,10 @@ class TestProviderModelCatalog:
         ) -> list[dict[str, str]]:
             if provider == "claude":
                 return [{"value": "sonnet", "label": "Sonnet"}]
-            if provider == "gemini":
-                return [{"value": "gemini-3.1-pro-preview", "label": "gemini-3.1-pro-preview"}]
+            if provider == "qwen":
+                return [{"value": "qwen-live", "label": "Qwen Live"}]
+            if provider == "droid":
+                return [{"value": "minimax-m2.7", "label": "Droid Core"}]
             raise RuntimeError("codex probe failed")
 
         with (
@@ -188,9 +190,11 @@ class TestProviderModelCatalog:
             status = await catalog.refresh()
 
         assert status["claude"]["source"] == "live"
-        assert status["gemini"]["source"] == "live"
+        assert status["qwen"]["source"] == "live"
+        assert status["droid"]["source"] == "live"
         assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "cache"
+        assert "gemini" not in status
         assert status["codex"]["model_count"] == 1
         assert status["codex"]["error"] == "codex probe failed"
 
@@ -214,12 +218,12 @@ class TestProviderModelCatalog:
                             "source": "live",
                             "models": [{"value": "gpt-5.4", "label": "gpt-5.4"}],
                         },
-                        "gemini": {
+                        "qwen": {
                             "source": "live",
                             "models": [
                                 {
-                                    "value": "gemini-custom",
-                                    "label": "Gemini Custom",
+                                    "value": "qwen-custom",
+                                    "label": "Qwen Custom",
                                     "context_length": 123456,
                                 }
                             ],
@@ -233,11 +237,11 @@ class TestProviderModelCatalog:
         catalog = ProviderModelCatalog(cache_path=cache_path)
 
         codex = catalog.get_provider_snapshot("codex")["models"][0]
-        gemini = catalog.get_provider_snapshot("gemini")["models"][0]
+        qwen = catalog.get_provider_snapshot("qwen")["models"][0]
         assert codex["context_length"] == 258_400
         assert codex["context_length_source"] == "static_default"
-        assert gemini["context_length"] == 123_456
-        assert gemini["context_length_source"] == "static_default"
+        assert qwen["context_length"] == 123_456
+        assert qwen["context_length_source"] == "static_default"
 
     def test_load_cache_accepts_version_none(self, temp_dir: Path) -> None:
         """Cache loading should accept legacy payloads with null version."""
@@ -350,8 +354,8 @@ class TestProviderModelCatalog:
         assert models[0]["context_length"] == 321_000
 
     @pytest.mark.asyncio
-    async def test_refresh_uses_static_gemini_without_prior_cache(self, temp_dir: Path) -> None:
-        """Gemini keeps a static catalog when ACP discovery fails before cache exists."""
+    async def test_refresh_uses_static_droid_without_prior_cache(self, temp_dir: Path) -> None:
+        """Droid keeps a static catalog when discovery fails before cache exists."""
         cache_path = temp_dir / "provider-model-catalog.json"
         catalog = ProviderModelCatalog(cache_path=cache_path)
 
@@ -359,7 +363,7 @@ class TestProviderModelCatalog:
             patch.object(
                 catalog,
                 "_discover_provider_models",
-                new=AsyncMock(side_effect=FileNotFoundError("gemini CLI not found in PATH")),
+                new=AsyncMock(side_effect=FileNotFoundError("provider CLI not found in PATH")),
             ),
             patch.object(
                 catalog,
@@ -371,16 +375,17 @@ class TestProviderModelCatalog:
             status = await catalog.refresh()
 
         assert status["claude"]["source"] == "failed"
-        assert status["gemini"]["source"] == "static"
-        assert status["gemini"]["model_count"] == 3
+        assert "gemini" not in status
+        assert status["droid"]["source"] == "static"
+        assert status["droid"]["model_count"] == 26
         assert status["grok"]["source"] == "static"
         assert status["codex"]["source"] == "failed"
 
-        gemini = catalog.get_provider_snapshot("gemini")["models"]
-        assert gemini[0]["value"] == "gemini-3.5-flash"
-        assert gemini[0]["label"] == "Gemini 3.5 Flash"
-        assert gemini[0]["context_length"] == 1_048_576
-        assert gemini[0]["reasoning"] == {
+        droid = {model["value"]: model for model in catalog.get_provider_snapshot("droid")["models"]}
+        gemini_flash = droid["gemini-3.5-flash"]
+        assert gemini_flash["label"] == "Gemini 3.5 Flash"
+        assert gemini_flash["context_length"] == 1_048_576
+        assert gemini_flash["reasoning"] == {
             "supported_efforts": ["minimal", "low", "medium", "high"],
             "default_effort": "medium",
         }
@@ -400,24 +405,24 @@ class TestProviderModelCatalog:
         client.start = AsyncMock(side_effect=start)
         client.stop = AsyncMock()
         client.session_info = {
-            "models": {
-                "availableModels": [
-                    {"modelId": "gemini-test", "name": "Gemini Test"},
+                "models": {
+                    "availableModels": [
+                    {"modelId": "qwen-test", "name": "Qwen Test"},
                 ]
             }
         }
 
         client_cls = MagicMock(return_value=client)
-        client_cls.cli_name = "gemini"
+        client_cls.cli_name = "qwen"
         gobby_home = temp_dir / "gobby-home"
-        expected_cwd = (gobby_home / "provider-model-discovery" / "gemini").resolve()
+        expected_cwd = (gobby_home / "provider-model-discovery" / "qwen").resolve()
 
         async def record_trust(_cli: str, _cwd: Path) -> None:
             order.append("trust")
 
         with (
             patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
-            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/qwen"),
             patch(
                 "gobby.servers.provider_models.authorize_model_discovery_trust",
                 new=AsyncMock(side_effect=record_trust),
@@ -432,7 +437,7 @@ class TestProviderModelCatalog:
         assert Path(kwargs["cwd"]) == expected_cwd
         assert Path(kwargs["cwd"]).is_absolute()
         assert kwargs["request_timeout"] > 30.0
-        authorize_trust.assert_awaited_once_with("gemini", expected_cwd)
+        authorize_trust.assert_awaited_once_with("qwen", expected_cwd)
         pre_approve.assert_not_called()
         assert order == ["trust", "start"]
         assert client_cls.call_count == 1
@@ -443,7 +448,7 @@ class TestProviderModelCatalog:
         client.stop.assert_awaited_once()
         assert client.stop.await_count == 1
         assert client.stop.await_args is not None
-        assert models == [{"value": "gemini-test", "label": "Gemini Test"}]
+        assert models == [{"value": "qwen-test", "label": "Qwen Test"}]
 
     @pytest.mark.asyncio
     async def test_discover_codex_models_logs_stop_failure_without_masking_list_error(
@@ -474,11 +479,11 @@ class TestProviderModelCatalog:
         client.start = AsyncMock(side_effect=RuntimeError("start failed"))
         client.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
         client_cls = MagicMock(return_value=client)
-        client_cls.cli_name = "gemini"
+        client_cls.cli_name = "qwen"
 
         with (
             caplog.at_level(logging.ERROR, logger="gobby.servers.provider_models"),
-            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/qwen"),
             patch(
                 "gobby.servers.provider_models.authorize_model_discovery_trust",
                 new=AsyncMock(),
@@ -487,7 +492,7 @@ class TestProviderModelCatalog:
         ):
             await catalog._discover_acp_models(client_cls=client_cls)
 
-        assert "Failed to stop gemini model discovery client" in caplog.text
+        assert "Failed to stop qwen model discovery client" in caplog.text
 
     @pytest.mark.asyncio
     async def test_discover_acp_models_removes_created_cwd_when_trust_fails(
@@ -496,13 +501,13 @@ class TestProviderModelCatalog:
         """A newly created discovery cwd should be removed when trust fails."""
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         client_cls = MagicMock()
-        client_cls.cli_name = "gemini"
+        client_cls.cli_name = "qwen"
         gobby_home = temp_dir / "gobby-home"
-        expected_cwd = (gobby_home / "provider-model-discovery" / "gemini").resolve()
+        expected_cwd = (gobby_home / "provider-model-discovery" / "qwen").resolve()
 
         with (
             patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
-            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/qwen"),
             patch(
                 "gobby.servers.provider_models.authorize_model_discovery_trust",
                 new=AsyncMock(side_effect=PermissionError("not trusted")),
@@ -521,7 +526,7 @@ class TestProviderModelCatalog:
         """Cleanup failures are logged while the authorization error remains primary."""
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         client_cls = MagicMock()
-        client_cls.cli_name = "gemini"
+        client_cls.cli_name = "qwen"
         gobby_home = temp_dir / "gobby-home"
 
         def fail_rmtree(_path: Path) -> None:
@@ -530,7 +535,7 @@ class TestProviderModelCatalog:
         with (
             caplog.at_level(logging.ERROR, logger="gobby.servers.provider_models"),
             patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
-            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/qwen"),
             patch(
                 "gobby.servers.provider_models.authorize_model_discovery_trust",
                 new=AsyncMock(side_effect=PermissionError("not trusted")),
@@ -541,7 +546,7 @@ class TestProviderModelCatalog:
                 await catalog._discover_acp_models(client_cls=client_cls)
 
         assert exc_info.value.__cause__ is None
-        assert "Failed to remove gemini model-discovery cwd" in caplog.text
+        assert "Failed to remove qwen model-discovery cwd" in caplog.text
         client_cls.assert_not_called()
 
     @pytest.mark.asyncio
@@ -551,14 +556,14 @@ class TestProviderModelCatalog:
         """Existing discovery cwd directories should survive trust failures."""
         catalog = ProviderModelCatalog(cache_path=temp_dir / "provider-model-catalog.json")
         client_cls = MagicMock()
-        client_cls.cli_name = "gemini"
+        client_cls.cli_name = "qwen"
         gobby_home = temp_dir / "gobby-home"
-        expected_cwd = (gobby_home / "provider-model-discovery" / "gemini").resolve()
+        expected_cwd = (gobby_home / "provider-model-discovery" / "qwen").resolve()
         expected_cwd.mkdir(parents=True)
 
         with (
             patch.dict("os.environ", {"GOBBY_HOME": str(gobby_home)}, clear=False),
-            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/gemini"),
+            patch("gobby.servers.provider_models.shutil.which", return_value="/usr/bin/qwen"),
             patch(
                 "gobby.servers.provider_models.authorize_model_discovery_trust",
                 new=AsyncMock(side_effect=PermissionError("not trusted")),
@@ -876,7 +881,7 @@ class TestModelDiscoveryCwdPath:
 
     @pytest.mark.parametrize(
         ("provider", "expected_dir"),
-        [("gemini", "gemini"), ("Qwen", "qwen"), ("  GEMINI  ", "gemini")],
+        [("qwen", "qwen"), ("Grok", "grok"), ("  QWEN  ", "qwen")],
     )
     def test_accepts_valid_provider_and_normalizes(self, provider: str, expected_dir: str) -> None:
         result = _model_discovery_cwd_path(provider)

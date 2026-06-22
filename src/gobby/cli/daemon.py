@@ -475,9 +475,9 @@ def start(ctx: click.Context, verbose: bool, no_ui: bool, docker_flag: bool) -> 
     if verbose:
         cmd.append("--verbose")
 
-    if not any(has_auth_env(cli_name) for cli_name in ("claude", "codex", "gemini")):
+    if not any(has_auth_env(cli_name) for cli_name in ("claude", "codex", "qwen")):
         click.secho(
-            "warning: no Anthropic/OpenAI/Google API/provider credential env vars detected. "
+            "warning: no Anthropic/OpenAI/Qwen API/provider credential env vars detected. "
             "Spawned agents may prompt for login unless the CLI has on-disk credentials.",
             fg="yellow",
         )

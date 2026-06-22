@@ -20,25 +20,11 @@ def derive_transcript_path(
     external_id: str,
 ) -> str | None:
     """Derive transcript path for CLIs that do not provide one natively."""
-    if cli_source == "gemini":
-        return cast(str | None, handler._find_gemini_transcript(input_data, external_id))
     if cli_source == "qwen":
         return cast(str | None, handler._find_qwen_transcript(input_data, external_id))
     if cli_source == "grok":
         return find_grok_transcript(handler, input_data, external_id)
     return None
-
-
-def find_gemini_transcript(
-    handler: Any,
-    input_data: dict[str, Any],
-    external_id: str,
-) -> str | None:
-    """Locate a Gemini CLI JSON session transcript for the hook event."""
-    return cast(
-        str | None,
-        handler._find_json_session_transcript("gemini", "Gemini", input_data, external_id),
-    )
 
 
 def find_qwen_transcript(

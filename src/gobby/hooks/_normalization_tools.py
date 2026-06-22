@@ -42,7 +42,7 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
     """
     # Phase 1: field alias normalization
 
-    # function_name -> tool_name  (Gemini)
+    # function_name -> tool_name  (ACP typed JSON)
     if "function_name" in data and "tool_name" not in data:
         data["tool_name"] = data["function_name"]
 
@@ -63,15 +63,15 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
                 pass
         data["tool_input"] = tool_args
 
-    # parameters -> tool_input  (Gemini)
+    # parameters -> tool_input  (ACP typed JSON)
     if "parameters" in data and "tool_input" not in data:
         data["tool_input"] = data["parameters"]
 
-    # args -> tool_input  (Gemini fallback)
+    # args -> tool_input  (ACP typed JSON fallback)
     if "args" in data and "tool_input" not in data:
         data["tool_input"] = data["args"]
 
-    # Normalize tool_input internal fields (e.g., path -> file_path for Gemini)
+    # Normalize tool_input internal fields (e.g., path -> file_path)
     tool_input = data.get("tool_input")
     tool_name = data.get("tool_name")
 
@@ -90,7 +90,7 @@ def normalize_tool_fields(data: dict[str, Any]) -> dict[str, Any]:
         if "path" in tool_input and "file_path" not in tool_input:
             tool_input["file_path"] = tool_input["path"]
 
-    # mcp_context {} -> mcp_server / mcp_tool  (Gemini MCP)
+    # mcp_context {} -> mcp_server / mcp_tool
     mcp_context = data.get("mcp_context")
     if mcp_context and isinstance(mcp_context, dict):
         server = mcp_context.get("server_name")
@@ -116,7 +116,7 @@ def _detect_tool_error(data: dict[str, Any]) -> None:
     """Infer ``is_error`` from tool output for shell tools (Phase 3).
 
     Some adapters set ``is_error`` explicitly via
-    ``exit_code`` or ``resultType``.  Claude Code and Gemini do not - they
+    ``exit_code`` or ``resultType``.  Claude Code and some ACP CLIs do not - they
     only provide the tool output text.  For shell tools (Bash), we parse the
     output for non-zero exit code patterns and set ``is_error = True``.
 

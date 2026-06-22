@@ -61,8 +61,8 @@ def _get_result_truncation_limit(content_str: str) -> int:
 def format_turns_for_llm(turns: list[dict[str, Any]]) -> str:
     """Format transcript turns for LLM analysis.
 
-    Handles both Claude Code format (nested message.role/content) and
-    Gemini CLI format (flat type/role/content).
+    Handles both Claude Code format (nested message.role/content) and typed
+    JSON format (flat type/role/content).
 
     Args:
         turns: List of transcript turn dicts
@@ -72,12 +72,12 @@ def format_turns_for_llm(turns: list[dict[str, Any]]) -> str:
     """
     formatted: list[str] = []
     for i, turn in enumerate(turns):
-        # Detect format: Gemini CLI uses "type" field, Claude uses nested "message"
+        # Detect format: typed JSON uses "type" field, Claude uses nested "message"
         event_type = turn.get("type")
 
         if event_type:
-            # Gemini CLI format: flat structure with type field
-            role, content = _format_gemini_turn(turn, event_type)
+            # Typed JSON format: flat structure with type field
+            role, content = _format_typed_json_turn(turn, event_type)
             if role is None:
                 continue  # Skip non-displayable events
         else:
@@ -89,8 +89,8 @@ def format_turns_for_llm(turns: list[dict[str, Any]]) -> str:
     return "\n\n".join(formatted)
 
 
-def _format_gemini_turn(turn: dict[str, Any], event_type: str) -> tuple[str | None, str]:
-    """Format a Gemini CLI turn.
+def _format_typed_json_turn(turn: dict[str, Any], event_type: str) -> tuple[str | None, str]:
+    """Format a typed-JSON transcript turn.
 
     Returns:
         Tuple of (role, formatted_content) or (None, "") if should skip

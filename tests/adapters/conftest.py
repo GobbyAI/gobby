@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from gobby.adapters.gemini import GeminiAdapter
+from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse, SessionSource
 from gobby.hooks.hook_manager import HookManager
 
@@ -14,9 +14,9 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def adapter() -> GeminiAdapter:
-    """Create a GeminiAdapter instance."""
-    return GeminiAdapter()
+def adapter() -> QwenAdapter:
+    """Create a QwenAdapter instance."""
+    return QwenAdapter()
 
 
 @pytest.fixture

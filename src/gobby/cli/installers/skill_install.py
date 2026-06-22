@@ -115,17 +115,16 @@ def install_router_skills_as_commands(target_commands_dir: Path) -> list[str]:
     return installed
 
 
-def install_router_skills_as_gemini_skills(target_skills_dir: Path) -> list[str]:
-    """Install router skills as Gemini skills (directory structure).
+def install_router_skills_as_cli_skills(target_skills_dir: Path) -> list[str]:
+    """Install router skills using the ``skills/name/SKILL.md`` directory structure.
 
-    Gemini CLI uses .gemini/skills/name/SKILL.md format for skills.
-    This function copies the gobby router skills from shared/skills/ to
-    the target skills directory preserving the directory structure.
+    This function copies the gobby router skills from shared/skills/ to the
+    target skills directory preserving the directory structure.
 
     Also cleans up stale skill directories from removed skills (e.g., g/).
 
     Args:
-        target_skills_dir: Path to skills directory (e.g., .gemini/skills)
+        target_skills_dir: Path to skills directory (e.g., .qwen/skills)
 
     Returns:
         List of installed skill names

@@ -21,7 +21,6 @@ logger = logging.getLogger(__name__)
 _CLI_COMPACT_COMMANDS: dict[str, str] = {
     "claude": "/compact",
     "codex": "/compact",
-    "gemini": "/compress",
     "qwen": "/compress",
     "droid": "/compress",
 }

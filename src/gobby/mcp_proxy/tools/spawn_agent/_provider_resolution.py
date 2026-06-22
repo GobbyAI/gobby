@@ -5,8 +5,6 @@ from __future__ import annotations
 MODEL_PROVIDER_PREFIXES = {
     "anthropic": "claude",
     "claude": "claude",
-    "google": "gemini",
-    "gemini": "gemini",
     "xai": "grok",
     "x.ai": "grok",
     "grok": "grok",

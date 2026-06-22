@@ -32,8 +32,6 @@ def _detect_source_from_path(path: str | None) -> str | None:
         return "grok"
     if ".factory" in parts and "sessions" in parts:
         return "droid"
-    if ".gemini" in parts or lowered.endswith(".json"):
-        return "gemini"
     if ".claude" in parts and "projects" in parts:
         return "claude"
 
@@ -75,7 +73,7 @@ def _looks_like_qwen(data: dict[str, Any]) -> bool:
 def _detect_source_from_record(data: dict[str, Any]) -> str | None:
     """Infer transcript source from a decoded transcript record."""
     if "sessionId" in data or isinstance(data.get("messages"), list):
-        return "qwen" if _looks_like_qwen(data) else "gemini"
+        return "qwen"
 
     params = data.get("params")
     if isinstance(params, dict):
@@ -107,10 +105,10 @@ def _detect_source_from_record(data: dict[str, Any]) -> str | None:
     if line_type in {"assistant", "summary", "system"}:
         return "claude"
     if line_type == "user":
-        return "claude" if isinstance(message, dict) else "gemini"
+        return "claude" if isinstance(message, dict) else "qwen"
 
-    if line_type in {"init", "message", "tool_use", "tool_result", "result", "model", "gemini"}:
-        return "gemini"
+    if line_type in {"init", "message", "tool_use", "tool_result", "result", "model"}:
+        return "qwen"
 
     return None
 
@@ -118,7 +116,7 @@ def _detect_source_from_record(data: dict[str, Any]) -> str | None:
 def _detect_source_from_json_session(data: dict[str, Any]) -> str | None:
     """Infer transcript source from a native JSON session file."""
     if "sessionId" in data or isinstance(data.get("messages"), list):
-        return "qwen" if _looks_like_qwen(data) else "gemini"
+        return "qwen"
     return _detect_source_from_record(data)
 
 

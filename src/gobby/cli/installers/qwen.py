@@ -18,7 +18,7 @@ from .shared import (
     install_global_hooks,
     install_shared_content,
 )
-from .skill_install import install_router_skills_as_gemini_skills
+from .skill_install import install_router_skills_as_cli_skills
 
 logger = logging.getLogger(__name__)
 
@@ -78,7 +78,7 @@ def install_qwen(project_path: Path, mode: str = "global") -> dict[str, Any]:
     result["plugins_installed"] = shared.get("plugins", [])
 
     skills_dir = qwen_path / "skills"
-    router_skills = install_router_skills_as_gemini_skills(skills_dir)
+    router_skills = install_router_skills_as_cli_skills(skills_dir)
     result["commands_installed"].extend(router_skills)
 
     if settings_file.exists():

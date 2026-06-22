@@ -10,7 +10,6 @@ from .codex import install_codex, uninstall_codex
 from .droid import install_droid, uninstall_droid
 from .embedding import install_embedding
 from .falkor import install_falkordb, uninstall_falkordb
-from .gemini import install_gemini, uninstall_gemini
 from .git_hooks import install_git_hooks
 from .grok import install_grok, uninstall_grok
 from .mcp_config import install_default_mcp_servers
@@ -35,9 +34,6 @@ __all__ = [
     # Claude
     "install_claude",
     "uninstall_claude",
-    # Gemini
-    "install_gemini",
-    "uninstall_gemini",
     # Grok
     "install_grok",
     "uninstall_grok",

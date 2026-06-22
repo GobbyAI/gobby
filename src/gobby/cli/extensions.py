@@ -63,9 +63,9 @@ def _get_hook_description(event_type: HookEventType) -> str:
         HookEventType.STOP: "Fired when agent attempts to stop (can block)",
         HookEventType.BEFORE_TOOL: "Fired before a tool is executed (can block)",
         HookEventType.AFTER_TOOL: "Fired after a tool completes",
-        HookEventType.BEFORE_TOOL_SELECTION: "Fired before tool selection (Gemini)",
-        HookEventType.BEFORE_MODEL: "Fired before model call (Gemini)",
-        HookEventType.AFTER_MODEL: "Fired after model call (Gemini)",
+        HookEventType.BEFORE_TOOL_SELECTION: "Fired before tool selection",
+        HookEventType.BEFORE_MODEL: "Fired before model call",
+        HookEventType.AFTER_MODEL: "Fired after model call",
         HookEventType.PRE_COMPACT: "Fired before session context is compacted",
         HookEventType.NOTIFICATION: "Notification event from CLI",
     }
@@ -77,7 +77,7 @@ def _get_hook_description(event_type: HookEventType) -> str:
 @click.option(
     "--source",
     "-s",
-    type=click.Choice(["claude", "gemini", "grok", "qwen", "codex", "droid"]),
+    type=click.Choice(["claude", "grok", "qwen", "codex", "droid"]),
     default="claude",
     help="Source CLI to simulate",
 )

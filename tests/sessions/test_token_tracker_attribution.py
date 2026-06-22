@@ -78,36 +78,36 @@ async def test_non_claude_transcript_events_keep_source_and_session_model_attrib
         ]
         await lifecycle._process_session_transcript(codex_session.id, str(codex_path))
 
-    gemini_path = tmp_path / "gemini.json"
-    gemini_path.write_text('{"sessionId":"gemini-ext","messages":[]}')
-    gemini_session = session_manager.register(
-        external_id="gemini-ext",
+    qwen_path = tmp_path / "qwen.json"
+    qwen_path.write_text('{"sessionId":"qwen-ext","messages":[]}')
+    qwen_session = session_manager.register(
+        external_id="qwen-ext",
         machine_id="machine-1",
-        source="gemini",
+        source="qwen",
         project_id=project.id,
-        transcript_path=str(gemini_path),
+        transcript_path=str(qwen_path),
     )
     session_manager.update_usage(
-        gemini_session.id,
+        qwen_session.id,
         input_tokens=0,
         output_tokens=0,
         cache_creation_tokens=0,
         cache_read_tokens=0,
-        model="gemini-2.5-pro",
+        model="qwen3-coder",
     )
 
     # Keep this direct call paired with the Codex case above for stable
     # source/model attribution coverage.
-    with patch("gobby.sessions.lifecycle.GeminiTranscriptParser") as parser_cls:
+    with patch("gobby.sessions.lifecycle.QwenTranscriptParser") as parser_cls:
         parser_cls.return_value.parse_session_json.return_value = [
-            _message(message_id="gemini-msg", input_tokens=200, output_tokens=50)
+            _message(message_id="qwen-msg", input_tokens=200, output_tokens=50)
         ]
-        await lifecycle._process_session_transcript(gemini_session.id, str(gemini_path))
+        await lifecycle._process_session_transcript(qwen_session.id, str(qwen_path))
 
     breakdown = TokenEventStore(temp_db).get_breakdown(project_id=project.id)
 
     assert breakdown["by_source"]["codex"]["input_tokens"] == 123
-    assert breakdown["by_source"]["gemini"]["input_tokens"] == 200
+    assert breakdown["by_source"]["qwen"]["input_tokens"] == 200
     assert "gpt-5-codex" in breakdown["by_model"]
-    assert "gemini-2.5-pro" in breakdown["by_model"]
+    assert "qwen3-coder" in breakdown["by_model"]
     assert "unknown" not in breakdown["by_model"]

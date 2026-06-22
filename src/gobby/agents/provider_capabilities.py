@@ -39,12 +39,6 @@ PROVIDER_CAPABILITIES: dict[str, ProviderCapabilities] = {
         reasoning_flag="reasoning-effort",
         sandbox=False,
     ),
-    "gemini": ProviderCapabilities(
-        terminal_reasoning=False,
-        fallback_reasoning_efforts=_STANDARD_REASONING_EFFORTS,
-        reasoning_flag=None,
-        sandbox=True,
-    ),
     "grok": ProviderCapabilities(
         terminal_reasoning=True,
         fallback_reasoning_efforts=_STANDARD_REASONING_EFFORTS,

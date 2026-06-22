@@ -32,7 +32,7 @@ from gobby.agents.tmux.session_manager import TmuxSessionInfo, TmuxSessionManage
 from gobby.config.tmux import TmuxConfig
 
 logger = logging.getLogger(__name__)
-_SUPPORTED_AUTH_CLIS = frozenset({"claude", "codex", "gemini", "grok", "qwen", "droid"})
+_SUPPORTED_AUTH_CLIS = frozenset({"claude", "codex", "grok", "qwen", "droid"})
 
 
 def _infer_auth_cli(command: list[str]) -> str | None:
@@ -235,7 +235,7 @@ class TmuxSpawner(TerminalSpawnerBase):
         """Spawn a CLI agent in a new tmux session with Gobby env vars.
 
         Args:
-            cli: CLI to run (e.g., "claude", "gemini", "codex").
+        cli: CLI to run (e.g., "claude", "qwen", "codex").
             cwd: Working directory.
             session_id: Pre-created child session ID.
             parent_session_id: Parent session for context resolution.

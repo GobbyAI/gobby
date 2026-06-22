@@ -61,13 +61,13 @@ class TranscriptAnalyzer:
     # Format-agnostic helpers
     # ------------------------------------------------------------------
     # Claude turns:  {"type": "user"|"assistant", "message": {"content": [blocks]}}
-    # Gemini turns:  {"type": "user"|"gemini", "content": str|[{"text":...}],
-    #                  "toolCalls": [{name, args, ...}]}
+    # Typed-JSON turns:  {"type": "user"|"model", "content": str|[{"text":...}],
+    #                     "toolCalls": [{name, args, ...}]}
     # These helpers let extract_handoff_context work with either format.
 
     @staticmethod
     def _get_user_text(turn: dict[str, Any]) -> str:
-        """Extract the user's text from a turn, handling Claude and Gemini formats."""
+        """Extract the user's text from a turn, handling Claude and typed-JSON formats."""
         # Claude: nested under message
         msg = turn.get("message")
         if isinstance(msg, dict):
@@ -82,7 +82,7 @@ class TranscriptAnalyzer:
                 return " ".join(parts).strip()
             return str(content).strip()
 
-        # Gemini: content at top level — list of {"text": ...} or a string
+        # Typed JSON: content at top level — list of {"text": ...} or a string
         content = turn.get("content")
         if isinstance(content, list):
             parts = []
@@ -98,7 +98,7 @@ class TranscriptAnalyzer:
 
     @staticmethod
     def _iter_content_blocks(turn: dict[str, Any]) -> list[dict[str, Any]]:
-        """Return normalized content blocks from a turn (Claude or Gemini).
+        """Return normalized content blocks from a turn (Claude or typed JSON).
 
         Every returned block has at least a ``type`` key (``"text"``,
         ``"tool_use"``, ``"tool_result"``).
@@ -111,7 +111,7 @@ class TranscriptAnalyzer:
                 return [b for b in content if isinstance(b, dict)]
             return []
 
-        # Gemini JSON session format — synthesize blocks from top-level fields
+        # Typed-JSON session format — synthesize blocks from top-level fields
         blocks: list[dict[str, Any]] = []
 
         content = turn.get("content")

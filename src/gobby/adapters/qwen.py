@@ -1,6 +1,6 @@
 """Qwen CLI adapter for hook translation.
 
-Qwen currently exposes Gemini-compatible hook payloads, but it remains a
+Qwen currently exposes ACP hook payloads, but it remains a
 distinct provider so storage, routing, and telemetry preserve Qwen identity.
 """
 

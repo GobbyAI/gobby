@@ -9,8 +9,8 @@ from typing import Any
 import pytest
 
 from gobby.sessions.transcripts.base import ParsedMessage, TokenUsage
-from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
 from gobby.sessions.transcripts.qwen import QwenTranscriptParser
+from gobby.sessions.transcripts.typed_json import TypedJsonTranscriptParser
 
 pytestmark = pytest.mark.unit
 
@@ -48,8 +48,8 @@ def _normalized(message: ParsedMessage) -> dict[str, Any]:
     }
 
 
-def test_qwen_parser_is_decoupled_from_gemini() -> None:
-    assert not issubclass(QwenTranscriptParser, GeminiTranscriptParser)
+def test_qwen_parser_uses_neutral_typed_json_base() -> None:
+    assert issubclass(QwenTranscriptParser, TypedJsonTranscriptParser)
 
 
 def test_qwen_jsonl_matches_golden_fixture() -> None:

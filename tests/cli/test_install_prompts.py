@@ -356,7 +356,6 @@ class TestInstallCommandSharedStores:
         with pytest.raises(click.UsageError, match="--embedding-provider requires --embedding-url"):
             install_command.callback(
                 claude_flag=False,
-                gemini_flag=False,
                 grok_flag=False,
                 agy_flag=False,
                 codex_flag=True,
@@ -389,7 +388,6 @@ class TestInstallCommandSharedStores:
             # whatever a prior test left in shutil.which/env, and an empty
             # detection makes the callback sys.exit(1) (install.py:275).
             patch("gobby.cli.install._is_claude_code_installed", return_value=True),
-            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
             patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
             patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
@@ -413,7 +411,6 @@ class TestInstallCommandSharedStores:
         ):
             install_command.callback(
                 claude_flag=False,
-                gemini_flag=False,
                 grok_flag=False,
                 agy_flag=False,
                 codex_flag=True,
@@ -456,7 +453,6 @@ class TestInstallCommandSharedStores:
             # whatever a prior test left in shutil.which/env, and an empty
             # detection makes the callback sys.exit(1) (install.py:275).
             patch("gobby.cli.install._is_claude_code_installed", return_value=True),
-            patch("gobby.cli.install._is_gemini_cli_installed", return_value=False),
             patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
             patch("gobby.cli.install._is_agy_cli_installed", return_value=False),
             patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
@@ -487,7 +483,6 @@ class TestInstallCommandSharedStores:
         ):
             install_command.callback(
                 claude_flag=False,
-                gemini_flag=False,
                 grok_flag=False,
                 agy_flag=False,
                 codex_flag=False,

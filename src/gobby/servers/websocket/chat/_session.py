@@ -43,7 +43,7 @@ def _normalize_web_chat_provider(provider: Any) -> str | None:
     normalized = provider.strip().lower()
     if normalized in {"", "inherit"}:
         return None
-    if normalized in {"claude", "gemini", "grok", "qwen", "codex", "droid", "agy"}:
+    if normalized in {"claude", "grok", "qwen", "codex", "droid", "agy"}:
         return normalized
     return None
 
@@ -51,7 +51,7 @@ def _normalize_web_chat_provider(provider: Any) -> str | None:
 def _build_agent_identity_preamble(agent_body: Any) -> str | None:
     """Build the non-duplicated identity preamble for web-chat sessions.
 
-    Gemini/Qwen web chat sends instructions through the first BEFORE_AGENT
+    Qwen/Grok web chat sends instructions through the first BEFORE_AGENT
     lifecycle hook, so bootstrap only carries stable identity fields there.
     """
     parts: list[str] = []
@@ -746,7 +746,7 @@ class ChatSessionMixin:
                         session.system_prompt_override = persona_context
                 elif agent_name != "default":
                     context_parts: list[str] = []
-                    if effective_provider in {"gemini", "grok", "qwen"}:
+                    if effective_provider in {"grok", "qwen"}:
                         preamble = _build_agent_identity_preamble(agent_body)
                     else:
                         preamble = agent_body.build_prompt_preamble()

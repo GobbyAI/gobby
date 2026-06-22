@@ -10,7 +10,6 @@ from gobby.cli import cli
 from gobby.cli.install import (
     _is_claude_code_installed,
     _is_codex_cli_installed,
-    _is_gemini_cli_installed,
 )
 from gobby.cli.utils import (
     format_uptime,
@@ -111,19 +110,6 @@ class TestCLIDetection:
         """Test Claude Code detection when not installed."""
         mock_which.return_value = None
         assert _is_claude_code_installed() is False
-
-    @patch("shutil.which")
-    def test_is_gemini_cli_installed_found(self, mock_which: MagicMock) -> None:
-        """Test Gemini CLI detection when installed."""
-        mock_which.return_value = "/usr/local/bin/gemini"
-        assert _is_gemini_cli_installed() is True
-        mock_which.assert_called_once_with("gemini")
-
-    @patch("shutil.which")
-    def test_is_gemini_cli_installed_not_found(self, mock_which: MagicMock) -> None:
-        """Test Gemini CLI detection when not installed."""
-        mock_which.return_value = None
-        assert _is_gemini_cli_installed() is False
 
     @patch("shutil.which")
     def test_is_codex_cli_installed_found(self, mock_which: MagicMock) -> None:
@@ -304,7 +290,6 @@ class TestInstallCommand:
         return CliRunner()
 
     @patch("gobby.cli.install._is_claude_code_installed")
-    @patch("gobby.cli.install._is_gemini_cli_installed")
     @patch("gobby.cli.install._is_grok_cli_installed")
     @patch("gobby.cli.install._is_agy_cli_installed")
     @patch("gobby.cli.install._is_qwen_cli_installed")
@@ -319,7 +304,6 @@ class TestInstallCommand:
         mock_qwen: MagicMock,
         mock_agy: MagicMock,
         mock_grok: MagicMock,
-        mock_gemini: MagicMock,
         mock_claude: MagicMock,
         runner: CliRunner,
         temp_dir: Path,
@@ -327,7 +311,6 @@ class TestInstallCommand:
         """Test install when no CLIs are detected."""
         mock_load_config.return_value = MagicMock()
         mock_claude.return_value = False
-        mock_gemini.return_value = False
         mock_grok.return_value = False
         mock_agy.return_value = False
         mock_qwen.return_value = False

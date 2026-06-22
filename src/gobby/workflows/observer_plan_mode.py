@@ -122,34 +122,34 @@ def detect_plan_mode_from_context(
             logger.info("Session %s: plan_mode=False", session_id)
         return
 
-    gemini_plan_indicators = [
+    acp_plan_indicators = [
         "# Active Approval Mode: Plan",
         "You are operating in **Plan Mode**",
     ]
 
-    indicator = _first_marker(cleaned, gemini_plan_indicators)
+    indicator = _first_marker(cleaned, acp_plan_indicators)
     if indicator:
         if variables.get("mode_level") != 0:
             variables["mode_level"] = 0
             logger.info(
-                "Session %s: mode_level=0 (plan) (detected from Gemini marker: %r)",
+                "Session %s: mode_level=0 (plan) (detected from ACP marker: %r)",
                 session_id,
                 indicator,
             )
         return
 
-    gemini_exit_indicators = [
+    acp_exit_indicators = [
         "Exited Plan Mode",
         "# Active Approval Mode: Execute",
     ]
 
-    indicator = _first_marker(cleaned, gemini_exit_indicators)
+    indicator = _first_marker(cleaned, acp_exit_indicators)
     if indicator:
         if variables.get("mode_level") == 0:
             chat_mode = variables.get("chat_mode", "bypass")
             variables["mode_level"] = compute_mode_level(chat_mode)
             logger.info(
-                "Session %s: mode_level=%s (detected from Gemini marker: %r)",
+                "Session %s: mode_level=%s (detected from ACP marker: %r)",
                 session_id,
                 variables["mode_level"],
                 indicator,

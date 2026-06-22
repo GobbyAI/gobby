@@ -351,52 +351,6 @@ _DROID_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
 }
 
 
-# --- Gemini native tool-approval menu (interactive TUI) ----------------------
-# Captured empirically from Gemini CLI v0.44.1 (Google, model Auto) in a tmux
-# pane (task #15730). Gemini's plan mode (`--approval-mode plan`) is read-only
-# and gates the *plan* conversationally ("Does this plan look good to you?") with
-# no selectable menu -- the approval mode is cycled with Shift+Tab, not chosen
-# from a keystroke menu. The native keystroke-selectable gate is the per-action
-# approval prompt shown in manual/default mode when the agent runs a tool;
-# typing the item number selects AND activates immediately (no following Enter --
-# verified live: "4" and Esc each dismissed the menu and cancelled the action
-# without touching the file). The menu's top two options are stable across tool
-# types, but the reject option's NUMBER varies by tool while its "(esc)" shortcut
-# is constant:
-#     Apply this change?                  (Edit/Write)
-#       1. Allow once
-#       2. Allow for this session
-#       3. Modify with external editor
-#       4. No, suggest changes (esc)
-#     Allow execution of [Shell]?         (Shell)
-#       1. Allow once
-#       2. Allow for this session
-#       3. No, suggest changes (esc)
-# Unlike Codex/Droid, Gemini's menu CAN express the bypass-vs-manual distinction:
-# "Allow once" (1, keep prompting each action) -> approve_act/normal, and "Allow
-# for this session" (2, stop prompting this session) -> approve_yolo/bypass.
-# request-changes maps to the Esc KEY rather than a digit because the reject
-# item's number is not stable (4 for edits, 3 for shell) while Esc always rejects
-# -- so a static map keyed on the stable positions 1/2 plus Esc resolves every
-# menu shape once a menu-presence matcher confirms the approval prompt is live.
-# Option 3 "Modify with external editor" (edit menu only, opens an external
-# editor) is deliberately unused: it does not fit a single-keystroke dispatch.
-
-
-def _gemini_digit(digit: str) -> PlanKeystrokeSequence:
-    """Gemini approval-menu selection: the item number activates with no Enter."""
-    return PlanKeystrokeSequence(strokes=(PlanKeystroke(digit, literal=True),))
-
-
-_GEMINI_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
-    "approve_act": _gemini_digit("1"),
-    "approve_yolo": _gemini_digit("2"),
-    # Reject via the "(esc)" shortcut: the menu's reject DIGIT varies by tool
-    # type, but Escape always rejects regardless of menu shape.
-    REQUEST_CHANGES_OPTION_ID: PlanKeystrokeSequence(strokes=(PlanKeystroke("Escape"),)),
-}
-
-
 def _grok_digit(digit: str) -> PlanKeystrokeSequence:
     """Grok approval-menu selection: the item number activates with no Enter."""
     return PlanKeystrokeSequence(strokes=(PlanKeystroke(digit, literal=True),))
@@ -424,7 +378,7 @@ def _grok_digit(digit: str) -> PlanKeystrokeSequence:
 # item, option 3 is the single manual approval, option 4 is reject. Option 2 is
 # a scope-specific "allow" whose wording varies and has no uniform plan_options
 # mapping. Esc only "unselects" the radio (it never rejects), so reject is the
-# stable digit 4 -- not Escape as with gemini.
+# stable digit 4.
 _GROK_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
     "approve_yolo": _grok_digit("1"),
     "approve_act": _grok_digit("3"),
@@ -442,8 +396,8 @@ def _qwen_digit(digit: str) -> PlanKeystrokeSequence:
 # working local LM Studio backend and reading the rendered menu grid (the
 # gobby-managed ACP path runs qwen headless and never shows this menu; this
 # mapping is for the native TUI a user runs under a proxy terminal). Qwen Code
-# is a Gemini-CLI fork, so its RadioButtonSelect confirmation menu matches
-# gemini's verbatim ([*] = the default-highlighted item):
+# uses the same RadioButtonSelect confirmation shape as other ACP CLIs
+# ([*] = the default-highlighted item):
 #
 #   Apply this change?
 #     [*] 1. Yes, allow once
@@ -455,13 +409,13 @@ def _qwen_digit(digit: str) -> PlanKeystrokeSequence:
 # wrote it). Option 1 ("allow once") is the single manual approval, option 2
 # ("allow always") is the auto-accept / bypass item. Esc rejects regardless of
 # menu shape (Esc on the write menu cancelled the write and the file was never
-# created); like gemini, the reject DIGIT varies by tool type while Escape is
+# created); the reject DIGIT varies by tool type while Escape is
 # the shape-independent reject shown as the menu's "(esc)" shortcut.
 _QWEN_PLAN_MENU: dict[str, PlanKeystrokeSequence] = {
     "approve_act": _qwen_digit("1"),
     "approve_yolo": _qwen_digit("2"),
     # Reject via the "(esc)" shortcut: the menu's reject DIGIT varies by tool
-    # type, but Escape always rejects regardless of menu shape (matches gemini).
+    # type, but Escape always rejects regardless of menu shape.
     REQUEST_CHANGES_OPTION_ID: PlanKeystrokeSequence(strokes=(PlanKeystroke("Escape"),)),
 }
 
@@ -512,13 +466,6 @@ def _register_builtin_plan_keystrokes(registry: PlanKeystrokeRegistry) -> None:
     registry.register_menu_matcher(
         "droid",
         _pane_contains_all("Proceed with the proposal", "No and explain why", "1-4 select"),
-    )
-    # --- gemini (interactive TUI tool-approval menu) -- task #15730 ---
-    for _gemini_option_id, _gemini_sequence in _GEMINI_PLAN_MENU.items():
-        registry.register("gemini", _gemini_option_id, _gemini_sequence)
-    registry.register_menu_matcher(
-        "gemini",
-        _pane_contains_all("Allow once", "Allow for this session", "No, suggest changes (esc)"),
     )
     # --- grok (Grok Build TUI tool-approval menu) -- task #15731 ---
     for _grok_option_id, _grok_sequence in _GROK_PLAN_MENU.items():

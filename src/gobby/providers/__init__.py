@@ -2,7 +2,6 @@
 
 from gobby.providers.registry import (
     AGY_UNAVAILABLE_REASON,
-    GEMINI_DEPRECATION_MESSAGE,
     ProviderMetadata,
     get_provider_metadata,
     installed_provider_metadata,
@@ -13,7 +12,6 @@ from gobby.providers.registry import (
 
 __all__ = [
     "AGY_UNAVAILABLE_REASON",
-    "GEMINI_DEPRECATION_MESSAGE",
     "ProviderMetadata",
     "get_provider_metadata",
     "installed_provider_metadata",

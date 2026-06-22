@@ -98,7 +98,7 @@ class _RegistrationCacheMixin:
 
         Args:
             machine_id: Machine identifier
-            source: CLI source identifier (e.g., "claude", "gemini", "codex") - REQUIRED
+    source: CLI source identifier (e.g., "claude", "qwen", "codex") - REQUIRED
             project_id: Project ID (required for matching)
             max_attempts: Maximum polling attempts (1 per second)
 
@@ -184,7 +184,7 @@ class _RegistrationCacheMixin:
 
         Args:
             external_id: External session identifier
-            source: CLI source identifier (e.g., "claude", "gemini", "codex")
+    source: CLI source identifier (e.g., "claude", "qwen", "codex")
             machine_id: Machine identifier
             project_id: Project identifier
 
@@ -280,7 +280,7 @@ class _RegistrationCacheMixin:
 
         Args:
             external_id: External session identifier
-            source: CLI source identifier (e.g., "claude", "gemini", "codex")
+    source: CLI source identifier (e.g., "claude", "qwen", "codex")
 
         Returns:
             session_id or None if not cached

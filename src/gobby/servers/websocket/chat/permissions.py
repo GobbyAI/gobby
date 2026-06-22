@@ -6,14 +6,12 @@ tool-approval gating, plan-mode prompt injection, and the plan-pending /
 approve / request-changes pipeline. That UX is identical regardless of the
 underlying wire protocol, so it lives here in one place:
 
-- ACP CLIs (Gemini, Grok, Qwen) via ``ACPManagedChatSession``
+- ACP CLIs (Grok, Qwen) via ``ACPManagedChatSession``
 - Codex via the Codex app-server JSON-RPC (``CodexManagedChatSession``)
 - Droid via stream-jsonrpc (``DroidManagedChatSession``)
 
-This used to be two near-identical mixins — ``ACPWebChatPermissionsMixin`` and
-a misleadingly named ``GeminiWebChatPermissionsMixin`` (the latter used by
-Codex/Droid, never Gemini). They are unified here; the name is protocol-neutral
-because the logic is not ACP-, Codex-, or Gemini-specific.
+This used to be two near-identical mixins. They are unified here; the name is
+protocol-neutral because the logic is not ACP-, Codex-, or Droid-specific.
 """
 
 from __future__ import annotations

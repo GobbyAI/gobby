@@ -36,7 +36,7 @@ class ChildSessionConfig:
     """Machine identifier."""
 
     source: str
-    """CLI source (e.g., 'claude', 'gemini', 'codex')."""
+    """CLI source (e.g., 'claude', 'qwen', 'codex')."""
 
     agent_id: str | None = None
     """ID of the agent that spawned this session."""

@@ -405,17 +405,13 @@ class TestExecuteSpawn:
             assert call_kwargs.get("workflow_name") == "auto-task"
 
     @pytest.mark.asyncio
-    async def test_gemini_terminal_calls_prepare_terminal_spawn(self):
-        """Test that provider='gemini' with mode='interactive' uses direct spawn with env vars.
-
-        Gemini now uses direct spawn with GOBBY_SESSION_ID env var passed to the terminal.
-        Session linkage happens when Gemini's hook dispatcher sends the env vars to daemon.
-        """
+    async def test_qwen_terminal_calls_prepare_terminal_spawn(self):
+        """Qwen direct spawn passes GOBBY_SESSION_ID env vars to the terminal."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
-            provider="gemini",
+            provider="qwen",
             session_id="sess",
             run_id="run",
             parent_session_id="parent",
@@ -447,7 +443,7 @@ class TestExecuteSpawn:
             ),
             patch(
                 "gobby.agents.spawn_executor.build_cli_command",
-                return_value=(["gemini", "--approval-mode", "yolo", "-i", "prompt"], {}),
+                return_value=(["qwen", "--approval-mode", "yolo", "-i", "prompt"], {}),
             ),
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",
@@ -767,8 +763,8 @@ class TestExecuteSpawn:
         assert "session_manager is required" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_gemini_terminal_requires_session_manager(self):
-        """Test that Gemini spawn requires session_manager for preflight."""
+    async def test_gemini_terminal_spawn_is_rejected(self):
+        """Gemini is no longer a supported spawn provider."""
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
@@ -783,16 +779,16 @@ class TestExecuteSpawn:
         result = await execute_spawn(request)
 
         assert result.success is False
-        assert "session_manager is required" in (result.error or "")
+        assert "Gemini provider is no longer supported" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_gemini_terminal_spawn_failure_propagates_error(self):
-        """Test that Gemini spawn failure is properly propagated to SpawnResult."""
+    async def test_qwen_terminal_spawn_failure_propagates_error(self):
+        """Qwen spawn failure is properly propagated to SpawnResult."""
         mock_session_manager = MagicMock()
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
-            provider="gemini",
+            provider="qwen",
             session_id="sess",
             run_id="run",
             parent_session_id="parent",
@@ -825,7 +821,7 @@ class TestExecuteSpawn:
             ),
             patch(
                 "gobby.agents.spawn_executor.build_cli_command",
-                return_value=(["gemini", "--approval-mode", "yolo", "-i", "prompt"], {}),
+                return_value=(["qwen", "--approval-mode", "yolo", "-i", "prompt"], {}),
             ),
             patch(
                 "gobby.agents.spawn_executor.TmuxSpawner",
@@ -1177,10 +1173,10 @@ class TestExecuteSpawnSandbox:
         assert result.success is True
 
     @pytest.mark.asyncio
-    async def test_gemini_terminal_spawn_with_sandbox_config(
+    async def test_qwen_terminal_spawn_with_sandbox_config(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
     ) -> None:
-        """Test that Gemini terminal spawn applies sandbox config correctly."""
+        """Qwen terminal spawn applies sandbox config correctly."""
         workspace = tmp_path / "workspace"
         workspace.mkdir()
         git_dir = tmp_path / "repo" / ".git"
@@ -1200,7 +1196,7 @@ class TestExecuteSpawnSandbox:
         request = SpawnRequest(
             prompt="Test with sandbox",
             cwd=str(workspace),
-            provider="gemini",
+            provider="qwen",
             session_id="sess",
             run_id="run",
             parent_session_id="parent",

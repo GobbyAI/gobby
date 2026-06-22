@@ -117,7 +117,7 @@ def sessions() -> None:
 )
 @click.option(
     "--source",
-    type=click.Choice(["claude", "gemini", "qwen", "codex", "droid"]),
+    type=click.Choice(["claude", "qwen", "codex", "droid"]),
     help="Filter by source",
 )
 @click.option("--limit", "-n", default=20, help="Max sessions to show")

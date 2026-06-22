@@ -1,5 +1,5 @@
 """
-Gobby hooks package for Claude Code, Gemini CLI, and Codex integration.
+Gobby hooks package for Claude Code, Qwen, Grok, Droid, and Codex integration.
 
 This package provides a hook system for intercepting and processing events
 from AI coding assistants. The architecture follows the Coordinator pattern:

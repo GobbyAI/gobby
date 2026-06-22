@@ -1,6 +1,6 @@
 """CLI command building for agent spawning.
 
-    Provides functions to construct CLI commands for Claude, Gemini, Grok, Qwen,
+    Provides functions to construct CLI commands for Claude, Grok, Qwen,
 Codex, and Droid with proper flags for prompts, permissions, and session management.
 """
 
@@ -39,11 +39,6 @@ def build_cli_command(
     Claude Code:
     - claude --session-id <uuid> --dangerously-skip-permissions -p [prompt]
 
-    Gemini CLI:
-    - gemini --approval-mode yolo "prompt" (one-shot)
-    - gemini --acp (interactive ACP mode)
-    - spawned-terminal reasoning is unsupported because there is no stable flag
-
     Codex CLI:
     - codex --ask-for-approval never --disable guardian_approval -C <dir> [PROMPT]
 
@@ -52,7 +47,7 @@ def build_cli_command(
       [--reasoning-effort <level>] --auto <low|high> [PROMPT]
 
     Args:
-        cli: CLI name (claude, gemini, grok, qwen, codex, droid)
+        cli: CLI name (claude, grok, qwen, codex, droid)
         prompt: Optional prompt to pass (agent mode)
         session_id: Optional session ID
         auto_approve: If True, add flags to auto-approve actions/permissions
@@ -97,8 +92,8 @@ def build_cli_command(
             fmt = output_format or "stream-json"
             command.extend(["--output-format", fmt, "--verbose", "--input-format", fmt])
 
-    elif cli in {"gemini", "qwen"}:
-        # Gemini/Qwen CLI flags
+    elif cli == "qwen":
+        # Qwen CLI flags
         if model:
             command.extend(["--model", model])
         if auto_approve:

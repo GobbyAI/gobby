@@ -25,7 +25,7 @@ from gobby.tasks.state_semantics import get_claimed_session_id, is_task_actionab
 
 logger = logging.getLogger(__name__)
 
-SUPPORTED_RESUME_PROVIDERS = frozenset({"claude", "gemini", "qwen", "grok", "codex", "droid"})
+SUPPORTED_RESUME_PROVIDERS = frozenset({"claude", "qwen", "grok", "codex", "droid"})
 DAEMON_STOP_CONTINUATION_PROMPT = (
     "Continue the interrupted task after the Gobby daemon stopped. Inspect the current "
     "workspace state, preserve any existing work, and continue from where the prior run left off."

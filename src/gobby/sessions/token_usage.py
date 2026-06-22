@@ -1,11 +1,9 @@
 """Shared token-usage extraction helpers.
 
-Leaf module so both the Gemini transcript parser and the live ``after_model``
-hook share one de-overlapped, thinking-aware mapping. ``TokenUsage`` is imported
-lazily inside the function (not at module load) so importing this helper from
-the hook layer does not eagerly pull in the transcripts package — whose
-``__init__`` imports every parser, and whose ``gemini`` parser imports this
-module right back (a cycle).
+Leaf module so typed-JSON transcript parsers and live ``after_model`` hooks share
+one de-overlapped, thinking-aware mapping. ``TokenUsage`` is imported lazily
+inside the function (not at module load) so importing this helper from the hook
+layer does not eagerly pull in the transcripts package.
 """
 
 from __future__ import annotations
@@ -30,14 +28,14 @@ def _coerce_token_count(value: Any) -> int:
         return 0
 
 
-def gemini_token_usage(usage_data: Mapping[str, Any]) -> TokenUsage:
-    """Build a de-overlapped, thinking-aware TokenUsage from Gemini usage metadata.
+def typed_json_token_usage(usage_data: Mapping[str, Any]) -> TokenUsage:
+    """Build a de-overlapped, thinking-aware TokenUsage from typed-JSON usage metadata.
 
-    Gemini's ``promptTokenCount`` already includes the cached portion, so the
+    ``promptTokenCount`` already includes the cached portion, so the
     uncached input is ``promptTokenCount - cachedContentTokenCount``. Thinking
     tokens (``thoughtsTokenCount``/``thinkingTokenCount``) are folded into the
-    output count. ``toolUsePromptTokenCount`` is intentionally excluded — per
-    the Gemini docs it is a subset of ``promptTokenCount``.
+    output count. ``toolUsePromptTokenCount`` is intentionally excluded because
+    it is a subset of ``promptTokenCount`` in this payload family.
     """
     from gobby.sessions.transcripts.base import TokenUsage
 
@@ -45,7 +43,7 @@ def gemini_token_usage(usage_data: Mapping[str, Any]) -> TokenUsage:
     cache_read = _coerce_token_count(usage_data.get("cachedContentTokenCount"))
     if cache_read > prompt:
         logger.warning(
-            "Gemini cachedContentTokenCount exceeds promptTokenCount; anomalous "
+            "cachedContentTokenCount exceeds promptTokenCount; anomalous "
             "usage data will be clamped when uncached input tokens are computed",
             extra={
                 "prompt_tokens": prompt,

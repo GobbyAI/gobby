@@ -22,7 +22,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 # Valid providers
-SUPPORTED_PROVIDERS = frozenset(["claude", "codex", "gemini"])
+SUPPORTED_PROVIDERS = frozenset(["claude", "codex"])
 
 # Default provider when nothing is specified
 DEFAULT_PROVIDER = "claude"

@@ -6,18 +6,18 @@ import pytest
 
 from gobby.config.sessions import SessionLifecycleConfig
 from gobby.sessions.lifecycle import SessionLifecycleManager
-from gobby.sessions.token_usage import gemini_token_usage
+from gobby.sessions.token_usage import typed_json_token_usage
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 
 pytestmark = pytest.mark.unit
 
 
-def test_gemini_token_usage_warns_when_cache_read_exceeds_prompt(
+def test_typed_json_token_usage_warns_when_cache_read_exceeds_prompt(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
     with caplog.at_level(logging.WARNING, logger="gobby.sessions.token_usage"):
-        usage = gemini_token_usage(
+        usage = typed_json_token_usage(
             {
                 "promptTokenCount": 10,
                 "cachedContentTokenCount": 25,

@@ -99,7 +99,7 @@ class _SessionCRUDMixin(_SessionWebChatCRUDMixin):
         Args:
             external_id: External session identifier (e.g., Claude Code session ID)
             machine_id: Machine identifier
-            source: CLI source (claude, gemini, qwen, codex, droid)
+    source: CLI source (claude, qwen, codex, droid)
             project_id: Project ID (None if project context unavailable)
             title: Optional session title
             transcript_path: Path to transcript file

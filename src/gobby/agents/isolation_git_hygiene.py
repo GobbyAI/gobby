@@ -17,7 +17,6 @@ GENERATED_ISOLATION_EXCLUDE_PATHS = (
     ".claude/",
     ".codex/",
     ".factory/hooks/hooks.json",
-    ".gemini/",
 )
 
 

@@ -93,8 +93,8 @@ def normalize_mcp_fields(data: dict[str, Any]) -> dict[str, Any]:
     tool_name = data.get("tool_name", "")
     tool_input = data.get("tool_input", {}) or {}
 
-    # 1a-pre. Normalize single-underscore MCP prefix (Gemini CLI) to canonical
-    # double-underscore form.  Gemini sends mcp_<server>_<tool>; canonical is
+    # 1a-pre. Normalize single-underscore MCP prefix from ACP CLIs to canonical
+    # double-underscore form. Some CLIs send mcp_<server>_<tool>; canonical is
     # mcp__<server>__<tool>.  Hyphenated server names are preserved; underscores
     # remain the delimiter, so the first underscore after "mcp_" splits the name.
     if not tool_name.startswith("mcp__") and tool_name.startswith("mcp_"):

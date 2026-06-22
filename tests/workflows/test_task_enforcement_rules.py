@@ -617,22 +617,22 @@ class TestIsPlanFile:
         assert is_plan_file("/project/.gobby/plans/x.md", "claude_code") is True
         assert is_plan_file("/project/.gobby/plans/x.md", None) is True
 
-    def test_gemini_deep_tmp_plan(self) -> None:
+    def test_removed_gemini_deep_tmp_plan_rejected(self) -> None:
         from gobby.workflows.enforcement.blocking import is_plan_file
 
-        assert is_plan_file("/home/user/.gemini/tmp/abc123/plans/design.md") is True
+        assert is_plan_file("/home/user/.gemini/tmp/abc123/plans/design.md") is False
 
-    def test_gemini_notes_md(self) -> None:
+    def test_removed_gemini_notes_md_rejected(self) -> None:
         from gobby.workflows.enforcement.blocking import is_plan_file
 
-        assert is_plan_file("/home/user/.gemini/notes.md") is True
+        assert is_plan_file("/home/user/.gemini/notes.md") is False
 
     def test_codex_plans_md(self) -> None:
         from gobby.workflows.enforcement.blocking import is_plan_file
 
         assert is_plan_file("/home/user/.codex/plans/plan.md") is True
 
-    def test_gemini_config_json_rejected(self) -> None:
+    def test_removed_gemini_config_json_rejected(self) -> None:
         from gobby.workflows.enforcement.blocking import is_plan_file
 
         assert is_plan_file("/home/user/.gemini/config.json") is False

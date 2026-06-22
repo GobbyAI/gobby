@@ -98,11 +98,7 @@ async def _build_summary_prompt_context(
         last_messages_str = recent_digest_turns
     else:
         parser: Any
-        if source == "gemini":
-            from gobby.sessions.transcripts.gemini import GeminiTranscriptParser
-
-            parser = GeminiTranscriptParser()
-        elif source == "qwen":
+        if source == "qwen":
             from gobby.sessions.transcripts.qwen import QwenTranscriptParser
 
             parser = QwenTranscriptParser(session_id=getattr(session, "id", None))

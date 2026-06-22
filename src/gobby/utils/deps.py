@@ -105,15 +105,6 @@ def get_claude_code_version() -> str | None:
     return None
 
 
-def get_gemini_cli_version() -> str | None:
-    """Get Gemini CLI version."""
-    output = _run_cmd(["gemini", "--version"])
-    if output:
-        match = re.search(r"(\d+\.\d+\.\d+)", output)
-        return match.group(1) if match else output
-    return None
-
-
 def get_grok_cli_version() -> str | None:
     """Get Grok CLI version."""
     output = _run_cmd(["grok", "version"])
@@ -170,10 +161,6 @@ def get_coding_cli_hooks_status() -> dict[str, bool]:
     # Claude Code: ~/.claude/settings.json
     claude_settings = Path.home() / ".claude" / "settings.json"
     result["claude"] = _check_hooks_in_file(claude_settings)
-
-    # Gemini: ~/.gemini/settings.json
-    gemini_settings = Path.home() / ".gemini" / "settings.json"
-    result["gemini"] = _check_hooks_in_file(gemini_settings)
 
     # Grok: ~/.grok/hooks/gobby.json
     grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
@@ -549,7 +536,6 @@ def collect_all_deps() -> dict[str, Any]:
         },
         "coding_clis": {
             "claude": get_claude_code_version(),
-            "gemini": get_gemini_cli_version(),
             "grok": get_grok_cli_version(),
             "codex": get_codex_cli_version(),
             "droid": get_droid_cli_version(),

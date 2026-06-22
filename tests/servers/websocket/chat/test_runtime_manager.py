@@ -23,8 +23,8 @@ from gobby.servers.chat_session import ChatSession
 from gobby.servers.websocket.chat.backends import (
     CodexManagedChatSession,
     CodexWebChatBackend,
-    GeminiManagedChatSession,
-    GeminiWebChatBackend,
+    GrokManagedChatSession,
+    GrokWebChatBackend,
     QwenManagedChatSession,
     QwenWebChatBackend,
 )
@@ -53,14 +53,20 @@ class TestWebChatRuntimeManager:
         manager = WebChatRuntimeManager(codex_client=None)
 
         claude_session = manager.create_session(provider="claude", conversation_id="conv-1")
-        gemini_session = manager.create_session(provider="gemini", conversation_id="conv-2")
+        grok_session = manager.create_session(provider="grok", conversation_id="conv-2")
         qwen_session = manager.create_session(provider="qwen", conversation_id="conv-3")
         codex_session = manager.create_session(provider="codex", conversation_id="conv-4")
 
         assert isinstance(claude_session, ChatSession)
-        assert isinstance(gemini_session, GeminiManagedChatSession)
+        assert isinstance(grok_session, GrokManagedChatSession)
         assert isinstance(qwen_session, QwenManagedChatSession)
         assert isinstance(codex_session, CodexManagedChatSession)
+
+    def test_create_session_rejects_removed_gemini_provider(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        with pytest.raises(RuntimeError, match="Gemini web chat is no longer supported"):
+            manager.create_session(provider="gemini", conversation_id="conv-gemini")
 
     def test_health_snapshot_contains_droid(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
@@ -138,8 +144,8 @@ class TestWebChatRuntimeManager:
         assert manager._claude_backend._sandbox_config.enabled is False
         assert manager._codex_backend._sandbox_config is not None
         assert manager._codex_backend._sandbox_config.enabled is False
-        assert manager._gemini_backend._sandbox_config is not None
-        assert manager._gemini_backend._sandbox_config.extra_read_paths == ["/tmp/web-read"]
+        assert manager._grok_backend._sandbox_config is not None
+        assert manager._grok_backend._sandbox_config.extra_read_paths == ["/tmp/web-read"]
         assert manager._qwen_backend._sandbox_config is not None
         assert manager._qwen_backend._sandbox_config.extra_write_paths == ["/tmp/web-write"]
         assert manager._droid_backend._sandbox_config is not None
@@ -161,7 +167,7 @@ class TestWebChatRuntimeManager:
     async def test_background_start_skips_acp_backends(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
         manager._codex_backend.start = AsyncMock()
-        manager._gemini_backend.start = AsyncMock()
+        manager._grok_backend.start = AsyncMock()
         manager._qwen_backend.start = AsyncMock()
         manager._droid_backend.start = AsyncMock()
 
@@ -171,16 +177,16 @@ class TestWebChatRuntimeManager:
         assert manager.sandbox_config.enabled is True
         manager._codex_backend.start.assert_awaited_once_with(background=True)
         manager._droid_backend.start.assert_awaited_once_with(background=True)
-        manager._gemini_backend.start.assert_not_awaited()
+        manager._grok_backend.start.assert_not_awaited()
         manager._qwen_backend.start.assert_not_awaited()
 
 
-class TestGeminiBackend:
+class TestGrokBackend:
     def test_backend_does_not_build_full_process_sandboxed_acp_client(self) -> None:
-        with patch.object(GeminiWebChatBackend, "acp_client_cls") as mock_client:
-            GeminiWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
+        with patch.object(GrokWebChatBackend, "acp_client_cls") as mock_client:
+            GrokWebChatBackend(sandbox_config=SandboxConfig(enabled=True, allow_network=False))
 
-        # Provider/display_name now come from class attributes on GeminiACPClient;
+        # Provider/display_name now come from class attributes on the ACP client;
         # the backend should not pass any sandbox-leaking process args.
         assert mock_client.call_args is not None
         kwargs = mock_client.call_args.kwargs
@@ -193,7 +199,7 @@ class TestGeminiBackend:
         client.is_started = False
         client.start = AsyncMock(side_effect=RuntimeError("boom"))
 
-        backend = GeminiWebChatBackend(client=client)
+        backend = GrokWebChatBackend(client=client)
         await backend.start()
 
         health = backend.health()
@@ -206,12 +212,12 @@ class TestGeminiBackend:
         client.is_started = False
         client.start = AsyncMock(side_effect=TimeoutError())
 
-        backend = GeminiWebChatBackend(client=client)
+        backend = GrokWebChatBackend(client=client)
         await backend.start()
 
         health = backend.health()
         assert health.available is False
-        assert health.startup_error == "Timed out starting Gemini ACP backend after 15.0s"
+        assert health.startup_error == "Timed out starting Grok ACP backend after 15.0s"
 
     @pytest.mark.asyncio
     async def test_managed_session_translates_stream_events(self) -> None:
@@ -220,19 +226,19 @@ class TestGeminiBackend:
         backend.send_message = MagicMock(
             return_value=_async_stream(
                 StreamEvent(event_type="content_delta", data={"content": "Hello "}),
-                StreamEvent(event_type="content_delta", data={"content": "Gemini"}),
+                StreamEvent(event_type="content_delta", data={"content": "Grok"}),
                 StreamEvent(event_type="result", data={}),
             )
         )
-        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
+        session = GrokManagedChatSession(conversation_id="conv-grok", _backend=backend)
         session._connected = True
-        session._model = "gemini-ctx"
-        session._context_window_overrides = {"gemini-ctx": 123_000}
+        session._model = "grok-ctx"
+        session._context_window_overrides = {"grok-ctx": 123_000}
         session.sdk_session_id = "sess-1"
 
         events = [event async for event in session.send_message("hi")]
 
-        assert [e.content for e in events if isinstance(e, TextChunk)] == ["Hello ", "Gemini"]
+        assert [e.content for e in events if isinstance(e, TextChunk)] == ["Hello ", "Grok"]
         assert isinstance(events[-1], DoneEvent)
         assert events[-1].context_window == 123_000
 
@@ -260,7 +266,7 @@ class TestGeminiBackend:
                 _async_stream(StreamEvent(event_type="result", data={})),
             ]
         )
-        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
+        session = GrokManagedChatSession(conversation_id="conv-grok", _backend=backend)
         session._connected = True
         session.sdk_session_id = "sess-1"
         session._on_pre_tool = AsyncMock(return_value={"context": PYTHON_SKILL_DIRECTIVE})
@@ -308,7 +314,7 @@ class TestGeminiBackend:
                 StreamEvent(event_type="result", data={}),
             )
         )
-        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
+        session = GrokManagedChatSession(conversation_id="conv-grok", _backend=backend)
         session._connected = True
         session.sdk_session_id = "sess-1"
         session._on_pre_tool = AsyncMock(
@@ -342,8 +348,8 @@ class TestGeminiBackend:
                 return None
 
         class FakeACPClient:
-            cli_name = "gemini"
-            display_name = "Gemini"
+            cli_name = "grok"
+            display_name = "Grok"
             is_started = True
 
             def __init__(self) -> None:
@@ -384,12 +390,12 @@ class TestGeminiBackend:
                 yield StreamEvent(event_type="result", data={})
 
         client = FakeACPClient()
-        backend = GeminiWebChatBackend(client=client)
-        backend._health = ProviderBackendHealth(provider="gemini", available=True)
-        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=backend)
+        backend = GrokWebChatBackend(client=client)
+        backend._health = ProviderBackendHealth(provider="grok", available=True)
+        session = GrokManagedChatSession(conversation_id="conv-grok", _backend=backend)
         session._connected = True
         session.sdk_session_id = "sess-1"
-        session._model = "gemini-ctx"
+        session._model = "grok-ctx"
         session._on_pre_tool = AsyncMock(
             return_value={"decision": "block", "context": TASK_TRANSITIONS_SKILL_DIRECTIVE}
         )
@@ -417,7 +423,7 @@ class TestGeminiBackend:
         ]
 
     def test_plan_mode_context_teaches_gcode(self) -> None:
-        session = GeminiManagedChatSession(conversation_id="conv-gem", _backend=MagicMock())
+        session = GrokManagedChatSession(conversation_id="conv-grok", _backend=MagicMock())
         session.chat_mode = "plan"
 
         context = session._pop_plan_mode_context()
@@ -439,7 +445,7 @@ class TestQwenBackend:
         assert "extra_args" not in kwargs
         assert "env_overrides" not in kwargs
 
-    def test_qwen_inherits_gemini_plan_mode_gcode_context(self) -> None:
+    def test_qwen_inherits_acp_plan_mode_gcode_context(self) -> None:
         session = QwenManagedChatSession(conversation_id="conv-qwen", _backend=MagicMock())
         session.chat_mode = "plan"
 

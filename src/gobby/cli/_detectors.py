@@ -9,11 +9,6 @@ def _is_claude_code_installed() -> bool:
     return shutil.which("claude") is not None
 
 
-def _is_gemini_cli_installed() -> bool:
-    """Check if Gemini CLI is installed."""
-    return shutil.which("gemini") is not None
-
-
 def _is_grok_cli_installed() -> bool:
     """Check if Grok CLI is installed."""
     return shutil.which("grok") is not None

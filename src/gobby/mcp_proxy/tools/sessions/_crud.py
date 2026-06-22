@@ -167,7 +167,7 @@ This tool is for browsing/listing sessions, not for self-identification.""",
         Args:
             project_id: Filter by project ID
             status: Filter by status (active, paused, expired, archived, handoff_ready)
-            source: Filter by CLI source (claude, gemini, qwen, codex, droid)
+            source: Filter by CLI source (claude, qwen, codex, droid)
             limit: Max results (default 20)
 
         Returns:

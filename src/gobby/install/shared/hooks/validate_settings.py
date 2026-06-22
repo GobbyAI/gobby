@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Unified settings validator for all CLI integrations.
 
-Validates hook configuration files across Claude Code, Gemini CLI,
-Qwen CLI, Codex, and Factory Droid.
+Validates hook configuration files across Claude Code, Qwen CLI, Codex,
+Grok, and Factory Droid.
 
 CLI is identified via --cli flag (primary) or path-based detection (fallback).
 
@@ -15,7 +15,7 @@ Validates:
 
 Usage:
     validate_settings.py --cli=claude
-    validate_settings.py --cli=gemini
+    validate_settings.py --cli=qwen
     validate_settings.py  # auto-detects from script path
 
 Exit Codes:
@@ -39,11 +39,11 @@ class ValidationConfig:
     """Per-CLI validation configuration."""
 
     cli_name: str
-    settings_dir: str  # ".claude", ".gemini", etc.
+    settings_dir: str  # ".claude", ".qwen", etc.
     settings_file: str  # "settings.json" or "hooks.json"
     required_hooks: tuple[str, ...]  # Required hook types
-    nested: bool  # True = hooks have nested "hooks" array (Claude/Gemini)
-    check_enable_hooks: bool = False  # Gemini/Qwen require general.enableHooks=true
+    nested: bool  # True = hooks have nested "hooks" array (Claude/Qwen)
+    check_enable_hooks: bool = False  # Qwen requires general.enableHooks=true
     check_version: int | None = None  # Reserved for future use
 
 
@@ -54,26 +54,6 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
         settings_file="settings.json",
         required_hooks=CLAUDE_PASCAL_HOOK_NAMES,
         nested=True,
-    ),
-    "gemini": ValidationConfig(
-        cli_name="Gemini CLI (deprecated)",
-        settings_dir=".gemini",
-        settings_file="settings.json",
-        required_hooks=(
-            "SessionStart",
-            "SessionEnd",
-            "BeforeAgent",
-            "AfterAgent",
-            "BeforeTool",
-            "AfterTool",
-            "BeforeToolSelection",
-            "BeforeModel",
-            "AfterModel",
-            "PreCompress",
-            "Notification",
-        ),
-        nested=True,
-        check_enable_hooks=True,
     ),
     "grok": ValidationConfig(
         cli_name="Grok CLI",
@@ -224,7 +204,7 @@ def validate(config: ValidationConfig) -> int:
             return 1
 
         if config.nested:
-            # Claude/Gemini/Qwen: nested structure with "hooks" array
+            # Claude/Qwen: nested structure with "hooks" array
             first_config = hook_configs[0]
             if not isinstance(first_config.get("hooks"), list) or not first_config["hooks"]:
                 print(f"No 'hooks' array in {hook_type} configuration")
@@ -248,7 +228,7 @@ def main() -> int:
     """Main entry point."""
     config = detect_cli_config()
     if config is None:
-        print("Could not detect CLI. Use --cli=<name> (claude, gemini, grok, qwen, codex, droid)")
+        print("Could not detect CLI. Use --cli=<name> (claude, grok, qwen, codex, droid)")
         return 1
 
     return validate(config)

@@ -12,7 +12,7 @@ from gobby.adapters.base import (
 )
 from gobby.adapters.claude_code import ClaudeCodeAdapter
 from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
-from gobby.adapters.gemini import GeminiAdapter
+from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookResponse
 
 pytestmark = pytest.mark.unit
@@ -61,10 +61,10 @@ def test_claude_pre_tool_use_blank_reason_uses_sentinel(
     )
 
 
-def test_gemini_block_blank_reason_uses_sentinel(
+def test_qwen_block_blank_reason_uses_sentinel(
     enable_log_propagation, caplog: pytest.LogCaptureFixture
 ) -> None:
-    adapter = GeminiAdapter()
+    adapter = QwenAdapter()
     response = HookResponse(decision="block", reason="")
 
     with caplog.at_level(logging.WARNING, logger="gobby"):
@@ -74,8 +74,8 @@ def test_gemini_block_blank_reason_uses_sentinel(
     assert result["continue"] is False
     assert result["reason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
     assert any(
-        record.name == "gobby.adapters.gemini"
-        and "GeminiAdapter translated block without reason at adapter boundary" in record.message
+        record.name == "gobby.adapters.qwen"
+        and "QwenAdapter translated block without reason at adapter boundary" in record.message
         for record in caplog.records
     )
 

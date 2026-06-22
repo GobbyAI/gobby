@@ -25,17 +25,17 @@ async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str,
     """Read and parse a transcript file in its native format.
 
     Claude, Codex, and Droid use JSONL (one JSON object per line).
-    Gemini/Qwen store sessions as a single JSON object with a ``messages`` array.
+    Qwen stores sessions as a single JSON object with a ``messages`` array.
     The returned dicts are in the source's native format - callers that need
     to iterate content blocks should use format-aware helpers.
 
     Args:
         path: Path to the transcript file.
-        source: Session source (``"claude"``, ``"gemini"``, ``"qwen"``, ``"codex"``, ``"droid"``).
+        source: Session source (``"claude"``, ``"qwen"``, ``"codex"``, ``"droid"``).
     """
-    # Gemini/Qwen JSON session files are a single JSON object, not JSONL.
-    if path.suffix == ".json" and source in {"gemini", "qwen"}:
-        return await _read_gemini_json_transcript(path)
+    # Qwen JSON session files are a single JSON object, not JSONL.
+    if path.suffix == ".json" and source == "qwen":
+        return await _read_typed_json_transcript(path)
 
     # JSONL format (Claude, Codex, default)
     turns: list[dict[str, Any]] = []
@@ -125,14 +125,14 @@ def _format_deterministic_summary(handoff_ctx: Any, digest_markdown: str) -> str
     return f"## Session Digest\n\n{digest_section}\n\n{base_markdown}".strip()
 
 
-async def _read_gemini_json_transcript(path: Path) -> list[dict[str, Any]]:
-    """Read a Gemini JSON session file and return its native message dicts.
+async def _read_typed_json_transcript(path: Path) -> list[dict[str, Any]]:
+    """Read a typed-JSON session file and return its native message dicts.
 
-    Gemini session files have the structure::
+    Typed-JSON session files have the structure::
 
         {"sessionId": "...", "messages": [{...}, ...], "kind": "main"}
 
-    We return the ``messages`` array as-is so callers get native Gemini dicts.
+    We return the ``messages`` array as-is so callers get native dicts.
     """
     async with aiofiles.open(path, encoding="utf-8") as f:
         raw = await f.read()
@@ -140,11 +140,13 @@ async def _read_gemini_json_transcript(path: Path) -> list[dict[str, Any]]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in Gemini transcript {path}: {e}")
+        logger.error(f"Invalid JSON in typed-JSON transcript {path}: {e}")
         return []
 
     if not isinstance(data, dict):
-        logger.error(f"Expected JSON object in Gemini transcript {path}, got {type(data).__name__}")
+        logger.error(
+            f"Expected JSON object in typed-JSON transcript {path}, got {type(data).__name__}"
+        )
         return []
 
     messages = data.get("messages", [])

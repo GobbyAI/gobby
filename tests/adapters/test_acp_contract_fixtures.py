@@ -1,4 +1,4 @@
-"""Golden-fixture ACP contract tests for Gemini and Qwen subprocess streams."""
+"""Golden-fixture ACP contract tests for ACP subprocess streams."""
 
 from __future__ import annotations
 
@@ -11,11 +11,9 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from gobby.adapters.acp_client import ACPClient, StreamEvent
-from gobby.adapters.gemini_acp_client import GeminiACPClient
 from gobby.adapters.grok_acp_client import GrokACPClient
 from gobby.adapters.qwen_acp_client import QwenACPClient
 from gobby.llm.claude_models import DoneEvent, ToolCallEvent
-from gobby.servers.websocket.chat.backends.gemini import GeminiManagedChatSession
 from gobby.servers.websocket.chat.backends.qwen import QwenManagedChatSession
 
 pytestmark = pytest.mark.unit
@@ -38,7 +36,7 @@ class ACPFixtureCase:
 @dataclass(frozen=True)
 class ACPToolCallFixtureCase:
     client_class: type[ACPClient]
-    session_class: type[GeminiManagedChatSession | QwenManagedChatSession]
+    session_class: type[QwenManagedChatSession]
     fixture: str
     expected_call_id: str
     expected_tool_name: str
@@ -47,18 +45,6 @@ class ACPToolCallFixtureCase:
 
 
 ACP_FIXTURE_CASES = [
-    pytest.param(
-        ACPFixtureCase(
-            client_class=GeminiACPClient,
-            cli_name="gemini",
-            version="0.40.1",
-            new_fixture="gemini-0.40.1-session-new-prompt.stdout.jsonl",
-            load_fixture="gemini-0.40.1-session-load-prompt.stdout.jsonl",
-            new_session_id="gemini-new-session",
-            load_session_id="gemini-existing-session",
-        ),
-        id="gemini-0.40.1",
-    ),
     pytest.param(
         ACPFixtureCase(
             client_class=QwenACPClient,
@@ -74,18 +60,6 @@ ACP_FIXTURE_CASES = [
 ]
 
 ACP_TOOL_CALL_FIXTURE_CASES = [
-    pytest.param(
-        ACPToolCallFixtureCase(
-            client_class=GeminiACPClient,
-            session_class=GeminiManagedChatSession,
-            fixture="gemini-0.40.1-session-tool-call.stdout.jsonl",
-            expected_call_id="call-gemini-tool-1",
-            expected_tool_name="run_shell_command",
-            expected_lifecycle_tool_name="Bash",
-            expected_tool_input={"command": "pwd", "description": "Show current directory"},
-        ),
-        id="gemini-0.40.1",
-    ),
     pytest.param(
         ACPToolCallFixtureCase(
             client_class=QwenACPClient,

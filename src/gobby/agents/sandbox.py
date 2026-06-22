@@ -56,7 +56,7 @@ _WEB_CHAT_POLICY_MISMATCH_MESSAGE = (
     "This chat was created under a different sandbox policy. Continue it in a new chat."
 )
 logger = logging.getLogger(__name__)
-_GEMINI_INCLUDE_DIRECTORY_LIMIT = 5
+_QWEN_INCLUDE_DIRECTORY_LIMIT = 5
 _CLAUDE_LOOPBACK_DOMAINS = ["localhost", "127.0.0.1", "::1"]
 
 
@@ -177,7 +177,7 @@ class SandboxResolver(ABC):
     """
     Abstract base class for CLI-specific sandbox configuration resolution.
 
-    Each CLI (Claude Code, Codex, Gemini) has different mechanisms for
+Each CLI (Claude Code, Codex, Qwen) has different mechanisms for
     enabling sandboxing. Subclasses implement the resolve() method to
     convert a SandboxConfig and ResolvedSandboxPaths into CLI-specific
     arguments and environment variables.
@@ -318,21 +318,16 @@ class CodexSandboxResolver(SandboxResolver):
         return (args, {})
 
 
-class GeminiSandboxResolver(SandboxResolver):
-    """
-    Sandbox resolver for Google Gemini CLI.
-
-    Gemini uses -s/--sandbox flag and SEATBELT_PROFILE env var for macOS.
-    See: https://geminicli.com/docs/cli/sandbox/
-    """
+class QwenSandboxResolver(SandboxResolver):
+    """Sandbox resolver for Qwen CLI's Seatbelt-backed sandbox contract."""
 
     @property
     def cli_name(self) -> str:
-        return "gemini"
+        return "qwen"
 
     @staticmethod
     def seatbelt_profile(config: SandboxConfig, paths: ResolvedSandboxPaths) -> str:
-        """Return the documented Gemini/Qwen Seatbelt profile name."""
+        """Return the documented Qwen Seatbelt profile name."""
         mode_prefix = "restrictive" if config.mode == "restrictive" else "permissive"
         network_suffix = "open" if paths.allow_external_network else "proxied"
         return f"{mode_prefix}-{network_suffix}"
@@ -346,12 +341,12 @@ class GeminiSandboxResolver(SandboxResolver):
         args = ["-s"]
         include_dirs = _compact_external_write_paths(
             _external_write_paths(paths),
-            limit=_GEMINI_INCLUDE_DIRECTORY_LIMIT,
+            limit=_QWEN_INCLUDE_DIRECTORY_LIMIT,
         )
-        if len(include_dirs) > _GEMINI_INCLUDE_DIRECTORY_LIMIT:
+        if len(include_dirs) > _QWEN_INCLUDE_DIRECTORY_LIMIT:
             raise ValueError(
-                "Gemini/Qwen sandbox supports at most "
-                f"{_GEMINI_INCLUDE_DIRECTORY_LIMIT} external "
+                "Qwen sandbox supports at most "
+                f"{_QWEN_INCLUDE_DIRECTORY_LIMIT} external "
                 f"--include-directories paths; got {len(include_dirs)}"
             )
         for path in include_dirs:
@@ -360,14 +355,6 @@ class GeminiSandboxResolver(SandboxResolver):
         env = {"SEATBELT_PROFILE": self.seatbelt_profile(config, paths)}
 
         return (args, env)
-
-
-class QwenSandboxResolver(GeminiSandboxResolver):
-    """Qwen currently follows the same sandbox contract as Gemini."""
-
-    @property
-    def cli_name(self) -> str:
-        return "qwen"
 
 
 class GrokSandboxResolver(SandboxResolver):
@@ -488,7 +475,7 @@ def get_sandbox_resolver(cli: str) -> SandboxResolver:
     Factory function to get the appropriate sandbox resolver for a CLI.
 
     Args:
-        cli: The CLI name ("claude", "codex", or "gemini")
+        cli: The CLI name ("claude", "codex", "grok", or "qwen")
 
     Returns:
         The appropriate SandboxResolver subclass instance.
@@ -499,7 +486,6 @@ def get_sandbox_resolver(cli: str) -> SandboxResolver:
     resolvers: dict[str, type[SandboxResolver]] = {
         "claude": ClaudeSandboxResolver,
         "codex": CodexSandboxResolver,
-        "gemini": GeminiSandboxResolver,
         "grok": GrokSandboxResolver,
         "qwen": QwenSandboxResolver,
     }

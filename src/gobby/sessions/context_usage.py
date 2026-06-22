@@ -16,7 +16,7 @@ if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
 
 _SOURCES: frozenset[str] = frozenset(
-    {"claude", "codex", "gemini", "qwen", "droid", "agy", "grok", "web_chat"}
+    {"claude", "codex", "qwen", "droid", "agy", "grok", "web_chat"}
 )
 logger = logging.getLogger(__name__)
 _AGY_LABEL_SUFFIX_RE = re.compile(r"\s*\([^)]*\)\s*$")

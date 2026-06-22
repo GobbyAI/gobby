@@ -84,10 +84,10 @@ class HookType(str, Enum):
     """Triggered after a user responds to an elicitation"""
 
     BEFORE_MODEL = "before-model"
-    """Triggered before model inference (Gemini only)"""
+    """Triggered before model inference"""
 
     AFTER_MODEL = "after-model"
-    """Triggered after model inference (Gemini only)"""
+    """Triggered after model inference"""
 
     PERMISSION_REQUEST = "permission-request"
     """Triggered when permission is requested (Claude only)"""

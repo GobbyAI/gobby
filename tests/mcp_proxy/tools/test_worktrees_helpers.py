@@ -225,25 +225,6 @@ class TestInstallProviderHooks:
             mock_install.assert_called_once_with(tmp_path, mode="project")
             assert "Install failed" in caplog.text
 
-    def test_gemini_hooks_success(self, tmp_path) -> None:
-        """Test Gemini hooks installation success."""
-        from gobby.cli.installers import gemini as gemini_mod
-
-        with patch.object(gemini_mod, "install_gemini") as mock_install:
-            mock_install.return_value = {"success": True}
-            result = _install_provider_hooks("gemini", tmp_path)
-            assert result is True
-
-    def test_gemini_hooks_failure(self, tmp_path, caplog) -> None:
-        """Test Gemini hooks installation failure."""
-        from gobby.cli.installers import gemini as gemini_mod
-
-        with patch.object(gemini_mod, "install_gemini") as mock_install:
-            mock_install.return_value = {"success": False, "error": "Failed"}
-            result = _install_provider_hooks("gemini", tmp_path)
-            assert result is False
-            assert "Failed" in caplog.text
-
     def test_qwen_hooks_success(self, tmp_path) -> None:
         """Test Qwen hooks installation success with project mode."""
         from gobby.cli.installers import qwen as qwen_mod

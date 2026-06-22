@@ -9,7 +9,6 @@ from typing import Any, Literal
 ContextUsageSource = Literal[
     "claude",
     "codex",
-    "gemini",
     "qwen",
     "droid",
     "agy",

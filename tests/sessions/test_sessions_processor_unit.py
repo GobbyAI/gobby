@@ -1281,7 +1281,7 @@ class TestProcessJsonSession:
 
     @pytest.mark.asyncio
     async def test_process_json_session_basic(self, mock_db, tmp_path) -> None:
-        """Should parse and store messages from a Gemini JSON session file."""
+        """Should parse and store messages from a Qwen JSON session file."""
         import json
 
         processor = SessionMessageProcessor(mock_db)
@@ -1305,7 +1305,7 @@ class TestProcessJsonSession:
         }
         transcript.write_text(json.dumps(data))
 
-        processor.register_session("session-1", str(transcript), source="gemini")
+        processor.register_session("session-1", str(transcript), source="qwen")
 
         await processor._process_json_session("session-1", str(transcript))
 
@@ -1337,7 +1337,7 @@ class TestProcessJsonSession:
         }
         transcript.write_text(json.dumps(data))
 
-        processor.register_session("session-1", str(transcript), source="gemini")
+        processor.register_session("session-1", str(transcript), source="qwen")
         processor.message_manager = AsyncMock()
 
         # Set mtime to current file mtime (pretend we already processed)
@@ -1382,7 +1382,7 @@ class TestProcessJsonSession:
         }
         transcript.write_text(json.dumps(data))
 
-        processor.register_session("session-1", str(transcript), source="gemini")
+        processor.register_session("session-1", str(transcript), source="qwen")
         # Pretend we already processed up to index 1
         processor._message_indices["session-1"] = 1
 
@@ -1396,7 +1396,7 @@ class TestProcessJsonSession:
     async def test_process_json_session_file_not_found(self, mock_db) -> None:
         """Should return early when transcript file doesn't exist."""
         processor = SessionMessageProcessor(mock_db)
-        processor.register_session("session-1", "/nonexistent/file.json", source="gemini")
+        processor.register_session("session-1", "/nonexistent/file.json", source="qwen")
         processor.message_manager = AsyncMock()
 
         await processor._process_json_session("session-1", "/nonexistent/file.json")
@@ -1411,7 +1411,7 @@ class TestProcessJsonSession:
         transcript = tmp_path / "bad.json"
         transcript.write_text("not valid json {{{")
 
-        processor.register_session("session-1", str(transcript), source="gemini")
+        processor.register_session("session-1", str(transcript), source="qwen")
         processor.message_manager = AsyncMock()
 
         await processor._process_json_session("session-1", str(transcript))
@@ -1419,7 +1419,7 @@ class TestProcessJsonSession:
 
     @pytest.mark.asyncio
     async def test_process_json_session_wrong_parser_type(self, mock_db, tmp_path, caplog) -> None:
-        """Should warn when parser is not GeminiTranscriptParser."""
+        """Should warn when source has no JSON session parser."""
         import json
 
         processor = SessionMessageProcessor(mock_db)
@@ -1432,7 +1432,7 @@ class TestProcessJsonSession:
         processor.message_manager.get_state = AsyncMock(return_value=None)
 
         await processor._process_json_session("session-1", str(transcript))
-        assert "No GeminiTranscriptParser" in caplog.text
+        assert "No JSON-session transcript parser" in caplog.text
 
     @pytest.mark.asyncio
     async def test_process_session_dispatches_to_json(self, mock_db, tmp_path) -> None:
@@ -1454,7 +1454,7 @@ class TestProcessJsonSession:
         }
         transcript.write_text(json.dumps(data))
 
-        processor.register_session("session-1", str(transcript), source="gemini")
+        processor.register_session("session-1", str(transcript), source="qwen")
 
         await processor._process_session("session-1", str(transcript))
 

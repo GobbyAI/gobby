@@ -701,7 +701,6 @@ class TestGenerateSessionSummaries:
 
         with (
             patch("gobby.prompts.loader.PromptLoader") as MockPromptLoader,
-            patch("gobby.sessions.transcripts.gemini.GeminiTranscriptParser") as MockGeminiParser,
             patch("gobby.sessions.transcripts.qwen.QwenTranscriptParser") as MockQwenParser,
             patch("gobby.workflows.git_utils.get_file_changes", return_value=[]),
             patch("gobby.workflows.git_utils.get_git_diff_summary", return_value=""),
@@ -732,7 +731,6 @@ class TestGenerateSessionSummaries:
         assert full_markdown == "# Qwen Summary"
         assert full_error is None
         MockQwenParser.assert_called_once_with(session_id="sess-qwen")
-        MockGeminiParser.assert_not_called()
 
     @pytest.mark.asyncio
     async def test_digest_primary_context_does_not_format_full_transcript(self) -> None:
@@ -1419,8 +1417,8 @@ class TestReadTranscript:
         assert all(isinstance(t, dict) for t in turns)
 
     @pytest.mark.asyncio
-    async def test_reads_gemini_json_session(self, tmp_path: Path) -> None:
-        """Gemini JSON session files are parsed and messages extracted."""
+    async def test_reads_qwen_json_session(self, tmp_path: Path) -> None:
+        """Qwen JSON session files are parsed and messages extracted."""
         from gobby.sessions.summarize import _read_transcript
 
         path = tmp_path / "session.json"
@@ -1444,34 +1442,34 @@ class TestReadTranscript:
             "kind": "main",
         }
         path.write_text(json.dumps(session_data))
-        turns = await _read_transcript(path, source="gemini")
+        turns = await _read_transcript(path, source="qwen")
         assert len(turns) == 2
         assert turns[0]["type"] == "user"
         assert turns[1]["type"] == "gemini"
         assert turns[1]["content"] == "Hi! How can I help?"
 
     @pytest.mark.asyncio
-    async def test_gemini_json_invalid_json(self, tmp_path: Path) -> None:
-        """Invalid JSON in Gemini file returns empty list."""
+    async def test_qwen_json_invalid_json(self, tmp_path: Path) -> None:
+        """Invalid JSON in Qwen file returns empty list."""
         from gobby.sessions.summarize import _read_transcript
 
         path = tmp_path / "session.json"
         path.write_text("not valid json{{{")
-        turns = await _read_transcript(path, source="gemini")
+        turns = await _read_transcript(path, source="qwen")
         assert turns == []
 
     @pytest.mark.asyncio
-    async def test_gemini_json_no_messages_key(self, tmp_path: Path) -> None:
-        """Gemini JSON without messages key returns empty list."""
+    async def test_qwen_json_no_messages_key(self, tmp_path: Path) -> None:
+        """Qwen JSON without messages key returns empty list."""
         from gobby.sessions.summarize import _read_transcript
 
         path = tmp_path / "session.json"
         path.write_text(json.dumps({"sessionId": "test", "kind": "main"}))
-        turns = await _read_transcript(path, source="gemini")
+        turns = await _read_transcript(path, source="qwen")
         assert turns == []
 
     @pytest.mark.asyncio
-    async def test_non_gemini_json_falls_through_to_jsonl(self, tmp_path: Path) -> None:
+    async def test_non_qwen_json_falls_through_to_jsonl(self, tmp_path: Path) -> None:
         """A .json file with source='claude' is still treated as JSONL."""
         from gobby.sessions.summarize import _read_transcript
 

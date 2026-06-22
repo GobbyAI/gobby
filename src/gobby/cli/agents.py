@@ -199,7 +199,7 @@ def agents() -> None:
     default="auto",
     help="Terminal for terminal mode",
 )
-@click.option("--provider", "-p", default="claude", help="LLM provider (claude, gemini, etc.)")
+@click.option("--provider", "-p", default="claude", help="LLM provider (claude, qwen, etc.)")
 @click.option("--model", help="Model override")
 @click.option(
     "--reasoning-effort", help="Reasoning effort override (e.g. low, medium, high, xhigh)"
@@ -240,7 +240,7 @@ def spawn_agent_cmd(
 
         gobby agents spawn "Implement feature X" --session sess-abc123
 
-        gobby agents spawn "Fix the bug" -s sess-abc123 -p gemini
+        gobby agents spawn "Fix the bug" -s sess-abc123 -p qwen
 
         gobby agents spawn "Run tests" -s sess-abc123 --task next
     """
@@ -680,10 +680,10 @@ def check_agent(
 
     \b
     Examples:
-        gobby agents check meeseeks-gemini
-        gobby agents check meeseeks-gemini --workflow worker
-        gobby agents check meeseeks-gemini --workflow worker --session #1071
-        gobby agents check meeseeks-gemini --json
+        gobby agents check meeseeks-qwen
+        gobby agents check meeseeks-qwen --workflow worker
+        gobby agents check meeseeks-qwen --workflow worker --session #1071
+        gobby agents check meeseeks-qwen --json
     """
     from gobby.utils.daemon_client import DaemonClient
 

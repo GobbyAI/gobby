@@ -27,7 +27,6 @@ from gobby.llm.context_windows import (
 )
 from gobby.providers import provider_metadata
 from gobby.servers.provider_model_defaults import DROID_MODEL_CATALOG as _DROID_MODEL_CATALOG
-from gobby.servers.provider_model_defaults import GEMINI_MODEL_CATALOG as _GEMINI_MODEL_CATALOG
 from gobby.servers.provider_model_discovery import (
     discover_acp_models as _discover_acp_models_impl,
 )
@@ -146,12 +145,9 @@ def _cached_models(provider: str, models: Any) -> list[dict[str, Any]]:
 
 
 DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths("droid", _DROID_MODEL_CATALOG)
-GEMINI_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths("gemini", _GEMINI_MODEL_CATALOG)
 
 
 def _static_provider_models(provider: str) -> list[dict[str, Any]]:
-    if provider == "gemini":
-        return copy.deepcopy(GEMINI_MODEL_CATALOG)
     if provider == "droid":
         return copy.deepcopy(DROID_MODEL_CATALOG)
     return []
@@ -518,8 +514,6 @@ class ProviderModelCatalog:
     ) -> list[dict[str, Any]]:
         if provider == "claude":
             return await self._discover_claude_models()
-        if provider == "gemini":
-            return await self._discover_gemini_models()
         if provider == "grok":
             return await self._discover_grok_models()
         if provider == "qwen":
@@ -538,11 +532,6 @@ class ProviderModelCatalog:
         codex_client: CodexAppServerClient | None = None,
     ) -> list[dict[str, Any]]:
         return await _discover_codex_models_impl(codex_client=codex_client, which=shutil.which)
-
-    async def _discover_gemini_models(self) -> list[dict[str, Any]]:
-        from gobby.adapters.gemini_acp_client import GeminiACPClient
-
-        return await self._discover_acp_models(client_cls=GeminiACPClient)
 
     async def _discover_grok_models(self) -> list[dict[str, Any]]:
         models, _source = await self._discover_grok_models_with_source()

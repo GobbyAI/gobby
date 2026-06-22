@@ -360,12 +360,6 @@ def _prompt_api_keys(
 # Mapping: cli_name -> (display_name, global_config, project_config_subpath, mcp_config_path)
 _CLI_INSTALL_META: dict[str, tuple[str, str, str, str | None]] = {
     "claude": ("Claude Code", "~/.claude/settings.json", ".claude/settings.json", "~/.claude.json"),
-    "gemini": (
-        "Gemini CLI (deprecated)",
-        "~/.gemini/settings.json",
-        ".gemini/settings.json",
-        "~/.gemini/settings.json",
-    ),
     "grok": (
         "Grok CLI",
         "~/.grok/hooks/gobby.json",
@@ -395,7 +389,7 @@ def _run_standard_cli_install(
     mode: str,
     results: dict[str, dict[str, Any]],
 ) -> None:
-    """Run install + echo for a standard CLI (claude, gemini, qwen, codex, droid)."""
+    """Run install + echo for a standard CLI (claude, qwen, codex, droid)."""
     display_name, global_config, project_subpath, mcp_path = _CLI_INSTALL_META[cli_name]
 
     click.echo("-" * 40)
@@ -573,7 +567,6 @@ def _echo_migration_notice(project_path: Path) -> None:
     per_project_hooks = []
     for cli_name, cli_dir in [
         ("claude", ".claude"),
-        ("gemini", ".gemini"),
         ("codex", ".codex"),
     ]:
         hooks_dir = project_path / cli_dir / "hooks"
@@ -669,7 +662,6 @@ def _echo_uninstall_summary(results: dict[str, dict[str, Any]]) -> bool:
 # Uninstall CLI meta: cli_name -> (display_name, uninstall_label)
 _CLI_UNINSTALL_META: dict[str, tuple[str, str]] = {
     "claude": ("Claude Code", "hooks from settings"),
-    "gemini": ("Gemini CLI", "hooks from settings"),
     "qwen": ("Qwen CLI", "hooks from settings"),
     "codex": ("Codex", "hooks from settings"),
     "droid": ("Droid CLI", "hooks from settings"),

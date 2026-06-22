@@ -8,7 +8,7 @@ start using them.
 
 Each CLI has a different trust mechanism:
 - Claude Code: ~/.claude/projects/<encoded-path>/ (directory existence = trust)
-- Gemini/Qwen CLI: ~/.gemini|.qwen/trustedFolders.json + projects.json
+- Qwen CLI: ~/.qwen/trustedFolders.json + projects.json
 - Codex CLI: ~/.codex/config.toml [projects."<path>"] trust_level = "trusted"
 - Droid CLI: --auto high handles spawned-agent permissions, no trust database needed
 """
@@ -35,7 +35,7 @@ from gobby.paths import get_gobby_home
 logger = logging.getLogger(__name__)
 
 _CLAUDE_COMPATIBLE_CLIS = frozenset({"claude"})
-_GEMINI_COMPATIBLE_CLIS = frozenset({"gemini", "qwen"})
+_JSON_FOLDER_TRUST_CLIS = frozenset({"qwen"})
 _MODEL_DISCOVERY_TRUST_LOCKS: dict[str, asyncio.Lock] = {}
 _LOCK_DICT_LOCK = asyncio.Lock()
 _TRUST_STORE_LOCKS: dict[str, threading.Lock] = {}
@@ -122,7 +122,7 @@ def pre_approve_directory(cli: str, directory: PathValue) -> None:
     and resolved paths to cover all cases.
 
     Args:
-        cli: CLI name (claude, gemini, qwen, codex, droid)
+        cli: CLI name (claude, qwen, codex, droid)
         directory: Absolute path to the workspace directory
     """
     seed_cli_trust(cli, directory)
@@ -142,14 +142,14 @@ def seed_gobby_home_trust(cli: str, gobby_home: PathValue | None = None) -> dict
 async def authorize_model_discovery_trust(cli: str, directory: PathValue) -> TrustSeedResult:
     """Authorize provider-owned ACP model discovery paths.
 
-    Model discovery only needs Gemini-compatible trust stores. Runtime workspace
+    Model discovery only needs provider-owned JSON folder-trust stores. Runtime workspace
     trust stays on ``pre_approve_directory`` so these authorization paths remain
     separate.
     """
-    if cli not in _GEMINI_COMPATIBLE_CLIS:
+    if cli not in _JSON_FOLDER_TRUST_CLIS:
         result = TrustSeedResult(cli=cli, paths=_trust_path_strings(directory))
         result.skipped = True
-        supported = ", ".join(sorted(_GEMINI_COMPATIBLE_CLIS))
+        supported = ", ".join(sorted(_JSON_FOLDER_TRUST_CLIS))
         result.reason = (
             f"Unsupported CLI for model discovery trust: {cli}; supported CLIs: {supported}"
         )
@@ -202,8 +202,8 @@ def _seed_cli_trust_unlocked(
     try:
         if cli in _CLAUDE_COMPATIBLE_CLIS:
             _seed_claude_trust(paths, result)
-        elif cli in _GEMINI_COMPATIBLE_CLIS:
-            _seed_gemini_compatible_trust(
+        elif cli in _JSON_FOLDER_TRUST_CLIS:
+            _seed_json_folder_trust(
                 cli,
                 paths,
                 result,
@@ -313,19 +313,19 @@ def _pre_approve_claude(directory: PathValue, result: TrustSeedResult | None = N
         logger.warning(message, exc_info=True)
 
 
-def _seed_gemini_compatible_trust(
+def _seed_json_folder_trust(
     cli: str,
     paths: list[str],
     result: TrustSeedResult,
     *,
     respect_folder_trust_setting: bool = False,
 ) -> None:
-    """Pre-approve paths for a Gemini-compatible CLI."""
+    """Pre-approve paths for a CLI with projects/trustedFolders JSON stores."""
     cli_home = Path.home() / f".{cli}"
     cli_home.mkdir(parents=True, exist_ok=True)
 
     try:
-        _seed_gemini_projects(cli, cli_home, paths, result)
+        _seed_cli_projects(cli, cli_home, paths, result)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         message = f"Failed to update {cli.title()} projects.json for {', '.join(paths)}: {exc}"
         result.add_error(message)
@@ -342,7 +342,7 @@ def _seed_gemini_compatible_trust(
         return
 
     try:
-        _seed_gemini_trusted_folders(cli, cli_home, paths, result)
+        _seed_trusted_folders(cli, cli_home, paths, result)
     except (OSError, json.JSONDecodeError, ValueError) as exc:
         message = (
             f"Failed to update {cli.title()} trustedFolders.json for {', '.join(paths)}: {exc}"
@@ -351,24 +351,13 @@ def _seed_gemini_compatible_trust(
         logger.warning(message, exc_info=True)
 
 
-def _pre_approve_gemini_compatible(cli: str, directory: PathValue) -> None:
-    """Backward-compatible wrapper for runtime Gemini/Qwen workspace trust."""
-    result = TrustSeedResult(cli=cli, paths=_trust_path_strings(directory))
-    _seed_gemini_compatible_trust(
-        cli,
-        result.paths,
-        result,
-        respect_folder_trust_setting=False,
-    )
-
-
-def _seed_gemini_projects(
+def _seed_cli_projects(
     cli: str,
     cli_home: Path,
     paths: list[str],
     result: TrustSeedResult,
 ) -> None:
-    """Register Gemini/Qwen project paths in projects.json."""
+    """Register provider project paths in projects.json."""
     projects_file = cli_home / "projects.json"
     data = _load_json_object(projects_file, reset_label=f"{cli.title()} projects.json")
 
@@ -396,13 +385,13 @@ def _seed_gemini_projects(
         result.add_file_written(projects_file)
 
 
-def _seed_gemini_trusted_folders(
+def _seed_trusted_folders(
     cli: str,
     cli_home: Path,
     paths: list[str],
     result: TrustSeedResult,
 ) -> None:
-    """Register Gemini/Qwen TRUST_PARENT paths in trustedFolders.json."""
+    """Register provider TRUST_PARENT paths in trustedFolders.json."""
     trust_file = cli_home / "trustedFolders.json"
     trusted = _load_json_object(trust_file, reset_label=f"{cli.title()} trustedFolders.json")
 
@@ -425,7 +414,7 @@ def _seed_gemini_trusted_folders(
 
 
 def _folder_trust_enabled(settings_file: Path) -> bool:
-    """Return whether Gemini/Qwen folder trust is active in settings."""
+    """Return whether folder trust is active in settings."""
     if not settings_file.exists():
         return True
 
