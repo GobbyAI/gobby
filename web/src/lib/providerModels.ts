@@ -54,7 +54,6 @@ const PROVIDER_LABELS: Record<string, string> = {
   claude: "Claude",
   codex: "Codex",
   droid: "Droid",
-  gemini: "Gemini",
   grok: "Grok",
   agy: "AGY",
   qwen: "Qwen",
@@ -391,9 +390,6 @@ function parseModelInfo(
   if (normalizedProvider === "codex") {
     return parseCodexModelInfo(model);
   }
-  if (normalizedProvider === "gemini") {
-    return parseGeminiModelInfo(model);
-  }
   if (normalizedProvider === "qwen") {
     return parseQwenModelInfo(model);
   }
@@ -447,30 +443,6 @@ function parseCodexModelInfo(model: ProviderModelOption): ParsedModelInfo {
   };
 }
 
-function parseGeminiModelInfo(model: ProviderModelOption): ParsedModelInfo {
-  const tokens = tokenizeModel(model.value || model.label);
-  const versionParts = extractVersionParts(tokens, "gemini");
-  const isPro = tokens.includes("pro");
-  const isFlash = tokens.includes("flash");
-  const isPreview = tokens.includes("preview");
-  const tierScore = isPro ? 300 : isFlash ? 200 : 100;
-  const stabilityScore = isPreview ? 0 : 50;
-  const variant = isPro ? "Pro" : isFlash ? "Flash" : "";
-
-  return {
-    displayLabel: [
-      "Gemini",
-      versionParts.join("."),
-      variant,
-    ]
-      .filter(Boolean)
-      .join(" "),
-    strengthRank: tierScore * 10_000 + stabilityScore * 100 + versionScore(versionParts),
-    versionParts,
-    releaseDate: null,
-  };
-}
-
 function stripTrailingParentheticalGroups(value: string): string {
   // Iterate instead of regex so nested trailing groups like "(foo (bar))" are stripped correctly.
   let cleaned = value.trim();
@@ -515,7 +487,7 @@ function parseQwenModelInfo(model: ProviderModelOption): ParsedModelInfo {
     strengthRank = 400_000;
   } else if (/gpt-5/.test(normalized)) {
     strengthRank = 350_000;
-  } else if (/gemini.*pro|pro/.test(normalized)) {
+  } else if (/pro/.test(normalized)) {
     strengthRank = 300_000;
   } else if (/flash/.test(normalized)) {
     strengthRank = 200_000;

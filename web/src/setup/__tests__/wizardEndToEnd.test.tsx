@@ -109,7 +109,7 @@ vi.mock("../utils/config.js", () => ({
 }));
 
 vi.mock("../utils/detect.js", () => ({
-  OPTIONAL_TOOLS: ["claude", "gemini", "qwen", "codex", "droid", "tailscale"],
+  OPTIONAL_TOOLS: ["claude", "qwen", "codex", "droid", "tailscale"],
   REQUIRED_TOOLS: ["python", "node", "uv", "tmux", "git", "docker"],
   detectAllTools: mocks.detectAllTools,
   detectTool: vi.fn(() => "present"),

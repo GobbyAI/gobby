@@ -160,7 +160,7 @@ export interface PlanPendingApprovalMessage {
   type: "plan_pending_approval";
   conversation_id?: string;
   plan_content?: string;
-  /** Originating CLI (claude, codex, droid, gemini, grok, qwen). */
+  /** Originating CLI (claude, codex, droid, grok, qwen). */
   source?: string;
   /** Per-CLI plan-accept options to render instead of a generic Approve. */
   options?: ApprovalOption[];

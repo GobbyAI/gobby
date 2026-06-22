@@ -71,7 +71,6 @@ type SortField = 'name' | 'tasks' | 'success' | 'tokens' | 'lastActive'
 
 const AGENT_SOURCE_ICONS: Record<string, string> = {
   claude: '\u2728',
-  gemini: '\u2666',
   qwen: '\u25C8',
   codex: '\u{1F4E6}',
 }
@@ -106,7 +105,7 @@ function formatTokens(n: number): string {
 }
 
 function identifyAgent(session: SessionData): { id: string; name: string; source: string } {
-  // Group by source (claude, gemini, qwen, codex, web-chat)
+  // Group by source (claude, qwen, codex, droid, web-chat)
   // For agent-depth > 0, prefix with "sub-"
   const prefix = session.agent_depth > 0 ? 'sub-' : ''
   const source = session.source || 'unknown'

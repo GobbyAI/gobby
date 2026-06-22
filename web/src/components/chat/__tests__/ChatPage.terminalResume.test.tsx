@@ -59,11 +59,11 @@ describe("ChatPage – terminal resume", () => {
             viewingSessionId: "terminal-resume-only",
             viewingSessionMeta: {
               ref: "#153",
-              source: "gemini",
+              source: "qwen",
               title: "Resume Only Terminal",
               status: "handoff_ready",
               canProxyAttach: false,
-              model: "gemini-2.5-pro",
+              model: "qwen3-coder",
               externalId: "term-153",
               sessionType: "terminal",
             },

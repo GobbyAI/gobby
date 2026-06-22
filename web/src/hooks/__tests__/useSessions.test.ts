@@ -47,7 +47,7 @@ const SAMPLE_SESSIONS = [
     id: "sess-2",
     ref: "#101",
     external_id: "ext-2",
-    source: "gemini",
+    source: "unknown",
     project_id: "proj-1",
     title: "Another Session",
     status: "expired",

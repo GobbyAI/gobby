@@ -75,21 +75,6 @@ const catalog: ProviderModelEntry[] = [
     ],
   },
   {
-    provider: "gemini",
-    available: true,
-    source: "live",
-    models: [
-      {
-        value: "gemini-3.1-pro-preview",
-        label: "pro-3.1",
-        reasoning: {
-          supported_efforts: ["low", "medium", "high"],
-          default_effort: "medium",
-        },
-      },
-    ],
-  },
-  {
     provider: "qwen",
     available: true,
     source: "live",
@@ -154,15 +139,16 @@ describe("providerModels", () => {
 
   it("derives reasoning options and defaults from the provider catalog", () => {
     expect(
-      getReasoningOptionsForModel(catalog, "gemini", "gemini-3.1-pro-preview"),
+      getReasoningOptionsForModel(catalog, "codex", "gpt-5.4"),
     ).toEqual([
       { value: "auto", label: "Auto" },
       { value: "low", label: "Low" },
       { value: "medium", label: "Med" },
       { value: "high", label: "High" },
+      { value: "xhigh", label: "XHigh" },
     ]);
     expect(
-      getPreferredReasoningEffort(catalog, "gemini", "gemini-3.1-pro-preview"),
+      getPreferredReasoningEffort(catalog, "codex", "gpt-5.4"),
     ).toBe("medium");
   });
 
@@ -237,8 +223,8 @@ describe("providerModels", () => {
   it("labels and sorts known providers alphabetically by display name", () => {
     expect(getProviderDisplayName("droid")).toBe("Droid");
     expect(
-      getOrderedProviders(["qwen", "droid", "claude", "gemini", "codex"]),
-    ).toEqual(["claude", "codex", "droid", "gemini", "qwen"]);
+      getOrderedProviders(["qwen", "droid", "claude", "codex"]),
+    ).toEqual(["claude", "codex", "droid", "qwen"]);
   });
 
   it("handles Grok, AGY, and provider metadata fields", () => {
@@ -264,22 +250,13 @@ describe("providerModels", () => {
         unavailable_reason: "No documented machine transport",
         models: [],
       },
-      {
-        provider: "gemini",
-        available: true,
-        source: "static",
-        deprecated: true,
-        deprecation_message: "Prefer Grok for new launches",
-        models: [],
-      },
     ];
 
     expect(getProviderDisplayName("grok")).toBe("Grok");
     expect(getProviderDisplayName("agy")).toBe("AGY");
     expect(getProviderDisplayNameFromEntry(entries[1])).toBe("AGY");
-    expect(getOrderedProviders(["qwen", "agy", "grok", "gemini"])).toEqual([
+    expect(getOrderedProviders(["qwen", "agy", "grok"])).toEqual([
       "agy",
-      "gemini",
       "grok",
       "qwen",
     ]);
@@ -287,7 +264,6 @@ describe("providerModels", () => {
       { value: "grok-build", label: "Grok Build" },
     ]);
     expect(entries[1].source).toBe("unsupported");
-    expect(entries[2].deprecated).toBe(true);
   });
 
   it("strips Qwen transport suffixes from live catalog labels", () => {

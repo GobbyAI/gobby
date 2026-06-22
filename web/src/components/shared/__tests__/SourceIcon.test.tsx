@@ -51,4 +51,16 @@ describe("SourceIcon", () => {
     expect(PROVIDER_COLOR_PAIRS.droid.dark).toBe(SOURCE_COLOR_PAIRS.droid.dark);
     expect(PROVIDER_COLOR_PAIRS.droid.light).toBe(SOURCE_COLOR_PAIRS.droid.light);
   });
+
+  it("renders unknown sources with the neutral fallback glyph", () => {
+    expect(KNOWN_SOURCES).toContain("unknown");
+    expect(SOURCE_LABELS.unknown).toBe("Unknown");
+    expect(SOURCE_COLOR_PAIRS.unknown).toBeTruthy();
+
+    const { container } = render(<SourceIcon source="unknown" size={16} />);
+
+    expect(container.querySelector("svg.source-icon")).toBeTruthy();
+    expect(container.querySelector("circle")).toBeTruthy();
+    expect(container.querySelector("img")).toBeNull();
+  });
 });

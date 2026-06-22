@@ -81,38 +81,38 @@ describe('useSessionDetail', () => {
 
   it('prefers rendered session messages for transcript-backed web chats', async () => {
     await loadModule()
-    mockFetch.mockJsonResponse('/api/sessions/sess-gemini/messages?limit=50&offset=0&order=tail', {
+    mockFetch.mockJsonResponse('/api/sessions/sess-unknown/messages?limit=50&offset=0&order=tail', {
       messages: [
         {
           id: 'sess-msg-1',
           role: 'assistant',
-          content: 'Transcript-backed Gemini response',
+          content: 'Transcript-backed response',
           timestamp: '2026-04-09T00:00:00Z',
-          content_blocks: [{ type: 'text', content: 'Transcript-backed Gemini response' }],
+          content_blocks: [{ type: 'text', content: 'Transcript-backed response' }],
         },
       ],
       total_count: 1,
     })
-    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-gemini$/, {
+    mockFetch.mockJsonResponse(/^\/api\/sessions\/sess-unknown$/, {
       session: {
-        id: 'sess-gemini',
-        external_id: 'gemini-ext-1',
+        id: 'sess-unknown',
+        external_id: 'unknown-ext-1',
         session_type: 'web_chat',
-        transcript_path: '/tmp/gemini-session.json',
+        transcript_path: '/tmp/unknown-session.json',
         status: 'paused',
       },
     })
 
-    const { result } = renderHook(() => useSessionDetail('sess-gemini'))
+    const { result } = renderHook(() => useSessionDetail('sess-unknown'))
     act(() => mockWs.instances[0]?.simulateOpen())
 
     await waitFor(() => expect(result.current.isLoading).toBe(false))
 
     expect(result.current.messages).toHaveLength(1)
-    expect(result.current.messages[0].content).toBe('Transcript-backed Gemini response')
+    expect(result.current.messages[0].content).toBe('Transcript-backed response')
     expect(
       mockFetch.fn.mock.calls.some(([url]) =>
-        String(url).includes('/api/chat/gemini-ext-1/messages'),
+        String(url).includes('/api/chat/unknown-ext-1/messages'),
       ),
     ).toBe(false)
   })

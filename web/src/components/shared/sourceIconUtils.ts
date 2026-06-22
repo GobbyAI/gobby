@@ -1,9 +1,9 @@
 export type SourceType =
   | 'claude'
-  | 'gemini'
   | 'grok'
   | 'agy'
   | 'qwen'
   | 'codex'
   | 'droid'
+  | 'unknown'
   | (string & {})

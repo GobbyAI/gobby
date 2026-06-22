@@ -7,7 +7,7 @@ import type {
 import { normalizeChatMode } from "../../types/chat";
 import { AUTO_REASONING_EFFORT } from "../../lib/providerModels";
 
-const CHAT_PROVIDERS = new Set(["claude", "gemini", "qwen", "codex", "droid", "agy", "grok"]);
+const CHAT_PROVIDERS = new Set(["claude", "qwen", "codex", "droid", "agy", "grok"]);
 
 export function isChatProvider(value: unknown): value is string {
   return typeof value === "string" && CHAT_PROVIDERS.has(value);

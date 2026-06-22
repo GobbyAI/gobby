@@ -17,15 +17,6 @@ function buildCatalog(qwenModels: { value: string; label: string }[] = []) {
         source: "static",
       },
       {
-        provider: "gemini",
-        available: true,
-        models: [
-          { value: "gemini-3.1-pro-preview", label: "pro-3.1" },
-          { value: "gemini-3-flash-preview", label: "flash-3" },
-        ],
-        source: "static",
-      },
-      {
         provider: "qwen",
         available: true,
         models: qwenModels,
@@ -72,14 +63,14 @@ describe("ProviderPicker", () => {
     vi.clearAllMocks();
   });
 
-  it("shows friendly Gemini and Codex labels plus Qwen catalog entries", async () => {
+  it("shows friendly Codex labels plus Qwen catalog entries", async () => {
     render(
       <ProviderPicker
         open={true}
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["claude", "gemini", "qwen", "codex", "droid"]}
+        availableProviders={["claude", "qwen", "codex", "droid"]}
         onModelChange={vi.fn()}
         onProviderChange={vi.fn()}
         onSwitchProvider={vi.fn()}
@@ -88,10 +79,8 @@ describe("ProviderPicker", () => {
     );
 
     await waitFor(() => {
-      // Labels are transformed by parseGemini/parseCodex/parseQwen to friendly
+      // Labels are transformed by parseCodex/parseQwen to friendly
       // display forms by resolveVisibleModels in providerModels.ts.
-      expect(screen.getByText("Gemini 3.1 Pro")).toBeTruthy();
-      expect(screen.getByText("Gemini 3 Flash")).toBeTruthy();
       expect(screen.getByText("GPT 5.4")).toBeTruthy();
       expect(screen.getByText("GPT 5.4 Mini")).toBeTruthy();
       expect(screen.getByText("GPT 5.3 Codex")).toBeTruthy();
@@ -109,7 +98,7 @@ describe("ProviderPicker", () => {
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["qwen", "droid", "claude", "gemini", "codex"]}
+        availableProviders={["qwen", "droid", "claude", "codex"]}
         onModelChange={vi.fn()}
         onProviderChange={vi.fn()}
         onSwitchProvider={vi.fn()}
@@ -120,12 +109,12 @@ describe("ProviderPicker", () => {
     await screen.findByText("GPT 5.4");
 
     const providerLabels = screen
-      .getAllByText(/^(Claude|Codex|Droid|Gemini|Qwen)$/)
+      .getAllByText(/^(Claude|Codex|Droid|Qwen)$/)
       .map((element) => element.textContent);
-    expect(providerLabels).toEqual(["Claude", "Codex", "Droid", "Gemini", "Qwen"]);
+    expect(providerLabels).toEqual(["Claude", "Codex", "Droid", "Qwen"]);
   });
 
-  it("shows Grok, disables AGY, and labels Gemini as deprecated", async () => {
+  it("shows Grok and disables AGY", async () => {
     global.fetch = vi.fn().mockResolvedValue({
       ok: true,
       json: async () => ({
@@ -146,13 +135,6 @@ describe("ProviderPicker", () => {
             supports_web_chat: false,
             unavailable_reason: "No documented machine transport",
           },
-          {
-            provider: "gemini",
-            available: true,
-            models: [{ value: "gemini-3.1-pro-preview", label: "pro-3.1" }],
-            source: "static",
-            deprecated: true,
-          },
         ],
       }),
     }) as typeof fetch;
@@ -172,7 +154,6 @@ describe("ProviderPicker", () => {
     );
 
     expect(await screen.findByText("Grok Build")).toBeTruthy();
-    expect(screen.getByText("deprecated")).toBeTruthy();
     expect(screen.getByText("unavailable")).toBeTruthy();
     expect(screen.getByText("No documented machine transport")).toBeTruthy();
     expect(screen.getAllByRole("button", { name: "Default" }).some(
@@ -191,7 +172,7 @@ describe("ProviderPicker", () => {
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["claude", "gemini", "qwen", "codex", "droid"]}
+        availableProviders={["claude", "qwen", "codex", "droid"]}
         onModelChange={onModelChange}
         onProviderChange={onProviderChange}
         onSwitchProvider={onSwitchProvider}
@@ -286,7 +267,7 @@ describe("ProviderPicker", () => {
         onClose={vi.fn()}
         currentProvider="claude"
         currentModel="opus"
-        availableProviders={["claude", "gemini", "qwen", "codex", "droid"]}
+        availableProviders={["claude", "qwen", "codex", "droid"]}
         onModelChange={onModelChange}
         onProviderChange={onProviderChange}
         onSwitchProvider={onSwitchProvider}

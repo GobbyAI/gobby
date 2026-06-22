@@ -4,7 +4,6 @@ import { render } from '@testing-library/react'
 import claudeFixture from './fixtures/claude.json'
 import codexFixture from './fixtures/codex.json'
 import droidFixture from './fixtures/droid.json'
-import geminiFixture from './fixtures/gemini.json'
 import qwenFixture from './fixtures/qwen.json'
 
 // LazyHighlighter waits for IntersectionObserver to mark a code block as
@@ -77,7 +76,6 @@ const FIXTURES: Record<string, Fixture> = {
   claude: loadFixture(claudeFixture),
   codex: loadFixture(codexFixture),
   droid: loadFixture(droidFixture),
-  gemini: loadFixture(geminiFixture),
   qwen: loadFixture(qwenFixture),
 }
 

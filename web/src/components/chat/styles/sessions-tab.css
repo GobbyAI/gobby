@@ -128,10 +128,6 @@
   background: var(--color-warning-foreground);
 }
 
-.session-source-dot.gemini {
-  background: var(--color-info);
-}
-
 .session-source-dot.qwen {
   background: var(--color-info);
 }

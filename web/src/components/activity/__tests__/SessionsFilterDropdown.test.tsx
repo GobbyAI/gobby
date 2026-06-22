@@ -14,7 +14,7 @@ function renderDropdown(overrides: Partial<{
     <SessionsFilterDropdown
       filters={overrides.filters ?? defaultSessionsFilters()}
       onChange={onChange}
-      providerOptions={overrides.providerOptions ?? ["claude", "codex", "gemini"]}
+      providerOptions={overrides.providerOptions ?? ["claude", "codex", "unknown"]}
       onClose={onClose}
     />,
   );
@@ -48,17 +48,17 @@ describe("SessionsFilterDropdown", () => {
   });
 
   it("renders providers alphabetically with capitalized labels and checked by default", () => {
-    renderDropdown({ providerOptions: ["gemini", "claude", "codex"] });
+    renderDropdown({ providerOptions: ["unknown", "claude", "codex"] });
 
     const section = screen.getByText("Provider").parentElement!;
     expect(
       within(section)
         .getAllByRole("checkbox")
         .map((checkbox) => checkbox.nextSibling?.textContent),
-    ).toEqual(["Claude", "Codex", "Gemini"]);
+    ).toEqual(["Claude", "Codex", "Unknown"]);
     expect(screen.getByLabelText("Claude")).toBeChecked();
     expect(screen.getByLabelText("Codex")).toBeChecked();
-    expect(screen.getByLabelText("Gemini")).toBeChecked();
+    expect(screen.getByLabelText("Unknown")).toBeChecked();
   });
 
   it("toggling a default Provider emits the remaining narrowed provider set", () => {
@@ -66,15 +66,15 @@ describe("SessionsFilterDropdown", () => {
     fireEvent.click(screen.getByLabelText("Codex"));
 
     const next: SessionsFilters = onChange.mock.calls[0][0];
-    expect([...next.providers]).toEqual(["claude", "gemini"]);
+    expect([...next.providers]).toEqual(["claude", "unknown"]);
   });
 
   it("toggling a default Provider uses the sorted provider option order", () => {
-    const { onChange } = renderDropdown({ providerOptions: ["gemini", "claude", "codex"] });
+    const { onChange } = renderDropdown({ providerOptions: ["unknown", "claude", "codex"] });
     fireEvent.click(screen.getByLabelText("Codex"));
 
     const next: SessionsFilters = onChange.mock.calls[0][0];
-    expect([...next.providers]).toEqual(["claude", "gemini"]);
+    expect([...next.providers]).toEqual(["claude", "unknown"]);
   });
 
   it("typing a session ref bound emits onChange with the parsed integer", () => {

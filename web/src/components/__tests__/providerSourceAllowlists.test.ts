@@ -4,7 +4,7 @@ import { describe, expect, it } from 'vitest'
 
 const COMPONENTS_DIR = join(process.cwd(), 'src/components')
 const SELF_SUFFIX = join('__tests__', 'providerSourceAllowlists.test.ts')
-const PROVIDER_SOURCES = ['claude', 'gemini', 'qwen', 'codex'] as const
+const PROVIDER_SOURCES = ['claude', 'qwen', 'codex'] as const
 
 function walk(dir: string): string[] {
   return readdirSync(dir).flatMap((entry) => {
@@ -32,7 +32,7 @@ describe('component provider source allowlists', () => {
       const arrayLiterals = contents.match(/\[[^\][]{0,500}\]/gs) ?? []
       const unionLiterals =
         contents.match(
-          /(?:['"](?:claude|gemini|qwen|codex|droid)['"]\s*\|\s*){3,}['"](?:claude|gemini|qwen|codex|droid)['"]/g,
+          /(?:['"](?:claude|qwen|codex|droid)['"]\s*\|\s*){3,}['"](?:claude|qwen|codex|droid)['"]/g,
         ) ?? []
 
       return [...arrayLiterals, ...unionLiterals]

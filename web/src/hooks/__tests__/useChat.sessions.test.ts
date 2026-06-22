@@ -953,7 +953,6 @@ describe("useChat viewed session state", () => {
 
   it.each([
     ["codex", "gpt-5.4"],
-    ["gemini", "gemini-2.5-pro"],
     ["qwen", "qwen3-coder"],
   ])(
     "keeps live %s tmux sessions attachable even when the session row is handoff_ready",

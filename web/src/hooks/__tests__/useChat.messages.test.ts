@@ -188,18 +188,18 @@ describe("useChat message and conversation state", () => {
     act(() => ws.simulateOpen());
 
     act(() => {
-      result.current.setSelectedProvider("gemini");
+      result.current.setSelectedProvider("qwen");
     });
 
     act(() => {
-      result.current.sendMessage("Hello through Gemini");
+      result.current.sendMessage("Hello through Qwen");
     });
 
     const sentMsg = JSON.parse(
       ws.send.mock.calls[ws.send.mock.calls.length - 1][0],
     );
     expect(sentMsg.type).toBe("chat_message");
-    expect(sentMsg.provider).toBe("gemini");
+    expect(sentMsg.provider).toBe("qwen");
   });
 
   it("sendMessage includes explicit TTS intent when provided", async () => {
@@ -257,7 +257,7 @@ describe("useChat message and conversation state", () => {
     act(() => ws.simulateOpen());
 
     act(() => {
-      result.current.setSelectedProvider("gemini");
+      result.current.setSelectedProvider("qwen");
     });
 
     await act(async () => {
@@ -452,7 +452,7 @@ describe("useChat message and conversation state", () => {
     act(() => ws.simulateOpen());
 
     act(() => {
-      result.current.setSelectedProvider("gemini");
+      result.current.setSelectedProvider("qwen");
     });
 
     await act(async () => {
@@ -747,7 +747,7 @@ describe("useChat message and conversation state", () => {
     act(() => ws.simulateOpen());
 
     act(() => {
-      result.current.setSelectedProvider("gemini");
+      result.current.setSelectedProvider("qwen");
       result.current.sendMessage("Existing draft");
     });
 
@@ -773,7 +773,7 @@ describe("useChat message and conversation state", () => {
     await waitFor(() => {
       expect(result.current.conversationId).toBe("test-conversation-id");
       expect(result.current.dbSessionId).toBe("test-conversation-id");
-      expect(result.current.selectedProvider).toBe("gemini");
+      expect(result.current.selectedProvider).toBe("qwen");
       expect(result.current.messages[0].content).toBe("Existing draft");
     });
 

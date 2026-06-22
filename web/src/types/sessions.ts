@@ -57,12 +57,12 @@ export interface GobbySession {
 
 export const KNOWN_SOURCES = [
   "claude",
-  "gemini",
   "qwen",
   "codex",
   "droid",
   "agy",
   "grok",
+  "unknown",
 ] as const;
 
 export interface SessionFilters {

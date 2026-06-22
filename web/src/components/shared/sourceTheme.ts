@@ -38,7 +38,6 @@ export interface SourceColorPair {
  *  neutral slot intentionally — they are state, not brand. */
 export const SOURCE_COLOR_PAIRS: Record<string, SourceColorPair> = {
   claude: { dark: "oklch(70% 0.16 290)", light: "oklch(42% 0.18 290)" },
-  gemini: { dark: "oklch(72% 0.16 145)", light: "oklch(42% 0.18 145)" },
   grok: { dark: "oklch(72% 0.14 20)", light: "oklch(42% 0.16 20)" },
   agy: { dark: "oklch(74% 0.09 185)", light: "oklch(42% 0.12 185)" },
   qwen: { dark: "oklch(78% 0.15 75)", light: "oklch(45% 0.18 75)" },
@@ -56,7 +55,6 @@ export const SOURCE_COLOR_PAIRS: Record<string, SourceColorPair> = {
 export const PROVIDER_COLOR_PAIRS: Record<string, SourceColorPair> = {
   inherit: { dark: "oklch(70% 0.005 250)", light: "oklch(45% 0.005 250)" },
   claude: { dark: "oklch(70% 0.16 290)", light: "oklch(42% 0.18 290)" },
-  gemini: { dark: "oklch(72% 0.16 145)", light: "oklch(42% 0.18 145)" },
   grok: { dark: "oklch(72% 0.14 20)", light: "oklch(42% 0.16 20)" },
   agy: { dark: "oklch(74% 0.09 185)", light: "oklch(42% 0.12 185)" },
   qwen: { dark: "oklch(78% 0.15 75)", light: "oklch(45% 0.18 75)" },
@@ -70,7 +68,6 @@ export const PROVIDER_COLOR_PAIRS: Record<string, SourceColorPair> = {
 
 export const SOURCE_LABELS: Record<string, string> = {
   claude: 'Claude',
-  gemini: 'Gemini',
   grok: 'Grok',
   agy: 'AGY',
   qwen: 'Qwen',
@@ -84,6 +81,7 @@ export const SOURCE_LABELS: Record<string, string> = {
   cursor: 'Cursor',
   windsurf: 'Windsurf',
   copilot: 'Copilot',
+  unknown: 'Unknown',
 }
 
 /** Resolve a session source to its theme-aware accent colour. */

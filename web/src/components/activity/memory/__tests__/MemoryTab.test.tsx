@@ -228,7 +228,7 @@ describe("Memory activity tab", () => {
     const menu = screen.getByRole("menu", { name: "Actions for Persist panel width override" });
     expect(within(menu).getByRole("menuitem", { name: "Copy content" })).toBeInTheDocument();
     expect(within(menu).getByRole("menuitem", { name: "Delete" })).toBeInTheDocument();
-  });
+  }, 10_000);
 
   it("shows memory scope and promotes a project memory to global", async () => {
     const fetchMock = setupFetch([

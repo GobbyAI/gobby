@@ -373,7 +373,7 @@ describe("App wiring", () => {
     vi.clearAllMocks();
     vi.mocked(useChat).mockReturnValue({
       ...chatState,
-      selectedProvider: "gemini",
+      selectedProvider: "qwen",
     } as never);
     rerender(<App />);
 
@@ -382,7 +382,7 @@ describe("App wiring", () => {
         "/api/config/ui-settings",
         expect.objectContaining({
           method: "PUT",
-          body: JSON.stringify({ selectedProvider: "gemini" }),
+          body: JSON.stringify({ selectedProvider: "qwen" }),
         }),
       );
     });
