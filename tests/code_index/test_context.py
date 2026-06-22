@@ -42,6 +42,23 @@ async def test_context_graph_overview_resolves_project_root_and_delegates(
 
 
 @pytest.mark.asyncio
+async def test_context_graph_path_resolves_project_root_and_delegates(
+    tmp_path: Path,
+) -> None:
+    storage = MagicMock()
+    storage.get_project_stats.return_value = _project(tmp_path)
+    gateway = MagicMock()
+    gateway.symbol_path = AsyncMock(return_value={"path": []})
+    context = CodeIndexContext(storage=storage, gcode_gateway=gateway)
+
+    result = await context.graph_path("proj-1", "from", "to", max_depth=7)
+
+    assert result == {"path": []}
+    storage.get_project_stats.assert_called_once_with("proj-1")
+    gateway.symbol_path.assert_awaited_once_with(tmp_path, "from", "to", 7)
+
+
+@pytest.mark.asyncio
 async def test_context_clear_graph_uses_project_id_without_project_root() -> None:
     storage = MagicMock()
     gateway = MagicMock()

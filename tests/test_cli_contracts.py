@@ -18,6 +18,10 @@ from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 CONTRACT_DIR = Path(__file__).parent / "contracts"
 CLI_CONTRACT_TOOLS = ("gcode", "gwiki")
 pytestmark = pytest.mark.unit
+PENDING_GWIKI_WRAPPER_FLAGS = {
+    ("search", "--token-budget"),
+    ("ask", "--token-budget"),
+}
 
 
 def _contract(tool: str) -> dict[str, Any]:
@@ -52,6 +56,13 @@ def _allowed_flags(contract: dict[str, Any], command_name: str) -> set[str]:
     if isinstance(scope, dict):
         flags |= _flag_names(scope["flags"])
     flags |= _flag_names(_command(contract, command_name)["flags"])
+    return flags
+
+
+def _allowed_gateway_flags(contract: dict[str, Any], command_name: str) -> set[str]:
+    flags = _allowed_flags(contract, command_name)
+    if contract.get("tool") == "gwiki":
+        flags |= {flag for command, flag in PENDING_GWIKI_WRAPPER_FLAGS if command == command_name}
     return flags
 
 
@@ -113,11 +124,17 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
     calls: list[tuple[str, str, Callable[[], Awaitable[dict[str, Any]]]]] = [
         ("status", "status", gateway.status),
         ("index", "index", gateway.index),
-        ("search", "search", lambda: gateway.search("ownership", limit=5)),
+        ("search", "search", lambda: gateway.search("ownership", limit=5, token_budget=2048)),
         (
             "ask",
             "ask",
-            lambda: gateway.ask("ownership", llm=True, ai="direct", require_ai=True),
+            lambda: gateway.ask(
+                "ownership",
+                llm=True,
+                ai="direct",
+                require_ai=True,
+                token_budget=2048,
+            ),
         ),
         ("read", "read", lambda: gateway.read(path="docs/wiki.md")),
         ("backlinks", "backlinks", lambda: gateway.backlinks("Home")),
@@ -135,6 +152,11 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
             lambda: gateway.remove_source("src-1", dry_run=True, yes=False, keep_asset=True),
         ),
         ("refresh", "refresh", lambda: gateway.refresh(source_ids=["src-1"], dry_run=True)),
+        (
+            "sync_sessions",
+            "sync-sessions",
+            lambda: gateway.sync_sessions(archive_dir="/tmp/sessions", limit=10),
+        ),
     ]
 
     for _command_name, _cli_name, call in calls:
@@ -157,10 +179,12 @@ async def test_gwiki_gateway_argv_conforms_to_vendored_contract() -> None:
         assert argv[0] == "gwiki"
         assert argv[1] == cli_name
         assert "--scope" not in argv
-        assert _observed_flags(argv) <= _allowed_flags(contract, cli_name)
+        assert _observed_flags(argv) <= _allowed_gateway_flags(contract, cli_name)
         assert "--format" in argv
+        if cli_name == "search":
+            assert "--token-budget" in _observed_flags(argv)
         if cli_name == "ask":
-            assert {"--llm", "--ai", "--require-ai"} <= _observed_flags(argv)
+            assert {"--llm", "--ai", "--require-ai", "--token-budget"} <= _observed_flags(argv)
         if cli_name == "health":
             assert "--project" not in argv
         else:
@@ -212,6 +236,11 @@ async def test_gcode_gateway_argv_conforms_to_vendored_contract() -> None:
             ),
         ),
         (
+            "path",
+            "path",
+            lambda: gateway.symbol_path(project_root, "symbol-1", "symbol-2", 8),
+        ),
+        (
             "graph clear",
             "graph clear",
             lambda: gateway.graph_clear("project-1"),
@@ -231,8 +260,9 @@ async def test_gcode_gateway_argv_conforms_to_vendored_contract() -> None:
         assert command_contract["daemon_consumed"] is True
         argv = gateway.argv_by_command[command_key]
         assert argv[0] == "gcode"
-        assert argv[1:3] == cli_name.split()
-        assert _observed_flags(argv) <= _allowed_flags(contract, cli_name)
+        expected_parts = cli_name.split()
+        assert argv[1 : 1 + len(expected_parts)] == expected_parts
+        assert _observed_flags(argv) <= _allowed_gateway_flags(contract, cli_name)
         assert "--format" in argv
         if cli_name == "graph clear":
             assert "--project-id" in argv
@@ -259,6 +289,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
         "wiki_health": "health",
         "wiki_list_sources": "sources",
         "wiki_remove_source": "remove-source",
+        "wiki_sync_sessions": "sync-sessions",
     }
 
     registry = create_wiki_registry(db=None)
@@ -296,6 +327,7 @@ def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
         contract, "search"
     )
     assert {"changed_paths"} <= _json_keys(contract, "refresh")
+    assert {"archive_dir", "accepted", "indexed"} <= _json_keys(contract, "sync-sessions")
     assert {
         "trust_status",
         "runtime",
@@ -327,6 +359,7 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
         "graph file",
         "graph neighbors",
         "graph blast-radius",
+        "path",
         "graph clear",
         "graph rebuild",
     } <= commands
@@ -338,6 +371,7 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph file")
     assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph neighbors")
     assert {"nodes", "links", "summary"} <= _json_keys(contract, "graph blast-radius")
+    assert "--max-depth" in _allowed_flags(contract, "path")
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph clear")
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph rebuild")
     assert "--allow-missing-indexed-file" in _allowed_flags(contract, "graph sync-file")

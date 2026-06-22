@@ -80,10 +80,18 @@ class GwikiGateway:
     async def index(self) -> dict[str, Any]:
         return await self._run_json("index", ["index"])
 
-    async def search(self, query: str, *, limit: int | None = None) -> dict[str, Any]:
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        token_budget: int | None = None,
+    ) -> dict[str, Any]:
         args = ["search", query]
         if limit is not None:
             args.extend(["--limit", str(limit)])
+        if token_budget is not None:
+            args.extend(["--token-budget", str(token_budget)])
         return await self._run_json("search", args)
 
     async def ask(
@@ -93,6 +101,7 @@ class GwikiGateway:
         llm: bool = False,
         ai: str | None = None,
         require_ai: bool = False,
+        token_budget: int | None = None,
     ) -> dict[str, Any]:
         if not llm and (ai is not None or require_ai):
             names = []
@@ -108,6 +117,8 @@ class GwikiGateway:
                 args.extend(["--ai", ai])
             if require_ai:
                 args.append("--require-ai")
+        if token_budget is not None:
+            args.extend(["--token-budget", str(token_budget)])
         return await self._run_json("ask", args)
 
     async def read(
@@ -182,6 +193,19 @@ class GwikiGateway:
         if dry_run:
             args.append("--dry-run")
         return await self._run_json("refresh", args)
+
+    async def sync_sessions(
+        self,
+        *,
+        archive_dir: str | Path | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        args = ["sync-sessions"]
+        if archive_dir is not None:
+            args.extend(["--archive-dir", str(archive_dir)])
+        if limit is not None:
+            args.extend(["--limit", str(limit)])
+        return await self._run_json("sync_sessions", args)
 
     async def _run_json(
         self,

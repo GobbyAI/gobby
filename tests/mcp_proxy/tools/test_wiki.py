@@ -40,8 +40,16 @@ class FakeGateway:
         self.calls.append(("index", None))
         return self._result("index", {"indexed": {"documents": 1}})
 
-    async def search(self, query: str, *, limit: int | None = None) -> dict[str, Any]:
-        self.calls.append(("search", {"query": query, "limit": limit}))
+    async def search(
+        self,
+        query: str,
+        *,
+        limit: int | None = None,
+        token_budget: int | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(
+            ("search", {"query": query, "limit": limit, "token_budget": token_budget})
+        )
         payload = {
             "command": "search",
             "query": query,
@@ -58,8 +66,20 @@ class FakeGateway:
         llm: bool = False,
         ai: str | None = None,
         require_ai: bool = False,
+        token_budget: int | None = None,
     ) -> dict[str, Any]:
-        self.calls.append(("ask", {"query": query, "llm": llm, "ai": ai, "require_ai": require_ai}))
+        self.calls.append(
+            (
+                "ask",
+                {
+                    "query": query,
+                    "llm": llm,
+                    "ai": ai,
+                    "require_ai": require_ai,
+                    "token_budget": token_budget,
+                },
+            )
+        )
         payload = {
             "command": "ask",
             "query": query,
@@ -145,6 +165,19 @@ class FakeGateway:
         self.calls.append(("health", None))
         return self._result("health", {"status": "healthy"})
 
+    async def sync_sessions(
+        self,
+        *,
+        archive_dir: str | Path | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        archive_value = str(archive_dir) if archive_dir is not None else None
+        self.calls.append(("sync_sessions", {"archive_dir": archive_value, "limit": limit}))
+        return self._result(
+            "sync_sessions",
+            {"command": "sync-sessions", "changed_paths": ["sessions/session-1.md"]},
+        )
+
     async def sources(self) -> dict[str, Any]:
         self.calls.append(("sources", None))
         return self._result("sources", {"sources": [{"id": "src-1"}]})
@@ -226,16 +259,21 @@ async def test_tool_schemas() -> None:
         "wiki_audit",
         "wiki_trust",
         "wiki_health",
+        "wiki_sync_sessions",
         "wiki_list_sources",
         "wiki_remove_source",
     } <= tool_names
 
     search_schema = _schema("wiki_search")
-    assert {"query", "project", "topic", "limit"} <= set(search_schema["properties"])
+    assert {"query", "project", "topic", "limit", "token_budget"} <= set(
+        search_schema["properties"]
+    )
     assert search_schema["required"] == ["query"]
 
     ask_schema = _schema("wiki_ask")
-    assert {"query", "project", "topic", "llm", "ai", "require_ai"} <= set(ask_schema["properties"])
+    assert {"query", "project", "topic", "llm", "ai", "require_ai", "token_budget"} <= set(
+        ask_schema["properties"]
+    )
     assert ask_schema["required"] == ["query"]
 
     remove_schema = _schema("wiki_remove_source")
@@ -263,6 +301,7 @@ async def test_tool_schemas() -> None:
             "llm": True,
             "ai": "direct",
             "require_ai": True,
+            "token_budget": 4096,
             "topic": "docs",
         },
     )
@@ -275,7 +314,20 @@ async def test_tool_schemas() -> None:
                 "llm": True,
                 "ai": "direct",
                 "require_ai": True,
+                "token_budget": 4096,
             },
+        ),
+    ]
+
+    sync_result = await registry.call(
+        "wiki_sync_sessions",
+        {"archive_dir": "/tmp/session_transcripts", "limit": 3, "topic": "docs"},
+    )
+    assert sync_result["payload"]["changed_paths"] == ["sessions/session-1.md"]
+    assert FakeGateway.instances[-1].calls == [
+        (
+            "sync_sessions",
+            {"archive_dir": "/tmp/session_transcripts", "limit": 3},
         ),
     ]
 

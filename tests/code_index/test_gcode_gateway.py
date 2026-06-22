@@ -281,6 +281,7 @@ async def test_gateway_builds_graph_read_args(
         FakeProcess(stdout=b'{"nodes": []}'),
         FakeProcess(stdout=b'{"nodes": []}'),
         FakeProcess(stdout=b'{"nodes": []}'),
+        FakeProcess(stdout=b'{"path": []}'),
     ]
     calls = _patch_subprocess(monkeypatch, processes)
     gateway = GcodeGateway(binary="/tmp/gcode")
@@ -289,6 +290,7 @@ async def test_gateway_builds_graph_read_args(
     await gateway.graph_neighbors(tmp_path, "sym-1", limit=7)
     await gateway.graph_blast_radius(tmp_path, symbol_id="sym-1", depth=2, limit=9)
     await gateway.graph_blast_radius(tmp_path, file_path="src/app.py", depth=4, limit=11)
+    await gateway.symbol_path(tmp_path, "from-symbol", "to-symbol", 8)
 
     assert calls[1:] == [
         (
@@ -345,6 +347,19 @@ async def test_gateway_builds_graph_read_args(
             "4",
             "--limit",
             "11",
+            "--format",
+            "json",
+            "--quiet",
+        ),
+        (
+            "/tmp/gcode",
+            "path",
+            "from-symbol",
+            "to-symbol",
+            "--project",
+            str(tmp_path),
+            "--max-depth",
+            "8",
             "--format",
             "json",
             "--quiet",

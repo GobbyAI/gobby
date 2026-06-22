@@ -45,7 +45,7 @@ def create_wiki_registry(
         description=(
             "Wiki tools - wiki_search, wiki_ask, wiki_read, wiki_attach, wiki_ingest, "
             "wiki_compile, wiki_audit, wiki_trust, wiki_health, "
-            "wiki_list_sources, wiki_remove_source"
+            "wiki_list_sources, wiki_remove_source, wiki_sync_sessions"
         ),
     )
 
@@ -93,9 +93,14 @@ def create_wiki_registry(
         project: str | None = None,
         topic: str | None = None,
         limit: int | None = None,
+        token_budget: int | None = None,
     ) -> dict[str, Any]:
         return await _guard(
-            lambda: read_call(project, topic, lambda gwiki: gwiki.search(query, limit=limit))
+            lambda: read_call(
+                project,
+                topic,
+                lambda gwiki: gwiki.search(query, limit=limit, token_budget=token_budget),
+            )
         )
 
     @registry.tool(
@@ -115,6 +120,7 @@ def create_wiki_registry(
         llm: bool = False,
         ai: str | None = None,
         require_ai: bool = False,
+        token_budget: int | None = None,
     ) -> dict[str, Any]:
         ai_value = _normalize_ai(ai) if ai is not None else None
         return await _guard(
@@ -126,6 +132,7 @@ def create_wiki_registry(
                     llm=llm,
                     ai=ai_value,
                     require_ai=require_ai,
+                    token_budget=token_budget,
                 ),
             )
         )
@@ -229,6 +236,24 @@ def create_wiki_registry(
         topic: str | None = None,
     ) -> dict[str, Any]:
         return await _guard(lambda: read_call(project, topic, lambda gwiki: gwiki.health()))
+
+    @registry.tool(
+        name="wiki_sync_sessions",
+        description="Sync archived daemon session transcripts into the wiki vault.",
+    )
+    async def wiki_sync_sessions(
+        archive_dir: str | None = None,
+        limit: int | None = None,
+        project: str | None = None,
+        topic: str | None = None,
+    ) -> dict[str, Any]:
+        return await _guard(
+            lambda: write_call(
+                project,
+                topic,
+                lambda gwiki: gwiki.sync_sessions(archive_dir=archive_dir, limit=limit),
+            )
+        )
 
     @registry.tool(
         name="wiki_list_sources",

@@ -254,6 +254,27 @@ class GcodeGateway:
         args.extend(["--depth", str(depth), "--limit", str(limit)])
         return await self._run_json(args)
 
+    async def symbol_path(
+        self,
+        project_root: Path,
+        symbol_a: str,
+        symbol_b: str,
+        max_depth: int,
+    ) -> dict[str, Any]:
+        symbol_a = _validate_user_gcode_value("symbol_a", symbol_a)
+        symbol_b = _validate_user_gcode_value("symbol_b", symbol_b)
+        return await self._run_json(
+            [
+                "path",
+                symbol_a,
+                symbol_b,
+                "--project",
+                str(project_root),
+                "--max-depth",
+                str(max_depth),
+            ]
+        )
+
     async def graph_clear(self, project_id: str) -> dict[str, Any]:
         return await self._run_json(["graph", "clear", "--project-id", project_id])
 

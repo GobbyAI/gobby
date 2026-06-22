@@ -16,6 +16,7 @@ from gobby.wiki.scheduled_jobs import (
     create_wiki_audit_handler,
     create_wiki_health_handler,
     create_wiki_refresh_handler,
+    create_wiki_sync_sessions_handler,
     register_wiki_cron_jobs,
 )
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
@@ -61,6 +62,22 @@ class RecordingGateway:
                 "status": "completed",
                 "findings": [],
                 "changed_paths": ["audits/wiki-audit.md"],
+            },
+        )
+
+    async def sync_sessions(
+        self,
+        *,
+        archive_dir: str | Path | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]:
+        self.calls.append(("sync-sessions", {"archive_dir": archive_dir, "limit": limit}))
+        return _result(
+            "sync_sessions",
+            {
+                "status": "completed",
+                "accepted": [{"raw_path": "sessions/session-1.md"}],
+                "indexed": {"documents": 1},
             },
         )
 
@@ -165,13 +182,26 @@ async def test_scheduled_jobs_use_gateway() -> None:
                 scope="project:alpha",
             ),
         ),
+        (
+            "sync-sessions",
+            create_wiki_sync_sessions_handler(
+                gateway=gateway,
+                coordinator=coordinator,
+                scope="project:alpha",
+            ),
+        ),
     ]
 
     for command, handler in handlers:
         output = json.loads(await handler(_job(command)))
         assert output["command"] == command
 
-    assert [call[0] for call in gateway.calls] == ["refresh", "health", "audit"]
+    assert [call[0] for call in gateway.calls] == [
+        "refresh",
+        "health",
+        "audit",
+        "sync-sessions",
+    ]
 
 
 @pytest.mark.asyncio
@@ -200,16 +230,18 @@ async def test_wiki_cron_handlers_registered(
         "wiki:refresh:project:alpha",
         "wiki:health:project:alpha",
         "wiki:audit:project:alpha",
+        "wiki:sync-sessions:project:alpha",
     }
     assert set(executor.handlers) == expected_handlers
-    assert created == 3
-    assert repeated == 3
+    assert created == 4
+    assert repeated == 4
 
     jobs = cron_storage.list_jobs(project_id=project_id)
     assert sorted(job.name for job in jobs) == [
         "gobby:wiki-audit:project:alpha",
         "gobby:wiki-health:project:alpha",
         "gobby:wiki-refresh:project:alpha",
+        "gobby:wiki-sync-sessions:project:alpha",
     ]
     assert all(job.action_type == "handler" for job in jobs)
     assert all(job.is_system for job in jobs)
@@ -331,6 +363,7 @@ async def test_default_wiki_cron_scope_resolves_project_root(
         f"gobby:wiki-audit:project:{project_id}",
         f"gobby:wiki-health:project:{project_id}",
         f"gobby:wiki-refresh:project:{project_id}",
+        f"gobby:wiki-sync-sessions:project:{project_id}",
     ]
 
 

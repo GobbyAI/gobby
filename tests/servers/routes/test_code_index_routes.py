@@ -57,6 +57,7 @@ def mock_server() -> MagicMock:
     code_indexer.graph_blast_radius = AsyncMock(
         return_value={"nodes": [], "links": [], "center": "sym-1"}
     )
+    code_indexer.graph_path = AsyncMock(return_value={"path": [], "summary": {"depth": 2}})
     code_indexer.clear_graph = AsyncMock(return_value={"success": True, "project_id": "proj-1"})
     code_indexer.rebuild_graph = AsyncMock(
         return_value={"success": True, "project_id": "proj-1", "files_processed": 0, "errors": []}
@@ -292,6 +293,25 @@ def test_blast_radius_delegates(client: TestClient, mock_server: MagicMock) -> N
         file_path=None,
         depth=2,
         limit=20,
+    )
+
+
+def test_graph_path_delegates(client: TestClient, mock_server: MagicMock) -> None:
+    response = client.get(
+        "/api/code-index/graph/path",
+        params={
+            "project_id": "proj-1",
+            "symbol_a": "from-symbol",
+            "symbol_b": "to-symbol",
+            "max_depth": 8,
+        },
+    )
+    assert response.status_code == 200
+    mock_server.services.code_indexer.graph_path.assert_awaited_once_with(
+        "proj-1",
+        "from-symbol",
+        "to-symbol",
+        max_depth=8,
     )
 
 

@@ -252,6 +252,19 @@ class CodeIndexContext:
             limit=limit,
         )
 
+    async def graph_path(
+        self,
+        project_id: str,
+        symbol_a: str,
+        symbol_b: str,
+        *,
+        max_depth: int = 6,
+    ) -> dict[str, Any]:
+        """Return the gcode-owned shortest call path between two symbols."""
+        gateway = self._require_graph_enabled()
+        root = await self._graph_project_root(project_id)
+        return await gateway.symbol_path(root, symbol_a, symbol_b, max_depth)
+
     async def clear_graph(self, project_id: str) -> dict[str, Any]:
         """Clear only the gcode-owned code graph projection for one project id."""
         gateway = self._require_graph_enabled()

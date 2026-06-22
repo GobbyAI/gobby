@@ -260,6 +260,44 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
             )
             raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
 
+    @router.get("/graph/path")
+    async def graph_path(
+        project_id: str | None = Query(None, description="Project ID"),
+        symbol_a: str = Query(..., description="Source symbol query"),
+        symbol_b: str = Query(..., description="Target symbol query"),
+        max_depth: int = Query(6, description="Maximum traversal depth"),
+    ) -> dict[str, Any]:
+        code_indexer = getattr(server.services, "code_indexer", None)
+        if code_indexer is None:
+            raise HTTPException(status_code=503, detail="Code graph not available")
+        try:
+            result = await code_indexer.graph_path(
+                _require_project_id(project_id),
+                symbol_a,
+                symbol_b,
+                max_depth=max_depth,
+            )
+            return cast(dict[str, Any], result)
+        except HTTPException:
+            raise
+        except (
+            CodeIndexGraphUnavailable,
+            CodeIndexProjectNotFound,
+            GcodeGatewayError,
+        ) as e:
+            raise _graph_http_exception(e) from e
+        except ValueError as e:
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.exception(
+                "Failed to build code graph path",
+                extra={
+                    "error": str(e),
+                    "context": {"route": "code_index", "operation": "graph_path"},
+                },
+            )
+            raise HTTPException(status_code=500, detail=_GRAPH_REQUEST_FAILED) from e
+
     @router.get("/graph/search")
     async def graph_search(
         project_id: str | None = Query(None, description="Project ID"),

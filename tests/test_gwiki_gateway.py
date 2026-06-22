@@ -88,6 +88,7 @@ async def test_gateway_exposes_expected_methods() -> None:
         "sources",
         "remove_source",
         "refresh",
+        "sync_sessions",
     ):
         assert callable(getattr(gateway, method_name))
     assert not hasattr(gateway, "research")
@@ -112,7 +113,7 @@ async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> N
         binary="/bin/gwiki",
         project_root="/repo",
         timeout_seconds=1.0,
-    ).ask("How do hooks work?", llm=True, ai="direct", require_ai=True)
+    ).ask("How do hooks work?", llm=True, ai="direct", require_ai=True, token_budget=2048)
 
     assert result["payload"] == payload
     assert calls == [
@@ -124,8 +125,65 @@ async def test_ask_uses_read_only_cli_args(monkeypatch: pytest.MonkeyPatch) -> N
             "--ai",
             "direct",
             "--require-ai",
+            "--token-budget",
+            "2048",
             "--project",
             "/repo",
+            "--format",
+            "json",
+        )
+    ]
+
+
+async def test_search_passes_token_budget(monkeypatch: pytest.MonkeyPatch) -> None:
+    payload = {"command": "search", "query": "hooks", "results": []}
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    result = await _gateway().search("hooks", limit=5, token_budget=4096)
+
+    assert result["payload"] == payload
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "search",
+            "hooks",
+            "--limit",
+            "5",
+            "--token-budget",
+            "4096",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
+            "--format",
+            "json",
+        )
+    ]
+
+
+async def test_sync_sessions_passes_archive_dir_and_limit(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    archive_dir = tmp_path / "sessions"
+    payload = {"command": "sync-sessions", "status": "completed", "accepted": 2}
+    calls = _patch_subprocess(monkeypatch, [FakeProcess(stdout=_json_bytes(payload))])
+
+    result = await _gateway().sync_sessions(archive_dir=archive_dir, limit=10)
+
+    assert result["payload"] == payload
+    assert calls == [
+        (
+            "/bin/gwiki",
+            "sync-sessions",
+            "--archive-dir",
+            str(archive_dir),
+            "--limit",
+            "10",
+            "--project",
+            "/repo",
+            "--topic",
+            "docs",
             "--format",
             "json",
         )

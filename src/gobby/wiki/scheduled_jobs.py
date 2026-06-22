@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable, Iterable
+from pathlib import Path
 from typing import Any, Protocol
 
 from gobby.gwiki_gateway import GwikiGateway
@@ -20,6 +21,7 @@ from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 WIKI_REFRESH_INTERVAL_SECONDS = 60 * 60
 WIKI_HEALTH_INTERVAL_SECONDS = 30 * 60
 WIKI_AUDIT_INTERVAL_SECONDS = 24 * 60 * 60
+WIKI_SYNC_SESSIONS_INTERVAL_SECONDS = 24 * 60 * 60
 
 
 class WikiGatewayProtocol(Protocol):
@@ -35,6 +37,13 @@ class WikiGatewayProtocol(Protocol):
     async def audit(self) -> dict[str, Any]: ...
 
     async def index(self) -> dict[str, Any]: ...
+
+    async def sync_sessions(
+        self,
+        *,
+        archive_dir: str | Path | None = None,
+        limit: int | None = None,
+    ) -> dict[str, Any]: ...
 
 
 class CronRegistrationProtocol(Protocol):
@@ -102,6 +111,26 @@ def create_wiki_audit_handler(
     return audit_handler
 
 
+def create_wiki_sync_sessions_handler(
+    *,
+    gateway: WikiGatewayProtocol,
+    coordinator: WikiUpdateCoordinator,
+    scope: str,
+) -> CronHandler:
+    async def sync_sessions_handler(job: CronJob) -> str:
+        result = await gateway.sync_sessions()
+        coordinated = await coordinator.handle_write_result(result)
+        return _history_output(
+            purpose="Sync archived session transcripts",
+            scope=scope,
+            command="sync-sessions",
+            gwiki_result=coordinated,
+            changed_paths=_changed_paths(coordinated),
+        )
+
+    return sync_sessions_handler
+
+
 async def register_wiki_cron_jobs(
     *,
     cron_storage: CronJobStorage,
@@ -143,6 +172,16 @@ async def register_wiki_cron_jobs(
                 "Scheduled wiki audit",
                 WIKI_AUDIT_INTERVAL_SECONDS,
                 create_wiki_audit_handler(
+                    gateway=gateway,
+                    coordinator=coordinator,
+                    scope=scope,
+                ),
+            ),
+            (
+                "sync-sessions",
+                "Scheduled wiki session transcript sync",
+                WIKI_SYNC_SESSIONS_INTERVAL_SECONDS,
+                create_wiki_sync_sessions_handler(
                     gateway=gateway,
                     coordinator=coordinator,
                     scope=scope,
