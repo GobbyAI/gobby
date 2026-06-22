@@ -6,7 +6,7 @@ import json
 import logging
 from typing import Any
 
-from gobby.adapters.gemini_acp_client import StreamEvent
+from gobby.adapters.acp_client import StreamEvent
 
 logger = logging.getLogger(__name__)
 

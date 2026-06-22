@@ -191,7 +191,7 @@ def _claude_capabilities() -> ProviderCapabilities:
     )
 
 
-GEMINI_EVENT_MAP: dict[str, HookEventType] = {
+ACP_EVENT_MAP: dict[str, HookEventType] = {
     "SessionStart": HookEventType.SESSION_START,
     "SessionEnd": HookEventType.SESSION_END,
     "BeforeAgent": HookEventType.BEFORE_AGENT,
@@ -205,7 +205,7 @@ GEMINI_EVENT_MAP: dict[str, HookEventType] = {
     "Notification": HookEventType.NOTIFICATION,
 }
 
-GEMINI_HOOK_ALIASES: dict[str, str] = {
+ACP_HOOK_ALIASES: dict[str, str] = {
     "session_start": "SessionStart",
     "session_end": "SessionEnd",
     "before_agent": "BeforeAgent",
@@ -219,15 +219,15 @@ GEMINI_HOOK_ALIASES: dict[str, str] = {
     "notification": "Notification",
 }
 
-GEMINI_CONTEXT_HOOKS = frozenset(GEMINI_EVENT_MAP)
+ACP_CONTEXT_HOOKS = frozenset(ACP_EVENT_MAP)
 
 
-def _gemini_like_capabilities(source: SessionSource) -> ProviderCapabilities:
+def _acp_capabilities(source: SessionSource) -> ProviderCapabilities:
     events: dict[str, HookCapability] = {}
-    for hook_name, event_type in GEMINI_EVENT_MAP.items():
+    for hook_name, event_type in ACP_EVENT_MAP.items():
         context_channel = (
             ContextChannel.ADDITIONAL_CONTEXT
-            if hook_name in GEMINI_CONTEXT_HOOKS
+            if hook_name in ACP_CONTEXT_HOOKS
             else ContextChannel.NONE
         )
         decision_style = ProviderDecisionStyle.TOP_LEVEL_BLOCK
@@ -252,7 +252,7 @@ def _gemini_like_capabilities(source: SessionSource) -> ProviderCapabilities:
     return ProviderCapabilities(
         source=source,
         hook_events=events,
-        hook_aliases=GEMINI_HOOK_ALIASES,
+        hook_aliases=ACP_HOOK_ALIASES,
     )
 
 
@@ -425,9 +425,9 @@ PROVIDER_CAPABILITIES: dict[SessionSource, ProviderCapabilities] = {
     SessionSource.AGY: _unsupported_capabilities(SessionSource.AGY),
     SessionSource.CLAUDE: _claude_capabilities(),
     SessionSource.CODEX: _codex_capabilities(),
-    SessionSource.GEMINI: _gemini_like_capabilities(SessionSource.GEMINI),
+    SessionSource.GEMINI: _acp_capabilities(SessionSource.GEMINI),
     SessionSource.GROK: _grok_capabilities(),
-    SessionSource.QWEN: _gemini_like_capabilities(SessionSource.QWEN),
+    SessionSource.QWEN: _acp_capabilities(SessionSource.QWEN),
     SessionSource.DROID: _droid_capabilities(),
 }
 

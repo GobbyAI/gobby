@@ -13,7 +13,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 import pytest
 
 from gobby.adapters import acp_client_requests
-from gobby.adapters.gemini_acp_client import StreamEvent
+from gobby.adapters.acp_client import StreamEvent
 from gobby.agents.local_model import LocalModelError
 from gobby.agents.sandbox import SandboxConfig
 from gobby.config.ai import LocalGenerationEndpointConfig

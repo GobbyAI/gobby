@@ -5,7 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from typing import Any, Protocol
 
-from gobby.adapters.gemini_acp_client import StreamEvent
+from gobby.adapters.acp_client import StreamEvent
 from gobby.servers.chat_session_helpers import _BASH_WRITE_PATTERNS, _PLAN_FILE_PATTERN
 from gobby.servers.tool_approvals import (
     DEFAULT_GLOBAL_APPROVAL_RULES,

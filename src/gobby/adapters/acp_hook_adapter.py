@@ -1,14 +1,14 @@
 """Shared ACP-style CLI adapter for hook translation.
 
-This adapter translates between Gemini CLI's native hook format and the unified
+This adapter translates between ACP-style native hook formats and the unified
 HookEvent/HookResponse models.
 
-Gemini CLI Hook Types (11 total):
+ACP-style hook types:
 - SessionStart, SessionEnd: Session lifecycle
 - BeforeAgent, AfterAgent: Agent turn lifecycle
 - BeforeTool, AfterTool: Tool execution lifecycle
-- BeforeToolSelection: Before tool selection (Gemini-only)
-- BeforeModel, AfterModel: Model call lifecycle (Gemini-only)
+- BeforeToolSelection: Before tool selection
+- BeforeModel, AfterModel: Model call lifecycle
 - PreCompress: Context compression (maps to PRE_COMPACT)
 - Notification: System notifications
 
@@ -32,8 +32,8 @@ from gobby.adapters.base import (
     system_message_has_session_banner,
 )
 from gobby.adapters.capabilities import (
-    GEMINI_EVENT_MAP,
-    GEMINI_HOOK_ALIASES,
+    ACP_EVENT_MAP,
+    ACP_HOOK_ALIASES,
     ContextChannel,
     get_provider_capabilities,
 )
@@ -54,24 +54,24 @@ class ACPHookAdapter(BaseAdapter):
     """Adapter for ACP-style CLI hook translation.
 
     This adapter:
-    1. Translates Gemini CLI's PascalCase hook payloads to unified HookEvent
-    2. Translates HookResponse back to Gemini CLI's expected format
+    1. Translates ACP-style PascalCase hook payloads to unified HookEvent
+    2. Translates HookResponse back to the provider's expected format
     3. Calls HookManager.handle() with unified HookEvent model
     """
 
     @property
     def source(self) -> SessionSource:
-        return SessionSource.GEMINI
+        raise NotImplementedError("ACP hook adapters must declare a concrete source")
 
-    # Event type mapping: Gemini CLI hook names -> unified HookEventType
-    # Gemini CLI uses PascalCase hook names in the payload's "hook_event_name" field
-    EVENT_MAP: dict[str, HookEventType] = dict(GEMINI_EVENT_MAP)
+    # Event type mapping: ACP-style hook names -> unified HookEventType.
+    # ACP-style hooks use PascalCase names in the payload's "hook_event_name" field.
+    EVENT_MAP: dict[str, HookEventType] = dict(ACP_EVENT_MAP)
 
     # Reverse mapping for response translation
-    HOOK_EVENT_NAME_MAP: dict[str, str] = dict(GEMINI_HOOK_ALIASES)
+    HOOK_EVENT_NAME_MAP: dict[str, str] = dict(ACP_HOOK_ALIASES)
 
-    # Tool name mapping: Gemini tool names -> normalized names
-    # Gemini uses different tool names than Claude Code
+    # Tool name mapping: ACP-style tool names -> normalized names.
+    # ACP providers use different tool names than Claude Code.
     # This enables workflows to use Claude Code naming conventions
     TOOL_MAP: dict[str, str] = {
         # Shell/Bash
@@ -115,7 +115,7 @@ class ACPHookAdapter(BaseAdapter):
         "get_tool_schema": "mcp__gobby__get_tool_schema",
         "search_tools": "mcp__gobby__search_tools",
         "recommend_tools": "mcp__gobby__recommend_tools",
-        # MCP tools — single-underscore variants (Gemini native MCP prefix)
+        # MCP tools - single-underscore variants used by ACP-style providers.
         "mcp_gobby_call_tool": "mcp__gobby__call_tool",
         "mcp_gobby_list_mcp_servers": "mcp__gobby__list_mcp_servers",
         "mcp_gobby_list_tools": "mcp__gobby__list_tools",
@@ -139,7 +139,7 @@ class ACPHookAdapter(BaseAdapter):
         return cls.HOOK_EVENT_NAME_MAP.get(hook_type)
 
     def __init__(self, hook_manager: "HookManager | None" = None):
-        """Initialize the Gemini CLI adapter.
+        """Initialize the ACP hook adapter.
 
         Args:
             hook_manager: Reference to HookManager for handling events.
@@ -151,26 +151,26 @@ class ACPHookAdapter(BaseAdapter):
         """Return the concrete adapter logger for boundary telemetry."""
         return logging.getLogger(self.__class__.__module__)
 
-    def normalize_tool_name(self, gemini_tool_name: str) -> str:
-        """Normalize Gemini tool name to standard format.
+    def normalize_tool_name(self, acp_tool_name: str) -> str:
+        """Normalize ACP-style tool name to standard format.
 
         Args:
-            gemini_tool_name: Tool name from Gemini CLI.
+            acp_tool_name: Tool name from an ACP-style provider.
 
         Returns:
             Normalized tool name (e.g., "Bash", "Read", "Write").
         """
-        return self.TOOL_MAP.get(gemini_tool_name, gemini_tool_name)
+        return self.TOOL_MAP.get(acp_tool_name, acp_tool_name)
 
     def _normalize_event_data(self, input_data: dict[str, Any]) -> dict[str, Any]:
-        """Normalize Gemini event data for CLI-agnostic processing.
+        """Normalize ACP event data for CLI-agnostic processing.
 
         Delegates field-alias and MCP normalization to the shared
-        ``normalize_tool_fields`` helper, then applies the Gemini-specific
+        ``normalize_tool_fields`` helper, then applies the ACP provider
         TOOL_MAP (e.g. ``write_file`` → ``Write``).
 
         Args:
-            input_data: Raw input data from Gemini CLI
+            input_data: Raw input data from an ACP-style provider
 
         Returns:
             Enriched data dict with normalized fields added
@@ -180,11 +180,11 @@ class ACPHookAdapter(BaseAdapter):
         data = dict(input_data)
         normalize_tool_fields(data)
 
-        # Gemini-specific: map tool names to Claude Code conventions
+        # Provider-specific: map tool names to Claude Code conventions.
         if "tool_name" in data:
             data["tool_name"] = self.normalize_tool_name(data["tool_name"])
 
-        # Gemini AfterAgent hooks expose the model reply as ``prompt_response``.
+        # ACP-style AfterAgent hooks can expose the model reply as ``prompt_response``.
         # Normalize it so downstream transcript and hook consumers can rely on
         # the same ``response`` field used by other CLIs.
         if "prompt_response" in data and "response" not in data:
@@ -194,10 +194,10 @@ class ACPHookAdapter(BaseAdapter):
 
     @staticmethod
     def _is_cancelled_after_agent(input_data: dict[str, Any]) -> bool:
-        """Heuristic for Gemini ESC/user-interrupt AfterAgent turns.
+        """Heuristic for ACP user-interrupt AfterAgent turns.
 
         Context7 docs show normal AfterAgent hooks expose ``prompt_response``.
-        When Gemini fires AfterAgent without any response payload, treat that
+        When a provider fires AfterAgent without any response payload, treat that
         as a cancelled/interrupted turn and stop the loop instead of retrying
         a block forever.
         """
@@ -209,9 +209,9 @@ class ACPHookAdapter(BaseAdapter):
         return False
 
     def translate_to_hook_event(self, native_event: dict[str, Any]) -> HookEvent:
-        """Convert Gemini CLI native event to unified HookEvent.
+        """Convert an ACP-style native event to unified HookEvent.
 
-        Gemini CLI payloads have the structure:
+        ACP-style payloads have the structure:
         {
             "hook_event_name": "SessionStart",  # PascalCase hook name
             "session_id": "abc123",             # Session identifier
@@ -222,13 +222,13 @@ class ACPHookAdapter(BaseAdapter):
 
         Note: Gobby's ghook-managed hook command wraps this in:
         {
-            "source": "gemini",
+            "source": "<provider>",
             "hook_type": "SessionStart",
-            "input_data": {...}  # The actual Gemini payload
+            "input_data": {...}  # The actual provider payload
         }
 
         Args:
-            native_event: Raw payload from Gemini CLI's ghook-managed hook command
+            native_event: Raw payload from the ghook-managed hook command
 
         Returns:
             Unified HookEvent with normalized fields.
@@ -238,7 +238,7 @@ class ACPHookAdapter(BaseAdapter):
         input_data = native_event.get("input_data", {})
 
         # If input_data is empty, the native_event might BE the input_data
-        # (for direct Gemini calls without dispatcher wrapper)
+        # (for direct provider calls without dispatcher wrapper)
         if not input_data and (
             "hook_event_name" in native_event or "hookEventName" in native_event
         ):
@@ -247,14 +247,14 @@ class ACPHookAdapter(BaseAdapter):
         if not hook_type and input_data:
             hook_type = input_data.get("hook_event_name") or input_data.get("hookEventName", "")
 
-        # Map Gemini hook type to unified event type
+        # Map provider hook type to unified event type.
         # Fall back to NOTIFICATION for unknown types (fail-open)
         event_type = self.EVENT_MAP.get(hook_type, HookEventType.NOTIFICATION)
 
         # Extract session_id
         session_id = input_data.get("session_id") or input_data.get("sessionId") or ""
 
-        # Parse timestamp if present (Gemini uses ISO format)
+        # Parse timestamp if present.
         timestamp_str = input_data.get("timestamp")
         if timestamp_str:
             try:
@@ -299,9 +299,9 @@ class ACPHookAdapter(BaseAdapter):
     def translate_from_hook_response(
         self, response: HookResponse, hook_type: str | None = None
     ) -> dict[str, Any]:
-        """Convert HookResponse to Gemini CLI's expected format.
+        """Convert HookResponse to the ACP-style provider response format.
 
-        Gemini CLI expects responses in this format:
+        ACP-style providers expect responses in this format:
         {
             "decision": "allow" | "deny" | "block",
             "continue": True/False,            # False only for hard-stop denials
@@ -313,18 +313,18 @@ class ACPHookAdapter(BaseAdapter):
             }
         }
 
-        Exit codes: always 0 — Gemini CLI treats non-zero as "hook failed".
+        Exit codes: always 0 because providers treat non-zero as "hook failed".
         Recoverable tool-hook denials are conveyed via top-level
-        decision/reason with continue=true so Gemini skips only the tool call.
+        decision/reason with continue=true so the provider skips only the tool call.
         Unknown/no-capability denials remain hard stops with continue=false.
 
         Args:
             response: Unified HookResponse from HookManager.
-            hook_type: Original Gemini CLI hook type (e.g., "SessionStart")
+            hook_type: Original provider hook type (e.g., "SessionStart")
                       Used to format hookSpecificOutput appropriately.
 
         Returns:
-            Dict in Gemini CLI's expected format.
+            Dict in the provider's expected format.
         """
         capabilities = get_provider_capabilities(self.source)
         capability = capabilities.get_hook(hook_type)
@@ -441,15 +441,15 @@ class ACPHookAdapter(BaseAdapter):
     ) -> dict[str, Any]:
         """Main entry point for HTTP endpoint.
 
-        Translates native Gemini CLI event, processes through HookManager,
-        and returns response in Gemini's expected format.
+        Translates a native ACP-style event, processes through HookManager,
+        and returns the provider response format.
 
         Args:
-            native_event: Raw payload from Gemini CLI's ghook-managed hook command
+            native_event: Raw payload from a ghook-managed hook command
             hook_manager: HookManager instance for processing.
 
         Returns:
-            Response dict in Gemini CLI's expected format.
+            Response dict in the provider's expected format.
         """
         # Translate to unified HookEvent
         hook_event = self.translate_to_hook_event(native_event)
@@ -473,11 +473,11 @@ class ACPHookAdapter(BaseAdapter):
         # Process through HookManager
         hook_response = hook_manager.handle(hook_event)
 
-        # Translate response back to Gemini format
+        # Translate response back to the provider format.
         result = self.translate_from_hook_response(hook_response, hook_type=hook_type)
 
         # Normal AfterAgent blocks should retry so stop gates keep the agent
-        # alive. But when the user interrupts the turn (ESC) Gemini still fires
+        # alive. But when the user interrupts the turn, providers may still fire
         # AfterAgent without a completed prompt_response; in that case, kill the
         # loop so the cancel doesn't get trapped in a retry cycle.
         if hook_type == "AfterAgent" and hook_response.decision == "block":

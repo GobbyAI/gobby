@@ -27,7 +27,7 @@ from typing import Any
 
 import pytest
 
-from gobby.adapters.gemini_acp_client import StreamEvent
+from gobby.adapters.acp_client import StreamEvent
 from gobby.llm.claude_models import ChatEvent, DoneEvent, TextChunk, ThinkingEvent
 from gobby.servers.websocket.chat.backends.codex import CodexManagedChatSession
 from gobby.servers.websocket.chat.backends.droid import (

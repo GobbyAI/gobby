@@ -14,7 +14,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
 
-from gobby.adapters.gemini_acp_client import StreamEvent
+from gobby.adapters.acp_client import StreamEvent
 from gobby.agents.sandbox import SandboxConfig
 from gobby.hooks.normalization import normalize_tool_fields
 from gobby.llm.claude_models import (
