@@ -37,7 +37,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from gobby.skills.loader import LoadedSkillFile
+    from gobby.skills._loader_models import LoadedSkillFile
 
 import yaml
 

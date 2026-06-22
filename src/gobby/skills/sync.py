@@ -20,7 +20,7 @@ from gobby.skills.loader import SkillLoader
 from gobby.skills.parser import ParsedSkill
 
 if TYPE_CHECKING:
-    from gobby.skills.loader import LoadedSkillFile
+    from gobby.skills._loader_models import LoadedSkillFile
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.skills import LocalSkillManager, Skill, SkillFile
 
