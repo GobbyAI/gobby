@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from collections.abc import AsyncIterator
 from pathlib import Path
 from typing import Any
 
@@ -150,7 +151,9 @@ async def _read_gemini_json_transcript(path: Path) -> list[dict[str, Any]]:
     return [m for m in messages if isinstance(m, dict)]
 
 
-async def async_enumerate(aiter: Any, start: int = 0) -> Any:
+async def async_enumerate[T](
+    aiter: AsyncIterator[T], start: int = 0
+) -> AsyncIterator[tuple[int, T]]:
     """Async version of enumerate."""
     idx = start
     async for item in aiter:

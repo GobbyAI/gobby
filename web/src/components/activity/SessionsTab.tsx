@@ -150,6 +150,10 @@ export const SessionsTab = memo(function SessionsTab({
   const [showFilterDropdown, setShowFilterDropdown] = useState(false);
 
   const activeFilterCount = countActiveFilters(filters);
+  const providerOptions = useMemo(
+    () => Array.from(new Set(sessions.map((session) => session.source))),
+    [sessions],
+  );
   const [modalEntry, setModalEntry] = useState<WatchingSessionEntry | null>(null);
   const initialSelectionAppliedRef = useRef(false);
   const selectionClearedRef = useRef(false);
@@ -491,6 +495,7 @@ export const SessionsTab = memo(function SessionsTab({
         onFiltersChange={setFilters}
         onSearchChange={setSearchInput}
         onStatusModeChange={setStatusMode}
+        providerOptions={providerOptions}
         searchInput={searchInput}
         showFilterDropdown={showFilterDropdown}
         statusMode={statusMode}

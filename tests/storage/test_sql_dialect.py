@@ -78,6 +78,7 @@ def test_json_array_contains_condition_uses_jsonb_contains_for_postgres() -> Non
     assert params == ('["gobby"]',)
 
 
+@pytest.mark.unit
 def test_json_empty_array_coalesce_expr_uses_jsonb_empty_array_for_postgres() -> None:
     assert json_empty_array_coalesce_expr(_Db(), "tags") == "COALESCE(tags, '[]'::jsonb)"
 

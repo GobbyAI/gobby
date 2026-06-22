@@ -13,14 +13,6 @@ import {
 import { SessionsFilterDropdown } from "./SessionsFilterDropdown";
 import type { SessionsFilters } from "./sessionsFilters";
 
-const SESSION_PROVIDERS: readonly string[] = [
-  "claude",
-  "codex",
-  "droid",
-  "gemini",
-  "qwen",
-];
-
 const STATUS_MODE_OPTIONS = [
   { value: "live" as const, label: "Live" },
   { value: "expired" as const, label: "Expired" },
@@ -32,6 +24,7 @@ interface SessionsTabToolbarProps {
   onFiltersChange: (filters: SessionsFilters) => void;
   onSearchChange: (value: string) => void;
   onStatusModeChange: (mode: SessionStatusMode) => void;
+  providerOptions: readonly string[];
   searchInput: string;
   showFilterDropdown: boolean;
   statusMode: SessionStatusMode;
@@ -45,6 +38,7 @@ export function SessionsTabToolbar({
   onFiltersChange,
   onSearchChange,
   onStatusModeChange,
+  providerOptions,
   searchInput,
   showFilterDropdown,
   statusMode,
@@ -97,7 +91,7 @@ export function SessionsTabToolbar({
         <SessionsFilterDropdown
           filters={filters}
           onChange={onFiltersChange}
-          providerOptions={SESSION_PROVIDERS}
+          providerOptions={providerOptions}
           onClose={closeFilterDropdown}
         />
       )}

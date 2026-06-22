@@ -253,7 +253,7 @@ class TestRemoveMCPServerJSON:
         settings.write_text("bad json")
         result = remove_mcp_server_json(settings)
         assert result["success"] is False
-        assert "Failed to read" in result["error"]
+        assert "Failed to parse" in result["error"]
 
     def test_rejects_non_object_json_root(self, tmp_path: Path) -> None:
         settings = tmp_path / "settings.json"
@@ -828,7 +828,7 @@ class TestRemoveProjectMCPServer:
         with patch("gobby.cli.installers.mcp_config_json.Path.home", return_value=tmp_path):
             result = remove_project_mcp_server(project_path)
         assert result["success"] is False
-        assert "Failed to read" in result["error"]
+        assert "Failed to parse" in result["error"]
 
     def test_rejects_non_object_json_root(self, tmp_path: Path) -> None:
         project_path = tmp_path / "my-project"

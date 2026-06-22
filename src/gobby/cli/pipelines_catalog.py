@@ -251,6 +251,6 @@ def run_pipeline(
             click.echo(f"\nTo approve: gobby pipelines approve {e.token}")
             click.echo(f"To reject:  gobby pipelines reject {e.token}")
 
-    except Exception as e:
+    except (RuntimeError, ValueError, OSError) as e:
         click.echo(f"Pipeline execution failed: {e}", err=True)
         raise SystemExit(1) from None

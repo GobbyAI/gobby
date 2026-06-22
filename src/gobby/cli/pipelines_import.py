@@ -51,7 +51,7 @@ def import_pipeline(ctx: click.Context, path: str, output_path: str | None) -> N
     except FileNotFoundError:
         click.echo(f"File not found: {path}", err=True)
         raise SystemExit(1) from None
-    except Exception as e:
+    except ValueError as e:
         click.echo(f"Failed to import: {e}", err=True)
         raise SystemExit(1) from None
 

@@ -152,8 +152,7 @@ class ProcessorStatsMixin:
             "cache_read_tokens",
         )
         if not all(
-            isinstance(getattr(usage, field, 0), int)
-            and not isinstance(getattr(usage, field, 0), bool)
+            isinstance(value := getattr(usage, field, 0), int) and not isinstance(value, bool)
             for field in fields
         ):
             return False

@@ -125,7 +125,7 @@ def approve_pipeline(ctx: click.Context, token: str, json_format: bool) -> None:
     except ValueError as e:
         click.echo(f"Invalid token: {e}", err=True)
         raise SystemExit(1) from None
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         click.echo(f"Approval failed: {e}", err=True)
         raise SystemExit(1) from None
 
@@ -157,7 +157,7 @@ def reject_pipeline(ctx: click.Context, token: str, json_format: bool) -> None:
     except ValueError as e:
         click.echo(f"Invalid token: {e}", err=True)
         raise SystemExit(1) from None
-    except Exception as e:
+    except (RuntimeError, OSError) as e:
         click.echo(f"Rejection failed: {e}", err=True)
         raise SystemExit(1) from None
 

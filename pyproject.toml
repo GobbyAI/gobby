@@ -94,7 +94,7 @@ constraint-dependencies = [
     "tokenizers>=0.21",
     # idna <3.15 has CVE-2026-45409 (transitive via HTTP clients)
     "idna>=3.15",
-    # starlette <1.3.1 has CVE-2025-62727 and the later GHSA fixed in 1.3.1;
+    # starlette <0.49.1 has CVE-2025-62727; <1.3.1 has the later GHSA;
     # keep the ASGI stack on compatible floors.
     "mcp>=1.27.1",
     "sse-starlette>=3.4.4",

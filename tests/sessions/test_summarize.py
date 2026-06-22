@@ -904,10 +904,11 @@ class TestGenerateSessionSummaries:
                 return_value="structured",
             ),
             patch(
-                "gobby.sessions.summarize._get_claimed_tasks", return_value="task context"
+                "gobby.sessions.summary_context._get_claimed_tasks",
+                return_value="task context",
             ) as claimed,
             patch(
-                "gobby.sessions.summarize._get_session_memories",
+                "gobby.sessions.summary_context._get_session_memories",
                 return_value="memory context",
             ) as memories,
         ):

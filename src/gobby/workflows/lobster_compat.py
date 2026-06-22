@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import yaml
+from pydantic import ValidationError
 
 from gobby.workflows.definitions import PipelineApproval, PipelineDefinition, PipelineStep
 
@@ -146,5 +147,13 @@ class LobsterImporter:
             lobster_pipeline = yaml.safe_load(content)
         except yaml.YAMLError as e:
             raise ValueError(f"Invalid YAML in pipeline file {path}: {e}") from e
+        if not isinstance(lobster_pipeline, dict):
+            raise ValueError(
+                f"Invalid pipeline file {path}: expected YAML object, "
+                f"got {type(lobster_pipeline).__name__}"
+            )
 
-        return self.convert_pipeline(lobster_pipeline)
+        try:
+            return self.convert_pipeline(lobster_pipeline)
+        except (ValidationError, ValueError) as e:
+            raise ValueError(f"Invalid pipeline file {path}: {e}") from e

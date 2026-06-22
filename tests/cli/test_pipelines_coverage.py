@@ -598,7 +598,7 @@ class TestImportPipeline:
     ) -> None:
         f = tmp_path / "test.lobster"
         f.write_text("x")
-        mock_imp.return_value.import_file.side_effect = RuntimeError("parse fail")
+        mock_imp.return_value.import_file.side_effect = ValueError("parse fail")
         result = runner.invoke(
             pipelines, ["import", str(f), "--output", str(tmp_path / "out.yaml")]
         )

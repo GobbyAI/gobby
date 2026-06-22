@@ -194,7 +194,7 @@ def remove_project_mcp_server(project_path: Path, server_name: str = "gobby") ->
     settings = _load_json_object(
         settings_path,
         result,
-        parse_error_prefix="Failed to read",
+        parse_error_prefix="Failed to parse",
         read_error_prefix="Failed to read",
     )
     if settings is None:
@@ -387,7 +387,7 @@ def remove_mcp_server_json(settings_path: Path, server_name: str = "gobby") -> d
     settings = _load_json_object(
         settings_path,
         result,
-        parse_error_prefix="Failed to read",
+        parse_error_prefix="Failed to parse",
         read_error_prefix="Failed to read",
     )
     if settings is None:

@@ -373,3 +373,32 @@ steps:
         result = importer.import_file(str(lobster_file))
 
         assert result.name == "string-path-pipeline"
+
+    def test_import_file_rejects_non_mapping_yaml(self, tmp_path: Path) -> None:
+        """Verify import_file reports YAML documents that are not objects."""
+        from gobby.workflows.lobster_compat import LobsterImporter
+
+        lobster_file = tmp_path / "list.lobster"
+        lobster_file.write_text("""
+- not
+- an
+- object
+""")
+
+        importer = LobsterImporter()
+        with pytest.raises(ValueError, match="expected YAML object"):
+            importer.import_file(lobster_file)
+
+    def test_import_file_wraps_validation_errors(self, tmp_path: Path) -> None:
+        """Verify import_file converts definition validation failures to ValueError."""
+        from gobby.workflows.lobster_compat import LobsterImporter
+
+        lobster_file = tmp_path / "invalid.lobster"
+        lobster_file.write_text("""
+name: invalid-pipeline
+steps: []
+""")
+
+        importer = LobsterImporter()
+        with pytest.raises(ValueError, match="Pipeline requires at least one step"):
+            importer.import_file(lobster_file)

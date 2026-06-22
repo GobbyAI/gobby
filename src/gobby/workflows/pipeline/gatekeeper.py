@@ -48,7 +48,7 @@ class ApprovalManager:
         if self.event_callback:
             try:
                 await self.event_callback(event, execution_id, **kwargs)
-            except (ValueError, RuntimeError, OSError):
+            except Exception:
                 logger.warning(
                     "Failed to emit pipeline event",
                     extra={"event": event, "execution_id": execution_id},

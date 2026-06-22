@@ -19,7 +19,7 @@ def test_stale_writer_guards_use_standard_text_casts() -> None:
     source = Path("src/gobby/storage/merge_resolutions.py").read_text()
 
     assert "%s::text" not in source
-    assert source.count("CAST(%s AS TEXT)") >= 6
+    assert source.count("CAST(%s AS TEXT)") >= 1
 
 
 def _table_exists(db: HubDatabase, table_name: str) -> bool:

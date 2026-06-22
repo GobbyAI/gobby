@@ -138,13 +138,11 @@ async def _build_summary_prompt_context(
 
     resolved_db = _summary_context_db(db, session_manager)
     run_db_fn = _facade_attr("_run_db")
-    get_claimed_tasks = _facade_attr("_get_claimed_tasks")
-    get_session_memories = _facade_attr("_get_session_memories")
     claimed_tasks = (
-        await run_db_fn(run_db, get_claimed_tasks, session.id, resolved_db) if resolved_db else ""
+        await run_db_fn(run_db, _get_claimed_tasks, session.id, resolved_db) if resolved_db else ""
     )
     session_memories = (
-        await run_db_fn(run_db, get_session_memories, session.id, resolved_db)
+        await run_db_fn(run_db, _get_session_memories, session.id, resolved_db)
         if resolved_db
         else ""
     )
