@@ -426,7 +426,17 @@ async def test_session_stats_scopes_project_aggregates(
     mock_session_manager, full_sessions_registry
 ):
     """Test session_stats forwards project filters to every aggregate."""
-    mock_session_manager.count.side_effect = [4, 2, 0, 0, 1, 0, 0, 0]
+
+    def count(project_id=None, status=None, source=None):
+        if source == "claude":
+            return 2
+        if source == "qwen":
+            return 1
+        if source:
+            return 0
+        return 4
+
+    mock_session_manager.count.side_effect = count
     mock_session_manager.count_by_status.return_value = {
         "active": 3,
         "paused": 1,
