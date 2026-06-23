@@ -25,7 +25,8 @@ from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
 from gobby.memory.dream.storage import INTERRUPTED_CANCELLED_ERROR, MemoryDreamStore
-from gobby.memory.dream.truth_digest import build_current_truth_digest
+from gobby.memory.dream.truth_digest import build_current_truth_digest, build_project_truth_digest
+from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
 
@@ -214,6 +215,22 @@ class MemoryDreamService:
             error=error,
         )
 
+    def _build_truth_digest(self, options: DreamRunOptions) -> str:
+        if options.global_only:
+            return build_current_truth_digest(self._daemon_config)
+        if options.project_id and self._is_current_daemon_project(options.project_id):
+            return build_current_truth_digest(self._daemon_config)
+        if options.project_id:
+            return build_project_truth_digest(self._resolve_repo_path(options.project_id))
+        return build_current_truth_digest(self._daemon_config)
+
+    def _is_current_daemon_project(self, project_id: str | None) -> bool:
+        return project_id is not None and project_id == self.current_project_id
+
+    def _resolve_repo_path(self, project_id: str) -> str | None:
+        project = LocalProjectManager(self.memory_manager.db).get(project_id)
+        return project.repo_path if project is not None else None
+
     async def execute_run(self, run_id: str, options: DreamRunOptions) -> dict[str, Any]:
         await self._ensure_schema_async()
         try:
@@ -239,7 +256,7 @@ class MemoryDreamService:
                 if options.full_sweep
                 else (run_started - timedelta(hours=redream_hours)).isoformat()
             )
-            digest = build_current_truth_digest(self._daemon_config)
+            digest = self._build_truth_digest(options)
 
             if options.dry_run:
                 return await self._execute_dry_run(

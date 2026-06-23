@@ -37,7 +37,11 @@ A `delete` requires a concrete, citable obsolescence signal in your `reason` —
 
 ## Current truth
 
-Judge each memory against these canonical current facts. A memory that contradicts them — superseded infrastructure (e.g. Neo4j -> FalkorDB, SQLite -> PostgreSQL), removed or renamed APIs, retired config keys, stale daemon paths, or completed one-time residue — is a strong `delete` or `refresh` signal.
+Judge each memory against the current-truth digest below. When the digest says `authoritative - complete current set`, its infrastructure stack is the complete current stack for this scope: infrastructure that contradicts the stack, or is absent from it, is a concrete stale signal. For example, under an authoritative Gobby platform digest, Neo4j contradicted by FalkorDB or SQLite contradicted by PostgreSQL is a strong `delete` or `refresh` signal.
+
+When the digest says `partial - do NOT infer staleness from absence`, treat listed facts as positive evidence only. Do not delete or refresh solely because infrastructure, APIs, config keys, or paths are absent from a partial or empty digest.
+
+Completed one-time residue, stale daemon paths, retired config keys, and removed or renamed APIs are still concrete obsolescence signals when you can cite current evidence from the digest or candidate metadata.
 
 {{ truth_digest }}
 

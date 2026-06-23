@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -32,7 +33,7 @@ from gobby.memory.dream.storage import (
     INTERRUPTED_RESTART_ERROR,
     MemoryDreamStore,
 )
-from gobby.memory.dream.truth_digest import build_current_truth_digest
+from gobby.memory.dream.truth_digest import build_current_truth_digest, build_project_truth_digest
 
 pytestmark = pytest.mark.unit
 
@@ -1022,6 +1023,71 @@ def _row(memory_id: str, content: str) -> dict[str, Any]:
     }
 
 
+def _project_row(project_id: str, repo_path: Path | None) -> dict[str, Any]:
+    return {
+        "id": project_id,
+        "name": project_id,
+        "repo_path": str(repo_path) if repo_path is not None else None,
+        "github_url": None,
+        "created_at": "2025-01-01T00:00:00+00:00",
+        "updated_at": "2025-01-01T00:00:00+00:00",
+    }
+
+
+def _write_truth_digest(repo_path: Path, payload: dict[str, Any]) -> Path:
+    digest_path = repo_path / "gobby-wiki" / "_meta" / "truth_digest.json"
+    digest_path.parent.mkdir(parents=True, exist_ok=True)
+    digest_path.write_text(json.dumps(payload), encoding="utf-8")
+    return digest_path
+
+
+def _complete_digest_payload(service: str = "React UI") -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "generated_at": "2026-01-01T00:00:00+00:00",
+        "project_id": "project-1",
+        "repo_summary": "A small web frontend with generated docs.",
+        "stack_authority": "complete_current_set",
+        "stack": [
+            {
+                "service": service,
+                "kind": "frontend",
+                "adapter_module": "src/app.tsx:10",
+                "pulled_in_by": ["package.json"],
+                "summary": "Browser application surface.",
+                "degradation": "Build fails when dependencies are missing.",
+            }
+        ],
+        "key_paths": {service: "src/app.tsx:10"},
+    }
+
+
+async def _capture_service_truth_digest(
+    db: "_FakeDreamDB",
+    options: DreamRunOptions,
+    *,
+    current_project_id: str | None = None,
+) -> str:
+    manager = _FakeSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=manager,
+        dream_config=_sweep_config(page_size=10),
+        llm_service=MagicMock(),
+        current_project_id=current_project_id,
+    )
+    captured: dict[str, str] = {}
+
+    async def fake_plan(**kwargs: Any) -> dict[str, Any]:
+        captured["truth_digest"] = str(kwargs["truth_digest"])
+        return {"actions": [], "planner_errors": []}
+
+    with patch("gobby.memory.dream.service.build_raw_plan", side_effect=fake_plan):
+        result = await service.run(options)
+
+    assert result["success"] is True
+    return captured["truth_digest"]
+
+
 class _Cursor:
     rowcount = 1
 
@@ -1031,6 +1097,7 @@ class _FakeDreamDB:
 
     def __init__(self) -> None:
         self.memories: dict[str, dict[str, Any]] = {}
+        self.projects: dict[str, dict[str, Any]] = {}
         self.runs: dict[str, dict[str, Any]] = {}
         self.snapshots: list[dict[str, Any]] = []
 
@@ -1117,6 +1184,9 @@ class _FakeDreamDB:
             return {"id": snapshot["id"]}
         if normalized.startswith("SELECT * FROM memory_dream_runs"):
             return self.runs.get(str(params[0]))
+        if "FROM projects" in normalized:
+            row = self.projects.get(str(params[0]))
+            return dict(row) if row else None
         if "FROM memories" in normalized:
             row = self.memories.get(str(params[0]))
             return dict(row) if row else None
@@ -1499,6 +1569,125 @@ def test_build_current_truth_digest_bounds_length() -> None:
     assert len(digest) <= 80
 
 
+def test_build_project_truth_digest_renders_authoritative_stack(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    _write_truth_digest(repo_path, _complete_digest_payload(service="React UI"))
+
+    digest = build_project_truth_digest(str(repo_path))
+
+    assert "Repository summary: A small web frontend with generated docs." in digest
+    assert "Current infrastructure stack (authoritative - complete current set):" in digest
+    assert "React UI (frontend)" in digest
+    assert "adapter: src/app.tsx:10" in digest
+    assert "Key paths: React UI: src/app.tsx:10" in digest
+    assert "Knowledge graph backend: FalkorDB" not in digest
+
+
+def test_build_project_truth_digest_renders_partial_and_empty_without_platform_facts(
+    tmp_path: Path,
+) -> None:
+    repo_path = tmp_path / "repo"
+    _write_truth_digest(
+        repo_path,
+        {
+            "schema_version": 1,
+            "repo_summary": "A non-Rust repo.",
+            "stack_authority": "partial",
+            "stack": [],
+        },
+    )
+
+    digest = build_project_truth_digest(str(repo_path))
+
+    assert "Known infrastructure (partial - do NOT infer staleness from absence):" in digest
+    assert "none listed" in digest
+    assert "Knowledge graph backend: FalkorDB" not in digest
+
+
+def test_build_project_truth_digest_missing_or_invalid_returns_empty(tmp_path: Path) -> None:
+    assert build_project_truth_digest(str(tmp_path / "missing")) == ""
+
+    repo_path = tmp_path / "repo"
+    digest_path = repo_path / "gobby-wiki" / "_meta" / "truth_digest.json"
+    digest_path.parent.mkdir(parents=True)
+    digest_path.write_text("{invalid", encoding="utf-8")
+
+    assert build_project_truth_digest(str(repo_path)) == ""
+
+
+@pytest.mark.asyncio
+async def test_service_uses_platform_truth_for_global_and_current_daemon_project(
+    tmp_path: Path,
+) -> None:
+    db = _FakeDreamDB()
+    current_repo = tmp_path / "current"
+    _write_truth_digest(
+        current_repo, _complete_digest_payload(service="Wrong current repo sidecar")
+    )
+    db.projects["current-project"] = _project_row("current-project", current_repo)
+    db.memories = {
+        "global": {**_row("global", "Global memory"), "project_id": None},
+        "current": {**_row("current", "Current project memory"), "project_id": "current-project"},
+    }
+
+    global_digest = await _capture_service_truth_digest(
+        db,
+        DreamRunOptions(dry_run=True, global_only=True),
+        current_project_id="current-project",
+    )
+    current_digest = await _capture_service_truth_digest(
+        db,
+        DreamRunOptions(dry_run=True, project_id="current-project"),
+        current_project_id="current-project",
+    )
+
+    assert "Knowledge graph backend: FalkorDB" in global_digest
+    assert "Knowledge graph backend: FalkorDB" in current_digest
+    assert "Wrong current repo sidecar" not in current_digest
+
+
+@pytest.mark.asyncio
+async def test_service_uses_project_truth_only_for_non_daemon_project(tmp_path: Path) -> None:
+    db = _FakeDreamDB()
+    current_repo = tmp_path / "current"
+    other_repo = tmp_path / "other"
+    _write_truth_digest(current_repo, _complete_digest_payload(service="Current sidecar"))
+    _write_truth_digest(other_repo, _complete_digest_payload(service="Other sidecar"))
+    db.projects["current-project"] = _project_row("current-project", current_repo)
+    db.projects["other-project"] = _project_row("other-project", other_repo)
+    db.memories = {
+        "other": {**_row("other", "Other project memory"), "project_id": "other-project"}
+    }
+
+    digest = await _capture_service_truth_digest(
+        db,
+        DreamRunOptions(dry_run=True, project_id="other-project", include_global=False),
+        current_project_id="current-project",
+    )
+
+    assert "Other sidecar (frontend)" in digest
+    assert "Current sidecar" not in digest
+    assert "Knowledge graph backend: FalkorDB" not in digest
+
+
+@pytest.mark.asyncio
+async def test_service_current_project_id_none_selects_no_daemon_project(tmp_path: Path) -> None:
+    db = _FakeDreamDB()
+    repo_path = tmp_path / "repo"
+    _write_truth_digest(repo_path, _complete_digest_payload(service="Repo sidecar"))
+    db.projects["proj-1"] = _project_row("proj-1", repo_path)
+    db.memories = {"m1": _row("m1", "Project memory")}
+
+    digest = await _capture_service_truth_digest(
+        db,
+        DreamRunOptions(dry_run=True, project_id="proj-1", include_global=False),
+        current_project_id=None,
+    )
+
+    assert "Repo sidecar (frontend)" in digest
+    assert "Knowledge graph backend: FalkorDB" not in digest
+
+
 def test_dream_prompt_declares_actions_and_truth_digest() -> None:
     import gobby
 
@@ -1516,6 +1705,8 @@ def test_dream_prompt_declares_actions_and_truth_digest() -> None:
     # obsolete-fact guidance names the canonical infra migrations.
     assert "Neo4j" in prompt
     assert "SQLite" in prompt
+    assert "authoritative - complete current set" in prompt
+    assert "partial - do NOT infer staleness from absence" in prompt
 
 
 @pytest.mark.asyncio
