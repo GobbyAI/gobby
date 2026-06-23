@@ -21,7 +21,10 @@ class MemoryDreamManagerProtocol(Protocol):
         project_id: str | None = None,
         memory_type: str | None = None,
         include_global: bool = True,
+        global_only: bool = False,
     ) -> list[Any]: ...
+
+    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]: ...
 
     def mark_dreamed(
         self,

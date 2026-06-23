@@ -2,13 +2,15 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Protocol
 
 from gobby.config.persistence import MemoryDreamConfig
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
-from gobby.memory.dream.service import run_memory_dream
+from gobby.memory.dream.service import DEFAULT_REDREAM_AFTER_HOURS, _positive_int, run_memory_dream
 from gobby.memory.dream.storage import MemoryDreamStore
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
@@ -69,45 +71,80 @@ def register_memory_dream_cron(
         return 0
 
     async def _handler(_job: CronJob) -> str:
-        result = await run_memory_dream(
-            memory_manager=memory_manager,
-            dream_config=dream_config,
-            llm_service=llm_service,
-            daemon_config=daemon_config,
-            project_id=project_id,
-            # The scheduled run is the authoritative nightly full sweep: ignore
-            # the rolling cooldown so coverage is deterministic regardless of
-            # off-schedule (manual/dev) dream runs earlier in the day.
-            full_sweep=True,
+        redream_hours = _positive_int(
+            getattr(dream_config, "redream_after_hours", DEFAULT_REDREAM_AFTER_HOURS),
+            DEFAULT_REDREAM_AFTER_HOURS,
         )
-        if not isinstance(result, dict):
-            raise RuntimeError("memory dream returned non-object result")
-        if not result.get("success"):
-            raise RuntimeError(str(result.get("error", "memory dream failed")))
-        raw_run = result.get("run")
-        run = raw_run if isinstance(raw_run, dict) else {}
-        raw_summary = run.get("summary")
-        summary = raw_summary if isinstance(raw_summary, dict) else {}
-        run_id = result.get("run_id")
-        if run_id is None:
-            run_id = run.get("id")
-        if run_id is None:
-            raise RuntimeError("memory dream completed without run_id")
-        raw_mutations = summary.get("mutations", 0)
-        try:
-            mutations = int(raw_mutations)
-        except (TypeError, ValueError):
-            logger.warning(
-                "Invalid memory dream mutation count: value=%r type=%s",
-                raw_mutations,
-                type(raw_mutations).__name__,
-            )
-            mutations = 0
-        return f"memory dream {run_id} completed: {mutations} mutation(s)"
+        cutoff = (datetime.now(UTC) - timedelta(hours=redream_hours)).isoformat()
+        targets = await asyncio.to_thread(
+            memory_manager.list_dream_project_ids, redream_cutoff=cutoff
+        )
+
+        done = 0
+        mutations = 0
+        failed = 0
+        for target_project_id in targets:
+            try:
+                if target_project_id is None:
+                    result = await run_memory_dream(
+                        memory_manager=memory_manager,
+                        dream_config=dream_config,
+                        llm_service=llm_service,
+                        daemon_config=daemon_config,
+                        current_project_id=project_id,
+                        global_only=True,
+                    )
+                else:
+                    result = await run_memory_dream(
+                        memory_manager=memory_manager,
+                        dream_config=dream_config,
+                        llm_service=llm_service,
+                        daemon_config=daemon_config,
+                        current_project_id=project_id,
+                        project_id=target_project_id,
+                        include_global=False,
+                    )
+                mutations += _completed_mutation_count(result)
+                done += 1
+            except Exception:
+                logger.exception("memory dream failed for target %s", target_project_id)
+                failed += 1
+
+        if done == 0 and failed:
+            raise RuntimeError("memory dream failed for all targets")
+        tail = f", {failed} failed" if failed else ""
+        return f"memory dream: {done} target(s), {mutations} mutation(s) total{tail}"
 
     cron_executor.register_handler(MEMORY_DREAM_CRON_HANDLER, _handler)
     _ensure_system_job(cron_storage, dream_config, project_id)
     return 1
+
+
+def _completed_mutation_count(result: object) -> int:
+    if not isinstance(result, dict):
+        raise RuntimeError("memory dream returned non-object result")
+    if not result.get("success"):
+        raise RuntimeError(str(result.get("error", "memory dream failed")))
+    raw_run = result.get("run")
+    run = raw_run if isinstance(raw_run, dict) else {}
+    raw_summary = run.get("summary")
+    summary = raw_summary if isinstance(raw_summary, dict) else {}
+    run_id = result.get("run_id")
+    if run_id is None:
+        run_id = run.get("id")
+    if run_id is None:
+        raise RuntimeError("memory dream completed without run_id")
+    raw_mutations = summary.get("mutations", 0)
+    try:
+        mutations = int(raw_mutations)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid memory dream mutation count: value=%r type=%s",
+            raw_mutations,
+            type(raw_mutations).__name__,
+        )
+        mutations = 0
+    return mutations
 
 
 def _ensure_system_job(

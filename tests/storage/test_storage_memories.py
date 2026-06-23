@@ -879,8 +879,38 @@ def test_list_dream_candidates_project_and_global_scope(memory_manager, db) -> N
     assert ids(project_id="proj1") == {glob.id, proj1.id}
     # Project only.
     assert ids(project_id="proj1", include_global=False) == {proj1.id}
+    # Global-only ignores project scope and returns only NULL-scoped rows.
+    assert ids(project_id="proj1", include_global=False, global_only=True) == {glob.id}
     # No project filter sweeps every row.
     assert {glob.id, proj1.id, proj2.id} <= ids()
+
+
+def test_list_dream_project_ids_returns_due_distinct_scopes(memory_manager, db) -> None:
+    project_a = str(uuid.uuid4())
+    project_b = str(uuid.uuid4())
+    project_fresh = str(uuid.uuid4())
+    project_hidden = str(uuid.uuid4())
+    for project_id in [project_a, project_b, project_fresh, project_hidden]:
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            (project_id, f"Project {project_id}"),
+        )
+    cutoff = (datetime.now(UTC) - timedelta(hours=20)).isoformat()
+    before_cutoff = (datetime.now(UTC) - timedelta(days=2)).isoformat()
+    after_cutoff = datetime.now(UTC).isoformat()
+
+    memory_manager.create_memory(content="never dreamed project b", project_id=project_b)
+    stale = memory_manager.create_memory(content="stale project a", project_id=project_a)
+    memory_manager.mark_dreamed(stale.id, when=before_cutoff)
+    fresh = memory_manager.create_memory(content="fresh project", project_id=project_fresh)
+    memory_manager.mark_dreamed(fresh.id, when=after_cutoff)
+    hidden = memory_manager.create_memory(content="hidden project", project_id=project_hidden)
+    memory_manager.mark_dreamed(hidden.id, hidden_as="delete", when=before_cutoff)
+    memory_manager.create_memory(content="global due", project_id=None)
+
+    assert memory_manager.list_dream_project_ids(redream_cutoff=cutoff) == sorted(
+        [project_a, project_b]
+    ) + [None]
 
 
 def test_list_dream_candidates_memory_type_scope(memory_manager) -> None:

@@ -63,6 +63,17 @@ class _FakeCronExecutor:
         self.handlers[name] = handler
 
 
+class _FakeDreamManager:
+    def __init__(self, targets: list[str | None]) -> None:
+        self.targets = targets
+        self.cutoffs: list[str] = []
+        self.db = MagicMock()
+
+    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]:
+        self.cutoffs.append(redream_cutoff)
+        return list(self.targets)
+
+
 def test_register_memory_dream_cron_creates_single_system_job() -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
@@ -162,28 +173,68 @@ def test_register_memory_dream_cron_restores_previously_enabled_system_job() -> 
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_formats_valid_result(
+async def test_memory_dream_cron_handler_loops_targets_and_formats_aggregate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
+    memory_manager = _FakeDreamManager(["proj-a", None, "proj-b"])
+    calls: list[dict[str, Any]] = []
 
-    async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
-        return {"success": True, "run": {"id": "dream-1", "summary": {"mutations": 2}}}
+    async def fake_run_memory_dream(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs)
+        mutations = 2 if kwargs.get("global_only") else 1
+        return {
+            "success": True,
+            "run": {"id": f"dream-{len(calls)}", "summary": {"mutations": mutations}},
+        }
 
     monkeypatch.setattr("gobby.memory.dream.cron.run_memory_dream", fake_run_memory_dream)
     register_memory_dream_cron(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
-        memory_manager=MagicMock(),
+        memory_manager=memory_manager,
         dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
-        project_id="proj-1",
+        project_id="daemon-proj",
     )
     handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
 
     message = await handler(SimpleNamespace())
 
-    assert message == "memory dream dream-1 completed: 2 mutation(s)"
+    assert message == "memory dream: 3 target(s), 4 mutation(s) total"
+    assert len(memory_manager.cutoffs) == 1
+    assert [
+        {
+            "project_id": call.get("project_id"),
+            "global_only": call.get("global_only", False),
+            "include_global": call.get("include_global"),
+            "current_project_id": call.get("current_project_id"),
+            "full_sweep": call.get("full_sweep"),
+        }
+        for call in calls
+    ] == [
+        {
+            "project_id": "proj-a",
+            "global_only": False,
+            "include_global": False,
+            "current_project_id": "daemon-proj",
+            "full_sweep": None,
+        },
+        {
+            "project_id": None,
+            "global_only": True,
+            "include_global": None,
+            "current_project_id": "daemon-proj",
+            "full_sweep": None,
+        },
+        {
+            "project_id": "proj-b",
+            "global_only": False,
+            "include_global": False,
+            "current_project_id": "daemon-proj",
+            "full_sweep": None,
+        },
+    ]
 
 
 @pytest.mark.asyncio
@@ -192,6 +243,7 @@ async def test_memory_dream_cron_handler_coerces_string_mutations(
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
+    memory_manager = _FakeDreamManager(["proj-1"])
 
     async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
         return {"success": True, "run": {"id": "dream-1", "summary": {"mutations": "2"}}}
@@ -200,7 +252,7 @@ async def test_memory_dream_cron_handler_coerces_string_mutations(
     register_memory_dream_cron(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
-        memory_manager=MagicMock(),
+        memory_manager=memory_manager,
         dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
         project_id="proj-1",
     )
@@ -208,7 +260,7 @@ async def test_memory_dream_cron_handler_coerces_string_mutations(
 
     message = await handler(SimpleNamespace())
 
-    assert message == "memory dream dream-1 completed: 2 mutation(s)"
+    assert message == "memory dream: 1 target(s), 2 mutation(s) total"
 
 
 @pytest.mark.asyncio
@@ -218,6 +270,7 @@ async def test_memory_dream_cron_handler_warns_for_invalid_mutations(
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
+    memory_manager = _FakeDreamManager(["proj-1"])
 
     async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
         return {"success": True, "run": {"id": "dream-1", "summary": {"mutations": "bad"}}}
@@ -227,7 +280,7 @@ async def test_memory_dream_cron_handler_warns_for_invalid_mutations(
     register_memory_dream_cron(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
-        memory_manager=MagicMock(),
+        memory_manager=memory_manager,
         dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
         project_id="proj-1",
     )
@@ -235,16 +288,48 @@ async def test_memory_dream_cron_handler_warns_for_invalid_mutations(
 
     message = await handler(SimpleNamespace())
 
-    assert message == "memory dream dream-1 completed: 0 mutation(s)"
+    assert message == "memory dream: 1 target(s), 0 mutation(s) total"
     assert "Invalid memory dream mutation count: value='bad' type=str" in caplog.text
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_rejects_missing_run_id(
+async def test_memory_dream_cron_handler_isolates_target_failure(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
+    memory_manager = _FakeDreamManager(["proj-ok", "proj-bad", None])
+    calls: list[str | None] = []
+
+    async def fake_run_memory_dream(**kwargs: Any) -> dict[str, Any]:
+        calls.append(kwargs.get("project_id"))
+        if kwargs.get("project_id") == "proj-bad":
+            raise RuntimeError("boom")
+        return {"success": True, "run": {"id": "dream-1", "summary": {"mutations": 2}}}
+
+    monkeypatch.setattr("gobby.memory.dream.cron.run_memory_dream", fake_run_memory_dream)
+    register_memory_dream_cron(
+        cron_storage=cron_storage,
+        cron_executor=cron_executor,
+        memory_manager=memory_manager,
+        dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
+        project_id="proj-1",
+    )
+    handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
+
+    message = await handler(SimpleNamespace())
+
+    assert calls == ["proj-ok", "proj-bad", None]
+    assert message == "memory dream: 2 target(s), 4 mutation(s) total, 1 failed"
+
+
+@pytest.mark.asyncio
+async def test_memory_dream_cron_handler_raises_when_every_target_fails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cron_storage = _FakeCronStorage()
+    cron_executor = _FakeCronExecutor()
+    memory_manager = _FakeDreamManager(["proj-bad", None])
 
     async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
         return {"success": True, "run": {"summary": {"mutations": 2}}}
@@ -253,11 +338,11 @@ async def test_memory_dream_cron_handler_rejects_missing_run_id(
     register_memory_dream_cron(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
-        memory_manager=MagicMock(),
+        memory_manager=memory_manager,
         dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
         project_id="proj-1",
     )
     handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
 
-    with pytest.raises(RuntimeError, match="without run_id"):
+    with pytest.raises(RuntimeError, match="failed for all targets"):
         await handler(SimpleNamespace())

@@ -44,11 +44,18 @@ class DreamRunOptions:
     skip_consolidation: bool = False
     memory_type: str | None = None
     project_id: str | None = None
+    global_only: bool = False
+    # None uses the dream config default. Scheduled per-project runs set this to
+    # False so the NULL/global bucket is swept by its own target exactly once.
+    include_global: bool | None = None
     # When True, ignore the rolling redream cooldown and sweep every active
-    # in-scope memory once (cutoff = run_start). The scheduled nightly run sets
-    # this so its coverage is deterministic regardless of off-schedule stamping;
-    # manual/ad-hoc runs leave it False to stay cooldown-throttled.
+    # in-scope memory once (cutoff = run_start). Scheduled nightly runs leave
+    # this False so project coverage stays cooldown-throttled.
     full_sweep: bool = False
+
+    def __post_init__(self) -> None:
+        if self.global_only and self.project_id is not None:
+            raise ValueError("global_only and project_id are mutually exclusive")
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -56,6 +63,8 @@ class DreamRunOptions:
             "skip_consolidation": self.skip_consolidation,
             "memory_type": self.memory_type,
             "project_id": self.project_id,
+            "global_only": self.global_only,
+            "include_global": self.include_global,
             "full_sweep": self.full_sweep,
         }
 
@@ -135,11 +144,13 @@ class MemoryDreamService:
         dream_config: MemoryDreamConfig | None = None,
         llm_service: MemoryDreamLLMProtocol | None = None,
         daemon_config: Any = None,
+        current_project_id: str | None = None,
     ) -> None:
         self.memory_manager = memory_manager
         self.dream_config = dream_config or MemoryDreamConfig()
         self.llm_service = llm_service
         self._daemon_config = daemon_config
+        self.current_project_id = current_project_id
         self.store = MemoryDreamStore(memory_manager.db)
         self._schema_ready = False
 
@@ -163,9 +174,10 @@ class MemoryDreamService:
         if not self.dream_config.enabled:
             return {"success": False, "error": "memory dream is disabled"}
         await self._ensure_schema_async()
+        run_project_id = None if options.global_only else options.project_id
         run_id = await asyncio.to_thread(
             self.store.create_run,
-            project_id=options.project_id,
+            project_id=run_project_id,
             dry_run=options.dry_run,
             options=options.to_dict(),
         )
@@ -176,8 +188,9 @@ class MemoryDreamService:
             return {"success": False, "error": "memory dream is disabled"}
         self.store.ensure_schema()
         self._schema_ready = True
+        run_project_id = None if options.global_only else options.project_id
         run_id = self.store.create_run(
-            project_id=options.project_id,
+            project_id=run_project_id,
             dry_run=options.dry_run,
             options=options.to_dict(),
         )
@@ -212,7 +225,11 @@ class MemoryDreamService:
                 getattr(self.dream_config, "redream_after_hours", DEFAULT_REDREAM_AFTER_HOURS),
                 DEFAULT_REDREAM_AFTER_HOURS,
             )
-            include_global = bool(getattr(self.dream_config, "include_global_memories", True))
+            include_global = (
+                options.include_global
+                if options.include_global is not None
+                else bool(getattr(self.dream_config, "include_global_memories", True))
+            )
             # full_sweep pins the cutoff to run_start so the cooldown excludes
             # only rows stamped during this run; the page loop still drains via
             # per-page stamping. Cannot be expressed as redream_after_hours=0 —
@@ -297,6 +314,7 @@ class MemoryDreamService:
                 project_id=options.project_id,
                 memory_type=options.memory_type,
                 include_global=include_global,
+                global_only=options.global_only,
                 now=run_started,
             )
             if not candidates:
@@ -359,6 +377,7 @@ class MemoryDreamService:
             project_id=options.project_id,
             memory_type=options.memory_type,
             include_global=include_global,
+            global_only=options.global_only,
             now=run_started,
         )
         raw_plan = await build_raw_plan(
@@ -445,13 +464,17 @@ async def run_memory_dream(
     skip_consolidation: bool = False,
     memory_type: str | None = None,
     project_id: str | None = None,
+    global_only: bool = False,
+    include_global: bool | None = None,
     full_sweep: bool = False,
+    current_project_id: str | None = None,
 ) -> dict[str, Any]:
     service = MemoryDreamService(
         memory_manager=memory_manager,
         dream_config=dream_config,
         llm_service=llm_service,
         daemon_config=daemon_config,
+        current_project_id=current_project_id,
     )
     return await service.run(
         DreamRunOptions(
@@ -459,6 +482,8 @@ async def run_memory_dream(
             skip_consolidation=skip_consolidation,
             memory_type=memory_type,
             project_id=project_id,
+            global_only=global_only,
+            include_global=include_global,
             full_sweep=full_sweep,
         )
     )

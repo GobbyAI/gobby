@@ -89,6 +89,7 @@ class MemoryDreamMixin(MemoryStoreBase):
         project_id: str | None = None,
         memory_type: str | None = None,
         include_global: bool = True,
+        global_only: bool = False,
     ) -> list[Memory]:
         """Return the next page of active memories due for a dream sweep.
 
@@ -96,17 +97,20 @@ class MemoryDreamMixin(MemoryStoreBase):
         dreamed or were last dreamed before ``redream_cutoff`` (the cooldown
         boundary, ``run_started_at - redream_after_hours``). Project/global and
         memory-type scoping is applied in SQL, mirroring ``_in_scope``: a
-        ``project_id`` with ``include_global`` also matches global rows; without
-        it only that project's rows match; a ``None`` ``project_id`` sweeps every
-        row. Ordered oldest-dreamed first so the sweep drains deterministically as
-        each returned page is stamped out of the next page's window.
+        global-only run matches only NULL-scoped rows; otherwise, a ``project_id``
+        with ``include_global`` also matches global rows; without it only that
+        project's rows match; a ``None`` ``project_id`` sweeps every row. Ordered
+        oldest-dreamed first so the sweep drains deterministically as each
+        returned page is stamped out of the next page's window.
         """
         clauses = [
             "deleted_at IS NULL",
             "(last_dreamed_at IS NULL OR last_dreamed_at < %s)",
         ]
         params: list[Any] = [redream_cutoff]
-        if project_id is not None:
+        if global_only:
+            clauses.append("project_id IS NULL")
+        elif project_id is not None:
             if include_global:
                 clauses.append("(project_id = %s OR project_id IS NULL)")
             else:
@@ -123,3 +127,14 @@ class MemoryDreamMixin(MemoryStoreBase):
             tuple(params),
         )
         return [Memory.from_row(row) for row in rows]
+
+    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]:
+        """Return distinct project scopes that have due memory dream work."""
+        rows = self.db.fetchall(
+            "SELECT DISTINCT project_id FROM memories "
+            "WHERE deleted_at IS NULL "
+            "AND (last_dreamed_at IS NULL OR last_dreamed_at < %s) "
+            "ORDER BY project_id ASC NULLS LAST",
+            (redream_cutoff,),
+        )
+        return [row["project_id"] for row in rows]

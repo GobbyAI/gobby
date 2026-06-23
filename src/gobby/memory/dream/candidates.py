@@ -28,6 +28,7 @@ class SweepCandidateSource(Protocol):
         project_id: str | None = None,
         memory_type: str | None = None,
         include_global: bool = True,
+        global_only: bool = False,
     ) -> list[Any]: ...
 
 
@@ -39,6 +40,7 @@ async def list_sweep_candidates(
     project_id: str | None = None,
     memory_type: str | None = None,
     include_global: bool = True,
+    global_only: bool = False,
     now: datetime | None = None,
 ) -> list[DreamCandidate]:
     """Fetch one page of active sweep candidates and adapt them for planning.
@@ -55,6 +57,7 @@ async def list_sweep_candidates(
         project_id=project_id,
         memory_type=memory_type,
         include_global=include_global,
+        global_only=global_only,
     )
     return [memory_to_candidate(row, now) for row in rows]
 

@@ -247,6 +247,7 @@ class MemoryManagerFacadeMethods:
         project_id: str | None = None,
         memory_type: str | None = None,
         include_global: bool = True,
+        global_only: bool = False,
     ) -> list[Memory]:
         """Delegate to storage for the nightly dream sweep candidate page."""
         return self.storage.list_dream_candidates(
@@ -255,7 +256,12 @@ class MemoryManagerFacadeMethods:
             project_id=project_id,
             memory_type=memory_type,
             include_global=include_global,
+            global_only=global_only,
         )
+
+    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]:
+        """Delegate to storage for due dream sweep project scopes."""
+        return self.storage.list_dream_project_ids(redream_cutoff=redream_cutoff)
 
     def mark_dreamed(
         self,

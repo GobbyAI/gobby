@@ -105,6 +105,7 @@ class _RecordingSweepSource:
         project_id: str | None = None,
         memory_type: str | None = None,
         include_global: bool = True,
+        global_only: bool = False,
     ) -> list[Any]:
         self.calls.append(
             {
@@ -113,6 +114,7 @@ class _RecordingSweepSource:
                 "project_id": project_id,
                 "memory_type": memory_type,
                 "include_global": include_global,
+                "global_only": global_only,
             }
         )
         return list(self.rows)
@@ -129,6 +131,7 @@ async def test_list_sweep_candidates_adapts_rows_and_forwards_scope() -> None:
         project_id="proj-1",
         memory_type="fact",
         include_global=False,
+        global_only=True,
         now=datetime(2026, 6, 15, tzinfo=UTC),
     )
 
@@ -140,6 +143,7 @@ async def test_list_sweep_candidates_adapts_rows_and_forwards_scope() -> None:
             "project_id": "proj-1",
             "memory_type": "fact",
             "include_global": False,
+            "global_only": True,
         }
     ]
     assert "re-dream cooldown elapsed" in result[0].reasons
@@ -1274,6 +1278,7 @@ class _FakeSweepManager:
         project_id: str | None = None,
         memory_type: str | None = None,
         include_global: bool = True,
+        global_only: bool = False,
     ) -> list[Any]:
         matches: list[dict[str, Any]] = []
         for row in self.db.memories.values():
@@ -1282,7 +1287,10 @@ class _FakeSweepManager:
             last_dreamed = row.get("last_dreamed_at")
             if last_dreamed is not None and last_dreamed >= redream_cutoff:
                 continue
-            if project_id is not None:
+            if global_only:
+                if row.get("project_id") is not None:
+                    continue
+            elif project_id is not None:
                 row_project = row.get("project_id")
                 in_scope = row_project == project_id or (include_global and row_project is None)
                 if not in_scope:
@@ -1429,6 +1437,34 @@ async def test_dry_run_previews_without_writing_or_stamping() -> None:
     assert summary["candidates_reviewed"] == 2
     assert summary["pages"] == 1
     assert summary.get("planned_actions")
+
+
+async def test_global_only_run_persists_null_scope_and_selects_only_global() -> None:
+    db = _FakeDreamDB()
+    db.memories = {
+        "global": _row("global", "global content"),
+        "project": _row("project", "project content"),
+    }
+    db.memories["global"]["project_id"] = None
+    manager = _FakeSweepManager(db)
+    service = MemoryDreamService(
+        memory_manager=manager, dream_config=_sweep_config(page_size=10), llm_service=None
+    )
+
+    result = await service.run(DreamRunOptions(global_only=True))
+
+    assert result["success"] is True
+    run = result["run"]
+    assert run["project_id"] is None
+    assert run["options"]["global_only"] is True
+    assert run["summary"]["candidates_reviewed"] == 1
+    assert db.memories["global"]["last_dreamed_at"] is not None
+    assert db.memories["project"]["last_dreamed_at"] is None
+
+
+def test_global_only_rejects_project_id() -> None:
+    with pytest.raises(ValueError, match="global_only and project_id"):
+        DreamRunOptions(global_only=True, project_id="proj-1")
 
 
 def test_build_current_truth_digest_includes_canonical_facts() -> None:
