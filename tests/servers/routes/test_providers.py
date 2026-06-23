@@ -174,11 +174,7 @@ class TestProviderModelsRoute:
         assert providers["agy"]["available"] is False
         agy_by_id = {model["value"]: model for model in agy_models}
         assert "gemini-3.5-flash-low" not in agy_by_id
-        assert agy_by_id["gemini-3.5-flash"]["effort_display"] == {
-            "low": "Gemini 3.5 Flash (Low)",
-            "medium": "Gemini 3.5 Flash (Medium)",
-            "high": "Gemini 3.5 Flash (High)",
-        }
+        assert "effort_display" not in agy_by_id["gemini-3.5-flash"]
         assert agy_by_id["gemini-3.5-flash"]["reasoning"] == {
             "supported_efforts": ["low", "medium", "high"],
             "default_effort": "low",
@@ -189,8 +185,10 @@ class TestProviderModelsRoute:
             "supported_efforts": ["low", "high"],
             "default_effort": "high",
         }
-        assert agy_by_id["claude-opus-4-6"]["effort_display"] == {
-            "high": "Claude Opus 4.6 (Thinking)",
+        assert "effort_display" not in agy_by_id["claude-opus-4-6"]
+        assert agy_by_id["claude-opus-4-6"]["reasoning"] == {
+            "supported_efforts": ["high"],
+            "default_effort": "high",
         }
         assert agy_by_id["gpt-oss-120b"]["context_length"] == 131_072
 

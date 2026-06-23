@@ -80,7 +80,7 @@ def context_length_for_model(provider: str | None, model: str | None) -> int | N
 
 def _model_identifiers(model: dict[str, Any]) -> list[str]:
     identifiers: list[str] = []
-    for key in ("value", "canonical_id", "id", "model", "agy_display", "context_lookup_key"):
+    for key in ("value", "canonical_id", "id", "model", "context_lookup_key"):
         value = model.get(key)
         if isinstance(value, str) and value.strip():
             identifiers.append(value)
@@ -146,9 +146,15 @@ def _cached_models(provider: str, models: Any) -> list[dict[str, Any]]:
 
 
 DROID_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths("droid", _DROID_MODEL_CATALOG)
+# Public route catalog: drop the internal effort->display map. Clients pick a
+# model + reasoning_effort; the daemon composes the AGY --model string. The
+# source _AGY_MODELS keeps effort_display for the adapter/gate and drift test.
 AGY_MODEL_CATALOG: list[dict[str, Any]] = with_context_lengths(
     "agy",
-    list(_AGY_MODELS.values()),
+    [
+        {key: value for key, value in model.items() if key != "effort_display"}
+        for model in _AGY_MODELS.values()
+    ],
 )
 
 
