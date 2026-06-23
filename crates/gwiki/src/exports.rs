@@ -1,7 +1,9 @@
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
-use crate::graph::{GraphExportOptions, WikiGraphFacts, render_graph_report};
+use crate::graph::{
+    GraphExport, GraphExportNode, GraphExportOptions, WikiGraphFacts, render_graph_report,
+};
 use crate::{ScopeIdentity, WikiError};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize)]
@@ -174,6 +176,274 @@ fn graph_export_error(error: crate::graph::analytics::GraphAnalyticsError) -> Wi
     }
 }
 
+/// Emit the static agent-context exports: `graph.jsonld` (schema.org JSON-LD of
+/// the vault document graph), `llms.txt` (portable index), and `llms-full.txt`
+/// (portable content bundle). Reuses the existing `export_graph` vault export
+/// and the vault Markdown on disk. On any write failure, already-written
+/// artifacts are removed so the export is all-or-nothing.
+pub fn export_agent_artifacts(
+    root: &Path,
+    facts: &WikiGraphFacts,
+    options: GraphExportOptions,
+) -> Result<Vec<ExportArtifact>, WikiError> {
+    let export = facts.export_graph(options).map_err(graph_export_error)?;
+
+    let jsonld = render_graph_jsonld(&export)?;
+    let llms_index = render_llms_index(&export);
+    let llms_full = render_llms_full(root, &export);
+
+    let mut artifacts = Vec::new();
+    write_agent_artifact(
+        root,
+        "graph.jsonld",
+        ExportKind::Graph,
+        jsonld,
+        &mut artifacts,
+    )?;
+    write_agent_artifact(
+        root,
+        "llms.txt",
+        ExportKind::Report,
+        llms_index,
+        &mut artifacts,
+    )?;
+    write_agent_artifact(
+        root,
+        "llms-full.txt",
+        ExportKind::Bundle,
+        llms_full,
+        &mut artifacts,
+    )?;
+    Ok(artifacts)
+}
+
+/// Write one agent artifact, rolling back previously-written artifacts in this
+/// batch if the write fails.
+fn write_agent_artifact(
+    root: &Path,
+    filename: &str,
+    kind: ExportKind,
+    contents: String,
+    written: &mut Vec<ExportArtifact>,
+) -> Result<(), WikiError> {
+    match write_export(
+        root,
+        ExportRequest {
+            filename: filename.to_string(),
+            kind,
+            contents,
+        },
+    ) {
+        Ok(artifact) => {
+            written.push(artifact);
+            Ok(())
+        }
+        Err(error) => {
+            for artifact in written.iter() {
+                let _ = fs::remove_file(&artifact.path);
+            }
+            Err(error)
+        }
+    }
+}
+
+/// Render schema.org JSON-LD describing the gwiki **vault document graph**
+/// (documents, sources, citations, and their wikilink / provenance edges).
+/// Reuses the [`GraphExport`] node set produced by `export_graph`; the code
+/// graph edge classes (`imports` / `calls` / `callers`) are intentionally
+/// excluded — this describes the vault, not the code graph.
+fn render_graph_jsonld(export: &GraphExport) -> Result<String, WikiError> {
+    use std::collections::BTreeMap;
+
+    // Relations that originate from each node id, keyed for stable lookup.
+    let mut citations: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+    let mut based_on: BTreeMap<&str, Vec<&str>> = BTreeMap::new();
+
+    // Wikilinks: the linking document cites its target page.
+    for edge in &export.edges.links {
+        citations
+            .entry(edge.source.as_str())
+            .or_default()
+            .push(edge.target.as_str());
+    }
+    // Audit: a citation node cites the source it was drawn from.
+    for edge in &export.edges.audit {
+        citations
+            .entry(edge.source.as_str())
+            .or_default()
+            .push(edge.target.as_str());
+    }
+    // Trust: a document is based on the source that supports it.
+    for edge in &export.edges.trust {
+        based_on
+            .entry(edge.target.as_str())
+            .or_default()
+            .push(edge.source.as_str());
+    }
+
+    let graph = export
+        .nodes
+        .iter()
+        .map(|node| {
+            let mut entity = serde_json::Map::new();
+            entity.insert(
+                "@id".to_string(),
+                serde_json::Value::String(node.id.clone()),
+            );
+            entity.insert(
+                "@type".to_string(),
+                serde_json::Value::String(jsonld_type(node.kind).to_string()),
+            );
+            entity.insert(
+                "name".to_string(),
+                serde_json::Value::String(node_label(node)),
+            );
+            entity.insert(
+                "url".to_string(),
+                serde_json::Value::String(node.path.clone()),
+            );
+            entity.insert(
+                "genre".to_string(),
+                serde_json::Value::String(node.kind.to_string()),
+            );
+            if let Some(targets) = citations.get(node.id.as_str()) {
+                entity.insert("citation".to_string(), id_references(targets));
+            }
+            if let Some(sources) = based_on.get(node.id.as_str()) {
+                entity.insert("isBasedOn".to_string(), id_references(sources));
+            }
+            serde_json::Value::Object(entity)
+        })
+        .collect::<Vec<_>>();
+
+    let document = serde_json::json!({
+        "@context": "https://schema.org",
+        "@graph": graph,
+    });
+
+    serde_json::to_string_pretty(&document).map_err(|error| WikiError::Json {
+        action: "serialize graph jsonld",
+        path: None,
+        source: error,
+    })
+}
+
+fn id_references(ids: &[&str]) -> serde_json::Value {
+    serde_json::Value::Array(
+        ids.iter()
+            .map(|id| serde_json::json!({ "@id": id }))
+            .collect(),
+    )
+}
+
+/// Map a vault graph node kind onto a schema.org type.
+fn jsonld_type(kind: &str) -> &'static str {
+    match kind {
+        "wiki_page" => "Article",
+        "code" => "SoftwareSourceCode",
+        "source" | "citation" | "unresolved_target" => "CreativeWork",
+        _ => "DigitalDocument",
+    }
+}
+
+/// Render an `llms.txt` portable index following the llmstxt.org convention:
+/// an H1 title, a summary blockquote, then link sections for documents and
+/// sources. Built from the same [`GraphExport`] node set.
+fn render_llms_index(export: &GraphExport) -> String {
+    let documents = document_nodes(export);
+    let sources = export
+        .nodes
+        .iter()
+        .filter(|node| node.kind == "source")
+        .collect::<Vec<_>>();
+
+    let mut out = String::from("# GWiki Vault Index\n\n");
+    out.push_str(&format!(
+        "> Static agent index for {}. {} documents, {} sources.\n\n",
+        scope_label(export),
+        documents.len(),
+        sources.len()
+    ));
+
+    push_link_section(&mut out, "Documents", &documents);
+    out.push('\n');
+    push_link_section(&mut out, "Sources", &sources);
+
+    out
+}
+
+/// Render an `llms-full.txt` portable content bundle: the full Markdown body of
+/// every vault document, concatenated in graph order. Bodies are read from the
+/// vault on disk; a missing or unreadable file degrades to a placeholder rather
+/// than failing the export.
+fn render_llms_full(root: &Path, export: &GraphExport) -> String {
+    let documents = document_nodes(export);
+
+    let mut out = String::from("# GWiki Vault Content\n\n");
+    out.push_str(&format!(
+        "> Full content export for {}. {} documents.\n\n",
+        scope_label(export),
+        documents.len()
+    ));
+
+    for node in documents {
+        out.push_str(&format!("## {}\n\n", node_label(node)));
+        out.push_str(&format!("`{}`\n\n", node.path));
+        match vault_document_contents(root, &node.path) {
+            Some(contents) => {
+                out.push_str(contents.trim_end());
+                out.push_str("\n\n");
+            }
+            None => out.push_str("_(content unavailable)_\n\n"),
+        }
+        out.push_str("---\n\n");
+    }
+
+    out
+}
+
+/// Documents in the vault graph (wiki pages, code mirrors, and other documents),
+/// excluding source / citation / unresolved-target nodes.
+fn document_nodes(export: &GraphExport) -> Vec<&GraphExportNode> {
+    export
+        .nodes
+        .iter()
+        .filter(|node| is_document_node(node.kind))
+        .collect()
+}
+
+fn is_document_node(kind: &str) -> bool {
+    matches!(kind, "wiki_page" | "code" | "document")
+}
+
+fn push_link_section(out: &mut String, heading: &str, nodes: &[&GraphExportNode]) {
+    out.push_str(&format!("## {heading}\n\n"));
+    if nodes.is_empty() {
+        out.push_str("- _(none)_\n");
+        return;
+    }
+    for node in nodes {
+        out.push_str(&format!("- [{}]({})\n", node_label(node), node.path));
+    }
+}
+
+fn node_label(node: &GraphExportNode) -> String {
+    node.title.clone().unwrap_or_else(|| node.path.clone())
+}
+
+fn scope_label(export: &GraphExport) -> String {
+    match export.nodes.first() {
+        Some(node) => format!("{} {}", node.scope_kind, node.scope_id),
+        None => "the vault".to_string(),
+    }
+}
+
+/// Read a vault document body, rejecting absolute or traversing paths.
+fn vault_document_contents(root: &Path, path: &str) -> Option<String> {
+    let relative = export_relative_path(path).ok()?;
+    std::fs::read_to_string(root.join(relative)).ok()
+}
+
 pub fn export_markdown_report(
     root: &Path,
     filename: impl Into<String>,
@@ -265,8 +535,8 @@ mod tests {
 
     use crate::graph::analytics::GraphAnalyticsError;
     use crate::graph::{
-        GraphExportOptions, WikiGraphDocument, WikiGraphFacts, WikiGraphLink, WikiGraphLinkTarget,
-        WikiGraphSource,
+        GraphExportOptions, WikiGraphCodeEdge, WikiGraphDocument, WikiGraphFacts, WikiGraphLink,
+        WikiGraphLinkTarget, WikiGraphSource,
     };
     use crate::search::SearchScope;
 
@@ -487,5 +757,187 @@ mod tests {
                 message
             } if message.contains("duplicate graph node `node-1`")
         ));
+    }
+
+    fn agent_export_facts(scope: SearchScope) -> WikiGraphFacts {
+        WikiGraphFacts {
+            documents: vec![
+                WikiGraphDocument {
+                    scope: scope.clone(),
+                    path: "knowledge/topics/overview.md".into(),
+                    title: Some("Overview".to_string()),
+                },
+                WikiGraphDocument {
+                    scope: scope.clone(),
+                    path: "code/src/lib.rs".into(),
+                    title: Some("lib.rs".to_string()),
+                },
+                WikiGraphDocument {
+                    scope: scope.clone(),
+                    path: "documents/design.md".into(),
+                    title: Some("Design Notes".to_string()),
+                },
+            ],
+            links: vec![WikiGraphLink {
+                scope: scope.clone(),
+                source_path: "knowledge/topics/overview.md".into(),
+                raw_target: "[[Design Notes]]".to_string(),
+                target: WikiGraphLinkTarget::Resolved("documents/design.md".into()),
+            }],
+            sources: vec![WikiGraphSource {
+                scope: scope.clone(),
+                source_path: "raw/sources/example.md".into(),
+                document_path: "knowledge/topics/overview.md".into(),
+            }],
+            code_edges: vec![WikiGraphCodeEdge {
+                scope,
+                document_path: "code/src/lib.rs".into(),
+                source: "alpha".to_string(),
+                target: "beta".to_string(),
+                kind: "imports".to_string(),
+                direction: "out".to_string(),
+                line: Some(3),
+                provenance: "code-edge-must-be-excluded".to_string(),
+            }],
+        }
+    }
+
+    #[test]
+    fn agent_exports_emit_index_jsonld_and_content() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let overview = root.join("knowledge/topics/overview.md");
+        fs::create_dir_all(overview.parent().expect("overview parent")).expect("overview dir");
+        fs::write(&overview, "# Overview\n\nVault entrypoint.\n").expect("overview page");
+
+        let artifacts = export_agent_artifacts(
+            root,
+            &agent_export_facts(SearchScope::project("project-123")),
+            GraphExportOptions::available(),
+        )
+        .expect("agent artifacts exported");
+
+        assert_eq!(
+            artifacts
+                .iter()
+                .map(|artifact| artifact.path.clone())
+                .collect::<Vec<_>>(),
+            vec![
+                root.join("outputs/graph.jsonld"),
+                root.join("outputs/llms.txt"),
+                root.join("outputs/llms-full.txt"),
+            ]
+        );
+
+        // graph.jsonld: schema.org JSON-LD of the vault document graph.
+        let jsonld_text =
+            fs::read_to_string(root.join("outputs/graph.jsonld")).expect("graph jsonld");
+        let jsonld: serde_json::Value =
+            serde_json::from_str(&jsonld_text).expect("valid graph jsonld");
+        assert_eq!(jsonld["@context"], "https://schema.org");
+        let graph = jsonld["@graph"].as_array().expect("@graph array");
+        // Vault nodes only: 3 documents + 1 source + 1 citation. No code endpoints.
+        assert_eq!(graph.len(), 5);
+
+        let overview_entity = graph
+            .iter()
+            .find(|entity| entity["url"] == serde_json::json!("knowledge/topics/overview.md"))
+            .expect("overview entity");
+        assert_eq!(overview_entity["@type"], "Article");
+        assert_eq!(overview_entity["genre"], "wiki_page");
+        assert_eq!(overview_entity["name"], "Overview");
+        // Wikilink → cites the resolved target page.
+        let design_id = graph
+            .iter()
+            .find(|entity| entity["url"] == serde_json::json!("documents/design.md"))
+            .expect("design entity")["@id"]
+            .clone();
+        assert_eq!(
+            overview_entity["citation"],
+            serde_json::json!([{ "@id": design_id }])
+        );
+        // Source provenance → isBasedOn the supporting source.
+        let source_id = graph
+            .iter()
+            .find(|entity| entity["genre"] == serde_json::json!("source"))
+            .expect("source entity")["@id"]
+            .clone();
+        assert_eq!(
+            overview_entity["isBasedOn"],
+            serde_json::json!([{ "@id": source_id }])
+        );
+
+        let lib_entity = graph
+            .iter()
+            .find(|entity| entity["url"] == serde_json::json!("code/src/lib.rs"))
+            .expect("lib entity");
+        assert_eq!(lib_entity["@type"], "SoftwareSourceCode");
+
+        // The code graph is excluded: no code-edge endpoints or edge classes.
+        assert!(!jsonld_text.contains("code-edge-must-be-excluded"));
+        assert!(!jsonld_text.contains("\"imports\""));
+        assert!(!jsonld_text.contains("\"calls\""));
+
+        // llms.txt: portable index with link sections.
+        let index = fs::read_to_string(root.join("outputs/llms.txt")).expect("llms index");
+        assert!(index.starts_with("# GWiki Vault Index"));
+        assert!(
+            index.contains("> Static agent index for project project-123. 3 documents, 1 sources.")
+        );
+        assert!(index.contains("## Documents"));
+        assert!(index.contains("- [Overview](knowledge/topics/overview.md)"));
+        assert!(index.contains("- [Design Notes](documents/design.md)"));
+        assert!(index.contains("## Sources"));
+        assert!(index.contains("- [raw/sources/example.md](raw/sources/example.md)"));
+
+        // llms-full.txt: real content for present docs, placeholder for missing ones.
+        let full = fs::read_to_string(root.join("outputs/llms-full.txt")).expect("llms full");
+        assert!(full.starts_with("# GWiki Vault Content"));
+        assert!(full.contains("## Overview"));
+        assert!(full.contains("`knowledge/topics/overview.md`"));
+        assert!(full.contains("Vault entrypoint."));
+        // design.md was never written to disk, so it degrades gracefully.
+        assert!(full.contains("## Design Notes"));
+        assert!(full.contains("_(content unavailable)_"));
+    }
+
+    #[test]
+    fn agent_exports_do_not_mutate_vault() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let overview = root.join("knowledge/topics/overview.md");
+        fs::create_dir_all(overview.parent().expect("overview parent")).expect("overview dir");
+        fs::write(&overview, "# Overview\n\nVault entrypoint.\n").expect("overview page");
+        let before = fs::read_to_string(&overview).expect("read before");
+
+        export_agent_artifacts(
+            root,
+            &agent_export_facts(SearchScope::project("project-123")),
+            GraphExportOptions::available(),
+        )
+        .expect("agent artifacts exported");
+
+        assert_eq!(fs::read_to_string(&overview).expect("read after"), before);
+    }
+
+    #[test]
+    fn agent_exports_clean_up_on_write_failure() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let root = temp.path();
+        let outputs = root.join("outputs");
+        fs::create_dir_all(&outputs).expect("outputs dir");
+        // A directory at the llms.txt path forces the second write to fail.
+        fs::create_dir(outputs.join("llms.txt")).expect("blocking dir");
+
+        let error = export_agent_artifacts(
+            root,
+            &agent_export_facts(SearchScope::project("project-123")),
+            GraphExportOptions::available(),
+        )
+        .expect_err("blocked llms.txt path should fail");
+
+        assert!(error.to_string().contains("llms.txt"));
+        // The earlier graph.jsonld artifact is rolled back.
+        assert!(!outputs.join("graph.jsonld").exists());
     }
 }
