@@ -913,6 +913,77 @@ def test_list_dream_project_ids_returns_due_distinct_scopes(memory_manager, db) 
     ) + [None]
 
 
+def test_list_dream_project_ids_far_future_cutoff_returns_all_with_memories(
+    memory_manager, db
+) -> None:
+    """Far-future cutoff enumerates every project with live memories.
+
+    Codewiki freshness registration uses this idiom: a cutoff past every
+    possible ``last_dreamed_at`` makes each live memory "due", so the result is
+    exactly the set of projects (plus the global NULL scope) the per-project
+    dream sweep will judge. Soft-deleted-only projects stay excluded.
+    """
+    project_dreamed = str(uuid.uuid4())
+    project_hidden = str(uuid.uuid4())
+    for project_id in [project_dreamed, project_hidden]:
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            (project_id, f"Project {project_id}"),
+        )
+    far_future = "9999-12-31T23:59:59+00:00"
+    just_now = datetime.now(UTC).isoformat()
+
+    fresh = memory_manager.create_memory(content="freshly dreamed", project_id=project_dreamed)
+    memory_manager.mark_dreamed(fresh.id, when=just_now)
+    hidden = memory_manager.create_memory(content="hidden only", project_id=project_hidden)
+    memory_manager.mark_dreamed(hidden.id, hidden_as="delete", when=just_now)
+    memory_manager.create_memory(content="global memory", project_id=None)
+
+    result = memory_manager.list_dream_project_ids(redream_cutoff=far_future)
+
+    # Freshly-dreamed project is included (cooldown neutralized) alongside the
+    # global NULL scope; the soft-deleted-only project is excluded.
+    assert project_dreamed in result
+    assert None in result
+    assert project_hidden not in result
+
+
+def test_mark_project_memories_due_resets_only_live_project_rows(memory_manager, db) -> None:
+    """The truth-change force-due touches only a project's stamped, live rows.
+
+    Never-dreamed rows are already due, soft-hidden rows must stay hidden, and
+    other projects' cooldowns must not bleed — the trigger is per-project.
+    """
+    project_a = str(uuid.uuid4())
+    project_b = str(uuid.uuid4())
+    for project_id in [project_a, project_b]:
+        db.execute(
+            "INSERT INTO projects (id, name) VALUES (%s, %s)",
+            (project_id, f"Project {project_id}"),
+        )
+    when = datetime.now(UTC).isoformat()
+
+    dreamed = memory_manager.create_memory(content="a dreamed", project_id=project_a)
+    memory_manager.mark_dreamed(dreamed.id, when=when)
+    never = memory_manager.create_memory(content="a never dreamed", project_id=project_a)
+    hidden = memory_manager.create_memory(content="a hidden", project_id=project_a)
+    memory_manager.mark_dreamed(hidden.id, hidden_as="delete", when=when)
+    other = memory_manager.create_memory(content="b dreamed", project_id=project_b)
+    memory_manager.mark_dreamed(other.id, when=when)
+
+    affected = memory_manager.mark_project_memories_due(project_a)
+
+    # Only the stamped, live, project-a row is reset.
+    assert affected == 1
+    assert memory_manager.get_memory(dreamed.id).last_dreamed_at is None
+    assert memory_manager.get_memory(never.id).last_dreamed_at is None  # already NULL
+    # The other project's cooldown is untouched (no cross-project bleed).
+    assert memory_manager.get_memory(other.id).last_dreamed_at is not None
+    # The soft-hidden row stays hidden regardless.
+    with pytest.raises(ValueError, match="not found"):
+        memory_manager.get_memory(hidden.id)
+
+
 def test_list_dream_candidates_memory_type_scope(memory_manager) -> None:
     cutoff = datetime.now(UTC).isoformat()
     fact = memory_manager.create_memory(content="a fact", memory_type="fact")

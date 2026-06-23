@@ -12,6 +12,7 @@ stamp mutations).
 from __future__ import annotations
 
 import asyncio
+import hashlib
 import json
 import logging
 from dataclasses import dataclass, field
@@ -35,6 +36,12 @@ DEFAULT_REDREAM_AFTER_HOURS = 20
 MAX_ACTION_SAMPLE = 50
 MAX_ERROR_DETAILS = 50
 MAX_PLANNER_ERRORS = 50
+
+# A cutoff past every possible ``last_dreamed_at`` makes the due predicate match
+# every live memory, so ``list_dream_project_ids`` returns every project that has
+# memories — including ones fully within the cooldown window. The truth-change
+# trigger needs that full set so a digest change on a cooled project is caught.
+_ALL_MEMORIES_CUTOFF = "9999-12-31T23:59:59+00:00"
 
 
 @dataclass(frozen=True)
@@ -175,11 +182,15 @@ class MemoryDreamService:
     ) -> dict[str, Any]:
         """Sweep every project with due memories, each under its own truth digest.
 
-        Enumerates targets via the cooldown-due predicate, then runs one sweep
-        per target: the NULL/global bucket runs ``global_only`` and real projects
-        run scoped with ``include_global=False`` so the global bucket is swept
-        exactly once. Per-target failures are isolated. Returns an aggregate; the
-        caller decides whether an all-failed batch is an error.
+        Before enumerating (and only when not a dry run), the truth-change
+        trigger clears the cooldown for any project whose codewiki truth digest
+        changed, so a stack shift is re-judged on this sweep even inside the
+        cooldown window. Enumerates
+        targets via the cooldown-due predicate, then runs one sweep per target:
+        the NULL/global bucket runs ``global_only`` and real projects run scoped
+        with ``include_global=False`` so the global bucket is swept exactly once.
+        Per-target failures are isolated. Returns an aggregate; the caller
+        decides whether an all-failed batch is an error.
         """
         if not self.dream_config.enabled:
             return {
@@ -191,6 +202,12 @@ class MemoryDreamService:
                 "mutations": 0,
                 "runs": [],
             }
+
+        await self._ensure_schema_async()
+        if not dry_run:
+            # The truth-change trigger mutates cooldown/hash state, so it is
+            # skipped for preview-only dry runs (which must write nothing).
+            await self._apply_truth_change_triggers()
 
         redream_hours = _positive_int(
             getattr(self.dream_config, "redream_after_hours", DEFAULT_REDREAM_AFTER_HOURS),
@@ -250,6 +267,53 @@ class MemoryDreamService:
             "mutations": mutations,
             "runs": runs,
         }
+
+    async def _apply_truth_change_triggers(self) -> None:
+        """Clear the cooldown for projects whose codewiki truth digest changed.
+
+        A project whose memories are all within the cooldown window is skipped by
+        the due enumeration, so a stack change captured by a codewiki refresh
+        would otherwise wait a full cooldown cycle before being re-judged. For
+        every memory-bearing project this compares the current rendered truth
+        digest against the last-seen hash; on a change it clears that project's
+        cooldown cursor so the upcoming sweep re-judges its memories against the
+        new stack, then records the new hash. The global/NULL bucket and the
+        daemon's own project use platform truth rather than a per-project
+        codewiki digest and are skipped. Per-project failures are isolated.
+        """
+        project_ids = await asyncio.to_thread(
+            self.memory_manager.list_dream_project_ids,
+            redream_cutoff=_ALL_MEMORIES_CUTOFF,
+        )
+        for project_id in project_ids:
+            if project_id is None or self._is_current_daemon_project(project_id):
+                continue
+            try:
+                repo_path = self._resolve_repo_path(project_id)
+                if not repo_path:
+                    continue
+                digest = build_project_truth_digest(repo_path)
+                if not digest:
+                    continue
+                digest_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+                previous = await asyncio.to_thread(self.store.get_truth_digest_hash, project_id)
+                if previous == digest_hash:
+                    continue
+                reset = await asyncio.to_thread(
+                    self.memory_manager.mark_project_memories_due, project_id
+                )
+                await asyncio.to_thread(self.store.set_truth_digest_hash, project_id, digest_hash)
+                logger.info(
+                    "memory dream: truth digest changed for project %s; "
+                    "cleared cooldown for %d memory(ies)",
+                    project_id,
+                    reset,
+                )
+            except Exception:
+                logger.exception(
+                    "memory dream: truth-change trigger failed for project %s",
+                    project_id,
+                )
 
     async def _ensure_schema_async(self) -> None:
         if self._schema_ready:

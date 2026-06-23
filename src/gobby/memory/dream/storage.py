@@ -182,6 +182,15 @@ class MemoryDreamStore:
             END $$;
             """
         )
+        self.db.execute(
+            """
+            CREATE TABLE IF NOT EXISTS memory_dream_truth_state (
+                project_id TEXT PRIMARY KEY,
+                digest_hash TEXT NOT NULL,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+            )
+            """
+        )
 
     def create_run(
         self,
@@ -233,6 +242,27 @@ class MemoryDreamStore:
         for key in ("options", "plan", "summary"):
             result[key] = _decode(result.get(key))
         return result
+
+    def get_truth_digest_hash(self, project_id: str) -> str | None:
+        """Return the last-seen codewiki truth-digest hash for a project."""
+        row = self.db.fetchone(
+            "SELECT digest_hash FROM memory_dream_truth_state WHERE project_id = %s",
+            (project_id,),
+        )
+        return str(row["digest_hash"]) if row is not None else None
+
+    def set_truth_digest_hash(self, project_id: str, digest_hash: str) -> None:
+        """Record the current codewiki truth-digest hash for a project."""
+        self.db.execute(
+            """
+            INSERT INTO memory_dream_truth_state (project_id, digest_hash, updated_at)
+            VALUES (%s, %s, NOW())
+            ON CONFLICT (project_id) DO UPDATE
+                SET digest_hash = EXCLUDED.digest_hash,
+                    updated_at = EXCLUDED.updated_at
+            """,
+            (project_id, digest_hash),
+        )
 
     def mark_interrupted_runs(self, *, error: str = INTERRUPTED_RESTART_ERROR) -> list[str]:
         """Reconcile runs orphaned in a non-terminal state to 'interrupted'.

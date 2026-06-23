@@ -334,22 +334,58 @@ def init_orchestration(runner: GobbyRunner) -> None:
                 logger.error("Failed to register code index prune cron handler: %s", e)
 
             try:
-                from gobby.code_index.codewiki_nightly import register_codewiki_nightly_cron
+                from gobby.code_index.codewiki_nightly import (
+                    register_codewiki_nightly_crons,
+                )
 
+                # Codewiki freshness must cover every project the memory dream
+                # judges per-project, not just the runner: each project's sweep
+                # reads its own gobby-wiki/_meta/truth_digest.json, so a project
+                # whose codewiki is never refreshed is judged against a stale or
+                # absent digest. Register a nightly refresh for the runner
+                # project plus every memory-bearing project with a repo path.
+                codewiki_targets: dict[str, str] = {}
                 current_project = pm.get(runner.project_id) if runner.project_id else None
-                if current_project is None or not current_project.repo_path:
+                if current_project is not None and current_project.repo_path:
+                    codewiki_targets[current_project.id] = current_project.repo_path
+
+                if runner.memory_manager is not None:
+                    # A far-future cutoff makes every live memory "due", so the
+                    # dream enumeration returns every project that has memories
+                    # — the exact set the per-project sweep will judge.
+                    all_memories_cutoff = "9999-12-31T23:59:59+00:00"
+                    try:
+                        memory_project_ids = runner.memory_manager.list_dream_project_ids(
+                            redream_cutoff=all_memories_cutoff
+                        )
+                    except Exception as enum_err:
+                        logger.warning(
+                            "Failed to enumerate memory-bearing projects for codewiki: %s",
+                            enum_err,
+                        )
+                        memory_project_ids = []
+                    for memory_project_id in memory_project_ids:
+                        if memory_project_id is None or memory_project_id in codewiki_targets:
+                            continue
+                        memory_project = pm.get(memory_project_id)
+                        if memory_project is not None and memory_project.repo_path:
+                            codewiki_targets[memory_project_id] = memory_project.repo_path
+
+                if not codewiki_targets:
                     logger.debug(
-                        "Skipping nightly codewiki cron registration; current project has no repo path"
+                        "Skipping nightly codewiki cron registration; no project has a repo path"
                     )
                 else:
-                    register_codewiki_nightly_cron(
+                    registered_count = register_codewiki_nightly_crons(
                         cron_storage=runner.cron_storage,
                         cron_executor=cron_executor,
-                        project_id=current_project.id,
-                        repo_path=current_project.repo_path,
+                        projects=list(codewiki_targets.items()),
                         wiki_config=runner.config.wiki,
                     )
-                    logger.debug("Codewiki nightly cron handler registered")
+                    logger.debug(
+                        "Codewiki nightly cron handlers registered for %d project(s)",
+                        registered_count,
+                    )
             except Exception as e:
                 logger.error("Failed to register codewiki nightly cron handler: %s", e)
 

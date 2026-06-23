@@ -26,6 +26,8 @@ class MemoryDreamManagerProtocol(Protocol):
 
     def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]: ...
 
+    def mark_project_memories_due(self, project_id: str) -> int: ...
+
     def mark_dreamed(
         self,
         memory_id: str,

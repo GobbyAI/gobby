@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+from collections.abc import Iterable
 from dataclasses import replace
 from pathlib import Path
 from typing import Protocol
@@ -137,6 +138,44 @@ def register_codewiki_nightly_cron(
     if repaired is not None:
         _reconcile_enabled_state(cron_storage, repaired, enabled)
     return 1
+
+
+def register_codewiki_nightly_crons(
+    *,
+    cron_storage: CronJobStorage,
+    cron_executor: CronRegistrationProtocol,
+    projects: Iterable[tuple[str, str | Path]],
+    wiki_config: WikiConfig,
+    refresh_service: CodewikiRefreshService | None = None,
+) -> int:
+    """Register the nightly codewiki cron for each ``(project_id, repo_path)``.
+
+    Every project the memory dream judges per-project reads its own
+    ``gobby-wiki/_meta/truth_digest.json``; a project whose codewiki is never
+    refreshed is judged against a stale or absent digest. Registering one
+    nightly refresh per memory-bearing repo keeps those digests fresh.
+
+    Project IDs are de-duplicated and entries without a repo path are skipped.
+    A single shared ``CodewikiRefreshService`` backs every registered handler.
+    Returns the number of projects registered.
+    """
+    service = refresh_service or CodewikiRefreshService()
+    seen: set[str] = set()
+    registered = 0
+    for project_id, repo_path in projects:
+        if not project_id or project_id in seen or not repo_path:
+            continue
+        seen.add(project_id)
+        register_codewiki_nightly_cron(
+            cron_storage=cron_storage,
+            cron_executor=cron_executor,
+            project_id=project_id,
+            repo_path=repo_path,
+            wiki_config=wiki_config,
+            refresh_service=service,
+        )
+        registered += 1
+    return registered
 
 
 def resolve_codewiki_nightly_timezone(configured_timezone: str | None = None) -> str:

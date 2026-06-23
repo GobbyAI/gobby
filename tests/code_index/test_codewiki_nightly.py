@@ -13,6 +13,7 @@ from gobby.code_index.codewiki_nightly import (
     codewiki_nightly_job_name,
     create_codewiki_nightly_handler,
     register_codewiki_nightly_cron,
+    register_codewiki_nightly_crons,
 )
 from gobby.code_index.codewiki_refresh import (
     CodewikiRefreshRequest,
@@ -23,6 +24,7 @@ from gobby.code_index.gcode_gateway import GcodeGatewayError
 from gobby.config.wiki import WikiConfig
 from gobby.storage.cron import CronJobStorage
 from gobby.storage.cron_models import CronJob
+from gobby.storage.projects import LocalProjectManager
 
 if TYPE_CHECKING:
     from gobby.storage.hub.protocol import HubDatabase
@@ -138,6 +140,46 @@ def test_register_codewiki_nightly_cron_reconciles_single_utc_system_job(
     assert updated.cron_expr == "0 4 * * *"
     assert updated.next_run_at is not None
     assert updated.next_run_at.endswith("+00:00")
+
+
+def test_register_codewiki_nightly_crons_covers_each_project_once(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """Batch registration covers every memory-bearing repo, deduped, repo-gated."""
+    pm = LocalProjectManager(temp_db)
+    repo_a = tmp_path / "a"
+    repo_b = tmp_path / "b"
+    project_a = pm.create(name="codewiki-a", repo_path=str(repo_a))
+    project_b = pm.create(name="codewiki-b", repo_path=str(repo_b))
+    # A repo-less project ID that does not exist in ``projects``: it must be
+    # skipped on the empty-repo gate before any FK-touching cron write.
+    no_repo_project = "33333333-3333-3333-3333-333333333333"
+
+    storage = CronJobStorage(temp_db)
+    executor = FakeCronExecutor()
+
+    registered = register_codewiki_nightly_crons(
+        cron_storage=storage,
+        cron_executor=executor,
+        # project_a appears twice (dedup) and no_repo_project has no repo path.
+        projects=[
+            (project_a.id, repo_a),
+            (project_b.id, repo_b),
+            (project_a.id, repo_a),
+            (no_repo_project, ""),
+        ],
+        wiki_config=WikiConfig(codewiki_nightly_enabled=True),
+    )
+
+    assert registered == 2
+    assert set(executor.handlers) == {
+        codewiki_nightly_handler_name(project_a.id),
+        codewiki_nightly_handler_name(project_b.id),
+    }
+    assert storage.get_job_by_name(codewiki_nightly_job_name(project_a.id)) is not None
+    assert storage.get_job_by_name(codewiki_nightly_job_name(project_b.id)) is not None
+    assert storage.get_job_by_name(codewiki_nightly_job_name(no_repo_project)) is None
 
 
 async def test_codewiki_nightly_handler_returns_success_output(tmp_path: Path) -> None:

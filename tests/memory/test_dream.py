@@ -6,7 +6,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -23,6 +23,7 @@ from gobby.memory.dream.models import (
 )
 from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
+from gobby.memory.dream.protocols import MemoryDreamManagerProtocol
 from gobby.memory.dream.service import (
     DreamRunOptions,
     MemoryDreamService,
@@ -36,6 +37,9 @@ from gobby.memory.dream.storage import (
     MemoryDreamStore,
 )
 from gobby.memory.dream.truth_digest import build_current_truth_digest, build_project_truth_digest
+from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.memories import LocalMemoryManager
+from gobby.storage.projects import LocalProjectManager
 
 pytestmark = pytest.mark.unit
 
@@ -1943,6 +1947,58 @@ async def test_run_all_due_projects_disabled_returns_empty_aggregate_without_enu
     assert result["error"] == "memory dream is disabled"
     assert result["targets"] == 0
     assert manager.cutoffs == []  # never enumerated when disabled
+
+
+@pytest.mark.asyncio
+async def test_truth_change_trigger_rejudges_cooled_memory_on_digest_change(
+    temp_db: HubDatabase,
+    tmp_path: Path,
+) -> None:
+    """A codewiki digest change clears the cooldown for a cooled project.
+
+    The whole point of the truth-change trigger: when a project's codewiki
+    ``truth_digest.json`` changes, its memories must be re-judged on the next
+    sweep **even inside the cooldown window**. A memory dreamed moments ago is
+    firmly cooled (a normal cooldown-throttled sweep would skip it), yet a digest
+    change must make it due again; an unchanged digest must leave it cooled.
+    """
+    pm = LocalProjectManager(temp_db)
+    repo = tmp_path / "repo"
+    project = pm.create(name="truth-trigger-proj", repo_path=str(repo))
+    manager = LocalMemoryManager(temp_db)
+    service = MemoryDreamService(
+        memory_manager=cast(MemoryDreamManagerProtocol, manager),
+        dream_config=_sweep_config(),
+    )
+    await service._ensure_schema_async()
+
+    just_now = datetime.now(UTC).isoformat()
+    cooldown_cutoff = (datetime.now(UTC) - timedelta(hours=20)).isoformat()
+    memory = manager.create_memory(content="project stack fact", project_id=project.id)
+
+    def recool() -> None:
+        """Stamp the memory as dreamed now, so it sits inside the cooldown."""
+        manager.mark_dreamed(memory.id, when=just_now)
+
+    # First observation records the baseline hash (and clears the cooldown once
+    # on first sight). Re-cool afterwards so the project is genuinely not due.
+    _write_truth_digest(repo, _complete_digest_payload(service="PostgreSQL hub"))
+    await service._apply_truth_change_triggers()
+    recool()
+    assert manager.get_memory(memory.id).last_dreamed_at is not None
+    assert project.id not in manager.list_dream_project_ids(redream_cutoff=cooldown_cutoff)
+
+    # Unchanged digest: the trigger is a no-op, the memory stays cooled.
+    await service._apply_truth_change_triggers()
+    assert manager.get_memory(memory.id).last_dreamed_at is not None
+    assert project.id not in manager.list_dream_project_ids(redream_cutoff=cooldown_cutoff)
+
+    # Changed digest: the cooldown is cleared, so the cooled memory is due again
+    # and would be swept on the next run despite still being inside the window.
+    _write_truth_digest(repo, _complete_digest_payload(service="FalkorDB graph"))
+    await service._apply_truth_change_triggers()
+    assert manager.get_memory(memory.id).last_dreamed_at is None
+    assert project.id in manager.list_dream_project_ids(redream_cutoff=cooldown_cutoff)
 
 
 def test_build_truth_digest_requires_explicit_scope() -> None:

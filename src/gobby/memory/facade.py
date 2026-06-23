@@ -263,6 +263,10 @@ class MemoryManagerFacadeMethods:
         """Delegate to storage for due dream sweep project scopes."""
         return self.storage.list_dream_project_ids(redream_cutoff=redream_cutoff)
 
+    def mark_project_memories_due(self, project_id: str) -> int:
+        """Delegate to storage: clear the dream cooldown for a project's memories."""
+        return self.storage.mark_project_memories_due(project_id)
+
     def mark_dreamed(
         self,
         memory_id: str,
