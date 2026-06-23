@@ -277,6 +277,9 @@ shift_enter_investigation.md
 2048-game/
 package-lock.json
 
+# Local scratch / throwaway harnesses (never committed)
+scratchpad/
+
 # MCP config (contains machine-specific absolute paths)
 .mcp.json
 

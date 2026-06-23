@@ -28,6 +28,7 @@ from gobby.ai import (
 )
 from gobby.ai._text_generation_builder import _daemon_text_generation_adapter_factories
 from gobby.ai._text_generation_helpers import _CandidateTimeoutError, _coerce_text_result
+from gobby.ai._text_generation_service import _gate_reasoning_effort
 from gobby.ai.text_generation import (
     ONE_SHOT_DIRECTIVE,
     FeatureGenerationUnavailableError,
@@ -1124,9 +1125,11 @@ async def test_text_generation_service_accepts_valid_effort_for_reasoning_provid
         ("gemini-3.5-flash", "medium", "medium"),
         ("gemini-3.1-pro", None, "high"),
         ("gemini-3.1-pro", "auto", "high"),
-        ("claude-sonnet-4-6", None, "thinking"),
-        ("claude-sonnet-4-6", "auto", "thinking"),
-        ("claude-opus-4-6", None, "thinking"),
+        ("claude-sonnet-4-6", None, "high"),
+        ("claude-sonnet-4-6", "auto", "high"),
+        ("claude-sonnet-4-6", "high", "high"),
+        ("claude-opus-4-6", None, "high"),
+        ("claude-opus-4-6", "high", "high"),
         ("gpt-oss-120b", "auto", "medium"),
     ],
 )
@@ -1171,6 +1174,28 @@ async def test_text_generation_service_resolves_agy_effort_before_adapter(
             reasoning_effort=expected,
         )
     ]
+
+
+def test_gate_reasoning_effort_skips_agy_without_explicit_model() -> None:
+    binding = CapabilityBinding(
+        capability=AICapability.TEXT_GENERATE,
+        provider="agy",
+        adapter_style=AIAdapterStyle.CLI,
+        available=True,
+        models=("gemini-3.5-flash", "gemini-3.1-pro"),
+        strict_models=True,
+    )
+    request = TextGenerationRequest(
+        prompt="summarize", provider="agy", reasoning_effort="auto"
+    )
+
+    gated = _gate_reasoning_effort(request, binding=binding)
+
+    # No explicit model: the adapter emits no --model, so the gate must not
+    # resolve effort against binding.models[0]. The request passes through
+    # untouched instead of being stamped with the first model's default.
+    assert gated is request
+    assert gated.reasoning_effort == "auto"
 
 
 @pytest.mark.asyncio
@@ -1225,6 +1250,7 @@ async def test_text_generation_service_rejects_invalid_agy_effort_pair_and_falls
     [
         ("gemini-3.1-pro", "medium"),
         ("claude-sonnet-4-6", "low"),
+        ("claude-sonnet-4-6", "thinking"),
     ],
 )
 @pytest.mark.asyncio
@@ -3268,8 +3294,8 @@ def test_agy_cli_text_generate_adapter_omits_model_when_not_requested() -> None:
         ("gemini-3.1-pro", "auto", "Gemini 3.1 Pro (High)"),
         ("claude-sonnet-4-6", None, "Claude Sonnet 4.6 (Thinking)"),
         ("claude-sonnet-4-6", "auto", "Claude Sonnet 4.6 (Thinking)"),
-        ("claude-sonnet-4-6", "thinking", "Claude Sonnet 4.6 (Thinking)"),
-        ("claude-opus-4-6", "thinking", "Claude Opus 4.6 (Thinking)"),
+        ("claude-sonnet-4-6", "high", "Claude Sonnet 4.6 (Thinking)"),
+        ("claude-opus-4-6", "high", "Claude Opus 4.6 (Thinking)"),
         ("gpt-oss-120b", None, "GPT-OSS 120B (Medium)"),
     ],
 )
@@ -3292,6 +3318,7 @@ def test_agy_cli_text_generate_adapter_composes_effort_model_display(
     [
         ("gemini-3.1-pro", "medium"),
         ("claude-sonnet-4-6", "low"),
+        ("claude-sonnet-4-6", "thinking"),
     ],
 )
 def test_agy_cli_text_generate_adapter_rejects_invalid_effort_model_pair(

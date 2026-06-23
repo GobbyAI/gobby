@@ -98,11 +98,15 @@ def _gate_reasoning_effort(
     binding: CapabilityBinding,
 ) -> TextGenerationRequest:
     if binding.provider == "agy":
-        model = request.model or next(iter(binding.models), None)
-        if model is None:
+        # Resolve effort only against an explicit model. The adapter composes
+        # --model solely from request.model (no binding fallback), so resolving
+        # against binding.models[0] here would stamp an effort for a model the
+        # adapter never sends. strict_models keeps request.model populated at
+        # selection; this guard just keeps gate and adapter in lockstep.
+        if request.model is None:
             return request
         try:
-            resolved = resolve_agy_effort(model, request.reasoning_effort)
+            resolved = resolve_agy_effort(request.model, request.reasoning_effort)
         except ValueError as exc:
             raise _ReasoningEffortRejectedError(str(exc)) from exc
         if request.reasoning_effort == resolved:

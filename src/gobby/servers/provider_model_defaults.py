@@ -79,12 +79,15 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
         "context_length": 200_000,
         "context_length_source": "provider_catalog",
         "availability_source": "agy-1.0.10-static",
+        # AGY exposes a single thinking-mode variant; key it on the standard
+        # "high" effort (display string unchanged) so the natural request
+        # reasoning_effort="high" resolves instead of being rejected.
         "effort_display": {
-            "thinking": "Claude Sonnet 4.6 (Thinking)",
+            "high": "Claude Sonnet 4.6 (Thinking)",
         },
         "reasoning": {
-            "supported_efforts": ["thinking"],
-            "default_effort": "thinking",
+            "supported_efforts": ["high"],
+            "default_effort": "high",
         },
     },
     "claude-opus-4-6": {
@@ -96,12 +99,13 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
         "context_length": 1_000_000,
         "context_length_source": "provider_catalog",
         "availability_source": "agy-1.0.10-static",
+        # See claude-sonnet-4-6: thinking-mode keyed on "high".
         "effort_display": {
-            "thinking": "Claude Opus 4.6 (Thinking)",
+            "high": "Claude Opus 4.6 (Thinking)",
         },
         "reasoning": {
-            "supported_efforts": ["thinking"],
-            "default_effort": "thinking",
+            "supported_efforts": ["high"],
+            "default_effort": "high",
         },
     },
     "gpt-oss-120b": {

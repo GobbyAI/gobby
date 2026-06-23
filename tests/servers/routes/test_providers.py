@@ -190,7 +190,7 @@ class TestProviderModelsRoute:
             "default_effort": "high",
         }
         assert agy_by_id["claude-opus-4-6"]["effort_display"] == {
-            "thinking": "Claude Opus 4.6 (Thinking)",
+            "high": "Claude Opus 4.6 (Thinking)",
         }
         assert agy_by_id["gpt-oss-120b"]["context_length"] == 131_072
 
