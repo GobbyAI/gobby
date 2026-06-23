@@ -26,7 +26,9 @@ from gobby.memory.dream.planner import build_raw_plan
 from gobby.memory.dream.service import (
     DreamRunOptions,
     MemoryDreamService,
+    _completed_mutation_count,
     _decode_raw_plan_metadata,
+    _result_run_id,
 )
 from gobby.memory.dream.storage import (
     INTERRUPTED_CANCELLED_ERROR,
@@ -986,7 +988,7 @@ async def test_memory_dream_service_persists_interrupted_status_on_cancellation(
     service._stream_sweep = AsyncMock(side_effect=asyncio.CancelledError())
 
     with pytest.raises(asyncio.CancelledError):
-        await service.execute_run(run_id, DreamRunOptions())
+        await service.execute_run(run_id, DreamRunOptions(project_id="proj-1"))
 
     run = service.store.get_run(run_id)
     assert run is not None
@@ -1063,7 +1065,7 @@ def _complete_digest_payload(service: str = "React UI") -> dict[str, Any]:
 
 
 async def _capture_service_truth_digest(
-    db: "_FakeDreamDB",
+    db: _FakeDreamDB,
     options: DreamRunOptions,
     *,
     current_project_id: str | None = None,
@@ -1429,7 +1431,7 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
         memory_manager=manager, dream_config=_sweep_config(page_size=2), llm_service=None
     )
 
-    result = await service.run(DreamRunOptions())
+    result = await service.run(DreamRunOptions(project_id="proj-1"))
 
     assert result["success"] is True
     summary = result["run"]["summary"]
@@ -1439,7 +1441,7 @@ async def test_streaming_sweep_drains_and_immediate_rerun_is_noop() -> None:
     assert summary["actions"].get("keep") == 5
     assert all(row["last_dreamed_at"] is not None for row in db.memories.values())
 
-    rerun = await service.run(DreamRunOptions())
+    rerun = await service.run(DreamRunOptions(project_id="proj-1"))
 
     # Everything was just stamped inside the cooldown window, so the re-run is a no-op.
     assert rerun["success"] is True
@@ -1466,7 +1468,7 @@ async def test_streaming_sweep_soft_hides_obsolete_and_keeps_current() -> None:
     }
 
     with patch("gobby.memory.dream.service.build_raw_plan", AsyncMock(return_value=canned)):
-        result = await service.run(DreamRunOptions())
+        result = await service.run(DreamRunOptions(project_id="proj-1"))
 
     assert result["success"] is True
     assert db.memories["obsolete"]["deleted_at"] is not None
@@ -1496,7 +1498,7 @@ async def test_dry_run_previews_without_writing_or_stamping() -> None:
     }
 
     with patch("gobby.memory.dream.service.build_raw_plan", AsyncMock(return_value=canned)):
-        result = await service.run(DreamRunOptions(dry_run=True))
+        result = await service.run(DreamRunOptions(dry_run=True, project_id="proj-1"))
 
     assert result["success"] is True
     # Dry-run is a single bounded preview pass: no memory, snapshot, or stamp writes.
@@ -1718,16 +1720,16 @@ async def test_full_sweep_ignores_cooldown_and_reviews_all() -> None:
         memory_manager=manager, dream_config=_sweep_config(page_size=2), llm_service=None
     )
 
-    first = await service.run(DreamRunOptions())
+    first = await service.run(DreamRunOptions(project_id="proj-1"))
     assert first["run"]["summary"]["candidates_reviewed"] == 5
 
     # A default rerun is a no-op: everything was just stamped inside the cooldown.
-    cooldown_rerun = await service.run(DreamRunOptions())
+    cooldown_rerun = await service.run(DreamRunOptions(project_id="proj-1"))
     assert cooldown_rerun["run"]["summary"]["candidates_reviewed"] == 0
 
     # full_sweep bypasses the cooldown and reviews the whole corpus again, draining
     # to completion (the page loop still terminates via per-page stamping).
-    full = await service.run(DreamRunOptions(full_sweep=True))
+    full = await service.run(DreamRunOptions(project_id="proj-1", full_sweep=True))
     assert full["success"] is True
     assert full["run"]["summary"]["candidates_reviewed"] == 5
     assert full["run"]["summary"]["pages"] == 3  # ceil(5 / 2)
@@ -1755,12 +1757,183 @@ async def test_full_sweep_cutoff_is_run_start_not_cooldown_window() -> None:
         llm_service=None,
     )
 
-    await service.run(DreamRunOptions())  # cooldown path: cutoff = run_start - 20h
+    await service.run(DreamRunOptions(project_id="proj-1"))  # cooldown: cutoff = run_start - 20h
     normal_cutoff = datetime.fromisoformat(manager.cutoffs[0])
-    await service.run(DreamRunOptions(full_sweep=True))  # full path: cutoff = run_start
+    await service.run(
+        DreamRunOptions(project_id="proj-1", full_sweep=True)
+    )  # full path: cutoff = run_start
     full_cutoff = datetime.fromisoformat(manager.cutoffs[-1])
 
     # full_sweep anchors the cutoff at run start; the cooldown path subtracts 20h.
     # The full run also fires slightly later, so the gap is ~20h (assert >= 19h to
     # absorb wall-clock jitter between the two runs).
     assert full_cutoff - normal_cutoff >= timedelta(hours=19)
+
+
+class _FakeDueProjectsManager:
+    """Manager exposing only list_dream_project_ids (+ a stub db) so the
+    run_all_due_projects loop can be tested with a patched per-target run()."""
+
+    def __init__(self, targets: list[str | None]) -> None:
+        self.targets = targets
+        self.cutoffs: list[str] = []
+        self.db = MagicMock()
+
+    def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]:
+        self.cutoffs.append(redream_cutoff)
+        return list(self.targets)
+
+
+@pytest.mark.asyncio
+async def test_run_all_due_projects_loops_targets_with_per_target_scope(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _FakeDueProjectsManager(["proj-a", None, "proj-b"])
+    service = MemoryDreamService(
+        memory_manager=manager,
+        dream_config=_sweep_config(),
+        current_project_id="daemon-proj",
+    )
+    recorded: list[DreamRunOptions] = []
+
+    async def fake_run(options: DreamRunOptions) -> dict[str, Any]:
+        recorded.append(options)
+        idx = len(recorded)
+        mutations = 2 if options.global_only else 1
+        return {
+            "success": True,
+            "run_id": f"run-{idx}",
+            "run": {"id": f"run-{idx}", "summary": {"mutations": mutations}},
+        }
+
+    monkeypatch.setattr(service, "run", fake_run)
+
+    result = await service.run_all_due_projects(dry_run=True, memory_type="fact", full_sweep=True)
+
+    # Enumeration runs once; the cutoff comes from redream_after_hours.
+    assert len(manager.cutoffs) == 1
+    assert result["success"] is True
+    assert result["targets"] == 3
+    assert result["completed"] == 3
+    assert result["failed"] == 0
+    assert result["mutations"] == 4  # 1 (proj-a) + 2 (global) + 1 (proj-b)
+
+    # The NULL/global bucket runs global_only; real projects run scoped with the
+    # global bucket excluded so it is swept exactly once. Manual flags pass through.
+    scopes = [
+        (o.project_id, o.global_only, o.include_global, o.dry_run, o.memory_type, o.full_sweep)
+        for o in recorded
+    ]
+    assert scopes == [
+        ("proj-a", False, False, True, "fact", True),
+        (None, True, None, True, "fact", True),
+        ("proj-b", False, False, True, "fact", True),
+    ]
+    assert [r["project_id"] for r in result["runs"]] == ["proj-a", None, "proj-b"]
+    assert [r["run_id"] for r in result["runs"]] == ["run-1", "run-2", "run-3"]
+
+
+@pytest.mark.asyncio
+async def test_run_all_due_projects_isolates_target_failure(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _FakeDueProjectsManager(["proj-ok", "proj-bad", None])
+    service = MemoryDreamService(memory_manager=manager, dream_config=_sweep_config())
+
+    async def fake_run(options: DreamRunOptions) -> dict[str, Any]:
+        if options.project_id == "proj-bad":
+            raise RuntimeError("boom")
+        return {"success": True, "run_id": "r", "run": {"id": "r", "summary": {"mutations": 2}}}
+
+    monkeypatch.setattr(service, "run", fake_run)
+
+    result = await service.run_all_due_projects()
+
+    assert result["success"] is True  # one failure does not fail the whole batch
+    assert result["completed"] == 2
+    assert result["failed"] == 1
+    assert result["mutations"] == 4
+    bad = next(r for r in result["runs"] if r["project_id"] == "proj-bad")
+    assert bad["success"] is False
+    assert "boom" in bad["error"]
+
+
+@pytest.mark.asyncio
+async def test_run_all_due_projects_all_failed_marks_aggregate_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    manager = _FakeDueProjectsManager(["proj-bad", None])
+    service = MemoryDreamService(memory_manager=manager, dream_config=_sweep_config())
+
+    async def fake_run(options: DreamRunOptions) -> dict[str, Any]:
+        raise RuntimeError("nope")
+
+    monkeypatch.setattr(service, "run", fake_run)
+
+    result = await service.run_all_due_projects()
+
+    assert result["success"] is False
+    assert result["completed"] == 0
+    assert result["failed"] == 2
+
+
+@pytest.mark.asyncio
+async def test_run_all_due_projects_disabled_returns_empty_aggregate_without_enumerating() -> None:
+    manager = _FakeDueProjectsManager(["proj-a"])
+    service = MemoryDreamService(
+        memory_manager=manager,
+        dream_config=SimpleNamespace(enabled=False),
+    )
+
+    result = await service.run_all_due_projects()
+
+    assert result["success"] is False
+    assert result["error"] == "memory dream is disabled"
+    assert result["targets"] == 0
+    assert manager.cutoffs == []  # never enumerated when disabled
+
+
+def test_build_truth_digest_requires_explicit_scope() -> None:
+    db = _FakeDreamDB()
+    service = MemoryDreamService(memory_manager=_FakeSweepManager(db), dream_config=_sweep_config())
+
+    # An unscoped sweep (no project_id, not global_only) must never silently
+    # default to platform truth across all projects — that was the contamination
+    # bug. Such runs must fan out through run_all_due_projects instead.
+    with pytest.raises(ValueError, match="run_all_due_projects"):
+        service._build_truth_digest(DreamRunOptions())
+
+
+def test_completed_mutation_count_coerces_string_and_warns(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    assert (
+        _completed_mutation_count(
+            {"success": True, "run": {"id": "r", "summary": {"mutations": "2"}}}
+        )
+        == 2
+    )
+    caplog.set_level("WARNING", logger="gobby.memory.dream.service")
+    assert (
+        _completed_mutation_count(
+            {"success": True, "run": {"id": "r", "summary": {"mutations": "bad"}}}
+        )
+        == 0
+    )
+    assert "Invalid memory dream mutation count: value='bad' type=str" in caplog.text
+
+
+def test_completed_mutation_count_raises_on_bad_result() -> None:
+    with pytest.raises(RuntimeError, match="non-object"):
+        _completed_mutation_count("nope")
+    with pytest.raises(RuntimeError, match="boom"):
+        _completed_mutation_count({"success": False, "error": "boom"})
+    with pytest.raises(RuntimeError, match="without run_id"):
+        _completed_mutation_count({"success": True, "run": {"summary": {"mutations": 1}}})
+
+
+def test_result_run_id_prefers_top_level_then_nested() -> None:
+    assert _result_run_id({"run_id": "top", "run": {"id": "nested"}}) == "top"
+    assert _result_run_id({"run": {"id": "nested"}}) == "nested"
+    assert _result_run_id({"success": True}) is None
+    assert _result_run_id("not a dict") is None

@@ -7,6 +7,7 @@ import logging
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
+from gobby.app_context import get_app_context
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.memory.dream.service import DreamRunOptions, MemoryDreamService
 from gobby.memory.manager import MemoryManager
@@ -107,11 +108,15 @@ def register_memory_dream_tools(
         if service is not None:
             return service
         dream_config = getattr(getattr(config, "memory", None), "dream", None)
+        # current_project_id is the daemon's own project identity (used to route
+        # the daemon's own memories to platform truth). It is NOT the per-call
+        # project: get_project_id() is the contextual sweep scope.
         service = MemoryDreamService(
             memory_manager=memory_manager,
             dream_config=dream_config,
             llm_service=llm_service,
             daemon_config=config,
+            current_project_id=getattr(get_app_context(), "project_id", None),
         )
         return service
 
@@ -127,11 +132,21 @@ def register_memory_dream_tools(
         full_sweep: bool = False,
     ) -> dict[str, Any]:
         service = _service()
+        project_id = get_project_id()
+        if project_id is None:
+            # No project context → sweep every project with due memories, each
+            # judged against its own truth digest, and return an aggregate.
+            return await service.run_all_due_projects(
+                dry_run=dry_run,
+                skip_consolidation=skip_consolidation,
+                memory_type=memory_type,
+                full_sweep=full_sweep,
+            )
         options = DreamRunOptions(
             dry_run=dry_run,
             skip_consolidation=skip_consolidation,
             memory_type=memory_type,
-            project_id=get_project_id(),
+            project_id=project_id,
             full_sweep=full_sweep,
         )
         if wait:

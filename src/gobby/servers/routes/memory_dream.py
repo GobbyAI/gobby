@@ -44,11 +44,24 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
             dream_config=dream_config,
             llm_service=getattr(server, "llm_service", None),
             daemon_config=config,
+            current_project_id=getattr(server.services, "project_id", None),
         )
 
     @router.post("/dream")
     async def memory_dream(request: MemoryDreamRequest) -> Any:
         service = _service()
+        if request.project_id is None:
+            # Unscoped trigger → sweep every project with due memories, each
+            # judged against its own truth digest, and return an aggregate.
+            result = await service.run_all_due_projects(
+                dry_run=request.dry_run,
+                skip_consolidation=request.skip_consolidation,
+                memory_type=request.memory_type,
+                full_sweep=request.full_sweep,
+            )
+            status = 200 if result.get("success") else 500
+            return JSONResponse(status_code=status, content=result)
+
         options = DreamRunOptions(
             dry_run=request.dry_run,
             skip_consolidation=request.skip_consolidation,

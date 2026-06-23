@@ -128,11 +128,13 @@ async def _run_sweep(manager: LocalMemoryManager) -> dict[str, Any]:
         # The storage manager covers the protocol subset this keep/delete sweep
         # exercises (candidates, mark_dreamed, snapshot store via .db); the
         # async consolidation/reconcile members are never reached here.
+        # These memories are global (no project_id); a sweep must carry an
+        # explicit scope, so target the NULL/global bucket directly.
         return await run_memory_dream(
             memory_manager=cast(MemoryDreamManagerProtocol, manager),
             dream_config=_sweep_config(),
             llm_service=None,
-            project_id=None,
+            global_only=True,
         )
 
 

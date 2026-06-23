@@ -102,6 +102,8 @@ class TestMemoryDreamRoutes:
         assert options.project_id == "proj-1"
         assert options.memory_type == "fact"
         mock_server.register_background_task.assert_called_once()
+        # The daemon's own project identity is threaded into the service.
+        assert service_cls.call_args.kwargs["current_project_id"] == "test-project"
 
     def test_wait_dream_returns_completed_run(self, dream_client: TestClient) -> None:
         with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
@@ -112,13 +114,43 @@ class TestMemoryDreamRoutes:
 
             response = dream_client.post(
                 "/memory/dream",
-                json={"wait": True, "skip_consolidation": True},
+                json={"wait": True, "skip_consolidation": True, "project_id": "proj-1"},
             )
 
         assert response.status_code == 200
         assert response.json()["run"]["status"] == "completed"
         service.run.assert_awaited_once()
-        assert service.run.await_args.args[0].skip_consolidation is True
+        options = service.run.await_args.args[0]
+        assert options.skip_consolidation is True
+        assert options.project_id == "proj-1"
+
+    def test_unscoped_dream_runs_all_due_projects(self, dream_client: TestClient) -> None:
+        aggregate = {
+            "success": True,
+            "targets": 2,
+            "completed": 2,
+            "failed": 0,
+            "mutations": 3,
+            "runs": [
+                {"project_id": "proj-1", "success": True, "run_id": "r1", "mutations": 1},
+                {"project_id": None, "success": True, "run_id": "r2", "mutations": 2},
+            ],
+        }
+        with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:
+            service = service_cls.return_value
+            service.run_all_due_projects = AsyncMock(return_value=aggregate)
+            service.run = AsyncMock()
+            service.start_async = AsyncMock()
+
+            response = dream_client.post("/memory/dream", json={"dry_run": True})
+
+        assert response.status_code == 200
+        assert response.json() == aggregate
+        service.run_all_due_projects.assert_awaited_once()
+        assert service.run_all_due_projects.await_args.kwargs["dry_run"] is True
+        # An unscoped trigger never runs the single-digest path.
+        service.run.assert_not_awaited()
+        service.start_async.assert_not_awaited()
 
     def test_status_and_revert(self, dream_client: TestClient) -> None:
         with patch("gobby.servers.routes.memory_dream.MemoryDreamService") as service_cls:

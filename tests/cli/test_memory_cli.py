@@ -472,14 +472,24 @@ class TestMemoryDreamCommand:
         """Create a CLI test runner."""
         return CliRunner()
 
-    def test_dream_starts_background_and_prints_status_command(
+    def test_dream_prints_aggregate_summary(
         self,
         runner: CliRunner,
     ) -> None:
-        """Non-wait dream start should return promptly and print a status command."""
+        """An unscoped dream sweeps every due project and prints a per-project summary."""
         mock_client = MagicMock()
         mock_client.call_http_api.return_value = _FakeHTTPResponse(
-            {"success": True, "run_id": "dream-1", "status": "started"}
+            {
+                "success": True,
+                "targets": 2,
+                "completed": 2,
+                "failed": 0,
+                "mutations": 3,
+                "runs": [
+                    {"project_id": "proj-1", "success": True, "run_id": "r1", "mutations": 1},
+                    {"project_id": None, "success": True, "run_id": "r2", "mutations": 2},
+                ],
+            }
         )
 
         with patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client):
@@ -490,110 +500,71 @@ class TestMemoryDreamCommand:
             )
 
         assert result.exit_code == 0
-        assert "Dream run: dream-1" in result.output
-        assert "Status: started" in result.output
-        assert "gobby memory dream status dream-1" in result.output
+        assert "Swept 2/2 project(s): 3 mutation(s) total" in result.output
+        assert "proj-1: 1 mutation(s) (run r1)" in result.output
+        assert "global: 2 mutation(s) (run r2)" in result.output
         mock_client.call_http_api.assert_called_once()
         call = mock_client.call_http_api.call_args
         assert call.args == ("/memory/dream",)
         assert call.kwargs["method"] == "POST"
-        assert call.kwargs["timeout"] == 15.0
+        # The sweep is synchronous; the POST waits for the full --timeout (default 900s).
+        assert call.kwargs["timeout"] == 900.0
         assert call.kwargs["json_data"]["dry_run"] is True
-        assert call.kwargs["json_data"]["wait"] is False
+        assert "wait" not in call.kwargs["json_data"]
+        assert "project_id" not in call.kwargs["json_data"]
 
-    def test_dream_wait_starts_background_then_polls_status(
-        self,
-        runner: CliRunner,
-    ) -> None:
-        """Wait mode should poll status instead of blocking the start request."""
-        mock_client = MagicMock()
-        mock_client.call_http_api.side_effect = [
-            _FakeHTTPResponse({"success": True, "run_id": "dream-1", "status": "started"}),
-            _FakeHTTPResponse({"success": True, "run": {"id": "dream-1", "status": "running"}}),
-            _FakeHTTPResponse(
-                {
-                    "success": True,
-                    "run": {
-                        "id": "dream-1",
-                        "status": "completed",
-                        "summary": {
-                            "candidates_reviewed": 2,
-                            "mutations": 1,
-                            "snapshots": 1,
-                        },
-                    },
-                }
-            ),
-        ]
-
-        with (
-            patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client),
-            patch("gobby.cli.memory.dream.time.sleep") as sleep,
-        ):
-            result = runner.invoke(
-                memory_cli,
-                ["dream", "--wait", "--timeout", "5"],
-                obj={"config": MagicMock(daemon_port=60887)},
-            )
-
-        assert result.exit_code == 0
-        assert "Status: started" in result.output
-        assert "Status: running" in result.output
-        assert "Status: completed" in result.output
-        assert "Candidates reviewed: 2" in result.output
-        assert "Mutations: 1" in result.output
-        assert "Snapshots: 1" in result.output
-        sleep.assert_called_once()
-        calls = mock_client.call_http_api.call_args_list
-        assert [call.args[0] for call in calls] == [
-            "/memory/dream",
-            "/memory/dream/dream-1",
-            "/memory/dream/dream-1",
-        ]
-        assert calls[0].kwargs["json_data"]["wait"] is False
-        assert calls[0].kwargs["timeout"] == 15.0
-        assert calls[1].kwargs["method"] == "GET"
-        assert calls[2].kwargs["method"] == "GET"
-        assert 0.0 < calls[1].kwargs["timeout"] <= 5.0
-        assert 0.0 < calls[2].kwargs["timeout"] <= 5.0
-
-    def test_dream_wait_continues_after_transient_poll_failure(
+    def test_dream_passes_flags_and_renders_failed_target(
         self,
         runner: CliRunner,
     ) -> None:
         mock_client = MagicMock()
-        mock_client.call_http_api.side_effect = [
-            _FakeHTTPResponse({"success": True, "run_id": "dream-1", "status": "started"}),
-            OSError("temporarily unavailable"),
-            _FakeHTTPResponse(
-                {
-                    "success": True,
-                    "run": {
-                        "id": "dream-1",
-                        "status": "completed",
-                        "summary": {"candidates_reviewed": 0, "mutations": 0, "snapshots": 0},
-                    },
-                }
-            ),
-        ]
+        mock_client.call_http_api.return_value = _FakeHTTPResponse(
+            {
+                "success": True,
+                "targets": 2,
+                "completed": 1,
+                "failed": 1,
+                "mutations": 2,
+                "runs": [
+                    {"project_id": "proj-ok", "success": True, "run_id": "r1", "mutations": 2},
+                    {"project_id": "proj-bad", "success": False, "error": "boom"},
+                ],
+            }
+        )
 
-        with (
-            patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client),
-            patch("gobby.cli.memory.dream.time.sleep") as sleep,
-        ):
+        with patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client):
             result = runner.invoke(
                 memory_cli,
-                ["dream", "--wait", "--timeout", "5"],
+                ["dream", "--full", "--memory-type", "fact", "--timeout", "30"],
                 obj={"config": MagicMock(daemon_port=60887)},
             )
 
         assert result.exit_code == 0
-        assert (
-            "Warning: failed to poll dream run dream-1: Could not reach daemon: "
-            "temporarily unavailable"
-        ) in result.output
-        assert "Status: completed" in result.output
-        sleep.assert_called_once()
+        assert "Swept 1/2 project(s): 2 mutation(s) total, 1 failed" in result.output
+        assert "proj-bad: failed — boom" in result.output
+        call = mock_client.call_http_api.call_args
+        assert call.kwargs["timeout"] == 30.0
+        assert call.kwargs["json_data"]["full_sweep"] is True
+        assert call.kwargs["json_data"]["memory_type"] == "fact"
+
+    def test_dream_raises_on_unsuccessful_response(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        mock_client = MagicMock()
+        mock_client.call_http_api.return_value = _FakeHTTPResponse(
+            {"success": False, "error": "memory dream is disabled"}
+        )
+
+        with patch("gobby.cli.memory.dream._get_daemon_client", return_value=mock_client):
+            result = runner.invoke(
+                memory_cli,
+                ["dream"],
+                obj={"config": MagicMock(daemon_port=60887)},
+            )
+
+        assert result.exit_code != 0
+        assert "memory dream is disabled" in result.output
 
 
 class TestMemoryBackupCommand:

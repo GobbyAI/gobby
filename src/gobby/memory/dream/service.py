@@ -165,6 +165,92 @@ class MemoryDreamService:
         run_id = str(started["run_id"])
         return await self.execute_run(run_id, options)
 
+    async def run_all_due_projects(
+        self,
+        *,
+        dry_run: bool = False,
+        skip_consolidation: bool = False,
+        memory_type: str | None = None,
+        full_sweep: bool = False,
+    ) -> dict[str, Any]:
+        """Sweep every project with due memories, each under its own truth digest.
+
+        Enumerates targets via the cooldown-due predicate, then runs one sweep
+        per target: the NULL/global bucket runs ``global_only`` and real projects
+        run scoped with ``include_global=False`` so the global bucket is swept
+        exactly once. Per-target failures are isolated. Returns an aggregate; the
+        caller decides whether an all-failed batch is an error.
+        """
+        if not self.dream_config.enabled:
+            return {
+                "success": False,
+                "error": "memory dream is disabled",
+                "targets": 0,
+                "completed": 0,
+                "failed": 0,
+                "mutations": 0,
+                "runs": [],
+            }
+
+        redream_hours = _positive_int(
+            getattr(self.dream_config, "redream_after_hours", DEFAULT_REDREAM_AFTER_HOURS),
+            DEFAULT_REDREAM_AFTER_HOURS,
+        )
+        cutoff = (datetime.now(UTC) - timedelta(hours=redream_hours)).isoformat()
+        targets = await asyncio.to_thread(
+            self.memory_manager.list_dream_project_ids, redream_cutoff=cutoff
+        )
+
+        runs: list[dict[str, Any]] = []
+        completed = 0
+        failed = 0
+        mutations = 0
+        for target_project_id in targets:
+            try:
+                if target_project_id is None:
+                    options = DreamRunOptions(
+                        dry_run=dry_run,
+                        skip_consolidation=skip_consolidation,
+                        memory_type=memory_type,
+                        global_only=True,
+                        full_sweep=full_sweep,
+                    )
+                else:
+                    options = DreamRunOptions(
+                        dry_run=dry_run,
+                        skip_consolidation=skip_consolidation,
+                        memory_type=memory_type,
+                        project_id=target_project_id,
+                        include_global=False,
+                        full_sweep=full_sweep,
+                    )
+                result = await self.run(options)
+                target_mutations = _completed_mutation_count(result)
+                mutations += target_mutations
+                completed += 1
+                runs.append(
+                    {
+                        "project_id": target_project_id,
+                        "success": True,
+                        "run_id": _result_run_id(result),
+                        "mutations": target_mutations,
+                    }
+                )
+            except Exception as exc:
+                logger.exception("memory dream failed for target %s", target_project_id)
+                failed += 1
+                runs.append({"project_id": target_project_id, "success": False, "error": str(exc)})
+
+        all_failed = failed > 0 and completed == 0
+        return {
+            "success": not all_failed,
+            "targets": len(targets),
+            "completed": completed,
+            "failed": failed,
+            "mutations": mutations,
+            "runs": runs,
+        }
+
     async def _ensure_schema_async(self) -> None:
         if self._schema_ready:
             return
@@ -222,7 +308,16 @@ class MemoryDreamService:
             return build_current_truth_digest(self._daemon_config)
         if options.project_id:
             return build_project_truth_digest(self._resolve_repo_path(options.project_id))
-        return build_current_truth_digest(self._daemon_config)
+        # Every sweep must carry an explicit scope: a concrete project_id or
+        # global_only. Unscoped manual triggers fan out through
+        # run_all_due_projects, so this branch is unreachable. Guard it instead
+        # of silently judging all projects' memories against the gobby platform
+        # truth digest — that cross-project contamination is the bug this path
+        # used to cause.
+        raise ValueError(
+            "memory dream sweep requires global_only or a project_id; "
+            "unscoped runs must fan out via run_all_due_projects"
+        )
 
     def _is_current_daemon_project(self, project_id: str | None) -> bool:
         return project_id is not None and project_id == self.current_project_id
@@ -514,6 +609,44 @@ def _positive_int(value: Any, default: int) -> int:
     except (TypeError, ValueError):
         return default
     return parsed if parsed >= 1 else default
+
+
+def _result_run_id(result: object) -> str | None:
+    if not isinstance(result, dict):
+        return None
+    value = result.get("run_id")
+    if value is None:
+        run = result.get("run")
+        if isinstance(run, dict):
+            value = run.get("id")
+    return str(value) if value is not None else None
+
+
+def _completed_mutation_count(result: object) -> int:
+    if not isinstance(result, dict):
+        raise RuntimeError("memory dream returned non-object result")
+    if not result.get("success"):
+        raise RuntimeError(str(result.get("error", "memory dream failed")))
+    raw_run = result.get("run")
+    run = raw_run if isinstance(raw_run, dict) else {}
+    raw_summary = run.get("summary")
+    summary = raw_summary if isinstance(raw_summary, dict) else {}
+    run_id = result.get("run_id")
+    if run_id is None:
+        run_id = run.get("id")
+    if run_id is None:
+        raise RuntimeError("memory dream completed without run_id")
+    raw_mutations = summary.get("mutations", 0)
+    try:
+        mutations = int(raw_mutations)
+    except (TypeError, ValueError):
+        logger.warning(
+            "Invalid memory dream mutation count: value=%r type=%s",
+            raw_mutations,
+            type(raw_mutations).__name__,
+        )
+        mutations = 0
+    return mutations
 
 
 def _decode_raw_plan_metadata(raw_plan: Any) -> dict[str, Any]:

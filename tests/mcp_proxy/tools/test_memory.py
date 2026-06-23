@@ -583,6 +583,17 @@ class TestSearchKnowledgeGraph:
 class TestMemoryDreamTools:
     """Tests for memory dream MCP wrappers."""
 
+    @pytest.fixture(autouse=True)
+    def _scoped_project(self):
+        # Registration captures get_current_project_id as the tool's get_project_id;
+        # a concrete project routes the tool to the scoped single-run path. Tests
+        # that need the unscoped (all-due-projects) path re-patch this to None.
+        with patch(
+            "gobby.mcp_proxy.tools.memory.get_current_project_id",
+            return_value="proj-1",
+        ):
+            yield
+
     @pytest.mark.asyncio
     async def test_memory_dream_runs_service(
         self,
@@ -620,6 +631,51 @@ class TestMemoryDreamTools:
         assert options.dry_run is True
         assert options.skip_consolidation is True
         assert options.memory_type == "fact"
+        assert options.project_id == "proj-1"
+
+    @pytest.mark.asyncio
+    async def test_memory_dream_unscoped_runs_all_due_projects(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+    ) -> None:
+        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
+        service = MagicMock()
+        aggregate = {
+            "success": True,
+            "targets": 1,
+            "completed": 1,
+            "failed": 0,
+            "mutations": 2,
+            "runs": [],
+        }
+        service.run_all_due_projects = AsyncMock(return_value=aggregate)
+        service.run = AsyncMock()
+        service.start_async = AsyncMock()
+
+        with patch("gobby.mcp_proxy.tools.memory.get_current_project_id", return_value=None):
+            registry = create_memory_registry(
+                mock_memory_manager,
+                llm_service=mock_llm_service,
+                config=config,
+            )
+            with patch(
+                "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
+                return_value=service,
+            ):
+                result = await registry.call(
+                    "memory_dream",
+                    {"dry_run": True, "wait": True, "full_sweep": True},
+                )
+
+        assert result == aggregate
+        service.run_all_due_projects.assert_awaited_once()
+        kwargs = service.run_all_due_projects.await_args.kwargs
+        assert kwargs["dry_run"] is True
+        assert kwargs["full_sweep"] is True
+        # No project context → never the single-run path.
+        service.run.assert_not_awaited()
+        service.start_async.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_memory_dream_background_logs_failed_result(

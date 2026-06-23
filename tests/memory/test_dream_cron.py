@@ -172,142 +172,69 @@ def test_register_memory_dream_cron_restores_previously_enabled_system_job() -> 
     assert cron_storage.toggled_job_ids == ["job-1"]
 
 
+def _patch_dream_service(
+    monkeypatch: pytest.MonkeyPatch, aggregate: dict[str, Any]
+) -> dict[str, Any]:
+    """Replace cron's MemoryDreamService with a fake that records construction and
+    returns a canned aggregate. The per-target loop itself is unit-tested against
+    the real service in test_dream.py; here we only verify cron orchestration."""
+    captured: dict[str, Any] = {}
+
+    class _Service:
+        def __init__(self, **kwargs: Any) -> None:
+            captured["init"] = kwargs
+
+        async def run_all_due_projects(self, **kwargs: Any) -> dict[str, Any]:
+            captured["call"] = kwargs
+            return aggregate
+
+    monkeypatch.setattr("gobby.memory.dream.cron.MemoryDreamService", _Service)
+    return captured
+
+
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_loops_targets_and_formats_aggregate(
+async def test_memory_dream_cron_handler_delegates_and_formats_aggregate(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
     memory_manager = _FakeDreamManager(["proj-a", None, "proj-b"])
-    calls: list[dict[str, Any]] = []
-
-    async def fake_run_memory_dream(**kwargs: Any) -> dict[str, Any]:
-        calls.append(kwargs)
-        mutations = 2 if kwargs.get("global_only") else 1
-        return {
-            "success": True,
-            "run": {"id": f"dream-{len(calls)}", "summary": {"mutations": mutations}},
-        }
-
-    monkeypatch.setattr("gobby.memory.dream.cron.run_memory_dream", fake_run_memory_dream)
+    captured = _patch_dream_service(
+        monkeypatch,
+        {"success": True, "targets": 3, "completed": 3, "failed": 0, "mutations": 4, "runs": []},
+    )
     register_memory_dream_cron(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
         memory_manager=memory_manager,
         dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
         project_id="daemon-proj",
+        daemon_config=SimpleNamespace(),
     )
     handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
 
     message = await handler(SimpleNamespace())
 
     assert message == "memory dream: 3 target(s), 4 mutation(s) total"
-    assert len(memory_manager.cutoffs) == 1
-    assert [
-        {
-            "project_id": call.get("project_id"),
-            "global_only": call.get("global_only", False),
-            "include_global": call.get("include_global"),
-            "current_project_id": call.get("current_project_id"),
-            "full_sweep": call.get("full_sweep"),
-        }
-        for call in calls
-    ] == [
-        {
-            "project_id": "proj-a",
-            "global_only": False,
-            "include_global": False,
-            "current_project_id": "daemon-proj",
-            "full_sweep": None,
-        },
-        {
-            "project_id": None,
-            "global_only": True,
-            "include_global": None,
-            "current_project_id": "daemon-proj",
-            "full_sweep": None,
-        },
-        {
-            "project_id": "proj-b",
-            "global_only": False,
-            "include_global": False,
-            "current_project_id": "daemon-proj",
-            "full_sweep": None,
-        },
-    ]
+    # The daemon's own project identity is threaded into the service so the
+    # per-target loop can route the daemon's own memories to platform truth.
+    assert captured["init"]["current_project_id"] == "daemon-proj"
+    assert captured["init"]["memory_manager"] is memory_manager
+    # Nightly runs stay cooldown-throttled (full_sweep is not forced).
+    assert captured["call"].get("full_sweep", False) is False
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_coerces_string_mutations(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    cron_storage = _FakeCronStorage()
-    cron_executor = _FakeCronExecutor()
-    memory_manager = _FakeDreamManager(["proj-1"])
-
-    async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
-        return {"success": True, "run": {"id": "dream-1", "summary": {"mutations": "2"}}}
-
-    monkeypatch.setattr("gobby.memory.dream.cron.run_memory_dream", fake_run_memory_dream)
-    register_memory_dream_cron(
-        cron_storage=cron_storage,
-        cron_executor=cron_executor,
-        memory_manager=memory_manager,
-        dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
-        project_id="proj-1",
-    )
-    handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
-
-    message = await handler(SimpleNamespace())
-
-    assert message == "memory dream: 1 target(s), 2 mutation(s) total"
-
-
-@pytest.mark.asyncio
-async def test_memory_dream_cron_handler_warns_for_invalid_mutations(
-    monkeypatch: pytest.MonkeyPatch,
-    caplog: pytest.LogCaptureFixture,
-) -> None:
-    cron_storage = _FakeCronStorage()
-    cron_executor = _FakeCronExecutor()
-    memory_manager = _FakeDreamManager(["proj-1"])
-
-    async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
-        return {"success": True, "run": {"id": "dream-1", "summary": {"mutations": "bad"}}}
-
-    caplog.set_level("WARNING", logger="gobby.memory.dream.cron")
-    monkeypatch.setattr("gobby.memory.dream.cron.run_memory_dream", fake_run_memory_dream)
-    register_memory_dream_cron(
-        cron_storage=cron_storage,
-        cron_executor=cron_executor,
-        memory_manager=memory_manager,
-        dream_config=SimpleNamespace(enabled=True, schedule_cron="0 3 * * *"),
-        project_id="proj-1",
-    )
-    handler = cron_executor.handlers[MEMORY_DREAM_CRON_HANDLER]
-
-    message = await handler(SimpleNamespace())
-
-    assert message == "memory dream: 1 target(s), 0 mutation(s) total"
-    assert "Invalid memory dream mutation count: value='bad' type=str" in caplog.text
-
-
-@pytest.mark.asyncio
-async def test_memory_dream_cron_handler_isolates_target_failure(
+async def test_memory_dream_cron_handler_reports_failed_targets(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
     memory_manager = _FakeDreamManager(["proj-ok", "proj-bad", None])
-    calls: list[str | None] = []
-
-    async def fake_run_memory_dream(**kwargs: Any) -> dict[str, Any]:
-        calls.append(kwargs.get("project_id"))
-        if kwargs.get("project_id") == "proj-bad":
-            raise RuntimeError("boom")
-        return {"success": True, "run": {"id": "dream-1", "summary": {"mutations": 2}}}
-
-    monkeypatch.setattr("gobby.memory.dream.cron.run_memory_dream", fake_run_memory_dream)
+    _patch_dream_service(
+        monkeypatch,
+        {"success": True, "targets": 3, "completed": 2, "failed": 1, "mutations": 4, "runs": []},
+    )
     register_memory_dream_cron(
         cron_storage=cron_storage,
         cron_executor=cron_executor,
@@ -319,22 +246,20 @@ async def test_memory_dream_cron_handler_isolates_target_failure(
 
     message = await handler(SimpleNamespace())
 
-    assert calls == ["proj-ok", "proj-bad", None]
     assert message == "memory dream: 2 target(s), 4 mutation(s) total, 1 failed"
 
 
 @pytest.mark.asyncio
-async def test_memory_dream_cron_handler_raises_when_every_target_fails(
+async def test_memory_dream_cron_handler_raises_when_aggregate_failed(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     cron_storage = _FakeCronStorage()
     cron_executor = _FakeCronExecutor()
     memory_manager = _FakeDreamManager(["proj-bad", None])
-
-    async def fake_run_memory_dream(**_kwargs: Any) -> dict[str, Any]:
-        return {"success": True, "run": {"summary": {"mutations": 2}}}
-
-    monkeypatch.setattr("gobby.memory.dream.cron.run_memory_dream", fake_run_memory_dream)
+    _patch_dream_service(
+        monkeypatch,
+        {"success": False, "targets": 2, "completed": 0, "failed": 2, "mutations": 0, "runs": []},
+    )
     register_memory_dream_cron(
         cron_storage=cron_storage,
         cron_executor=cron_executor,

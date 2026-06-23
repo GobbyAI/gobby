@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import time
 from typing import Any, cast
 
 import click
@@ -8,14 +7,9 @@ import httpx
 
 from gobby.cli.memory.common import _get_daemon_client
 
-_START_REQUEST_TIMEOUT_SECONDS = 15.0
-_WAIT_POLL_INTERVAL_SECONDS = 2.0
-_TERMINAL_STATUSES = frozenset({"completed", "failed", "reverted", "interrupted"})
-
 
 @click.group("dream", invoke_without_command=True)
 @click.option("--dry-run", is_flag=True, help="Build the dream plan without mutating memories")
-@click.option("--wait", is_flag=True, help="Wait for the dream run to complete")
 @click.option(
     "--skip-consolidation",
     is_flag=True,
@@ -34,54 +28,41 @@ _TERMINAL_STATUSES = frozenset({"completed", "failed", "reverted", "interrupted"
     type=click.FloatRange(min=0.0),
     default=900.0,
     show_default=True,
-    help="Maximum seconds to wait for completion with --wait",
+    help="Maximum seconds to wait for the sweep to complete",
 )
 @click.pass_context
 def memory_dream(
     ctx: click.Context,
     dry_run: bool,
-    wait: bool,
     skip_consolidation: bool,
     memory_type: str | None,
     full_sweep: bool,
     timeout: float,
 ) -> None:
-    """Review and improve stale memories."""
+    """Review stale memories across every project with due memories.
+
+    Sweeps each project that has due memories under its own truth digest and
+    prints a per-project summary. The sweep runs synchronously; use --timeout to
+    bound the wait.
+    """
     if ctx.invoked_subcommand is not None:
         return
 
-    payload = {
-        "dry_run": dry_run,
-        "skip_consolidation": skip_consolidation,
-        "memory_type": memory_type,
-        "full_sweep": full_sweep,
-    }
     data = _request(
         ctx,
         "/memory/dream",
         method="POST",
-        json_data={**payload, "wait": False},
-        timeout=_START_REQUEST_TIMEOUT_SECONDS,
+        json_data={
+            "dry_run": dry_run,
+            "skip_consolidation": skip_consolidation,
+            "memory_type": memory_type,
+            "full_sweep": full_sweep,
+        },
+        timeout=timeout,
     )
     if not data.get("success"):
         raise click.ClickException(str(data.get("error", "memory dream failed")))
-    run_id = _run_id(data)
-    if not run_id:
-        raise click.ClickException("memory dream did not return a run_id")
-
-    click.echo(f"Dream run: {run_id}")
-    status = _status(data)
-    if status:
-        click.echo(f"Status: {status}")
-    if not wait:
-        click.echo(f"Check status: gobby memory dream status {run_id}")
-        return
-
-    completed = _wait_for_completion(ctx, run_id, timeout=timeout, last_status=status)
-    run = completed.get("run") or {}
-    _print_summary(run.get("summary"))
-    if run.get("status") == "failed":
-        raise click.ClickException(str(run.get("error") or "memory dream failed"))
+    _print_aggregate(data)
 
 
 @memory_dream.command("status")
@@ -136,53 +117,26 @@ def _request(
         raise click.ClickException(f"Could not reach daemon: {exc}") from exc
 
 
-def _run_id(data: dict[str, Any]) -> str | None:
-    run = data.get("run") or {}
-    value = data.get("run_id") or run.get("id")
-    return str(value) if value else None
-
-
-def _status(data: dict[str, Any]) -> str | None:
-    run = data.get("run") or {}
-    value = data.get("status") or run.get("status")
-    return str(value) if value else None
-
-
-def _wait_for_completion(
-    ctx: click.Context,
-    run_id: str,
-    *,
-    timeout: float,
-    last_status: str | None,
-) -> dict[str, Any]:
-    deadline = time.monotonic() + timeout
-    while True:
-        remaining = deadline - time.monotonic()
-        if remaining <= 0:
-            raise click.ClickException(
-                f"Timed out after {timeout:g}s waiting for dream run {run_id}"
-            )
-        try:
-            data = _request(
-                ctx,
-                f"/memory/dream/{run_id}",
-                method="GET",
-                timeout=min(_START_REQUEST_TIMEOUT_SECONDS, remaining),
-            )
-        except click.ClickException as exc:
-            click.echo(
-                f"Warning: failed to poll dream run {run_id}: {exc.format_message()}",
-                err=True,
-            )
+def _print_aggregate(data: dict[str, Any]) -> None:
+    targets = data.get("targets", 0)
+    completed = data.get("completed", 0)
+    failed = data.get("failed", 0)
+    mutations = data.get("mutations", 0)
+    tail = f", {failed} failed" if failed else ""
+    click.echo(f"Swept {completed}/{targets} project(s): {mutations} mutation(s) total{tail}")
+    runs = data.get("runs")
+    if not isinstance(runs, list):
+        return
+    for run in runs:
+        if not isinstance(run, dict):
+            continue
+        scope = run.get("project_id") or "global"
+        if run.get("success"):
+            run_id = run.get("run_id")
+            suffix = f" (run {run_id})" if run_id else ""
+            click.echo(f"  - {scope}: {run.get('mutations', 0)} mutation(s){suffix}")
         else:
-            status = _status(data)
-            if status and status != last_status:
-                click.echo(f"Status: {status}")
-                last_status = status
-            if status in _TERMINAL_STATUSES:
-                return data
-        sleep_for = min(_WAIT_POLL_INTERVAL_SECONDS, max(0.0, deadline - time.monotonic()))
-        time.sleep(sleep_for)
+            click.echo(f"  - {scope}: failed — {run.get('error', 'unknown error')}")
 
 
 def _print_summary(summary: Any) -> None:
