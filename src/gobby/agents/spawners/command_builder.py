@@ -6,7 +6,7 @@ Codex, and Droid with proper flags for prompts, permissions, and session managem
 
 from __future__ import annotations
 
-from gobby.agents.provider_capabilities import provider_reasoning_flag
+from gobby.agents.provider_capabilities import PROVIDER_CAPABILITIES, provider_reasoning_flag
 
 
 def build_cli_command(
@@ -67,6 +67,10 @@ def build_cli_command(
     Returns:
         Tuple of (command list, env dict) for subprocess execution
     """
+    if cli not in PROVIDER_CAPABILITIES:
+        supported = ", ".join(sorted(PROVIDER_CAPABILITIES))
+        raise ValueError(f"Unsupported CLI: {cli}. Must be one of: {supported}")
+
     command = [cli]
     env: dict[str, str] = {}
     reasoning_flag = provider_reasoning_flag(cli)

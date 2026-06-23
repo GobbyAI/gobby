@@ -831,7 +831,7 @@ class TestPeriodicAgentTerminalEnter:
         mock_run_mgr.list_active.return_value = [
             self._run(run_id="run-codex", tmux_session_name="gobby-codex", provider="codex"),
             self._run(run_id="run-claude", tmux_session_name="gobby-claude", provider="claude"),
-            self._run(run_id="run-gemini", tmux_session_name="gobby-gemini", provider="gemini"),
+            self._run(run_id="run-qwen", tmux_session_name="gobby-qwen", provider="qwen"),
         ]
         mock_tmux.send_keys.return_value = True
 
@@ -841,7 +841,7 @@ class TestPeriodicAgentTerminalEnter:
         assert mock_tmux.send_keys.call_args_list == [
             call("gobby-codex", PromptDetector.ENTER_KEY, literal=False),
             call("gobby-claude", PromptDetector.ENTER_KEY, literal=False),
-            call("gobby-gemini", PromptDetector.ENTER_KEY, literal=False),
+            call("gobby-qwen", PromptDetector.ENTER_KEY, literal=False),
         ]
 
     @pytest.mark.asyncio

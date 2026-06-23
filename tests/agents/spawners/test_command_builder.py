@@ -44,26 +44,9 @@ class TestBuildCliCommand:
             "hello",
         ]
 
-    def test_gemini_basic(self) -> None:
-        cmd, _env = build_cli_command("gemini", prompt="hello")
-        assert cmd == ["gemini", "hello"]
-
-    def test_gemini_auto_approve(self) -> None:
-        cmd, _env = build_cli_command("gemini", auto_approve=True, prompt="hello")
-        assert cmd == ["gemini", "--approval-mode", "yolo", "hello"]
-
-    def test_gemini_with_model(self) -> None:
-        cmd, _env = build_cli_command("gemini", model="gemini-1.5-pro", prompt="hello")
-        assert cmd == ["gemini", "--model", "gemini-1.5-pro", "hello"]
-
-    def test_gemini_reasoning_uses_model_settings_without_extra_flag(self) -> None:
-        cmd, _env = build_cli_command(
-            "gemini",
-            model="gemini-3.1-pro-preview",
-            reasoning_effort="high",
-            prompt="hello",
-        )
-        assert cmd == ["gemini", "--model", "gemini-3.1-pro-preview", "hello"]
+    def test_unsupported_provider_raises(self) -> None:
+        with pytest.raises(ValueError, match="Unsupported CLI: unsupported"):
+            build_cli_command("unsupported", prompt="hello")
 
     def test_codex_basic(self) -> None:
         cmd, _env = build_cli_command("codex", prompt="hello")
@@ -87,7 +70,6 @@ class TestBuildCliCommand:
         ("cli", "approval_args"),
         [
             ("claude", ["--dangerously-skip-permissions"]),
-            ("gemini", ["--approval-mode", "yolo"]),
             ("qwen", ["--approval-mode", "yolo"]),
         ],
     )
@@ -206,17 +188,6 @@ class TestBuildCliCommand:
         ]
         assert env == {}
 
-    def test_gemini_interactive_mode_uses_acp_and_resume(self) -> None:
-        cmd, env = build_cli_command(
-            "gemini",
-            prompt="hello",
-            mode="interactive",
-            session_id="gem-session",
-            env_overrides={"CUSTOM_VAR": "value"},
-        )
-        assert cmd == ["gemini", "--acp", "--resume", "gem-session"]
-        assert env == {"CUSTOM_VAR": "value"}
-
     def test_grok_agent_command(self) -> None:
         cmd, _env = build_cli_command(
             "grok",
@@ -273,20 +244,6 @@ class TestBuildCliCommand:
                     "--effort",
                     "high",
                     "--dangerously-skip-permissions",
-                    "--sandbox",
-                    "continue",
-                ],
-            ),
-            (
-                "gemini",
-                [
-                    "gemini",
-                    "--model",
-                    "model-x",
-                    "--approval-mode",
-                    "yolo",
-                    "--resume",
-                    "native-123",
                     "--sandbox",
                     "continue",
                 ],

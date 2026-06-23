@@ -3218,7 +3218,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-uninit",
             machine_id="machine-1",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
 
@@ -3268,7 +3268,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-uninit-recycled-pid",
             machine_id="machine-1",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
         run = agent_run_manager.create(
@@ -3381,7 +3381,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-init",
             machine_id="machine-1",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
 
@@ -3437,7 +3437,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-young",
             machine_id="machine-1",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
 
@@ -3475,7 +3475,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-naive-uninit",
             machine_id="machine-1",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
         run = _make_terminal_run(
@@ -3522,7 +3522,7 @@ class TestCheckInitializationTimeout:
         child = session_manager.register(
             external_id="child-pattern",
             machine_id="machine-1",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
 

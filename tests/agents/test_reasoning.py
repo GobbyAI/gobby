@@ -122,22 +122,22 @@ def test_resolve_spawn_reasoning_applies_codex_gpt_55_xhigh(
     assert result.message is None
 
 
-def test_resolve_spawn_reasoning_rejects_gemini_terminal_reasoning(
+def test_resolve_spawn_reasoning_rejects_qwen_terminal_reasoning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(
         "gobby.agents.reasoning._get_provider_models",
         lambda provider, daemon_config: [
             {
-                "value": "gemini-3.1-pro-preview",
+                "value": "qwen3-coder",
                 "reasoning": {"supported_efforts": ["low", "medium", "high"]},
             }
         ],
     )
 
     result = resolve_spawn_reasoning(
-        provider="gemini",
-        model="gemini-3.1-pro-preview",
+        provider="qwen",
+        model="qwen3-coder",
         requested_effort="high",
         reasoning_required=False,
     )
@@ -147,7 +147,7 @@ def test_resolve_spawn_reasoning_rejects_gemini_terminal_reasoning(
     assert result.effective_effort is None
     assert result.message == (
         "Requested reasoning 'high' was not applied because spawned-terminal reasoning "
-        "is not wired for provider 'gemini'."
+        "is not wired for provider 'qwen'."
     )
 
 

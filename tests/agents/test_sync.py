@@ -390,7 +390,7 @@ class TestSyncBundledAgents:
             "name: agent-a\nprovider: claude\nmode: interactive\n"
         )
         (agents_dir / "agent-b.yaml").write_text(
-            "name: agent-b\nprovider: gemini\nmode: interactive\n"
+            "name: agent-b\nprovider: qwen\nmode: interactive\n"
         )
 
         with patch("gobby.agents.sync.get_bundled_agents_path", return_value=agents_dir):

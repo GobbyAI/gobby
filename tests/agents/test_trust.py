@@ -106,14 +106,14 @@ class TestPreApproveClaude:
         assert expected.is_dir()
 
 
-class TestPreApproveGemini:
+class TestPreApproveQwen:
     def test_creates_projects_json(self, tmp_path: Path) -> None:
         clone_dir = "/private/tmp/gobby-clones/test-task"
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            pre_approve_directory("gemini", clone_dir)
+            pre_approve_directory("qwen", clone_dir)
 
-        projects_file = tmp_path / ".gemini" / "projects.json"
+        projects_file = tmp_path / ".qwen" / "projects.json"
         assert projects_file.exists()
         data = json.loads(projects_file.read_text())
         assert clone_dir in data["projects"]
@@ -123,25 +123,25 @@ class TestPreApproveGemini:
         clone_dir = "/private/tmp/gobby-clones/test-task"
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            pre_approve_directory("gemini", clone_dir)
+            pre_approve_directory("qwen", clone_dir)
 
-        trust_file = tmp_path / ".gemini" / "trustedFolders.json"
+        trust_file = tmp_path / ".qwen" / "trustedFolders.json"
         assert trust_file.exists()
         data = json.loads(trust_file.read_text())
         assert data[clone_dir] == "TRUST_PARENT"
 
     def test_preserves_existing_entries(self, tmp_path: Path) -> None:
-        gemini_dir = tmp_path / ".gemini"
-        gemini_dir.mkdir()
-        projects_file = gemini_dir / "projects.json"
+        qwen_dir = tmp_path / ".qwen"
+        qwen_dir.mkdir()
+        projects_file = qwen_dir / "projects.json"
         projects_file.write_text(json.dumps({"projects": {"/existing/path": "existing"}}))
-        trust_file = gemini_dir / "trustedFolders.json"
+        trust_file = qwen_dir / "trustedFolders.json"
         trust_file.write_text(json.dumps({"/existing/path": "TRUST_FOLDER"}))
 
         clone_dir = "/private/tmp/gobby-clones/test-task"
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            pre_approve_directory("gemini", clone_dir)
+            pre_approve_directory("qwen", clone_dir)
 
         data = json.loads(projects_file.read_text())
         assert "/existing/path" in data["projects"]
@@ -155,14 +155,14 @@ class TestPreApproveGemini:
         clone_dir = "/private/tmp/gobby-clones/test-task"
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            pre_approve_directory("gemini", clone_dir)
-            pre_approve_directory("gemini", clone_dir)
+            pre_approve_directory("qwen", clone_dir)
+            pre_approve_directory("qwen", clone_dir)
 
-        projects_file = tmp_path / ".gemini" / "projects.json"
+        projects_file = tmp_path / ".qwen" / "projects.json"
         data = json.loads(projects_file.read_text())
         assert data["projects"][clone_dir] == "test-task"
 
-        trust_file = tmp_path / ".gemini" / "trustedFolders.json"
+        trust_file = tmp_path / ".qwen" / "trustedFolders.json"
         trusted = json.loads(trust_file.read_text())
         assert trusted[clone_dir] == "TRUST_PARENT"
 
@@ -179,13 +179,13 @@ class TestPreApproveGemini:
             patch("gobby.agents.trust.Path.home", return_value=tmp_path),
             patch("gobby.agents.trust.os.replace", side_effect=tracking_replace),
         ):
-            pre_approve_directory("gemini", clone_dir)
+            pre_approve_directory("qwen", clone_dir)
 
         assert {dst.name for _, dst in replace_calls} == {
             "projects.json",
             "trustedFolders.json",
         }
-        assert not list((tmp_path / ".gemini").glob("*.tmp"))
+        assert not list((tmp_path / ".qwen").glob("*.tmp"))
 
     def test_concurrent_pre_approve_preserves_all_paths(self, tmp_path: Path) -> None:
         clone_dirs = [f"/private/tmp/gobby-clones/task-{index}" for index in range(12)]
@@ -220,13 +220,11 @@ class TestPreApproveGemini:
             ThreadPoolExecutor(max_workers=len(clone_dirs)) as executor,
         ):
             list(
-                executor.map(
-                    lambda clone_dir: pre_approve_directory("gemini", clone_dir), clone_dirs
-                )
+                executor.map(lambda clone_dir: pre_approve_directory("qwen", clone_dir), clone_dirs)
             )
 
-        projects_file = tmp_path / ".gemini" / "projects.json"
-        trust_file = tmp_path / ".gemini" / "trustedFolders.json"
+        projects_file = tmp_path / ".qwen" / "projects.json"
+        trust_file = tmp_path / ".qwen" / "trustedFolders.json"
         projects = json.loads(projects_file.read_text())["projects"]
         trusted = json.loads(trust_file.read_text())
 
@@ -241,44 +239,30 @@ class TestPreApproveGemini:
             patch("gobby.agents.trust.Path.home", return_value=tmp_path),
             patch("gobby.agents.trust.os.path.realpath", return_value=resolved),
         ):
-            result = seed_gobby_home_trust("gemini", gobby_home=configured)
+            result = seed_gobby_home_trust("qwen", gobby_home=configured)
 
         assert result["paths"] == [configured, resolved]
-        projects = json.loads((tmp_path / ".gemini" / "projects.json").read_text())
-        trusted = json.loads((tmp_path / ".gemini" / "trustedFolders.json").read_text())
+        projects = json.loads((tmp_path / ".qwen" / "projects.json").read_text())
+        trusted = json.loads((tmp_path / ".qwen" / "trustedFolders.json").read_text())
         assert set(projects["projects"]) == {configured, resolved}
         assert trusted[configured] == "TRUST_PARENT"
         assert trusted[resolved] == "TRUST_PARENT"
 
     def test_install_trust_does_not_force_enable_folder_trust(self, tmp_path: Path) -> None:
-        gemini_home = tmp_path / ".gemini"
-        gemini_home.mkdir()
-        settings_file = gemini_home / "settings.json"
+        qwen_home = tmp_path / ".qwen"
+        qwen_home.mkdir()
+        settings_file = qwen_home / "settings.json"
         settings = {"security": {"folderTrust": False}, "general": {"enableHooks": True}}
         settings_file.write_text(json.dumps(settings))
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            result = seed_gobby_home_trust("gemini", gobby_home="/Users/josh/.gobby")
+            result = seed_gobby_home_trust("qwen", gobby_home="/Users/josh/.gobby")
 
         assert result["success"] is True
-        assert (gemini_home / "projects.json").exists()
-        assert not (gemini_home / "trustedFolders.json").exists()
+        assert (qwen_home / "projects.json").exists()
+        assert not (qwen_home / "trustedFolders.json").exists()
         assert json.loads(settings_file.read_text()) == settings
         assert any(entry["status"] == "skipped" for entry in result["entries"])
-
-
-class TestPreApproveQwen:
-    def test_install_trust_writes_qwen_json_stores(self, tmp_path: Path) -> None:
-        gobby_home = "/Users/josh/.gobby"
-
-        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            result = seed_gobby_home_trust("qwen", gobby_home=gobby_home)
-
-        assert result["success"] is True
-        projects = json.loads((tmp_path / ".qwen" / "projects.json").read_text())
-        trusted = json.loads((tmp_path / ".qwen" / "trustedFolders.json").read_text())
-        assert projects["projects"][gobby_home] == ".gobby"
-        assert trusted[gobby_home] == "TRUST_PARENT"
 
 
 class TestModelDiscoveryTrust:
@@ -287,26 +271,6 @@ class TestModelDiscoveryTrust:
         _MODEL_DISCOVERY_TRUST_LOCKS.clear()
         yield
         _MODEL_DISCOVERY_TRUST_LOCKS.clear()
-
-    @pytest.mark.asyncio
-    async def test_gemini_authorization_writes_only_gemini_stores(self, tmp_path: Path) -> None:
-        discovery_cwd = (tmp_path / "gobby-home" / "provider-model-discovery" / "gemini").resolve()
-        discovery_cwd.mkdir(parents=True)
-
-        with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            result = await authorize_model_discovery_trust("gemini", discovery_cwd)
-
-        assert result.success is True
-        assert result.skipped is False
-        projects_file = tmp_path / ".gemini" / "projects.json"
-        trust_file = tmp_path / ".gemini" / "trustedFolders.json"
-        projects = json.loads(projects_file.read_text())
-        trusted = json.loads(trust_file.read_text())
-        assert projects["projects"] == {os.fspath(discovery_cwd): "gemini"}
-        assert trusted == {os.fspath(discovery_cwd): "TRUST_PARENT"}
-        assert not (tmp_path / ".qwen").exists()
-        assert not (tmp_path / ".claude").exists()
-        assert not (tmp_path / ".codex").exists()
 
     @pytest.mark.asyncio
     async def test_qwen_authorization_writes_only_qwen_stores(self, tmp_path: Path) -> None:
@@ -324,7 +288,6 @@ class TestModelDiscoveryTrust:
         trusted = json.loads(trust_file.read_text())
         assert projects["projects"] == {os.fspath(discovery_cwd): "qwen"}
         assert trusted == {os.fspath(discovery_cwd): "TRUST_PARENT"}
-        assert not (tmp_path / ".gemini").exists()
         assert not (tmp_path / ".claude").exists()
         assert not (tmp_path / ".codex").exists()
 
@@ -333,20 +296,20 @@ class TestModelDiscoveryTrust:
         self,
         tmp_path: Path,
     ) -> None:
-        gemini_home = tmp_path / ".gemini"
-        gemini_home.mkdir()
-        settings_file = gemini_home / "settings.json"
+        qwen_home = tmp_path / ".qwen"
+        qwen_home.mkdir()
+        settings_file = qwen_home / "settings.json"
         settings_file.write_text(json.dumps({"security": {"folderTrust": False}}))
-        discovery_cwd = (tmp_path / "gobby-home" / "provider-model-discovery" / "gemini").resolve()
+        discovery_cwd = (tmp_path / "gobby-home" / "provider-model-discovery" / "qwen").resolve()
         discovery_cwd.mkdir(parents=True)
 
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):
-            result = await authorize_model_discovery_trust("gemini", discovery_cwd)
+            result = await authorize_model_discovery_trust("qwen", discovery_cwd)
 
         assert result.success is True
         assert result.skipped is False
-        assert (gemini_home / "projects.json").exists()
-        assert not (gemini_home / "trustedFolders.json").exists()
+        assert (qwen_home / "projects.json").exists()
+        assert not (qwen_home / "trustedFolders.json").exists()
         assert any(
             entry["store"] == "trusted_folders" and entry["status"] == "skipped"
             for entry in result.entries
@@ -364,14 +327,13 @@ class TestModelDiscoveryTrust:
         assert result.skipped is True
         assert (
             result.reason
-            == f"Unsupported CLI for model discovery trust: {cli}; supported CLIs: gemini, qwen"
+            == f"Unsupported CLI for model discovery trust: {cli}; supported CLIs: qwen"
         )
         assert not result.entries
         assert not result.files_written
         assert not (tmp_path / ".claude").exists()
         assert not (tmp_path / ".codex").exists()
         assert not (tmp_path / ".droid").exists()
-        assert not (tmp_path / ".gemini").exists()
         assert not (tmp_path / ".qwen").exists()
 
     @pytest.mark.asyncio
@@ -404,11 +366,11 @@ class TestModelDiscoveryTrust:
 
         with patch("gobby.agents.trust.seed_cli_trust", side_effect=slow_seed):
             first_task = asyncio.create_task(
-                authorize_model_discovery_trust("gemini", tmp_path / "a")
+                authorize_model_discovery_trust("qwen", tmp_path / "a")
             )
             assert await asyncio.to_thread(first_started.wait, 1)
             second_task = asyncio.create_task(
-                authorize_model_discovery_trust("gemini", tmp_path / "b")
+                authorize_model_discovery_trust("qwen", tmp_path / "b")
             )
             await asyncio.to_thread(lambda: None)
             release_seed.set()
@@ -418,100 +380,6 @@ class TestModelDiscoveryTrust:
         assert second.success is True
         assert waits_completed == [True]
         assert max_active == 1
-
-    @pytest.mark.asyncio
-    async def test_different_cli_authorizations_can_overlap(self, tmp_path: Path) -> None:
-        active = 0
-        max_active = 0
-        counter_lock = threading.Lock()
-        started_by_cli = {"gemini": threading.Event(), "qwen": threading.Event()}
-        release_seed = threading.Event()
-
-        def slow_seed(
-            cli: str,
-            directory: os.PathLike[str],
-            *,
-            respect_folder_trust_setting: bool,
-        ) -> TrustSeedResult:
-            nonlocal active, max_active
-            with counter_lock:
-                active += 1
-                max_active = max(max_active, active)
-                started_by_cli[cli].set()
-            try:
-                release_seed.wait(timeout=1)
-                return TrustSeedResult(cli=cli, paths=[os.fspath(directory)])
-            finally:
-                with counter_lock:
-                    active -= 1
-
-        with patch("gobby.agents.trust.seed_cli_trust", side_effect=slow_seed):
-            first_task = asyncio.create_task(
-                authorize_model_discovery_trust("gemini", tmp_path / "a")
-            )
-            assert await asyncio.to_thread(started_by_cli["gemini"].wait, 1)
-            second_task = asyncio.create_task(
-                authorize_model_discovery_trust("qwen", tmp_path / "b")
-            )
-            assert await asyncio.to_thread(started_by_cli["qwen"].wait, 1)
-            release_seed.set()
-            first, second = await asyncio.gather(first_task, second_task)
-
-        assert first.success is True
-        assert second.success is True
-        assert max_active == 2
-
-    @pytest.mark.asyncio
-    async def test_blocked_same_cli_authorization_does_not_block_different_cli(
-        self, tmp_path: Path
-    ) -> None:
-        first_started = threading.Event()
-        qwen_started = threading.Event()
-        release_first = threading.Event()
-
-        def slow_seed(
-            cli: str,
-            directory: os.PathLike[str],
-            *,
-            respect_folder_trust_setting: bool,
-        ) -> TrustSeedResult:
-            if cli == "gemini" and Path(directory).name == "first":
-                first_started.set()
-                if not release_first.wait(timeout=2):
-                    raise TimeoutError("timed out waiting to release first authorization")
-            if cli == "qwen":
-                qwen_started.set()
-            return TrustSeedResult(cli=cli, paths=[os.fspath(directory)])
-
-        with patch("gobby.agents.trust.seed_cli_trust", side_effect=slow_seed):
-            first_task = asyncio.create_task(
-                authorize_model_discovery_trust("gemini", tmp_path / "first")
-            )
-            assert await asyncio.wait_for(asyncio.to_thread(first_started.wait, 1), timeout=2)
-
-            second_task = asyncio.create_task(
-                authorize_model_discovery_trust("gemini", tmp_path / "second")
-            )
-
-            qwen_task = asyncio.create_task(
-                authorize_model_discovery_trust("qwen", tmp_path / "qwen")
-            )
-
-            try:
-                qwen_ran_before_first_released = await asyncio.wait_for(
-                    asyncio.to_thread(qwen_started.wait, 1),
-                    timeout=2,
-                )
-                assert not second_task.done()
-            finally:
-                release_first.set()
-
-            assert qwen_ran_before_first_released is True
-            first, second, qwen = await asyncio.gather(first_task, second_task, qwen_task)
-
-        assert first.success is True
-        assert second.success is True
-        assert qwen.success is True
 
 
 class TestCodexTrust:
@@ -559,7 +427,6 @@ class TestDroidNoop:
         assert "Droid workspace trust pre-approval is a no-op" in caplog.text
         assert not (tmp_path / ".factory").exists()
         assert not (tmp_path / ".claude").exists()
-        assert not (tmp_path / ".gemini").exists()
 
     def test_install_trust_returns_noop_result(self, tmp_path: Path) -> None:
         with patch("gobby.agents.trust.Path.home", return_value=tmp_path):

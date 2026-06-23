@@ -21,11 +21,11 @@ class TestParseProviderList:
 
     def test_multiple_providers(self) -> None:
         with pytest.warns(DeprecationWarning, match="Comma-separated"):
-            assert parse_provider_list("gemini,claude") == ["gemini", "claude"]
+            assert parse_provider_list("qwen,claude") == ["qwen", "claude"]
 
     def test_whitespace_handling(self) -> None:
         with pytest.warns(DeprecationWarning, match="Comma-separated"):
-            assert parse_provider_list("gemini , claude , codex") == ["gemini", "claude", "codex"]
+            assert parse_provider_list("qwen , claude , codex") == ["qwen", "claude", "codex"]
 
     def test_none_returns_empty(self) -> None:
         assert parse_provider_list(None) == []
@@ -35,27 +35,27 @@ class TestParseProviderList:
 
     def test_case_normalization(self) -> None:
         with pytest.warns(DeprecationWarning, match="Comma-separated"):
-            assert parse_provider_list("Claude,GEMINI") == ["claude", "gemini"]
+            assert parse_provider_list("Claude,QWEN") == ["claude", "qwen"]
 
 
 class TestGetFailedProviders:
     def test_returns_providers_with_provider_errors(self) -> None:
         mock_arm = MagicMock()
         mock_arm.db.fetchall.return_value = [
-            {"provider": "gemini", "error": "429 rate limit exceeded"},
+            {"provider": "qwen", "error": "429 rate limit exceeded"},
             {"provider": "claude", "error": "SyntaxError in code"},
         ]
         result = get_failed_providers_for_task("task-1", mock_arm)
-        assert result == ["gemini"]  # Only gemini had a provider error
+        assert result == ["qwen"]
 
     def test_deduplicates_providers(self) -> None:
         mock_arm = MagicMock()
         mock_arm.db.fetchall.return_value = [
-            {"provider": "gemini", "error": "429 rate limit exceeded"},
-            {"provider": "gemini", "error": "503 service unavailable"},
+            {"provider": "qwen", "error": "429 rate limit exceeded"},
+            {"provider": "qwen", "error": "503 service unavailable"},
         ]
         result = get_failed_providers_for_task("task-1", mock_arm)
-        assert result == ["gemini"]
+        assert result == ["qwen"]
 
     def test_empty_when_no_provider_errors(self) -> None:
         mock_arm = MagicMock()
@@ -76,8 +76,8 @@ class TestSelectNextProvider:
     def test_returns_none_when_not_provider_error(self) -> None:
         result = select_next_provider(
             "task-1",
-            ["gemini", "claude"],
-            failed_provider="gemini",
+            ["qwen", "claude"],
+            failed_provider="qwen",
             is_provider_error=False,
         )
         assert result is None
@@ -86,7 +86,7 @@ class TestSelectNextProvider:
         result = select_next_provider(
             "task-1",
             [],
-            failed_provider="gemini",
+            failed_provider="qwen",
             is_provider_error=True,
         )
         assert result is None
@@ -94,8 +94,8 @@ class TestSelectNextProvider:
     def test_skips_failed_provider(self) -> None:
         result = select_next_provider(
             "task-1",
-            ["gemini", "claude"],
-            failed_provider="gemini",
+            ["qwen", "claude"],
+            failed_provider="qwen",
             is_provider_error=True,
         )
         assert result == "claude"
@@ -107,8 +107,8 @@ class TestSelectNextProvider:
         ]
         result = select_next_provider(
             "task-1",
-            ["gemini", "claude"],
-            failed_provider="gemini",
+            ["qwen", "claude"],
+            failed_provider="qwen",
             is_provider_error=True,
             agent_run_manager=mock_arm,
         )
@@ -117,12 +117,12 @@ class TestSelectNextProvider:
     def test_skips_historically_failed_providers(self) -> None:
         mock_arm = MagicMock()
         mock_arm.db.fetchall.return_value = [
-            {"provider": "gemini", "error": "429 rate limit exceeded"},
+            {"provider": "qwen", "error": "429 rate limit exceeded"},
         ]
         result = select_next_provider(
             "task-1",
-            ["gemini", "claude", "codex"],
-            failed_provider="gemini",
+            ["qwen", "claude", "codex"],
+            failed_provider="qwen",
             is_provider_error=True,
             agent_run_manager=mock_arm,
         )
@@ -132,17 +132,17 @@ class TestSelectNextProvider:
         """First untried provider in the list wins."""
         result = select_next_provider(
             "task-1",
-            ["claude", "gemini", "codex"],
+            ["claude", "qwen", "codex"],
             failed_provider="claude",
             is_provider_error=True,
         )
-        assert result == "gemini"
+        assert result == "qwen"
 
     def test_no_agent_run_manager_uses_only_current_failure(self) -> None:
         result = select_next_provider(
             "task-1",
-            ["gemini", "claude"],
-            failed_provider="gemini",
+            ["qwen", "claude"],
+            failed_provider="qwen",
             is_provider_error=True,
             agent_run_manager=None,
         )
