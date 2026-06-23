@@ -1617,6 +1617,58 @@ def test_build_project_truth_digest_missing_or_invalid_returns_empty(tmp_path: P
     assert build_project_truth_digest(str(repo_path)) == ""
 
 
+def test_build_project_truth_digest_matches_real_gobby_cli_artifact_shape(
+    tmp_path: Path,
+) -> None:
+    """Pin the consumer to the REAL gobby-cli ``truth_digest.json`` field names.
+
+    The fixture is a trimmed copy of a real ``gobby-wiki/_meta/truth_digest.json``
+    emitted by the gobby-cli codewiki build (stack reduced to two entries and the
+    long ``summary``/``degradation`` strings shortened so every consumed field
+    renders inside the digest bound). It deliberately preserves the producer's
+    field names verbatim so the cross-repo handshake is CI-enforced: if gobby-cli
+    renames a field the fixture carries the new name and the consumer's
+    ``in digest`` assertions fail; if the consumer stops reading a field the same
+    assertions fail. This catches the field drift that synthetic, co-authored
+    fixtures cannot.
+    """
+    fixture_path = Path(__file__).parent / "fixtures" / "gobby_cli_truth_digest.json"
+    payload = json.loads(fixture_path.read_text(encoding="utf-8"))
+
+    # schema_version is the contract version the consumer is written against; a
+    # producer bump is a deliberate signal to re-review the consumer.
+    assert payload["schema_version"] == 1
+
+    repo_path = tmp_path / "repo"
+    _write_truth_digest(repo_path, payload)
+
+    digest = build_project_truth_digest(str(repo_path))
+
+    # stack_authority -> authoritative lead (not the partial/absence wording).
+    assert "Current infrastructure stack (authoritative - complete current set):" in digest
+    # repo_summary
+    assert f"Repository summary: {payload['repo_summary']}" in digest
+
+    # Every consumed stack[] field renders for every entry. Subscripting the
+    # payload means a renamed field in the fixture raises KeyError here, while
+    # the membership checks catch a consumer that stops reading the field.
+    assert payload["stack"], "fixture must carry at least one stack entry"
+    for entry in payload["stack"]:
+        assert f"{entry['service']} ({entry['kind']})" in digest  # service + kind
+        assert entry["summary"] in digest  # summary
+        assert f"adapter: {entry['adapter_module']}" in digest  # adapter_module
+        assert f"pulled in by: {', '.join(entry['pulled_in_by'])}" in digest  # pulled_in_by
+        assert f"degradation: {entry['degradation']}" in digest  # degradation
+
+    # key_paths
+    assert payload["key_paths"], "fixture must carry at least one key path"
+    for label, path in payload["key_paths"].items():
+        assert f"{label}: {path}" in digest
+
+    # No Gobby platform facts leak into a project sweep.
+    assert "Knowledge graph backend: FalkorDB" not in digest
+
+
 @pytest.mark.asyncio
 async def test_service_uses_platform_truth_for_global_and_current_daemon_project(
     tmp_path: Path,

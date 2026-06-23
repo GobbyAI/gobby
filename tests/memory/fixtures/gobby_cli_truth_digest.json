@@ -1,0 +1,29 @@
+{
+  "schema_version": 1,
+  "generated_at": "2026-06-23T02:19:23Z",
+  "project_id": "3bf57fe7-2a0c-4074-8912-a83d9cd4df01",
+  "repo_summary": "Repository code documentation covers 498 files across 82 modules.",
+  "stack_authority": "complete_current_set",
+  "stack": [
+    {
+      "service": "PostgreSQL hub",
+      "kind": "postgres",
+      "adapter_module": "crates/gcore/src/postgres.rs:16",
+      "pulled_in_by": ["gobby-code (postgres)"],
+      "summary": "The Gobby PostgreSQL hub stores indexed symbols and content.",
+      "degradation": "BM25 search works whenever the PostgreSQL hub is configured."
+    },
+    {
+      "service": "FalkorDB graph",
+      "kind": "falkor",
+      "adapter_module": "crates/gcore/src/falkor.rs:28",
+      "pulled_in_by": ["gobby-code (falkor)"],
+      "summary": "FalkorDB holds the code relationship graph projection.",
+      "degradation": "When FalkorDB is down, graph commands return an empty result."
+    }
+  ],
+  "key_paths": {
+    "PostgreSQL hub": "crates/gcore/src/postgres.rs:16",
+    "FalkorDB graph": "crates/gcore/src/falkor.rs:28"
+  }
+}
