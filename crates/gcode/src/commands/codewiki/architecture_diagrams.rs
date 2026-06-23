@@ -512,11 +512,146 @@ fn balanced_delimiters(lines: &[&str]) -> bool {
     paren == 0 && bracket == 0 && brace == 0
 }
 
+/// One stage of a curated page's conceptual-behavior flow. `id` is the stable
+/// Mermaid node id, `label` is the subsystem name taken from the page's grounded
+/// evidence, and `role` is a short behavior phrase pulled from that subsystem's
+/// module/file summary (`None` when no summary was indexed).
+pub(crate) struct ConceptualFlowStep {
+    pub(crate) id: String,
+    pub(crate) label: String,
+    pub(crate) role: Option<String>,
+}
+
+/// Render the *conceptual-flow* section for a curated concept/narrative page: a
+/// labelled `flowchart` chaining the page's member subsystems in behavior order.
+///
+/// This is the curated counterpart to [`render_architecture_diagrams`] — the
+/// concept/narrative-level "missing piece" of the wiki's C4 story. Where the
+/// architecture diagrams are seeded from the workspace `Cargo.toml` topology,
+/// this flow is grounded strictly in the page's own member-module/file
+/// summaries: every node is a real member and no per-symbol call/import edges
+/// are drawn, so it is a behavior sketch rather than the code-graph dump #884
+/// removed. A flow with fewer than two stages is omitted (`None`) — normal, not
+/// degradation, exactly like a too-sparse architecture model.
+///
+/// `ordered_from_docs` records whether the stage order came from a documented
+/// data-flow chain (so the caption stays honest about provenance); `degraded`
+/// is set when a stage is missing its grounded role phrase.
+pub(crate) fn render_conceptual_flow(
+    steps: &[ConceptualFlowStep],
+    ordered_from_docs: bool,
+    degraded: bool,
+) -> Option<String> {
+    if steps.len() < 2 {
+        return None;
+    }
+
+    let mut body = String::from("flowchart LR\n");
+    for step in steps {
+        let label = match step.role.as_deref() {
+            Some(role) if !role.is_empty() => format!("{} — {role}", step.label),
+            _ => step.label.clone(),
+        };
+        let _ = writeln!(body, "    {}[\"{}\"]", step.id, mermaid_label(&label));
+    }
+    for pair in steps.windows(2) {
+        let _ = writeln!(body, "    {} --> {}", pair[0].id, pair[1].id);
+    }
+
+    let block = fence(&body);
+    if !is_valid_mermaid(&block) {
+        // A label that somehow unbalances the fence is dropped rather than
+        // emitted broken — same valid-Mermaid contract as the architecture
+        // diagrams.
+        return None;
+    }
+
+    let mut section = String::from("## Conceptual flow\n\n");
+    let provenance = if ordered_from_docs {
+        "ordered by the data flow documented in the sources"
+    } else {
+        "in the order these subsystems are grouped on this page"
+    };
+    let _ = write!(
+        section,
+        "> _Conceptual flow_ — how this page's subsystems behave together, \
+{provenance}. Grounded in the member module/file summaries below; it is a \
+behavior sketch, not a per-symbol call or import graph.\n\n"
+    );
+    if degraded {
+        section.push_str(
+            "> _Degraded:_ one or more subsystems had no indexed summary, so it \
+appears by name only.\n\n",
+        );
+    }
+    section.push_str(&block);
+    if !section.ends_with('\n') {
+        section.push('\n');
+    }
+    section.push('\n');
+    Some(section)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::commands::codewiki::system_model::{Crate, ServiceBoundary};
     use std::collections::BTreeMap;
+
+    fn step(id: &str, label: &str, role: Option<&str>) -> ConceptualFlowStep {
+        ConceptualFlowStep {
+            id: id.to_string(),
+            label: label.to_string(),
+            role: role.map(str::to_string),
+        }
+    }
+
+    #[test]
+    fn conceptual_flow_chains_members_with_roles_caption_and_degradation() {
+        let steps = vec![
+            step("s0", "walker", Some("discovers files")),
+            step("s1", "parser", Some("extracts the AST")),
+            step("s2", "indexer", None),
+        ];
+        let section = render_conceptual_flow(&steps, true, true).expect("flow section");
+
+        assert!(section.contains("## Conceptual flow"), "{section}");
+        assert!(section.contains("```mermaid"), "{section}");
+        assert!(section.contains("flowchart LR"), "{section}");
+        // Behavior-level, grounded, and explicitly not a code graph.
+        assert!(
+            section.contains("not a per-symbol call or import graph"),
+            "{section}"
+        );
+        // Role-bearing node carries its grounded behavior phrase; role-less node
+        // shows by name only and trips the degradation note.
+        assert!(
+            section.contains("s0[\"walker — discovers files\"]"),
+            "{section}"
+        );
+        assert!(section.contains("s2[\"indexer\"]"), "{section}");
+        assert!(section.contains("_Degraded:_"), "{section}");
+        // Edges chain the stages in order; documented-order provenance shown.
+        assert!(section.contains("s0 --> s1"), "{section}");
+        assert!(section.contains("s1 --> s2"), "{section}");
+        assert!(
+            section.contains("ordered by the data flow documented"),
+            "{section}"
+        );
+        // The emitted fence passes the same validity gate as every other block.
+        let fence = section
+            .split_once("```mermaid")
+            .map(|(_, rest)| format!("```mermaid{rest}"))
+            .map(|block| block.trim_end().to_string())
+            .expect("mermaid fence present");
+        assert!(is_valid_mermaid(&fence), "{fence}");
+    }
+
+    #[test]
+    fn conceptual_flow_omitted_below_two_stages() {
+        let steps = vec![step("s0", "only", None)];
+        assert!(render_conceptual_flow(&steps, false, false).is_none());
+    }
 
     /// A realistic three-binary + foundation model resembling the real
     /// workspace: gobby-code/gobby-wiki/gobby-hooks all depend on gobby-core,

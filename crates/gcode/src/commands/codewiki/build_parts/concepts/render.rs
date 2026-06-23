@@ -102,9 +102,16 @@ pub(super) fn render_curated_navigation_docs(
             &module_lookup,
             &file_lookup,
         );
+        let flow = curated_content::curated_flow_diagram(
+            &concept.modules,
+            &concept.files,
+            &module_lookup,
+            &file_lookup,
+            leading_chunks,
+        );
         docs.push(BuiltDoc {
             path: concept_doc_path(&concept.slug),
-            content: render_concept_page(concept, &spans, degraded),
+            content: render_concept_page(concept, &spans, degraded, flow.as_deref()),
             // A failed content pass falls back to the structural body — record
             // that honestly so the meta cache and the run summary surface it
             // instead of caching the page as healthy (#900).
@@ -122,9 +129,25 @@ pub(super) fn render_curated_navigation_docs(
             .checked_sub(1)
             .map(|i| chapter_link(&narrative_pages[i]));
         let next = narrative_pages.get(index + 1).map(chapter_link);
+        let (flow_modules, flow_files) = narrative_members(page, &concepts);
+        let flow = curated_content::curated_flow_diagram(
+            &flow_modules,
+            &flow_files,
+            &module_lookup,
+            &file_lookup,
+            leading_chunks,
+        );
         docs.push(BuiltDoc {
             path: narrative_doc_path(&page.slug),
-            content: render_narrative_page(page, &spans, &concept_titles, degraded, prev, next),
+            content: render_narrative_page(
+                page,
+                &spans,
+                &concept_titles,
+                degraded,
+                prev,
+                next,
+                flow.as_deref(),
+            ),
             // See the concept page above: a structural-fallback narrative is
             // degraded, not healthy, so the cache and summary must say so (#900).
             degraded: degraded || page.body_degraded,
@@ -190,7 +213,12 @@ fn render_concept_tree(
     doc
 }
 
-fn render_concept_page(concept: &ConceptModule, spans: &[SourceSpan], degraded: bool) -> String {
+fn render_concept_page(
+    concept: &ConceptModule,
+    spans: &[SourceSpan],
+    degraded: bool,
+    flow: Option<&str>,
+) -> String {
     let degraded = degraded || concept.body_degraded;
     let degraded_sources = degraded_sources(degraded);
     let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
@@ -208,6 +236,9 @@ fn render_concept_page(concept: &ConceptModule, spans: &[SourceSpan], degraded: 
         "Overview",
         &ground_text(&concept.summary, spans, None),
     );
+    if let Some(flow) = flow {
+        doc.push_str(flow);
+    }
     append_explore_section(&mut doc, &concept.modules, &concept.files);
     doc
 }
@@ -219,6 +250,7 @@ fn render_narrative_page(
     degraded: bool,
     prev: Option<(&str, &str)>,
     next: Option<(&str, &str)>,
+    flow: Option<&str>,
 ) -> String {
     let degraded = degraded || page.body_degraded;
     let degraded_sources = degraded_sources(degraded);
@@ -237,6 +269,9 @@ fn render_narrative_page(
         "Guide",
         &ground_text(&page.summary, spans, None),
     );
+    if let Some(flow) = flow {
+        doc.push_str(flow);
+    }
     if !page.concepts.is_empty() {
         doc.push_str("## Concepts\n\n");
         for concept in &page.concepts {

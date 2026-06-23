@@ -307,3 +307,430 @@ pub(crate) fn append_tour_nav(
     }
     doc.push('\n');
 }
+
+/// One resolved stage of a curated page's behavior flow.
+struct FlowComponent {
+    /// Normalized match keys (module name / file stem) used to align this stage
+    /// with a documented `A -> B -> C` data-flow chain in the evidence.
+    keys: Vec<String>,
+    label: String,
+    role: Option<String>,
+}
+
+/// Bounded source-excerpt budget (chars per file) scanned for a documented
+/// data-flow chain. Keeps the hint grounded in real excerpts without pulling
+/// whole files into the scan.
+const FLOW_HINT_EXCERPT_CHARS: usize = 600;
+/// Word cap on a stage's role phrase so node labels stay legible.
+const FLOW_ROLE_WORDS: usize = 8;
+
+/// Build the conceptual-behavior flow diagram for a curated concept/narrative
+/// page. Grounded strictly in the page's member modules/files: each stage is a
+/// real member, its role phrase comes from that member's grounded summary, and
+/// the stage order follows a documented data flow — an `A -> B -> C` arrow chain
+/// found in the member summaries or bounded source excerpts (e.g. a CLAUDE.md
+/// "Data Flow" section indexed into the evidence) — when present, otherwise the
+/// member declaration order. Returns `None` when there are fewer than two
+/// members to chain, so callers can simply omit the section. When a stage lacks
+/// a grounded role the diagram shows it by name only and its caption carries an
+/// honest degradation note. Works for repos without curated docs because
+/// module/file summaries are always available from indexing.
+pub(crate) fn curated_flow_diagram(
+    member_modules: &[String],
+    member_files: &[String],
+    module_lookup: &BTreeMap<&str, &ModuleDoc>,
+    file_lookup: &BTreeMap<&str, &FileDoc>,
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
+) -> Option<String> {
+    let mut components = flow_components(member_modules, member_files, module_lookup, file_lookup);
+    if components.len() < 2 {
+        return None;
+    }
+
+    let hint = flow_hint_text(
+        member_modules,
+        member_files,
+        module_lookup,
+        file_lookup,
+        leading_chunks,
+    );
+    let ordered_from_docs = order_components_by_hint(&mut components, &hint);
+    let degraded = components.iter().any(|component| component.role.is_none());
+
+    let steps = components
+        .iter()
+        .enumerate()
+        .map(
+            |(index, component)| architecture_diagrams::ConceptualFlowStep {
+                id: format!("s{index}"),
+                label: component.label.clone(),
+                role: component.role.clone(),
+            },
+        )
+        .collect::<Vec<_>>();
+
+    architecture_diagrams::render_conceptual_flow(&steps, ordered_from_docs, degraded)
+}
+
+/// Resolve the page's members into flow stages. Modules are the subsystem unit;
+/// files only flesh out the flow when there are too few modules to chain on
+/// their own.
+fn flow_components(
+    member_modules: &[String],
+    member_files: &[String],
+    module_lookup: &BTreeMap<&str, &ModuleDoc>,
+    file_lookup: &BTreeMap<&str, &FileDoc>,
+) -> Vec<FlowComponent> {
+    let mut components: Vec<FlowComponent> = Vec::new();
+    for module in member_modules {
+        if let Some(doc) = module_lookup.get(module.as_str()) {
+            components.push(component_from(&doc.module, &doc.summary));
+        }
+    }
+    if components.len() < 2 {
+        for file in member_files {
+            if let Some(doc) = file_lookup.get(file.as_str()) {
+                components.push(component_from(&doc.path, &doc.summary));
+            }
+        }
+    }
+    components
+}
+
+fn component_from(name: &str, summary: &str) -> FlowComponent {
+    let label = flow_label(name);
+    let mut keys = vec![normalize_key(name)];
+    let label_key = normalize_key(&label);
+    if !label_key.is_empty() && !keys.contains(&label_key) {
+        keys.push(label_key);
+    }
+    keys.retain(|key| !key.is_empty());
+    FlowComponent {
+        keys,
+        label,
+        role: role_phrase(summary),
+    }
+}
+
+/// Concatenate the member summaries and bounded leading-chunk excerpts into one
+/// scan buffer for documented-data-flow detection.
+fn flow_hint_text(
+    member_modules: &[String],
+    member_files: &[String],
+    module_lookup: &BTreeMap<&str, &ModuleDoc>,
+    file_lookup: &BTreeMap<&str, &FileDoc>,
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
+) -> String {
+    let mut text = String::new();
+    for module in member_modules {
+        if let Some(doc) = module_lookup.get(module.as_str()) {
+            text.push_str(&doc.summary);
+            text.push('\n');
+        }
+    }
+    for file in member_files {
+        if let Some(doc) = file_lookup.get(file.as_str()) {
+            text.push_str(&doc.summary);
+            text.push('\n');
+        }
+        if let Some(excerpt) = source_excerpt_for_file(file, leading_chunks) {
+            let head: String = excerpt
+                .excerpt
+                .chars()
+                .take(FLOW_HINT_EXCERPT_CHARS)
+                .collect();
+            text.push_str(&head);
+            text.push('\n');
+        }
+    }
+    text
+}
+
+/// Reorder `components` to follow a documented `A -> B -> C` data-flow chain in
+/// `hint` when one references at least two of them. Returns true when the order
+/// came from such a chain. Recognises ASCII `->`/`-->` and the Unicode `→`.
+fn order_components_by_hint(components: &mut Vec<FlowComponent>, hint: &str) -> bool {
+    let chain = parse_flow_chain(hint, components);
+    if chain.len() < 2 {
+        return false;
+    }
+    // Chain-matched stages first (documented order), then any remaining members
+    // in their original order. Drain into slots so each stage moves exactly once.
+    let mut slots: Vec<Option<FlowComponent>> = components.drain(..).map(Some).collect();
+    let mut ordered: Vec<FlowComponent> = Vec::with_capacity(slots.len());
+    for &index in &chain {
+        if let Some(component) = slots[index].take() {
+            ordered.push(component);
+        }
+    }
+    for slot in &mut slots {
+        if let Some(component) = slot.take() {
+            ordered.push(component);
+        }
+    }
+    *components = ordered;
+    true
+}
+
+/// Find the first arrow-delimited line in `hint` that maps at least two
+/// components, returning their indices in documented order.
+fn parse_flow_chain(hint: &str, components: &[FlowComponent]) -> Vec<usize> {
+    let normalized = hint.replace("-->", "\u{2192}").replace("->", "\u{2192}");
+    for line in normalized.lines() {
+        if !line.contains('\u{2192}') {
+            continue;
+        }
+        let mut chain: Vec<usize> = Vec::new();
+        for segment in line.split('\u{2192}') {
+            if let Some(index) = first_component_in(segment, components) {
+                push_unique(&mut chain, index);
+            }
+        }
+        if chain.len() >= 2 {
+            return chain;
+        }
+    }
+    Vec::new()
+}
+
+/// Index of the first component named by any word in `segment`.
+fn first_component_in(segment: &str, components: &[FlowComponent]) -> Option<usize> {
+    segment
+        .split(|c: char| !c.is_ascii_alphanumeric() && c != '_')
+        .map(normalize_key)
+        .filter(|key| !key.is_empty())
+        .find_map(|key| {
+            components
+                .iter()
+                .position(|component| component.keys.contains(&key))
+        })
+}
+
+fn push_unique(chain: &mut Vec<usize>, index: usize) {
+    if !chain.contains(&index) {
+        chain.push(index);
+    }
+}
+
+/// Short, stable node label for a module name or file path: the last path/`::`
+/// segment, with a `.rs` extension trimmed.
+fn flow_label(name: &str) -> String {
+    name.rsplit(['/', ':'])
+        .next()
+        .unwrap_or(name)
+        .trim_end_matches(".rs")
+        .trim()
+        .to_string()
+}
+
+/// Lowercase alphanumeric match key from the last path/`::` segment (extension
+/// dropped), for aligning members with a documented data-flow chain.
+fn normalize_key(text: &str) -> String {
+    let last = text.rsplit(['/', ':']).next().unwrap_or(text);
+    let stem = last.split('.').next().unwrap_or(last);
+    stem.chars()
+        .filter(|c| c.is_ascii_alphanumeric())
+        .flat_map(char::to_lowercase)
+        .collect()
+}
+
+/// First clause of a member summary, capped to a few words, as the stage's
+/// behavior role. `None` for an empty summary so the renderer shows the stage by
+/// name only and marks the flow degraded.
+fn role_phrase(summary: &str) -> Option<String> {
+    let summary = summary.trim();
+    if summary.is_empty() {
+        return None;
+    }
+    let clause = summary
+        .split_terminator(['.', ';', ':'])
+        .next()
+        .unwrap_or(summary)
+        .trim();
+    let phrase = clause
+        .split_whitespace()
+        .take(FLOW_ROLE_WORDS)
+        .collect::<Vec<_>>()
+        .join(" ");
+    (!phrase.is_empty()).then_some(phrase)
+}
+
+#[cfg(test)]
+mod flow_tests {
+    use super::*;
+
+    fn module_doc(name: &str, summary: &str) -> ModuleDoc {
+        ModuleDoc {
+            module: name.to_string(),
+            summary: summary.to_string(),
+            source_spans: Vec::new(),
+            direct_files: Vec::new(),
+            child_modules: Vec::new(),
+            degraded: false,
+            degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
+            reused_page: None,
+        }
+    }
+
+    fn file_doc(path: &str, summary: &str) -> FileDoc {
+        FileDoc {
+            path: path.to_string(),
+            module: String::new(),
+            summary: summary.to_string(),
+            body: String::new(),
+            source_spans: Vec::new(),
+            symbols: Vec::new(),
+            component_ids: Vec::new(),
+            degraded: false,
+            degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
+            reused_page: None,
+        }
+    }
+
+    fn module_lookup<'a>(docs: &'a [ModuleDoc]) -> BTreeMap<&'a str, &'a ModuleDoc> {
+        docs.iter().map(|doc| (doc.module.as_str(), doc)).collect()
+    }
+
+    fn file_lookup<'a>(docs: &'a [FileDoc]) -> BTreeMap<&'a str, &'a FileDoc> {
+        docs.iter().map(|doc| (doc.path.as_str(), doc)).collect()
+    }
+
+    #[test]
+    fn chains_member_modules_grounded_in_summaries() {
+        let modules = [
+            module_doc("walker", "Discovers candidate files. Walks the tree."),
+            module_doc("parser", "Extracts the AST via tree-sitter."),
+        ];
+        let member_modules = vec!["walker".to_string(), "parser".to_string()];
+
+        let flow = curated_flow_diagram(
+            &member_modules,
+            &[],
+            &module_lookup(&modules),
+            &file_lookup(&[]),
+            &BTreeMap::new(),
+        );
+        let section = flow.expect("flow drawn for two members");
+
+        assert!(section.contains("## Conceptual flow"), "{section}");
+        assert!(section.contains("flowchart LR"), "{section}");
+        // Real member names only — no fabricated components.
+        assert!(
+            section.contains("walker — Discovers candidate files"),
+            "{section}"
+        );
+        assert!(
+            section.contains("parser — Extracts the AST via tree-sitter"),
+            "{section}"
+        );
+        // Member-declaration order when nothing documents a flow.
+        assert!(
+            section.contains("in the order these subsystems are grouped"),
+            "{section}"
+        );
+    }
+
+    #[test]
+    fn orders_by_documented_data_flow_when_present() {
+        // Members are given out of flow order; one summary documents the real
+        // pipeline, so the diagram follows it rather than the member order.
+        let modules = [
+            module_doc(
+                "indexer",
+                "Writes hub rows. Pipeline: walker -> parser -> chunker -> indexer.",
+            ),
+            module_doc("walker", "Discovers files."),
+            module_doc("parser", "Extracts the AST."),
+            module_doc("chunker", "Splits content for search."),
+        ];
+        let member_modules = vec![
+            "indexer".to_string(),
+            "walker".to_string(),
+            "parser".to_string(),
+            "chunker".to_string(),
+        ];
+
+        let flow = curated_flow_diagram(
+            &member_modules,
+            &[],
+            &module_lookup(&modules),
+            &file_lookup(&[]),
+            &BTreeMap::new(),
+        );
+        let section = flow.expect("flow drawn");
+
+        assert!(
+            section.contains("ordered by the data flow documented"),
+            "{section}"
+        );
+        // Documented order walker -> parser -> chunker -> indexer wins.
+        assert!(
+            section.contains("s0[\"walker — Discovers files\"]"),
+            "{section}"
+        );
+        assert!(section.contains("s3[\"indexer"), "indexer last: {section}");
+    }
+
+    #[test]
+    fn marks_degraded_when_a_member_summary_is_missing() {
+        let modules = [
+            module_doc("walker", "Discovers files."),
+            module_doc("parser", ""),
+        ];
+        let member_modules = vec!["walker".to_string(), "parser".to_string()];
+
+        let flow = curated_flow_diagram(
+            &member_modules,
+            &[],
+            &module_lookup(&modules),
+            &file_lookup(&[]),
+            &BTreeMap::new(),
+        );
+        let section = flow.expect("flow drawn");
+
+        assert!(section.contains("_Degraded:_"), "{section}");
+        assert!(
+            section.contains("s1[\"parser\"]"),
+            "name-only node: {section}"
+        );
+    }
+
+    #[test]
+    fn omitted_for_a_single_member() {
+        let modules = [module_doc("walker", "Discovers files.")];
+        let flow = curated_flow_diagram(
+            &["walker".to_string()],
+            &[],
+            &module_lookup(&modules),
+            &file_lookup(&[]),
+            &BTreeMap::new(),
+        );
+        assert!(flow.is_none());
+    }
+
+    #[test]
+    fn falls_back_to_files_without_enough_modules() {
+        let files = [
+            file_doc("src/bm25.rs", "Runs BM25 keyword search."),
+            file_doc("src/rrf.rs", "Fuses ranked results."),
+        ];
+        let member_files = vec!["src/bm25.rs".to_string(), "src/rrf.rs".to_string()];
+
+        let flow = curated_flow_diagram(
+            &[],
+            &member_files,
+            &module_lookup(&[]),
+            &file_lookup(&files),
+            &BTreeMap::new(),
+        );
+        let section = flow.expect("flow drawn from files");
+
+        assert!(
+            section.contains("bm25 — Runs BM25 keyword search"),
+            "{section}"
+        );
+        assert!(section.contains("rrf — Fuses ranked results"), "{section}");
+    }
+}
