@@ -25,6 +25,7 @@ mod progress;
 mod provenance;
 mod repair;
 mod reuse;
+mod truth_digest;
 
 #[test]
 fn documents_code_and_config_excludes_content_only_by_default() {

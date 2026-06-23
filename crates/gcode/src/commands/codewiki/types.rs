@@ -29,6 +29,35 @@ pub struct LeadingChunk {
     pub line_end: usize,
 }
 
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct CodewikiTruthDigest {
+    pub(crate) schema_version: u8,
+    pub(crate) generated_at: String,
+    pub(crate) project_id: String,
+    pub(crate) repo_summary: String,
+    pub(crate) stack_authority: String,
+    pub(crate) stack: Vec<CodewikiTruthStackEntry>,
+    pub(crate) key_paths: BTreeMap<String, String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub(crate) superseded: Vec<CodewikiTruthSuperseded>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct CodewikiTruthStackEntry {
+    pub(crate) service: String,
+    pub(crate) kind: String,
+    pub(crate) adapter_module: String,
+    pub(crate) pulled_in_by: Vec<String>,
+    pub(crate) summary: String,
+    pub(crate) degradation: String,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+pub(crate) struct CodewikiTruthSuperseded {
+    pub(crate) old: String,
+    pub(crate) new: String,
+}
+
 /// Builds a prompt source excerpt for `file` from its leading chunk.
 pub(crate) fn source_excerpt_for_file(
     file: &str,

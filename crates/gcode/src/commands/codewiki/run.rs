@@ -12,9 +12,9 @@ use super::{
     BuiltDoc, CodewikiAiOptions, CodewikiInput, CodewikiProgress, CodewikiRunSummary,
     DEFAULT_OUT_DIR, DocPruneScope, DocSink, LeadingChunk, MAX_EDGE_LIMIT, ReusePlan,
     build_audit_context, build_codewiki_changes_doc, build_codewiki_index_snapshot,
-    build_feature_catalog_doc, build_system_model, fetch_codewiki_graph_edges, generation,
-    in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator, resolve_text_verifier,
-    write_ownership_meta,
+    build_feature_catalog_doc, build_system_model, build_truth_digest, fetch_codewiki_graph_edges,
+    generation, in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator,
+    resolve_text_verifier, write_ownership_meta, write_truth_digest,
 };
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
@@ -203,6 +203,11 @@ pub fn run(
     }
     let changed_paths = sink.finish(index_snapshot)?;
     let skipped = generated_pages.saturating_sub(changed_paths.len());
+    if doc_scope.is_unscoped() {
+        let truth_digest =
+            build_truth_digest(&system_model, &ctx.project_id, file_count, module_count);
+        write_truth_digest(out_path, &doc_scope, &truth_digest)?;
+    }
 
     let summary = CodewikiRunSummary {
         command: "codewiki",

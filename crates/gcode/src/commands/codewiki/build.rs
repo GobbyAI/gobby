@@ -30,7 +30,7 @@ pub(crate) use concepts::build_curated_navigation_docs;
 pub(crate) use features::build_feature_catalog_doc;
 pub(crate) use file::{FileDocPosition, build_file_doc};
 pub(crate) use hotspots::build_hotspots_doc;
-pub(crate) use infrastructure::build_infrastructure_doc;
+pub(crate) use infrastructure::{build_infrastructure_doc, infra_descriptor};
 #[cfg(test)]
 pub(crate) use modules::build_module_docs;
 pub(crate) use modules::build_module_docs_with_filter;

@@ -80,6 +80,22 @@ pub enum ServiceKind {
     MediaToolchain,
 }
 
+impl ServiceKind {
+    pub(crate) fn kind_slug(self) -> &'static str {
+        match self {
+            Self::Postgres => "postgres",
+            Self::Falkor => "falkor",
+            Self::Qdrant => "qdrant",
+            Self::EmbeddingApi => "embedding_api",
+            Self::Daemon => "daemon",
+            Self::GhookInbox => "ghook_inbox",
+            Self::TreeSitter => "tree_sitter",
+            Self::DocumentToolchain => "document_toolchain",
+            Self::MediaToolchain => "media_toolchain",
+        }
+    }
+}
+
 /// One service boundary the workspace reaches, plus what pulls it in.
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct ServiceBoundary {

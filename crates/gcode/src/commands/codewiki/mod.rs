@@ -70,6 +70,7 @@ mod reuse;
 mod run;
 mod system_model;
 mod text;
+mod truth_digest;
 mod types;
 
 // Document builders.
@@ -81,6 +82,7 @@ pub(crate) use build::{
     build_deprecations_doc, build_feature_catalog_doc, build_file_doc, build_hotspots_doc,
     build_infrastructure_doc, build_module_docs_with_filter, build_onboarding_doc,
 };
+pub(crate) use truth_digest::build_truth_digest;
 // Module clustering and graph-to-file helpers.
 pub(crate) use cluster::{
     cluster_file_modules, files_for_import_target, first_component_for_file,
@@ -157,7 +159,8 @@ pub use types::{
 };
 pub(crate) use types::{
     ArchitectureDoc, ArchitectureSubsystem, BuiltDoc, CodewikiDocMeta, CodewikiFileSnapshot,
-    CodewikiGraph, CodewikiIndexSnapshot, CodewikiMeta, CodewikiSymbolSnapshot, DeprecatedSymbol,
+    CodewikiGraph, CodewikiIndexSnapshot, CodewikiMeta, CodewikiSymbolSnapshot,
+    CodewikiTruthDigest, CodewikiTruthStackEntry, CodewikiTruthSuperseded, DeprecatedSymbol,
     DeprecationIndex, DeprecationsDoc, FeatureCatalogDoc, FileDoc, FileLink, HotspotFinding,
     HotspotNode, HotspotsDoc, InfraSection, InfrastructureDoc, ModuleDoc, ModuleLink,
     OnboardingDoc, OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc, TestIndex,
@@ -172,6 +175,9 @@ pub(crate) use types::FeatureBinarySection;
 pub(crate) use io::write_incremental_doc_set_with_snapshot;
 pub(crate) use io::{DocPruneScope, DocSink, read_ownership_meta, write_ownership_meta};
 pub use io::{write_doc_set, write_incremental_doc_set};
+#[cfg(test)]
+pub(crate) use truth_digest::TRUTH_DIGEST_META_PATH;
+pub(crate) use truth_digest::write_truth_digest;
 
 #[cfg(test)]
 mod tests;

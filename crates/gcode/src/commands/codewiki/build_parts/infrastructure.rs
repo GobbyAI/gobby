@@ -5,18 +5,18 @@ use super::super::*;
 /// to cite, and the graceful-degradation behavior when the service is
 /// unavailable. The adapter-module `path:line` citation is the binding "cites a
 /// real module" fact a test guards against renames.
-struct InfraDescriptor {
+pub(crate) struct InfraDescriptor {
     /// What the service is and how the code reaches it. Plain prose, no LLM.
-    summary: &'static str,
+    pub(crate) summary: &'static str,
     /// `path:line` citation for the adapter module that talks to this service:
     /// the workspace-relative module path plus a representative line pointing at
     /// the module's primary public item / public surface. The path is verified
     /// to exist on disk and the line is range-checked by the infrastructure test.
-    adapter_module: &'static str,
+    pub(crate) adapter_module: &'static str,
     /// Documented graceful-degradation behavior when the service is
     /// unavailable, phrased from the workspace's degradation vocabulary
     /// (`gobby_core::degradation`) and the documented search/ingest fallbacks.
-    degradation: &'static str,
+    pub(crate) degradation: &'static str,
 }
 
 /// Map a [`ServiceKind`] to its curated infrastructure descriptor. Every kind
@@ -24,7 +24,7 @@ struct InfraDescriptor {
 /// defensively skipped by the builder. The adapter-module `path:line` citations
 /// point at the real feature-gated / always-compiled adapter modules in the
 /// workspace.
-fn infra_descriptor(kind: ServiceKind) -> Option<InfraDescriptor> {
+pub(crate) fn infra_descriptor(kind: ServiceKind) -> Option<InfraDescriptor> {
     let descriptor = match kind {
         ServiceKind::Postgres => InfraDescriptor {
             summary: "The Gobby PostgreSQL hub stores indexed symbols, content chunks, and \
