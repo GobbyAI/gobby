@@ -1,6 +1,6 @@
 [package]
 name = "gobby-wiki"
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -26,7 +26,7 @@ name = "gwiki"
 path = "src/main.rs"
 
 [dependencies]
-gobby-core = { path = "../gcore", version = "0.5.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
+gobby-core = { path = "../gcore", version = "0.6.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
 clap = { version = "4", features = ["derive"] }
 anyhow = "1"
 chrono = { version = "0.4", default-features = false, features = ["clock"] }
@@ -63,7 +63,7 @@ zip = { version = "4", default-features = false, features = ["deflate"], optiona
 libc = "0.2"
 
 [dev-dependencies]
-gobby-core = { path = "../gcore", version = "0.5.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
+gobby-core = { path = "../gcore", version = "0.6.0", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
 serial_test = "3"
 
 [target.'cfg(windows)'.dev-dependencies]

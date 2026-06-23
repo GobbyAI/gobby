@@ -61,6 +61,9 @@ Use these **before making changes** to understand what you'll affect:
 - `gcode callers <symbol-id>` — who calls this function/method? Prefer a full symbol ID after resolving one
 - `gcode usages <symbol-id>` — all usages (calls + imports). Prefer a full symbol ID after resolving one
 - `gcode imports <file>` — what does this file import?
+- `gcode path <from> <to>` — shortest CALLS path between two symbol queries (requires the graph backend); `--max-depth` bounds the hop search
+
+`gcode search`, `gcode usages`, and `gcode blast-radius` accept `--token-budget <N>` to trim returned rows to an approximate token budget — useful when feeding bounded context to an agent.
 
 ## Graph Lifecycle
 
@@ -93,6 +96,7 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 | What breaks if I change X | `gcode blast-radius <name>` |
 | Who calls a function | `gcode callers <symbol-id>` |
 | All references to a symbol | `gcode usages <symbol-id>` |
+| Shortest call path between two symbols | `gcode path <from> <to>` |
 
 ## Output and global flags
 

@@ -146,14 +146,22 @@ gcode tree                                # File tree with symbol counts
 gcode graph overview --limit 100          # Project overview graph
 gcode callers <symbol-id>                 # Who calls this symbol?
 gcode usages <symbol-id>                  # Incoming call sites for this symbol
+gcode usages <symbol-id> --token-budget 120 # Trim rows to an approximate token budget
 gcode imports src/auth.ts                 # Import graph for a file
+gcode path "handleAuth" "writeDb"         # Shortest CALLS path between two symbols
 gcode blast-radius "handleAuth" --depth 3 # Transitive impact analysis
+gcode blast-radius "handleAuth" --depth 3 --token-budget 160
+
+# Code documentation
+gcode codewiki --out docs/codewiki        # Vault-ready hierarchical code docs
 
 # Graph lifecycle (requires FalkorDB)
 gcode graph clear                         # Clear current project's graph projection
 gcode graph clear --project-id <id>       # Clear graph projection by explicit project id
 gcode graph sync-file --file src/lib.rs   # Sync one indexed file into the graph projection
 gcode graph rebuild                       # Rebuild current project's graph projection
+gcode graph cleanup-orphans               # Remove project-wide orphaned graph nodes
+gcode vector cleanup-orphans              # Remove code-symbol vectors for unindexed files
 
 # Project management
 gcode status                              # Index stats
@@ -161,6 +169,7 @@ gcode projects                            # List all indexed projects
 gcode setup --standalone                  # Provision daemon-independent services
 gcode index                               # Re-index (incremental)
 gcode invalidate                          # Clear index, force full re-index
+gcode prune                               # Remove stale projects + reconcile orphaned projections
 
 # Cross-project queries
 gcode search --project myapp "query"      # By project name
@@ -175,8 +184,10 @@ gcode search --project /path/to/app "q"   # By path
 `gcode grep` defaults to grouped text output: each matched file is printed once,
 followed by line-numbered matches and context. Other high-volume text outputs,
 including `tree`, `callers`, `usages`, and `blast-radius`, also group repeated
-paths for compact agent-readable output. `gcode grep --format json` returns
-structured matches with spans and context. Regex patterns use Rust regex syntax,
+paths for compact agent-readable output. `--token-budget N` trims returned rows
+to an approximate `ceil(chars/4)` token ceiling on `search`, `usages`, and
+`blast-radius` only. `gcode grep --format json` returns structured matches with
+spans and context. Regex patterns use Rust regex syntax,
 including `\b` word boundaries; use `-w/--word` for ASCII identifier whole-word
 search. For reference mapping, resolve a symbol ID first and prefer
 `gcode usages <symbol-id>` or `gcode callers <symbol-id>` over text grep when
@@ -267,14 +278,14 @@ error surface stale or incorrect sync requests.
 
 ## Language Support
 
-gcode parses ASTs using tree-sitter with support for 18 languages. Files that
+gcode parses ASTs using tree-sitter with support for 21 languages. Files that
 pass the same safety checks but do not match a tree-sitter language are indexed
 as content-only text for `search-content`.
 
 | Tier | Languages |
 |------|-----------|
-| **Tier 1** | Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin |
-| **Tier 2** | Dart, Elixir |
+| **Tier 1** | Python, JavaScript, TypeScript, Go, Rust, Java, C, C++, C#, Ruby, PHP, Swift, Kotlin, Scala, Objective-C |
+| **Tier 2** | Dart, Elixir, Lua, Bash |
 | **Tier 3** | JSON, YAML |
 
 Content-only indexing covers repo text files such as source comments, skill

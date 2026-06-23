@@ -589,11 +589,11 @@ mod flow_tests {
         }
     }
 
-    fn module_lookup<'a>(docs: &'a [ModuleDoc]) -> BTreeMap<&'a str, &'a ModuleDoc> {
+    fn module_lookup(docs: &[ModuleDoc]) -> BTreeMap<&str, &ModuleDoc> {
         docs.iter().map(|doc| (doc.module.as_str(), doc)).collect()
     }
 
-    fn file_lookup<'a>(docs: &'a [FileDoc]) -> BTreeMap<&'a str, &'a FileDoc> {
+    fn file_lookup(docs: &[FileDoc]) -> BTreeMap<&str, &FileDoc> {
         docs.iter().map(|doc| (doc.path.as_str(), doc)).collect()
     }
 

@@ -22,7 +22,7 @@ base64 = "0.22"
 chrono = { version = "0.4", default-features = false, features = ["clock", "std"] }
 clap = { version = "4", features = ["derive"] }
 dirs = "6"
-gobby-core = { path = "../gcore", version = "0.5.0" }
+gobby-core = { path = "../gcore", version = "0.6.0" }
 libc = "0.2"
 log = "0.4"
 serde = { version = "1", features = ["derive"] }

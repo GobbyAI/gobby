@@ -7,7 +7,102 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.3.0] — gcode — 2026-06-23
+
+Covers the `1.1.0` → `1.3.0` gap: the intermediate `1.2.0` was never logged, so
+this section folds in all undocumented gcode work since `1.1.0`.
+
+### Added
+
+#### gcode
+
+- **Codewiki suite** — a major expansion of `gcode codewiki`:
+  - **Deep-wiki narrative pages** — long-form, source-grounded narrative pages
+    rendered alongside the structural module/file docs (#897, #874).
+  - **Curated navigation layer** — promoted table of contents, a guided-tour
+    spine (the "explain my codebase" entry point), a demoted reference
+    appendix, and navigation roots exempt from missing-backlink lint (#762,
+    #853).
+  - **Deterministic SystemModel + Mermaid** — a deterministic SystemModel feeds
+    architectural Mermaid diagrams and conceptual-flow diagrams on curated
+    pages, independent of LLM output (#887, #891, #911).
+  - **Deterministic infra-stack page** (#892).
+  - **Contract-derived feature catalog** (#888).
+  - **Deprecation markers** for documented symbols (#889).
+  - **Prose-depth dial + audience register** — `--ai-prose-depth
+    brief|standard|deep` tunes verbosity and `--ai-register
+    newcomer|maintainer|agent` selects the audience voice; grounding holds in
+    all combinations (#890).
+  - **Trustworthy incremental** — per-page-type invalidation plus a `--since
+    <git-ref>` driver that regenerates only pages whose sources or cross-file
+    neighbors changed, preserving out-of-scope pages and `_meta` (#893).
+  - **Grounded verification pass** — a verification pass over generated prose
+    with a configurable `--ai-verify-profile` (#873, #882).
+  - **Citation repair** — `--repair-citations` re-anchors existing pages'
+    `[file:line]` citations against the current index with no LLM calls (#875).
+  - **Truth digest** — an emitted digest of grounded/verified codewiki facts
+    (#915).
+  - **Two-pass curated content engine** with structural fallback (#853).
+- **New AST languages** — Scala (#818), Objective-C (#820), Lua (#819), and
+  Bash (#817). gcode now indexes **21 languages**.
+- **`gcode path`** — shortest CALLS path between two symbol queries (#767).
+- **Projection lifecycle commands** — `gcode prune` reconciles stale projects
+  and orphaned graph + vector projection state across all indexed projects;
+  `gcode graph cleanup-orphans` and `gcode vector cleanup-orphans` remove
+  project-wide orphans; cross-project projection pruning is supported (#774,
+  #802, #772).
+- **`--token-budget`** — approximate token-budget trimming on high-volume reads
+  (`search`, `usages`, `blast-radius`) (#769).
+- **gcode contract v2** — the published CLI contract was bumped to v2 (#876).
+- **Weighted Leiden community detection** — graph communities now use the
+  weighted Leiden implementation in gobby-core `graph_analytics` (#736).
+
+### Changed
+
+#### gcode
+
+- **DB-backed post-write local call resolution** — local call resolution was
+  reworked into a DB-backed post-write pass that resolves cross-file and
+  cross-package call targets across all tier-1/2 languages (Python, JS/TS,
+  Rust, Go, Java, C#, Kotlin, Ruby, PHP, Swift, C/C++, Dart, Elixir), including
+  bare-module resolution and blast-radius external targets (#790, #786, #787,
+  #776, #792–#801, #829–#835).
+- **Collapsed Rust impl symbols** so impl blocks fold into their type (#838).
+- **Oversized-module decomposition** — gcode index, graph reads/writer,
+  codewiki, and CLI test modules were split into focused sub-modules.
+
+### Fixed
+
+#### gcode
+
+- **SIGPIPE reset** — gcode (and gwiki) reset SIGPIPE to its default
+  disposition so closed pipes no longer panic stdout writes (#852).
+- **JSON/YAML AST symbol caps** plus batched FalkorDB graph sync for
+  data-format files (#678).
+- Assorted call/import resolution fixes — C-family header disambiguation,
+  Elixir module functions, and parameterized Elixir function symbols (#830,
+  #829, #822).
+
+## [0.6.0] — gobby-core — 2026-06-23
+
+### Added
+
+#### gobby-core
+
+- **Token-budget accounting helpers** — shared token-budget trimming primitives
+  were extracted into the foundation crate for gcode and gwiki consumers (#909).
+- **Weighted Leiden community detection** — a weighted Leiden community
+  detection module landed in `graph_analytics`, with modularity and
+  local-optimality validation (#736, #760).
+- **Standalone text-generation config provisioning** (#778).
+
+### Changed
+
+#### gobby-core
+
+- **AI daemon module split** — the AI daemon transport module was decomposed
+  into focused sub-modules (#757).
+- **Preserved text-generation defaults** during the AI refactor (#827).
 
 ### Removed
 
@@ -17,12 +112,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `local_backend`, and the `local-backend` feature after retiring the only
   active consumers.
 
-#### gobby-local / gobby-squeeze
+#### Workspace
 
-- **Retired from the active workspace** — `gobby-local`/`gloc` and
-  `gobby-squeeze`/`gsqz` source, release workflows, CI jobs, and live guides
-  have been removed from the repository mainline. Archive tags preserve the
-  last live source snapshots.
+- **`gloc` / `gsqz` retired** — `gobby-local`/`gloc` and `gobby-squeeze`/`gsqz`
+  source, release workflows, CI jobs, and live guides were removed from the
+  active workspace mainline. Archive tags preserve the last live source
+  snapshots (#842).
+
+## [0.6.0] — gwiki — 2026-06-23
+
+Covers the `0.4.0` → `0.6.0` gap: the intermediate `0.5.0` was never logged, so
+this section folds in all undocumented gwiki work since `0.4.0`.
+
+### Added
+
+#### gwiki
+
+- **Session-transcript ingest** — `gwiki sync-sessions` ingests archived Gobby
+  session transcripts into the vault, with adapters for Claude Code, Codex,
+  Gemini, Grok, Qwen, and Droid, deterministic session frontmatter metadata,
+  and secret redaction on ingest (#804, #805–#812, #813).
+- **`gwiki normalize`** — repairs already-written vault markdown for
+  markdownlint; `--check` is a real exit-code gate that fails when normalization
+  would change content (#850, #851).
+- **Static agent exports** — `gwiki graph` emits `llms.txt`, `llms-full.txt`,
+  and `graph.jsonld` alongside `graph.json`/`GRAPH_REPORT.md` (#910).
+- **`--token-budget`** on `gwiki search` and `gwiki ask` (#912).
+- **Cited LLM explainer synthesis** for `gwiki compile` (#724).
+- **Mermaid validity + grounding checks** in `gwiki lint` (#913).
+
+### Changed
+
+#### gwiki
+
+- **`search` is the agent retrieval primitive** — `gwiki search` is now the
+  bounded retrieval primitive and `gwiki ask` is a thin bounded-evidence RAG
+  layer over it; the standalone reason-act research loop was removed (#722).
+- **De-dotted control dir** — the gwiki control directory is now `_gwiki` and
+  `gwiki init` is Obsidian-aware (#848).
+- **Vault relocated and untracked** — the working vault was moved out of the
+  tracked tree and is published to a `wiki` branch via a pre-push hook (#907).
 
 ### Fixed
 
@@ -178,6 +307,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   Grok's snake_case hook names, treats `session_start`, `session_end`,
   `pre_compact`, and `stop` as critical hooks, and hard-blocks Grok `stop`
   responses with exit code 2.
+
+### Fixed
+
+#### ghook
+
+- **Early stdout is EPIPE-tolerant** — early `ghook` stdout writes no longer
+  panic when the host CLI has already closed the pipe; broken-pipe errors on the
+  initial output path are swallowed instead of aborting the dispatch (#716).
 
 ## [0.5.0] — ghook
 
