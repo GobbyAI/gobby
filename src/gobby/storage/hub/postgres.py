@@ -251,7 +251,7 @@ class PostgresHubDatabase:
                 return
             if state == "corrupt_partial":
                 raise MigrationUnsupportedError(
-                    "Pre-0.5 PostgreSQL hub databases below schema version 294 "
+                    f"Pre-0.5 PostgreSQL hub databases below schema version {BASELINE_VERSION} "
                     "require backup/export and recreation under Gobby 0.5.0."
                 )
             _require_pg_search_extension(conn)

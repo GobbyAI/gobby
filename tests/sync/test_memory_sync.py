@@ -577,15 +577,15 @@ class TestExportMerge:
         old_record = {
             "id": "57d7158b-caf9-59d7-9ef5-971f9b7ab8bb",
             "content": (
-                "PostgreSQL migrations are flattened at baseline version 294. "
-                "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 294`, "
-                "`_MIN_MIGRATION_VERSION = 294`, and an empty `MIGRATIONS` list; "
-                "historical PostgreSQL upgrade support below v294 is intentionally "
-                "unsupported/reset-required. Fresh databases rely on `baseline_schema.sql`, "
-                "which already includes the folded v293/v294 objects such as "
-                "`idx_ism_completion_lookup`, `idx_chat_attachments_local_path`, "
-                "`trg_chat_attachments_bound_at_write_once`, and "
-                "`trg_chat_attachments_updated_at_touch`."
+                "PostgreSQL migrations are flattened at baseline version 297. "
+                "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 297`, "
+                "and `src/gobby/storage/migrations/` has no active SQL migration files; "
+                "historical PostgreSQL baseline states below v297 are intentionally "
+                "unsupported/reset-required. Fresh databases rely on "
+                "`postgres_baseline_schema.sql`, which already includes the folded "
+                "v295-v297 objects such as `session_wiki_revisions`, "
+                "`sessions_wiki_revision_fk`, and "
+                "`idx_sessions_wiki_synthesis_failures_source`."
             ),
             "created_at": "2026-05-18T14:43:36.509768+00:00",
             "tags": ["storage", "postgres", "migrations"],
@@ -595,18 +595,17 @@ class TestExportMerge:
         newer_record = {
             "id": "e720187e-e971-5d3b-a999-1f25acf0e39c",
             "content": (
-                "PostgreSQL migrations are flattened at baseline version 294. "
-                "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 294`, "
-                "`_MIN_MIGRATION_VERSION = 294`, and an empty `MIGRATIONS` list; "
-                "historical PostgreSQL upgrade support below v294 is intentionally "
-                "unsupported/reset-required. Fresh databases rely on `baseline_schema.sql`, "
-                "which includes the folded v293/v294 objects: "
-                "`idx_ism_completion_lookup`, `idx_chat_attachments_local_path`, "
-                "`trg_chat_attachments_bound_at_write_once`, and "
-                "`trg_chat_attachments_updated_at_touch`."
+                "PostgreSQL migrations are flattened at baseline version 297. "
+                "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 297`, "
+                "and `src/gobby/storage/migrations/` has no active SQL migration files; "
+                "historical PostgreSQL baseline states below v297 are intentionally "
+                "unsupported/reset-required. Fresh databases rely on "
+                "`postgres_baseline_schema.sql`, which includes the folded v295-v297 "
+                "objects: `session_wiki_revisions`, `sessions_wiki_revision_fk`, "
+                "and `idx_sessions_wiki_synthesis_failures_source`."
             ),
             "created_at": "2026-05-17T20:19:19.756488+00:00",
-            "tags": ["storage", "migrations", "baseline", "postgres", "v294"],
+            "tags": ["storage", "migrations", "baseline", "postgres", "v297"],
             "type": "decision",
             "updated_at": "2026-05-18T15:43:00.273039+00:00",
         }
@@ -624,7 +623,7 @@ class TestExportMerge:
             "migrations",
             "postgres",
             "storage",
-            "v294",
+            "v297",
         ]
 
     def test_export_preserves_file_only_records(self, mock_db, tmp_path) -> None:

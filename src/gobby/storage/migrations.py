@@ -28,7 +28,7 @@ class MigrationUnsupportedError(Exception):
     """Raised when database version is too old or bookkeeping is corrupt."""
 
 
-BASELINE_VERSION = 294
+BASELINE_VERSION = 297
 
 
 _MIGRATION_FILE_RE = re.compile(r"^(?P<version>\d+)_(?P<name>.+?)(?:\.postgres)?\.sql$")

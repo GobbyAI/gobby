@@ -93,17 +93,14 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     assert "Applying PostgreSQL migration 295_add_needed_column" in caplog.text
 
 
-def test_postgres_migration_discovery_finds_current_data_migration() -> None:
+def test_postgres_migration_discovery_is_empty_after_flattening() -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
     runner = module.MigrationRunner(hub)
 
     discovered = runner._discover_migrations()
 
-    assert [(migration.version, migration.name) for migration in discovered] == [
-        (295, "relabel_gemini_sessions"),
-        (296, "add_wiki_to_sessions"),
-    ]
+    assert discovered == []
 
 
 def test_split_statements_respecting_dollar_quotes_keeps_function_bodies_intact() -> None:

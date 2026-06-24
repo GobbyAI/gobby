@@ -69,7 +69,9 @@ def _tracked_migration_names(migrations_dir: Path) -> list[str]:
         return sorted(path.name for path in migrations_dir.glob("*.sql"))
     if result.returncode == 0 and result.stdout.strip():
         return sorted(
-            Path(line).name for line in result.stdout.splitlines() if line.endswith(".sql")
+            Path(line).name
+            for line in result.stdout.splitlines()
+            if line.endswith(".sql") and (REPO_ROOT / line).exists()
         )
     return sorted(path.name for path in migrations_dir.glob("*.sql"))
 
@@ -182,20 +184,16 @@ def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
         assert removed not in assignments
 
 
-def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
+def test_no_postgres_sql_migrations_exist_after_flattening() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
-    assert _tracked_migration_names(migrations_dir) == [
-        "295_relabel_gemini_sessions.postgres.sql",
-        "296_add_wiki_to_sessions.postgres.sql",
-        "297_track_wiki_synthesis_failures.postgres.sql",
-    ]
+    assert _tracked_migration_names(migrations_dir) == []
 
 
-def test_postgres_baseline_version_is_flattened_to_294() -> None:
+def test_postgres_baseline_version_is_flattened_to_297() -> None:
     import gobby.storage.migrations as module
 
-    assert module.BASELINE_VERSION == 294
+    assert module.BASELINE_VERSION == 297
     assert module.latest_known_version() == 297
 
 
@@ -262,11 +260,8 @@ def test_session_summary_revisions_baseline_defines_schema() -> None:
     _assert_contains_all("summary revision integrity baseline", baseline, integrity_snippets)
 
 
-def test_session_wiki_revisions_migration_and_baseline_define_schema() -> None:
+def test_session_wiki_revisions_baseline_defines_schema() -> None:
     baseline = _baseline_text()
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "296_add_wiki_to_sessions.postgres.sql"
-    ).read_text(encoding="utf-8")
 
     session_columns = (
         "wiki_path",
@@ -309,29 +304,9 @@ def test_session_wiki_revisions_migration_and_baseline_define_schema() -> None:
     _assert_contains_all("session wiki revision baseline", baseline, revision_snippets)
     _assert_contains_all("wiki revision integrity baseline", baseline, integrity_snippets)
 
-    # Migration 296 (applied on top of an existing DB) must define the same
-    # objects AND be idempotent, since a freshly baselined DB already carries
-    # them via the baseline snapshot.
-    for column in session_columns:
-        assert f"ADD COLUMN IF NOT EXISTS {column}" in migration
-    _assert_contains_all("session wiki revision migration", migration, revision_snippets)
-    _assert_contains_all("wiki revision integrity migration", migration, integrity_snippets)
-    idempotency_guards = (
-        "ADD COLUMN IF NOT EXISTS",
-        "CREATE TABLE IF NOT EXISTS session_wiki_revisions",
-        "CREATE INDEX IF NOT EXISTS idx_session_wiki_revisions_previous",
-        "CREATE INDEX IF NOT EXISTS idx_sessions_wiki_revision",
-        "WHERE conname = 'sessions_wiki_revision_fk'",
-        "WHERE conname = 'sessions_wiki_digest_turn_count_nonnegative'",
-    )
-    _assert_contains_all("wiki migration idempotency guards", migration, idempotency_guards)
 
-
-def test_wiki_synthesis_failure_migration_and_baseline_define_session_state() -> None:
+def test_wiki_synthesis_failure_baseline_defines_session_state() -> None:
     baseline = _baseline_text()
-    migration = (
-        SRC_ROOT / "storage" / "migrations" / "297_track_wiki_synthesis_failures.postgres.sql"
-    ).read_text(encoding="utf-8")
 
     snippets = (
         "wiki_synthesis_consecutive_failures INTEGER NOT NULL DEFAULT 0",
@@ -344,16 +319,6 @@ def test_wiki_synthesis_failure_migration_and_baseline_define_session_state() ->
         "WHERE wiki_synthesis_consecutive_failures > 0",
     )
     _assert_contains_all("wiki synthesis failure baseline", baseline, snippets)
-    _assert_contains_all("wiki synthesis failure migration", migration, snippets)
-    _assert_contains_all(
-        "wiki synthesis failure migration idempotency",
-        migration,
-        (
-            "ADD COLUMN IF NOT EXISTS wiki_synthesis_consecutive_failures",
-            "WHERE conname = 'sessions_wiki_synthesis_consecutive_failures_nonnegative'",
-            "CREATE INDEX IF NOT EXISTS idx_sessions_wiki_synthesis_failures_source",
-        ),
-    )
 
 
 def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
