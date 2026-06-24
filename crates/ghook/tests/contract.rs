@@ -23,6 +23,7 @@ fn malformed_stdin_uses_cli_specific_json_error_contract() -> TestResult {
         ("qwen", "SessionStart", 1),
         ("droid", "SessionStart", 1),
         ("grok", "session_start", 2),
+        ("agy", "SessionStart", 2),
     ] {
         let home = tempfile::tempdir()?;
         let gobby_home = tempfile::tempdir()?;
@@ -176,6 +177,23 @@ fn daemon_down_distinguishes_critical_and_noncritical_hooks() -> TestResult {
     )?;
     assert_stderr_empty(&grok_noncritical, "grok noncritical daemon-down")?;
 
+    let agy_critical = run_with_closed_daemon("agy", "Stop")?;
+    assert_eq!(agy_critical.status.code(), Some(2));
+    assert!(agy_critical.stdout.is_empty());
+    let agy_critical_stderr = String::from_utf8(agy_critical.stderr)?;
+    assert!(agy_critical_stderr.contains("Daemon connection failed on critical hook 'Stop'"));
+
+    let agy_noncritical = run_with_closed_daemon("agy", "PreToolUse")?;
+    assert_eq!(agy_noncritical.status.code(), Some(1));
+    assert_json_stdout(
+        &agy_noncritical,
+        serde_json::json!({
+            "status": "error",
+            "message": "Daemon unreachable",
+        }),
+    )?;
+    assert_stderr_empty(&agy_noncritical, "agy noncritical daemon-down")?;
+
     Ok(())
 }
 
@@ -319,6 +337,28 @@ fn daemon_success_maps_deny_and_block_bodies() -> TestResult {
     )?;
     assert_stderr_empty(&grok_pre_tool_output, "grok pre_tool_use block")?;
     assert!(grok_pre_tool_request.contains("\"hook_type\":\"pre_tool_use\""));
+
+    for hook_type in [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+    ] {
+        let body = r#"{"decision":"accept","reason":"ok"}"#;
+        let (agy_url, agy_daemon) = start_daemon(http_ok_json(body))?;
+        let agy_output = run_temp_ghook("agy", hook_type, &agy_url, VALID_STDIN, &[])?;
+        let agy_request = join_daemon(agy_daemon)?;
+
+        assert_eq!(agy_output.status.code(), Some(0), "{hook_type}");
+        assert_json_stdout(&agy_output, serde_json::from_str(body)?)?;
+        assert_stderr_empty(&agy_output, "agy accepted hook")?;
+        assert!(agy_request.contains("\"source\":\"agy\""), "{hook_type}");
+        assert!(
+            agy_request.contains(&format!("\"hook_type\":\"{hook_type}\"")),
+            "{hook_type}"
+        );
+    }
 
     Ok(())
 }

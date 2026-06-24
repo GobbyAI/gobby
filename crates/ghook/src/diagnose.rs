@@ -159,6 +159,22 @@ mod tests {
     }
 
     #[test]
+    fn agy_uses_antigravity_pascal_case_hooks() {
+        for (hook_type, critical) in [
+            ("SessionStart", true),
+            ("UserPromptSubmit", false),
+            ("PreToolUse", false),
+            ("PostToolUse", false),
+            ("Stop", true),
+        ] {
+            let d = diagnose("agy", hook_type);
+            assert!(d.cli_recognized);
+            assert_eq!(d.source.as_deref(), Some("agy"));
+            assert_eq!(d.critical, critical, "{hook_type}");
+        }
+    }
+
+    #[test]
     fn droid_session_start_is_recognized_noncritical_with_terminal_context_enabled() {
         let d = diagnose("droid", "SessionStart");
         assert!(d.cli_recognized);

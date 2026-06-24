@@ -42,6 +42,11 @@ impl CliConfig {
                 critical_hooks: ["SessionStart", "Stop"].into_iter().collect(),
                 json_error_exit_code: 2,
             }),
+            "agy" => Some(Self {
+                source: "agy",
+                critical_hooks: ["SessionStart", "Stop"].into_iter().collect(),
+                json_error_exit_code: 2,
+            }),
             "grok" => Some(Self {
                 source: "grok",
                 critical_hooks: ["session_start", "session_end", "pre_compact", "stop"]
@@ -89,6 +94,16 @@ mod tests {
     #[test]
     fn codex_stop_is_critical() {
         let c = CliConfig::for_cli("codex").unwrap();
+        assert!(c.is_critical_hook("Stop"));
+        assert!(!c.is_critical_hook("PreToolUse"));
+        assert_eq!(c.json_error_exit_code, 2);
+    }
+
+    #[test]
+    fn agy_uses_antigravity_hook_contract() {
+        let c = CliConfig::for_cli("agy").unwrap();
+        assert_eq!(c.source, "agy");
+        assert!(c.is_critical_hook("SessionStart"));
         assert!(c.is_critical_hook("Stop"));
         assert!(!c.is_critical_hook("PreToolUse"));
         assert_eq!(c.json_error_exit_code, 2);

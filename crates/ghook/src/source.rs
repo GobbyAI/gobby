@@ -73,6 +73,11 @@ mod tests {
             "non-claude CLIs should keep their canonical source"
         );
         assert_eq!(
+            detect_source(&CliConfig::for_dispatch("agy")),
+            "agy",
+            "Antigravity CLI should keep its canonical source"
+        );
+        assert_eq!(
             detect_source(&CliConfig::for_dispatch("grok")),
             "grok",
             "GOBBY_SOURCE should remain a Claude-only compatibility override"
