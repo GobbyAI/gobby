@@ -334,12 +334,11 @@ mod serial_db {
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn overwrite_recreates_incompatible_code_index_and_preserves_sentinel_table() {
-        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for overwrite setup tests");
+        let database_url = crate::test_env::postgres_test_database_url("overwrite setup tests");
         if let Err(reason) = destructive_postgres_test_allowed(&database_url) {
             // Refuse to panic against a non-test database; skipping is safer than
             // requiring every developer machine to provide PostgreSQL.

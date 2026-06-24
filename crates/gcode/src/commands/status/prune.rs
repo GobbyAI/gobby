@@ -543,7 +543,7 @@ mod tests {
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn orphan_project_discovery_and_sql_deletion_counts() {
@@ -599,8 +599,7 @@ mod tests {
     }
 
     fn connect_test_db() -> (postgres::Client, String) {
-        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for prune tests");
+        let database_url = crate::test_env::postgres_test_database_url("prune tests");
         let conn = db::connect_readwrite(&database_url).expect("connect prune PostgreSQL test DB");
         (conn, database_url)
     }

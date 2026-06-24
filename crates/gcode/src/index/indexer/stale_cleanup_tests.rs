@@ -10,7 +10,7 @@ mod serial_db {
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn discovered_scan_deletes_stale_facts_when_ast_indexing_returns_none() {
@@ -61,8 +61,7 @@ mod serial_db {
 }
 
 fn connect_test_db() -> (postgres::Client, String) {
-    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-        .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for stale cleanup tests");
+    let database_url = crate::test_env::postgres_test_database_url("stale cleanup tests");
     let conn = db::connect_readwrite(&database_url)
         .expect("connect stale cleanup PostgreSQL test database");
     (conn, database_url)

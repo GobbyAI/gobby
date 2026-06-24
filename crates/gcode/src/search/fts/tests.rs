@@ -171,7 +171,7 @@ mod serial_db {
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn overlay_visibility_counts_and_kinds_use_database_predicates() {
@@ -211,7 +211,7 @@ mod serial_db {
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn resolve_graph_symbol_by_id_resolves_exact_symbol() {
@@ -245,7 +245,7 @@ mod serial_db {
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn resolve_graph_symbol_by_id_returns_none_for_missing_uuid() {
@@ -266,7 +266,7 @@ mod serial_db {
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn resolve_graph_symbol_by_id_returns_none_for_empty_id() {
@@ -281,7 +281,7 @@ mod serial_db {
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn resolve_graph_symbol_by_id_returns_none_for_malformed_id() {
@@ -296,8 +296,7 @@ mod serial_db {
 }
 
 fn connect_overlay_visibility_test_db() -> (Client, String) {
-    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-        .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for FTS PostgreSQL tests");
+    let database_url = crate::test_env::postgres_test_database_url("FTS PostgreSQL tests");
     let mut conn = gobby_core::postgres::connect_readwrite(&database_url)
         .expect("connect FTS PostgreSQL test database");
     crate::schema::validate_runtime_schema(&mut conn).expect("FTS PostgreSQL test schema is valid");

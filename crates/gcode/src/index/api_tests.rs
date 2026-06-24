@@ -4,8 +4,6 @@ use crate::models::{CallRelation, ImportRelation, IndexedFile, IndexedProject, S
 
 use super::api;
 
-const POSTGRES_DSN_ENV: &str = "GCODE_POSTGRES_TEST_DATABASE_URL";
-
 mod serial_db {
     use super::*;
 
@@ -13,7 +11,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     fn api_upsert_symbols_preserves_same_hash_summary_and_clears_changed_hash() {
         let (mut conn, database_url) = connect_test_db();
@@ -68,7 +66,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     fn api_upsert_file_resets_projection_sync_flags_on_conflict() {
         let (mut conn, database_url) = connect_test_db();
@@ -134,7 +132,7 @@ mod serial_db {
     #[serial_test::serial(serial_db)]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     fn api_upsert_imports_and_calls_report_rows_inserted_not_input_len() {
         let (mut conn, database_url) = connect_test_db();
@@ -189,8 +187,7 @@ mod serial_db {
 }
 
 fn connect_test_db() -> (postgres::Client, String) {
-    let database_url = std::env::var(POSTGRES_DSN_ENV)
-        .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for postgres API SQL tests");
+    let database_url = crate::test_env::postgres_test_database_url("postgres API SQL tests");
     let conn = gobby_core::postgres::connect_readwrite(&database_url)
         .expect("connect to PostgreSQL test database");
     (conn, database_url)

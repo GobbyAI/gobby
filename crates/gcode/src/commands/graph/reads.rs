@@ -638,8 +638,7 @@ mod tests {
     ];
 
     fn graph_resolution_database_url() -> String {
-        std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for graph resolution tests")
+        crate::test_env::postgres_test_database_url("graph resolution tests")
     }
 
     fn connect_graph_resolution_test_db() -> Client {
@@ -761,7 +760,7 @@ mod tests {
         #[test]
         #[cfg_attr(
             not(gcode_postgres_tests),
-            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+            ignore = "requires a PostgreSQL test database URL"
         )]
         #[serial_test::serial(serial_db)]
         fn uuid_input_resolves_exact_symbol_for_active_project() {
@@ -795,7 +794,7 @@ mod tests {
         #[test]
         #[cfg_attr(
             not(gcode_postgres_tests),
-            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+            ignore = "requires a PostgreSQL test database URL"
         )]
         #[serial_test::serial(serial_db)]
         fn unknown_uuid_input_does_not_fall_back_to_name_resolution() {
@@ -827,7 +826,7 @@ mod tests {
         #[test]
         #[cfg_attr(
             not(gcode_postgres_tests),
-            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+            ignore = "requires a PostgreSQL test database URL"
         )]
         #[serial_test::serial(serial_db)]
         fn ambiguous_name_behavior_remains_unchanged() {

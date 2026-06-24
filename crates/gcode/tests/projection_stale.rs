@@ -4,19 +4,20 @@ mod serial_db {
     use serde_json::Value;
     use std::process::Command;
 
-    const POSTGRES_DSN_ENV: &str = "GCODE_POSTGRES_TEST_DATABASE_URL";
+    const GCODE_POSTGRES_TEST_DATABASE_URL_ENV: &str = "GCODE_POSTGRES_TEST_DATABASE_URL";
+    const GOBBY_POSTGRES_TEST_DATABASE_URL_ENV: &str = "GOBBY_POSTGRES_TEST_DATABASE_URL";
+    const DATABASE_URL_ENV: &str = "DATABASE_URL";
     const PROJECT_ID: &str = "gcode-projection-stale-missing-file";
     const FILE_PATH: &str = "src/lib.rs";
 
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn vector_sync_file_allows_deleted_indexed_file_row() {
-        let database_url = std::env::var(POSTGRES_DSN_ENV)
-            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for projection stale tests");
+        let database_url = postgres_test_database_url("projection stale tests");
         let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");
         cleanup_project(&mut conn, PROJECT_ID).expect("pre-clean project rows");
         let _cleanup = ProjectCleanup {
@@ -83,12 +84,11 @@ mod serial_db {
     #[test]
     #[cfg_attr(
         not(gcode_postgres_tests),
-        ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+        ignore = "requires a PostgreSQL test database URL"
     )]
     #[serial_test::serial(serial_db)]
     fn prune_reconciles_orphan_project_rows_without_touching_valid_project() {
-        let database_url = std::env::var(POSTGRES_DSN_ENV)
-            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for projection stale tests");
+        let database_url = postgres_test_database_url("projection stale tests");
         let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");
         let valid_project_id = "gcode-prune-valid-project";
         let orphan_project_id = "gcode-prune-orphan-project";
@@ -125,6 +125,7 @@ mod serial_db {
             valid_project_id,
             project.path().to_string_lossy(),
         );
+        seed_indexed_file_without_project(&mut conn, valid_project_id, FILE_PATH);
         seed_orphan_project_rows(&mut conn, orphan_project_id);
 
         let output = Command::new(env!("CARGO_BIN_EXE_gcode"))
@@ -157,6 +158,48 @@ mod serial_db {
         assert_eq!(project_child_row_count(&mut conn, orphan_project_id), 0);
         assert_eq!(project_child_row_count(&mut conn, valid_project_id), 2);
         assert_eq!(indexed_project_count(&mut conn, valid_project_id), 1);
+    }
+
+    fn postgres_test_database_url(purpose: &str) -> String {
+        postgres_test_database_url_from_env().unwrap_or_else(|| {
+            panic!(
+                "{purpose} requires a PostgreSQL test database URL; set \
+                 {GCODE_POSTGRES_TEST_DATABASE_URL_ENV}, \
+                 {GOBBY_POSTGRES_TEST_DATABASE_URL_ENV}, {DATABASE_URL_ENV}, \
+                 or GOBBY_POSTGRES_TEST_* components"
+            )
+        })
+    }
+
+    fn postgres_test_database_url_from_env() -> Option<String> {
+        [
+            GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
+            GOBBY_POSTGRES_TEST_DATABASE_URL_ENV,
+            DATABASE_URL_ENV,
+        ]
+        .iter()
+        .find_map(|name| non_empty_env(name))
+        .or_else(postgres_test_database_url_from_parts)
+    }
+
+    fn postgres_test_database_url_from_parts() -> Option<String> {
+        let database = non_empty_env("GOBBY_POSTGRES_TEST_DB")?;
+        let user = non_empty_env("GOBBY_POSTGRES_TEST_USER")?;
+        let password = non_empty_env("GOBBY_POSTGRES_TEST_PASSWORD").unwrap_or_default();
+        let host =
+            non_empty_env("GOBBY_POSTGRES_TEST_HOST").unwrap_or_else(|| "localhost".to_string());
+        let port = non_empty_env("GOBBY_POSTGRES_TEST_PORT").unwrap_or_else(|| "5432".to_string());
+
+        Some(format!(
+            "postgresql://{user}:{password}@{host}:{port}/{database}"
+        ))
+    }
+
+    fn non_empty_env(name: &str) -> Option<String> {
+        std::env::var(name)
+            .ok()
+            .map(|value| value.trim().to_string())
+            .filter(|value| !value.is_empty())
     }
 
     struct ProjectCleanup {

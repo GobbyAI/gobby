@@ -226,8 +226,7 @@ mod tests {
     }
 
     fn postgres_test_context(project_id: &str) -> Context {
-        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for freshness tests");
+        let database_url = crate::test_env::postgres_test_database_url("freshness tests");
         db::connect_readwrite(&database_url).expect("connect freshness PostgreSQL test database");
         Context {
             database_url,
@@ -245,8 +244,7 @@ mod tests {
     }
 
     fn postgres_context_with_root(project_id: &str, root: &Path) -> Context {
-        let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-            .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for freshness tests");
+        let database_url = crate::test_env::postgres_test_database_url("freshness tests");
         db::connect_readwrite(&database_url).expect("connect freshness PostgreSQL test database");
         Context {
             database_url,
@@ -322,7 +320,7 @@ mod tests {
         #[test]
         #[cfg_attr(
             not(gcode_postgres_tests),
-            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+            ignore = "requires a PostgreSQL test database URL"
         )]
         #[serial_test::serial(serial_db)]
         fn busy_project_lock_skips_freshness_refresh() {
@@ -337,7 +335,7 @@ mod tests {
         #[test]
         #[cfg_attr(
             not(gcode_postgres_tests),
-            ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+            ignore = "requires a PostgreSQL test database URL"
         )]
         #[serial_test::serial(serial_db)]
         fn pre_gate_skips_lock_when_unchanged_and_trips_after_a_change() {

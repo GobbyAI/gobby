@@ -9,7 +9,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[test]
 #[cfg_attr(
     not(gcode_postgres_tests),
-    ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    ignore = "requires a PostgreSQL test database URL"
 )]
 #[serial_test::serial(serial_db)]
 fn parsed_reindex_preserves_unchanged_symbol_summaries_and_clears_changed_symbols() {
@@ -88,7 +88,7 @@ fn parsed_reindex_preserves_unchanged_symbol_summaries_and_clears_changed_symbol
 #[test]
 #[cfg_attr(
     not(gcode_postgres_tests),
-    ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+    ignore = "requires a PostgreSQL test database URL"
 )]
 #[serial_test::serial(serial_db)]
 fn postgres_sink_seeds_project_row_before_file_facts() {
@@ -131,8 +131,7 @@ fn postgres_sink_seeds_project_row_before_file_facts() {
 }
 
 fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
-    let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
-        .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for summary preservation tests");
+    let database_url = crate::test_env::postgres_test_database_url("indexer serial DB tests");
     let conn = db::connect_readwrite(&database_url)
         .expect("connect summary preservation PostgreSQL test database");
     (conn, database_url)
