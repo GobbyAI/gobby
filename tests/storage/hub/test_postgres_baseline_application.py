@@ -199,10 +199,12 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
     """Construction sets open=False and only explicit open() opens the pool once."""
     module = _postgres_module()
     calls: dict[str, object] = {}
+    monkeypatch.delenv("PGAPPNAME", raising=False)
 
     class FakePool:
         def __init__(self, *args, **kwargs) -> None:
             calls["constructor_open"] = kwargs["open"]
+            calls["pool_kwargs"] = kwargs["kwargs"]
 
         def open(self, *, wait: bool, timeout: float) -> None:
             calls["opened"] = (wait, timeout)
@@ -214,6 +216,11 @@ def test_postgres_pool_opens_lazily(monkeypatch: pytest.MonkeyPatch) -> None:
 
     db = module.PostgresHubDatabase("postgresql://gobby:secret@localhost/gobby")
     assert calls["constructor_open"] is False
+    pool_kwargs = calls["pool_kwargs"]
+    assert isinstance(pool_kwargs, dict)
+    assert pool_kwargs["application_name"] == "gobby"
+    assert pool_kwargs["prepare_threshold"] is None
+    assert pool_kwargs["row_factory"] is module.dict_row
     assert "opened" not in calls
 
     db.open(timeout=1.5)

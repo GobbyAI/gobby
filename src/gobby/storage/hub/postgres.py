@@ -94,6 +94,7 @@ class PostgresHubDatabase:
             timeout=int(os.getenv("PGCONNECT_TIMEOUT", "5")),
             kwargs={
                 "application_name": os.getenv("PGAPPNAME", "gobby"),
+                "prepare_threshold": None,
                 "row_factory": dict_row,
             },
         )
