@@ -271,6 +271,25 @@ class _QueryMixin:
         )
         return {row["status"]: row["count"] for row in rows}
 
+    def count_wiki_synthesis_failures_by_source(
+        self: _ManagerState,
+        project_id: str | None = None,
+    ) -> dict[str, int]:
+        """Count sessions with wiki synthesis failures grouped by source."""
+        conditions, params = _build_session_filters(project_id, None, None)
+        conditions.append("wiki_synthesis_consecutive_failures > 0")
+        where_clause = f"WHERE {' AND '.join(conditions)}"
+        rows = self.db.fetchall(
+            f"""
+            SELECT source, COUNT(*) as count
+            FROM sessions
+            {where_clause}
+            GROUP BY source
+            """,  # nosec B608
+            tuple(params),
+        )
+        return {row["source"]: int(row["count"]) for row in rows}
+
     def fetch_task_refs_by_session(
         self: _ManagerState,
         session_ids: Sequence[str],

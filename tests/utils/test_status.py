@@ -115,6 +115,23 @@ class TestStatusUtils:
         assert "Health Issues:" in msg
         assert "s1" in msg
 
+    def test_format_status_message_wiki_synthesis_health_issue(self) -> None:
+        msg = format_status_message(
+            running=True,
+            api_data={
+                "sessions": {
+                    "wiki_synthesis": {
+                        "failed_sessions": 3,
+                        "by_source": {"codex": 2, "claude": 1},
+                    },
+                },
+            },
+        )
+
+        assert "Health Issues:" in msg
+        assert "Wiki synthesis: 3 failed sessions" in msg
+        assert "claude: 1, codex: 2" in msg
+
     def test_format_status_message_log_files(self) -> None:
         msg = format_status_message(
             running=True,

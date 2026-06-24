@@ -89,6 +89,13 @@ class _SummaryUpdateHost(Protocol):
         wiki_path: str | None = None,
     ) -> Session | None: ...
 
+    def record_wiki_synthesis_failure(
+        self,
+        session_id: str,
+        reason: str,
+        error: str | None = None,
+    ) -> Session | None: ...
+
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
 
 
@@ -310,6 +317,10 @@ class _SummaryUpdateMixin:
                     wiki_digest_turn_count = %s,
                     wiki_generation_mode = %s,
                     wiki_generated_at = %s,
+                    wiki_synthesis_consecutive_failures = 0,
+                    wiki_synthesis_last_failure_reason = NULL,
+                    wiki_synthesis_last_error = NULL,
+                    wiki_synthesis_last_failed_at = NULL,
                     updated_at = %s
                 WHERE id = %s
                 """,
@@ -325,6 +336,39 @@ class _SummaryUpdateMixin:
                     session_id,
                 ),
             )
+
+        updated = self.get(session_id)
+        if updated is not None:
+            self._notify_session_change("session_updated", session_id)
+        return updated
+
+    def record_wiki_synthesis_failure(
+        self: _SummaryUpdateHost,
+        session_id: str,
+        reason: str,
+        error: str | None = None,
+    ) -> Session | None:
+        """Increment consecutive wiki synthesis failures for a session."""
+        failure_reason = reason.strip() or "unknown"
+        now = datetime.now(UTC).isoformat()
+
+        with self.db.transaction() as conn:
+            row = conn.execute(
+                """
+                UPDATE sessions
+                SET wiki_synthesis_consecutive_failures =
+                        COALESCE(wiki_synthesis_consecutive_failures, 0) + 1,
+                    wiki_synthesis_last_failure_reason = %s,
+                    wiki_synthesis_last_error = %s,
+                    wiki_synthesis_last_failed_at = %s,
+                    updated_at = %s
+                WHERE id = %s
+                RETURNING id
+                """,
+                (failure_reason, error, now, now, session_id),
+            ).fetchone()
+            if row is None:
+                return None
 
         updated = self.get(session_id)
         if updated is not None:

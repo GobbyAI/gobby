@@ -712,6 +712,75 @@ class TestSessionManagerMetadata:
         fetched = session_manager.get_wiki_revision(second.wiki_revision_id)
         assert fetched == revisions[0]
 
+    def test_wiki_synthesis_failure_tracking_increments_groups_and_resets(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+        project_manager,
+    ) -> None:
+        """Wiki synthesis failures are durable until successful wiki persistence."""
+        other_project = project_manager.create(name="wiki-failures-other")
+        claude = session_manager.register(
+            external_id="wiki-failures-claude",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        codex = session_manager.register(
+            external_id="wiki-failures-codex",
+            machine_id="machine",
+            source="codex",
+            project_id=sample_project["id"],
+        )
+        other = session_manager.register(
+            external_id="wiki-failures-other",
+            machine_id="machine",
+            source="claude",
+            project_id=other_project.id,
+        )
+
+        first = session_manager.record_wiki_synthesis_failure(
+            claude.id,
+            "llm_error",
+            error="provider unavailable",
+        )
+        second = session_manager.record_wiki_synthesis_failure(claude.id, "invalid_synthesis")
+        session_manager.record_wiki_synthesis_failure(codex.id, "empty_synthesis")
+        session_manager.record_wiki_synthesis_failure(other.id, "invalid_synthesis")
+
+        assert first is not None
+        assert second is not None
+        assert second.wiki_synthesis_consecutive_failures == 2
+        assert second.wiki_synthesis_last_failure_reason == "invalid_synthesis"
+        assert second.wiki_synthesis_last_error is None
+        assert second.wiki_synthesis_last_failed_at is not None
+        assert second.to_dict()["wiki_synthesis_consecutive_failures"] == 2
+        assert second.to_brief()["wiki_synthesis_last_failure_reason"] == "invalid_synthesis"
+        assert session_manager.count_wiki_synthesis_failures_by_source() == {
+            "claude": 2,
+            "codex": 1,
+        }
+        assert session_manager.count_wiki_synthesis_failures_by_source(
+            project_id=sample_project["id"]
+        ) == {"claude": 1, "codex": 1}
+
+        reset = session_manager.persist_wiki_state(
+            claude.id,
+            wiki_markdown="## Summary\nRecovered page.\n\n## Key Claims\n- one",
+            generation_mode="full",
+            source_context_hash="wiki-hash-reset",
+            digest_turn_count=3,
+        )
+
+        assert reset is not None
+        assert reset.wiki_synthesis_consecutive_failures == 0
+        assert reset.wiki_synthesis_last_failure_reason is None
+        assert reset.wiki_synthesis_last_error is None
+        assert reset.wiki_synthesis_last_failed_at is None
+        assert session_manager.count_wiki_synthesis_failures_by_source(
+            project_id=sample_project["id"]
+        ) == {"codex": 1}
+
     def test_persist_wiki_state_rejects_negative_digest_turn_count(
         self,
         session_manager: SessionManager,

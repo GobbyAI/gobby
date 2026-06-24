@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import logging
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from typing import Any, Protocol
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGatewayError
@@ -19,16 +19,19 @@ async def collect_wiki_status(
     *,
     gateway: WikiStatusGateway,
     runner: object | None,
+    synthesis_failures_by_source: Mapping[str, int] | None = None,
 ) -> dict[str, Any]:
     status_envelope = await _gateway_probe(lambda: gateway.status())
     health_envelope = await _gateway_probe(lambda: gateway.health())
     payload = dict(_payload(status_envelope))
     gateway_maintenance = _gateway_maintenance(health_envelope)
     watcher_maintenance = _watcher_maintenance(runner)
+    synthesis_maintenance = _synthesis_maintenance(synthesis_failures_by_source)
     payload["maintenance"] = {
         "watcher": watcher_maintenance,
         "gateway": gateway_maintenance,
-        "degraded": bool(gateway_maintenance["degraded"]),
+        "synthesis": synthesis_maintenance,
+        "degraded": bool(gateway_maintenance["degraded"] or synthesis_maintenance["degraded"]),
     }
 
     result = dict(status_envelope)
@@ -101,6 +104,22 @@ def _watcher_maintenance(runner: object | None) -> dict[str, Any]:
         "last_index_time": health.get("last_index_time"),
         "pending_debounce": bool(health.get("pending_debounce", False)),
         "pending_changes": _int_value(health.get("pending_changes")),
+    }
+
+
+def _synthesis_maintenance(
+    failures_by_source: Mapping[str, int] | None,
+) -> dict[str, Any]:
+    by_source = {
+        str(source): count
+        for source, value in dict(failures_by_source or {}).items()
+        if (count := _int_value(value)) > 0
+    }
+    failed_sessions = sum(by_source.values())
+    return {
+        "degraded": failed_sessions > 0,
+        "failed_sessions": failed_sessions,
+        "by_source": by_source,
     }
 
 

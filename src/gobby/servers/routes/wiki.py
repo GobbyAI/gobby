@@ -9,7 +9,11 @@ from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
 from gobby.wiki import WikiUpdateCoordinator
-from gobby.wiki.scope_resolution import WikiScopeResolutionError, resolve_wiki_scope
+from gobby.wiki.scope_resolution import (
+    ResolvedWikiScope,
+    WikiScopeResolutionError,
+    resolve_wiki_scope,
+)
 from gobby.wiki.status import collect_wiki_status
 
 if TYPE_CHECKING:
@@ -29,8 +33,13 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         project: str | None = Query(None),
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
-        gateway = await _gateway(server, project, topic)
-        return await collect_wiki_status(gateway=gateway, runner=_runner(server))
+        resolved = await _resolve_scope(server, project, topic)
+        synthesis_failures = await _wiki_synthesis_failures_by_source(server, resolved)
+        return await collect_wiki_status(
+            gateway=_gateway_from_scope(resolved),
+            runner=_runner(server),
+            synthesis_failures_by_source=synthesis_failures,
+        )
 
     @router.post("/index")
     async def index(
@@ -237,11 +246,14 @@ async def _write(gateway: GwikiGateway, result: dict[str, Any]) -> dict[str, Any
     return await _map_gateway_errors(lambda: coordinator.handle_write_result(result))
 
 
-async def _gateway(server: HTTPServer, project: str | None, topic: str | None) -> GwikiGateway:
-    # Keep server in the helper signature for route factory compatibility.
+async def _resolve_scope(
+    server: HTTPServer,
+    project: str | None,
+    topic: str | None,
+) -> ResolvedWikiScope:
     services = getattr(server, "services", None)
     try:
-        resolved = await resolve_wiki_scope(
+        return await resolve_wiki_scope(
             getattr(services, "database", None),
             project=project,
             topic=topic,
@@ -250,12 +262,32 @@ async def _gateway(server: HTTPServer, project: str | None, topic: str | None) -
     except WikiScopeResolutionError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+
+async def _gateway(server: HTTPServer, project: str | None, topic: str | None) -> GwikiGateway:
+    # Keep server in the helper signature for route factory compatibility.
+    return _gateway_from_scope(await _resolve_scope(server, project, topic))
+
+
+def _gateway_from_scope(resolved: ResolvedWikiScope) -> GwikiGateway:
     return GwikiGateway(
         binary=None,
         project_root=resolved.project_root,
         topic=resolved.topic,
         timeout_seconds=30.0,
     )
+
+
+async def _wiki_synthesis_failures_by_source(
+    server: HTTPServer,
+    resolved: ResolvedWikiScope,
+) -> dict[str, int]:
+    session_manager = getattr(server, "session_manager", None)
+    count_failures = getattr(session_manager, "count_wiki_synthesis_failures_by_source", None)
+    if not callable(count_failures):
+        return {}
+
+    project_id = resolved.project_id if resolved.topic is None else None
+    return await server.run_db(count_failures, project_id=project_id)
 
 
 def _runner(server: HTTPServer) -> object | None:

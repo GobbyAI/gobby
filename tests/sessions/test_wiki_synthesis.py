@@ -78,7 +78,7 @@ def _make_session(**overrides: Any) -> SimpleNamespace:
 
 
 class _FakeLLM:
-    def __init__(self, output: str) -> None:
+    def __init__(self, output: str | Exception) -> None:
         self.output = output
         self.prompts: list[str] = []
 
@@ -92,6 +92,8 @@ class _FakeLLM:
         cwd: str | None = None,
     ) -> str:
         self.prompts.append(prompt)
+        if isinstance(self.output, Exception):
+            raise self.output
         return self.output
 
 
@@ -99,10 +101,20 @@ class _FakeSessionManager:
     def __init__(self) -> None:
         self.db = None
         self.persist_calls: list[tuple[str, dict[str, Any]]] = []
+        self.failure_calls: list[tuple[str, str, str | None]] = []
 
     def persist_wiki_state(self, session_id: str, **kwargs: Any) -> Any:
         self.persist_calls.append((session_id, kwargs))
         return SimpleNamespace(id=session_id, wiki_markdown=kwargs.get("wiki_markdown"))
+
+    def record_wiki_synthesis_failure(
+        self,
+        session_id: str,
+        reason: str,
+        error: str | None = None,
+    ) -> Any:
+        self.failure_calls.append((session_id, reason, error))
+        return SimpleNamespace(id=session_id)
 
 
 def _config(**overrides: Any) -> SimpleNamespace:
@@ -149,8 +161,16 @@ def test_redact_wiki_markdown_scrubs_secrets_and_home_path() -> None:
 
 
 def test_is_wiki_markdown_valid_requires_core_sections() -> None:
-    assert is_wiki_markdown_valid("## Summary\nx\n## Key Claims\n- y")
+    assert is_wiki_markdown_valid(
+        "# Session\n\n## Summary\nReal summary text.\n\n## Key Claims\n- Real claim text."
+    )
+    assert is_wiki_markdown_valid(
+        "### Summary ###\nSummary body.\n\n#### Detail\nNested detail.\n\n### Key Claims\nClaim body."
+    )
     assert not is_wiki_markdown_valid("## Summary\nonly summary")
+    assert not is_wiki_markdown_valid("Summary and Key Claims are words in prose.")
+    assert not is_wiki_markdown_valid("## Summary\n\n## Key Claims\nClaim body.")
+    assert not is_wiki_markdown_valid("## Summary\n- \n\n## Key Claims\n** **")
     assert not is_wiki_markdown_valid("")
     assert not is_wiki_markdown_valid(None)
 
@@ -321,6 +341,7 @@ async def test_generate_session_wiki_persists_and_writes_file(
     assert kwargs["wiki_path"] == str(wiki_file)
     assert "SECRETKEY" not in kwargs["wiki_markdown"]
     assert _HOME not in kwargs["wiki_markdown"]
+    assert manager.failure_calls == []
 
 
 @pytest.mark.asyncio
@@ -350,14 +371,16 @@ async def test_generate_session_wiki_noop_on_hash_match() -> None:
     assert result["generated"] is False
     assert result["skipped"] == "noop"
     assert manager.persist_calls == []
+    assert manager.failure_calls == []
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_stub_prompt")
 async def test_generate_session_wiki_empty_synthesis_skips() -> None:
     manager = _FakeSessionManager()
+    session = _make_session()
     result = await generate_session_wiki(
-        session=_make_session(),
+        session=session,
         digest_markdown=_DIGEST,
         session_manager=manager,
         llm_service=_FakeLLM("   "),
@@ -365,19 +388,62 @@ async def test_generate_session_wiki_empty_synthesis_skips() -> None:
     )
     assert result == {"generated": False, "skipped": "empty_synthesis"}
     assert manager.persist_calls == []
+    assert manager.failure_calls == [(session.id, "empty_synthesis", None)]
 
 
 @pytest.mark.asyncio
 @pytest.mark.usefixtures("_stub_prompt")
 async def test_generate_session_wiki_invalid_synthesis_skips_without_fallback() -> None:
     manager = _FakeSessionManager()
+    session = _make_session()
     # Missing the required sections -> invalid, and there is no fallback.
     result = await generate_session_wiki(
-        session=_make_session(),
+        session=session,
         digest_markdown=_DIGEST,
         session_manager=manager,
-        llm_service=_FakeLLM("just some prose with no sections"),
+        llm_service=_FakeLLM("Summary and Key Claims are only prose mentions."),
         session_wiki_config=_config(),
     )
     assert result == {"generated": False, "skipped": "invalid_synthesis"}
     assert manager.persist_calls == []
+    assert manager.failure_calls == [(session.id, "invalid_synthesis", None)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_stub_prompt")
+async def test_generate_session_wiki_llm_error_records_failure() -> None:
+    manager = _FakeSessionManager()
+    session = _make_session()
+    result = await generate_session_wiki(
+        session=session,
+        digest_markdown=_DIGEST,
+        session_manager=manager,
+        llm_service=_FakeLLM(RuntimeError("provider unavailable")),
+        session_wiki_config=_config(),
+    )
+
+    assert result == {
+        "generated": False,
+        "skipped": "llm_error",
+        "error": "provider unavailable",
+    }
+    assert manager.persist_calls == []
+    assert manager.failure_calls == [(session.id, "llm_error", "provider unavailable")]
+
+
+@pytest.mark.asyncio
+@pytest.mark.usefixtures("_stub_prompt")
+async def test_generate_session_wiki_empty_required_section_records_invalid_failure() -> None:
+    manager = _FakeSessionManager()
+    session = _make_session()
+    result = await generate_session_wiki(
+        session=session,
+        digest_markdown=_DIGEST,
+        session_manager=manager,
+        llm_service=_FakeLLM("## Summary\n\n## Key Claims\n- claim"),
+        session_wiki_config=_config(),
+    )
+
+    assert result == {"generated": False, "skipped": "invalid_synthesis"}
+    assert manager.persist_calls == []
+    assert manager.failure_calls == [(session.id, "invalid_synthesis", None)]

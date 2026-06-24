@@ -101,6 +101,11 @@ async def test_status_reports_maintenance_state() -> None:
         "degraded_services": ["embeddings"],
         "error": None,
     }
+    assert maintenance["synthesis"] == {
+        "degraded": False,
+        "failed_sessions": 0,
+        "by_source": {},
+    }
     assert maintenance["degraded"] is True
     assert gateway.calls == ["status", "health"]
     assert watcher.calls == 1
@@ -145,6 +150,23 @@ async def test_status_reads_live_watcher_and_handles_absent_watcher() -> None:
     assert maintenance["gateway"]["degraded"] is True
     assert maintenance["gateway"]["degraded_services"] == ["index"]
     assert maintenance["gateway"]["error"]["message"] == "gwiki health failed"
+
+
+@pytest.mark.asyncio
+async def test_status_reports_synthesis_degradation() -> None:
+    status = await collect_wiki_status(
+        gateway=RecordingGateway(),
+        runner=SimpleNamespace(_wiki_watcher=None),
+        synthesis_failures_by_source={"codex": 2, "claude": 1},
+    )
+
+    maintenance = status["payload"]["maintenance"]
+    assert maintenance["synthesis"] == {
+        "degraded": True,
+        "failed_sessions": 3,
+        "by_source": {"codex": 2, "claude": 1},
+    }
+    assert maintenance["degraded"] is True
 
 
 @pytest.mark.asyncio

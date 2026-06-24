@@ -188,6 +188,7 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
     assert _tracked_migration_names(migrations_dir) == [
         "295_relabel_gemini_sessions.postgres.sql",
         "296_add_wiki_to_sessions.postgres.sql",
+        "297_track_wiki_synthesis_failures.postgres.sql",
     ]
 
 
@@ -195,7 +196,7 @@ def test_postgres_baseline_version_is_flattened_to_294() -> None:
     import gobby.storage.migrations as module
 
     assert module.BASELINE_VERSION == 294
-    assert module.latest_known_version() == 296
+    assert module.latest_known_version() == 297
 
 
 def test_postgres_baseline_defines_implementation_domain_and_current_config_state() -> None:
@@ -324,6 +325,35 @@ def test_session_wiki_revisions_migration_and_baseline_define_schema() -> None:
         "WHERE conname = 'sessions_wiki_digest_turn_count_nonnegative'",
     )
     _assert_contains_all("wiki migration idempotency guards", migration, idempotency_guards)
+
+
+def test_wiki_synthesis_failure_migration_and_baseline_define_session_state() -> None:
+    baseline = _baseline_text()
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "297_track_wiki_synthesis_failures.postgres.sql"
+    ).read_text(encoding="utf-8")
+
+    snippets = (
+        "wiki_synthesis_consecutive_failures INTEGER NOT NULL DEFAULT 0",
+        "wiki_synthesis_last_failure_reason TEXT",
+        "wiki_synthesis_last_error TEXT",
+        "wiki_synthesis_last_failed_at TIMESTAMPTZ",
+        "sessions_wiki_synthesis_consecutive_failures_nonnegative",
+        "wiki_synthesis_consecutive_failures >= 0",
+        "idx_sessions_wiki_synthesis_failures_source",
+        "WHERE wiki_synthesis_consecutive_failures > 0",
+    )
+    _assert_contains_all("wiki synthesis failure baseline", baseline, snippets)
+    _assert_contains_all("wiki synthesis failure migration", migration, snippets)
+    _assert_contains_all(
+        "wiki synthesis failure migration idempotency",
+        migration,
+        (
+            "ADD COLUMN IF NOT EXISTS wiki_synthesis_consecutive_failures",
+            "WHERE conname = 'sessions_wiki_synthesis_consecutive_failures_nonnegative'",
+            "CREATE INDEX IF NOT EXISTS idx_sessions_wiki_synthesis_failures_source",
+        ),
+    )
 
 
 def test_code_index_baseline_defines_projection_and_failure_tables() -> None:

@@ -176,6 +176,10 @@ CREATE TABLE sessions (
     wiki_digest_turn_count INTEGER,
     wiki_generation_mode TEXT,
     wiki_generated_at TIMESTAMPTZ,
+    wiki_synthesis_consecutive_failures INTEGER NOT NULL DEFAULT 0,
+    wiki_synthesis_last_failure_reason TEXT,
+    wiki_synthesis_last_error TEXT,
+    wiki_synthesis_last_failed_at TIMESTAMPTZ,
     git_branch TEXT,
     parent_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     transcript_processed BOOLEAN DEFAULT FALSE,
@@ -254,6 +258,10 @@ CONSTRAINT sessions_wiki_digest_turn_count_nonnegative
 CHECK (
     wiki_digest_turn_count IS NULL
     OR wiki_digest_turn_count >= 0
+),
+CONSTRAINT sessions_wiki_synthesis_consecutive_failures_nonnegative
+CHECK (
+    wiki_synthesis_consecutive_failures >= 0
 )
 );
 
@@ -353,6 +361,10 @@ CREATE INDEX idx_session_wiki_revisions_previous
     ON session_wiki_revisions(previous_revision_id);
 
 CREATE INDEX idx_sessions_wiki_revision ON sessions(wiki_revision_id);
+
+CREATE INDEX idx_sessions_wiki_synthesis_failures_source
+ON sessions(source)
+WHERE wiki_synthesis_consecutive_failures > 0;
 
 CREATE INDEX idx_sessions_agent_depth ON sessions(agent_depth);
 

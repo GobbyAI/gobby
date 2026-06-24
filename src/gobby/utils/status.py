@@ -463,6 +463,21 @@ def format_status_message(
         elif postgres.get("healthy") is False:
             health_issues.append("PostgreSQL: unhealthy")
 
+    sessions = data.get("sessions", {})
+    if isinstance(sessions, dict):
+        wiki_synthesis = sessions.get("wiki_synthesis", {})
+        if isinstance(wiki_synthesis, dict):
+            failed_sessions = wiki_synthesis.get("failed_sessions", 0)
+            if isinstance(failed_sessions, int) and failed_sessions > 0:
+                by_source = wiki_synthesis.get("by_source", {})
+                detail = ""
+                if isinstance(by_source, dict) and by_source:
+                    source_counts = ", ".join(
+                        f"{source}: {count}" for source, count in sorted(by_source.items())
+                    )
+                    detail = f" ({source_counts})"
+                health_issues.append(f"Wiki synthesis: {failed_sessions} failed sessions{detail}")
+
     if health_issues:
         lines.append("Health Issues:")
         for issue_msg in health_issues:

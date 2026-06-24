@@ -65,6 +65,7 @@ class TestAdminRoutes:
 
         server.session_manager = MagicMock()
         server.session_manager.count_by_status.return_value = {"active": 1, "paused": 0}
+        server.session_manager.count_wiki_synthesis_failures_by_source.return_value = {}
 
         server.task_manager = MagicMock()
         server.task_manager.count_by_state.return_value = {"ready": 2}
@@ -92,6 +93,11 @@ class TestAdminRoutes:
             provider_model_catalog=None,
         )
         server.config = server.services.config
+
+        async def run_db(func, *args, **kwargs):
+            return func(*args, **kwargs)
+
+        server.run_db = AsyncMock(side_effect=run_db)
 
         # Shutdown support
         server._process_shutdown = AsyncMock()
@@ -128,6 +134,10 @@ class TestAdminRoutes:
         mock_config.transport = "stdio"
         mock_server.mcp_manager.server_configs = [mock_config]
         mock_server.mcp_manager.connections = ["test-server"]
+        mock_server.session_manager.count_wiki_synthesis_failures_by_source.return_value = {
+            "codex": 2,
+            "claude": 1,
+        }
 
         response = client.get("/api/admin/status")
         assert response.status_code == 200
@@ -138,6 +148,11 @@ class TestAdminRoutes:
         assert data["process"]["memory_rss_mb"] == 100.0
         assert "test-server" in data["mcp_servers"]
         assert data["mcp_servers"]["test-server"]["connected"] is True
+        assert data["sessions"]["wiki_synthesis"] == {
+            "degraded": True,
+            "failed_sessions": 3,
+            "by_source": {"codex": 2, "claude": 1},
+        }
 
     @patch("gobby.servers.routes.admin._health.psutil")
     @patch("gobby.servers.routes.admin._health.asyncio.to_thread")

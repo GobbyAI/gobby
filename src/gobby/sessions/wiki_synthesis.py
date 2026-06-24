@@ -51,7 +51,12 @@ WIKI_GENERATION_MODE = "full"
 _EPHEMERAL_SOURCES = ("pipeline", "cron")
 
 #: Sections that must be present for a synthesis to count as valid output.
-_REQUIRED_SECTIONS = ("## Summary", "## Key Claims")
+_REQUIRED_SECTIONS = ("Summary", "Key Claims")
+
+_HEADING_RE = re.compile(
+    r"^(?P<marks>#{1,6})\s+(?P<title>.*?)\s*(?:#+\s*)?$",
+    re.MULTILINE,
+)
 
 _SUGGESTED_TAGS_RE = re.compile(
     r"<!--\s*suggested-tags:\s*(?P<tags>.*?)\s*-->",
@@ -84,10 +89,57 @@ _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
 
 
 def is_wiki_markdown_valid(wiki_markdown: str | None) -> bool:
-    """Return true when wiki text is non-empty and has the core sections."""
+    """Return true when wiki text has required headings with visible bodies."""
     if not isinstance(wiki_markdown, str) or not wiki_markdown.strip():
         return False
-    return all(section in wiki_markdown for section in _REQUIRED_SECTIONS)
+    return all(_section_has_visible_body(wiki_markdown, section) for section in _REQUIRED_SECTIONS)
+
+
+def _section_has_visible_body(wiki_markdown: str, section: str) -> bool:
+    body = _required_section_body(wiki_markdown, section)
+    if body is None:
+        return False
+    return _has_visible_markdown_text(body)
+
+
+def _required_section_body(wiki_markdown: str, section: str) -> str | None:
+    section_heading_re = re.compile(
+        rf"^(?P<marks>#{{1,6}})\s+{re.escape(section)}\s*(?:#+\s*)?$",
+        re.MULTILINE,
+    )
+    match = section_heading_re.search(wiki_markdown)
+    if match is None:
+        return None
+
+    level = len(match.group("marks"))
+    body_start = match.end()
+    body_end = len(wiki_markdown)
+    for next_heading in _HEADING_RE.finditer(wiki_markdown, body_start):
+        if len(next_heading.group("marks")) <= level:
+            body_end = next_heading.start()
+            break
+    return wiki_markdown[body_start:body_end]
+
+
+def _has_visible_markdown_text(body: str) -> bool:
+    body = re.sub(r"<!--.*?-->", "", body, flags=re.DOTALL)
+    visible_lines: list[str] = []
+    for line in body.splitlines():
+        stripped = line.strip()
+        if not stripped:
+            continue
+        stripped = re.sub(r"^>\s?", "", stripped)
+        stripped = re.sub(r"^\s{0,3}(?:[-*+]|\d+[.)])\s*", "", stripped)
+        stripped = re.sub(r"^`{3,}.*$", "", stripped)
+        stripped = re.sub(r"!\[[^\]]*\]\([^)]+\)", "", stripped)
+        stripped = re.sub(r"\[([^\]]*)\]\([^)]+\)", r"\1", stripped)
+        stripped = re.sub(r"\[\[([^\]|]+)(?:\|([^\]]+))?\]\]", r"\2\1", stripped)
+        stripped = stripped.strip(" \t\r\n#`*_>-+|:;.,[](){}")
+        if stripped:
+            visible_lines.append(stripped)
+
+    visible = " ".join(visible_lines)
+    return any(char.isalnum() for char in visible)
 
 
 def wiki_generation_skip_reason(
@@ -363,13 +415,32 @@ async def generate_session_wiki(
         )
     except Exception as exc:  # noqa: BLE001 — boundary: LLM call is best-effort
         logger.warning("Wiki synthesis LLM call failed for %s: %s", session_id, exc)
+        await _record_wiki_synthesis_failure(
+            session_id=session_id,
+            session_manager=session_manager,
+            db_runner=db_runner,
+            reason="llm_error",
+            error=str(exc),
+        )
         return {"generated": False, "skipped": "llm_error", "error": str(exc)}
 
     if not synthesis or not synthesis.strip():
+        await _record_wiki_synthesis_failure(
+            session_id=session_id,
+            session_manager=session_manager,
+            db_runner=db_runner,
+            reason="empty_synthesis",
+        )
         return {"generated": False, "skipped": "empty_synthesis"}
 
     tags, _body, file_content = assemble_wiki_page(session, synthesis)
     if not is_wiki_markdown_valid(file_content):
+        await _record_wiki_synthesis_failure(
+            session_id=session_id,
+            session_manager=session_manager,
+            db_runner=db_runner,
+            reason="invalid_synthesis",
+        )
         return {"generated": False, "skipped": "invalid_synthesis"}
 
     wiki_path = resolve_wiki_file_path(session, session_wiki_config)
@@ -403,6 +474,32 @@ async def generate_session_wiki(
         "digest_turn_count": current_turns,
         "persisted": persisted is not None,
     }
+
+
+async def _record_wiki_synthesis_failure(
+    *,
+    session_id: str,
+    session_manager: Any,
+    db_runner: Callable[..., Awaitable[Any]] | None,
+    reason: str,
+    error: str | None = None,
+) -> Any | None:
+    """Record durable wiki synthesis failure state when storage supports it."""
+    record_failure = getattr(session_manager, "record_wiki_synthesis_failure", None)
+    if not callable(record_failure):
+        return None
+
+    from gobby.sessions.summarize import _run_db
+
+    try:
+        return await _run_db(db_runner, record_failure, session_id, reason, error=error)
+    except Exception as exc:  # noqa: BLE001 — boundary: failure tracking is best-effort
+        logger.warning(
+            "Failed to record wiki synthesis failure for %s: %s",
+            session_id,
+            exc,
+        )
+        return None
 
 
 async def _persist_wiki_state(
