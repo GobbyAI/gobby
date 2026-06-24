@@ -39,6 +39,13 @@ class Session:
     summary_digest_turn_count: int | None = None
     summary_generation_mode: str | None = None
     summary_generated_at: str | None = None
+    wiki_path: str | None = None
+    wiki_markdown: str | None = None
+    wiki_revision_id: str | None = None
+    wiki_source_context_hash: str | None = None
+    wiki_digest_turn_count: int | None = None
+    wiki_generation_mode: str | None = None
+    wiki_generated_at: str | None = None
     title_source: str | None = None
     agent_depth: int = 0  # 0 = human-initiated, 1+ = agent-spawned
     spawned_by_agent_id: str | None = None  # ID of agent that spawned this session
@@ -130,6 +137,13 @@ class Session:
             summary_digest_turn_count=cls._get_optional(row, "summary_digest_turn_count"),
             summary_generation_mode=cls._get_optional(row, "summary_generation_mode"),
             summary_generated_at=cls._get_optional(row, "summary_generated_at"),
+            wiki_path=cls._get_optional(row, "wiki_path"),
+            wiki_markdown=cls._get_optional(row, "wiki_markdown"),
+            wiki_revision_id=cls._get_optional(row, "wiki_revision_id"),
+            wiki_source_context_hash=cls._get_optional(row, "wiki_source_context_hash"),
+            wiki_digest_turn_count=cls._get_optional(row, "wiki_digest_turn_count"),
+            wiki_generation_mode=cls._get_optional(row, "wiki_generation_mode"),
+            wiki_generated_at=cls._get_optional(row, "wiki_generated_at"),
             agent_depth=row["agent_depth"] or 0,
             spawned_by_agent_id=row["spawned_by_agent_id"],
             workflow_name=row["workflow_name"],
@@ -267,6 +281,13 @@ class Session:
             "summary_digest_turn_count": self.summary_digest_turn_count,
             "summary_generation_mode": self.summary_generation_mode,
             "summary_generated_at": self.summary_generated_at,
+            "wiki_path": self.wiki_path,
+            "wiki_markdown": self.wiki_markdown,
+            "wiki_revision_id": self.wiki_revision_id,
+            "wiki_source_context_hash": self.wiki_source_context_hash,
+            "wiki_digest_turn_count": self.wiki_digest_turn_count,
+            "wiki_generation_mode": self.wiki_generation_mode,
+            "wiki_generated_at": self.wiki_generated_at,
             "git_branch": self.git_branch,
             "parent_session_id": self.parent_session_id,
             "agent_depth": self.agent_depth,
@@ -330,6 +351,9 @@ class Session:
             "summary_revision_id": self.summary_revision_id,
             "summary_generation_mode": self.summary_generation_mode,
             "summary_generated_at": self.summary_generated_at,
+            "wiki_revision_id": self.wiki_revision_id,
+            "wiki_generation_mode": self.wiki_generation_mode,
+            "wiki_generated_at": self.wiki_generated_at,
             "model": self.model,
             "is_local": self.is_local,
             "had_edits": self.had_edits,

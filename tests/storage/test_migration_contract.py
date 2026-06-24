@@ -186,7 +186,8 @@ def test_only_current_postgres_sql_migrations_exist_after_flattening() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
     assert _tracked_migration_names(migrations_dir) == [
-        "295_relabel_gemini_sessions.postgres.sql"
+        "295_relabel_gemini_sessions.postgres.sql",
+        "296_add_wiki_to_sessions.postgres.sql",
     ]
 
 
@@ -194,7 +195,7 @@ def test_postgres_baseline_version_is_flattened_to_294() -> None:
     import gobby.storage.migrations as module
 
     assert module.BASELINE_VERSION == 294
-    assert module.latest_known_version() == 295
+    assert module.latest_known_version() == 296
 
 
 def test_postgres_baseline_defines_implementation_domain_and_current_config_state() -> None:
@@ -258,6 +259,69 @@ def test_session_summary_revisions_baseline_defines_schema() -> None:
     )
     _assert_contains_all("session summary revision baseline", baseline, revision_snippets)
     _assert_contains_all("summary revision integrity baseline", baseline, integrity_snippets)
+
+
+def test_session_wiki_revisions_migration_and_baseline_define_schema() -> None:
+    baseline = _baseline_text()
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "296_add_wiki_to_sessions.postgres.sql"
+    ).read_text(encoding="utf-8")
+
+    session_columns = (
+        "wiki_path",
+        "wiki_markdown",
+        "wiki_revision_id",
+        "wiki_source_context_hash",
+        "wiki_digest_turn_count",
+        "wiki_generation_mode",
+        "wiki_generated_at",
+    )
+    revision_snippets = (
+        "session_wiki_revisions",
+        "wiki_markdown TEXT NOT NULL",
+        "generation_mode TEXT NOT NULL",
+        "source_context_hash TEXT",
+        "digest_turn_count INTEGER",
+        "previous_revision_id TEXT",
+        "metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb",
+        "session_wiki_revisions_digest_turn_count_nonnegative",
+        "session_wiki_revisions_generation_mode_valid",
+        "sessions_wiki_revision_fk",
+        "idx_session_wiki_revisions_session_created",
+        "idx_sessions_wiki_revision",
+    )
+    integrity_snippets = (
+        "sessions_wiki_digest_turn_count_nonnegative",
+        "session_wiki_revisions_id_session_id_unique",
+        "session_wiki_revisions_previous_same_session_fk",
+        "FOREIGN KEY (previous_revision_id, session_id)",
+        "FOREIGN KEY (wiki_revision_id, id)",
+        "REFERENCES session_wiki_revisions(id, session_id)",
+        "ON DELETE SET NULL (wiki_revision_id)",
+        "UNIQUE (id, session_id)",
+    )
+
+    # Baseline (applied first on a fresh DB) must define the full wiki schema.
+    for column in session_columns:
+        assert column in baseline
+    _assert_contains_all("session wiki revision baseline", baseline, revision_snippets)
+    _assert_contains_all("wiki revision integrity baseline", baseline, integrity_snippets)
+
+    # Migration 296 (applied on top of an existing DB) must define the same
+    # objects AND be idempotent, since a freshly baselined DB already carries
+    # them via the baseline snapshot.
+    for column in session_columns:
+        assert f"ADD COLUMN IF NOT EXISTS {column}" in migration
+    _assert_contains_all("session wiki revision migration", migration, revision_snippets)
+    _assert_contains_all("wiki revision integrity migration", migration, integrity_snippets)
+    idempotency_guards = (
+        "ADD COLUMN IF NOT EXISTS",
+        "CREATE TABLE IF NOT EXISTS session_wiki_revisions",
+        "CREATE INDEX IF NOT EXISTS idx_sessions_wiki_revision",
+        "WHERE conname = 'sessions_wiki_revision_fk'",
+        "WHERE conname = 'sessions_wiki_digest_turn_count_nonnegative'",
+    )
+    _assert_contains_all("wiki migration idempotency guards", migration, idempotency_guards)
 
 
 def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
