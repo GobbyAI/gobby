@@ -216,6 +216,7 @@ def register_terminal_tools(
     llm_service: Any | None = None,
     session_summary_config: Any | None = None,
     web_chat_session_registry: WebChatSessionRegistry | None = None,
+    session_wiki_config: Any | None = None,
 ) -> None:
     """Register send_keys and capture_output tools."""
 
@@ -390,6 +391,7 @@ def register_terminal_tools(
                 db,
                 llm_service,
                 session_summary_config,
+                session_wiki_config,
             )
         result = {
             "compacted": True,

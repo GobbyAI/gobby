@@ -202,6 +202,7 @@ async def _run_compact_handoff_background_refresh(
     db: HubDatabase,
     llm_service: Any | None,
     session_summary_config: Any | None,
+    session_wiki_config: Any | None = None,
 ) -> None:
     from gobby.sessions.summarize import generate_session_summaries
 
@@ -215,6 +216,7 @@ async def _run_compact_handoff_background_refresh(
                 session_summary_config=session_summary_config,
                 db=db,
                 set_handoff_ready=True,
+                session_wiki_config=session_wiki_config,
             ),
             timeout=timeout_seconds,
         )
@@ -251,6 +253,7 @@ def _schedule_compact_handoff_background_refresh(
     db: HubDatabase,
     llm_service: Any | None,
     session_summary_config: Any | None,
+    session_wiki_config: Any | None = None,
 ) -> bool:
     coro = _run_compact_handoff_background_refresh(
         session_id,
@@ -258,6 +261,7 @@ def _schedule_compact_handoff_background_refresh(
         db,
         llm_service,
         session_summary_config,
+        session_wiki_config,
     )
     try:
         asyncio.create_task(coro, name=f"compact-handoff-refresh-{session_id[:8]}")

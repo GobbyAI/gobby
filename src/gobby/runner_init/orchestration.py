@@ -177,6 +177,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
         memory_manager=runner.memory_manager,
         llm_service=runner.llm_service,
         session_summary_config=runner.config.session_summary,
+        session_wiki_config=getattr(runner.config, "session_wiki", None),
         memory_sync_manager=runner.memory_sync_manager,
         memory_dream_config=getattr(getattr(runner.config, "memory", None), "dream", None),
     )
