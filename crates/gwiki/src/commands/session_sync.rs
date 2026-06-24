@@ -50,6 +50,7 @@ pub(crate) fn execute(
                 scope.root(),
                 &mut store,
                 &archive_dir,
+                &wiki_dir,
                 options.limit,
                 &fetched_at,
             )?
@@ -67,6 +68,7 @@ pub(crate) fn execute(
         scope.root(),
         &mut store,
         &archive_dir,
+        &wiki_dir,
         options.limit,
         &fetched_at,
     )?;

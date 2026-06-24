@@ -46,9 +46,6 @@ pub struct SessionFileSnapshot {
 /// frontmatter, then rewrites a gwiki-owned page keyed on the canonical
 /// `session:{external_id}` location shared with the raw fallback so a fresh
 /// synthesis can supersede a previously raw-parsed page.
-// The sole caller (sync-sessions synthesis-first loop) lands in #926 (B.3);
-// allow dead_code on this synthesis-ingest surface until then.
-#[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionWikiFileSnapshot {
     /// Canonical session external id (the `.md` filename stem).
@@ -144,7 +141,6 @@ pub(crate) fn ingest_session_file_without_index(
 /// and a single gwiki-owned frontmatter block plus the synthesized body is
 /// written to `knowledge/sources/{id}.md`. The body is re-redacted defensively
 /// before write — the synthesis can lift secrets from the digest verbatim.
-#[allow(dead_code)] // sole caller lands in #926 (B.3)
 pub(crate) fn ingest_session_wiki_file_without_index(
     vault_root: &Path,
     snapshot: SessionWikiFileSnapshot,
@@ -706,6 +702,10 @@ fn render_session_markdown(
             MetadataValue::string(snapshot.location.clone()),
         ),
         (
+            "source_archive",
+            MetadataValue::string(redact_session_text(&path_to_string(&snapshot.path))),
+        ),
+        (
             "fetched_at",
             MetadataValue::string(snapshot.fetched_at.clone()),
         ),
@@ -761,13 +761,11 @@ fn render_session_markdown(
 /// `key: value` frontmatter fields gwiki carries forward (`title`, `source`,
 /// `model`, `tags`). Anything malformed degrades to "treat the whole document
 /// as body" so a missing fence never drops content.
-#[allow(dead_code)] // exercised by the ingest path wired in #926 (B.3)
 struct DaemonWikiPage {
     frontmatter: BTreeMap<String, String>,
     body: String,
 }
 
-#[allow(dead_code)] // exercised by the ingest path wired in #926 (B.3)
 impl DaemonWikiPage {
     fn parse(text: &str) -> Self {
         let text = text.strip_prefix('\u{feff}').unwrap_or(text);
@@ -836,7 +834,6 @@ impl DaemonWikiPage {
     }
 }
 
-#[allow(dead_code)] // sole caller lands in #926 (B.3)
 fn unquote_frontmatter_value(value: &str) -> String {
     let value = value.trim();
     let bytes = value.as_bytes();
@@ -849,7 +846,6 @@ fn unquote_frontmatter_value(value: &str) -> String {
     value.to_string()
 }
 
-#[allow(dead_code)] // sole caller lands in #926 (B.3)
 fn render_session_wiki_markdown(
     snapshot: &SessionWikiFileSnapshot,
     page: &DaemonWikiPage,
