@@ -296,7 +296,7 @@ class _RegistrationCacheMixin:
 
         Args:
             external_id: External session identifier
-            source: CLI source identifier (e.g., "claude", "gemini", "codex")
+            source: CLI source identifier (e.g., "claude", "agy", "codex")
             session_id: Database session ID
         """
         with self._session_mapping_lock:

@@ -714,8 +714,8 @@ class CodexAdapter(BaseAdapter):
     ) -> dict[str, Any]:
         """Convert HookResponse to Codex response format with context injection.
 
-        Unlike Claude/Gemini which use hookSpecificOutput.additionalContext,
-        Codex injects context via the `instructions` field at turn start.
+Unlike additionalContext-based hook adapters,
+Codex injects context via the `instructions` field at turn start.
         This method builds a `context` string from HookResponse metadata
         for the caller to pass to start_turn(context_prefix=...).
 

@@ -1,4 +1,4 @@
-"""Tests for Gemini adapter event and response translation."""
+"""Tests for ACP hook adapter event and response translation."""
 
 from datetime import UTC, datetime
 
@@ -37,7 +37,7 @@ class TestTranslateToHookEvent:
         """Translates SessionStart event without dispatcher wrapper."""
         native_event = {
             "hook_event_name": "SessionStart",
-            "session_id": "gemini-sess-456",
+            "session_id": "acp-sess-456",
             "cwd": "/tmp/project",
             "timestamp": "2025-01-15T11:00:00+00:00",
         }
@@ -45,7 +45,7 @@ class TestTranslateToHookEvent:
         event = adapter.translate_to_hook_event(native_event)
 
         assert event.event_type == HookEventType.SESSION_START
-        assert event.session_id == "gemini-sess-456"
+        assert event.session_id == "acp-sess-456"
         assert event.cwd == "/tmp/project"
 
     def test_before_tool_with_tool_name(self, adapter) -> None:
@@ -85,13 +85,13 @@ class TestTranslateToHookEvent:
         assert event.metadata["normalized_tool_name"] == "Read"
 
     def test_before_model_event(self, adapter) -> None:
-        """Translates BeforeModel event (Gemini-specific)."""
+        """Translates BeforeModel event (ACP-specific)."""
         native_event = {
             "hook_type": "BeforeModel",
             "input_data": {
                 "hook_event_name": "BeforeModel",
                 "session_id": "sess-model",
-                "model": "gemini-2.0-flash-exp",
+                "model": "provider-model",
                 "prompt": "Hello, world!",
             },
         }
@@ -99,10 +99,10 @@ class TestTranslateToHookEvent:
         event = adapter.translate_to_hook_event(native_event)
 
         assert event.event_type == HookEventType.BEFORE_MODEL
-        assert event.data["model"] == "gemini-2.0-flash-exp"
+        assert event.data["model"] == "provider-model"
 
     def test_after_model_event(self, adapter) -> None:
-        """Translates AfterModel event (Gemini-specific)."""
+        """Translates AfterModel event (ACP-specific)."""
         native_event = {
             "hook_type": "AfterModel",
             "input_data": {
@@ -117,7 +117,7 @@ class TestTranslateToHookEvent:
         assert event.event_type == HookEventType.AFTER_MODEL
 
     def test_after_agent_normalizes_prompt_response(self, adapter) -> None:
-        """Gemini AfterAgent prompt_response is normalized to response."""
+        """ACP AfterAgent prompt_response is normalized to response."""
         native_event = {
             "hook_type": "AfterAgent",
             "input_data": {
@@ -134,7 +134,7 @@ class TestTranslateToHookEvent:
         assert event.data["response"] == "Completed answer"
 
     def test_before_tool_selection_event(self, adapter) -> None:
-        """Translates BeforeToolSelection event (Gemini-specific)."""
+        """Translates BeforeToolSelection event (ACP-specific)."""
         native_event = {
             "hook_type": "BeforeToolSelection",
             "input_data": {
@@ -445,7 +445,7 @@ class TestTranslateFromHookResponse:
         assert result["hookSpecificOutput"]["additionalContext"].count(banner) == 1
 
     def test_session_start_live_context_does_not_replay_persona(self, adapter) -> None:
-        """Live SessionStart context reaches Gemini without startup persona replay."""
+        """Live SessionStart context reaches ACP provider without startup persona replay."""
         response = HookResponse(
             decision="allow",
             system_message="Gobby Session ID: #6273 (sess-live-123)",
@@ -542,7 +542,7 @@ class TestTranslateFromHookResponse:
         assert "hookSpecificOutput" not in result
 
     def test_combined_context_and_modify_args(self, adapter) -> None:
-        """Translates both context and modify_args together."""
+        """Routes BeforeModel modify_args and drops unsupported context."""
         response = HookResponse(
             decision="allow",
             context="Use JSON format",
@@ -551,8 +551,8 @@ class TestTranslateFromHookResponse:
 
         result = adapter.translate_from_hook_response(response, hook_type="BeforeModel")
 
-        assert result["hookSpecificOutput"]["additionalContext"] == "Use JSON format"
         assert result["hookSpecificOutput"]["llm_request"]["temperature"] == 0.7
+        assert "additionalContext" not in result["hookSpecificOutput"]
 
     def test_all_fields_combined(self, adapter) -> None:
         """Translates response with all fields populated."""
@@ -569,8 +569,8 @@ class TestTranslateFromHookResponse:
         assert result["decision"] == "allow"
         assert result["reason"] == "Some reason"
         assert result["systemMessage"] == "System message"
-        assert result["hookSpecificOutput"]["additionalContext"] == "Context text"
         assert result["hookSpecificOutput"]["llm_request"] == {"key": "value"}
+        assert "additionalContext" not in result["hookSpecificOutput"]
 
     def test_none_hook_type(self, adapter) -> None:
         """Handles None hook_type gracefully."""

@@ -143,8 +143,8 @@ where = ["src"]
 
 [tool.setuptools.package-data]
 gobby = [
+    "install/agy/**/*",
     "install/claude/**/*",
-    "install/gemini/**/*",
     "install/codex/**/*",
     "install/qwen/**/*",
     "install/bundled_content_manifest.json",

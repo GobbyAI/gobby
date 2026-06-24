@@ -63,6 +63,7 @@ from ._install_prompts import (
 )
 from .install_setup import ensure_daemon_config, run_daemon_setup
 from .installers import (
+    install_agy,
     install_claude,
     install_codex,
     install_droid,
@@ -72,6 +73,7 @@ from .installers import (
     install_grok,
     install_qdrant,
     install_qwen,
+    uninstall_agy,
     uninstall_claude,
     uninstall_codex,
     uninstall_droid,
@@ -159,7 +161,7 @@ def _run_install_preflight(
         if not detected_clis:
             errors.append(
                 "At least one supported coding CLI is required for full install "
-                "(Claude Code, Codex, Grok, Qwen, or Droid)."
+                "(Claude Code, AGY, Codex, Grok, Qwen, or Droid)."
             )
         python_version = tuple(int(part) for part in platform.python_version_tuple()[:2])
         if python_version < (3, 13):
@@ -217,7 +219,7 @@ def _maybe_start_daemon_after_install(*, no_interactive: bool) -> None:
     "--agy",
     "agy_flag",
     is_flag=True,
-    help="Show AGY CLI status (hooks unavailable)",
+    help="Install AGY CLI hooks only",
 )
 @click.option(
     "--codex",
@@ -369,8 +371,8 @@ def install(
 
     By default (no flags), installs hooks globally (one-time setup).
     Use --project to install per-project instead (legacy behavior).
-    Use --claude, --grok, --qwen, --codex, or --droid to install only
-    to specific CLIs. AGY is detected but has no supported hook transport yet.
+    Use --claude, --grok, --agy, --qwen, --codex, or --droid to install only
+    to specific CLIs.
     Use --hooks to install Git hooks for verification, JSONL export, and code indexing.
     """
     if embedding_provider and not embedding_url:
@@ -415,7 +417,7 @@ def install(
         if _is_qwen_cli_installed():
             clis_to_install.append("qwen")
         if _is_agy_cli_installed():
-            click.echo("AGY detected but skipped: no documented hook transport is available.")
+            clis_to_install.append("agy")
         if _is_codex_cli_installed():
             clis_to_install.append("codex")
         if _is_droid_cli_installed():
@@ -433,10 +435,10 @@ def install(
             click.echo("  - Qwen CLI:    npm install -g @qwen-code/qwen-code")
             click.echo("  - Codex CLI:   npm install -g @openai/codex")
             click.echo("  - Droid CLI:   curl -fsSL https://app.factory.ai/cli | sh")
-            click.echo("  - AGY CLI:     detected for status only; hooks unavailable")
+            click.echo("  - AGY CLI:     install Google Antigravity CLI")
             click.echo(
                 "\nYou can still install manually with --claude, --grok, --qwen, "
-                "--codex, or --droid flags."
+                "--agy, --codex, or --droid flags."
             )
             sys.exit(1)
     else:
@@ -445,7 +447,7 @@ def install(
         if grok_flag:
             clis_to_install.append("grok")
         if agy_flag:
-            click.echo("AGY detected/status-only: no documented hook transport is available.")
+            clis_to_install.append("agy")
         if qwen_flag:
             clis_to_install.append("qwen")
         if codex_flag:
@@ -524,8 +526,9 @@ def install(
         )
 
     try:
-        # Standard CLIs (claude, grok, qwen, codex, droid)
+        # Standard CLIs (claude, grok, agy, qwen, codex, droid)
         _standard_installers: dict[str, Callable[..., dict[str, Any]]] = {
+            "agy": install_agy,
             "claude": install_claude,
             "grok": install_grok,
             "qwen": install_qwen,
@@ -619,6 +622,12 @@ def install(
     help="Uninstall Droid CLI hooks only",
 )
 @click.option(
+    "--agy",
+    "agy_flag",
+    is_flag=True,
+    help="Uninstall AGY CLI hooks only",
+)
+@click.option(
     "--qwen",
     "qwen_flag",
     is_flag=True,
@@ -657,6 +666,7 @@ def install(
 def uninstall(
     claude_flag: bool,
     grok_flag: bool,
+    agy_flag: bool,
     codex_flag: bool,
     droid_flag: bool,
     qwen_flag: bool,
@@ -668,7 +678,7 @@ def uninstall(
 
     By default (no flags), uninstalls global hooks from CLI settings and ~/.gobby/hooks/.
     Use --project to uninstall per-project hooks from the current directory.
-    Use --claude, --grok, --qwen, or --codex to uninstall only from
+    Use --claude, --grok, --agy, --qwen, or --codex to uninstall only from
     specific CLIs.
     """
     project_path = working_dir.resolve() if working_dir else Path.cwd()
@@ -677,6 +687,7 @@ def uninstall(
     if (
         not claude_flag
         and not grok_flag
+        and not agy_flag
         and not qwen_flag
         and not codex_flag
         and not droid_flag
@@ -691,12 +702,14 @@ def uninstall(
         if project_flag:
             claude_settings = project_path / ".claude" / "settings.json"
             grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
+            agy_hooks = Path.home() / ".gemini" / "config" / "hooks.json"
             qwen_settings = project_path / ".qwen" / "settings.json"
             codex_hooks = project_path / ".codex" / "hooks.json"
             droid_hooks = project_path / ".factory" / "hooks" / "hooks.json"
         else:
             claude_settings = Path.home() / ".claude" / "settings.json"
             grok_hooks = Path.home() / ".grok" / "hooks" / "gobby.json"
+            agy_hooks = Path.home() / ".gemini" / "config" / "hooks.json"
             qwen_settings = Path.home() / ".qwen" / "settings.json"
             codex_hooks = Path.home() / ".codex" / "hooks.json"
             droid_hooks = Path.home() / ".factory" / "hooks" / "hooks.json"
@@ -705,6 +718,8 @@ def uninstall(
             clis_to_uninstall.append("claude")
         if grok_hooks.exists():
             clis_to_uninstall.append("grok")
+        if agy_hooks.exists():
+            clis_to_uninstall.append("agy")
         if qwen_settings.exists():
             clis_to_uninstall.append("qwen")
         if codex_hooks.exists():
@@ -717,12 +732,14 @@ def uninstall(
             if project_flag:
                 click.echo(f"\nChecked: {project_path / '.claude'}")
                 click.echo(f"         {Path.home() / '.grok' / 'hooks' / 'gobby.json'}")
+                click.echo(f"         {Path.home() / '.gemini' / 'config' / 'hooks.json'}")
                 click.echo(f"         {project_path / '.qwen'}")
                 click.echo(f"         {project_path / '.codex'}")
                 click.echo(f"         {project_path / '.factory'}")
             else:
                 click.echo(f"\nChecked: {Path.home() / '.claude'}")
                 click.echo(f"         {Path.home() / '.grok' / 'hooks' / 'gobby.json'}")
+                click.echo(f"         {Path.home() / '.gemini' / 'config' / 'hooks.json'}")
                 click.echo(f"         {Path.home() / '.qwen'}")
                 click.echo(f"         {Path.home() / '.codex'}")
                 click.echo(f"         {Path.home() / '.factory'}")
@@ -732,6 +749,8 @@ def uninstall(
             clis_to_uninstall.append("claude")
         if grok_flag:
             clis_to_uninstall.append("grok")
+        if agy_flag:
+            clis_to_uninstall.append("agy")
         if qwen_flag:
             clis_to_uninstall.append("qwen")
         if codex_flag:
@@ -755,8 +774,9 @@ def uninstall(
     # Track results
     results: dict[str, dict[str, Any]] = {}
 
-    # Standard CLIs (claude, grok, qwen, codex, droid)
+    # Standard CLIs (claude, grok, agy, qwen, codex, droid)
     _standard_uninstallers: dict[str, Callable[..., dict[str, Any]]] = {
+        "agy": uninstall_agy,
         "claude": uninstall_claude,
         "grok": uninstall_grok,
         "qwen": uninstall_qwen,

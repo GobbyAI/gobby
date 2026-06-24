@@ -40,9 +40,9 @@ def test_build_hook_command_falls_back_to_bare_ghook(temp_dir: Path, tmp_path: P
             return_value="ghook",
         ),
     ):
-        command = build_hook_command("gemini", "SessionStart", hooks_dir)
+        command = build_hook_command("qwen", "SessionStart", hooks_dir)
 
-    assert command == "ghook --gobby-owned --cli=gemini --type=SessionStart"
+    assert command == "ghook --gobby-owned --cli=qwen --type=SessionStart"
 
 
 def test_build_stop_hook_command_uses_raw_ghook() -> None:
@@ -228,14 +228,14 @@ def test_rewrite_ignores_legacy_script_name_substrings() -> None:
 def test_gobby_hook_detection_accepts_ghook_marker() -> None:
     assert is_gobby_hook_command("/Users/test/.gobby/bin/ghook --gobby-owned --cli=codex")
     assert config_contains_gobby_hook(
-        {"hooks": [{"type": "command", "command": "ghook --gobby-owned --cli=gemini"}]}
+        {"hooks": [{"type": "command", "command": "ghook --gobby-owned --cli=agy"}]}
     )
 
 
 def test_gobby_hook_detection_rejects_legacy_dispatcher_commands() -> None:
     assert not is_gobby_hook_command("uv run /tmp/hooks/hook_dispatcher.py --cli=codex")
     assert not config_contains_gobby_hook(
-        {"hooks": [{"type": "command", "command": "hook_dispatcher.py --cli=gemini"}]}
+        {"hooks": [{"type": "command", "command": "hook_dispatcher.py --cli=qwen"}]}
     )
 
 

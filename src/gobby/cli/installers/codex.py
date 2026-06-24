@@ -497,7 +497,7 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         project_path: Project root directory. Shared content (plugins)
             installs to {project_path}/.gobby/.
         mode: Installation mode. Only "global" is supported for Codex.
-            Accepted for interface consistency with claude/gemini installers.
+            Accepted for interface consistency with other CLI installers.
 
     Returns:
         Dict with installation results including success status and installed items

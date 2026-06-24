@@ -109,7 +109,7 @@
 
 - #16015 (U056, `docs/reviews/hooks.md`) — Fail STOP/AFTER_AGENT closed in the health gate when the daemon is unhealthy
 - #16024 (U057, `docs/reviews/hooks.md`) — Normalize the nested call_tool routing form so mcp_tool-keyed rules fire
-- #16039 (U058, `docs/reviews/hooks.md`) — Remove the most-recent transcript fallback for Gemini/Qwen session start
+- #16039 (U058, `docs/reviews/hooks.md`) — Remove the most-recent transcript fallback for ACP/Qwen session start
 - #16054 (U059, `docs/reviews/hooks.md`) — Route Grok hook traffic as grok in ghook; gate the installer on a supporting version
 - #16062 (U060, `docs/reviews/hooks.md`) — Short-circuit web-chat hold-open when the rule pipeline already denied the call
 - #16077 (U061, `docs/reviews/hooks.md`) — Stop writing success markers and default identity when agent activation fails
@@ -344,7 +344,7 @@
 - #16106 (U193, `docs/reviews/adapters.md`) — Force permissionDecision allow when Claude updatedInput is emitted
 - #16112 (U194, `docs/reviews/adapters.md`) — Guard static-source plan-approval keystrokes with live pane-state checks
 - #16123 (U195, `docs/reviews/adapters.md`) — Map Codex block to decline for command/file/mcp approvals
-- #16128 (U196, `docs/reviews/adapters.md`) — Normalize Gemini/Qwen tool_call session updates so lifecycle hooks fire
+- #16128 (U196, `docs/reviews/adapters.md`) — Normalize ACP/Qwen tool_call session updates so lifecycle hooks fire
 - #16134 (U197, `docs/reviews/adapters.md`) — Reset or id-validate ACP stdout correlation after request timeouts
 - #16137 (U198, `docs/reviews/adapters.md`) — Scope Codex run_turn event handlers by threadId/turnId
 - #16145 (U199, `docs/reviews/adapters.md`) — Treat decision=block as denied in the ACP hook adapter
@@ -361,7 +361,7 @@
 - #15906 (U208, `docs/reviews/agents.md`) — Free claims held by non-active sessions for non-automation tasks
 - #15911 (U209, `docs/reviews/agents.md`) — Gate os.killpg in kill_session for Windows/WSL platforms
 - #15916 (U210, `docs/reviews/agents.md`) — Gate provider-stall classification on bottom-line context and checkpoint before kill
-- #15926 (U211, `docs/reviews/agents.md`) — Handle Gemini/Qwen sandbox --include-directories overflow gracefully
+- #15926 (U211, `docs/reviews/agents.md`) — Handle Qwen ACP sandbox --include-directories overflow gracefully
 - #15932 (U212, `docs/reviews/agents.md`) — Harden resume: claim before spawn, consume resume candidates, re-claim worktrees
 - #15939 (U213, `docs/reviews/agents.md`) — Honor TERM→KILL grace, verify death after terminal close, and killpg in PID fallback
 - #15946 (U214, `docs/reviews/agents.md`) — Inject the daemon TmuxConfig at one init point; forbid default construction
@@ -612,7 +612,7 @@
 - #16231 (U411, `docs/reviews/hooks.md`) — Surface edit-tracking write failures and fail evidence freshness closed
 - #16242 (U412, `docs/reviews/hooks.md`) — Tighten validation-command classification: exclude non-executing pytest flags; same-category clearing
 - #16252 (U413, `docs/reviews/hooks.md`) — Track subagents with an atomic count instead of a per-event boolean toggle
-- #16269 (U415, `docs/reviews/hooks.md`) — Use run_coroutine_threadsafe for the Gemini/Qwen session-usage broadcast
+- #16269 (U415, `docs/reviews/hooks.md`) — Use run_coroutine_threadsafe for the ACP/Qwen session-usage broadcast
 
 ### integrations
 

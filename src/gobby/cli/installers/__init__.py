@@ -5,6 +5,7 @@ This package contains per-CLI installation logic extracted from the main install
 using the strangler fig pattern for incremental migration.
 """
 
+from .agy import install_agy, uninstall_agy
 from .claude import install_claude, uninstall_claude
 from .codex import install_codex, uninstall_codex
 from .droid import install_droid, uninstall_droid
@@ -31,6 +32,9 @@ __all__ = [
     "install_cli_content",
     "install_global_hooks",
     "install_default_mcp_servers",
+    # AGY
+    "install_agy",
+    "uninstall_agy",
     # Claude
     "install_claude",
     "uninstall_claude",

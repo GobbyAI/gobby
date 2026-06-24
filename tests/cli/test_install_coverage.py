@@ -260,6 +260,40 @@ class TestInstallCommand:
         mock_qdrant.assert_called_once()
         mock_falkordb.assert_called_once()
 
+    def test_install_default_includes_agy_when_detected(
+        self,
+        runner: CliRunner,
+    ) -> None:
+        """Default install includes AGY when the agy binary is present."""
+        agy_result = {
+            "success": True,
+            "hooks_installed": ["PreInvocation"],
+            "mcp_configured": True,
+        }
+        with (
+            patch("gobby.cli.install.run_daemon_setup"),
+            patch(
+                "gobby.cli.install._ensure_daemon_config",
+                return_value={"created": False, "path": "/fake"},
+            ),
+            patch("gobby.cli.install.get_install_dir", return_value=Path("/fake/install")),
+            patch("gobby.cli.install._is_claude_code_installed", return_value=False),
+            patch("gobby.cli.install._is_grok_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_agy_cli_installed", return_value=True),
+            patch("gobby.cli.install._is_qwen_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
+            patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
+            patch("gobby.cli.install.install_agy", return_value=agy_result) as mock_agy,
+            patch("gobby.cli.install._run_embedding_install", return_value="none"),
+            patch("gobby.cli.install._maybe_start_daemon_after_install"),
+        ):
+            result = runner.invoke(install, [], catch_exceptions=False)
+
+        assert result.exit_code == 0
+        assert "Components to configure: agy" in result.output
+        assert "AGY CLI" in result.output
+        mock_agy.assert_called_once()
+
     def test_install_all_no_ext_services_runs_embedding_only(
         self,
         runner: CliRunner,

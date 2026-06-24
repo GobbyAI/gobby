@@ -2,7 +2,7 @@
 
 Rules are Gobby's reactive enforcement layer. They evaluate normalized hook
 events and decide whether to block, rewrite, annotate, or trigger follow-up
-actions. The model is **CLI agnostic**: Claude, Codex, and Gemini sessions all
+actions. The model is **CLI agnostic**: Claude, Codex, AGY, and Qwen sessions all
 feed the same rule engine once their events are normalized. The same model also
 covers other supported sources as their adapters emit normalized events.
 

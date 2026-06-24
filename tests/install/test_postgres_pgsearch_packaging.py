@@ -137,6 +137,16 @@ def test_package_data_recursively_includes_gobby_data(repo_root: Path) -> None:
     assert "data/**/*" in package_data
 
 
+def test_package_data_excludes_retired_gemini_install_assets(repo_root: Path) -> None:
+    pyproject = _load_toml(repo_root / "pyproject.toml")
+
+    package_data = pyproject["tool"]["setuptools"]["package-data"]["gobby"]
+
+    assert "install/agy/**/*" in package_data
+    retired_install_glob = "install/" + "gemini/**/*"
+    assert retired_install_glob not in package_data
+
+
 def test_runtime_resource_lookup_uses_gobby_package_joinpath(repo_root: Path) -> None:
     source_text = "\n".join(path.read_text() for path in (repo_root / "src/gobby").rglob("*.py"))
 

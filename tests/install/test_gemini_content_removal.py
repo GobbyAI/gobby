@@ -1,7 +1,7 @@
 """Regression tests for retired Gemini bundled content.
 
 The ``gemini-image-gen`` workflow agent and the ``nano-banana`` skill were
-removed from disk as part of the Gemini CLI removal. These tests prove the
+removed from disk as part of provider cleanup. These tests prove the
 removal is real (absent from the bundled trees) and that previously-installed
 rows soft-delete through the normal bundled sync orphan path rather than via a
 direct DB mutation.

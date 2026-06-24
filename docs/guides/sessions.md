@@ -82,7 +82,6 @@ summarize during lifecycle processing.
 | :--- | :--- |
 | `claude` | Claude Code hooks |
 | `codex` | Codex hook adapter or web-chat Codex backend |
-| `gemini` | Gemini CLI hooks |
 | `qwen` | Qwen CLI hooks |
 | `droid` | Droid CLI hooks |
 | `grok` | Grok CLI hooks |
@@ -90,7 +89,7 @@ summarize during lifecycle processing.
 | `pipeline` | Pipeline automation |
 | `system` | Bootstrapped root session for cron and pipeline work without a caller |
 
-The public `get_current_session` helper accepts `claude`, `gemini`, `grok`,
+The public `get_current_session` helper accepts `claude`, `grok`,
 `qwen`, `codex`, `droid`, and `agy`. Pipeline and system sessions are created
 by internal automation.
 
@@ -111,7 +110,7 @@ gobby sessions list [OPTIONS]
 | :--- | :--- |
 | `-p, --project TEXT` | Filter by project name or UUID. |
 | `-s, --status TEXT` | Filter by status such as `active`, `completed`, or `handoff_ready`. |
-| `--source TEXT` | Filter by `claude`, `gemini`, `qwen`, `codex`, or `droid`. |
+| `--source TEXT` | Filter by `claude`, `grok`, `qwen`, `agy`, `codex`, or `droid`. |
 | `-n, --limit INTEGER` | Maximum rows to show. |
 | `--json` | Emit JSON. |
 

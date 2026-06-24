@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any
 
+# Gemini-family catalog metadata is retained for providers that expose Gemini
+# model families, currently AGY and Droid. It is not an active Gemini provider.
 GEMINI_FAMILY_MODELS: list[dict[str, Any]] = [
     {
         "value": "gemini-3.5-flash",

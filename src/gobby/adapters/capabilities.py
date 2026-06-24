@@ -7,6 +7,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
+from gobby.adapters.agy_contract import AGY_HOOK_ALIASES, AGY_HOOK_CONTRACTS
 from gobby.adapters.claude_contract import CLAUDE_HOOK_CONTRACTS
 from gobby.adapters.droid_contract import DROID_HOOK_CONTRACTS
 from gobby.hooks.events import HookEventType, HookResponse, SessionSource
@@ -393,6 +394,33 @@ def _unsupported_capabilities(source: SessionSource) -> ProviderCapabilities:
     return ProviderCapabilities(source=source, hook_events={})
 
 
+def _agy_capabilities() -> ProviderCapabilities:
+    events: dict[str, HookCapability] = {}
+    for hook_name, contract in AGY_HOOK_CONTRACTS.items():
+        decision_style = ProviderDecisionStyle.TOP_LEVEL_BLOCK
+        extra_fields: list[str] = []
+        if contract.blocks_tool_call:
+            decision_style = ProviderDecisionStyle.PRE_TOOL_USE
+            extra_fields.extend(["permission_decision", "auto_approve", "modified_input"])
+        elif hook_name == "Stop":
+            decision_style = ProviderDecisionStyle.HARD_STOP
+
+        events[hook_name] = HookCapability(
+            hook_name=hook_name,
+            event_type=contract.event_type,
+            decision_style=decision_style,
+            context_channel=ContextChannel.NONE,
+            supported_response_fields=_response_fields(*extra_fields),
+        )
+
+    return ProviderCapabilities(
+        source=SessionSource.AGY,
+        hook_events=events,
+        hook_aliases=AGY_HOOK_ALIASES,
+        supports_permissions=True,
+    )
+
+
 def _droid_capabilities() -> ProviderCapabilities:
     events: dict[str, HookCapability] = {}
     for hook_name, contract in DROID_HOOK_CONTRACTS.items():
@@ -422,7 +450,7 @@ def _droid_capabilities() -> ProviderCapabilities:
 
 
 PROVIDER_CAPABILITIES: dict[SessionSource, ProviderCapabilities] = {
-    SessionSource.AGY: _unsupported_capabilities(SessionSource.AGY),
+    SessionSource.AGY: _agy_capabilities(),
     SessionSource.CLAUDE: _claude_capabilities(),
     SessionSource.CODEX: _codex_capabilities(),
     SessionSource.GROK: _grok_capabilities(),

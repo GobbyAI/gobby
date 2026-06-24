@@ -303,7 +303,7 @@
 - **Minimal fix:** Reuse the per-CLI lock on the spawn path.
 - **Confidence:** med.
 
-### [IMPORTANT] Gemini/Qwen sandbox sits at the exact 5-dir `--include-directories` limit; one extra write path raises `ValueError` mid-spawn
+### [IMPORTANT] Qwen ACP sandbox sits at the exact 5-dir `--include-directories` limit; one extra write path raises `ValueError` mid-spawn
 - **Where:** `sandbox.py:338-351` (raises >5; limit at `:57`); worktree agents hit exactly 5 by default (2 git-metadata + uv-cache + cargo-home + hook-inbox); uncaught at `spawn_executor.py:399`.
 - **Failure mode:** A valid config (worktree isolation + one `extra_write_paths` entry) hard-crashes the spawn instead of degrading.
 - **Minimal fix:** Aggregate/cap dirs or fail gracefully at the spawner boundary.

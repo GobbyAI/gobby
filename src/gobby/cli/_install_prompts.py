@@ -372,6 +372,12 @@ _CLI_INSTALL_META: dict[str, tuple[str, str, str, str | None]] = {
         ".qwen/settings.json",
         "~/.qwen/settings.json",
     ),
+    "agy": (
+        "AGY CLI",
+        "~/.gemini/config/hooks.json",
+        ".gemini/config/hooks.json",
+        "~/.gemini/config/mcp_config.json",
+    ),
     "codex": ("Codex", "~/.codex/hooks.json", ".codex/hooks.json", None),
     "droid": (
         "Droid CLI",
@@ -389,7 +395,7 @@ def _run_standard_cli_install(
     mode: str,
     results: dict[str, dict[str, Any]],
 ) -> None:
-    """Run install + echo for a standard CLI (claude, qwen, codex, droid)."""
+    """Run install + echo for a standard CLI."""
     display_name, global_config, project_subpath, mcp_path = _CLI_INSTALL_META[cli_name]
 
     click.echo("-" * 40)
@@ -400,7 +406,11 @@ def _run_standard_cli_install(
     results[cli_name] = result
 
     if result["success"]:
-        config = global_config if mode == "global" else str(project_path / project_subpath)
+        config = (
+            global_config
+            if mode == "global" or cli_name == "agy"
+            else str(project_path / project_subpath)
+        )
         _echo_install_details(result, mcp_config_path=mcp_path, config_path=config)
     else:
         click.echo(f"Failed: {result['error']}", err=True)
@@ -661,6 +671,7 @@ def _echo_uninstall_summary(results: dict[str, dict[str, Any]]) -> bool:
 
 # Uninstall CLI meta: cli_name -> (display_name, uninstall_label)
 _CLI_UNINSTALL_META: dict[str, tuple[str, str]] = {
+    "agy": ("AGY CLI", "hooks from settings"),
     "claude": ("Claude Code", "hooks from settings"),
     "qwen": ("Qwen CLI", "hooks from settings"),
     "codex": ("Codex", "hooks from settings"),

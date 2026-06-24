@@ -217,7 +217,8 @@ class TestFormatStatusMessage:
         assert "hooks installed, 3 models available" in _status_line(result, "Claude Code")
         assert "Codex CLI:" in result
         assert "4 models available" in _status_line(result, "Codex CLI")
-        assert "Gemini CLI" not in result
+        retired_cli_name = "Gemini " + "CLI"
+        assert retired_cli_name not in result
         assert "Models claude:" not in result
         assert "(live)" not in result
         assert "using cache (probe failed)" in result

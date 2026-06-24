@@ -256,7 +256,7 @@
 - **Minimal fix:** Thread the session's project path through and pass `cwd=` to all four helpers.
 - **Confidence:** high.
 
-### [IMPORTANT] `generate_summary` transcript reader: one torn JSONL line aborts; Gemini/Qwen `.json` transcripts unsupported; unbounded memory
+### [IMPORTANT] `generate_summary` transcript reader: one torn JSONL line aborts; ACP/Qwen `.json` transcripts unsupported; unbounded memory
 - **Where:** `summary_actions.py:632-648` (strict per-line `json.loads`, whole file accumulated before the 100-turn cut).
 - **Failure mode:** (1) A partially-written final line (live-appended transcripts) aborts the whole generation with HTTP 422 — the sibling `_read_transcript` skips malformed lines (`summarize.py:288-295`). (2) Single-JSON `.json` transcripts (dispatched explicitly elsewhere, `lifecycle.py:551-563`) fail line 1 or yield the wrong shape — on-demand summary broken for that CLI family. (3) Hundreds of MB held in memory before truncation.
 - **Minimal fix:** Reuse `_read_transcript` (suffix dispatch + per-line tolerance); cap retained turns while streaming.

@@ -1,4 +1,4 @@
-"""Integration and edge-case tests for Gemini adapter handling."""
+"""Integration and edge-case tests for ACP hook adapter handling."""
 
 from datetime import UTC, datetime
 
@@ -310,7 +310,7 @@ class TestIntegration:
         start_event = {
             "hook_type": "SessionStart",
             "input_data": {
-                "session_id": "gemini-lifecycle-123",
+                "session_id": "acp-lifecycle-123",
                 "cwd": "/home/user/project",
                 "timestamp": "2025-01-15T10:00:00Z",
             },
@@ -327,7 +327,7 @@ class TestIntegration:
         end_event = {
             "hook_type": "SessionEnd",
             "input_data": {
-                "session_id": "gemini-lifecycle-123",
+                "session_id": "acp-lifecycle-123",
                 "timestamp": "2025-01-15T11:00:00Z",
             },
         }
@@ -344,7 +344,7 @@ class TestIntegration:
         before_event = {
             "hook_type": "BeforeTool",
             "input_data": {
-                "session_id": "gemini-tool-456",
+                "session_id": "acp-tool-456",
                 "tool_name": "WriteFileTool",
                 "tool_input": {
                     "path": "/tmp/test.txt",
@@ -367,7 +367,7 @@ class TestIntegration:
         after_event = {
             "hook_type": "AfterTool",
             "input_data": {
-                "session_id": "gemini-tool-456",
+                "session_id": "acp-tool-456",
                 "tool_name": "WriteFileTool",
                 "tool_output": {"success": True, "bytes_written": 13},
             },
@@ -388,7 +388,7 @@ class TestIntegration:
         native_event = {
             "hook_type": "BeforeTool",
             "input_data": {
-                "session_id": "gemini-deny-789",
+                "session_id": "acp-deny-789",
                 "tool_name": "EditFileTool",
                 "tool_input": {
                     "path": "/src/main.py",

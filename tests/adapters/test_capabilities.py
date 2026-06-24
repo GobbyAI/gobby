@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import pytest
 
+from gobby.adapters.agy import AgyAdapter
+from gobby.adapters.agy_contract import AGY_HOOK_NAMES
 from gobby.adapters.capabilities import (
     ContextChannel,
     ProviderDecisionStyle,
@@ -55,7 +57,10 @@ def test_capability_registry_covers_current_http_adapters() -> None:
     assert tuple(get_provider_capabilities(SessionSource.DROID).hook_events) == (
         DROID_PASCAL_HOOK_NAMES
     )
-    assert get_provider_capabilities(SessionSource.AGY).hook_events == {}
+    assert tuple(get_provider_capabilities(SessionSource.AGY).hook_events) == AGY_HOOK_NAMES
+    assert get_provider_capabilities(SessionSource.AGY).hook_events.keys() == (
+        AgyAdapter.EVENT_MAP.keys()
+    )
 
 
 def test_current_context_and_decision_capabilities_are_declared() -> None:
@@ -63,6 +68,7 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     codex_pre_tool = get_provider_capabilities("codex").get_hook("PreToolUse")
     qwen_before_model = get_provider_capabilities("qwen").get_hook("BeforeModel")
     grok_pre_tool = get_provider_capabilities("grok").get_hook("pre_tool_use")
+    agy_pre_tool = get_provider_capabilities("agy").get_hook("PreToolUse")
     droid_pre_tool = get_provider_capabilities("droid").get_hook("PreToolUse")
 
     assert claude_pre_tool is not None
@@ -81,9 +87,27 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert grok_pre_tool.context_channel is ContextChannel.SYSTEM_MESSAGE
     assert grok_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
+    assert agy_pre_tool is not None
+    assert agy_pre_tool.context_channel is ContextChannel.NONE
+    assert agy_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
+    assert agy_pre_tool.supports_response_field("permission_decision")
+    assert agy_pre_tool.supports_response_field("auto_approve")
+    assert agy_pre_tool.supports_response_field("modified_input")
+
     assert droid_pre_tool is not None
     assert droid_pre_tool.context_channel is ContextChannel.NONE
     assert droid_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
+
+
+def test_agy_hook_capabilities_have_no_live_transport_claims() -> None:
+    """AGY supports hook install parity only; live runtime transport stays unavailable."""
+    capabilities = get_provider_capabilities("agy")
+
+    assert capabilities.transport_capabilities == {}
+    assert capabilities.supports_permissions is True
+    assert capabilities.get_hook("pre_tool_use") is capabilities.get_hook("PreToolUse")
+    assert capabilities.get_hook("Stop") is not None
+    assert capabilities.get_hook("Stop").decision_style is ProviderDecisionStyle.HARD_STOP
 
 
 def test_grok_0_2_hook_capabilities_are_declared() -> None:

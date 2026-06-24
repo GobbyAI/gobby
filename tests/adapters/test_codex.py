@@ -3930,7 +3930,7 @@ class TestCodexAdapterApprovalAttach:
 #
 # Tests for injecting session metadata and workflow context into Codex turns.
 # Codex uses turn-start injection: context is prepended to the `instructions`
-# field when starting a turn, unlike Claude/Gemini which use per-hook
+# field when starting a turn, unlike additionalContext-based adapters which use per-hook
 # additionalContext.
 # =============================================================================
 
@@ -4021,7 +4021,7 @@ class TestCodexAdapterContextStringBuilding:
     """Tests for context string building in CodexAdapter.
 
     The adapter should build context strings from HookResponse metadata,
-    similar to Claude/Gemini adapters, for injection into Codex turns.
+        similar to additionalContext-based adapters, for injection into Codex turns.
     translate_from_hook_response() should include context for BEFORE_AGENT hooks.
     """
 
@@ -4134,7 +4134,7 @@ class TestCodexAdapterContextOneTimeInjection:
 
     Context metadata should only be injected fully on the first hook
     per session. Subsequent hooks should only include minimal session ref.
-    This matches the behavior in Claude/Gemini adapters.
+        This matches the behavior in additionalContext-based adapters.
     """
 
     def test_first_hook_flag_controls_metadata_depth(self) -> None:
@@ -4194,10 +4194,10 @@ class TestCodexAdapterContextOneTimeInjection:
 
 
 class TestCodexAdapterContextFormat:
-    """Tests for context format consistency with Claude/Gemini adapters.
+    """Tests for context format consistency with other hook adapters.
 
     The Codex adapter should produce context strings that follow the same
-    patterns as Claude and Gemini adapters for consistency across CLIs.
+    patterns as other adapters for consistency across CLIs.
     """
 
     def test_session_ref_format(self) -> None:
@@ -4215,7 +4215,7 @@ class TestCodexAdapterContextFormat:
         result = adapter.translate_from_hook_response(response)
 
         context = result["context"]
-        # Should contain "Gobby Session ID: #77" similar to Claude/Gemini
+        # Should contain "Gobby Session ID: #77" similar to other adapters
         assert "Gobby Session ID: #77" in context
 
     def test_session_ref_with_full_id(self) -> None:

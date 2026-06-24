@@ -44,7 +44,7 @@ PLAN_MODE_RULES = {
     "handle-plan-mode-entry",
     "handle-plan-mode-exit",
     "reset-plan-mode-on-session-start",
-    "teach-gemini-qwen-gcode-plan-mode",
+    "teach-qwen-gcode-plan-mode",
 }
 
 
@@ -124,26 +124,26 @@ class TestHandlePlanModeEntry:
         assert effects[0].skill == "plan"
 
 
-class TestTeachGeminiQwenGcodePlanMode:
-    """Verify Gemini/Qwen plan-mode gcode guidance."""
+class TestTeachQwenGcodePlanMode:
+    """Verify Qwen plan-mode gcode guidance."""
 
-    def test_targets_gemini_and_qwen_plan_mode_once(self, db, manager) -> None:
+    def test_targets_qwen_plan_mode_once(self, db, manager) -> None:
         _sync_bundled(db)
 
-        row = manager.get_by_name("teach-gemini-qwen-gcode-plan-mode")
+        row = manager.get_by_name("teach-qwen-gcode-plan-mode")
         assert row is not None
 
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.event.value == "turn_start"
         assert body.when is not None
         assert "plan_mode" in body.when
-        assert "source in ('gemini', 'qwen')" in body.when
-        assert "gemini_qwen_gcode_plan_hint_shown" in body.when
+        assert "source == 'qwen'" in body.when
+        assert "qwen_gcode_plan_hint_shown" in body.when
 
     def test_injects_gcode_context_and_sets_guard(self, db, manager) -> None:
         _sync_bundled(db)
 
-        row = manager.get_by_name("teach-gemini-qwen-gcode-plan-mode")
+        row = manager.get_by_name("teach-qwen-gcode-plan-mode")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
 
         effects = body.resolved_effects
@@ -155,7 +155,7 @@ class TestTeachGeminiQwenGcodePlanMode:
         assert "search or outline results" in effects[0].template
         assert "write/destructive shell commands remain blocked" in effects[0].template
         assert effects[1].type == "set_variable"
-        assert effects[1].variable == "gemini_qwen_gcode_plan_hint_shown"
+        assert effects[1].variable == "qwen_gcode_plan_hint_shown"
         assert effects[1].value is True
 
 
@@ -175,8 +175,8 @@ class TestHandlePlanModeExit:
         assert "ExitPlanMode" in body.when
         assert "is_failure" in body.when
 
-    def test_clears_plan_mode_and_gemini_qwen_hint_guard(self, db, manager) -> None:
-        """Should clear plan_mode and the Gemini/Qwen gcode hint guard."""
+    def test_clears_plan_mode_and_qwen_hint_guard(self, db, manager) -> None:
+        """Should clear plan_mode and the Qwen gcode hint guard."""
         _sync_bundled(db)
 
         row = manager.get_by_name("handle-plan-mode-exit")
@@ -186,7 +186,7 @@ class TestHandlePlanModeExit:
         assert len(effects) == 2
         assert effects[0].variable == "plan_mode"
         assert effects[0].value is False
-        assert effects[1].variable == "gemini_qwen_gcode_plan_hint_shown"
+        assert effects[1].variable == "qwen_gcode_plan_hint_shown"
         assert effects[1].value is False
 
 
@@ -204,7 +204,7 @@ class TestResetPlanModeOnSessionStart:
         assert body.event.value == "session_start"
         effects_by_variable = {effect.variable: effect for effect in body.effects}
         assert effects_by_variable["plan_mode"].value is False
-        assert effects_by_variable["gemini_qwen_gcode_plan_hint_shown"].value is False
+        assert effects_by_variable["qwen_gcode_plan_hint_shown"].value is False
 
     def test_when_condition_covers_clear_compact_startup(self, db, manager) -> None:
         """Should fire on clear, compact, and startup sources."""

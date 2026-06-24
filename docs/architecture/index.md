@@ -4,7 +4,7 @@
 
 ## Project Overview
 
-**Gobby** is a local-first daemon that unifies AI coding assistants (Claude Code, Codex, Gemini CLI, Qwen, Droid, and Grok) through a hook interface for session tracking and provides an MCP proxy with progressive tool discovery for efficient access to downstream servers.
+**Gobby** is a local-first daemon that unifies AI coding assistants (Claude Code, Codex, AGY, Qwen, Droid, and Grok) through a hook interface for session tracking and provides an MCP proxy with progressive tool discovery for efficient access to downstream servers.
 
 ### Quick Facts
 
@@ -87,7 +87,7 @@ gobby status
 
 ### Multi-CLI Support
 - **Claude Code** - Full hook integration
-- **Gemini CLI** - Full hook integration
+- **AGY CLI** - Hook integration
 - **Codex CLI** - Full hook integration (+ app-server JSON-RPC)
 - **Droid** - Hook integration
 - **Qwen Code** - Hook integration (ACP)
@@ -106,7 +106,7 @@ gobby status
 - Dynamic server add/remove
 
 ### LLM Integration
-- Multi-provider support (Claude, Codex, Gemini, Qwen, Droid, local endpoints)
+- Multi-provider support (Claude, Codex, AGY, Qwen, Droid, local endpoints)
 - Subscription-based and BYOK authentication
 - Feature-routed LLM calls with profile fallback
 - Tool recommendations

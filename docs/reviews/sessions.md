@@ -44,9 +44,9 @@
 - **Minimal fix:** Give `QwenTranscriptParser` a real `parse_line` for the envelope; add a fixture captured from a real `~/.qwen/projects/*/chats/*.jsonl`.
 - **Confidence:** high (empirical, two CLI versions).
 
-### [BLOCKER] Gemini native session-JSON token usage is 100% lost — the `tokens` shape is unmapped
+### [BLOCKER] ACP-native session-JSON token usage is 100% lost — the `tokens` shape is unmapped
 - **Where:** `transcripts/gemini.py:347-354` (`_extract_usage`: `data.get("usageMetadata") or data.get("tokens")`) feeding `token_usage.py:33-67` (`gemini_token_usage` reads only `promptTokenCount`/`cachedContentTokenCount`/`candidatesTokenCount`/`thoughtsTokenCount`).
-- **Failure mode:** Real Gemini session files store usage as `tokens: {input, output, cached, thoughts, tool, total}` — surveyed 3,083 real messages: **zero** had `usageMetadata`. The fallback exists for exactly this shape but feeds an incompatible key reader → `TokenUsage(0,0,0,0)` → consumers skip all-zero usage → no token events are ever recorded from Gemini/Qwen transcripts (the backfill/recovery path records nothing). Relations verified on real data: `total = input + output + thoughts`, `cached ⊆ input`.
+- **Failure mode:** Real ACP-family session files store usage as `tokens: {input, output, cached, thoughts, tool, total}` — surveyed 3,083 real messages: **zero** had `usageMetadata`. The fallback exists for exactly this shape but feeds an incompatible key reader -> `TokenUsage(0,0,0,0)` -> consumers skip all-zero usage -> no token events are ever recorded from Qwen ACP transcripts (the backfill/recovery path records nothing). Relations verified on real data: `total = input + output + thoughts`, `cached <= input`.
 - **Minimal fix:** Map the session-file shape (`input - cached`, `cache_read=cached`, `output + thoughts`); add a real-shape test.
 - **Confidence:** high (empirical + two independent reviewer reads).
 

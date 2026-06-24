@@ -2,7 +2,7 @@
 
 Gobby's workflow system is the control plane that keeps sessions, agents, and
 automation aligned with the repo's rules. It is **CLI agnostic**: Claude,
-Codex, and Gemini sessions all flow through the same normalized hook events,
+Codex, AGY, and Qwen sessions all flow through the same normalized hook events,
 session variables, rule engine, and MCP tool surface.
 
 This guide is the high-level map. Use it to decide whether behavior belongs in

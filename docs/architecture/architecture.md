@@ -4,7 +4,7 @@
 
 ## Overview
 
-Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code, Codex, Gemini CLI, Qwen, Droid, and Grok) through a hook interface for session tracking. It provides a rule engine for declarative behavior enforcement, an MCP proxy with progressive tool discovery, agent spawning with P2P messaging, and persistent memory.
+Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code, Codex, AGY, Qwen, Droid, and Grok) through a hook interface for session tracking. It provides a rule engine for declarative behavior enforcement, an MCP proxy with progressive tool discovery, agent spawning with P2P messaging, and persistent memory.
 
 ### Key Characteristics
 
@@ -57,7 +57,7 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 │  ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐        │
 │  │    Adapters     │  │  LLMService     │  │ MCPClientManager│        │
 │  │ Claude/Codex/   │  │  (multi-prov)   │  │ (conn pooling)  │        │
-│  │ Gemini/Droid/   │  │                 │  │                 │        │
+│  │ AGY/Droid/      │  │                 │  │                 │        │
 │  │ Qwen/Grok       │  │                 │  │                 │        │
 │  └─────────────────┘  └─────────────────┘  └─────────────────┘        │
 └────────────────────────────────┬───────────────────────────────────────┘
@@ -110,7 +110,7 @@ Gobby is a **local-first daemon** that unifies AI coding assistants (Claude Code
 | Adapter | File | CLI |
 |---------|------|-----|
 | **ClaudeCodeAdapter** | `adapters/claude_code.py` | Claude Code |
-| **GeminiAdapter** | `adapters/gemini.py` | Gemini CLI |
+| **AgyAdapter** | `adapters/agy.py` | AGY CLI |
 | **CodexAdapter** | `adapters/codex_impl/app_server_adapter.py` | Codex CLI |
 | **DroidAdapter** | `adapters/droid.py` | Droid |
 | **QwenAdapter** | `adapters/qwen.py` | Qwen Code |
@@ -183,11 +183,10 @@ Hook event fired (e.g., before_tool)
 | Integration | Protocol | Direction |
 |-------------|----------|-----------|
 | **Claude Code** | HTTP hooks | Inbound |
-| **Gemini CLI** | HTTP hooks | Inbound |
+| **AGY CLI** | HTTP hooks | Inbound |
 | **Codex CLI** | HTTP hooks (+ app-server JSON-RPC subprocess) | Inbound |
 | **Claude API** | HTTP | Outbound |
 | **OpenAI API** | HTTP | Outbound |
-| **Gemini CLI** | ACP subprocess | Outbound |
 | **Downstream MCP** | HTTP/stdio/WS | Outbound |
 
 ## Key Design Decisions
@@ -196,7 +195,7 @@ Hook event fired (e.g., before_tool)
 2. **CLI-Agnostic**: Adapter pattern normalizes different CLI hook formats to unified events
 3. **Rules-First Enforcement**: Declarative rules enforce behavior without relying on prompt compliance
 4. **Progressive Discovery**: MCP tools loaded on-demand to reduce token usage
-5. **Multi-Provider LLM**: Abstraction layer supports Claude (API + CLI), Codex, Gemini, Qwen, and Droid providers plus local endpoints
+5. **Multi-Provider LLM**: Abstraction layer supports Claude (API + CLI), Codex, AGY, Qwen, and Droid providers plus local endpoints
 6. **Event-Driven Hooks**: Hook events feed into RuleEngine for enforcement and context injection
 7. **P2P Agent Messaging**: Agents communicate via target-based `send_message` without parent relay
 8. **Thread-Safe Storage**: Bounded database execution and PostgreSQL transactions for concurrent access

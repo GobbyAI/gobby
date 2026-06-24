@@ -63,7 +63,7 @@ class TestInstallQwen:
                 return_value={"commands": ["command1.md"]},
             ),
             patch(
-                "gobby.cli.installers.qwen.install_router_skills_as_gemini_skills",
+                "gobby.cli.installers.qwen.install_router_skills_as_cli_skills",
                 return_value=["gobby/", "g/"],
             ),
             patch(
@@ -112,7 +112,7 @@ class TestInstallQwen:
                 return_value={"commands": ["command1.md"]},
             ),
             patch(
-                "gobby.cli.installers.qwen.install_router_skills_as_gemini_skills",
+                "gobby.cli.installers.qwen.install_router_skills_as_cli_skills",
                 return_value=["gobby/", "g/"],
             ),
             patch(

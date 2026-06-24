@@ -152,7 +152,7 @@ gobby uninstall [OPTIONS]
 | Option | Purpose |
 | --- | --- |
 | `--claude` | Install Claude Code integration assets. |
-| `--gemini` | Install Gemini integration assets. |
+| `--agy` | Install AGY integration assets. |
 | `--codex` | Install Codex integration assets. |
 | `--droid` | Install Droid integration assets. |
 | `--qwen` | Install QwenCode integration assets. |
@@ -175,7 +175,7 @@ gobby uninstall [OPTIONS]
 | Option | Purpose |
 | --- | --- |
 | `--claude` | Remove Claude Code integration assets. |
-| `--gemini` | Remove Gemini integration assets. |
+| `--agy` | Remove AGY integration assets. |
 | `--codex` | Remove Codex integration assets. |
 | `--droid` | Remove Droid integration assets. |
 | `--qwen` | Remove QwenCode integration assets. |

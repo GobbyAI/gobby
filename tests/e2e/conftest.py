@@ -277,7 +277,7 @@ def e2e_project_dir() -> Generator[Path]:
     """Create an isolated project directory for E2E tests.
 
     ``ignore_cleanup_errors=True`` protects against ENOTEMPTY on macOS when a
-    daemon subprocess (or one of its helpers — Gemini CLI, gcode, etc.) still
+    daemon subprocess (or one of its helpers — gcode, CLI tools, etc.) still
     holds file descriptors inside the tree at teardown. terminate_process_tree
     gives children a few seconds to exit, but the kernel may still report a
     directory as non-empty briefly after. Without this flag, the whole test

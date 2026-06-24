@@ -20,8 +20,8 @@ must still finish by calling `gobby-agents:end_agent_run`.
 | CLI | Native Format | Session Field | Integration |
 | --- | --- | --- | --- |
 | Claude Code | Settings hook names with Gobby kebab-case `ghook --type` values | `session_id` | HTTP hook command |
-| Gemini CLI | PascalCase (`SessionStart`) | `session_id` | HTTP hook command |
-| Qwen CLI | Gemini-compatible PascalCase | `session_id` | HTTP hook command |
+| AGY CLI | PascalCase (`PreInvocation`, `PreToolUse`) | `session_id` | HTTP hook command |
+| Qwen CLI | ACP PascalCase (`SessionStart`, `BeforeTool`) | `session_id` | HTTP hook command |
 | Codex CLI | hooks.json PascalCase (`SessionStart`, `PreToolUse`) | `session_id` | HTTP hook command |
 | Droid CLI | PascalCase (`PreToolUse`) | `session_id` | HTTP hook command |
 | Grok CLI | snake_case (`session_start`, `pre_tool_use`) | `session_id` | HTTP hook command |
@@ -55,7 +55,7 @@ the older flat shape without `schema_version` is no longer accepted.
 }
 ```
 
-`source` is required and must be one of `claude`, `gemini`, `grok`, `qwen`,
+`source` is required and must be one of `claude`, `grok`, `qwen`, `agy`,
 `codex`, or `droid`. `hook_type` is the provider hook name that the selected
 adapter understands.
 
@@ -115,9 +115,23 @@ passes kebab-case hook types to the daemon.
 | `elicitation` | `Elicitation` | `elicitation` | `elicitation` |
 | `elicitation-result` | `ElicitationResult` | `elicitation_result` | `elicitation_result` |
 
-### Gemini And Qwen
+### AGY
 
-Qwen uses the Gemini-compatible adapter and hook template.
+AGY hooks are installed to `~/.gemini/config/hooks.json`, which is the AGY
+vendor config path. Runtime web chat, spawning, and live transport remain
+unavailable.
+
+| Native Hook | Raw Workflow Event | Semantic Event |
+| --- | --- | --- |
+| `PreInvocation` | `before_agent` | `turn_start` |
+| `PostInvocation` | `after_agent` | `turn_end` |
+| `PreToolUse` | `before_tool` | `before_tool` |
+| `PostToolUse` | `after_tool` | `after_tool` |
+| `Stop` | `stop` | `turn_end` |
+
+### Qwen
+
+Qwen uses the ACP-style hook adapter and hook template.
 
 | Native Hook | Raw Workflow Event | Semantic Event |
 | --- | --- | --- |
@@ -185,7 +199,7 @@ fields where possible.
 | `mcp_tool` | Extracted MCP tool name when a tool call targets MCP |
 | `is_error` | Normalized tool failure flag |
 
-Shell-like tools normalize to `Bash`. Common Gemini/Qwen tool names also map to
+Shell-like tools normalize to `Bash`. Common Qwen/AGY tool names also map to
 Claude-style names such as `Read`, `Write`, `Edit`, `Glob`, and `Grep`.
 
 ## Provider Payload Examples
@@ -235,21 +249,23 @@ Claude-style names such as `Read`, `Write`, `Edit`, `Glob`, and `Grep`.
 }
 ```
 
-### Gemini And Qwen
+### AGY
 
 ```json
 {
-  "source": "gemini",
-  "hook_type": "BeforeAgent",
+  "source": "agy",
+  "hook_type": "PreInvocation",
   "input_data": {
-    "hook_event_name": "BeforeAgent",
-    "session_id": "gemini-session-123",
+    "hook_event_name": "PreInvocation",
+    "session_id": "agy-session-123",
     "cwd": "/path/to/project",
     "timestamp": "2026-05-07T15:00:00Z",
     "prompt": "Refresh the hook schema guide"
   }
 }
 ```
+
+### Qwen
 
 ```json
 {
@@ -369,10 +385,10 @@ Adapters translate these fields into the native response schema for each CLI.
 
 ### Context Fields
 
-| HookResponse Field | Claude Code | Gemini/Qwen | Codex | Droid |
-| --- | --- | --- | --- | --- |
-| `context` | `hookSpecificOutput.additionalContext` when supported | `hookSpecificOutput.additionalContext` when supported | `additionalContext` or `systemMessage`, depending on hook | `hookSpecificOutput.additionalContext` when supported |
-| `system_message` | Top-level `systemMessage`, except startup context is injected once | Top-level `systemMessage`, except startup context is injected once | `systemMessage` for `PreToolUse` and `Stop` | Top-level `systemMessage`, except startup context is injected once |
+| HookResponse Field | Claude Code | Qwen | AGY | Codex | Droid |
+| --- | --- | --- | --- | --- | --- |
+| `context` | `hookSpecificOutput.additionalContext` when supported | `hookSpecificOutput.additionalContext` when supported | No native destination | `additionalContext` or `systemMessage`, depending on hook | `hookSpecificOutput.additionalContext` when supported |
+| `system_message` | Top-level `systemMessage`, except startup context is injected once | Top-level `systemMessage`, except startup context is injected once | No native destination | `systemMessage` for `PreToolUse` and `Stop` | Top-level `systemMessage`, except startup context is injected once |
 
 ### Blocking And Tool Control
 
@@ -387,7 +403,7 @@ Adapters translate these fields into the native response schema for each CLI.
 | `watch_paths` | Claude dynamic `FileChanged` watch paths |
 | `worktree_path` | Claude `WorktreeCreate` output |
 | `elicitation_*` | Claude elicitation response fields |
-| `modify_args` | Gemini/Qwen `BeforeModel.llm_request` or `BeforeToolSelection.toolConfig` |
+| `modify_args` | Qwen `BeforeModel.llm_request` or `BeforeToolSelection.toolConfig` |
 
 ## Integration Example
 
@@ -422,7 +438,7 @@ def main() -> None:
     result = response.json()
     print(json.dumps(result))
 
-    if source in {"gemini", "qwen"}:
+    if source in {"agy", "qwen"}:
         sys.exit(0)
     sys.exit(0 if result.get("continue", True) else 1)
 
@@ -431,7 +447,7 @@ if __name__ == "__main__":
     main()
 ```
 
-Gemini and Qwen communicate block decisions in JSON; their hook commands should
+AGY and Qwen communicate block decisions in JSON; their hook commands should
 exit `0` so the CLI treats the hook response as successful rather than a hook
 process failure.
 

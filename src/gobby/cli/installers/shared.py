@@ -2,7 +2,7 @@
 Shared content installation for Gobby hooks.
 
 This module handles installing shared plugins and docs
-that are used across all CLI integrations (Claude, Gemini, Codex, etc.).
+that are used across all CLI integrations (Claude, AGY, Codex, etc.).
 
 Workflows, agents, rules, prompts, and skills are DB-managed:
 they are synced from bundled YAML to the database during ``gobby install``
@@ -360,7 +360,7 @@ def install_cli_content(cli_name: str, target_path: Path) -> dict[str, list[str]
     CLI-specific content can add to or override shared content.
 
     Args:
-        cli_name: Name of the CLI (e.g., "claude", "gemini", "codex")
+        cli_name: Name of the CLI (e.g., "claude", "agy", "codex")
         target_path: Path to CLI config directory
 
     Returns:
@@ -370,7 +370,7 @@ def install_cli_content(cli_name: str, target_path: Path) -> dict[str, list[str]
     installed: dict[str, list[str]] = {"commands": []}
 
     # CLI-specific commands (slash commands)
-    # Claude/Gemini: commands/, Codex: prompts/
+    # Claude/AGY/Qwen: commands/, Codex: prompts/
     for cmd_dir_name in ["commands", "prompts"]:
         cli_commands = cli_dir / cmd_dir_name
         if cli_commands.exists():

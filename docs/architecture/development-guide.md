@@ -43,7 +43,7 @@ uv run gobby status
 |---------|-------------|
 | `uv run gobby install` | Install to all detected CLIs |
 | `uv run gobby install --claude` | Claude Code only |
-| `uv run gobby install --gemini` | Gemini CLI only |
+| `uv run gobby install --agy` | AGY CLI hooks only |
 | `uv run gobby install --codex` | Codex CLI only |
 | `uv run gobby uninstall` | Remove all hooks |
 

@@ -53,7 +53,7 @@ SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 # that a stuck daemon cannot leave provider hooks hanging indefinitely.
 FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0
 FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
-SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid")
+SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid", "agy")
 
 
 def _graceful_error_response(
@@ -104,6 +104,16 @@ def _graceful_error_response(
         result = DroidAdapter().translate_from_hook_response(hook_response, hook_type=hook_type)
         if isinstance(result, dict):
             return result
+
+    if provider == "agy":
+        from gobby.adapters.agy import AgyAdapter
+
+        agy_response = AgyAdapter().translate_from_hook_response(
+            hook_response,
+            hook_type=hook_type,
+        )
+        if isinstance(agy_response, dict):
+            return agy_response
 
     if provider == "codex":
         from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
@@ -544,7 +554,8 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"Unsupported source: {source}. Supported: claude, grok, qwen, codex, droid"
+                        f"Unsupported source: {source}. Supported: "
+                        f"{', '.join(SUPPORTED_HOOK_SOURCES)}"
                     ),
                 )
 
@@ -582,6 +593,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                     )
 
             # Select adapter based on source
+            from gobby.adapters.agy import AgyAdapter
             from gobby.adapters.base import BaseAdapter
             from gobby.adapters.claude_code import ClaudeCodeAdapter
             from gobby.adapters.codex_impl.hooks_adapter import CodexHooksAdapter
@@ -607,11 +619,14 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
                 adapter = CodexHooksAdapter(hook_manager=hook_manager)
             elif source == "droid":
                 adapter = DroidAdapter(hook_manager=hook_manager)
+            elif source == "agy":
+                adapter = AgyAdapter(hook_manager=hook_manager)
             else:
                 raise HTTPException(
                     status_code=400,
                     detail=(
-                        f"Unsupported source: {source}. Supported: claude, grok, qwen, codex, droid"
+                        f"Unsupported source: {source}. Supported: "
+                        f"{', '.join(SUPPORTED_HOOK_SOURCES)}"
                     ),
                 )
 

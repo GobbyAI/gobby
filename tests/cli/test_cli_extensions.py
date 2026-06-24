@@ -94,17 +94,17 @@ class TestGetHookDescription:
     def test_before_tool_selection_description(self) -> None:
         """Test description for BEFORE_TOOL_SELECTION event."""
         desc = _get_hook_description(HookEventType.BEFORE_TOOL_SELECTION)
-        assert desc == "Fired before tool selection (Gemini)"
+        assert desc == "Fired before tool selection"
 
     def test_before_model_description(self) -> None:
         """Test description for BEFORE_MODEL event."""
         desc = _get_hook_description(HookEventType.BEFORE_MODEL)
-        assert desc == "Fired before model call (Gemini)"
+        assert desc == "Fired before model call"
 
     def test_after_model_description(self) -> None:
         """Test description for AFTER_MODEL event."""
         desc = _get_hook_description(HookEventType.AFTER_MODEL)
-        assert desc == "Fired after model call (Gemini)"
+        assert desc == "Fired after model call"
 
     def test_pre_compact_description(self) -> None:
         """Test description for PRE_COMPACT event."""
@@ -228,7 +228,7 @@ class TestHooksTestCommand:
         assert "Test a hook by sending a test event" in result.output
         assert "--source" in result.output
         assert "claude" in result.output
-        assert "gemini" in result.output
+        assert "agy" in result.output
         assert "codex" in result.output
 
     @patch("gobby.cli.extensions.call_mcp_api")
@@ -282,15 +282,15 @@ class TestHooksTestCommand:
         mock_check_daemon.return_value = True
         mock_call_api.return_value = {"continue": True}
 
-        result = runner.invoke(cli, ["hooks", "test", "before-tool", "-s", "gemini"])
+        result = runner.invoke(cli, ["hooks", "test", "before-tool", "-s", "agy"])
 
         assert result.exit_code == 0
-        assert "Source: gemini" in result.output
+        assert "Source: agy" in result.output
 
         # Verify API was called with correct source
         mock_call_api.assert_called_once()
         call_args = mock_call_api.call_args
-        assert call_args[1]["json_data"]["source"] == "gemini"
+        assert call_args[1]["json_data"]["source"] == "agy"
 
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")

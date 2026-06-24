@@ -1,4 +1,4 @@
-"""Tests for Gemini adapter event and tool mapping."""
+"""Tests for ACP hook adapter event and tool mapping."""
 
 import pytest
 
@@ -8,10 +8,10 @@ pytestmark = pytest.mark.unit
 
 
 class TestEventTypeMapping:
-    """Tests for Gemini event type mapping."""
+    """Tests for ACP hook event type mapping."""
 
     @pytest.mark.parametrize(
-        "gemini_type,expected_type",
+        "acp_type,expected_type",
         [
             ("SessionStart", HookEventType.SESSION_START),
             ("SessionEnd", HookEventType.SESSION_END),
@@ -26,16 +26,16 @@ class TestEventTypeMapping:
             ("Notification", HookEventType.NOTIFICATION),
         ],
     )
-    def test_event_map_coverage(self, adapter, gemini_type, expected_type) -> None:
-        """EVENT_MAP maps all Gemini hook types correctly."""
-        assert adapter.EVENT_MAP[gemini_type] == expected_type
+    def test_event_map_coverage(self, adapter, acp_type, expected_type) -> None:
+        """EVENT_MAP maps all ACP hook types correctly."""
+        assert adapter.EVENT_MAP[acp_type] == expected_type
 
-    def test_event_map_has_all_gemini_types(self, adapter) -> None:
-        """EVENT_MAP contains exactly 11 Gemini hook types."""
+    def test_event_map_has_all_acp_types(self, adapter) -> None:
+        """EVENT_MAP contains exactly 11 ACP hook types."""
         assert len(adapter.EVENT_MAP) == 11
 
     @pytest.mark.parametrize(
-        "event_type_value,expected_gemini_name",
+        "event_type_value,expected_acp_name",
         [
             ("session_start", "SessionStart"),
             ("session_end", "SessionEnd"),
@@ -51,17 +51,17 @@ class TestEventTypeMapping:
         ],
     )
     def test_hook_event_name_map_coverage(
-        self, adapter, event_type_value, expected_gemini_name
+        self, adapter, event_type_value, expected_acp_name
     ) -> None:
         """HOOK_EVENT_NAME_MAP reverse maps all event types correctly."""
-        assert adapter.HOOK_EVENT_NAME_MAP[event_type_value] == expected_gemini_name
+        assert adapter.HOOK_EVENT_NAME_MAP[event_type_value] == expected_acp_name
 
 
 class TestToolNameNormalization:
-    """Tests for Gemini tool name normalization."""
+    """Tests for ACP tool name normalization."""
 
     @pytest.mark.parametrize(
-        "gemini_tool,expected_tool",
+        "acp_tool,expected_tool",
         [
             # Shell/Bash
             ("run_shell_command", "Bash"),
@@ -109,9 +109,9 @@ class TestToolNameNormalization:
             ("delegate_to_agent", "Task"),
         ],
     )
-    def test_tool_map_coverage(self, adapter, gemini_tool, expected_tool) -> None:
-        """TOOL_MAP normalizes all known Gemini tool names."""
-        assert adapter.normalize_tool_name(gemini_tool) == expected_tool
+    def test_tool_map_coverage(self, adapter, acp_tool, expected_tool) -> None:
+        """TOOL_MAP normalizes all known ACP tool names."""
+        assert adapter.normalize_tool_name(acp_tool) == expected_tool
 
     def test_unknown_tool_passes_through(self, adapter) -> None:
         """Unknown tool names pass through unchanged."""

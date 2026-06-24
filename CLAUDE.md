@@ -210,7 +210,7 @@ src/gobby/
 │
 ├── adapters/             # CLI-specific hook adapters
 │   ├── claude_code.py    # Claude Code adapter
-│   ├── gemini.py         # Gemini CLI adapter
+│   ├── agy.py            # AGY hook adapter
 │   └── codex_impl/       # Codex adapter implementation
 │
 ├── agents/               # Agent spawning and lifecycle
@@ -224,7 +224,7 @@ src/gobby/
 ├── sessions/             # Session lifecycle
 │   ├── lifecycle.py      # Background jobs
 │   ├── processor.py      # SessionMessageProcessor
-│   └── transcripts/      # Parsers for Claude/Gemini/Codex
+│   └── transcripts/      # Parsers for Claude/Codex/ACP-family data
 │
 ├── tasks/                # Task system
 │   ├── expansion/        # ExpansionService (LLM-based decomposition)

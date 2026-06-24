@@ -65,12 +65,10 @@ and direct resolver use.
 | --- | --- | --- |
 | Web chat | Claude | Materialized Claude settings file passed through the SDK |
 | Web chat | Codex | Codex app-server `thread/start` sandbox policy |
-| Web chat | Gemini | Shared ACP backend; Gobby does not wrap ACP startup in Seatbelt |
-| Web chat | Qwen | Same ACP startup behavior as Gemini |
+| Web chat | Qwen | Shared ACP backend; Gobby does not wrap ACP startup in Seatbelt |
 | Spawned agents | Claude | CLI `--settings <json>` |
 | Spawned agents | Codex | CLI `--sandbox <mode>` plus `--add-dir` for extra write paths |
-| Spawned agents | Gemini | CLI `-s`, `SEATBELT_PROFILE`, and `--include-directories` for external write paths |
-| Spawned agents | Qwen | Same sandbox contract as Gemini |
+| Spawned agents | Qwen | CLI `-s`, `SEATBELT_PROFILE`, and `--include-directories` for external write paths |
 
 ## Provider Details
 
@@ -132,32 +130,30 @@ Codex web chat is different because it uses the app server. Gobby starts the
 thread with the app-server sandbox policy string derived from the same daemon
 config instead of launching a CLI process with `--sandbox`.
 
-### Gemini And Qwen
+### Qwen
 
-Spawned Gemini and Qwen agents use the CLI `-s` flag, the `SEATBELT_PROFILE`
+Spawned Qwen agents use the CLI `-s` flag, the `SEATBELT_PROFILE`
 environment variable on macOS, and `--include-directories` for writable paths
 outside the launched workspace:
 
 ```bash
-SEATBELT_PROFILE=permissive-open gemini -s
-SEATBELT_PROFILE=restrictive-open gemini -s
 SEATBELT_PROFILE=permissive-open qwen -s
 SEATBELT_PROFILE=restrictive-open qwen -s
-SEATBELT_PROFILE=permissive-open gemini -s --include-directories /repo/.git/worktrees/task
+SEATBELT_PROFILE=permissive-open qwen -s --include-directories /repo/.git/worktrees/task
 ```
 
 The lower-level resolver chooses `permissive` or `restrictive` from sandbox
 mode, then chooses `open` or `proxied` from network policy. Daemon-owned config
 currently resolves to `permissive-open`. The resolver dedupes external write
-paths and omits the workspace root and workspace-internal paths. Gemini/Qwen's
-shipped Seatbelt profiles support five include directories, so Gobby fails
+paths and omits the workspace root and workspace-internal paths. Qwen's shipped
+Seatbelt profiles support five include directories, so Gobby fails
 early if more external write paths are required.
 
-Daemon-owned Gemini/Qwen ACP web chat does not launch the shared ACP subprocess
-with Gobby-managed Seatbelt flags because full-process Seatbelt blocked ACP
-startup on macOS. Those sessions still use ACP's proxied filesystem model and
-the upstream CLI's tool-level sandboxing, which is separate from wrapping the
-entire ACP process.
+Daemon-owned Qwen ACP web chat does not launch the shared ACP subprocess with
+Gobby-managed Seatbelt flags because full-process Seatbelt blocked ACP startup
+on macOS. Those sessions still use ACP's proxied filesystem model and the
+upstream CLI's tool-level sandboxing, which is separate from wrapping the entire
+ACP process.
 
 ## Path Resolution
 
@@ -172,7 +168,7 @@ translation:
 - The daemon port defaults to `60887` for local daemon communication.
 
 Provider support for these resolved paths is CLI-dependent. Codex currently
-uses extra write paths as `--add-dir`; spawned Gemini/Qwen agents pass external
+uses extra write paths as `--add-dir`; spawned Qwen agents pass external
 write paths as repeated `--include-directories` arguments.
 
 ## Example: Spawning A Sandboxed Agent
@@ -197,13 +193,13 @@ its agent-run resources.
 
 ## Limitations And Caveats
 
-1. **Provider support varies**: Gobby has resolvers for Claude, Codex, Gemini,
-   Qwen, and Grok. Each provider exposes different sandbox knobs (Grok maps
+1. **Provider support varies**: Gobby has resolvers for Claude, Codex, Qwen,
+   and Grok. Each provider exposes different sandbox knobs (Grok maps
    restrictive/no-network policies to `--sandbox strict`, otherwise
    `--sandbox workspace`).
 
-2. **Platform behavior varies**: Gemini and Qwen Seatbelt profiles are macOS
-   behavior. Other platforms depend on the upstream CLI's sandbox support.
+2. **Platform behavior varies**: Qwen Seatbelt profiles are macOS behavior.
+   Other platforms depend on the upstream CLI's sandbox support.
 
 3. **Extra paths are provider-dependent**: The daemon computes extra read and
    write paths, but each provider decides which path categories can be

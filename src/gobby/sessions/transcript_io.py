@@ -19,7 +19,7 @@ class DecompressionError(RuntimeError):
 class TranscriptTooLargeError(RuntimeError):
     """Raised when a non-windowable transcript exceeds the in-memory size guard.
 
-    Native-JSON transcripts (Gemini/Qwen export style) have no line offsets, so
+    Native-JSON transcripts have no line offsets, so
     they cannot be windowed and must be rendered whole. Above the size guard the
     serving layer refuses to materialize them and the route maps this to HTTP 413
     (download instead) rather than risking an OOM / opaque 500.

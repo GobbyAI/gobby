@@ -10,11 +10,14 @@ Each adapter is responsible for:
 
 Adapters:
 - ClaudeCodeAdapter: For Claude Code CLI hooks (HTTP-based)
+- AgyAdapter: For AGY CLI hooks (HTTP-based)
 - DroidAdapter: For Factory Droid CLI hooks (HTTP-based)
 - CodexAdapter: For Codex CLI via app-server (JSON-RPC-based) [Phase 4]
 - CodexHooksAdapter: For Codex CLI hooks.json lifecycle events
 """
 
+from gobby.adapters.agy import AgyAdapter
+from gobby.adapters.agy_contract import AGY_HOOK_NAMES
 from gobby.adapters.base import BaseAdapter
 from gobby.adapters.capabilities import get_provider_capabilities
 from gobby.adapters.claude_code import ClaudeCodeAdapter
@@ -27,6 +30,8 @@ from gobby.adapters.grok import GrokAdapter
 
 __all__ = [
     "BaseAdapter",
+    "AGY_HOOK_NAMES",
+    "AgyAdapter",
     "ClaudeCodeAdapter",
     "CodexAdapter",
     "CodexAppServerClient",

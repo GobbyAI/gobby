@@ -58,13 +58,13 @@
 - **Minimal fix:** Don't write markers (or default identity) when `activation_missing` was non-empty and activation failed; leave keys absent so the next event retries; log at WARNING with the agent name.
 - **Confidence:** high (mechanism); med (trigger frequency).
 
-### [BLOCKER] Gemini/Qwen transcript fallback binds another session's transcript to the new session
+### [BLOCKER] ACP/Qwen transcript fallback binds another session's transcript to the new session
 
 - **Where:** `hooks/event_handlers/_session_start/transcripts.py:105-115` — prefix glob `session-*-{prefix}.json` misses (CLI hasn't written its chat file yet at SessionStart) → fallback `sorted(chats_dir.glob("session-*.json"), reverse=True)[0]` returns the newest **previous** session's transcript; registered on the new session row and with the message processor (`flow.py:317,397-403`), never re-derived.
 - **Failure mode:** The processor and lifecycle ingest the old transcript's messages, token stats, and summary content under the new session — another session's conversation becomes this session's messages, handoff summaries, and archived transcript. By construction the fallback only fires when the session's own file doesn't exist, so when it returns a path it is essentially always the wrong session's. The canonical implementation (`sessions/transcript_paths.py:66-78`) deliberately has no most-recent fallback — in-repo contract drift; a test enshrines the wrong behavior (`tests/hooks/test_transcript_path_derivation.py:69`).
 - **Why it matters:** Cross-session data attribution violating the session boundary — wrong context injected into summaries and handoffs.
 - **Minimal fix:** Delete the most-recent fallback (return None, matching `transcript_paths.py`); re-derive the path on a later hook once the real file exists.
-- **Confidence:** high (logic); med (frequency — depends on when Gemini/Qwen write the chat file).
+- **Confidence:** high (logic); med (frequency — depends on when Qwen ACP writes the chat file).
 
 ### [BLOCKER] Grok hook traffic is mis-sourced as "claude" by the installed ghook — all Grok enforcement is silently inert
 
@@ -82,14 +82,14 @@
 
 ### [IMPORTANT] Daemon-down: the Stop gate fails open on every CLI except Codex, undocumented
 
-- **Where:** ghook `cli_config.rs:21-52` — claude critical set = `{session-start, session-end, pre-compact}` (no `stop`); gemini/qwen = `{SessionStart}`; droid = `{}`; only codex includes `Stop`. Non-critical failures exit 1 → CLI proceeds (`main.rs:422-482`).
-- **Failure mode:** Daemon stopped/crashed (unplanned — the planned-shutdown marker correctly suppresses only fresh intents): Claude/Gemini/Qwen/Droid agents stop freely with claimed tasks. Documented only in a completed plan file and Rust unit tests, never operator-facing. The cross-CLI asymmetry (codex closed, others open) reads accidental.
-- **Minimal fix:** Document per-CLI daemon-down posture in `docs/guides/hook-schemas.md`; deliberately decide whether claude/gemini Stop join codex's fail-closed set.
+- **Where:** ghook `cli_config.rs:21-52` — claude critical set = `{session-start, session-end, pre-compact}` (no `stop`); qwen = `{SessionStart}`; droid = `{}`; only codex includes `Stop`. Non-critical failures exit 1 -> CLI proceeds (`main.rs:422-482`).
+- **Failure mode:** Daemon stopped/crashed (unplanned — the planned-shutdown marker correctly suppresses only fresh intents): Claude/Qwen/Droid agents stop freely with claimed tasks. Documented only in a completed plan file and Rust unit tests, never operator-facing. The cross-CLI asymmetry (codex closed, others open) reads accidental.
+- **Minimal fix:** Document per-CLI daemon-down posture in `docs/guides/hook-schemas.md`; deliberately decide whether claude/qwen Stop join codex's fail-closed set.
 
 ### [IMPORTANT] No daemon-side execution bound for non-Stop hooks; ghook gives up at 30s and the CLI proceeds — and Gemini's stop equivalent has no fail-safe at all
 
 - **Where:** `servers/routes/mcp/hooks.py:46` (`FAIL_SAFE_HOOK_TYPES = {"stop"}` — `afteragent` absent), `:206-213` (non-fail-safe → no timeout), ghook `transport.rs:23` (30s POST timeout, then fail-open for non-critical).
-- **Failure mode:** A >30s rule/webhook/DB stall on PreToolUse → tool executes; any later-computed deny is read by nobody. Gemini/Qwen's `AfterAgent` (their turn-end gate) is not fail-safe, so their stop gate is unbounded daemon-side and resolves by ghook timeout → allow — unlike claude/codex Stop which gets the 20s block.
+- **Failure mode:** A >30s rule/webhook/DB stall on PreToolUse → tool executes; any later-computed deny is read by nobody. Qwen ACP's `AfterAgent` (its turn-end gate) is not fail-safe, so its stop gate is unbounded daemon-side and resolves by ghook timeout → allow — unlike claude/codex Stop which gets the 20s block.
 - **Minimal fix:** Add `afteragent` to `FAIL_SAFE_HOOK_TYPES`; bound non-fail-safe hooks comfortably below 30s so the daemon decides degraded behavior, not the transport.
 
 ### [IMPORTANT] `mcp_call` success detection inverted vs the proxy result contract — `block_on_success` can never fire; `block_on_failure` blocks on success
@@ -236,7 +236,7 @@
 - **Failure mode:** No `session_edited_files` append → `has_dirty_files` scoping, `require-commit-before-status`, and completion-readiness never see notebook edits — a notebook-only task can close with uncommitted changes.
 - **Minimal fix:** Use the canonical write-tool set instead of the drifted local list.
 
-### [IMPORTANT] Gemini/Qwen session-usage broadcast can never fire in production
+### [IMPORTANT] ACP/Qwen session-usage broadcast can never fire in production
 
 - **Where:** `event_handlers/_misc.py:136-143` — `asyncio.get_running_loop()` from a `to_thread` worker always raises; swallowed at DEBUG.
 - **Failure mode:** DB updates succeed; the WebSocket usage broadcast never happens — dead code that looks functional. The correct pattern exists in `session_summary_dispatcher.py:75-83`.

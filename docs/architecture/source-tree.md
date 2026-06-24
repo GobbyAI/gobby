@@ -14,7 +14,7 @@ gobby/                                  # Project root
 ├── pyproject.toml                      # Project configuration, dependencies, build settings
 ├── README.md                           # Project overview with architecture diagram
 ├── CLAUDE.md                           # Claude Code development instructions
-├── GEMINI.md                           # Gemini CLI instructions
+├── GEMINI.md                           # Legacy project instructions file
 ├── AGENTS.md                           # Agent definitions reference
 ├── CONTRIBUTING.md                     # Contribution guidelines
 ├── GUIDING_PRINCIPLES.md               # Development philosophy
@@ -56,7 +56,7 @@ src/gobby/
 ```text
 src/gobby/
 ├── adapters/                           # CLI-specific hook adapters: claude_code.py,
-│                                       #   gemini.py, droid.py, grok.py, qwen.py,
+│                                       #   agy.py, droid.py, grok.py, qwen.py,
 │                                       #   codex_impl/ (package), ACP client modules,
 │                                       #   base.py (BaseAdapter), capabilities.py
 ├── agents/                             # Agent spawning and lifecycle: spawn.py,
@@ -92,7 +92,7 @@ src/gobby/
 │                                       #   hook_types/ (package), skill_manager.py,
 │                                       #   webhooks.py, normalization.py
 ├── install/                            # Bundled assets and installers
-│   ├── claude/ codex/ droid/ gemini/ grok/ qwen/   # Per-CLI install assets
+│   ├── agy/ claude/ codex/ droid/ grok/ qwen/      # Per-CLI install assets
 │   └── shared/                         # Bundled content synced to DB on startup
 │       ├── config/ hooks/ prompts/ scripts/ services/
 │       ├── registry/                   # build_profiles.yaml, stages.yaml
@@ -219,7 +219,7 @@ Counts as of 2026-06-11; expect drift. Regenerate with the commands shown.
 | **Bundled Agent Definitions** | 23 | `ls src/gobby/install/shared/workflows/agents/*.yaml \| wc -l` |
 | **Bundled Workflow Definitions** | 3 (+7 pipelines) | `ls src/gobby/install/shared/workflows/*.yaml` |
 | **LLM Providers** | Claude (API + CLI), local endpoints | `ls src/gobby/llm/` |
-| **CLI Adapters** | 6 (Claude Code, Gemini, Codex, Droid, Grok, Qwen) | `ls src/gobby/adapters/` |
+| **CLI Adapters** | 6 (Claude Code, AGY, Codex, Droid, Grok, Qwen) | `ls src/gobby/adapters/` |
 | **Guides** | 47 | `ls docs/guides/*.md \| wc -l` |
 | **Test Coverage Target** | 80% | enforced in CI and pre-push |
 

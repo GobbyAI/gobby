@@ -119,8 +119,8 @@ Hook webhooks receive a JSON object with this shape:
 ```
 
 `data` contains the adapter-native hook payload. Keep receivers tolerant of
-source-specific fields because Claude, Codex, Droid, Gemini, and Qwen do not
-send identical raw hook data.
+source-specific fields because Claude, Codex, Droid, AGY, Grok, and Qwen do
+not send identical raw hook data.
 
 ### Blocking Webhooks
 

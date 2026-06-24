@@ -462,7 +462,7 @@ class TestDroidPlanMenu:
         assert DEFAULT_PLAN_KEYSTROKES.resolve("droid", "approve_bogus") is None
 
 
-# Verbatim captures from Gemini CLI v0.44.1 (Google, model Auto) in a tmux pane:
+# Verbatim captures from a retired ACP CLI in a tmux pane:
 # the per-action approval menus shown in manual/default mode. The reject option's
 # DIGIT differs between tool types (4 vs 3) while "Allow once"/"Allow for this
 # session" stay at positions 1/2 and the "(esc)" shortcut always rejects.
@@ -662,7 +662,7 @@ class TestDefaultRegistry:
     def test_all_clis_registered(self) -> None:
         # Every managed CLI now has a captured native plan-menu mapping: claude
         # (#15727), codex (#15728), droid (#15729), grok (#15731), and qwen
-        # (#15732). Gemini CLI was removed. No per-CLI source remains pending.
+        # (#15732). No per-CLI source remains pending.
         for source in ("claude", "codex", "droid", "grok", "qwen"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is True
         assert DEFAULT_PLAN_KEYSTROKES.has_source("gemini") is False

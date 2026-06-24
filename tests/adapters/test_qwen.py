@@ -9,7 +9,7 @@ pytestmark = pytest.mark.unit
 
 
 class TestQwenAdapter:
-    """Qwen-specific regression coverage for inherited Gemini behavior."""
+    """Qwen-specific regression coverage for ACP hook behavior."""
 
     def test_source_is_qwen(self) -> None:
         adapter = QwenAdapter()

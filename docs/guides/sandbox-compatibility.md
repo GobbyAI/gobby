@@ -46,7 +46,7 @@ are implementation details produced from the daemon model.
   isolation.
 - Repo, worktree, and clone sessions inherit the same path rule: the launched
   workspace root is writable; extra paths must be explicitly added.
-- Spawned Gemini/Qwen agents pass writable paths outside the workspace as
+- Spawned Qwen agents pass writable paths outside the workspace as
   repeated `--include-directories` arguments alongside `-s` and
   `SEATBELT_PROFILE`.
 - Agent process termination is separate from sandbox compatibility. Spawned
@@ -61,7 +61,7 @@ These tests cover daemon-owned runtime behavior:
   `web_chat_sandbox` and `agent_sandbox`.
 - `tests/servers/websocket/chat/test_runtime_manager.py`
   Verifies daemon-owned web chat defaults, provider translation layers, Codex
-  app-server thread sandboxing, and the Gemini/Qwen ACP startup caveat.
+  app-server thread sandboxing, and the Qwen ACP startup caveat.
 - `tests/servers/test_session_control.py`
   Verifies policy-hash mismatch behavior during continue-in-chat.
 - `tests/agents/test_sandbox.py`
@@ -75,7 +75,7 @@ These tests cover the local hook binary contract:
   Verifies the shared runner wiring and schema location.
 - `tests/integration/sandbox/test_diagnose_schema.py`
   Validates live `ghook --diagnose` output against the mirrored schema.
-- `tests/integration/sandbox/run_{claude,codex,gemini,qwen}_sandbox.py`
+- `tests/integration/sandbox/run_{claude,codex,qwen}_sandbox.py`
   Verifies the installed Gobby-managed hook command rewrites cleanly into the
   current `ghook --diagnose` branch for each supported CLI.
 - `tests/integration/sandbox/test_public_ghook_install.py`
@@ -88,14 +88,12 @@ These tests cover the local hook binary contract:
 | --- | --- | --- | --- |
 | Web chat | Claude | `--settings` sandbox JSON | Resume blocked on policy-hash mismatch |
 | Web chat | Codex | Codex app-server sandbox policy derived from daemon config | Default daemon-owned sandbox stays enabled |
-| Web chat | Gemini | Shared ACP backend; daemon policy is tracked, but the ACP process is not wrapped in Gobby Seatbelt | ACP startup remains reliable on macOS |
-| Web chat | Qwen | Same ACP caveat as Gemini | ACP startup remains reliable on macOS |
-| Web chat | Grok | Shared ACP backend; same caveat as Gemini/Qwen | ACP startup remains reliable on macOS |
+| Web chat | Qwen | Shared ACP backend; daemon policy is tracked, but the ACP process is not wrapped in Gobby Seatbelt | ACP startup remains reliable on macOS |
+| Web chat | Grok | Shared ACP backend; same caveat as Qwen | ACP startup remains reliable on macOS |
 | Web chat | Droid | Per-session stream-jsonrpc backend; daemon policy is tracked, but no Gobby sandbox translation is applied | Droid availability and session metadata stay consistent |
 | Spawned agents | Claude | `--settings` sandbox JSON | Sandbox stays enabled without unsandboxed fallback |
 | Spawned agents | Codex | `--sandbox <mode>`, `sandbox_workspace_write.network_access`, plus `--add-dir` for extra write paths | Workspace boundary follows repo/worktree/clone root and loopback services stay reachable when network is enabled |
-| Spawned agents | Gemini | `-s` plus `SEATBELT_PROFILE`; external write paths use repeated `--include-directories` | Workspace boundary follows repo/worktree/clone root |
-| Spawned agents | Qwen | Same Gemini-compatible `-s`, `SEATBELT_PROFILE`, and `--include-directories` contract | Workspace boundary follows repo/worktree/clone root |
+| Spawned agents | Qwen | `-s` plus `SEATBELT_PROFILE`; external write paths use repeated `--include-directories` | Workspace boundary follows repo/worktree/clone root |
 | Spawned agents | Grok | `--sandbox strict` for restrictive/no-network policies, otherwise `--sandbox workspace` | Workspace boundary follows repo/worktree/clone root |
 | Spawned agents | Droid | No daemon sandbox resolver; Droid uses its own `droid exec --auto high` permission path | Sandbox state is recorded, but no provider sandbox flags are emitted |
 
@@ -106,11 +104,11 @@ and does not invent undocumented outbound-network wildcard settings.
 Codex maps permissive daemon mode to `workspace-write` and restrictive mode to
 `read-only`; spawned Codex agents also force workspace-write network access from
 daemon policy so local Gobby services, including Postgres, are reachable when
-network is enabled. Gemini and Qwen share the Seatbelt profile naming contract:
+network is enabled. Qwen uses the Seatbelt profile naming contract:
 `permissive-open`, `permissive-proxied`, `restrictive-open`, or
-`restrictive-proxied`. That Seatbelt contract applies to spawned Gemini/Qwen
-agents and hook-binary diagnostics; daemon-owned Gemini/Qwen web chat does not
-launch ACP under full-process Seatbelt. Spawned Gemini/Qwen agents also pass
+`restrictive-proxied`. That Seatbelt contract applies to spawned Qwen agents
+and hook-binary diagnostics; daemon-owned Qwen web chat does not launch ACP
+under full-process Seatbelt. Spawned Qwen agents also pass
 the external subset of resolved write paths through `--include-directories`;
 the built-in Seatbelt profiles support up to five include directories.
 
@@ -166,7 +164,7 @@ uv run pytest tests/integration/sandbox/test_public_ghook_install.py -v --run-sa
 
 The validator installs into an isolated temporary `HOME`, checks the
 resulting `~/.gobby/bin/ghook` and stamp files, and then runs the live
-`ghook --diagnose` matrix for Claude, Codex, Gemini, and Qwen.
+`ghook --diagnose` matrix for Claude, Codex, and Qwen.
 
 ## Regenerating Observations
 

@@ -3,9 +3,9 @@
 - **Scope:** `src/gobby/adapters/` — Claude (`claude_code.py`, `claude_contract.py`,
   `base.py`, `capabilities.py`, `degradation.py`), Codex app-server (`codex_impl/`:
   client, app_server_adapter, hooks_adapter, item_normalization, types, shared), ACP
-  clients for Gemini/Qwen/Grok (`acp_client.py`, `acp_client_requests.py`,
-  `acp_hook_adapter.py`, `grok_acp_client.py`, `gemini_acp_client.py`,
-  `qwen_acp_client.py`, the thin `grok.py`/`gemini.py`/`qwen.py` wrappers), Droid
+  clients for Qwen/Grok (`acp_client.py`, `acp_client_requests.py`,
+  `acp_hook_adapter.py`, `grok_acp_client.py`, `qwen_acp_client.py`,
+  the thin `grok.py`/`qwen.py` wrappers), AGY hooks, Droid
   (`droid.py`, `droid_contract.py`), and plan-mode keystroke automation
   (`plan_keystrokes.py`, `plan_options.py`). Cross-seam reads into hooks events/normalization,
   the chat backends (`servers/websocket/chat/backends/`), the plan-approval handlers, and
@@ -15,7 +15,7 @@
 - **Commit / branch:** `0.5.0` @ HEAD `849538a02` (working tree clean at review time).
 - **Summary:** 6 Blocker · 13 Important · 6 Nit — the Claude adapter (the one fully-native
   hook path) is solid, but the protocol-bridge adapters (Codex app-server, ACP for
-  Gemini/Qwen/Grok) lose enforcement at the bridge: tool/prompt block decisions never
+  Qwen/Grok) lose enforcement at the bridge: tool/prompt block decisions never
   reach the CLI in the managed paths, the Codex JSON-RPC client mis-correlates approvals by
   id, and neither bridge drains subprocess stderr (a deadlock under verbose CLIs). Block
   semantics diverge per adapter (`block` honored on Claude/Codex/Droid, dropped on ACP).
@@ -36,11 +36,11 @@
 
 ### [BLOCKER] Codex BEFORE_AGENT (UserPromptSubmit) gate cannot block in the app-server path
 - **Where:** `codex_impl/app_server_adapter.py:107` (`turn/started` → `BEFORE_AGENT`) dispatched via `_handle_notification:309-337` as fire-and-forget (`loop.create_task(self._dispatch_hook_event(...))`); the computed `HookResponse` is only logged (`_log_notification_result`).
-- **Failure mode:** For Codex, `BEFORE_AGENT` maps to `UserPromptSubmit` (`hooks/events.py:189-194`), a blocking hook on every other CLI. In the WS adapter `turn/started` flows only through the notification path, so any UserPromptSubmit-level block silently no-ops for daemon-managed Codex sessions — a gate that fires on Claude/Gemini does nothing here. (The separate chat backend `backends/codex.py:586` does honor lifecycle block; this gap is the daemon `CodexAdapter`.)
+- **Failure mode:** For Codex, `BEFORE_AGENT` maps to `UserPromptSubmit` (`hooks/events.py:189-194`), a blocking hook on other hook providers. In the WS adapter `turn/started` flows only through the notification path, so any UserPromptSubmit-level block silently no-ops for daemon-managed Codex sessions — a gate that fires on blocking hook providers does nothing here. (The separate chat backend `backends/codex.py:586` does honor lifecycle block; this gap is the daemon `CodexAdapter`.)
 - **Minimal fix:** Route `turn/started` through a blocking path that calls `interrupt_turn` on `deny`/`block`, or explicitly downgrade BEFORE_AGENT to non-gating with a degradation record.
 - **Confidence:** med-high (dispatch and mapping confirmed; intent is the one open assumption).
 
-### [BLOCKER] ACP pre-tool block/deny is never enforced in managed web-chat sessions (Gemini/Qwen/Grok)
+### [BLOCKER] ACP pre-tool block/deny is never enforced in managed web-chat sessions (Qwen/Grok)
 - **Where:** `servers/websocket/chat/backends/acp_session.py:135` (verified: `await self._apply_pre_tool_lifecycle(...)` — return value ignored), `backends/base.py` `_apply_pre_tool_lifecycle` (only queues deferred context, no action); the other seam `acp_client_requests.py:134-174` (`_handle_request_permission_request` auto-approves, never consults Gobby).
 - **Failure mode:** A managed ACP chat tool_call fires `_apply_pre_tool_lifecycle`, but its `HookResponse` (which may carry `decision="block"`) only queues context — the tool is never declined; `session/request_permission` unconditionally auto-selects an allow option. The auto-approve docstring explicitly claims tools are gated "through Gobby's lifecycle/hook systems," but that path does not block. Codex's chat backend (`backends/codex.py:586-587`) declines on block — ACP is the outlier. Any `before_tool` rule/workflow block is silently lost.
 - **Minimal fix:** Capture the `_apply_pre_tool_lifecycle` return; on `decision in ("deny","block")` suppress the tool_call or reject the `session/request_permission` answer. The two enforcement points must agree.
@@ -54,13 +54,13 @@
 
 ### [BLOCKER] ACP subprocess stderr is never drained — verbose CLI deadlocks mid-turn
 - **Where:** `acp_client.py:262` (`stderr=PIPE`), read only post-exit at `:432`; no background drainer.
-- **Failure mode:** Node CLIs (Gemini/Qwen) are chatty on stderr (deprecation/telemetry/progress). When >~64KB is written during a turn, the child blocks on `write(stderr)` → agent hangs → prompt timeout. The 16 MiB reader limit protects only stdout. Manifests as flaky prompt timeouts.
+- **Failure mode:** Node-based ACP CLIs are chatty on stderr (deprecation/telemetry/progress). When >~64KB is written during a turn, the child blocks on `write(stderr)` → agent hangs → prompt timeout. The 16 MiB reader limit protects only stdout. Manifests as flaky prompt timeouts.
 - **Minimal fix:** Background task draining `self._process.stderr` (ring-buffered) for the process lifetime; cancel in `stop()`.
 - **Confidence:** med-high (mechanism certain; depends on per-CLI stderr volume).
 
 ### [IMPORTANT] `decision="block"` from workflows yields `continue:True` on ACP — inconsistent with every other adapter
 - **Where:** `acp_hook_adapter.py:323` — verified `should_continue = response.decision != "deny"`; emits `{"decision": response.decision, "continue": should_continue}`. Every other adapter treats `decision in ("deny","block")` as denied (`claude_code.py:321`, `codex_impl/hooks_adapter.py:174`, `droid.py:173`). The dominant block path emits `decision="block"`, not `"deny"`.
-- **Failure mode:** The ACP adapter relies entirely on the CLI honoring a verbatim `decision:"block"` while sending `continue:True`; if the CLI only acts on `continue` or the documented `"allow"|"deny"` (the docstring at `:301-313` says Gemini expects those), the most common block decision is a no-op for standalone ghook Gemini/Qwen/Grok sessions. (AfterAgent's `continue:True` is intentional per the retry design.)
+- **Failure mode:** The ACP adapter relies entirely on the CLI honoring a verbatim `decision:"block"` while sending `continue:True`; if the CLI only acts on `continue` or the documented `"allow"|"deny"` decision style, the most common block decision is a no-op for standalone ghook Qwen/Grok sessions. (AfterAgent's `continue:True` is intentional per the retry design.)
 - **Minimal fix:** Compute `is_denied = decision in ("deny","block")` and map to the field the CLI actually enforces; reconcile the docstring.
 - **Confidence:** med (block-loss conditional on the CLI's real decision-field semantics).
 
@@ -100,9 +100,9 @@
 - **Minimal fix:** Route setup-phase client requests through `handle_client_request`; re-raise CancelledError; wrap the handshake in try/except that calls `stop()` and re-raises.
 - **Confidence:** high (code); med on operational reach.
 
-### [IMPORTANT] Gemini/Qwen `tool_call`/`tool_result` session updates are not normalized — events dropped, lifecycle never fires
+### [IMPORTANT] ACP/Qwen `tool_call`/`tool_result` session updates are not normalized — events dropped, lifecycle never fires
 - **Where:** `acp_client.py:642-736` (base `_normalize_notification` has no `tool_call` branch → emits raw `update`) vs `grok_acp_client.py:75-98` (Grok override maps `toolCallId`→`call_id`, `title`→`tool_name`, `rawInput`→`tool_input`). Consumer `acp_session.py:220-238` requires the structured keys.
-- **Failure mode:** For Gemini/Qwen a `tool_call` update yields `event_type="tool_call"` but raw `data` → `_translate_event` finds no `tool_name` → returns None → the ToolCallEvent is dropped: no UI surfacing, and `_apply_pre_tool_lifecycle` never runs (so before_tool hooks don't even fire for two primary CLIs). Compounds the ACP enforcement Blocker. No test covers Gemini/Qwen tool_call normalization.
+- **Failure mode:** For Qwen ACP a `tool_call` update yields `event_type="tool_call"` but raw `data` → `_translate_event` finds no `tool_name` → returns None → the ToolCallEvent is dropped: no UI surfacing, and `_apply_pre_tool_lifecycle` never runs. Compounds the ACP enforcement Blocker. No test covers Qwen ACP tool_call normalization.
 - **Minimal fix:** Lift Grok's mapping into the base normalizer; add fixture-backed tests.
 - **Confidence:** high on the field mismatch; med on whether every Gemini version emits `tool_call` via `session/update`.
 

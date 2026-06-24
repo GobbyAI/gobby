@@ -11,7 +11,7 @@ Thank you for your interest in contributing to Gobby! This document provides gui
 - [uv](https://github.com/astral-sh/uv) package manager
 - At least one supported AI CLI for testing:
   - [Claude Code](https://claude.ai/code)
-  - [Gemini CLI](https://github.com/google-gemini/gemini-cli)
+- Provider CLIs for the integration you are testing, such as Claude Code, Codex, Qwen CLI, Droid, or AGY
   - [Codex CLI](https://github.com/openai/codex)
 
 ### Getting Started
@@ -171,7 +171,7 @@ src/gobby/
 │
 ├── adapters/             # CLI-specific hook adapters
 │   ├── claude_code.py    # Claude Code adapter
-│   ├── gemini.py         # Gemini CLI adapter
+│   ├── agy.py            # AGY hook adapter
 │   └── codex_impl/       # Codex adapter implementation
 │
 ├── agents/               # Agent spawning and lifecycle

@@ -13,6 +13,7 @@ from click.testing import CliRunner
 from gobby.cli import cli
 from gobby.cli.install import (
     _ensure_daemon_config,
+    _is_agy_cli_installed,
     _is_claude_code_installed,
     _is_codex_cli_installed,
     _is_droid_cli_installed,
@@ -53,6 +54,13 @@ def _mock_qwen_detector() -> None:
 def _mock_droid_detector() -> None:
     """Keep Droid detection deterministic unless a test overrides it."""
     with patch("gobby.cli.install._is_droid_cli_installed", return_value=False):
+        yield
+
+
+@pytest.fixture(autouse=True)
+def _mock_agy_detector() -> None:
+    """Keep AGY detection deterministic unless a test overrides it."""
+    with patch("gobby.cli.install._is_agy_cli_installed", return_value=False):
         yield
 
 
@@ -155,6 +163,19 @@ class TestCLIDetectionFunctions:
         assert _is_qwen_cli_installed() is False
 
     @patch("shutil.which")
+    def test_is_agy_cli_installed_true(self, mock_which: MagicMock) -> None:
+        """Test AGY CLI detection when installed."""
+        mock_which.return_value = "/usr/local/bin/agy"
+        assert _is_agy_cli_installed() is True
+        mock_which.assert_called_once_with("agy")
+
+    @patch("shutil.which")
+    def test_is_agy_cli_installed_false(self, mock_which: MagicMock) -> None:
+        """Test AGY CLI detection when not installed."""
+        mock_which.return_value = None
+        assert _is_agy_cli_installed() is False
+
+    @patch("shutil.which")
     def test_is_codex_cli_installed_true(self, mock_which: MagicMock) -> None:
         """Test Codex CLI detection when installed."""
         mock_which.return_value = "/usr/local/bin/codex"
@@ -195,7 +216,9 @@ class TestInstallCommand:
         assert result.exit_code == 0
         assert "Install Gobby hooks" in result.output
         assert "--claude" in result.output
-        assert "--gemini" not in result.output
+        retired_flag = "--" + "gemini"
+        assert retired_flag not in result.output
+        assert "--agy" in result.output
         assert "--qwen" in result.output
         assert "--codex" in result.output
         assert "--droid" in result.output
@@ -281,6 +304,37 @@ class TestInstallCommand:
         assert "Installed 1 hooks" in result.output
         mock_install_droid.assert_called_once()
 
+    @patch("gobby.cli.install._ensure_daemon_config")
+    @patch("gobby.cli.install.install_agy")
+    @patch("gobby.cli.load_full_config_from_db")
+    def test_install_agy_only_flag(
+        self,
+        mock_load_config: MagicMock,
+        mock_install_agy: MagicMock,
+        mock_ensure_config: MagicMock,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        """Test install with --agy flag only."""
+        mock_load_config.return_value = MagicMock()
+        mock_ensure_config.return_value = {"created": False, "path": "/test/config.yaml"}
+        mock_install_agy.return_value = {
+            "success": True,
+            "hooks_installed": ["PreInvocation"],
+            "workflows_installed": [],
+            "commands_installed": [],
+            "plugins_installed": [],
+            "mcp_configured": True,
+        }
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            result = runner.invoke(cli, ["install", "--agy"])
+
+        assert result.exit_code == 0
+        assert "AGY CLI" in result.output
+        assert "Installed 1 hooks" in result.output
+        mock_install_agy.assert_called_once()
+
     def test_codex_install_skips_embedding(
         self,
         runner: CliRunner,
@@ -336,7 +390,9 @@ class TestUninstallCommand:
         assert result.exit_code == 0
         assert "Uninstall Gobby hooks" in result.output
         assert "--claude" in result.output
-        assert "--gemini" not in result.output
+        retired_flag = "--" + "gemini"
+        assert retired_flag not in result.output
+        assert "--agy" in result.output
         assert "--qwen" in result.output
         assert "--codex" in result.output
         assert "--all" in result.output
@@ -472,6 +528,31 @@ class TestUninstallCommand:
         assert "Droid CLI" in result.output
         assert "Removed 1 hooks" in result.output
         mock_uninstall_droid.assert_called_once()
+
+    @patch("gobby.cli.install.uninstall_agy")
+    @patch("gobby.cli.load_full_config_from_db")
+    def test_uninstall_agy_only_flag(
+        self,
+        mock_load_config: MagicMock,
+        mock_uninstall_agy: MagicMock,
+        runner: CliRunner,
+        temp_dir: Path,
+    ) -> None:
+        """Test uninstall with --agy flag only."""
+        mock_load_config.return_value = MagicMock()
+        mock_uninstall_agy.return_value = {
+            "success": True,
+            "hooks_removed": ["PreInvocation"],
+            "files_removed": [],
+        }
+
+        with runner.isolated_filesystem(temp_dir=str(temp_dir)):
+            result = runner.invoke(cli, ["uninstall", "--agy", "--yes"])
+
+        assert result.exit_code == 0
+        assert "AGY CLI" in result.output
+        assert "Removed 1 hooks" in result.output
+        mock_uninstall_agy.assert_called_once()
 
     @patch("gobby.cli.install.uninstall_claude")
     @patch("gobby.cli.load_full_config_from_db")
