@@ -76,7 +76,11 @@ fn gobby_home_env_keeps_envelope_and_marker_under_same_root()
         marker.exists(),
         "shutdown marker should stay under GOBBY_HOME"
     );
-    let envelopes = fs::read_dir(&inbox)?.collect::<Result<Vec<_>, _>>()?;
+    let envelopes = fs::read_dir(&inbox)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .filter(|entry| entry.path().is_file())
+        .collect::<Vec<_>>();
     assert_eq!(
         envelopes.len(),
         1,

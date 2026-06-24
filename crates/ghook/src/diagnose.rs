@@ -5,7 +5,7 @@
 //! write — this is a pure introspection surface so operators can confirm
 //! configuration without spamming the inbox.
 
-use crate::cli_config::CliConfig;
+use crate::{cli_config::CliConfig, diagnostics};
 use gobby_core::{bootstrap, daemon_url, project};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
@@ -29,6 +29,9 @@ pub struct DiagnoseOutput {
     pub cli_recognized: bool,
     pub install_method: Option<String>,
     pub install_source_url: Option<String>,
+    pub failure_dir: PathBuf,
+    pub recent_failure_count: usize,
+    pub recent_failures: Vec<diagnostics::RecentFailureMetadata>,
 }
 
 pub const DIAGNOSE_SCHEMA_VERSION: u32 = 2;
@@ -98,6 +101,7 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
     };
 
     let (install_method, install_source_url) = install_provenance_for_running_binary();
+    let failure_inventory = diagnostics::failure_inventory();
 
     DiagnoseOutput {
         schema_version: DIAGNOSE_SCHEMA_VERSION,
@@ -116,6 +120,9 @@ pub fn diagnose(cli: &str, hook_type: &str) -> DiagnoseOutput {
         cli_recognized,
         install_method,
         install_source_url,
+        failure_dir: failure_inventory.failure_dir,
+        recent_failure_count: failure_inventory.recent_failure_count,
+        recent_failures: failure_inventory.recent_failures,
     }
 }
 

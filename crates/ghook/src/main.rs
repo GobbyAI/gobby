@@ -22,6 +22,7 @@ mod args;
 mod cli_config;
 mod detach;
 mod diagnose;
+mod diagnostics;
 mod dispatch;
 mod envelope;
 mod json_value;

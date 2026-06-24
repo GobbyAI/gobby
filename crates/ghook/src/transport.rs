@@ -25,11 +25,11 @@ const HOOKS_ENDPOINT: &str = "/api/hooks/execute";
 const ENVELOPE_ID_HEADER: &str = "X-Gobby-Envelope-Id";
 
 /// Result of `enqueue_and_post` — the main CLI needs to know whether the
-/// daemon ACKed (delete the inbox file and return early) or not (keep the
-/// file; the drain will handle it).
+/// daemon ACKed (caller parses the body before deleting the inbox file) or not
+/// (keep the file; the drain will handle it).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum DeliveryOutcome {
-    /// Daemon returned 2xx — inbox file already deleted.
+    /// Daemon returned 2xx; caller owns cleanup after response parsing.
     Delivered,
     /// Daemon did not 2xx — inbox file persists for drain replay.
     Enqueued,
@@ -124,12 +124,12 @@ pub fn enqueue_to(envelope: &Envelope, inbox: &Path) -> Result<PathBuf> {
     Ok(path)
 }
 
-fn envelope_id_from_path(enqueued_path: &Path) -> Option<&str> {
+pub(crate) fn envelope_id_from_path(enqueued_path: &Path) -> Option<&str> {
     enqueued_path.file_stem()?.to_str()
 }
 
-/// POST the current hook envelope to the daemon. On 2xx, delete the inbox file
-/// and return `Delivered`. On any other outcome, leave the file and return
+/// POST the current hook envelope to the daemon. On 2xx, return `Delivered`
+/// without deleting the inbox file. On any other outcome, leave the file and return
 /// `Enqueued`.
 ///
 /// `daemon_url` is the base URL (e.g. `http://127.0.0.1:60887`). The
@@ -167,7 +167,6 @@ pub fn post_and_cleanup(
         Ok(resp) if (200..300).contains(&resp.status()) => {
             let status_code = Some(resp.status());
             let response_body = resp.into_string().ok();
-            let _ = fs::remove_file(enqueued_path);
             DeliveryReport {
                 outcome: DeliveryOutcome::Delivered,
                 failure_kind: None,
@@ -400,7 +399,7 @@ mod tests {
             report.response_body,
             Some("{\"decision\":\"accept\",\"reason\":\"ok\"}".to_string())
         );
-        assert!(!path.exists());
+        assert!(path.exists());
     }
 
     #[test]
@@ -454,7 +453,7 @@ mod tests {
         assert_eq!(report.failure_kind, None);
         assert_eq!(report.status_code, Some(200));
         assert_eq!(report.response_body, Some("{}".to_string()));
-        assert!(!path.exists());
+        assert!(path.exists());
     }
 
     #[test]

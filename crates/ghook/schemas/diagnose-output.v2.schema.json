@@ -75,6 +75,33 @@
     "install_source_url": {
       "type": ["string", "null"],
       "description": "URL the binary was fetched from (typically a GitHub release asset URL), sourced from the install sidecar. null when unknown or not applicable."
+    },
+    "failure_dir": {
+      "type": "string",
+      "description": "Directory where ghook writes bounded local failure diagnostics."
+    },
+    "recent_failure_count": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of recent failure artifact files found under failure_dir."
+    },
+    "recent_failures": {
+      "type": "array",
+      "description": "Recent ghook failure artifact metadata, newest first.",
+      "items": {
+        "type": "object",
+        "required": ["path", "modified_at_unix_ms"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {
+            "type": "string"
+          },
+          "modified_at_unix_ms": {
+            "type": ["integer", "null"],
+            "minimum": 0
+          }
+        }
+      }
     }
   }
 }

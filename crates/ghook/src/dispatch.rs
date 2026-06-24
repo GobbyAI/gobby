@@ -6,11 +6,14 @@ use crate::args::Args;
 use crate::cli_config::CliConfig;
 use crate::envelope::Envelope;
 use crate::source::detect_source;
-use crate::{detach, planned_shutdown, statusline, terminal_context, transport};
+use crate::{
+    detach, diagnostics, output, planned_shutdown, statusline, terminal_context, transport,
+};
 use serde_json::Value;
 use std::collections::BTreeMap;
+use std::fs;
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 
 pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
@@ -82,50 +85,66 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
 
     let env = build_dispatch_envelope(&cfg, hook_type, input_data, project_id.as_deref());
 
-    let direct_post_after_enqueue_failure = |failure_detail: String| -> HookAction {
-        // Mirror the normal enqueue→detach→POST ordering: a --detach run must
-        // escape the host's process group before the bounded fallback POST,
-        // or a host group-kill can reap us mid-delivery with no action emitted.
-        if args.detach {
-            detach::detach();
-        }
-        let daemon_url = gobby_core::daemon_url::daemon_url();
-        // No inbox file exists here; post_and_cleanup ignores remove errors after 2xx.
-        let missing_enqueued_path = PathBuf::new();
-        let report = transport::post_and_cleanup(&env, &missing_enqueued_path, &daemon_url);
-        match report.outcome {
-            transport::DeliveryOutcome::Delivered => {
-                let body = report.response_body.as_deref().unwrap_or_default();
-                match action_from_success_response(cfg.source, hook_type, body) {
-                    Ok(action) => action,
-                    Err(error) => action_from_failure(
+    let direct_post_after_enqueue_failure =
+        |failure_detail: String| -> Result<HookAction, ExitCode> {
+            // Mirror the normal enqueue→detach→POST ordering: a --detach run must
+            // escape the host's process group before the bounded fallback POST,
+            // or a host group-kill can reap us mid-delivery with no action emitted.
+            if args.detach {
+                detach::detach();
+            }
+            let daemon_url = gobby_core::daemon_url::daemon_url();
+            // No inbox file exists here; post_and_cleanup ignores remove errors after 2xx.
+            let missing_enqueued_path = PathBuf::new();
+            let report = transport::post_and_cleanup(&env, &missing_enqueued_path, &daemon_url);
+            match report.outcome {
+                transport::DeliveryOutcome::Delivered => {
+                    delivered_action(&cfg, hook_type, &env, &report, None, &daemon_url)
+                }
+                transport::DeliveryOutcome::Enqueued => {
+                    let direct_detail = report
+                        .response_body
+                        .as_deref()
+                        .or(report.transport_error.as_deref())
+                        .unwrap_or_default();
+                    let diagnostic_error = format!(
+                        "enqueue failed: {failure_detail}; direct post failed: {direct_detail}"
+                    );
+                    record_delivery_failure(
+                        &env,
+                        &report,
+                        None,
+                        &daemon_url,
+                        diagnostics::FailureKind::DirectPostAfterEnqueueFailure,
+                        Some(&diagnostic_error),
+                    );
+                    Ok(action_from_failure(
                         hook_type,
                         &cfg,
                         transport::DeliveryFailureKind::Other,
-                        &error,
-                    ),
+                        &failure_detail,
+                    ))
                 }
             }
-            transport::DeliveryOutcome::Enqueued => action_from_failure(
-                hook_type,
-                &cfg,
-                transport::DeliveryFailureKind::Other,
-                &failure_detail,
-            ),
-        }
-    };
+        };
 
     // Enqueue first (atomic write to ~/.gobby/hooks/inbox/).
     let inbox = match transport::inbox_dir() {
         Ok(d) => d,
         Err(e) => {
-            return emit_action(direct_post_after_enqueue_failure(e.to_string()));
+            return match direct_post_after_enqueue_failure(e.to_string()) {
+                Ok(action) => emit_action(action),
+                Err(exit_code) => exit_code,
+            };
         }
     };
     let enqueued_path = match transport::enqueue_to(&env, &inbox) {
         Ok(p) => p,
         Err(e) => {
-            return emit_action(direct_post_after_enqueue_failure(e.to_string()));
+            return match direct_post_after_enqueue_failure(e.to_string()) {
+                Ok(action) => emit_action(action),
+                Err(exit_code) => exit_code,
+            };
         }
     };
 
@@ -140,15 +159,16 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
     let report = transport::post_and_cleanup(&env, &enqueued_path, &daemon_url);
     let action = match report.outcome {
         transport::DeliveryOutcome::Delivered => {
-            let body = report.response_body.as_deref().unwrap_or_default();
-            match action_from_success_response(cfg.source, hook_type, body) {
+            match delivered_action(
+                &cfg,
+                hook_type,
+                &env,
+                &report,
+                Some(&enqueued_path),
+                &daemon_url,
+            ) {
                 Ok(action) => action,
-                Err(error) => action_from_failure(
-                    hook_type,
-                    &cfg,
-                    transport::DeliveryFailureKind::Other,
-                    &error,
-                ),
+                Err(exit_code) => return exit_code,
             }
         }
         transport::DeliveryOutcome::Enqueued => {
@@ -159,6 +179,19 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
             ) {
                 return emit_action(continue_action());
             }
+
+            let failure_kind = report
+                .failure_kind
+                .map(diagnostics::FailureKind::from)
+                .unwrap_or(diagnostics::FailureKind::Other);
+            record_delivery_failure(
+                &env,
+                &report,
+                Some(&enqueued_path),
+                &daemon_url,
+                failure_kind,
+                report.transport_error.as_deref(),
+            );
 
             let detail = report
                 .response_body
@@ -210,6 +243,73 @@ fn build_dispatch_envelope(
         detect_source(cfg),
         headers,
     )
+}
+
+fn delivered_action(
+    cfg: &CliConfig,
+    hook_type: &str,
+    envelope: &Envelope,
+    report: &transport::DeliveryReport,
+    enqueued_path: Option<&Path>,
+    daemon_url: &str,
+) -> Result<HookAction, ExitCode> {
+    let body = report.response_body.as_deref().unwrap_or_default();
+    match action_from_success_response(cfg.source, hook_type, body) {
+        Ok(action) => {
+            if let Some(path) = enqueued_path {
+                let _ = fs::remove_file(path);
+            }
+            Ok(action)
+        }
+        Err(error) => {
+            let written = record_delivery_failure(
+                envelope,
+                report,
+                enqueued_path,
+                daemon_url,
+                success_failure_kind(body),
+                Some(&error),
+            );
+            if written && let Some(path) = enqueued_path {
+                let _ = fs::remove_file(path);
+            }
+            output::stderr(format_args!(
+                "ghook: daemon 2xx response could not be mapped for hook '{hook_type}': {error}\n"
+            ));
+            Err(ExitCode::from(1))
+        }
+    }
+}
+
+fn record_delivery_failure(
+    envelope: &Envelope,
+    report: &transport::DeliveryReport,
+    enqueued_path: Option<&Path>,
+    daemon_url: &str,
+    failure_kind: diagnostics::FailureKind,
+    error: Option<&str>,
+) -> bool {
+    let envelope_id = enqueued_path.and_then(transport::envelope_id_from_path);
+    diagnostics::record_failure(diagnostics::FailureContext {
+        envelope,
+        envelope_id,
+        failure_kind,
+        status_code: report.status_code,
+        error,
+        response_body: report.response_body.as_deref(),
+        transport_error: report.transport_error.as_deref(),
+        daemon_url,
+    })
+    .is_ok()
+}
+
+fn success_failure_kind(response_body: &str) -> diagnostics::FailureKind {
+    let trimmed = response_body.trim();
+    if !trimmed.is_empty() && serde_json::from_str::<Value>(trimmed).is_err() {
+        diagnostics::FailureKind::InvalidSuccessJson
+    } else {
+        diagnostics::FailureKind::SuccessResponseMapping
+    }
 }
 
 #[cfg(test)]

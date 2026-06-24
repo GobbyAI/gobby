@@ -2,7 +2,7 @@ use std::{
     fs, io,
     io::{Read, Write},
     net::TcpListener,
-    path::Path,
+    path::{Path, PathBuf},
     process::{Command, Output, Stdio},
     thread::{self, JoinHandle},
     time::{SystemTime, UNIX_EPOCH},
@@ -202,6 +202,13 @@ fn diagnose_json_reports_grok_snake_case_contract() -> TestResult {
     assert_eq!(critical_json["critical"], true);
     assert_eq!(critical_json["terminal_context_enabled"], true);
     assert_eq!(critical_json["cli_recognized"], true);
+    assert_eq!(critical_json["recent_failure_count"], 0);
+    assert_eq!(critical_json["recent_failures"], serde_json::json!([]));
+    assert!(
+        critical_json["failure_dir"]
+            .as_str()
+            .is_some_and(|path| path.ends_with("hooks/inbox/failures"))
+    );
 
     let noncritical = run_diagnose_with_dirs(
         home.path(),
@@ -312,6 +319,200 @@ fn daemon_success_maps_deny_and_block_bodies() -> TestResult {
     )?;
     assert_stderr_empty(&grok_pre_tool_output, "grok pre_tool_use block")?;
     assert!(grok_pre_tool_request.contains("\"hook_type\":\"pre_tool_use\""));
+
+    Ok(())
+}
+
+#[test]
+fn valid_daemon_success_removes_envelope_and_writes_no_failure() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let body = r#"{"decision":"accept","reason":"ok"}"#;
+    let (daemon_url, daemon) = start_daemon(http_ok_json(body))?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("PreToolUse"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_json_stdout(&output, serde_json::from_str(body)?)?;
+    assert_stderr_empty(&output, "valid daemon success")?;
+    assert!(
+        inbox_envelopes(gobby_home.path())?.is_empty(),
+        "valid parsed success should remove the queued envelope"
+    );
+    assert!(
+        read_failure_artifacts(gobby_home.path())?.is_empty(),
+        "valid parsed success should not write failure diagnostics"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn daemon_success_with_invalid_json_writes_failure_and_removes_envelope() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let (daemon_url, daemon) = start_daemon(http_ok_json("not json"))?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("SessionStart"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(1));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("daemon 2xx response could not be mapped"));
+    assert!(
+        inbox_envelopes(gobby_home.path())?.is_empty(),
+        "invalid 2xx body should remove the envelope only after writing diagnostics"
+    );
+
+    let failures = read_failure_artifacts(gobby_home.path())?;
+    assert_eq!(failures.len(), 1);
+    let failure = &failures[0];
+    assert_eq!(failure["failure_kind"], "invalid_success_json");
+    assert_eq!(failure["status_code"], 200);
+    assert_eq!(failure["response_body_preview"], "not json");
+    assert_eq!(failure["response_body_truncated"], false);
+    assert_eq!(failure["hook_type"], "SessionStart");
+    assert_eq!(failure["source"], "codex");
+    assert_eq!(failure["critical"], true);
+    assert!(
+        failure["envelope_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+
+    Ok(())
+}
+
+#[test]
+fn daemon_http_error_writes_failure_and_keeps_envelope_for_replay() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let body = r#"{"error":"down"}"#;
+    let (daemon_url, daemon) = start_daemon(http_json_status(500, "Internal Server Error", body))?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("SessionStart"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    let _request = join_daemon(daemon)?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("Hook error on critical hook 'SessionStart'"));
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+
+    let failures = read_failure_artifacts(gobby_home.path())?;
+    assert_eq!(failures.len(), 1);
+    let failure = &failures[0];
+    assert_eq!(failure["failure_kind"], "http");
+    assert_eq!(failure["status_code"], 500);
+    assert_eq!(failure["response_body_preview"], body);
+    assert!(
+        failure["envelope_id"]
+            .as_str()
+            .is_some_and(|id| !id.is_empty())
+    );
+
+    Ok(())
+}
+
+#[test]
+fn daemon_connect_failure_writes_failure_and_keeps_envelope_for_replay() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("SessionStart"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    assert_eq!(inbox_envelopes(gobby_home.path())?.len(), 1);
+
+    let failures = read_failure_artifacts(gobby_home.path())?;
+    assert_eq!(failures.len(), 1);
+    let failure = &failures[0];
+    assert_eq!(failure["failure_kind"], "connect");
+    assert_eq!(failure["status_code"], Value::Null);
+    assert!(
+        failure["transport_error"]
+            .as_str()
+            .is_some_and(|s| !s.is_empty())
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn enqueue_failure_followed_by_direct_post_failure_writes_artifact() -> TestResult {
+    use std::os::unix::fs::PermissionsExt;
+
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let inbox = gobby_home.path().join("hooks").join("inbox");
+    let failure_dir = inbox.join("failures");
+    fs::create_dir_all(&failure_dir)?;
+    fs::set_permissions(&inbox, fs::Permissions::from_mode(0o555))?;
+    let daemon_url = closed_local_url()?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("codex"),
+        Some("SessionStart"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+    fs::set_permissions(&inbox, fs::Permissions::from_mode(0o755))?;
+
+    assert_eq!(output.status.code(), Some(2));
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8(output.stderr)?;
+    assert!(stderr.contains("Hook failure on critical hook 'SessionStart'"));
+
+    let failures = read_failure_artifacts(gobby_home.path())?;
+    assert_eq!(failures.len(), 1);
+    let failure = &failures[0];
+    assert_eq!(failure["failure_kind"], "direct_post_after_enqueue_failure");
+    assert!(
+        failure["error"]
+            .as_str()
+            .is_some_and(|s| s.contains("enqueue failed") && s.contains("direct post failed"))
+    );
+    assert_eq!(failure["envelope_id"], Value::Null);
 
     Ok(())
 }
@@ -494,6 +695,46 @@ fn assert_stderr_empty(output: &Output, context: &str) -> TestResult {
     Ok(())
 }
 
+fn inbox_envelopes(gobby_home: &Path) -> Result<Vec<PathBuf>, Box<dyn std::error::Error>> {
+    let inbox = gobby_home.join("hooks").join("inbox");
+    if !inbox.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut envelopes = fs::read_dir(inbox)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|entry| entry.path())
+        .filter(|path| path.is_file())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect::<Vec<_>>();
+    envelopes.sort();
+    Ok(envelopes)
+}
+
+fn read_failure_artifacts(gobby_home: &Path) -> Result<Vec<Value>, Box<dyn std::error::Error>> {
+    let failure_dir = gobby_home.join("hooks").join("inbox").join("failures");
+    if !failure_dir.exists() {
+        return Ok(Vec::new());
+    }
+
+    let mut paths = fs::read_dir(failure_dir)?
+        .collect::<Result<Vec<_>, _>>()?
+        .into_iter()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().and_then(|ext| ext.to_str()) == Some("json"))
+        .collect::<Vec<_>>();
+    paths.sort();
+
+    paths
+        .into_iter()
+        .map(|path| {
+            let bytes = fs::read(path)?;
+            Ok(serde_json::from_slice(&bytes)?)
+        })
+        .collect()
+}
+
 fn start_daemon(response: String) -> io::Result<(String, JoinHandle<io::Result<String>>)> {
     let listener = TcpListener::bind("127.0.0.1:0")?;
     let addr = listener.local_addr()?;
@@ -562,8 +803,12 @@ fn find_header_end(bytes: &[u8]) -> Option<usize> {
 }
 
 fn http_ok_json(body: &str) -> String {
+    http_json_status(200, "OK", body)
+}
+
+fn http_json_status(status: u16, reason: &str, body: &str) -> String {
     format!(
-        "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+        "HTTP/1.1 {status} {reason}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
         body.len()
     )
 }
