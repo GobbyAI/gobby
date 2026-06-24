@@ -44,6 +44,20 @@ def _summary_revision_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
     }
 
 
+def _wiki_revision_from_row(row: Mapping[str, Any]) -> dict[str, Any]:
+    return {
+        "id": row["id"],
+        "session_id": row["session_id"],
+        "wiki_markdown": row["wiki_markdown"],
+        "generation_mode": row["generation_mode"],
+        "source_context_hash": row["source_context_hash"],
+        "digest_turn_count": row["digest_turn_count"],
+        "previous_revision_id": row["previous_revision_id"],
+        "metadata_json": _decode_metadata_json(row["metadata_json"]),
+        "created_at": row["created_at"],
+    }
+
+
 class _SummaryUpdateHost(Protocol):
     db: HubDatabase
 
@@ -60,6 +74,19 @@ class _SummaryUpdateHost(Protocol):
         previous_revision_id: str | None = None,
         metadata_json: Mapping[str, Any] | None = None,
         summary_path: str | None = None,
+    ) -> Session | None: ...
+
+    def persist_wiki_state(
+        self,
+        session_id: str,
+        *,
+        wiki_markdown: str,
+        generation_mode: str,
+        source_context_hash: str | None = None,
+        digest_turn_count: int | None = None,
+        previous_revision_id: str | None = None,
+        metadata_json: Mapping[str, Any] | None = None,
+        wiki_path: str | None = None,
     ) -> Session | None: ...
 
     def _notify_session_change(self, event: str, session_id: str) -> None: ...
@@ -213,3 +240,124 @@ class _SummaryUpdateMixin:
             (session_id, bounded_limit),
         )
         return [_summary_revision_from_row(row) for row in rows]
+
+    def persist_wiki_state(
+        self: _SummaryUpdateHost,
+        session_id: str,
+        *,
+        wiki_markdown: str,
+        generation_mode: str,
+        source_context_hash: str | None = None,
+        digest_turn_count: int | None = None,
+        previous_revision_id: str | None = None,
+        metadata_json: Mapping[str, Any] | None = None,
+        wiki_path: str | None = None,
+    ) -> Session | None:
+        """Persist wiki markdown, source metadata, and a revision row atomically.
+
+        Mirror of ``persist_summary_state`` for the knowledge-synthesis (wiki)
+        artifact: writes a ``session_wiki_revisions`` row and updates the
+        ``sessions.wiki_*`` columns in one transaction. The mirror file is
+        written by the sessions layer (gobby.sessions.wiki_synthesis) using the
+        same already-redacted body, so the DB column and the file cannot diverge
+        on secrets.
+        """
+        if digest_turn_count is not None and digest_turn_count < 0:
+            raise ValueError("digest_turn_count must be non-negative")
+
+        now = datetime.now(UTC).isoformat()
+        revision_id = str(uuid.uuid4())
+
+        with self.db.transaction() as conn:
+            current_row = conn.execute(
+                "SELECT wiki_revision_id FROM sessions WHERE id = %s FOR UPDATE",
+                (session_id,),
+            ).fetchone()
+            if current_row is None:
+                return None
+            previous_id = previous_revision_id
+            if previous_id is None:
+                previous_id = current_row["wiki_revision_id"]
+
+            conn.execute(
+                """
+                INSERT INTO session_wiki_revisions (
+                    id, session_id, wiki_markdown, generation_mode,
+                    source_context_hash, digest_turn_count,
+                    previous_revision_id, metadata_json, created_at
+                )
+                VALUES (%s, %s, %s, %s, %s, %s, %s, %s::jsonb, %s)
+                """,
+                (
+                    revision_id,
+                    session_id,
+                    wiki_markdown,
+                    generation_mode,
+                    source_context_hash,
+                    digest_turn_count,
+                    previous_id,
+                    _encode_metadata_json(metadata_json),
+                    now,
+                ),
+            )
+            conn.execute(
+                """
+                UPDATE sessions
+                SET wiki_path = COALESCE(%s, wiki_path),
+                    wiki_markdown = %s,
+                    wiki_revision_id = %s,
+                    wiki_source_context_hash = %s,
+                    wiki_digest_turn_count = %s,
+                    wiki_generation_mode = %s,
+                    wiki_generated_at = %s,
+                    updated_at = %s
+                WHERE id = %s
+                """,
+                (
+                    wiki_path,
+                    wiki_markdown,
+                    revision_id,
+                    source_context_hash,
+                    digest_turn_count,
+                    generation_mode,
+                    now,
+                    now,
+                    session_id,
+                ),
+            )
+
+        updated = self.get(session_id)
+        if updated is not None:
+            self._notify_session_change("session_updated", session_id)
+        return updated
+
+    def get_wiki_revision(
+        self: _SummaryUpdateHost,
+        revision_id: str,
+    ) -> dict[str, Any] | None:
+        """Return one wiki revision row for debug/test callers."""
+        row = self.db.fetchone(
+            "SELECT * FROM session_wiki_revisions WHERE id = %s",
+            (revision_id,),
+        )
+        return _wiki_revision_from_row(row) if row else None
+
+    def list_wiki_revisions(
+        self: _SummaryUpdateHost,
+        session_id: str,
+        *,
+        limit: int = 20,
+    ) -> list[dict[str, Any]]:
+        """Return recent wiki revisions for a session, newest first."""
+        bounded_limit = max(1, min(int(limit), 100))
+        rows = self.db.fetchall(
+            """
+            SELECT *
+            FROM session_wiki_revisions
+            WHERE session_id = %s
+            ORDER BY created_at DESC, id DESC
+            LIMIT %s
+            """,
+            (session_id, bounded_limit),
+        )
+        return [_wiki_revision_from_row(row) for row in rows]

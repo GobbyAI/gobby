@@ -101,7 +101,8 @@ def test_postgres_migration_discovery_finds_current_data_migration() -> None:
     discovered = runner._discover_migrations()
 
     assert [(migration.version, migration.name) for migration in discovered] == [
-        (295, "relabel_gemini_sessions")
+        (295, "relabel_gemini_sessions"),
+        (296, "add_wiki_to_sessions"),
     ]
 
 

@@ -25,6 +25,7 @@ def register_handoff_tools(
     transcript_processor: Any | None = None,
     session_summary_config: SessionSummaryConfig | None = None,
     inter_session_message_manager: InterSessionMessageManager | None = None,
+    session_wiki_config: Any | None = None,
 ) -> None:
     """
     Register handoff tools with a registry.
@@ -36,6 +37,7 @@ def register_handoff_tools(
         transcript_processor: Transcript processor for parsing transcripts (optional)
         session_summary_config: Feature config for session summary generation (optional)
         inter_session_message_manager: For sending P2P messages between sessions (optional)
+        session_wiki_config: Feature config for session wiki synthesis (optional)
     """
     from gobby.utils.session_context import resolve_session_ref
 
@@ -165,6 +167,7 @@ def register_handoff_tools(
             output_path=output_path,
             set_handoff_ready=set_handoff_ready,
             full_only=full,
+            session_wiki_config=session_wiki_config,
         )
 
         if not summary_result.get("success"):

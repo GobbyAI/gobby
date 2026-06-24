@@ -203,6 +203,7 @@ async def generate_session_summaries(
     compact_only: bool = False,
     full_only: bool = False,
     run_db: Callable[..., Awaitable[Any]] | None = None,
+    session_wiki_config: Any | None = None,
 ) -> dict[str, Any]:
     """Generate summary_markdown for a session.
 
@@ -222,6 +223,10 @@ async def generate_session_summaries(
         compact_only: Ignored (kept for API compatibility).
         full_only: Ignored (kept for API compatibility).
         run_db: Optional bounded executor bridge for hub database storage calls.
+        session_wiki_config: Feature config for the session knowledge-synthesis
+            (wiki) artifact. When provided and enabled, a concise cross-linked
+            wiki page is synthesized from the same digest at the tail of this
+            flow so every summary-producing caller also produces the wiki page.
 
     Returns:
         Dict with success status, markdown lengths, and context summary.
@@ -388,6 +393,30 @@ async def generate_session_summaries(
         f"Session summary generated for {session_id} ({(len(full_markdown) if full_markdown else 0)} chars)",
     )
 
+    # Tail: synthesize the durable knowledge-wiki page from the same digest.
+    # Gated by session_wiki.enabled; best-effort so a wiki failure never breaks
+    # summary generation. Hanging it here means every summary-producing caller
+    # (lifecycle/background, dispatcher, CLI/server/MCP refresh) produces both
+    # artifacts with no caller drift.
+    wiki_result: dict[str, Any] = {"generated": False, "skipped": "not_requested"}
+    if session_wiki_config is not None:
+        from gobby.sessions.wiki_synthesis import generate_session_wiki
+
+        try:
+            wiki_result = await generate_session_wiki(
+                session=session,
+                digest_markdown=digest_markdown,
+                session_manager=session_manager,
+                llm_service=llm_service,
+                session_wiki_config=session_wiki_config,
+                db=db,
+                db_runner=db_runner,
+                project_path=str(cwd),
+            )
+        except Exception as e:  # noqa: BLE001 — boundary: wiki must not break summary
+            logger.warning(f"Wiki synthesis failed for session {session_id}: {e}")
+            wiki_result = {"generated": False, "skipped": "error", "error": str(e)}
+
     return {
         "success": True,
         "session_id": session_id,
@@ -400,6 +429,7 @@ async def generate_session_summaries(
         "source_context_hash": source_hash,
         "source_digest_turn_count": current_digest_turn_count,
         "files_written": files_written,
+        "wiki": wiki_result,
         "context_summary": {
             "has_active_task": bool(handoff_ctx.active_gobby_task),
             "files_modified_count": len(handoff_ctx.files_modified),

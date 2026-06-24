@@ -559,6 +559,7 @@ def create_handoff(
                     session_summary_config=config.session_summary,
                     db=summary_manager.db,
                     set_handoff_ready=False,
+                    session_wiki_config=getattr(config, "session_wiki", None),
                 )
 
             summary_result = asyncio.run(_gen_summary())

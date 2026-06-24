@@ -96,6 +96,7 @@ class SessionLifecycleManager:
         memory_sync_manager: Any | None = None,
         kg_queue_config: Any | None = None,
         memory_dream_config: Any | None = None,
+        session_wiki_config: Any | None = None,
     ):
         self.db = db
         self.config = config
@@ -104,6 +105,7 @@ class SessionLifecycleManager:
         self.memory_manager = memory_manager
         self.llm_service = llm_service
         self.session_summary_config = session_summary_config
+        self.session_wiki_config = session_wiki_config
         self.memory_sync_manager = memory_sync_manager
         self._kg_queue_config = kg_queue_config
         self._memory_dream_config = memory_dream_config
@@ -458,11 +460,11 @@ class SessionLifecycleManager:
                 )
                 continue
 
-            # Step 2: Generate summaries (best-effort)
+            # Step 2: Generate artifacts — summary and/or wiki (best-effort)
             try:
-                await self._generate_summaries_if_needed(session.id)
+                await self._generate_artifacts_if_needed(session.id)
             except Exception as e:
-                logger.warning(f"Summary generation failed for {session.id}: {e}")
+                logger.warning(f"Artifact generation failed for {session.id}: {e}")
 
             # Step 3: Only mark as processed if summaries succeeded or LLM is unavailable.
             refreshed = self.session_manager.get(session.id)
@@ -500,18 +502,51 @@ class SessionLifecycleManager:
 
         return processed
 
-    async def _generate_summaries_if_needed(self, session_id: str) -> None:
-        """Generate summaries for a session that's missing them.
+    def _wiki_refresh_needed(self, session: Any) -> bool:
+        """Return true when the session's wiki page is missing or stale.
+
+        Mirrors the wiki generator's skip policy so this gate never asks for a
+        wiki it would refuse to produce. The authoritative noop check (source
+        hash) still runs inside ``generate_session_wiki``; this is a cheap
+        over-approximation, so a false positive merely no-ops downstream.
+        """
+        from gobby.sessions.summary_refresh import coerce_digest_turn_count, digest_turn_count
+        from gobby.sessions.wiki_synthesis import (
+            is_wiki_markdown_valid,
+            wiki_generation_skip_reason,
+        )
+
+        config = self.session_wiki_config
+        if config is None or not getattr(config, "enabled", False):
+            return False
+        digest_markdown = getattr(session, "digest_markdown", None)
+        if wiki_generation_skip_reason(session, digest_markdown) is not None:
+            return False
+        if not is_wiki_markdown_valid(getattr(session, "wiki_markdown", None)):
+            return True
+        current = digest_turn_count(digest_markdown)
+        previous = coerce_digest_turn_count(getattr(session, "wiki_digest_turn_count", None))
+        return previous is None or current != previous
+
+    async def _generate_artifacts_if_needed(self, session_id: str) -> None:
+        """Generate session artifacts (summary and/or wiki) that are missing.
 
         Safety net for ungraceful exits — if on_session_end or /clear never
-        triggered summary generation, this catches it during background
-        transcript processing.
+        triggered generation, this catches it during background transcript
+        processing. Proceeds when the summary is missing/invalid OR the wiki is
+        missing/stale; the shared summary flow no-ops whichever artifact is
+        already current, so only the missing artifact(s) are produced.
         """
         if not self.llm_service:
             return
 
         session = self.session_manager.get(session_id)
-        if not session or is_summary_markdown_valid(session.summary_markdown):
+        if not session:
+            return
+
+        summary_ok = is_summary_markdown_valid(session.summary_markdown)
+        wiki_needed = self._wiki_refresh_needed(session)
+        if summary_ok and not wiki_needed:
             return
 
         digest_markdown = getattr(session, "digest_markdown", None)
@@ -531,9 +566,10 @@ class SessionLifecycleManager:
                 session_summary_config=self.session_summary_config,
                 db=self.db,
                 set_handoff_ready=False,  # already expired, don't change status
+                session_wiki_config=self.session_wiki_config,
             )
         except Exception as e:
-            logger.warning(f"Summary generation failed for session {session_id}: {e}")
+            logger.warning(f"Artifact generation failed for session {session_id}: {e}")
 
     async def _process_session_transcript(
         self, session_id: str, transcript_path: str | None

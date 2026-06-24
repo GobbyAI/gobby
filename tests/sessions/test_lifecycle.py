@@ -260,7 +260,7 @@ class TestSessionLifecycleManager:
         with (
             patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
             patch.object(
-                manager, "_generate_summaries_if_needed", new_callable=AsyncMock
+                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_sum,
         ):
             processed = await manager._process_pending_transcripts()
@@ -287,7 +287,7 @@ class TestSessionLifecycleManager:
         with (
             patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
             patch.object(
-                manager, "_generate_summaries_if_needed", new_callable=AsyncMock
+                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_sum,
         ):
             processed = await manager._process_pending_transcripts()
@@ -448,7 +448,7 @@ class TestSessionLifecycleManager:
             patch.object(
                 manager, "_process_session_transcript", new_callable=AsyncMock
             ) as mock_proc,
-            patch.object(manager, "_generate_summaries_if_needed", new_callable=AsyncMock),
+            patch.object(manager, "_generate_artifacts_if_needed", new_callable=AsyncMock),
         ):
             mock_proc.side_effect = [Exception("Fail"), None]
 
@@ -657,14 +657,14 @@ class TestPromptFileCleanup:
         mock_cleanup.assert_called_once()
 
 
-class TestGenerateSummariesIfNeeded:
-    """Tests for _generate_summaries_if_needed."""
+class TestGenerateArtifactsIfNeeded:
+    """Tests for _generate_artifacts_if_needed."""
 
     @pytest.mark.asyncio
     async def test_no_llm_service(self, manager):
         """Skips when llm_service is None."""
         manager.llm_service = None
-        await manager._generate_summaries_if_needed("sess-1")
+        await manager._generate_artifacts_if_needed("sess-1")
         manager.session_manager.get.assert_not_called()
         assert manager.session_manager.get.call_count == 0
 
@@ -673,7 +673,7 @@ class TestGenerateSummariesIfNeeded:
         """Skips when session not found."""
         manager.llm_service = MagicMock()
         manager.session_manager.get.return_value = None
-        await manager._generate_summaries_if_needed("sess-1")
+        await manager._generate_artifacts_if_needed("sess-1")
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
@@ -683,7 +683,7 @@ class TestGenerateSummariesIfNeeded:
         session = MagicMock()
         session.summary_markdown = "existing summary"
         manager.session_manager.get.return_value = session
-        await manager._generate_summaries_if_needed("sess-1")
+        await manager._generate_artifacts_if_needed("sess-1")
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
@@ -700,7 +700,7 @@ class TestGenerateSummariesIfNeeded:
             "gobby.sessions.summarize.generate_session_summaries",
             new_callable=AsyncMock,
         ) as mock_gen:
-            await manager._generate_summaries_if_needed("sess-1")
+            await manager._generate_artifacts_if_needed("sess-1")
 
         mock_gen.assert_awaited_once()
         assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
@@ -713,7 +713,7 @@ class TestGenerateSummariesIfNeeded:
         session.summary_markdown = None
         session.transcript_path = None
         manager.session_manager.get.return_value = session
-        await manager._generate_summaries_if_needed("sess-1")
+        await manager._generate_artifacts_if_needed("sess-1")
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
@@ -731,7 +731,7 @@ class TestGenerateSummariesIfNeeded:
             side_effect=RuntimeError("Summary error"),
         ):
             # Should not raise
-            await manager._generate_summaries_if_needed("sess-1")
+            await manager._generate_artifacts_if_needed("sess-1")
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
@@ -747,9 +747,39 @@ class TestGenerateSummariesIfNeeded:
             "gobby.sessions.summarize.generate_session_summaries",
             new_callable=AsyncMock,
         ) as mock_gen:
-            await manager._generate_summaries_if_needed("sess-1")
+            await manager._generate_artifacts_if_needed("sess-1")
             mock_gen.assert_awaited_once()
             assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
+
+    @pytest.mark.asyncio
+    async def test_valid_summary_missing_wiki_still_triggers(self, manager):
+        """Valid summary but missing wiki still triggers generation (Blocker-1 fix).
+
+        The extended artifact gate must proceed when the wiki is missing even
+        though the summary is already valid, passing the wiki config through.
+        """
+        manager.llm_service = MagicMock()
+        manager.session_wiki_config = SimpleNamespace(enabled=True)
+        session = MagicMock()
+        session.summary_markdown = "## Current State\nvalid summary"
+        session.wiki_markdown = None
+        session.digest_markdown = "### Turn 1\na\n### Turn 2\nb\n### Turn 3\nc"
+        session.wiki_source_context_hash = None
+        session.wiki_digest_turn_count = None
+        session.agent_depth = 0
+        session.source = "claude-code"
+        session.transcript_path = None
+        manager.session_manager.get.return_value = session
+
+        with patch(
+            "gobby.sessions.summarize.generate_session_summaries",
+            new_callable=AsyncMock,
+        ) as mock_gen:
+            await manager._generate_artifacts_if_needed("sess-1")
+
+        mock_gen.assert_awaited_once()
+        assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
+        assert mock_gen.await_args.kwargs["session_wiki_config"] is manager.session_wiki_config
 
 
 class TestPurgeSoftDeletedDefinitions:

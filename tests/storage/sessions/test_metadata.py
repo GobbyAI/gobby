@@ -661,6 +661,77 @@ class TestSessionManagerMetadata:
         fetched = session_manager.get_summary_revision(second.summary_revision_id)
         assert fetched == revisions[0]
 
+    def test_persist_wiki_state_updates_revision_and_session_atomically(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Wiki state persistence writes the revision and session metadata together."""
+        session = session_manager.register(
+            external_id="wiki-state-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+
+        first = session_manager.persist_wiki_state(
+            session.id,
+            wiki_markdown="## Summary\nFirst page.\n\n## Key Claims\n- one",
+            generation_mode="full",
+            source_context_hash="wiki-hash-1",
+            digest_turn_count=3,
+            wiki_path="/tmp/session_wiki/wiki-state-test.md",
+            metadata_json={"reason": "full"},
+        )
+        second = session_manager.persist_wiki_state(
+            session.id,
+            wiki_markdown="## Summary\nSecond page.\n\n## Key Claims\n- two",
+            generation_mode="full",
+            source_context_hash="wiki-hash-2",
+            digest_turn_count=5,
+            metadata_json={"reason": "full"},
+        )
+
+        assert first is not None
+        assert second is not None
+        assert first.wiki_revision_id is not None
+        assert second.wiki_revision_id is not None
+        assert second.wiki_revision_id != first.wiki_revision_id
+        assert second.wiki_markdown == "## Summary\nSecond page.\n\n## Key Claims\n- two"
+        assert second.wiki_source_context_hash == "wiki-hash-2"
+        assert second.wiki_digest_turn_count == 5
+        assert second.wiki_generation_mode == "full"
+        assert second.wiki_generated_at is not None
+        # wiki_path is preserved via COALESCE when the second call omits it.
+        assert second.wiki_path == "/tmp/session_wiki/wiki-state-test.md"
+
+        revisions = session_manager.list_wiki_revisions(session.id)
+        assert [revision["generation_mode"] for revision in revisions] == ["full", "full"]
+        assert revisions[0]["previous_revision_id"] == first.wiki_revision_id
+        assert revisions[0]["metadata_json"] == {"reason": "full"}
+        fetched = session_manager.get_wiki_revision(second.wiki_revision_id)
+        assert fetched == revisions[0]
+
+    def test_persist_wiki_state_rejects_negative_digest_turn_count(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """A negative digest turn count is rejected before any write."""
+        session = session_manager.register(
+            external_id="wiki-state-negative",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        with pytest.raises(ValueError, match="digest_turn_count must be non-negative"):
+            session_manager.persist_wiki_state(
+                session.id,
+                wiki_markdown="## Summary\nx\n\n## Key Claims\n- y",
+                generation_mode="full",
+                digest_turn_count=-1,
+            )
+
     def test_persist_summary_state_rolls_back_revision_on_update_failure(
         self,
         session_manager: SessionManager,
