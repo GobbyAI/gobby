@@ -267,6 +267,10 @@ struct SyncSessionsArgs {
     #[arg(long, value_name = "PATH")]
     archive_dir: Option<PathBuf>,
 
+    /// Directory containing daemon-synthesized session wiki *.md files.
+    #[arg(long, value_name = "PATH")]
+    wiki_dir: Option<PathBuf>,
+
     /// Maximum number of archives to process.
     #[arg(long, value_name = "N", value_parser = parse_positive_usize)]
     limit: Option<usize>,
@@ -621,6 +625,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
             scope,
             options: SyncSessionsOptions {
                 archive_dir: args.archive_dir,
+                wiki_dir: args.wiki_dir,
                 limit: args.limit,
             },
         }),

@@ -187,6 +187,7 @@ pub struct IngestFileOptions {
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SyncSessionsOptions {
     pub archive_dir: Option<PathBuf>,
+    pub wiki_dir: Option<PathBuf>,
     pub limit: Option<usize>,
 }
 

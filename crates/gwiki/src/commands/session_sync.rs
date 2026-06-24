@@ -34,6 +34,11 @@ pub(crate) fn execute(
     }
 
     let archive_dir = archive_dir_or_default(options.archive_dir)?;
+    let wiki_dir = wiki_dir_or_default(options.wiki_dir)?;
+    log::debug!(
+        "resolved session wiki directory for sync-sessions: {}",
+        wiki_dir.display()
+    );
     let output_scope = resolved_scope_identity(&scope);
     let fetched_at = collect_timestamp()?;
     if let Some(database_url) = database_url_for(COMMAND)? {
@@ -78,6 +83,17 @@ fn archive_dir_or_default(archive_dir: Option<PathBuf>) -> Result<PathBuf, WikiE
                 detail: format!(
                     "failed to resolve Gobby home for session transcript sync: {error}"
                 ),
+            }),
+    }
+}
+
+fn wiki_dir_or_default(wiki_dir: Option<PathBuf>) -> Result<PathBuf, WikiError> {
+    match wiki_dir {
+        Some(path) => Ok(path),
+        None => gobby_core::gobby_home()
+            .map(|home| home.join("session_wiki"))
+            .map_err(|error| WikiError::Config {
+                detail: format!("failed to resolve Gobby home for session wiki sync: {error}"),
             }),
     }
 }
