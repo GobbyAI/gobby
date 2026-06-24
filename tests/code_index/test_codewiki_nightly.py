@@ -162,6 +162,7 @@ async def test_codewiki_nightly_handler_returns_success_output(tmp_path: Path) -
     ]
 
 
+@pytest.mark.asyncio
 async def test_codewiki_nightly_handler_raises_on_refresh_failure(tmp_path: Path) -> None:
     service = FakeRefreshService(error=GcodeGatewayError("gcode failed"))
     handler = create_codewiki_nightly_handler(
