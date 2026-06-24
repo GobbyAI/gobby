@@ -22,6 +22,7 @@ from gobby.config.app import (
 )
 from gobby.config.bin_freshness import BinFreshnessConfig
 from gobby.config.bootstrap import BootstrapConfigError
+from gobby.config.code_index import CodeIndexConfig
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_DIM_KEY,
@@ -69,6 +70,19 @@ from gobby.config.ui import UIConfig
 from gobby.telemetry.config import TelemetrySettings
 
 pytestmark = pytest.mark.unit
+
+
+def test_code_index_config_maintenance_defaults() -> None:
+    config = CodeIndexConfig()
+
+    assert config.maintenance_interval_seconds == 3600
+    assert config.maintenance_index_timeout_seconds == 120
+    assert config.nightly_full_reindex_enabled is True
+    assert config.nightly_full_reindex_cron == "0 2 * * *"
+    assert config.nightly_full_reindex_timezone is None
+    assert config.nightly_full_reindex_timeout_seconds == 7200
+    assert config.nightly_full_reindex_concurrency == 1
+    assert config.maintenance_log_file == "~/.gobby/logs/code-index-maintenance.log"
 
 
 def write_secure_bootstrap(path: Path, content: str) -> None:

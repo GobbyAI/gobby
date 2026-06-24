@@ -6,7 +6,10 @@ import asyncio
 import json
 import re
 from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path, PurePath, PureWindowsPath
+from time import perf_counter
 from typing import Any
 
 from gobby.install.bin_freshness_models import is_at_least_version
@@ -48,6 +51,25 @@ class GcodeCommandError(GcodeGatewayError):
         self.stderr = stderr
         detail = stderr or "<no stderr>"
         super().__init__(f"gcode exited {returncode}: {detail}")
+
+
+@dataclass(frozen=True)
+class GcodeCommandResult:
+    """Captured gcode command outcome for maintenance logging."""
+
+    command: tuple[str, ...]
+    returncode: int | None
+    stdout: str
+    stderr: str
+    started_at: str
+    completed_at: str
+    duration_seconds: float
+    timeout_seconds: float | None
+    timed_out: bool = False
+
+    @property
+    def success(self) -> bool:
+        return not self.timed_out and self.returncode == 0
 
 
 class GcodeProjectNotFoundError(GcodeCommandError):
@@ -317,6 +339,62 @@ class GcodeGateway:
             timeout=self._rebuild_timeout_seconds,
         )
 
+    async def maintenance_index(
+        self,
+        project_root: Path,
+        *,
+        timeout: float | None = None,
+    ) -> GcodeCommandResult:
+        binary = await self._ensure_version()
+        return await self._run_command_result(
+            [binary, "index", "--project", str(project_root), "--quiet"],
+            timeout=timeout,
+        )
+
+    async def nightly_full_reindex(
+        self,
+        project_root: Path,
+        *,
+        timeout: float | None = None,
+    ) -> GcodeCommandResult:
+        binary = await self._ensure_version()
+        return await self._run_command_result(
+            [
+                binary,
+                "index",
+                "--full",
+                "--sync-projections",
+                "--project",
+                str(project_root),
+                "--format",
+                "json",
+            ],
+            timeout=timeout,
+        )
+
+    async def prune_all_projects(
+        self,
+        *,
+        timeout: float | None = None,
+    ) -> GcodeCommandResult:
+        binary = await self._ensure_version()
+        return await self._run_command_result(
+            [binary, "prune", "--force"],
+            timeout=timeout,
+        )
+
+    async def prune_project_for_maintenance(
+        self,
+        project_root: Path,
+        *,
+        timeout: float | None = None,
+    ) -> GcodeCommandResult:
+        binary = await self._ensure_version()
+        return await self._run_command_result(
+            [binary, "prune", "--force", "--project", str(project_root)],
+            timeout=timeout,
+        )
+
     async def codewiki(
         self,
         project_root: Path,
@@ -447,9 +525,68 @@ class GcodeGateway:
 
         return stdout, stderr
 
+    async def _run_command_result(
+        self,
+        command: Sequence[str],
+        *,
+        timeout: float | None = None,
+    ) -> GcodeCommandResult:
+        proc: asyncio.subprocess.Process | None = None
+        started = datetime.now(UTC)
+        started_at = started.isoformat()
+        start = perf_counter()
+        timeout_seconds = timeout or self._timeout_seconds
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+            )
+            stdout, stderr = await asyncio.wait_for(
+                proc.communicate(),
+                timeout=timeout_seconds,
+            )
+            returncode = proc.returncode
+            timed_out = False
+        except FileNotFoundError as exc:
+            raise GcodeUnavailableError(f"gcode binary not found: {command[0]}") from exc
+        except asyncio.CancelledError:
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+            raise
+        except TimeoutError:
+            if proc is not None:
+                try:
+                    proc.kill()
+                    await proc.wait()
+                except ProcessLookupError:
+                    pass
+            stdout = b""
+            stderr = f"gcode timed out after {timeout_seconds}s".encode()
+            returncode = None
+            timed_out = True
+
+        completed_at = datetime.now(UTC).isoformat()
+        return GcodeCommandResult(
+            command=tuple(command),
+            returncode=returncode,
+            stdout=stdout.decode(errors="replace"),
+            stderr=stderr.decode(errors="replace"),
+            started_at=started_at,
+            completed_at=completed_at,
+            duration_seconds=perf_counter() - start,
+            timeout_seconds=timeout_seconds,
+            timed_out=timed_out,
+        )
+
 
 __all__ = [
     "GcodeCommandError",
+    "GcodeCommandResult",
     "GcodeGateway",
     "GcodeGatewayError",
     "GcodeIndexedFileNotFoundError",

@@ -9,10 +9,11 @@ from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Protocol, TypeVar
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from gobby.code_index.gcode_gateway import GcodeCommandResult
 from gobby.code_index.maintenance import (
     _run_maintenance,
     _summarize_unsummarized,
@@ -31,6 +32,28 @@ class _MaintenanceConfig(Protocol):
     missing_root_purge_observations: int
 
 
+def _gcode_result(
+    command: tuple[str, ...] = ("/tmp/gcode", "index", "--project", "/repo", "--quiet"),
+    *,
+    returncode: int | None = 0,
+    stdout: str = "",
+    stderr: str = "",
+    timed_out: bool = False,
+    timeout_seconds: float | None = 120,
+) -> GcodeCommandResult:
+    return GcodeCommandResult(
+        command=command,
+        returncode=returncode,
+        stdout=stdout,
+        stderr=stderr,
+        started_at="2026-01-01T00:00:00+00:00",
+        completed_at="2026-01-01T00:00:01+00:00",
+        duration_seconds=1.0,
+        timeout_seconds=timeout_seconds,
+        timed_out=timed_out,
+    )
+
+
 class _MaintenanceContext(Protocol):
     storage: Any
     gcode_gateway: Any | None
@@ -41,31 +64,32 @@ class _MaintenanceContext(Protocol):
     async def clear_graph(self, project_id: str) -> dict[str, Any]: ...
 
 
-class _MaintenanceProcess:
-    def __init__(
-        self,
-        *,
-        returncode: int = 0,
-        stderr: bytes = b"",
-    ) -> None:
-        self.returncode = returncode
-        self.stderr = stderr
-
-    async def communicate(self) -> tuple[bytes, bytes]:
-        return b"", self.stderr
-
-
 class RecordingGcodeGateway:
     def __init__(
         self,
         *,
         vector_sync_result: dict[str, Any] | None = None,
         vector_clear_result: dict[str, Any] | None = None,
+        maintenance_result: GcodeCommandResult | None = None,
     ) -> None:
         self.vector_sync_result = vector_sync_result or {"success": True}
         self.vector_clear_result = vector_clear_result or {"success": True}
+        self.maintenance_result = maintenance_result
         self.vector_synced_files: list[tuple[Path, str]] = []
         self.vector_cleared_roots: list[Path] = []
+        self.maintenance_calls: list[tuple[Path, float | None]] = []
+
+    async def maintenance_index(
+        self,
+        project_root: Path,
+        *,
+        timeout: float | None = None,
+    ) -> GcodeCommandResult:
+        self.maintenance_calls.append((project_root, timeout))
+        return self.maintenance_result or _gcode_result(
+            ("/tmp/gcode", "index", "--project", str(project_root), "--quiet"),
+            timeout_seconds=timeout,
+        )
 
     async def vector_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
         self.vector_synced_files.append((project_root, file_path))
@@ -124,34 +148,26 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
     )
     missing_root_observations: dict[str, int] = {}
 
-    with (
-        patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
-        patch("asyncio.create_subprocess_exec") as create_proc,
-    ):
-        await _run_maintenance(
-            context,
-            missing_root_observations=missing_root_observations,
-        )
+    await _run_maintenance(
+        context,
+        missing_root_observations=missing_root_observations,
+    )
 
     storage.delete_project_index.assert_not_called()
     clear_graph.assert_not_awaited()
     assert gcode_gateway.vector_cleared_roots == []
-    create_proc.assert_not_called()
+    assert gcode_gateway.maintenance_calls == []
     assert missing_root_observations == {"proj-missing": 1}
 
-    with (
-        patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
-        patch("asyncio.create_subprocess_exec") as create_proc,
-    ):
-        await _run_maintenance(
-            context,
-            missing_root_observations=missing_root_observations,
-        )
+    await _run_maintenance(
+        context,
+        missing_root_observations=missing_root_observations,
+    )
 
     storage.delete_project_index.assert_called_once_with("proj-missing")
     clear_graph.assert_awaited_once_with("proj-missing")
     assert gcode_gateway.vector_cleared_roots == []
-    create_proc.assert_not_called()
+    assert gcode_gateway.maintenance_calls == []
     assert not missing_root.exists()
     assert missing_root_observations == {}
     assert run_db_calls == [
@@ -211,8 +227,7 @@ async def test_maintenance_retries_pending_vector_projection_cleanup(tmp_path: P
         run_db=run_db,
     )
 
-    with patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"):
-        await _run_maintenance(context)
+    await _run_maintenance(context)
 
     assert gcode_gateway.vector_cleared_roots == [tmp_path]
     assert storage.cleared == [("proj-retry", "vector")]
@@ -244,10 +259,21 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
         "projects": 1,
     }
     clear_graph = AsyncMock(return_value={"success": True})
-    gcode_gateway = RecordingGcodeGateway()
+    gcode_gateway = RecordingGcodeGateway(
+        maintenance_result=_gcode_result(
+            (
+                "/tmp/gcode",
+                "index",
+                "--project",
+                str(root),
+                "--quiet",
+            ),
+            returncode=1,
+            stderr="No gcode project found. Run `gcode init` to initialize this directory.",
+        )
+    )
     summarizer = SimpleNamespace(summarize_batch=AsyncMock())
     run_db_calls: list[str] = []
-    subprocess_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
     async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
         func_name = getattr(func, "__name__", None)
@@ -257,41 +283,24 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
         run_db_calls.append(func_name)
         return func(*args, **kwargs)
 
-    async def create_subprocess_exec(*args: Any, **kwargs: Any) -> _MaintenanceProcess:
-        subprocess_calls.append((args, kwargs))
-        return _MaintenanceProcess(
-            returncode=1,
-            stderr=b"No gcode project found. Run `gcode init` to initialize this directory.",
-        )
-
     context: _MaintenanceContext = SimpleNamespace(
         storage=storage,
         clear_graph=clear_graph,
         gcode_gateway=gcode_gateway,
-        config=SimpleNamespace(graph_enabled=True, embedding_enabled=True),
+        config=SimpleNamespace(
+            graph_enabled=True,
+            embedding_enabled=True,
+            maintenance_index_timeout_seconds=30,
+        ),
         run_db=run_db,
     )
 
-    with (
-        patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
-        patch("asyncio.create_subprocess_exec", side_effect=create_subprocess_exec),
-        caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"),
-    ):
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.maintenance"):
         await _run_maintenance(context, summarizer=summarizer)
 
-    assert subprocess_calls == [
-        (
-            (
-                "/tmp/gcode",
-                "index",
-                "--project",
-                str(root),
-                "--quiet",
-                "--sync-projections",
-            ),
-            {"stdout": asyncio.subprocess.DEVNULL, "stderr": asyncio.subprocess.PIPE},
-        )
-    ]
+    assert gcode_gateway.maintenance_calls == [(root, 30)]
+    assert gcode_gateway.maintenance_result is not None
+    assert "--sync-projections" not in gcode_gateway.maintenance_result.command
     storage.delete_project_index.assert_called_once_with("proj-stale")
     storage.get_unsummarized_symbols.assert_not_called()
     clear_graph.assert_awaited_once_with("proj-stale")
@@ -303,227 +312,6 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
         "list_indexed_projects",
         "delete_project_index",
     ]
-
-
-@pytest.mark.asyncio
-async def test_maintenance_reconciles_deleted_and_renamed_files(tmp_path: Path) -> None:
-    root = tmp_path / "repo"
-    source_dir = root / "src"
-    source_dir.mkdir(parents=True)
-    (source_dir / "new_name.py").write_text("def kept() -> None:\n    pass\n")
-    (source_dir / "kept.py").write_text("def kept_too() -> None:\n    pass\n")
-
-    project = IndexedProject(
-        id="proj-orphans",
-        root_path=str(root),
-        total_files=4,
-        total_symbols=8,
-    )
-    indexed_files = [
-        SimpleNamespace(file_path="src/old_name.py"),
-        SimpleNamespace(file_path="src/new_name.py"),
-        SimpleNamespace(file_path="src/deleted.py"),
-        SimpleNamespace(file_path="src/kept.py"),
-    ]
-
-    class Storage:
-        def __init__(self) -> None:
-            self.current_paths: list[set[str]] = []
-            self.deleted: list[tuple[str, str]] = []
-            self.graph_resets: list[str] = []
-            self.prune_dirty: list[tuple[str, str, str]] = []
-
-        def list_projection_cleanup_pending(self, _limit: int) -> list[Any]:
-            return []
-
-        def list_indexed_projects(self) -> list[IndexedProject]:
-            return [project]
-
-        def list_files(self, _project_id: str) -> list[Any]:
-            return indexed_files
-
-        def get_orphan_files(self, _project_id: str, current_paths: set[str]) -> list[str]:
-            self.current_paths.append(current_paths)
-            return [file.file_path for file in indexed_files if file.file_path not in current_paths]
-
-        def delete_imports_for_file(self, project_id: str, file_path: str) -> int:
-            self.deleted.append(("imports", file_path))
-            assert project_id == project.id
-            return 1
-
-        def delete_calls_for_file(self, project_id: str, file_path: str) -> int:
-            self.deleted.append(("calls", file_path))
-            assert project_id == project.id
-            return 1
-
-        def delete_content_chunks_for_file(self, project_id: str, file_path: str) -> None:
-            self.deleted.append(("content", file_path))
-            assert project_id == project.id
-
-        def delete_symbols_for_file(self, project_id: str, file_path: str) -> int:
-            self.deleted.append(("symbols", file_path))
-            assert project_id == project.id
-            return 2
-
-        def delete_file(self, project_id: str, file_path: str) -> None:
-            self.deleted.append(("file", file_path))
-            assert project_id == project.id
-
-        def reset_graph_sync_for_project(self, project_id: str) -> int:
-            self.graph_resets.append(project_id)
-            return 2
-
-        def mark_prune_dirty(self, project_id: str, root_path: str, reason: str) -> None:
-            self.prune_dirty.append((project_id, root_path, reason))
-
-        def get_unsummarized_symbols(
-            self,
-            _project_id: str,
-            _kinds: list[str] | None = None,
-            _limit: int = 20,
-        ) -> list[Any]:
-            return []
-
-    storage = Storage()
-    gcode_gateway = RecordingGcodeGateway()
-    clear_graph = AsyncMock(return_value={"success": True})
-    subprocess_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
-
-    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        return func(*args, **kwargs)
-
-    async def create_subprocess_exec(*args: Any, **kwargs: Any) -> _MaintenanceProcess:
-        subprocess_calls.append((args, kwargs))
-        return _MaintenanceProcess()
-
-    context: _MaintenanceContext = SimpleNamespace(
-        storage=storage,
-        clear_graph=clear_graph,
-        gcode_gateway=gcode_gateway,
-        config=SimpleNamespace(graph_enabled=True, embedding_enabled=True),
-        run_db=run_db,
-    )
-
-    with (
-        patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
-        patch("asyncio.create_subprocess_exec", side_effect=create_subprocess_exec),
-    ):
-        await _run_maintenance(context)
-
-    assert subprocess_calls == [
-        (
-            (
-                "/tmp/gcode",
-                "index",
-                "--project",
-                str(root),
-                "--quiet",
-                "--sync-projections",
-            ),
-            {"stdout": asyncio.subprocess.DEVNULL, "stderr": asyncio.subprocess.PIPE},
-        )
-    ]
-    assert storage.current_paths == [{"src/new_name.py", "src/kept.py"}]
-    assert gcode_gateway.vector_synced_files == [
-        (root, "src/old_name.py"),
-        (root, "src/deleted.py"),
-    ]
-    assert storage.deleted == [
-        ("imports", "src/old_name.py"),
-        ("calls", "src/old_name.py"),
-        ("content", "src/old_name.py"),
-        ("symbols", "src/old_name.py"),
-        ("file", "src/old_name.py"),
-        ("imports", "src/deleted.py"),
-        ("calls", "src/deleted.py"),
-        ("content", "src/deleted.py"),
-        ("symbols", "src/deleted.py"),
-        ("file", "src/deleted.py"),
-    ]
-    assert storage.prune_dirty == [(project.id, str(root), "orphan_files")]
-    clear_graph.assert_awaited_once_with(project.id)
-    assert storage.graph_resets == [project.id]
-
-
-@pytest.mark.asyncio
-async def test_maintenance_keeps_orphan_row_when_vector_cleanup_fails(
-    tmp_path: Path,
-) -> None:
-    root = tmp_path / "repo"
-    root.mkdir()
-    project = IndexedProject(
-        id="proj-orphans",
-        root_path=str(root),
-        total_files=1,
-        total_symbols=2,
-    )
-    indexed_files = [SimpleNamespace(file_path="src/deleted.py")]
-
-    class Storage:
-        def __init__(self) -> None:
-            self.deleted: list[tuple[str, str]] = []
-            self.prune_dirty: list[tuple[str, str, str]] = []
-
-        def list_projection_cleanup_pending(self, _limit: int) -> list[Any]:
-            return []
-
-        def list_indexed_projects(self) -> list[IndexedProject]:
-            return [project]
-
-        def list_files(self, _project_id: str) -> list[Any]:
-            return indexed_files
-
-        def get_orphan_files(self, _project_id: str, _current_paths: set[str]) -> list[str]:
-            return ["src/deleted.py"]
-
-        def delete_imports_for_file(self, _project_id: str, file_path: str) -> int:
-            self.deleted.append(("imports", file_path))
-            return 1
-
-        def delete_calls_for_file(self, _project_id: str, file_path: str) -> int:
-            self.deleted.append(("calls", file_path))
-            return 1
-
-        def delete_content_chunks_for_file(self, _project_id: str, file_path: str) -> None:
-            self.deleted.append(("content", file_path))
-
-        def delete_symbols_for_file(self, _project_id: str, file_path: str) -> int:
-            self.deleted.append(("symbols", file_path))
-            return 2
-
-        def delete_file(self, _project_id: str, file_path: str) -> None:
-            self.deleted.append(("file", file_path))
-
-        def mark_prune_dirty(self, project_id: str, root_path: str, reason: str) -> None:
-            self.prune_dirty.append((project_id, root_path, reason))
-
-    storage = Storage()
-    gcode_gateway = RecordingGcodeGateway(
-        vector_sync_result={"success": False, "error": "vector cleanup failed"}
-    )
-    clear_graph = AsyncMock(return_value={"success": True})
-
-    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
-        return func(*args, **kwargs)
-
-    context: _MaintenanceContext = SimpleNamespace(
-        storage=storage,
-        clear_graph=clear_graph,
-        gcode_gateway=gcode_gateway,
-        config=SimpleNamespace(graph_enabled=True, embedding_enabled=True),
-        run_db=run_db,
-    )
-
-    with (
-        patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
-        patch("asyncio.create_subprocess_exec", return_value=_MaintenanceProcess()),
-    ):
-        await _run_maintenance(context)
-
-    assert gcode_gateway.vector_synced_files == [(root, "src/deleted.py")]
-    assert storage.deleted == []
-    assert storage.prune_dirty == []
-    clear_graph.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -559,7 +347,6 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
     )
 
     with (
-        patch("gobby.code_index.maintenance.resolve_native_bin", return_value="/tmp/gcode"),
         caplog.at_level(logging.WARNING, logger="gobby.code_index.cleanup"),
         pytest.raises(TypeError, match="delete_project_index returned list"),
     ):

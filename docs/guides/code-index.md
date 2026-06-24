@@ -77,12 +77,18 @@ two-second debounce, and runs:
 gcode index --files <changed-files> --quiet
 ```
 
-The maintenance loop runs every `code_index.maintenance_interval_seconds`
-seconds. It replays `gcode index --project <root> --quiet` for each indexed
-project, purges projects whose root no longer exists, and fills missing symbol
-summaries when a summarizer is configured. A separate sync worker polls pending
-files, copies symbols to Qdrant vectors, and calls `gcode graph sync-file --file
-<file> --project <root>` for graph projection sync.
+The lightweight maintenance loop runs every
+`code_index.maintenance_interval_seconds` seconds. It replays
+`gcode index --project <root> --quiet` for each indexed project, purges projects
+whose root no longer exists, and fills missing symbol summaries when a
+summarizer is configured. A global system cron runs `gcode prune --force`
+hourly. A separate nightly system cron runs
+`gcode index --full --sync-projections --project <root> --format json` for each
+indexed project.
+
+A separate sync worker polls pending files, copies symbols to Qdrant vectors,
+and calls `gcode graph sync-file --file <file> --project <root>` for graph
+projection sync.
 
 ## CLI Reference
 
@@ -189,7 +195,14 @@ Configure indexing in `code_index`:
 code_index:
   enabled: true
   auto_index_on_commit: true
-  maintenance_interval_seconds: 300
+  maintenance_interval_seconds: 3600
+  maintenance_index_timeout_seconds: 120
+  nightly_full_reindex_enabled: true
+  nightly_full_reindex_cron: "0 2 * * *"
+  nightly_full_reindex_timezone: null
+  nightly_full_reindex_timeout_seconds: 7200
+  nightly_full_reindex_concurrency: 1
+  maintenance_log_file: ~/.gobby/logs/code-index-maintenance.log
   max_file_size_bytes: 1000000
   exclude_patterns:
     - node_modules

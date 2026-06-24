@@ -315,6 +315,7 @@ def init_orchestration(runner: GobbyRunner) -> None:
             logger.debug("Skipping memory dream cron registration; memory.dream config missing")
 
         runner.code_index_pruner = None
+        runner.code_index_nightly_reindexer = None
         if runner.code_indexer is not None:
             try:
                 from gobby.code_index.prune import (
@@ -333,6 +334,30 @@ def init_orchestration(runner: GobbyRunner) -> None:
             except Exception as e:
                 runner.code_index_pruner = None
                 logger.error("Failed to register code index prune cron handler: %s", e)
+
+            try:
+                from gobby.code_index.nightly_reindex import (
+                    CodeIndexNightlyFullReindexer,
+                    register_code_index_nightly_reindex_cron,
+                )
+
+                runner.code_index_nightly_reindexer = CodeIndexNightlyFullReindexer(
+                    runner.code_indexer
+                )
+                register_code_index_nightly_reindex_cron(
+                    cron_storage=runner.cron_storage,
+                    cron_executor=cron_executor,
+                    reindexer=runner.code_index_nightly_reindexer,
+                    config=runner.config.code_index,
+                    project_id=runner.project_id,
+                )
+                logger.debug("Code index nightly full reindex cron handler registered")
+            except Exception as e:
+                runner.code_index_nightly_reindexer = None
+                logger.error(
+                    "Failed to register code index nightly full reindex cron handler: %s",
+                    e,
+                )
 
             try:
                 from gobby.code_index.codewiki_nightly import (

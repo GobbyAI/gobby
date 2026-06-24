@@ -63,7 +63,18 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     config.code_index.symbol_summary = getattr(config.code_index, "symbol_summary", MagicMock())
     set_mock_default(config.code_index.symbol_summary, "enabled", False)
     set_mock_default(config.code_index.symbol_summary, "batch_size", 20)
-    set_mock_default(config.code_index, "maintenance_interval_seconds", 300)
+    set_mock_default(config.code_index, "maintenance_interval_seconds", 3600)
+    set_mock_default(config.code_index, "maintenance_index_timeout_seconds", 120)
+    set_mock_default(config.code_index, "nightly_full_reindex_enabled", True)
+    set_mock_default(config.code_index, "nightly_full_reindex_cron", "0 2 * * *")
+    set_mock_default(config.code_index, "nightly_full_reindex_timezone", None)
+    set_mock_default(config.code_index, "nightly_full_reindex_timeout_seconds", 7200)
+    set_mock_default(config.code_index, "nightly_full_reindex_concurrency", 1)
+    set_mock_default(
+        config.code_index,
+        "maintenance_log_file",
+        "~/.gobby/logs/code-index-maintenance.log",
+    )
     set_mock_default(config.code_index, "sync_worker_interval_seconds", 5)
     set_mock_default(config.code_index, "sync_worker_batch_size", 50)
 

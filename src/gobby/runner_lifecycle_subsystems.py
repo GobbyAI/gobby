@@ -374,13 +374,6 @@ def _start_code_index_tasks(runner: GobbyRunner, tracker: StartupTracker | None)
         if tracker:
             tracker.schedule("Code index sync")
 
-        code_index_pruner = getattr(runner, "code_index_pruner", None)
-        runner._code_index_startup_prune_task = None
-        if code_index_pruner is not None:
-            runner._code_index_startup_prune_task = code_index_pruner.schedule_startup_prunes()
-            if tracker:
-                tracker.schedule("Code index startup prune")
-
 
 async def _recover_pipelines(runner: GobbyRunner, tracker: StartupTracker | None) -> None:
     if not (

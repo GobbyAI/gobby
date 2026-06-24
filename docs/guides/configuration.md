@@ -380,7 +380,14 @@ rule model.
 code_index:
   enabled: true
   auto_index_on_commit: true
-  maintenance_interval_seconds: 300
+  maintenance_interval_seconds: 3600
+  maintenance_index_timeout_seconds: 120
+  nightly_full_reindex_enabled: true
+  nightly_full_reindex_cron: "0 2 * * *"
+  nightly_full_reindex_timezone: null
+  nightly_full_reindex_timeout_seconds: 7200
+  nightly_full_reindex_concurrency: 1
+  maintenance_log_file: ~/.gobby/logs/code-index-maintenance.log
   max_file_size_bytes: 1000000
   embedding_enabled: true
   graph_enabled: true

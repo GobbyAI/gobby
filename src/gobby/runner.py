@@ -105,7 +105,6 @@ class GobbyRunner:
     _bin_freshness_task: asyncio.Task[None] | None
     _code_index_task: asyncio.Task[None] | None
     _code_index_shutdown: asyncio.Event | None
-    _code_index_startup_prune_task: asyncio.Task[dict[str, int]] | None
     _sync_worker_task: asyncio.Task[None] | None
     _sync_worker_shutdown: asyncio.Event | None
     _websocket_task: asyncio.Task[None] | None
@@ -139,6 +138,7 @@ class GobbyRunner:
     memory_manager: MemoryManager | None
     code_indexer: Any | None
     code_index_pruner: CodeIndexPruner | None
+    code_index_nightly_reindexer: Any | None
     mcp_db_manager: LocalMCPManager
     metrics_event_store: MetricsEventStore
     metrics_manager: ToolMetricsManager

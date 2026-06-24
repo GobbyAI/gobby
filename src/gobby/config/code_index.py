@@ -51,8 +51,40 @@ class CodeIndexConfig(BaseModel):
         description="Auto-reindex changed files on git commit",
     )
     maintenance_interval_seconds: int = Field(
-        default=300,
-        description="Background reindex interval in seconds",
+        default=3600,
+        ge=1,
+        description="Lightweight background reindex interval in seconds",
+    )
+    maintenance_index_timeout_seconds: int = Field(
+        default=120,
+        ge=1,
+        description="Timeout for each lightweight maintenance gcode index command",
+    )
+    nightly_full_reindex_enabled: bool = Field(
+        default=True,
+        description="Enable nightly full code-index reindex with projection sync",
+    )
+    nightly_full_reindex_cron: str = Field(
+        default="0 2 * * *",
+        description="Cron expression for nightly full code-index reindex",
+    )
+    nightly_full_reindex_timezone: str | None = Field(
+        default=None,
+        description="Timezone for nightly full code-index reindex; UTC when unset",
+    )
+    nightly_full_reindex_timeout_seconds: int = Field(
+        default=7200,
+        ge=1,
+        description="Timeout for each nightly full gcode reindex command",
+    )
+    nightly_full_reindex_concurrency: int = Field(
+        default=1,
+        ge=1,
+        description="Maximum concurrent nightly full reindex commands",
+    )
+    maintenance_log_file: str = Field(
+        default="~/.gobby/logs/code-index-maintenance.log",
+        description="Dedicated rotating log file for code-index prune and nightly maintenance",
     )
     missing_root_purge_observations: int = Field(
         default=3,

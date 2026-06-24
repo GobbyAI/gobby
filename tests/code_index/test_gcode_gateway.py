@@ -171,6 +171,10 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
         FakeProcess(stdout=b'{"success": true, "cleared": true}'),
         FakeProcess(stdout=b'{"success": true, "rebuilt": true}'),
         FakeProcess(stdout=b"No stale projects found."),
+        FakeProcess(stdout=b"indexed"),
+        FakeProcess(stdout=b'{"indexed_files": 1}'),
+        FakeProcess(stdout=b"global prune"),
+        FakeProcess(stdout=b"targeted prune"),
     ]
     calls = _patch_subprocess(monkeypatch, processes)
     timeouts: list[float | None] = []
@@ -192,8 +196,16 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
         "success": True,
         "output": "No stale projects found.",
     }
+    maintenance_result = await gateway.maintenance_index(tmp_path, timeout=11)
+    nightly_result = await gateway.nightly_full_reindex(tmp_path, timeout=12)
+    global_prune_result = await gateway.prune_all_projects(timeout=13)
+    targeted_prune_result = await gateway.prune_project_for_maintenance(tmp_path, timeout=14)
 
-    assert timeouts == [7.0, 7.0, 42.0, 42.0, 42.0]
+    assert maintenance_result.success is True
+    assert nightly_result.success is True
+    assert global_prune_result.success is True
+    assert targeted_prune_result.success is True
+    assert timeouts == [7.0, 7.0, 42.0, 42.0, 42.0, 11, 12, 13, 14]
     assert calls[1:] == [
         (
             "/tmp/gcode",
@@ -236,6 +248,35 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             "--format",
             "json",
             "--quiet",
+        ),
+        (
+            "/tmp/gcode",
+            "index",
+            "--project",
+            str(tmp_path),
+            "--quiet",
+        ),
+        (
+            "/tmp/gcode",
+            "index",
+            "--full",
+            "--sync-projections",
+            "--project",
+            str(tmp_path),
+            "--format",
+            "json",
+        ),
+        (
+            "/tmp/gcode",
+            "prune",
+            "--force",
+        ),
+        (
+            "/tmp/gcode",
+            "prune",
+            "--force",
+            "--project",
+            str(tmp_path),
         ),
     ]
 

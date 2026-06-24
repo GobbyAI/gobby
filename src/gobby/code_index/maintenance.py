@@ -16,7 +16,6 @@ from gobby.code_index.gcode_gateway import (
     GcodeProjectNotFoundError,
     _classify_gcode_command_error,
 )
-from gobby.utils.native_bin import resolve_native_bin
 
 if TYPE_CHECKING:
     from gobby.code_index.context import CodeIndexContext
@@ -30,7 +29,7 @@ _SUMMARY_DB_WRITE_CONCURRENCY = 4
 async def code_index_maintenance_loop(
     context: CodeIndexContext,
     shutdown_flag: asyncio.Event | None = None,
-    interval: int = 300,
+    interval: int = 3600,
     summarizer: SymbolSummarizer | None = None,
     symbol_summary_batch_size: int = 20,
 ) -> None:
@@ -80,16 +79,17 @@ async def _run_maintenance(
     symbol_summary_batch_size: int = 20,
     missing_root_observations: dict[str, int] | None = None,
 ) -> None:
-    """Single maintenance pass: re-index via gcode, recover unsynced files, generate summaries."""
+    """Single maintenance pass: re-index via gcode and generate summaries."""
     if missing_root_observations is None:
         missing_root_observations = {}
 
     await _retry_pending_projection_cleanups(context)
     projects = await context.run_db(context.storage.list_indexed_projects)
-    gcode_bin = await asyncio.to_thread(resolve_native_bin, "gcode")
+    gcode_gateway = context.gcode_gateway
+    index_timeout = getattr(context.config, "maintenance_index_timeout_seconds", 120)
 
-    if gcode_bin is None:
-        logger.warning("gcode not installed — skipping maintenance index. Run `gobby install`.")
+    if gcode_gateway is None:
+        logger.warning("gcode unavailable — skipping maintenance index. Run `gobby install`.")
 
     active_project_ids = {str(project.id) for project in projects}
     for stale_project_id in set(missing_root_observations) - active_project_ids:
@@ -119,54 +119,27 @@ async def _run_maintenance(
 
         missing_root_observations.pop(project_id, None)
 
-        if gcode_bin is not None:
-            proc: asyncio.subprocess.Process | None = None
+        if gcode_gateway is not None:
             purge_project = False
             try:
-                command = [
-                    gcode_bin,
-                    "index",
-                    "--project",
-                    str(root),
-                    "--quiet",
-                    "--sync-projections",
-                ]
-                proc = await asyncio.create_subprocess_exec(
-                    *command,
-                    stdout=asyncio.subprocess.DEVNULL,
-                    stderr=asyncio.subprocess.PIPE,
-                )
-                _, stderr = await asyncio.wait_for(proc.communicate(), timeout=120)
-                if proc.returncode != 0:
-                    detail = stderr.decode(errors="replace").strip() if stderr else "<no stderr>"
-                    error = _classify_gcode_command_error(
-                        command,
-                        proc.returncode or 1,
-                        detail,
-                    )
-                    if isinstance(error, GcodeProjectNotFoundError):
-                        purge_project = True
+                result = await gcode_gateway.maintenance_index(root, timeout=index_timeout)
+                if not result.success:
+                    detail = result.stderr.strip() or result.stdout.strip() or "<no output>"
+                    if result.timed_out:
+                        logger.warning(f"Maintenance reindex timed out for {project.id}")
                     else:
-                        logger.warning(
-                            f"Maintenance reindex failed for {project.id} "
-                            f"(exit code {proc.returncode}): {detail}"
+                        error = _classify_gcode_command_error(
+                            result.command,
+                            result.returncode or 1,
+                            detail,
                         )
-            except asyncio.CancelledError:
-                if proc is not None:
-                    try:
-                        proc.kill()
-                        await proc.wait()
-                    except ProcessLookupError:
-                        pass
-                raise
-            except TimeoutError:
-                if proc is not None:
-                    try:
-                        proc.kill()
-                        await proc.wait()
-                    except ProcessLookupError:
-                        pass
-                logger.warning(f"Maintenance reindex timed out for {project.id}")
+                        if isinstance(error, GcodeProjectNotFoundError):
+                            purge_project = True
+                        else:
+                            logger.warning(
+                                f"Maintenance reindex failed for {project.id} "
+                                f"(exit code {result.returncode}): {detail}"
+                            )
             except Exception as e:
                 logger.warning(
                     "Maintenance reindex failed for %s: %s", project.id, e, exc_info=True
@@ -182,8 +155,6 @@ async def _run_maintenance(
                 )
                 continue
 
-        await _reconcile_orphan_files(context, project.id, root)
-
         # Generate summaries for unsummarized symbols
         if summarizer:
             await _summarize_unsummarized(
@@ -192,89 +163,6 @@ async def _run_maintenance(
                 summarizer,
                 symbol_summary_batch_size,
             )
-
-
-async def _reconcile_orphan_files(
-    context: CodeIndexContext,
-    project_id: str,
-    root: Path,
-) -> None:
-    indexed_files = await context.run_db(context.storage.list_files, project_id)
-    exists_results = await asyncio.gather(
-        *(asyncio.to_thread((root / file.file_path).exists) for file in indexed_files)
-    )
-    current_paths = {
-        file.file_path for file, exists in zip(indexed_files, exists_results, strict=True) if exists
-    }
-    orphan_paths = await context.run_db(context.storage.get_orphan_files, project_id, current_paths)
-    if not orphan_paths:
-        return
-
-    cleaned_paths: list[str] = []
-    for file_path in orphan_paths:
-        if context.config.embedding_enabled and context.gcode_gateway is not None:
-            try:
-                result = await context.gcode_gateway.vector_sync_file(root, file_path)
-                if not result.get("success", True):
-                    raise RuntimeError(result.get("error", "gcode vector sync-file failed"))
-            except Exception as e:
-                logger.warning(
-                    "Vector cleanup failed for orphaned code index file %s:%s: %s",
-                    project_id,
-                    file_path,
-                    e,
-                    exc_info=True,
-                )
-                continue
-
-        await context.run_db(context.storage.delete_imports_for_file, project_id, file_path)
-        await context.run_db(context.storage.delete_calls_for_file, project_id, file_path)
-        await context.run_db(context.storage.delete_content_chunks_for_file, project_id, file_path)
-        await context.run_db(context.storage.delete_symbols_for_file, project_id, file_path)
-        await context.run_db(context.storage.delete_file, project_id, file_path)
-        cleaned_paths.append(file_path)
-
-    if cleaned_paths:
-        await context.run_db(
-            context.storage.mark_prune_dirty,
-            project_id,
-            str(root),
-            "orphan_files",
-        )
-
-    if not cleaned_paths or not context.config.graph_enabled:
-        return
-
-    try:
-        result = await context.clear_graph(project_id)
-        if not result.get("success", False):
-            error = str(result.get("error", "unknown error"))
-            await context.run_db(
-                context.storage.record_projection_cleanup_failure,
-                project_id,
-                "graph",
-                error,
-            )
-            logger.warning(
-                "Graph cleanup reported failure for orphan files in %s: %s", project_id, error
-            )
-            return
-    except Exception as e:
-        await context.run_db(
-            context.storage.record_projection_cleanup_failure,
-            project_id,
-            "graph",
-            str(e),
-        )
-        logger.warning(
-            "Graph cleanup failed for orphan files in %s: %s",
-            project_id,
-            e,
-            exc_info=True,
-        )
-        return
-
-    await context.run_db(context.storage.reset_graph_sync_for_project, project_id)
 
 
 async def _retry_pending_projection_cleanups(

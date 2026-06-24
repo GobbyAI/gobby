@@ -49,6 +49,13 @@ const OWNED_PATHS: readonly string[] = [
   'code_index.enabled',
   'code_index.auto_index_on_commit',
   'code_index.maintenance_interval_seconds',
+  'code_index.maintenance_index_timeout_seconds',
+  'code_index.nightly_full_reindex_enabled',
+  'code_index.nightly_full_reindex_cron',
+  'code_index.nightly_full_reindex_timezone',
+  'code_index.nightly_full_reindex_timeout_seconds',
+  'code_index.nightly_full_reindex_concurrency',
+  'code_index.maintenance_log_file',
   'code_index.missing_root_purge_observations',
   'code_index.max_file_size_bytes',
   'code_index.exclude_patterns',
@@ -297,6 +304,51 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
         path="code_index.maintenance_interval_seconds"
         label="Maintenance interval (seconds)"
         ariaLabel="Index maintenance interval (seconds)"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="code_index.maintenance_index_timeout_seconds"
+        label="Maintenance index timeout (seconds)"
+        ariaLabel="Maintenance index timeout (seconds)"
+      />
+      <SwitchConfigField
+        fields={fields}
+        path="code_index.nightly_full_reindex_enabled"
+        label="Nightly full reindex"
+        ariaLabel="Nightly full reindex"
+      />
+      <TextConfigField
+        fields={fields}
+        path="code_index.nightly_full_reindex_cron"
+        label="Nightly full reindex cron"
+        ariaLabel="Nightly full reindex cron"
+        placeholder="0 2 * * *"
+      />
+      <TextConfigField
+        fields={fields}
+        path="code_index.nightly_full_reindex_timezone"
+        label="Nightly full reindex timezone"
+        ariaLabel="Nightly full reindex timezone"
+        placeholder="UTC"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="code_index.nightly_full_reindex_timeout_seconds"
+        label="Nightly full reindex timeout (seconds)"
+        ariaLabel="Nightly full reindex timeout (seconds)"
+      />
+      <NumberConfigField
+        fields={fields}
+        path="code_index.nightly_full_reindex_concurrency"
+        label="Nightly full reindex concurrency"
+        ariaLabel="Nightly full reindex concurrency"
+      />
+      <TextConfigField
+        fields={fields}
+        path="code_index.maintenance_log_file"
+        label="Maintenance log file"
+        ariaLabel="Maintenance log file"
+        placeholder="~/.gobby/logs/code-index-maintenance.log"
       />
       <NumberConfigField
         fields={fields}
