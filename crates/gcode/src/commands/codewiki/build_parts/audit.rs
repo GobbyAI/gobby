@@ -287,7 +287,8 @@ fn is_test_gated<'a>(
 }
 
 fn is_test_path(file: &str) -> bool {
-    file.contains("/tests") || file.ends_with("tests.rs") || file.ends_with("test.rs")
+    file.split('/')
+        .any(|segment| matches!(segment, "tests" | "test" | "tests.rs" | "test.rs"))
 }
 
 #[cfg(test)]
@@ -330,5 +331,14 @@ mod tests {
         let back = ["/// deprecated: prefer the new API"];
         let reason = doc_comment_deprecation(&back).expect("doc deprecation");
         assert!(reason.to_ascii_lowercase().contains("prefer the new api"));
+    }
+
+    #[test]
+    fn test_path_requires_whole_segment_or_test_file_suffix() {
+        assert!(is_test_path("crates/foo/tests/api.rs"));
+        assert!(is_test_path("crates/foo/src/tests.rs"));
+        assert!(is_test_path("crates/foo/src/test.rs"));
+        assert!(!is_test_path("crates/foo/contest/api.rs"));
+        assert!(!is_test_path("crates/foo/src/latest.rs"));
     }
 }

@@ -532,6 +532,9 @@ pub(crate) struct BuiltDoc {
     /// Page-type invalidation digest for derived aggregate pages (Leaf H).
     /// `None` for source-file pages that invalidate on source/neighbor hashes.
     pub(crate) invalidation_key: Option<String>,
+    /// True for keyed pages whose digest covers non-source inputs but whose
+    /// provenance source hashes must still match before reuse.
+    pub(crate) invalidation_key_requires_sources: bool,
 }
 
 impl BuiltDoc {
@@ -543,6 +546,7 @@ impl BuiltDoc {
             summary: None,
             neighbors: BTreeSet::new(),
             invalidation_key: None,
+            invalidation_key_requires_sources: false,
         }
     }
 
@@ -561,7 +565,13 @@ impl BuiltDoc {
             summary: None,
             neighbors: BTreeSet::new(),
             invalidation_key: Some(invalidation_key),
+            invalidation_key_requires_sources: false,
         }
+    }
+
+    pub(crate) fn with_source_sensitive_key(mut self) -> Self {
+        self.invalidation_key_requires_sources = true;
+        self
     }
 
     /// Records the cross-file neighbor files this page depends on, builder-style.

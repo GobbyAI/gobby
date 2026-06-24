@@ -317,6 +317,8 @@ pub fn contract() -> CliContract {
                     FlagContract::value("--ai-verify-profile", "PROFILE"),
                     ai_prose_depth_flag(),
                     ai_register_flag(),
+                    FlagContract::value("--edge-limit", "N"),
+                    FlagContract::switch("--include-docs"),
                     FlagContract::switch("--repair-citations"),
                 ],
                 // Two JSON shapes: a generation run-summary, or — under
@@ -335,6 +337,7 @@ pub fn contract() -> CliContract {
                     "modules",
                     "symbols",
                     "ai_enabled",
+                    "degraded_pages",
                     "pages_scanned",
                     "pages_repaired",
                     "citations_repaired",

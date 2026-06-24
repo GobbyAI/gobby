@@ -100,6 +100,23 @@ impl ReusePlan {
         std::fs::read_to_string(target).ok()
     }
 
+    pub(crate) fn reusable_page_keyed_with_sources(
+        &mut self,
+        doc_path: &str,
+        invalidation_key: &str,
+        sources: &BTreeSet<String>,
+    ) -> Option<String> {
+        let entry = self.docs.get(doc_path)?;
+        if entry.invalidation_key.as_deref() != Some(invalidation_key) {
+            return None;
+        }
+        if !self.reusable(doc_path, sources, &BTreeSet::new()) {
+            return None;
+        }
+        let target = safe_doc_path(&self.out_dir, doc_path).ok()?;
+        std::fs::read_to_string(target).ok()
+    }
+
     /// Both the on-disk page and the recorded summary of a reusable doc.
     pub(crate) fn reusable_page_with_summary(
         &mut self,
@@ -155,6 +172,7 @@ impl ReusePlan {
                 summary,
                 neighbors: BTreeSet::new(),
                 invalidation_key: None,
+                invalidation_key_requires_sources: false,
             });
         }
         docs.sort_by(|left, right| left.path.cmp(&right.path));

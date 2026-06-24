@@ -193,7 +193,13 @@ impl<'a> DocSink<'a> {
                     && meta.ai_mode == self.ai_mode
                     && meta.render_version == CODEWIKI_RENDER_VERSION
                     && match &doc.invalidation_key {
-                        Some(key) => meta.invalidation_key.as_deref() == Some(key.as_str()),
+                        Some(key) => {
+                            meta.invalidation_key.as_deref() == Some(key.as_str())
+                                && (!doc.invalidation_key_requires_sources
+                                    || (!source_hashes.is_empty()
+                                        && meta.source_hashes == source_hashes
+                                        && meta.neighbor_hashes == neighbor_hashes))
+                        }
                         None => {
                             !source_hashes.is_empty()
                                 && meta.source_hashes == source_hashes
@@ -210,7 +216,14 @@ impl<'a> DocSink<'a> {
         let since_unchanged = doc.invalidation_key.is_none()
             && !source_hashes.is_empty()
             && target.exists()
-            && previous_meta.is_some()
+            && previous_meta.is_some_and(|meta| {
+                !meta.degraded
+                    && meta.ai_mode == self.ai_mode
+                    && meta.render_version == CODEWIKI_RENDER_VERSION
+                    && source_hash_key_sets_match(&meta.source_hashes, &source_hashes)
+                    && source_hash_key_sets_match(&meta.neighbor_hashes, &neighbor_hashes)
+                    && (doc.summary.is_none() || meta.summary.is_some())
+            })
             && self.since.as_ref().is_some_and(|since| {
                 source_hashes
                     .keys()
@@ -483,6 +496,13 @@ pub(crate) fn source_hashes_for_doc(
         hashes.insert(file, hash);
     }
     Ok(hashes)
+}
+
+fn source_hash_key_sets_match(
+    recorded: &BTreeMap<String, String>,
+    current: &BTreeMap<String, String>,
+) -> bool {
+    recorded.len() == current.len() && current.keys().all(|file| recorded.contains_key(file))
 }
 
 /// Content hashes of a page's cross-file neighbor files (#885, Leaf H). Unlike

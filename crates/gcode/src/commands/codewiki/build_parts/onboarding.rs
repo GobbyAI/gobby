@@ -16,10 +16,10 @@ pub(crate) fn build_onboarding_doc(
     // reading order simply cannot be computed, so the page keeps its Entry
     // Points and omits the reading order without setting `degraded`.
     let reading_order = match graph_availability {
-        CodewikiGraphAvailability::Unavailable => Vec::new(),
-        CodewikiGraphAvailability::Truncated | CodewikiGraphAvailability::Available => {
+        CodewikiGraphAvailability::Available => {
             ranked_onboarding_steps(files, modules, graph_edges)
         }
+        CodewikiGraphAvailability::Truncated | CodewikiGraphAvailability::Unavailable => Vec::new(),
     };
 
     let source_spans = entry_points

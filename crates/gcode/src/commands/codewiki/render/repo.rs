@@ -1,5 +1,6 @@
 use super::super::*;
 use super::{cell_summary, model_degraded_sources};
+use crate::index::hasher;
 
 pub(crate) fn build_repo_doc(
     files: &[FileDoc],
@@ -9,7 +10,7 @@ pub(crate) fn build_repo_doc(
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
-) -> (String, bool) {
+) -> (String, bool, String) {
     let top_modules = modules
         .iter()
         .filter(|module| parent_module(&module.module).is_none())
@@ -44,15 +45,17 @@ pub(crate) fn build_repo_doc(
         .collect::<Vec<_>>();
     let fallback = structural_repo_summary(files.len(), modules.len());
     let source_spans = collect_link_spans(&root_files, &top_modules);
+    let source_files = span_files(&source_spans);
+    let repo_key = repo_audit_link_key(audit_links);
     // The repo overview's provenance rolls up every source file, so it is
-    // reusable only when nothing changed at all; nothing downstream consumes
-    // its summary, so the on-disk page is returned verbatim.
-    if let Some(page) = reuse
-        .as_deref_mut()
-        .and_then(|plan| plan.reusable_page("code/repo.md", &span_files(&source_spans)))
-    {
+    // reusable only when nothing changed at all and the deterministic audit-link
+    // appendix set is the same; nothing downstream consumes its summary, so the
+    // on-disk page is returned verbatim.
+    if let Some(page) = reuse.as_deref_mut().and_then(|plan| {
+        plan.reusable_page_keyed_with_sources("code/repo.md", &repo_key, &source_files)
+    }) {
         progress.emit("reusing repo overview (sources unchanged)");
-        return (page, false);
+        return (page, false, repo_key);
     }
     progress.emit("generating repo overview");
     let sources = repo_source_excerpts(files, leading_chunks);
@@ -79,7 +82,18 @@ pub(crate) fn build_repo_doc(
         &source_spans,
         degraded,
     );
-    (doc, degraded)
+    (doc, degraded, repo_key)
+}
+
+fn repo_audit_link_key(audit_links: &[(&str, &str)]) -> String {
+    let mut key = String::from("repo-audit-links:v1\n");
+    for (path, label) in audit_links {
+        key.push_str(path);
+        key.push('\t');
+        key.push_str(label);
+        key.push('\n');
+    }
+    format!("repo-audit-links:{}", hasher::content_hash(key.as_bytes()))
 }
 
 /// Root-level source excerpts for the repository overview prompt; README-style

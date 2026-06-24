@@ -93,6 +93,7 @@ pub(super) fn render_curated_navigation_docs(
         summary: Some("Curated concept navigation over the code reference.".to_string()),
         neighbors: std::collections::BTreeSet::new(),
         invalidation_key: None,
+        invalidation_key_requires_sources: false,
     });
 
     for concept in &concepts {
@@ -119,6 +120,7 @@ pub(super) fn render_curated_navigation_docs(
             summary: Some(concept.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
             invalidation_key: None,
+            invalidation_key_requires_sources: false,
         });
     }
 
@@ -154,6 +156,7 @@ pub(super) fn render_curated_navigation_docs(
             summary: Some(page.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
             invalidation_key: None,
+            invalidation_key_requires_sources: false,
         });
     }
 
@@ -325,8 +328,16 @@ fn append_curated_body(
 /// line is removed; `##`+ subsections and bodies that do not open with a heading
 /// are returned unchanged.
 fn strip_leading_model_h1(body: &str) -> &str {
-    // Ignore blank lines before the first content line.
-    let trimmed = body.trim_start_matches(['\n', '\r']);
+    // Ignore fully blank lines before the first content line, including lines
+    // containing only spaces or tabs.
+    let mut trimmed = body;
+    while let Some(line_end) = trimmed.find('\n') {
+        let line = trimmed[..line_end].trim_end_matches('\r');
+        if !line.trim_matches([' ', '\t']).is_empty() {
+            break;
+        }
+        trimmed = &trimmed[line_end + 1..];
+    }
     let indent = trimmed.len() - trimmed.trim_start_matches(' ').len();
     if indent > 3 {
         return body;
@@ -418,6 +429,14 @@ mod tests {
     #[test]
     fn strips_a_leading_h1_after_blank_lines() {
         assert_eq!(strip_leading_model_h1("\n\n# Title\n\nBody.\n"), "Body.\n");
+    }
+
+    #[test]
+    fn strips_a_leading_h1_after_whitespace_only_blank_lines() {
+        assert_eq!(
+            strip_leading_model_h1("  \n\t\n# Title\n\nBody.\n"),
+            "Body.\n"
+        );
     }
 
     #[test]

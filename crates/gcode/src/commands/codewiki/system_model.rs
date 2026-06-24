@@ -521,11 +521,20 @@ fn toolchain_boundaries(
         let has_documents_feature = feature_keys_by_crate
             .get(crate_name)
             .is_some_and(|keys| keys.contains("documents"));
-        let has_pdf_dep = PDF_DEPS.iter().any(|dep| deps.contains(*dep));
-        if has_documents_feature || has_pdf_dep {
+        let pdf_deps = PDF_DEPS
+            .iter()
+            .filter(|dep| deps.contains(**dep))
+            .copied()
+            .collect::<Vec<_>>();
+        if has_documents_feature {
             out.push((
                 ServiceKind::DocumentToolchain,
                 format!("{crate_name} (feature: documents)"),
+            ));
+        } else if !pdf_deps.is_empty() {
+            out.push((
+                ServiceKind::DocumentToolchain,
+                format!("{crate_name} (deps: {})", pdf_deps.join(", ")),
             ));
         }
     }
@@ -831,6 +840,24 @@ mod tests {
         assert_eq!(
             docs.pulled_in_by,
             vec!["vault-crate (feature: documents)".to_string()]
+        );
+    }
+
+    #[test]
+    fn pdf_dep_yields_dependency_based_document_toolchain_boundary() {
+        let manifest = "[package]\nname = \"pdf-crate\"\nversion = \"0.1.0\"\n\n[lib]\npath = \"src/lib.rs\"\n\n[dependencies]\npdf-extract = \"0.10\"\n";
+        let (_dir, root) = fixture_workspace(&[("crates/pdf", manifest)]);
+
+        let model = build_system_model(&root);
+        let docs = model
+            .services
+            .iter()
+            .find(|s| s.kind == ServiceKind::DocumentToolchain)
+            .expect("DocumentToolchain boundary present");
+
+        assert_eq!(
+            docs.pulled_in_by,
+            vec!["pdf-crate (deps: pdf-extract)".to_string()]
         );
     }
 

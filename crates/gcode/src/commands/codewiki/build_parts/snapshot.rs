@@ -60,10 +60,11 @@ pub(crate) fn build_codewiki_index_snapshot(
     // computed (used for incremental change detection); it is informational and
     // never degrades the changes page, so no graph marker is recorded here.
     let graph_neighborhoods = match input.graph_availability {
-        CodewikiGraphAvailability::Available | CodewikiGraphAvailability::Truncated => Some(
-            graph_neighborhood_fingerprints(&symbols, &input.graph_edges),
-        ),
-        CodewikiGraphAvailability::Unavailable => None,
+        CodewikiGraphAvailability::Available => Some(graph_neighborhood_fingerprints(
+            &symbols,
+            &input.graph_edges,
+        )),
+        CodewikiGraphAvailability::Truncated | CodewikiGraphAvailability::Unavailable => None,
     };
 
     Ok(CodewikiIndexSnapshot {

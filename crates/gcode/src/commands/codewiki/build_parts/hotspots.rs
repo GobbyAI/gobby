@@ -11,7 +11,7 @@ pub(crate) fn build_hotspots_doc(
     // page. When the graph is unavailable the centrality analytics simply
     // cannot run, so the page omits its findings (the renderer prints a plain
     // "no hotspots" note) without setting `degraded`.
-    if graph_availability == CodewikiGraphAvailability::Unavailable {
+    if graph_availability != CodewikiGraphAvailability::Available {
         return HotspotsDoc {
             source_spans: Vec::new(),
             hotspots: Vec::new(),

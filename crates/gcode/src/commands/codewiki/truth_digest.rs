@@ -52,7 +52,7 @@ pub(crate) fn build_truth_digest(
         .iter()
         .map(|entry| (entry.service.clone(), entry.adapter_module.clone()))
         .collect::<BTreeMap<_, _>>();
-    let stack_authority = if stack.is_empty() {
+    let stack_authority = if stack.is_empty() || !system_model.notes.is_empty() {
         STACK_AUTHORITY_PARTIAL
     } else {
         STACK_AUTHORITY_COMPLETE

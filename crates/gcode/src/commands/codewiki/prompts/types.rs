@@ -4,6 +4,7 @@
 /// [`ChildSummary`] alone carries no location, so the content pass would have
 /// nothing real to cite; these rows give the model concrete anchors to ground
 /// prose against (review #4).
+#[derive(Debug, Clone)]
 pub struct PageEvidenceRow {
     pub name: String,
     pub kind: String,

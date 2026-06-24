@@ -159,24 +159,26 @@ pub(crate) fn sync_session_transcript_archives(
                     });
                     continue;
                 }
-                if let Err(error) = supersede_session_page(vault_root, &external_id, &content_hash)
-                {
-                    failed.push(SessionArchiveFailure::from_wiki_error(&path, error));
-                    continue;
-                }
                 let snapshot = SessionWikiFileSnapshot {
-                    external_id,
+                    external_id: external_id.clone(),
                     path: path.clone(),
                     fetched_at: fetched_at.to_string(),
                     bytes,
                 };
                 match ingest_session_wiki_file_without_index(vault_root, snapshot) {
                     Ok(result) => {
+                        let archive_path = path.clone();
                         known_session_hashes.insert(result.record.content_hash.clone());
                         accepted.push(AcceptedSessionArchive {
                             archive_path: path,
                             result,
                         });
+                        if let Err(error) =
+                            supersede_session_page(vault_root, &external_id, &content_hash)
+                        {
+                            failed
+                                .push(SessionArchiveFailure::from_wiki_error(&archive_path, error));
+                        }
                     }
                     Err(error) => failed.push(SessionArchiveFailure::from_wiki_error(&path, error)),
                 }
@@ -214,11 +216,6 @@ pub(crate) fn sync_session_transcript_archives(
                 // so a later synthesis (or re-run) supersedes this page. `file_name`
                 // still seeds the title and the `source_archive` provenance field.
                 let external_id = external_id.unwrap_or_else(|| file_name.clone());
-                if let Err(error) = supersede_session_page(vault_root, &external_id, &content_hash)
-                {
-                    failed.push(SessionArchiveFailure::from_wiki_error(&path, error));
-                    continue;
-                }
                 let snapshot = SessionFileSnapshot {
                     location: format!("session:{external_id}"),
                     file_name,
@@ -228,11 +225,18 @@ pub(crate) fn sync_session_transcript_archives(
                 };
                 match ingest_session_file_without_index(vault_root, snapshot) {
                     Ok(result) => {
+                        let archive_path = path.clone();
                         known_session_hashes.insert(result.record.content_hash.clone());
                         accepted.push(AcceptedSessionArchive {
                             archive_path: path,
                             result,
                         });
+                        if let Err(error) =
+                            supersede_session_page(vault_root, &external_id, &content_hash)
+                        {
+                            failed
+                                .push(SessionArchiveFailure::from_wiki_error(&archive_path, error));
+                        }
                     }
                     Err(error) => failed.push(SessionArchiveFailure::from_wiki_error(&path, error)),
                 }
@@ -421,6 +425,7 @@ mod tests {
     use super::*;
     use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef};
     use crate::store::MemoryWikiStore;
+    use crate::support::text::slugify_with_options;
 
     #[test]
     fn sync_session_archives_ingests_gzip_and_indexes_once() {
@@ -590,6 +595,16 @@ mod tests {
         let path = wiki_dir.join(format!("{external_id}.md"));
         fs::write(&path, page).expect("write session wiki");
         path
+    }
+
+    fn source_id_for_test(canonical_location: &str, content_hash: &str) -> String {
+        let hash_prefix = &content_hash[..content_hash.len().min(16)];
+        let slug = slugify_with_options(canonical_location, None, Some(48));
+        if slug.is_empty() {
+            format!("src-{hash_prefix}")
+        } else {
+            format!("src-{hash_prefix}-{slug}")
+        }
     }
 
     #[test]
@@ -809,6 +824,60 @@ mod tests {
             .collect();
         assert_eq!(sessions.len(), 1, "exactly one page per session");
         assert_eq!(sessions[0].id, new_id);
+    }
+
+    #[test]
+    fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let vault = temp.path();
+        let wiki_dir = vault.join("session_wiki");
+        fs::create_dir(&wiki_dir).expect("wiki dir");
+        let external_id = "fedcba00-1111-2222-3333-444455556666";
+
+        write_session_wiki(&wiki_dir, external_id, "## Summary\n\nFirst revision.\n");
+        let mut store = MemoryWikiStore::default();
+        let first = sync_session_transcript_archives(
+            vault,
+            &mut store,
+            &vault.join("missing-archives"),
+            &wiki_dir,
+            None,
+            "2026-06-24T00:00:00Z",
+        )
+        .expect("first sync");
+        assert_eq!(first.accepted.len(), 1);
+        let old_id = first.accepted[0].result.record.id.clone();
+        let old_derived = vault
+            .join("knowledge")
+            .join("sources")
+            .join(format!("{old_id}.md"));
+        assert!(old_derived.exists());
+
+        let second_path =
+            write_session_wiki(&wiki_dir, external_id, "## Summary\n\nSecond revision.\n");
+        let second_bytes = fs::read(&second_path).expect("second wiki bytes");
+        let second_hash = gobby_core::indexing::content_hash(&second_bytes);
+        let new_id = source_id_for_test(&format!("session:{external_id}"), &second_hash);
+        let blocking_raw = vault.join("raw").join(format!("{new_id}.md"));
+        fs::create_dir(blocking_raw).expect("blocking raw dir");
+
+        let mut store = MemoryWikiStore::default();
+        let second = sync_session_transcript_archives(
+            vault,
+            &mut store,
+            &vault.join("missing-archives"),
+            &wiki_dir,
+            None,
+            "2026-06-24T01:00:00Z",
+        )
+        .expect("second sync");
+
+        assert_eq!(second.accepted.len(), 0);
+        assert_eq!(second.failed.len(), 1);
+        assert!(
+            old_derived.exists(),
+            "old derived page must survive failed replacement"
+        );
     }
 
     #[test]

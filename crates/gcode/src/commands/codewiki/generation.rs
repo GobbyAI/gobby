@@ -1,19 +1,21 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::fmt::Write as _;
 use std::path::Path;
 
 use crate::index::hasher;
 use crate::models::Symbol;
 
 use super::{
-    AiDepth, AuditContext, BuiltDoc, CodewikiInput, CodewikiProgress, DocPruneScope,
-    FeatureCatalogDoc, FileDocPosition, OwnershipMeta, OwnershipOptions, ReusePlan, SystemModel,
-    TextGenerator, TextVerifier, build_architecture_doc, build_curated_navigation_docs,
-    build_deprecations_doc, build_file_doc, build_hotspots_doc, build_infrastructure_doc,
-    build_module_docs_with_filter, build_onboarding_doc, build_ownership_doc, build_repo_doc,
-    cluster, cluster_file_modules, file_doc_path, is_core_file, module_doc_path, module_for_file,
-    relationship_facts_for_file, render_architecture_doc, render_deprecations_doc,
-    render_feature_catalog_doc, render_file_doc, render_hotspots_doc, render_infrastructure_doc,
-    render_module_doc, render_onboarding_doc, span_files,
+    AiDepth, AuditContext, BuiltDoc, CodewikiGraphEdge, CodewikiGraphEdgeKind, CodewikiInput,
+    CodewikiProgress, DocPruneScope, FeatureCatalogDoc, FileDoc, FileDocPosition, LeadingChunk,
+    ModuleDoc, OwnershipMeta, OwnershipOptions, ReusePlan, SourceSpan, SystemModel, TextGenerator,
+    TextVerifier, build_architecture_doc, build_curated_navigation_docs, build_deprecations_doc,
+    build_file_doc, build_hotspots_doc, build_infrastructure_doc, build_module_docs_with_filter,
+    build_onboarding_doc, build_ownership_doc, build_repo_doc, cluster, cluster_file_modules,
+    file_doc_path, is_core_file, module_doc_path, module_for_file, relationship_facts_for_file,
+    render_architecture_doc, render_deprecations_doc, render_feature_catalog_doc, render_file_doc,
+    render_hotspots_doc, render_infrastructure_doc, render_module_doc, render_onboarding_doc,
+    span_files,
 };
 
 pub fn generate_hierarchical_docs(
@@ -308,6 +310,7 @@ pub(crate) fn generate_hierarchical_docs_core(
                 summary: Some(file_doc.summary.clone()),
                 neighbors: BTreeSet::new(),
                 invalidation_key: None,
+                invalidation_key_requires_sources: false,
             }
             // Record the cross-file neighbor set so a caller/import-target edit
             // invalidates this page on the next run (#885, Leaf H).
@@ -338,6 +341,7 @@ pub(crate) fn generate_hierarchical_docs_core(
                 // page's provenance — no separate key or neighbor set needed.
                 neighbors: BTreeSet::new(),
                 invalidation_key: None,
+                invalidation_key_requires_sources: false,
             })
         },
     )?;
@@ -365,7 +369,7 @@ pub(crate) fn generate_hierarchical_docs_core(
         feature_catalog.is_some(),
         infrastructure_doc.is_some(),
     );
-    let (repo_doc, repo_degraded) = build_repo_doc(
+    let (repo_doc, repo_degraded, repo_key) = build_repo_doc(
         &file_docs,
         &module_docs,
         &input.leading_chunks,
@@ -374,14 +378,18 @@ pub(crate) fn generate_hierarchical_docs_core(
         reuse,
         progress,
     );
-    emit(BuiltDoc {
-        path: "code/repo.md".to_string(),
-        content: repo_doc,
-        degraded: repo_degraded,
-        summary: None,
-        neighbors: BTreeSet::new(),
-        invalidation_key: None,
-    })?;
+    emit(
+        BuiltDoc {
+            path: "code/repo.md".to_string(),
+            content: repo_doc,
+            degraded: repo_degraded,
+            summary: None,
+            neighbors: BTreeSet::new(),
+            invalidation_key: Some(repo_key),
+            invalidation_key_requires_sources: true,
+        }
+        .with_source_sensitive_key(),
+    )?;
     progress.emit("generating architecture docs");
     // Architecture and infrastructure invalidate on the SystemModel digest, not
     // their source-file set (Leaf H, #893): a function-body edit leaves the
@@ -389,7 +397,15 @@ pub(crate) fn generate_hierarchical_docs_core(
     // unchanged, so the page is kept; a Cargo.toml dependency or feature change
     // shifts the digest and rebuilds it. Test/AI-off entry points pass no model
     // and fall back to the old full source-set reuse.
-    let system_model_key = system_model.map(|model| model.digest());
+    let system_model_key = system_model.map(|model| {
+        architecture_invalidation_key(
+            model,
+            &file_docs,
+            &module_docs,
+            &input.graph_edges,
+            &input.leading_chunks,
+        )
+    });
     let subsystem_names = cluster::subsystem_roots(&files);
     let architecture_sources = span_files(
         &module_docs
@@ -434,6 +450,7 @@ pub(crate) fn generate_hierarchical_docs_core(
                 summary: None,
                 neighbors: BTreeSet::new(),
                 invalidation_key: system_model_key.clone(),
+                invalidation_key_requires_sources: false,
             }
         }
     };
@@ -513,4 +530,100 @@ pub(crate) fn generate_hierarchical_docs_core(
         ))?;
     }
     Ok(())
+}
+
+fn architecture_invalidation_key(
+    system_model: &SystemModel,
+    file_docs: &[FileDoc],
+    module_docs: &[ModuleDoc],
+    graph_edges: &[CodewikiGraphEdge],
+    leading_chunks: &BTreeMap<String, LeadingChunk>,
+) -> String {
+    let mut key = String::from("architecture:v2\n");
+    let _ = writeln!(key, "system={}", system_model.digest());
+
+    for file in file_docs {
+        let _ = writeln!(
+            key,
+            "file\t{}\t{}\t{}",
+            file.path, file.module, file.summary
+        );
+        for span in &file.source_spans {
+            push_span_key(&mut key, "file-span", span);
+        }
+        for component_id in &file.component_ids {
+            let _ = writeln!(key, "file-component\t{}\t{}", file.path, component_id);
+        }
+        for symbol in &file.symbols {
+            let _ = writeln!(
+                key,
+                "symbol\t{}\t{}\t{}\t{}",
+                file.path, symbol.component_label, symbol.component_id, symbol.purpose
+            );
+        }
+    }
+
+    for module in module_docs {
+        let _ = writeln!(key, "module\t{}\t{}", module.module, module.summary);
+        for span in &module.source_spans {
+            push_span_key(&mut key, "module-span", span);
+        }
+        for file in &module.direct_files {
+            let _ = writeln!(
+                key,
+                "module-file\t{}\t{}\t{}",
+                module.module, file.path, file.summary
+            );
+        }
+        for child in &module.child_modules {
+            let _ = writeln!(
+                key,
+                "module-child\t{}\t{}\t{}",
+                module.module, child.module, child.summary
+            );
+        }
+    }
+
+    let mut edges = graph_edges.iter().collect::<Vec<_>>();
+    edges.sort_by(|left, right| {
+        edge_kind_key(&left.kind)
+            .cmp(edge_kind_key(&right.kind))
+            .then_with(|| left.source_component_id.cmp(&right.source_component_id))
+            .then_with(|| left.target_component_id.cmp(&right.target_component_id))
+    });
+    for edge in edges {
+        let _ = writeln!(
+            key,
+            "edge\t{}\t{}\t{}",
+            edge_kind_key(&edge.kind),
+            edge.source_component_id,
+            edge.target_component_id
+        );
+    }
+
+    for (path, chunk) in leading_chunks {
+        let chunk_hash = hasher::content_hash(chunk.content.as_bytes());
+        let _ = writeln!(
+            key,
+            "leading\t{}\t{}\t{}\t{}",
+            path, chunk.line_start, chunk.line_end, chunk_hash
+        );
+    }
+
+    format!("architecture:{}", hasher::content_hash(key.as_bytes()))
+}
+
+fn push_span_key(out: &mut String, prefix: &str, span: &SourceSpan) {
+    let _ = writeln!(
+        out,
+        "{}\t{}\t{}\t{}",
+        prefix, span.file, span.line_start, span.line_end
+    );
+}
+
+fn edge_kind_key(kind: &CodewikiGraphEdgeKind) -> &'static str {
+    match kind {
+        CodewikiGraphEdgeKind::Call => "call",
+        CodewikiGraphEdgeKind::Import => "import",
+    }
 }

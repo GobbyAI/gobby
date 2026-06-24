@@ -66,6 +66,17 @@ fn run_generate(
     out_dir: &Path,
     since: Option<BTreeSet<String>>,
 ) -> Vec<String> {
+    run_generate_with_audit(input, model, None, project_root, out_dir, since)
+}
+
+fn run_generate_with_audit(
+    input: &CodewikiInput,
+    model: Option<&SystemModel>,
+    audit: Option<&AuditContext>,
+    project_root: &Path,
+    out_dir: &Path,
+    since: Option<BTreeSet<String>>,
+) -> Vec<String> {
     let mut reuse_plan =
         ReusePlan::load_with_since(project_root, out_dir, "symbols", since.clone())
             .expect("reuse plan loads");
@@ -82,7 +93,7 @@ fn run_generate(
         None,
         model,
         None,
-        None,
+        audit,
         &mut generate,
         &mut None,
         AiDepth::Symbols,
@@ -202,6 +213,69 @@ fn system_model_change_rewrites_architecture_not_unrelated_files() {
     assert!(
         !second.iter().any(|p| p.starts_with("code/files/")),
         "no source file changed, so file pages must not rebuild: {second:?}"
+    );
+}
+
+#[test]
+fn leading_chunk_change_rewrites_architecture_with_same_system_model() {
+    let project = tempfile::tempdir().expect("project");
+    let out_dir = project.path().join("codewiki");
+    seed_two_crate_sources(project.path());
+    let mut input = two_crate_input();
+    input.leading_chunks.insert(
+        "crates/gcode/src/lib.rs".to_string(),
+        LeadingChunk {
+            content: "first architecture excerpt".to_string(),
+            line_start: 1,
+            line_end: 1,
+        },
+    );
+    let model = workspace_model(false);
+
+    let first = run_generate(&input, Some(&model), project.path(), &out_dir, None);
+    assert!(first.iter().any(|p| p == "code/_architecture.md"));
+
+    input.leading_chunks.insert(
+        "crates/gcode/src/lib.rs".to_string(),
+        LeadingChunk {
+            content: "second architecture excerpt".to_string(),
+            line_start: 1,
+            line_end: 1,
+        },
+    );
+    let second = run_generate(&input, Some(&model), project.path(), &out_dir, None);
+    assert!(
+        second.iter().any(|p| p == "code/_architecture.md"),
+        "architecture prompt input changed, so the page must rebuild: {second:?}"
+    );
+}
+
+#[test]
+fn audit_link_change_rewrites_repo_overview_with_same_sources() {
+    let project = tempfile::tempdir().expect("project");
+    let out_dir = project.path().join("codewiki");
+    seed_two_crate_sources(project.path());
+    let input = two_crate_input();
+    let model = workspace_model(false);
+
+    let first = run_generate(&input, Some(&model), project.path(), &out_dir, None);
+    assert!(first.iter().any(|p| p == "code/repo.md"));
+
+    let audit = AuditContext {
+        deprecations: BTreeMap::new(),
+        tests: BTreeSet::new(),
+    };
+    let second = run_generate_with_audit(
+        &input,
+        Some(&model),
+        Some(&audit),
+        project.path(),
+        &out_dir,
+        None,
+    );
+    assert!(
+        second.iter().any(|p| p == "code/repo.md"),
+        "repo audit-link set changed, so the overview must rebuild: {second:?}"
     );
 }
 

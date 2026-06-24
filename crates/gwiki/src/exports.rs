@@ -1,5 +1,7 @@
 use std::fs;
+use std::io::{Error, ErrorKind};
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::graph::{
     GraphExport, GraphExportNode, GraphExportOptions, WikiGraphFacts, render_graph_report,
@@ -26,6 +28,13 @@ pub struct ExportArtifact {
     pub path: PathBuf,
     pub kind: ExportKind,
     pub bytes_written: usize,
+}
+
+#[derive(Debug)]
+struct StagedExport {
+    artifact: ExportArtifact,
+    temp_path: PathBuf,
+    backup_path: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -144,29 +153,21 @@ pub fn export_graph_artifacts(
         source: error,
     })?;
     let report = render_graph_report(&export);
-    let graph_artifact = write_export(
+    write_export_batch(
         root,
-        ExportRequest {
-            filename: "graph.json".to_string(),
-            kind: ExportKind::Graph,
-            contents: graph_json,
-        },
-    )?;
-    let report_artifact = match write_export(
-        root,
-        ExportRequest {
-            filename: "GRAPH_REPORT.md".to_string(),
-            kind: ExportKind::Report,
-            contents: report,
-        },
-    ) {
-        Ok(artifact) => artifact,
-        Err(error) => {
-            let _ = fs::remove_file(&graph_artifact.path);
-            return Err(error);
-        }
-    };
-    Ok(vec![graph_artifact, report_artifact])
+        vec![
+            ExportRequest {
+                filename: "graph.json".to_string(),
+                kind: ExportKind::Graph,
+                contents: graph_json,
+            },
+            ExportRequest {
+                filename: "GRAPH_REPORT.md".to_string(),
+                kind: ExportKind::Report,
+                contents: report,
+            },
+        ],
+    )
 }
 
 fn graph_export_error(error: crate::graph::analytics::GraphAnalyticsError) -> WikiError {
@@ -179,8 +180,8 @@ fn graph_export_error(error: crate::graph::analytics::GraphAnalyticsError) -> Wi
 /// Emit the static agent-context exports: `graph.jsonld` (schema.org JSON-LD of
 /// the vault document graph), `llms.txt` (portable index), and `llms-full.txt`
 /// (portable content bundle). Reuses the existing `export_graph` vault export
-/// and the vault Markdown on disk. On any write failure, already-written
-/// artifacts are removed so the export is all-or-nothing.
+/// and the vault Markdown on disk. Files are staged first, then committed as a
+/// batch so a failed export preserves existing targets.
 pub fn export_agent_artifacts(
     root: &Path,
     facts: &WikiGraphFacts,
@@ -192,59 +193,26 @@ pub fn export_agent_artifacts(
     let llms_index = render_llms_index(&export);
     let llms_full = render_llms_full(root, &export);
 
-    let mut artifacts = Vec::new();
-    write_agent_artifact(
+    write_export_batch(
         root,
-        "graph.jsonld",
-        ExportKind::Graph,
-        jsonld,
-        &mut artifacts,
-    )?;
-    write_agent_artifact(
-        root,
-        "llms.txt",
-        ExportKind::Report,
-        llms_index,
-        &mut artifacts,
-    )?;
-    write_agent_artifact(
-        root,
-        "llms-full.txt",
-        ExportKind::Bundle,
-        llms_full,
-        &mut artifacts,
-    )?;
-    Ok(artifacts)
-}
-
-/// Write one agent artifact, rolling back previously-written artifacts in this
-/// batch if the write fails.
-fn write_agent_artifact(
-    root: &Path,
-    filename: &str,
-    kind: ExportKind,
-    contents: String,
-    written: &mut Vec<ExportArtifact>,
-) -> Result<(), WikiError> {
-    match write_export(
-        root,
-        ExportRequest {
-            filename: filename.to_string(),
-            kind,
-            contents,
-        },
-    ) {
-        Ok(artifact) => {
-            written.push(artifact);
-            Ok(())
-        }
-        Err(error) => {
-            for artifact in written.iter() {
-                let _ = fs::remove_file(&artifact.path);
-            }
-            Err(error)
-        }
-    }
+        vec![
+            ExportRequest {
+                filename: "graph.jsonld".to_string(),
+                kind: ExportKind::Graph,
+                contents: jsonld,
+            },
+            ExportRequest {
+                filename: "llms.txt".to_string(),
+                kind: ExportKind::Report,
+                contents: llms_index,
+            },
+            ExportRequest {
+                filename: "llms-full.txt".to_string(),
+                kind: ExportKind::Bundle,
+                contents: llms_full,
+            },
+        ],
+    )
 }
 
 /// Render schema.org JSON-LD describing the gwiki **vault document graph**
@@ -460,6 +428,36 @@ pub fn export_markdown_report(
 }
 
 pub fn write_export(root: &Path, request: ExportRequest) -> Result<ExportArtifact, WikiError> {
+    let mut artifacts = write_export_batch(root, vec![request])?;
+    Ok(artifacts.remove(0))
+}
+
+fn write_export_batch(
+    root: &Path,
+    requests: Vec<ExportRequest>,
+) -> Result<Vec<ExportArtifact>, WikiError> {
+    let mut staged = Vec::with_capacity(requests.len());
+    for (sequence, request) in requests.into_iter().enumerate() {
+        match stage_export(root, request, sequence) {
+            Ok(export) => staged.push(export),
+            Err(error) => {
+                cleanup_staged_exports(&staged);
+                return Err(error);
+            }
+        }
+    }
+    if let Err(error) = commit_staged_exports(&mut staged) {
+        rollback_staged_exports(&staged);
+        return Err(error);
+    }
+    Ok(staged.into_iter().map(|export| export.artifact).collect())
+}
+
+fn stage_export(
+    root: &Path,
+    request: ExportRequest,
+    sequence: usize,
+) -> Result<StagedExport, WikiError> {
     let relative_path = export_relative_path(&request.filename)?;
     let path = root.join("outputs").join(relative_path);
     if let Some(parent) = path.parent() {
@@ -469,18 +467,100 @@ pub fn write_export(root: &Path, request: ExportRequest) -> Result<ExportArtifac
             source: error,
         })?;
     }
+    if path.is_dir() {
+        return Err(WikiError::Io {
+            action: "write export",
+            path: Some(path),
+            source: Error::new(ErrorKind::AlreadyExists, "export target is a directory"),
+        });
+    }
 
-    std::fs::write(&path, &request.contents).map_err(|error| WikiError::Io {
+    let temp_path = export_sidecar_path(&path, "tmp", sequence);
+    std::fs::write(&temp_path, &request.contents).map_err(|error| WikiError::Io {
         action: "write export",
-        path: Some(path.clone()),
+        path: Some(temp_path.clone()),
         source: error,
     })?;
 
-    Ok(ExportArtifact {
-        path,
-        kind: request.kind,
-        bytes_written: request.contents.len(),
+    Ok(StagedExport {
+        artifact: ExportArtifact {
+            path,
+            kind: request.kind,
+            bytes_written: request.contents.len(),
+        },
+        temp_path,
+        backup_path: None,
     })
+}
+
+fn commit_staged_exports(staged: &mut [StagedExport]) -> Result<(), WikiError> {
+    for (sequence, export) in staged.iter_mut().enumerate() {
+        let target = &export.artifact.path;
+        if target.exists() {
+            if target.is_dir() {
+                return Err(WikiError::Io {
+                    action: "write export",
+                    path: Some(target.clone()),
+                    source: Error::new(ErrorKind::AlreadyExists, "export target is a directory"),
+                });
+            }
+            let backup_path = export_sidecar_path(target, "backup", sequence);
+            fs::rename(target, &backup_path).map_err(|error| WikiError::Io {
+                action: "backup export",
+                path: Some(target.clone()),
+                source: error,
+            })?;
+            export.backup_path = Some(backup_path);
+        }
+    }
+
+    for export in staged.iter() {
+        fs::rename(&export.temp_path, &export.artifact.path).map_err(|error| WikiError::Io {
+            action: "commit export",
+            path: Some(export.artifact.path.clone()),
+            source: error,
+        })?;
+    }
+
+    for export in staged.iter() {
+        if let Some(backup_path) = &export.backup_path {
+            let _ = fs::remove_file(backup_path);
+        }
+    }
+    Ok(())
+}
+
+fn cleanup_staged_exports(staged: &[StagedExport]) {
+    for export in staged {
+        let _ = fs::remove_file(&export.temp_path);
+    }
+}
+
+fn rollback_staged_exports(staged: &[StagedExport]) {
+    for export in staged {
+        let _ = fs::remove_file(&export.temp_path);
+        if export.backup_path.is_none() {
+            let _ = fs::remove_file(&export.artifact.path);
+        }
+    }
+    for export in staged {
+        if let Some(backup_path) = &export.backup_path {
+            let _ = fs::remove_file(&export.artifact.path);
+            let _ = fs::rename(backup_path, &export.artifact.path);
+        }
+    }
+}
+
+fn export_sidecar_path(path: &Path, kind: &str, sequence: usize) -> PathBuf {
+    let unique = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_nanos())
+        .unwrap_or_default();
+    let file_name = path
+        .file_name()
+        .map(|name| name.to_string_lossy())
+        .unwrap_or_else(|| "export".into());
+    path.with_file_name(format!(".{file_name}.{kind}.{unique}.{sequence}"))
 }
 
 fn export_relative_path(filename: &str) -> Result<PathBuf, WikiError> {
@@ -727,6 +807,7 @@ mod tests {
         let root = temp.path();
         let outputs = root.join("outputs");
         fs::create_dir_all(&outputs).expect("outputs dir");
+        fs::write(outputs.join("graph.json"), "existing graph").expect("existing graph");
         fs::create_dir(outputs.join("GRAPH_REPORT.md")).expect("blocking dir");
 
         let error = export_graph_artifacts(
@@ -737,7 +818,10 @@ mod tests {
         .expect_err("report path directory should fail");
 
         assert!(error.to_string().contains("GRAPH_REPORT.md"));
-        assert!(!outputs.join("graph.json").exists());
+        assert_eq!(
+            fs::read_to_string(outputs.join("graph.json")).expect("preserved graph"),
+            "existing graph"
+        );
     }
 
     #[test]
@@ -926,6 +1010,7 @@ mod tests {
         let root = temp.path();
         let outputs = root.join("outputs");
         fs::create_dir_all(&outputs).expect("outputs dir");
+        fs::write(outputs.join("graph.jsonld"), "existing graph").expect("existing graph");
         // A directory at the llms.txt path forces the second write to fail.
         fs::create_dir(outputs.join("llms.txt")).expect("blocking dir");
 
@@ -937,7 +1022,9 @@ mod tests {
         .expect_err("blocked llms.txt path should fail");
 
         assert!(error.to_string().contains("llms.txt"));
-        // The earlier graph.jsonld artifact is rolled back.
-        assert!(!outputs.join("graph.jsonld").exists());
+        assert_eq!(
+            fs::read_to_string(outputs.join("graph.jsonld")).expect("preserved graph"),
+            "existing graph"
+        );
     }
 }
