@@ -1,4 +1,4 @@
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
@@ -25,8 +25,8 @@ use redaction::{redact_session_markdown, redact_session_text};
 
 use crate::WikiError;
 use crate::ingest::{
-    IngestResult, MetadataValue, markdown_metadata_values, markdown_title, single_line,
-    text_from_utf8_lossy, write_raw_markdown,
+    IngestResult, MetadataValue, markdown_metadata_values, markdown_title, path_to_string,
+    single_line, text_from_utf8_lossy, write_raw_markdown,
 };
 use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef, SourceKind, SourceManifest};
 
@@ -36,6 +36,28 @@ pub struct SessionFileSnapshot {
     pub file_name: String,
     pub fetched_at: String,
     pub path: PathBuf,
+    pub bytes: Vec<u8>,
+}
+
+/// A daemon-synthesized session wiki `.md` file pulled from the wiki directory.
+///
+/// Unlike [`SessionFileSnapshot`] (raw transcript archives), this carries the
+/// already-synthesized knowledge page. Ingest parses and strips the daemon
+/// frontmatter, then rewrites a gwiki-owned page keyed on the canonical
+/// `session:{external_id}` location shared with the raw fallback so a fresh
+/// synthesis can supersede a previously raw-parsed page.
+// The sole caller (sync-sessions synthesis-first loop) lands in #926 (B.3);
+// allow dead_code on this synthesis-ingest surface until then.
+#[allow(dead_code)]
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionWikiFileSnapshot {
+    /// Canonical session external id (the `.md` filename stem).
+    pub external_id: String,
+    /// Original daemon mirror path (e.g. `~/.gobby/session_wiki/{external_id}.md`).
+    pub path: PathBuf,
+    /// Timestamp this snapshot was read.
+    pub fetched_at: String,
+    /// Raw bytes of the daemon `.md` file (frontmatter + synthesized body).
     pub bytes: Vec<u8>,
 }
 
@@ -102,6 +124,66 @@ pub(crate) fn ingest_session_file_without_index(
         },
     )?;
     let markdown = render_session_markdown(&snapshot, &parsed, &title, &record.content_hash);
+    let markdown = redact_session_markdown(&markdown);
+    let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
+    write_session_derived_markdown(vault_root, &record, &markdown)?;
+
+    Ok(IngestResult {
+        record,
+        raw_path,
+        asset_path: None,
+    })
+}
+
+/// Ingest a daemon-synthesized session wiki page into the vault.
+///
+/// Parallel to [`ingest_session_file_without_index`] but sourced from the
+/// daemon's `session_wiki/{external_id}.md` synthesis rather than a raw
+/// transcript archive: the daemon frontmatter is parsed and stripped, the
+/// session is registered under the canonical `session:{external_id}` location,
+/// and a single gwiki-owned frontmatter block plus the synthesized body is
+/// written to `knowledge/sources/{id}.md`. The body is re-redacted defensively
+/// before write — the synthesis can lift secrets from the digest verbatim.
+#[allow(dead_code)] // sole caller lands in #926 (B.3)
+pub(crate) fn ingest_session_wiki_file_without_index(
+    vault_root: &Path,
+    snapshot: SessionWikiFileSnapshot,
+) -> Result<IngestResult, WikiError> {
+    let text = text_from_utf8_lossy(&snapshot.bytes);
+    let page = DaemonWikiPage::parse(&text);
+
+    // Canonical, content-stable session location shared with the raw fallback,
+    // so a fresh synthesis can supersede a previously raw-parsed page.
+    let location = format!("session:{}", snapshot.external_id);
+    let title = page
+        .field("title")
+        .map(|value| single_line(value))
+        .and_then(|value| non_empty_string(&value))
+        .unwrap_or_else(|| format!("Session {}", snapshot.external_id));
+    let source_title = redact_session_text(&title);
+
+    let record = SourceManifest::register_borrowed(
+        vault_root,
+        SourceDraftRef {
+            location: location.clone(),
+            kind: SourceKind::Session,
+            fetched_at: snapshot.fetched_at.clone(),
+            content: &snapshot.bytes,
+            title: Some(source_title.clone()),
+            citation: Some(location.clone()),
+            license: None,
+            ingestion_method: IngestionMethod::Manual,
+            compile_status: CompileStatus::Pending,
+        },
+    )?;
+
+    let markdown = render_session_wiki_markdown(
+        &snapshot,
+        &page,
+        &location,
+        &source_title,
+        &record.content_hash,
+    );
     let markdown = redact_session_markdown(&markdown);
     let raw_path = write_raw_markdown(vault_root, &record, &markdown)?;
     write_session_derived_markdown(vault_root, &record, &markdown)?;
@@ -672,6 +754,155 @@ fn render_session_markdown(
     markdown
 }
 
+/// Parsed daemon-owned wiki frontmatter plus the synthesized body.
+///
+/// The daemon writes one leading `---`-fenced YAML frontmatter block followed
+/// by the knowledge body; this splits the two and exposes the simple
+/// `key: value` frontmatter fields gwiki carries forward (`title`, `source`,
+/// `model`, `tags`). Anything malformed degrades to "treat the whole document
+/// as body" so a missing fence never drops content.
+#[allow(dead_code)] // exercised by the ingest path wired in #926 (B.3)
+struct DaemonWikiPage {
+    frontmatter: BTreeMap<String, String>,
+    body: String,
+}
+
+#[allow(dead_code)] // exercised by the ingest path wired in #926 (B.3)
+impl DaemonWikiPage {
+    fn parse(text: &str) -> Self {
+        let text = text.strip_prefix('\u{feff}').unwrap_or(text);
+        let mut lines = text.lines();
+        if lines.next().map(str::trim_end) != Some("---") {
+            return Self::body_only(text);
+        }
+
+        let mut frontmatter = BTreeMap::new();
+        let mut closed = false;
+        let mut body_lines: Vec<&str> = Vec::new();
+        for line in lines {
+            if !closed {
+                if line.trim_end() == "---" {
+                    closed = true;
+                    continue;
+                }
+                if let Some((key, value)) = line.split_once(':') {
+                    let key = key.trim();
+                    if !key.is_empty() {
+                        frontmatter.insert(key.to_string(), unquote_frontmatter_value(value));
+                    }
+                }
+                continue;
+            }
+            body_lines.push(line);
+        }
+
+        if !closed {
+            // No closing fence: keep the whole document as body, defensively.
+            return Self::body_only(text);
+        }
+
+        Self {
+            frontmatter,
+            body: body_lines.join("\n").trim().to_string(),
+        }
+    }
+
+    fn body_only(text: &str) -> Self {
+        Self {
+            frontmatter: BTreeMap::new(),
+            body: text.trim().to_string(),
+        }
+    }
+
+    fn field(&self, key: &str) -> Option<&String> {
+        self.frontmatter.get(key)
+    }
+
+    fn tags(&self) -> Vec<String> {
+        let Some(raw) = self.frontmatter.get("tags") else {
+            return Vec::new();
+        };
+        let trimmed = raw.trim();
+        let inner = trimmed
+            .strip_prefix('[')
+            .and_then(|rest| rest.strip_suffix(']'))
+            .unwrap_or(trimmed);
+        inner
+            .split(',')
+            .map(|tag| tag.trim().trim_matches('"').trim())
+            .filter(|tag| !tag.is_empty())
+            .map(str::to_string)
+            .collect()
+    }
+}
+
+#[allow(dead_code)] // sole caller lands in #926 (B.3)
+fn unquote_frontmatter_value(value: &str) -> String {
+    let value = value.trim();
+    let bytes = value.as_bytes();
+    if bytes.len() >= 2
+        && ((bytes[0] == b'"' && bytes[bytes.len() - 1] == b'"')
+            || (bytes[0] == b'\'' && bytes[bytes.len() - 1] == b'\''))
+    {
+        return value[1..value.len() - 1].to_string();
+    }
+    value.to_string()
+}
+
+#[allow(dead_code)] // sole caller lands in #926 (B.3)
+fn render_session_wiki_markdown(
+    snapshot: &SessionWikiFileSnapshot,
+    page: &DaemonWikiPage,
+    location: &str,
+    title: &str,
+    source_hash: &str,
+) -> String {
+    let source_archive = redact_session_text(&path_to_string(&snapshot.path));
+    let mut fields = vec![
+        (
+            "source_kind",
+            MetadataValue::string(SourceKind::Session.to_string()),
+        ),
+        (
+            "source_location",
+            MetadataValue::string(location.to_string()),
+        ),
+        ("source_archive", MetadataValue::string(source_archive)),
+        (
+            "fetched_at",
+            MetadataValue::string(snapshot.fetched_at.clone()),
+        ),
+        (
+            "source_hash",
+            MetadataValue::string(source_hash.to_string()),
+        ),
+    ];
+    if let Some(session_type) = page
+        .field("source")
+        .and_then(|value| non_empty_string(value))
+    {
+        fields.push(("session_type", MetadataValue::string(session_type)));
+    }
+    if let Some(model) = page
+        .field("model")
+        .and_then(|value| non_empty_string(value))
+    {
+        fields.push(("model", MetadataValue::string(model)));
+    }
+    let tags = page.tags();
+    if !tags.is_empty() {
+        fields.push(("tags", MetadataValue::json(&tags)));
+    }
+
+    let mut markdown = markdown_metadata_values(&fields);
+    markdown.push_str("# ");
+    markdown.push_str(title);
+    markdown.push_str("\n\n");
+    markdown.push_str(page.body.trim());
+    markdown.push('\n');
+    markdown
+}
+
 fn message_heading(role: &str) -> String {
     non_empty_string(&markdown_title(role)).unwrap_or_else(|| "Speaker".to_string())
 }
@@ -747,6 +978,91 @@ mod tests {
         );
         assert!(markdown.contains("is_subagent: true\n"));
         assert!(markdown.contains("gitBranch: dev\n"));
+    }
+
+    #[test]
+    fn session_wiki_ingest_strips_daemon_frontmatter_and_redacts() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let openai_key = format!("{}{}", "sk-proj-", "abcdefghijklmnopqrstuvwxyz123456");
+        let daemon_md = format!(
+            concat!(
+                "---\n",
+                "title: \"Session: abcd1234 — 2026-06-24\"\n",
+                "type: source\n",
+                "tags: [rust, sessions]\n",
+                "date: 2026-06-24\n",
+                "model: claude-opus-4-8\n",
+                "project: proj-1\n",
+                "session_id: sess-1\n",
+                "source: claude\n",
+                "---\n",
+                "\n",
+                "## Summary\n\nWired the synthesis ingest.\n\n",
+                "## Key Quotes\n\n> Token {key} lives at /Users/casey/secret.env\n\n",
+                "## Connections\n\n- [[session-transcript-wiki-fix]]\n"
+            ),
+            key = openai_key
+        );
+        let snapshot = SessionWikiFileSnapshot {
+            external_id: "abcd1234-0000-4000-8000-000000000000".to_string(),
+            path: PathBuf::from(
+                "/Users/josh/.gobby/session_wiki/abcd1234-0000-4000-8000-000000000000.md",
+            ),
+            fetched_at: "2026-06-24T00:00:00Z".to_string(),
+            bytes: daemon_md.into_bytes(),
+        };
+
+        let result =
+            ingest_session_wiki_file_without_index(temp.path(), snapshot).expect("ingest wiki");
+
+        assert_eq!(
+            result.record.location,
+            "session:abcd1234-0000-4000-8000-000000000000"
+        );
+
+        let derived = std::fs::read_to_string(
+            temp.path()
+                .join("knowledge")
+                .join("sources")
+                .join(format!("{}.md", result.record.id)),
+        )
+        .expect("derived markdown");
+
+        // Exactly one frontmatter block: the daemon block was stripped.
+        let fence_lines = derived
+            .lines()
+            .filter(|line| line.trim_end() == "---")
+            .count();
+        assert_eq!(
+            fence_lines, 2,
+            "expected one frontmatter block, got:\n{derived}"
+        );
+        assert!(!derived.contains("type: source"));
+        assert!(!derived.contains("session_id: sess-1"));
+        assert!(!derived.contains("project: proj-1"));
+
+        // gwiki-owned frontmatter.
+        assert!(derived.contains("source_kind: session"));
+        assert!(derived.contains("session:abcd1234-0000-4000-8000-000000000000"));
+        assert!(derived.contains("source_archive:"));
+        assert!(derived.contains("session_type: claude"));
+        assert!(derived.contains("model: claude-opus-4-8"));
+        assert!(derived.contains("tags:"));
+        assert!(derived.contains("rust"));
+
+        // Body kept: H1 title + sections + wikilink, no `## Messages` dump.
+        assert!(derived.contains("# Session: abcd1234"));
+        assert!(derived.contains("## Summary"));
+        assert!(derived.contains("## Connections"));
+        assert!(derived.contains("[[session-transcript-wiki-fix]]"));
+        assert!(!derived.contains("## Messages"));
+
+        // Defensive re-redaction over the synthesized body and the mirror path.
+        assert!(derived.contains("[REDACTED_API_KEY]"));
+        assert!(!derived.contains(&openai_key));
+        assert!(!derived.contains("/Users/casey"));
+        assert!(!derived.contains("/Users/josh"));
+        assert!(derived.contains("[REDACTED_HOME]"));
     }
 
     #[test]
