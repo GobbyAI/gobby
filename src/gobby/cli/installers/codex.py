@@ -20,7 +20,7 @@ import tomlkit
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
-from gobby.agents.trust import seed_gobby_home_trust
+from gobby.agents.trust import seed_cli_trust, seed_gobby_home_trust
 from gobby.cli.utils import get_install_dir
 
 from .hook_commands import config_contains_gobby_hook, rewrite_hook_template_commands
@@ -397,10 +397,10 @@ def _remove_codex_hook_trust_state(config: TOMLDocument, state_keys: set[str]) -
         del config["hooks"]
 
 
-def _install_hooks_json(
-    codex_home: Path, hooks_dir: Path
+def _install_hooks_file(
+    hooks_file: Path, hooks_dir: Path
 ) -> tuple[list[str], list[HookTrustEntry]]:
-    """Load hooks-template.json, substitute $HOOKS_DIR, merge into ~/.codex/hooks.json.
+    """Load hooks-template.json, substitute $HOOKS_DIR, merge into a Codex hooks file.
 
     Returns installed hook type names and Gobby hook trust entries from the
     pre-clean hooks file.
@@ -416,7 +416,6 @@ def _install_hooks_json(
     gobby_hooks_config = json.loads(template_str)
     rewrite_hook_template_commands(gobby_hooks_config, cli_name="codex", hooks_dir=hooks_dir)
 
-    hooks_file = codex_home / "hooks.json"
     existing: dict[str, Any] = {}
     if hooks_file.exists():
         try:
@@ -443,6 +442,13 @@ def _install_hooks_json(
     _atomic_write_json(hooks_file, existing)
 
     return hooks_installed, previous_gobby_trust_entries
+
+
+def _install_hooks_json(
+    codex_home: Path, hooks_dir: Path
+) -> tuple[list[str], list[HookTrustEntry]]:
+    """Load hooks-template.json, substitute $HOOKS_DIR, merge into ~/.codex/hooks.json."""
+    return _install_hooks_file(codex_home / "hooks.json", hooks_dir)
 
 
 def _is_gobby_hook(hook_entry: Any) -> bool:
@@ -597,6 +603,80 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
         logger.warning(f"Failed to strip MCP tool overrides: {strip_result['error']}")
 
     trust_result = seed_gobby_home_trust("codex")
+    result["trust"] = trust_result
+    if trust_result.get("files_written"):
+        result["config_updated"] = True
+
+    result["success"] = True
+    return result
+
+
+def install_codex_project_hooks(project_path: Path) -> dict[str, Any]:
+    """Install project-local Codex hooks for a worktree without global Codex content."""
+    hooks_installed: list[str] = []
+    files_installed: list[str] = []
+    result: dict[str, Any] = {
+        "success": False,
+        "hooks_installed": hooks_installed,
+        "files_installed": files_installed,
+        "config_updated": False,
+        "trust": None,
+        "error": None,
+    }
+
+    codex_home = Path.home() / ".codex"
+    codex_home.mkdir(parents=True, exist_ok=True)
+    hooks_dir = _get_hooks_dir()
+
+    try:
+        files_installed.extend(install_global_hooks())
+    except OSError as e:
+        result["error"] = f"Failed to install global hooks: {e}"
+        return result
+
+    try:
+        project_codex_dir = project_path / ".codex"
+        project_codex_dir.mkdir(parents=True, exist_ok=True)
+        project_hooks_path = project_codex_dir / "hooks.json"
+        installed_hooks, previous_gobby_trust_entries = _install_hooks_file(
+            project_hooks_path,
+            hooks_dir,
+        )
+        hooks_installed.extend(installed_hooks)
+    except (FileNotFoundError, OSError, json.JSONDecodeError) as e:
+        result["error"] = f"Failed to install project hooks.json: {e}"
+        return result
+
+    codex_config_path = codex_home / "config.toml"
+    try:
+        existing_config = ""
+        parsed_config: TOMLDocument = tomlkit.document()
+        if codex_config_path.exists():
+            existing_config = codex_config_path.read_text(encoding="utf-8")
+            parsed_config = _load_toml_config(existing_config)
+        updated_config: TOMLDocument = deepcopy(parsed_config)
+
+        _remove_toml_key(updated_config, "features.codex_hooks")
+        _set_toml_value(updated_config, "features.hooks", True)
+        _ensure_codex_hook_trust_state(
+            updated_config,
+            project_hooks_path,
+            previous_entries=previous_gobby_trust_entries,
+        )
+
+        if updated_config != parsed_config:
+            if codex_config_path.exists():
+                backup_path = codex_config_path.with_suffix(".toml.bak")
+                backup_path.write_text(existing_config, encoding="utf-8")
+
+            _dump_toml_config(codex_config_path, updated_config)
+            result["config_updated"] = True
+
+    except Exception as e:
+        result["error"] = f"Failed to update Codex config: {e}"
+        return result
+
+    trust_result = seed_cli_trust("codex", project_path).as_dict()
     result["trust"] = trust_result
     if trust_result.get("files_written"):
         result["config_updated"] = True

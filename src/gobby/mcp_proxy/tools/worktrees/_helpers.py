@@ -135,9 +135,9 @@ def copy_project_json_to_worktree(
 # Registry: (module_path, function_name, uses_mode_param)
 _PROVIDER_INSTALLERS: dict[str, tuple[str, str, bool]] = {
     "claude": ("gobby.cli.installers.claude", "install_claude", True),
+    "codex": ("gobby.cli.installers.codex", "install_codex_project_hooks", False),
     "qwen": ("gobby.cli.installers.qwen", "install_qwen", True),
     "droid": ("gobby.cli.installers.droid", "install_droid", True),
-    # Note: codex uses CODEX_NOTIFY_SCRIPT env var, not project-level hooks
 }
 
 
@@ -146,10 +146,6 @@ def install_provider_hooks(
     worktree_path: str | Path,
 ) -> bool:
     """Install CLI hooks for the specified provider in the worktree.
-
-    Note: "codex" is accepted for type consistency but always returns False.
-    Codex uses the CODEX_NOTIFY_SCRIPT env var for hook integration rather
-    than project-level hooks. See ``_PROVIDER_INSTALLERS`` for supported providers.
 
     Args:
         provider: Provider name or None

@@ -714,6 +714,174 @@ class TestInstallCodex:
         assert list(config["mcp_servers"]["gobby"]["args"]) == ["mcp-server"]
 
 
+class TestInstallCodexProjectHooks:
+    """Tests for project-local Codex hook installation."""
+
+    @pytest.fixture
+    def mock_home(self, temp_dir: Path):
+        """Mock Path.home() and GOBBY_HOOKS_DIR to return temp directory."""
+        hooks_dir = str(temp_dir / ".gobby" / "hooks")
+        with (
+            patch.object(Path, "home", return_value=temp_dir),
+            patch.dict(os.environ, {"GOBBY_HOOKS_DIR": hooks_dir}),
+            patch(
+                "gobby.cli.installers.hook_commands.resolve_native_bin_or_default",
+                return_value="/Users/test/.gobby/bin/ghook",
+            ),
+        ):
+            yield temp_dir
+
+    @pytest.fixture
+    def mock_install_dir(self, temp_dir: Path):
+        """Create a mock install directory with hooks-template.json."""
+        install_dir = temp_dir / "install"
+        codex_dir = install_dir / "codex"
+        codex_dir.mkdir(parents=True)
+        (codex_dir / "hooks-template.json").write_text(json.dumps(_make_hooks_template(), indent=2))
+
+        with patch("gobby.cli.installers.codex.get_install_dir", return_value=install_dir):
+            yield install_dir
+
+    def test_project_install_creates_hooks_and_trust(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+    ) -> None:
+        """Test project hook install writes project hooks and Codex trust state."""
+        from gobby.cli.installers.codex import install_codex_project_hooks
+
+        project_path = mock_home / "worktree"
+        project_path.mkdir()
+
+        with patch("gobby.cli.installers.codex.install_global_hooks") as mock_global:
+            mock_global.return_value = ["validate_settings.py"]
+
+            result = install_codex_project_hooks(project_path)
+
+        assert result["success"] is True
+        assert result["error"] is None
+        assert set(result["hooks_installed"]) == EXPECTED_HOOK_EVENT_SET
+        assert result["files_installed"] == ["validate_settings.py"]
+        assert result["config_updated"] is True
+
+        project_hooks_path = project_path / ".codex" / "hooks.json"
+        assert project_hooks_path.exists()
+        assert not (mock_home / ".codex" / "hooks.json").exists()
+
+        hooks_config = json.loads(project_hooks_path.read_text())
+        assert set(hooks_config["hooks"].keys()) == EXPECTED_HOOK_EVENT_SET
+        hooks_content = project_hooks_path.read_text()
+        assert "$HOOKS_DIR" not in hooks_content
+        assert "ghook --gobby-owned" in hooks_content
+        assert "--cli=codex" in hooks_content
+
+        config_data = _load_toml_file(mock_home / ".codex" / "config.toml")
+        _assert_stable_hooks_feature(config_data)
+        _assert_gobby_trust_state(config_data, project_hooks_path)
+        assert config_data["projects"][str(project_path)]["trust_level"] == "trusted"
+        assert result["trust"]["success"] is True
+
+    def test_project_install_preserves_user_hooks_and_replaces_gobby_hooks(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+    ) -> None:
+        """Test reinstall keeps user hooks while replacing stale Gobby-owned hooks."""
+        from gobby.cli.installers.codex import install_codex_project_hooks
+
+        project_path = mock_home / "worktree"
+        project_path.mkdir()
+        project_hooks_path = project_path / ".codex" / "hooks.json"
+
+        with patch("gobby.cli.installers.codex.install_global_hooks", return_value=[]):
+            first_result = install_codex_project_hooks(project_path)
+
+        assert first_result["success"] is True
+
+        hooks_config = json.loads(project_hooks_path.read_text())
+        hooks_config["hooks"]["PreToolUse"].insert(
+            0,
+            {
+                "matcher": ".*",
+                "hooks": [
+                    {"type": "command", "command": "echo user pre-tool hook"},
+                    {
+                        "type": "command",
+                        "command": "ghook --gobby-owned --cli=codex --type=PreToolUse --old",
+                    },
+                ],
+            },
+        )
+        hooks_config["hooks"]["CustomEvent"] = [
+            {"hooks": [{"type": "command", "command": "echo custom hook"}]}
+        ]
+        project_hooks_path.write_text(json.dumps(hooks_config))
+
+        with patch("gobby.cli.installers.codex.install_global_hooks", return_value=[]):
+            second_result = install_codex_project_hooks(project_path)
+
+        assert second_result["success"] is True
+        merged = json.loads(project_hooks_path.read_text())
+        assert "CustomEvent" in merged["hooks"]
+        pre_tool_commands = [
+            hook["command"] for group in merged["hooks"]["PreToolUse"] for hook in group["hooks"]
+        ]
+        assert "echo user pre-tool hook" in pre_tool_commands
+        assert "echo custom hook" in json.dumps(merged["hooks"]["CustomEvent"])
+        assert not any(command.endswith("--old") for command in pre_tool_commands)
+        assert sum("--gobby-owned" in command for command in pre_tool_commands) == 1
+
+    def test_project_install_skips_shared_cli_and_cleanup(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+    ) -> None:
+        """Test project hook install avoids shared content, CLI content, and cleanup."""
+        from gobby.cli.installers.codex import install_codex_project_hooks
+
+        project_path = mock_home / "worktree"
+        project_path.mkdir()
+
+        with (
+            patch("gobby.cli.installers.codex.install_global_hooks", return_value=[]),
+            patch("gobby.cli.installers.codex.install_shared_content") as mock_shared,
+            patch("gobby.cli.installers.codex.install_cli_content") as mock_cli,
+            patch("gobby.cli.installers.codex.clean_project_hooks") as mock_clean,
+        ):
+            result = install_codex_project_hooks(project_path)
+
+        assert result["success"] is True
+        assert (project_path / ".codex" / "hooks.json").exists()
+        assert not (mock_home / ".codex" / "hooks.json").exists()
+        mock_shared.assert_not_called()
+        mock_cli.assert_not_called()
+        mock_clean.assert_not_called()
+
+    def test_project_install_skips_mcp_config(
+        self,
+        mock_home: Path,
+        mock_install_dir: Path,
+    ) -> None:
+        """Test project hook install avoids MCP configuration changes."""
+        from gobby.cli.installers.codex import install_codex_project_hooks
+
+        project_path = mock_home / "worktree"
+        project_path.mkdir()
+
+        with (
+            patch("gobby.cli.installers.codex.install_global_hooks", return_value=[]),
+            patch("gobby.cli.installers.codex.configure_mcp_server_toml") as mock_mcp,
+            patch("gobby.cli.installers.codex.strip_mcp_tool_overrides_toml") as mock_strip,
+        ):
+            result = install_codex_project_hooks(project_path)
+
+        assert result["success"] is True
+        config_data = _load_toml_file(mock_home / ".codex" / "config.toml")
+        assert "mcp_servers" not in config_data
+        mock_mcp.assert_not_called()
+        mock_strip.assert_not_called()
+
+
 class TestUninstallCodex:
     """Tests for uninstall_codex function."""
 

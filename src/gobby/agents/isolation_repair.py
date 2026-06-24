@@ -67,15 +67,18 @@ async def _copy_cli_hooks(
     target_path: str,
     provider: str,
 ) -> None:
-    """Copy CLI-specific hooks to an isolated environment.
+    """Copy CLI-specific hook directories to an isolated environment.
 
     Without these hooks, the spawned agent won't trigger SessionStart
     and other lifecycle hooks, breaking Gobby integration.
 
+    Claude and Codex use copied project directories, Droid generates its hook
+    files separately, and Qwen relies on its installer/global hook flow.
+
     Args:
         source_path: Path to the source repository
         target_path: Path to the isolated environment (worktree or clone)
-    provider: CLI provider (claude, qwen, codex, droid)
+        provider: CLI provider (claude, qwen, codex, droid)
     """
     import shutil
 
