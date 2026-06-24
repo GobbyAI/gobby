@@ -3,7 +3,8 @@ Session configuration module.
 
 Contains session-related Pydantic config models:
 - ContextInjectionConfig: Subagent context injection settings
-- SessionSummaryConfig: Session summary generation settings
+- SessionSummaryConfig: Session summary (handoff) generation settings
+- SessionWikiConfig: Session knowledge-synthesis (wiki) generation settings
 - DigestConfig: Rolling digest and title generation settings
 - MemoryRecallConfig: Daemon-owned memory recall settings
 - MessageTrackingConfig: Session message tracking settings
@@ -22,6 +23,7 @@ __all__ = [
     "DigestConfig",
     "MemoryRecallConfig",
     "SessionSummaryConfig",
+    "SessionWikiConfig",
     "MessageTrackingConfig",
     "SessionLifecycleConfig",
 ]
@@ -128,6 +130,36 @@ Be concise. Focus on what the next agent needs to know to continue effectively."
     summary_file_path: str = Field(
         default=".gobby/session_summaries",
         description="Directory path for session summary markdown files",
+    )
+
+
+class SessionWikiConfig(FeatureDefaultConfig):
+    """Session knowledge-synthesis (wiki) generation configuration.
+
+    A concise, durable, cross-linked knowledge page per session, synthesized
+    from the per-turn digest (not the raw transcript). Complementary to the
+    handoff-purposed session summary: different artifact, different prompt,
+    different owner field. Profile defaults to LOW (claude/haiku) for parity
+    with the summary feature; bump to MEDIUM if eval shows thin claims.
+    """
+
+    enabled: bool = Field(
+        default=True,
+        description="Enable LLM-based session knowledge-synthesis (wiki) generation",
+    )
+    prompt_path: str = Field(
+        default="wiki/source_page",
+        description=(
+            "PromptLoader path (NOT literal prompt text) for the wiki synthesis "
+            "prompt; rendered with the per-turn digest_markdown + meta context."
+        ),
+    )
+    wiki_file_path: str = Field(
+        default=".gobby/session_wiki",
+        description=(
+            "Directory path (resolved under gobby_home at write time) for "
+            "session wiki markdown mirror files"
+        ),
     )
 
 
