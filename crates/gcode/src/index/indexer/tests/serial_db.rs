@@ -3,6 +3,7 @@ use super::super::sink::PostgresCodeFactSink;
 use crate::db;
 use crate::index::api;
 use crate::models::{IndexedProject, ParseResult, Symbol};
+use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[test]
@@ -84,6 +85,51 @@ fn parsed_reindex_preserves_unchanged_symbol_summaries_and_clears_changed_symbol
     );
 }
 
+#[test]
+#[cfg_attr(
+    not(gcode_postgres_tests),
+    ignore = "requires GCODE_POSTGRES_TEST_DATABASE_URL"
+)]
+#[serial_test::serial(serial_db)]
+fn postgres_sink_seeds_project_row_before_file_facts() {
+    let (mut conn, database_url) = connect_summary_preservation_test_db();
+    let project_id = unique_test_project_id("gcode-project-seed");
+    let rel = "src/lib.rs";
+    let root_path = Path::new("/tmp/gcode-project-seed");
+    cleanup_summary_preservation_project(&mut conn, &project_id)
+        .expect("pre-clean project seed rows");
+    let _cleanup = SummaryPreservationCleanup {
+        database_url,
+        project_id: project_id.clone(),
+    };
+    let seeded_symbol = test_symbol(&project_id, rel, "seeded", 0, "hash-1");
+    let seeded_symbol_id = seeded_symbol.id.clone();
+
+    write_postgres_parsed_file_facts_with_root(
+        &mut conn,
+        &project_id,
+        root_path,
+        rel,
+        "hash-1",
+        b"pub fn seeded() {}\n",
+        vec![seeded_symbol],
+    );
+
+    let root_path_from_db: String = conn
+        .query_one(
+            "SELECT root_path FROM code_indexed_projects WHERE id = $1",
+            &[&project_id],
+        )
+        .expect("select seeded project row")
+        .get(0);
+
+    assert_eq!(root_path_from_db, root_path.to_string_lossy());
+    assert_eq!(
+        symbol_count(&mut conn, &project_id, rel, &seeded_symbol_id),
+        1
+    );
+}
+
 fn connect_summary_preservation_test_db() -> (postgres::Client, String) {
     let database_url = std::env::var("GCODE_POSTGRES_TEST_DATABASE_URL")
         .expect("GCODE_POSTGRES_TEST_DATABASE_URL must be set for summary preservation tests");
@@ -154,6 +200,26 @@ fn write_postgres_parsed_file_facts(
     source: &[u8],
     symbols: Vec<Symbol>,
 ) {
+    write_postgres_parsed_file_facts_with_root(
+        conn,
+        project_id,
+        Path::new("/tmp/gcode-summary-preservation"),
+        rel,
+        file_hash,
+        source,
+        symbols,
+    );
+}
+
+fn write_postgres_parsed_file_facts_with_root(
+    conn: &mut postgres::Client,
+    project_id: &str,
+    root_path: &Path,
+    rel: &str,
+    file_hash: &str,
+    source: &[u8],
+    symbols: Vec<Symbol>,
+) {
     let parse_result = ParseResult {
         symbols,
         imports: Vec::new(),
@@ -161,7 +227,8 @@ fn write_postgres_parsed_file_facts(
         source: source.to_vec(),
     };
     let mut tx = conn.transaction().expect("start parsed write transaction");
-    let mut sink = PostgresCodeFactSink::new(&mut tx);
+    let mut sink =
+        PostgresCodeFactSink::new(&mut tx, project_id, root_path).expect("seed project row");
     write_parsed_file_facts(
         &mut sink,
         project_id,

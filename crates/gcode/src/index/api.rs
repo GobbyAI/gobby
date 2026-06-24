@@ -268,6 +268,25 @@ pub fn upsert_file(conn: &mut impl GenericClient, file: &IndexedFile) -> anyhow:
     Ok(())
 }
 
+pub fn upsert_project_seed(
+    conn: &mut impl GenericClient,
+    project_id: &str,
+    root_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let root_path = root_path.to_string_lossy().to_string();
+    conn.execute(
+        "INSERT INTO code_indexed_projects (
+            id, root_path, total_files, total_symbols,
+            last_indexed_at, index_duration_ms
+        ) VALUES ($1,$2,0,0,NULL,0)
+        ON CONFLICT(id) DO UPDATE SET
+            root_path=excluded.root_path,
+            updated_at=NOW()",
+        &[&project_id, &root_path],
+    )?;
+    Ok(())
+}
+
 pub fn upsert_content_chunks(
     conn: &mut impl GenericClient,
     chunks: &[ContentChunk],

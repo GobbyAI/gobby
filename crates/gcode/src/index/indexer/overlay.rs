@@ -223,7 +223,7 @@ pub(super) fn index_overlay_files(
             }
             OverlayReconcileAction::Tombstone => {
                 cleanup_deleted_file_projections(ctx, &rel, &mut outcome, file_vectors_synced);
-                write_tombstone(conn, overlay_project_id, &rel)?;
+                write_tombstone(conn, overlay_project_id, root_path, &rel)?;
                 outcome.tombstones_indexed += 1;
             }
             OverlayReconcileAction::DeleteOverlay => {
@@ -433,9 +433,14 @@ fn rel_matches_filter(root_path: &Path, path_filter: &Path, rel: &str) -> bool {
     abs.starts_with(filter_abs)
 }
 
-fn write_tombstone(conn: &mut Client, project_id: &str, rel: &str) -> anyhow::Result<()> {
+fn write_tombstone(
+    conn: &mut Client,
+    project_id: &str,
+    root_path: &Path,
+    rel: &str,
+) -> anyhow::Result<()> {
     let mut tx = conn.transaction().context("start tombstone transaction")?;
-    let mut sink = PostgresCodeFactSink::new(&mut tx);
+    let mut sink = PostgresCodeFactSink::new(&mut tx, project_id, root_path)?;
     sink.delete_file_facts(project_id, rel)?;
     sink.upsert_file(&IndexedFile {
         id: IndexedFile::make_id(project_id, rel),

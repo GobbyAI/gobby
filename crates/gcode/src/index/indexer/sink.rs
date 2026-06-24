@@ -1,3 +1,5 @@
+use std::path::Path;
+
 use postgres::GenericClient;
 
 use crate::index::api;
@@ -38,8 +40,12 @@ pub(super) struct PostgresCodeFactSink<'a, C> {
 }
 
 impl<'a, C> PostgresCodeFactSink<'a, C> {
-    pub(super) fn new(conn: &'a mut C) -> Self {
-        Self { conn }
+    pub(super) fn new(conn: &'a mut C, project_id: &str, root_path: &Path) -> anyhow::Result<Self>
+    where
+        C: GenericClient,
+    {
+        api::upsert_project_seed(conn, project_id, root_path)?;
+        Ok(Self { conn })
     }
 }
 

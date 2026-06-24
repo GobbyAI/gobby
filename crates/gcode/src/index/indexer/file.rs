@@ -74,7 +74,7 @@ pub(super) fn index_file(
         .transaction()
         .context("start indexed file transaction")?;
 
-    let mut sink = PostgresCodeFactSink::new(&mut tx);
+    let mut sink = PostgresCodeFactSink::new(&mut tx, project_id, root_path)?;
     let counts = write_parsed_file_facts(
         &mut sink,
         project_id,
@@ -163,7 +163,7 @@ pub(super) fn index_content_only(
     let mut tx = conn
         .transaction()
         .context("start content-only file transaction")?;
-    let mut sink = PostgresCodeFactSink::new(&mut tx);
+    let mut sink = PostgresCodeFactSink::new(&mut tx, project_id, root_path)?;
     let counts = write_content_only_file_facts(
         &mut sink,
         project_id,
