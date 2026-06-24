@@ -56,7 +56,9 @@ pub(crate) fn execute(
             )?
         };
         let counts = indexed_counts_for_postgres(&mut conn, &search_scope, true)?;
-        if !result.accepted.is_empty() {
+        // Reconciled deletions change the index just like accepted ingests, so
+        // gate Qdrant/Falkor sync on any change, not only newly accepted pages.
+        if result.has_changes() {
             sync_qdrant_vectors(&mut conn, &search_scope, COMMAND)?;
             sync_falkor_graph(&mut conn, &search_scope, COMMAND)?;
         }
@@ -143,6 +145,17 @@ fn render_sync_sessions(
             })
         })
         .collect::<Vec<_>>();
+    let reconciled = result
+        .reconciled
+        .iter()
+        .map(|reconciled| {
+            json!({
+                "source_id": reconciled.source_id,
+                "canonical_location": reconciled.canonical_location,
+                "content_hash": reconciled.content_hash,
+            })
+        })
+        .collect::<Vec<_>>();
     let payload = json!({
         "command": "sync-sessions",
         "scope": scope,
@@ -152,6 +165,7 @@ fn render_sync_sessions(
         "accepted": accepted,
         "skipped": skipped,
         "failed": failed,
+        "reconciled": reconciled,
         "indexed": {
             "documents": counts.documents,
             "chunks": counts.chunks,
@@ -161,13 +175,14 @@ fn render_sync_sessions(
         },
     });
     let text = format!(
-        "Synced session archives\nScope: {scope}\nArchive dir: {}\nStatus: {}\nScanned: {}\nIngested: {}\nSkipped: {}\nFailed: {}\nDocuments: {}\nChunks: {}\nLinks: {}\nSources: {}\nIngestions: {}",
+        "Synced session archives\nScope: {scope}\nArchive dir: {}\nStatus: {}\nScanned: {}\nIngested: {}\nSkipped: {}\nFailed: {}\nReconciled: {}\nDocuments: {}\nChunks: {}\nLinks: {}\nSources: {}\nIngestions: {}",
         ingest::path_to_string(Path::new(&result.archive_dir)),
         result.status(),
         result.scanned,
         result.accepted.len(),
         result.skipped.len(),
         result.failed.len(),
+        result.reconciled.len(),
         counts.documents,
         counts.chunks,
         counts.links,

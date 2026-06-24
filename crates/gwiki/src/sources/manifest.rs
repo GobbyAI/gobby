@@ -194,6 +194,30 @@ impl SourceManifest {
         })
     }
 
+    /// Removes an entry crash-consistently: under the manifest lock, run
+    /// `cleanup` (e.g. delete derived/raw files) *before* dropping the entry and
+    /// rewriting the manifest atomically. Ordering matters — fs + manifest are
+    /// not transactional, so if the process dies mid-cleanup the entry still
+    /// points at the orphaned files and the caller retries on the next run.
+    /// Returns the removed record, or `None` if `id` is not present (cleanup is
+    /// then skipped).
+    pub(crate) fn remove_with_cleanup(
+        vault_root: &Path,
+        id: &str,
+        cleanup: impl FnOnce(&SourceRecord) -> Result<(), WikiError>,
+    ) -> Result<Option<SourceRecord>, WikiError> {
+        with_manifest_lock(vault_root, || {
+            let mut manifest = Self::read(vault_root)?;
+            let Some(index) = manifest.entries.iter().position(|entry| entry.id == id) else {
+                return Ok(None);
+            };
+            cleanup(&manifest.entries[index])?;
+            let removed = manifest.entries.remove(index);
+            manifest.write_unlocked(vault_root)?;
+            Ok(Some(removed))
+        })
+    }
+
     pub fn update(
         vault_root: &Path,
         action: impl FnOnce(&mut SourceManifest) -> Result<bool, WikiError>,

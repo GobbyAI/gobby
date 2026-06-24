@@ -272,3 +272,66 @@ fn escape_string_contents(value: &str) -> String {
     }
     escaped
 }
+
+#[test]
+fn wiki_graph_edge_cleanup_uses_owned_relationships_and_scope() {
+    let scope = SearchScope::topic("rust");
+    let statements = super::sync::scope_edge_cleanup_statements(&scope);
+    assert_eq!(statements.len(), 3);
+    let cyphers = statements
+        .iter()
+        .map(|statement| statement.cypher.clone())
+        .collect::<Vec<_>>();
+    for rel in [WIKI_LINKS_TO_REL, MENTIONS_TARGET_REL, SUPPORTS_REL] {
+        assert!(
+            cyphers.iter().any(|cypher| cypher.contains(rel)),
+            "edge cleanup must cover {rel}"
+        );
+    }
+    for cypher in &cyphers {
+        assert!(cypher.contains("DELETE edge"));
+        assert!(cypher.contains("scope_kind"));
+        assert!(cypher.contains("'topic'"));
+        assert!(cypher.contains("scope_id"));
+        assert!(cypher.contains("'rust'"));
+        // Edges are deleted; nodes are preserved (no node-level DETACH DELETE).
+        assert!(!cypher.contains("DETACH DELETE"));
+    }
+}
+
+#[test]
+fn stale_doc_delete_detaches_scoped_wikidoc_by_path() {
+    let scope = SearchScope::project("demo");
+    let statement = super::sync::stale_doc_delete_statement(&scope, "knowledge/sources/src-abc.md");
+    let cypher = statement.cypher;
+    assert!(cypher.contains(WIKI_DOC_LABEL));
+    assert!(cypher.contains("DETACH DELETE doc"));
+    assert!(cypher.contains("knowledge/sources/src-abc.md"));
+    assert!(cypher.contains("scope_kind"));
+    assert!(cypher.contains("'project'"));
+    assert!(cypher.contains("'demo'"));
+}
+
+#[test]
+fn orphan_cleanup_targets_unsupported_sources_and_unmentioned_targets() {
+    let scope = SearchScope::topic("rust");
+    let statements = super::sync::orphan_cleanup_statements(&scope);
+    assert_eq!(statements.len(), 2);
+    let source_cypher = &statements[0].cypher;
+    assert!(source_cypher.contains(WIKI_SOURCE_LABEL));
+    assert!(source_cypher.contains(SUPPORTS_REL));
+    assert!(source_cypher.contains("WHERE NOT (source)-["));
+    assert!(source_cypher.contains("DELETE source"));
+    let target_cypher = &statements[1].cypher;
+    assert!(target_cypher.contains(WIKI_TARGET_LABEL));
+    assert!(target_cypher.contains(MENTIONS_TARGET_REL));
+    assert!(target_cypher.contains("WHERE NOT ()-["));
+    assert!(target_cypher.contains("DELETE target"));
+}
+
+#[test]
+fn scoped_projection_guard_rejects_global_scope() {
+    assert!(super::sync::require_scoped(&SearchScope::global()).is_err());
+    assert!(super::sync::require_scoped(&SearchScope::project("demo")).is_ok());
+    assert!(super::sync::require_scoped(&SearchScope::topic("rust")).is_ok());
+}
