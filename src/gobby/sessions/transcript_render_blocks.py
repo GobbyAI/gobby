@@ -128,10 +128,10 @@ def _process_message_block(
     if msg.content_type in ["tool_result", "mcp_tool_result"]:
         if msg.tool_use_id and msg.tool_use_id in state.pending_tool_calls:
             tool_call = state.pending_tool_calls[msg.tool_use_id]
-            content = msg.tool_result or msg.content
+            content = msg.tool_result if msg.tool_result is not None else msg.content
             tool_call.result = ToolResult(
                 content=content,
-                kind="json" if msg.tool_result else "text",
+                kind="json" if msg.tool_result is not None else "text",
                 metadata=extract_result_metadata(tool_call.tool_type, content, tool_call.arguments),
             )
             tool_call.status = "completed"
@@ -197,7 +197,7 @@ def _process_message_block(
         block_type = "tool_chain"
     elif block_type == "web_search_tool_result":
         block_type = "web_search_result"
-        block_content = msg.tool_result or block_text
+        block_content = msg.tool_result if msg.tool_result is not None else block_text
     elif block_type in ["text", "thinking", "tool_reference", "image", "document"]:
         pass  # Use as-is
     else:

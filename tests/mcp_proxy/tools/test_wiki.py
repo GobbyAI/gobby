@@ -245,7 +245,8 @@ def _schema(name: str) -> dict[str, Any]:
 
 
 @pytest.mark.asyncio
-async def test_tool_schemas() -> None:
+async def test_tool_schemas(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
     registry = _registry()
     tool_names = {tool["name"] for tool in registry.list_tools()}
 
@@ -319,17 +320,25 @@ async def test_tool_schemas() -> None:
         ),
     ]
 
+    archive_dir = tmp_path / ".gobby" / "session_transcripts" / "custom"
     sync_result = await registry.call(
         "wiki_sync_sessions",
-        {"archive_dir": "/tmp/session_transcripts", "limit": 3, "topic": "docs"},
+        {"archive_dir": str(archive_dir), "limit": 3, "topic": "docs"},
     )
     assert sync_result["payload"]["changed_paths"] == ["sessions/session-1.md"]
     assert FakeGateway.instances[-1].calls == [
         (
             "sync_sessions",
-            {"archive_dir": "/tmp/session_transcripts", "limit": 3},
+            {"archive_dir": str(archive_dir), "limit": 3},
         ),
     ]
+
+    invalid_sync = await registry.call(
+        "wiki_sync_sessions",
+        {"archive_dir": str(tmp_path / "outside"), "limit": 3, "topic": "docs"},
+    )
+    assert invalid_sync["ok"] is False
+    assert invalid_sync["error"] == "archive_dir must be inside the configured archive root"
 
 
 @pytest.mark.asyncio

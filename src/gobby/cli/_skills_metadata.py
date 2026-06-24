@@ -55,7 +55,7 @@ def set_metadata(storage_factory: StorageFactory, name: str, key: str, value: st
     new_metadata = set_nested_value(skill.metadata or {}, key, parsed_value)
     try:
         storage.update_skill(skill.id, metadata=new_metadata)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"Error updating skill metadata: {exc}", err=True)
         sys.exit(1)
     click.echo(f"Set {key} = {value}")
@@ -77,7 +77,7 @@ def unset_metadata(storage_factory: StorageFactory, name: str, key: str) -> None
     new_metadata = unset_nested_value(skill.metadata, key)
     try:
         storage.update_skill(skill.id, metadata=new_metadata)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"Error updating skill metadata: {exc}", err=True)
         sys.exit(1)
     click.echo(f"Unset {key}")

@@ -71,7 +71,7 @@ _PROTOCOL_TAG_RE = re.compile(
     rf"<(?P<closing>/)?(?P<tag>{_PROTOCOL_TOOL_TAG_PATTERN})(?=[\s>])(?P<attrs>[^>]*)>",
     re.IGNORECASE,
 )
-_PROTOCOL_CODE_SPAN_RE = re.compile(r"```.*?```|`[^`\n]*(?:`|$)", re.DOTALL)
+_PROTOCOL_CODE_SPAN_RE = re.compile(r"```(?:.*?```|.*\Z)|`[^`\n]*(?:`|$)", re.DOTALL)
 
 _INLINE_WRAPPER_PROTOCOL_TAG_RE = re.compile(
     rf"</?(?:{_INLINE_WRAPPER_PROTOCOL_TAG_PATTERN})(?=[\s>])[^>]*>",

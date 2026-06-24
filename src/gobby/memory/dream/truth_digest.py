@@ -96,6 +96,12 @@ def build_project_truth_digest(
     payload = _load_project_truth_payload(repo_path)
     if not payload:
         return ""
+    if payload.get("schema_version") != 1:
+        logger.warning(
+            "Unsupported project truth digest schema_version: %r",
+            payload.get("schema_version"),
+        )
+        return ""
 
     lines: list[str] = []
     repo_summary = _safe_digest_text(payload.get("repo_summary"), _PROJECT_FIELD_MAX_CHARS * 2)

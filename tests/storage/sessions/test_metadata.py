@@ -789,6 +789,61 @@ class TestSessionManagerMetadata:
             )
             session_manager.db.execute("DROP FUNCTION IF EXISTS fail_summary_state_update_fn()")
 
+    def test_persist_wiki_state_rolls_back_revision_on_update_failure(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """A failed session update leaves no orphaned wiki revision."""
+        session = session_manager.register(
+            external_id="wiki-state-rollback-test",
+            machine_id="machine",
+            source="claude",
+            project_id=sample_project["id"],
+        )
+        session_manager.db.execute(
+            """
+            CREATE OR REPLACE FUNCTION fail_wiki_state_update_fn()
+            RETURNS trigger
+            LANGUAGE plpgsql
+            AS $$
+            BEGIN
+                IF NEW.wiki_markdown = 'boom' THEN
+                    RAISE EXCEPTION 'wiki boom';
+                END IF;
+                RETURN NEW;
+            END;
+            $$
+            """
+        )
+        session_manager.db.execute(
+            """
+            CREATE TRIGGER fail_wiki_state_update
+            BEFORE UPDATE OF wiki_markdown ON sessions
+            FOR EACH ROW
+            EXECUTE FUNCTION fail_wiki_state_update_fn()
+            """
+        )
+
+        try:
+            with pytest.raises(RaiseException, match="wiki boom"):
+                session_manager.persist_wiki_state(
+                    session.id,
+                    wiki_markdown="boom",
+                    generation_mode="full",
+                    source_context_hash="wiki-hash-1",
+                    digest_turn_count=1,
+                )
+
+            reloaded = session_manager.get(session.id)
+            assert reloaded is not None
+            assert reloaded.wiki_markdown is None
+            assert reloaded.wiki_revision_id is None
+            assert session_manager.list_wiki_revisions(session.id) == []
+        finally:
+            session_manager.db.execute("DROP TRIGGER IF EXISTS fail_wiki_state_update ON sessions")
+            session_manager.db.execute("DROP FUNCTION IF EXISTS fail_wiki_state_update_fn()")
+
     def test_update_resume_metadata_fields(
         self,
         session_manager: SessionManager,

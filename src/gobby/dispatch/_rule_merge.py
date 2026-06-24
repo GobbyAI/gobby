@@ -22,7 +22,8 @@ def _workspace_merge_action(task: object, context: object) -> MergeWorkspaceActi
         return None
     artifacts = _artifacts(task, context)
     target_branch = _field(artifacts, "target_branch")
-    assert isinstance(target_branch, str)
+    if not isinstance(target_branch, str):
+        raise TypeError("workspace merge action requires string target_branch")
 
     integration_branch = _field(artifacts, "integration_branch")
     integration_workspace_id = _field(artifacts, "integration_workspace_id")

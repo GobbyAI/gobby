@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import os
 import shlex
 import shutil
@@ -452,8 +453,8 @@ class AgyCLITextGenerateAdapter:
 
 
 def _agy_go_duration(timeout_seconds: float) -> str:
-    if timeout_seconds <= 0:
-        raise ValueError("AGY timeout_seconds must be positive")
+    if not math.isfinite(timeout_seconds) or timeout_seconds <= 0:
+        raise ValueError("AGY timeout_seconds must be finite and positive")
     return f"{timeout_seconds:g}s"
 
 

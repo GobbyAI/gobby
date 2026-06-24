@@ -35,16 +35,17 @@ def register_branch_protection_tool(
     )
     async def probe_branch_protection(
         repo_path: str | None = None,
-        branch: str = "main",
+        branch: str | None = None,
         worktree_id: str | None = None,
     ) -> dict[str, Any]:
         """Probe GitHub branch protection and return PR gating requirements."""
+        effective_branch = branch or "main"
         effective_repo_path = repo_path
         if not effective_repo_path and worktree_id and worktree_manager is not None:
             worktree = worktree_manager.get(worktree_id)
             if worktree is not None:
                 effective_repo_path = worktree.worktree_path
-                branch = branch or worktree.base_branch
+                effective_branch = branch or worktree.base_branch
         if not effective_repo_path:
             return {
                 "success": False,
@@ -82,7 +83,9 @@ def register_branch_protection_tool(
         if token:
             headers["Authorization"] = f"Bearer {token}"
 
-        api_url = f"https://api.github.com/repos/{owner}/{repo}/branches/{branch}/protection"
+        api_url = (
+            f"https://api.github.com/repos/{owner}/{repo}/branches/{effective_branch}/protection"
+        )
         try:
             async with async_client_factory(timeout=15.0) as client:
                 response = await client.get(api_url, headers=headers)
@@ -91,19 +94,19 @@ def register_branch_protection_tool(
                 repo_path=effective_repo_path,
                 owner=owner,
                 repo=repo,
-                branch=branch,
+                branch=effective_branch,
                 git_manager=git_manager,
                 source="push_dry_run_after_api_error",
                 error=str(exc),
             )
 
         if response.status_code == 200:
-            return parse_protection_response(owner, repo, branch, response.json())
+            return parse_protection_response(owner, repo, effective_branch, response.json())
         if response.status_code == 404:
             return protection_payload(
                 owner=owner,
                 repo=repo,
-                branch=branch,
+                branch=effective_branch,
                 source="github_api",
                 requires_pr=False,
             )
@@ -114,7 +117,7 @@ def register_branch_protection_tool(
                 repo_path=effective_repo_path,
                 owner=owner,
                 repo=repo,
-                branch=branch,
+                branch=effective_branch,
                 git_manager=git_manager,
                 source=fallback_source,
                 error=response.text.strip(),
@@ -124,7 +127,7 @@ def register_branch_protection_tool(
             repo_path=effective_repo_path,
             owner=owner,
             repo=repo,
-            branch=branch,
+            branch=effective_branch,
             git_manager=git_manager,
             source=f"push_dry_run_after_{response.status_code}",
             error=response.text.strip(),

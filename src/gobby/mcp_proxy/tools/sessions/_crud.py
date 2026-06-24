@@ -78,7 +78,7 @@ def register_crud_tools(
         description="""Get YOUR current session ID - the CORRECT way to look up your session.
 
 Use this when session_id wasn't in your injected context. Pass your external_id
-(from transcript path or GOBBY_SESSION_ID env) and source (claude, gemini, qwen, codex, droid).
+(from transcript path or GOBBY_SESSION_ID env) and source (claude, grok, qwen, codex, droid, agy).
 
 DO NOT use list_sessions to find your session - it won't work with multiple active sessions.""",
     )
@@ -87,19 +87,19 @@ DO NOT use list_sessions to find your session - it won't work with multiple acti
         source: str,
     ) -> dict[str, Any]:
         """
-        Look up your internal session_id from external_id and source.
+                Look up your internal session_id from external_id and source.
 
         The agent passes external_id (from injected context or GOBBY_SESSION_ID env var)
-        and source (claude, gemini, qwen, codex, droid). project_id and machine_id are
-        auto-resolved from config files.
+        and source (claude, grok, qwen, codex, droid, agy). project_id and machine_id are
+                auto-resolved from config files.
 
-        Args:
-            external_id: Your CLI's session ID (from context or GOBBY_SESSION_ID env)
-            source: CLI source - "claude", "gemini", "qwen", "codex", or "droid"
+                Args:
+                    external_id: Your CLI's session ID (from context or GOBBY_SESSION_ID env)
+        source: CLI source - "claude", "grok", "qwen", "codex", "droid", or "agy"
 
-        Returns:
-            session_id: Internal Gobby session ID (use for parent_session_id, etc.)
-            Plus basic session metadata
+                Returns:
+                    session_id: Internal Gobby session ID (use for parent_session_id, etc.)
+                    Plus basic session metadata
         """
         from gobby.utils.machine_id import get_machine_id
         from gobby.utils.project_context import get_project_context
@@ -162,16 +162,16 @@ This tool is for browsing/listing sessions, not for self-identification.""",
         limit: int = 20,
     ) -> dict[str, Any]:
         """
-        List sessions with filters.
+                List sessions with filters.
 
-        Args:
-            project_id: Filter by project ID
-            status: Filter by status (active, paused, expired, archived, handoff_ready)
-            source: Filter by CLI source (claude, qwen, codex, droid)
-            limit: Max results (default 20)
+                Args:
+                    project_id: Filter by project ID
+                    status: Filter by status (active, paused, expired, archived, handoff_ready)
+        source: Filter by CLI source (claude, grok, qwen, codex, droid, agy)
+                    limit: Max results (default 20)
 
-        Returns:
-            List of sessions and count
+                Returns:
+                    List of sessions and count
         """
         if session_manager is None:
             return {"error": "Session manager not available"}

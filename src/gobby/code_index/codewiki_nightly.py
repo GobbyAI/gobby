@@ -118,7 +118,16 @@ def register_codewiki_nightly_cron(
             enabled=enabled,
             is_system=True,
         )
-        logger.info("Created system cron job: %s", job_name)
+        logger.info(
+            "Created codewiki nightly system cron job",
+            extra={
+                "job_name": job_name,
+                "project_id": project_id,
+                "cron_expr": cron_expr,
+                "timezone": timezone,
+                "enabled": enabled,
+            },
+        )
         return 1
 
     if not existing.is_system:
@@ -137,6 +146,16 @@ def register_codewiki_nightly_cron(
     )
     if repaired is not None:
         _reconcile_enabled_state(cron_storage, repaired, enabled)
+        logger.info(
+            "Reconciled codewiki nightly system cron job",
+            extra={
+                "job_name": job_name,
+                "project_id": project_id,
+                "cron_expr": cron_expr,
+                "timezone": timezone,
+                "enabled": enabled,
+            },
+        )
     return 1
 
 
@@ -229,6 +248,6 @@ def _reconcile_enabled_state(
 def _is_valid_timezone(value: str) -> bool:
     try:
         ZoneInfo(value)
-    except ZoneInfoNotFoundError:
+    except (ValueError, ZoneInfoNotFoundError):
         return False
     return True

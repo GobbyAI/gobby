@@ -24,6 +24,8 @@ from gobby.hooks._normalization_shell import (
     extract_redirection_paths,
     has_shell_input_redirection,
     has_shell_redirection,
+    is_shell_input_redirection_token,
+    is_unquoted_shell_control_token,
     shell_token_values,
     tokenize_shell_command,
 )
@@ -260,7 +262,12 @@ def _shell_positional_args_after(parts: list[str], start: int) -> list[str]:
 def _search_command_paths(cmd: str, parts: list[str]) -> list[str]:
     if cmd in {"rg", "grep"}:
         positional = _shell_positional_args_after(parts, 1)
-        return [path for path in positional[1:] if _looks_path_target(path)]
+        pattern_from_option = any(
+            part in {"-e", "--regexp"} or part.startswith("-e") or part.startswith("--regexp=")
+            for part in parts[1:]
+        )
+        candidate_paths = positional if pattern_from_option else positional[1:]
+        return [path for path in candidate_paths if _looks_path_target(path)]
 
     if cmd == "git":
         if len(parts) <= 1 or parts[1] != "grep":
@@ -359,6 +366,19 @@ def _merge_shell_segment_metadata(metadata: list[_ShellSegmentMetadata]) -> dict
     )
 
 
+def _input_redirection_paths(tokens: list[ShellToken]) -> list[str]:
+    paths: list[str] = []
+    for idx, token in enumerate(tokens[:-1]):
+        if not is_shell_input_redirection_token(token) or token.value != "<":
+            continue
+        candidate = tokens[idx + 1]
+        if is_unquoted_shell_control_token(candidate):
+            continue
+        if _looks_path_target(candidate.value) and candidate.value not in paths:
+            paths.append(candidate.value)
+    return paths
+
+
 def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     """Infer canonical semantics from visible shell command segments."""
     try:
@@ -372,6 +392,8 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
     cwd: str | None = None
     metadata: list[_ShellSegmentMetadata] = []
     for segment in _split_shell_segments(tokens):
+        if segment.separator_before not in {None, "&&", ";", "\n"}:
+            cwd = None
         raw_parts = shell_token_values(segment.tokens)
         parts = _strip_shell_wrappers(raw_parts)
         if not parts:
@@ -379,7 +401,7 @@ def _normalize_shell_tool_metadata(command: str) -> dict[str, Any]:
             continue
 
         cd_target = _literal_cd_target(parts)
-        if cd_target is not None:
+        if cd_target is not None and segment.separator_before in {None, "&&", ";", "\n"}:
             cwd = _apply_cd(cwd, cd_target)
             metadata.append(_ShellSegmentMetadata("execute", neutral_setup=True))
             continue
@@ -404,6 +426,7 @@ def _classify_shell_segment(
     cwd: str | None,
 ) -> _ShellSegmentMetadata:
     redirection_paths = _rebase_shell_paths(extract_redirection_paths(tokens), cwd)
+    input_paths = _rebase_shell_paths(_input_redirection_paths(tokens), cwd)
 
     gcode_metadata = gcode_navigation_metadata(parts)
     if gcode_metadata and not has_shell_redirection(tokens):
@@ -430,6 +453,19 @@ def _classify_shell_segment(
             ),
             extra=extra,
             repo_mutation=True,
+        )
+
+    if input_paths:
+        base_metadata = _classify_shell_segment_without_redirection(parts, cwd)
+        base_paths = list(base_metadata.paths)
+        return _ShellSegmentMetadata(
+            base_metadata.kind,
+            paths=tuple(base_paths + [path for path in input_paths if path not in base_paths]),
+            extra=base_metadata.extra,
+            repo_mutation=base_metadata.repo_mutation,
+            neutral_setup=base_metadata.neutral_setup,
+            pure_gcode_navigation=base_metadata.pure_gcode_navigation,
+            read_only_pipeline_filter=base_metadata.read_only_pipeline_filter,
         )
 
     if has_shell_input_redirection(tokens):

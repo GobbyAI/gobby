@@ -86,8 +86,16 @@ async def _proxy_websocket(websocket: WebSocket, target: str) -> None:
             async def client_to_backend() -> None:
                 try:
                     while True:
-                        data = await websocket.receive_text()
-                        await backend.send(data)
+                        message = await websocket.receive()
+                        if message["type"] == "websocket.disconnect":
+                            break
+                        text_data = message.get("text")
+                        if text_data is not None:
+                            await backend.send(text_data)
+                            continue
+                        bytes_data = message.get("bytes")
+                        if bytes_data is not None:
+                            await backend.send(bytes_data)
                 except (WebSocketDisconnect, websockets.exceptions.ConnectionClosed):
                     pass
                 except asyncio.CancelledError:
@@ -270,8 +278,7 @@ def _mount_production_ui(app: FastAPI, server: "_ProductionUIServer") -> None:
 
     @app.get("/{path:path}")
     async def spa_catch_all(request: Request, path: str) -> FileResponse:
-        path_check = path if path.endswith("/") else path + "/"
-        if path_check.startswith(("api/", "ws/", "health/")):
+        if _is_daemon_owned_ui_path(path):
             raise HTTPException(status_code=404)
 
         static_file = dist_dir / path

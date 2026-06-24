@@ -265,7 +265,7 @@ def create_code_index_router(server: HTTPServer) -> APIRouter:
         project_id: str | None = Query(None, description="Project ID"),
         symbol_a: str = Query(..., description="Source symbol query"),
         symbol_b: str = Query(..., description="Target symbol query"),
-        max_depth: int = Query(6, description="Maximum traversal depth"),
+        max_depth: int = Query(6, ge=1, description="Maximum traversal depth"),
     ) -> dict[str, Any]:
         code_indexer = getattr(server.services, "code_indexer", None)
         if code_indexer is None:

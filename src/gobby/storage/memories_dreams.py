@@ -55,7 +55,7 @@ class MemoryDreamMixin(MemoryStoreBase):
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE memories SET last_dreamed_at = NULL "
-                "WHERE project_id = %s AND deleted_at IS NULL "
+                "WHERE (project_id = %s OR project_id IS NULL) AND deleted_at IS NULL "
                 "AND last_dreamed_at IS NOT NULL",
                 (project_id,),
             )

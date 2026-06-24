@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from typing import Any, Literal
 
@@ -212,7 +213,8 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         # This avoids pushing to origin (which fails on divergent branches).
         ctx.clone_storage.mark_syncing(clone_id)
         temp_ref = f"clone-merge/{clone.branch_name}"
-        fetch_result = git_manager.run_git_command(
+        fetch_result = await asyncio.to_thread(
+            git_manager.run_git_command,
             ["fetch", str(clone.clone_path), f"{clone.branch_name}:refs/heads/{temp_ref}"],
             cwd=git_manager.repo_path,
             timeout=120,
@@ -231,18 +233,21 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
         # Step 2: Stash dirty .gobby/ sync files to prevent merge conflicts.
         # Compare stash list before/after to reliably detect if a stash was created.
         stash_created = False
-        stash_list_before = git_manager.run_git_command(
+        stash_list_before = await asyncio.to_thread(
+            git_manager.run_git_command,
             ["stash", "list"],
             cwd=git_manager.repo_path,
             timeout=10,
         )
-        stash_result = git_manager.run_git_command(
+        stash_result = await asyncio.to_thread(
+            git_manager.run_git_command,
             ["stash", "push", "-m", "gobby-merge-clone: auto-stash sync files", "--", ".gobby/"],
             cwd=git_manager.repo_path,
             timeout=10,
         )
         if stash_result.returncode == 0:
-            stash_list_after = git_manager.run_git_command(
+            stash_list_after = await asyncio.to_thread(
+                git_manager.run_git_command,
                 ["stash", "list"],
                 cwd=git_manager.repo_path,
                 timeout=10,
@@ -251,21 +256,24 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
 
         # Step 3: Merge the fetched ref into target branch
         try:
-            merge_result = git_manager.merge_branch(
+            merge_result = await asyncio.to_thread(
+                git_manager.merge_branch,
                 source_branch=temp_ref,
                 target_branch=target_branch,
                 source_is_local=True,
             )
         finally:
             # Clean up temp ref regardless of merge outcome
-            git_manager.run_git_command(
+            await asyncio.to_thread(
+                git_manager.run_git_command,
                 ["branch", "-D", temp_ref],
                 cwd=git_manager.repo_path,
                 timeout=10,
             )
             # Restore stashed .gobby/ files
             if stash_created:
-                pop_result = git_manager.run_git_command(
+                pop_result = await asyncio.to_thread(
+                    git_manager.run_git_command,
                     ["stash", "pop"],
                     cwd=git_manager.repo_path,
                     timeout=10,
@@ -277,6 +285,7 @@ def create_clone_operations_registry(ctx: CloneRegistryContext) -> InternalToolR
                     )
 
         if not merge_result.success:
+            ctx.clone_storage.update(clone_id, status="active")
             # Check for conflicts
             if merge_result.error == "merge_conflict":
                 conflicted_files = merge_result.output.split("\n") if merge_result.output else []

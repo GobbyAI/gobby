@@ -136,12 +136,49 @@ def register_memory_dream_tools(
         if project_id is None:
             # No project context → sweep every project with due memories, each
             # judged against its own truth digest, and return an aggregate.
-            return await service.run_all_due_projects(
+            if wait:
+                return await service.run_all_due_projects(
+                    dry_run=dry_run,
+                    skip_consolidation=skip_consolidation,
+                    memory_type=memory_type,
+                    full_sweep=full_sweep,
+                )
+            if not await _try_acquire_background_slot():
+                return {
+                    "success": False,
+                    "error": f"Background memory dream limit reached ({MAX_BACKGROUND_DREAM_TASKS})",
+                }
+            started = await service.start_all_due_projects_async(
                 dry_run=dry_run,
                 skip_consolidation=skip_consolidation,
                 memory_type=memory_type,
                 full_sweep=full_sweep,
             )
+            if not started.get("success"):
+                _release_background_slot()
+                return started
+            run_id = str(started["run_id"])
+            run_coro = service.execute_all_due_projects_run(
+                run_id,
+                dry_run=dry_run,
+                skip_consolidation=skip_consolidation,
+                memory_type=memory_type,
+                full_sweep=full_sweep,
+            )
+            try:
+                task = asyncio.create_task(run_coro, name=f"memory-dream:{run_id}")
+            except Exception as exc:
+                run_coro.close()
+                error = f"Failed to schedule background memory dream: {exc}"
+                try:
+                    service.record_run_failure(run_id, error)
+                except Exception:
+                    logger.exception("Failed to record memory dream scheduling failure")
+                _release_background_slot()
+                return {"success": False, "run_id": run_id, "status": "failed", "error": error}
+            _BACKGROUND_DREAM_TASKS.add(task)
+            task.add_done_callback(lambda completed: _handle_background_task(completed, run_id))
+            return {"success": True, "run_id": run_id, "status": "started"}
         options = DreamRunOptions(
             dry_run=dry_run,
             skip_consolidation=skip_consolidation,

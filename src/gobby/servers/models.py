@@ -39,9 +39,7 @@ class WebChatSessionRequest(BaseModel):
 
     provider: str | None = Field(
         default="claude",
-        description=(
-            "CLI provider backing the web chat session (claude, grok, qwen, codex, droid, agy)"
-        ),
+        description="CLI provider backing the web chat session (claude, grok, qwen, codex, droid)",
     )
     project_id: str | None = Field(None, description="Project ID to associate with session")
     cwd: str | None = Field(

@@ -512,8 +512,11 @@ class SessionLifecycleManager:
         """
         from gobby.sessions.summary_refresh import coerce_digest_turn_count, digest_turn_count
         from gobby.sessions.wiki_synthesis import (
+            WIKI_PROMPT_PATH,
+            _render_wiki_prompt,
             is_wiki_markdown_valid,
             wiki_generation_skip_reason,
+            wiki_source_context_hash,
         )
 
         config = self.session_wiki_config
@@ -522,11 +525,30 @@ class SessionLifecycleManager:
         digest_markdown = getattr(session, "digest_markdown", None)
         if wiki_generation_skip_reason(session, digest_markdown) is not None:
             return False
+        if not isinstance(digest_markdown, str):
+            return False
         if not is_wiki_markdown_valid(getattr(session, "wiki_markdown", None)):
             return True
+        prompt_path = getattr(config, "prompt_path", WIKI_PROMPT_PATH)
+        prompt = _render_wiki_prompt(
+            session=session,
+            digest_markdown=digest_markdown,
+            prompt_path=prompt_path,
+            db=self.db,
+            session_manager=self.session_manager,
+        )
+        if not prompt:
+            return False
+        current_hash = wiki_source_context_hash(
+            session=session,
+            digest_markdown=digest_markdown,
+            prompt_path=prompt_path,
+            rendered_prompt=prompt,
+        )
+        previous_hash = getattr(session, "wiki_source_context_hash", None)
         current = digest_turn_count(digest_markdown)
         previous = coerce_digest_turn_count(getattr(session, "wiki_digest_turn_count", None))
-        return previous is None or current != previous
+        return previous_hash != current_hash or previous is None or current != previous
 
     async def _generate_artifacts_if_needed(self, session_id: str) -> None:
         """Generate session artifacts (summary and/or wiki) that are missing.

@@ -24,6 +24,8 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
+import yaml
+
 from gobby.sessions.summary_context import _summary_context_db
 from gobby.sessions.summary_refresh import (
     coerce_digest_turn_count,
@@ -153,22 +155,50 @@ def _session_date(session: Any) -> str:
 
 def _format_meta_yaml(session: Any) -> str:
     """Build a compact YAML metadata block for the synthesis prompt context."""
-    lines = [
-        f"project: {getattr(session, 'project_id', '') or ''}",
-        f"date: {_session_date(session)}",
-        f"model: {getattr(session, 'model', '') or ''}",
-        f"source: {getattr(session, 'source', '') or ''}",
-        f"input_tokens: {getattr(session, 'usage_input_tokens', 0) or 0}",
-        f"output_tokens: {getattr(session, 'usage_output_tokens', 0) or 0}",
-    ]
-    return "\n".join(lines)
+    return _dump_yaml_mapping(
+        {
+            "project": getattr(session, "project_id", "") or "",
+            "date": _session_date(session),
+            "model": getattr(session, "model", "") or "",
+            "source": getattr(session, "source", "") or "",
+            "input_tokens": getattr(session, "usage_input_tokens", 0) or 0,
+            "output_tokens": getattr(session, "usage_output_tokens", 0) or 0,
+        }
+    )
 
 
-def _yaml_tags(tags: list[str]) -> str:
-    """Render a tag list as an inline YAML sequence."""
-    if not tags:
-        return "[]"
-    return "[" + ", ".join(tags) + "]"
+def _dump_yaml_mapping(values: dict[str, Any]) -> str:
+    """Serialize prompt metadata/frontmatter with safe YAML quoting."""
+    return yaml.safe_dump(
+        values,
+        allow_unicode=True,
+        default_flow_style=False,
+        sort_keys=False,
+    ).strip()
+
+
+def wiki_source_context_hash(
+    *,
+    session: Any,
+    digest_markdown: str,
+    prompt_path: str,
+    rendered_prompt: str,
+) -> str:
+    """Hash the exact wiki source inputs used to decide regeneration."""
+    return source_context_hash(
+        {
+            "external_id": getattr(session, "external_id", None),
+            "digest_markdown": digest_markdown,
+            "prompt_path": prompt_path,
+            "rendered_prompt": rendered_prompt,
+        }
+    )
+
+
+def _safe_wiki_filename_stem(session: Any) -> str:
+    raw = str(getattr(session, "external_id", None) or getattr(session, "id", "") or "session")
+    stem = re.sub(r"[^A-Za-z0-9._-]+", "-", raw.strip()).strip(".-_")
+    return stem[:120] or "session"
 
 
 def _build_wiki_frontmatter(session: Any, tags: list[str]) -> str:
@@ -180,19 +210,19 @@ def _build_wiki_frontmatter(session: Any, tags: list[str]) -> str:
     short_id = external_id[:8] if external_id else (getattr(session, "id", "") or "")[:8]
     date = _session_date(session)
     title = f"Session: {short_id}" + (f" — {date}" if date else "")
-    lines = [
-        "---",
-        f'title: "{title}"',
-        "type: source",
-        f"tags: {_yaml_tags(tags)}",
-        f"date: {date}",
-        f"model: {getattr(session, 'model', '') or ''}",
-        f"project: {getattr(session, 'project_id', '') or ''}",
-        f"session_id: {getattr(session, 'id', '') or ''}",
-        f"source: {getattr(session, 'source', '') or ''}",
-        "---",
-    ]
-    return "\n".join(lines)
+    frontmatter = _dump_yaml_mapping(
+        {
+            "title": title,
+            "type": "source",
+            "tags": tags,
+            "date": date,
+            "model": getattr(session, "model", "") or "",
+            "project": getattr(session, "project_id", "") or "",
+            "session_id": getattr(session, "id", "") or "",
+            "source": getattr(session, "source", "") or "",
+        }
+    )
+    return f"---\n{frontmatter}\n---"
 
 
 def assemble_wiki_page(session: Any, synthesis: str) -> tuple[list[str], str, str]:
@@ -216,7 +246,7 @@ def resolve_wiki_file_path(session: Any, session_wiki_config: Any) -> Path:
     """
     from gobby.cli.utils_config import get_gobby_home
 
-    external_id = getattr(session, "external_id", None) or getattr(session, "id", "")
+    external_id = _safe_wiki_filename_stem(session)
     configured = getattr(session_wiki_config, "wiki_file_path", ".gobby/session_wiki")
     rel = Path(configured)
     if rel.is_absolute():
@@ -292,12 +322,21 @@ async def generate_session_wiki(
 
     prompt_path = getattr(session_wiki_config, "prompt_path", WIKI_PROMPT_PATH)
     current_turns = digest_turn_count(digest_markdown)
-    current_hash = source_context_hash(
-        {
-            "external_id": getattr(session, "external_id", None),
-            "digest_markdown": digest_markdown,
-            "prompt_path": prompt_path,
-        }
+    prompt = _render_wiki_prompt(
+        session=session,
+        digest_markdown=digest_markdown,
+        prompt_path=prompt_path,
+        db=db,
+        session_manager=session_manager,
+    )
+    if not prompt:
+        return {"generated": False, "skipped": "prompt_unavailable"}
+
+    current_hash = wiki_source_context_hash(
+        session=session,
+        digest_markdown=digest_markdown,
+        prompt_path=prompt_path,
+        rendered_prompt=prompt,
     )
 
     previous_hash = getattr(session, "wiki_source_context_hash", None)
@@ -310,16 +349,6 @@ async def generate_session_wiki(
         and existing_valid
     ):
         return {"generated": False, "skipped": "noop", "reason": "source_context_hash_match"}
-
-    prompt = _render_wiki_prompt(
-        session=session,
-        digest_markdown=digest_markdown,
-        prompt_path=prompt_path,
-        db=db,
-        session_manager=session_manager,
-    )
-    if not prompt:
-        return {"generated": False, "skipped": "prompt_unavailable"}
 
     try:
         synthesis = await llm_service.call_feature(

@@ -13,7 +13,7 @@ from __future__ import annotations
 import logging
 from pathlib import Path
 
-from gobby.skills._loader_files import _classify_file, load_skill_files, scan_subdirectory
+from gobby.skills._loader_files import load_skill_files, scan_subdirectory
 from gobby.skills._loader_github import DEFAULT_CACHE_DIR, clone_skill_repo, parse_github_url
 from gobby.skills._loader_models import GitHubRef, LoadedSkillFile, SkillLoadError
 from gobby.skills._loader_zip import _resolve_within_directory, extract_zip
@@ -29,7 +29,6 @@ __all__ = [
     "LoadedSkillFile",
     "SkillLoadError",
     "SkillLoader",
-    "_classify_file",
     "clone_skill_repo",
     "extract_zip",
     "parse_github_url",

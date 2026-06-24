@@ -58,7 +58,7 @@ def _fresh_output_delta(before: str, after: str) -> str:
 async def _capture_pane_snapshot(tmux: TmuxSessionManager, target: str) -> str | None:
     try:
         output = await tmux.capture_pane(target, lines=_COMPACTION_REJECTION_CAPTURE_LINES)
-    except Exception:
+    except (TimeoutError, OSError, RuntimeError):
         logger.debug("Failed to capture tmux target %s for compaction rejection check", target)
         return None
     if isinstance(output, str):
@@ -99,7 +99,7 @@ async def _send_tmux_keys(
     except TimeoutError:
         logger.warning("Timed out %s to tmux target %s for %s", action, target, session_id)
         return False, f"tmux send-keys timed out for session {session_id} while {action}"
-    except Exception as exc:
+    except (OSError, RuntimeError) as exc:
         detail = str(exc) or type(exc).__name__
         logger.warning(
             "Failed %s to tmux target %s for %s: %s",

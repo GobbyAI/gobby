@@ -33,8 +33,9 @@ async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str,
         path: Path to the transcript file.
         source: Session source (``"claude"``, ``"qwen"``, ``"codex"``, ``"droid"``).
     """
-    # Qwen JSON session files are a single JSON object, not JSONL.
-    if path.suffix == ".json" and source == "qwen":
+    # Typed JSON session files are a single JSON object, not JSONL. Legacy
+    # registrations may have source="unknown" even when the file shape is typed.
+    if path.suffix == ".json" and source in {"qwen", "unknown"}:
         return await _read_typed_json_transcript(path)
 
     # JSONL format (Claude, Codex, default)
@@ -47,9 +48,15 @@ async def _read_transcript(path: Path, source: str = "claude") -> list[dict[str,
                     if isinstance(obj, dict):
                         turns.append(obj)
                     else:
-                        logger.warning(f"Skipping non-dict JSONL value at line {idx + 1} in {path}")
+                        logger.warning(
+                            "Skipping non-dict JSONL value",
+                            extra={"line": idx + 1, "path": str(path)},
+                        )
                 except json.JSONDecodeError:
-                    logger.warning(f"Skipping malformed JSONL line {idx + 1} in {path}")
+                    logger.warning(
+                        "Skipping malformed JSONL line",
+                        extra={"line": idx + 1, "path": str(path)},
+                    )
     return turns
 
 
@@ -140,12 +147,16 @@ async def _read_typed_json_transcript(path: Path) -> list[dict[str, Any]]:
     try:
         data = json.loads(raw)
     except json.JSONDecodeError as e:
-        logger.error(f"Invalid JSON in typed-JSON transcript {path}: {e}")
+        logger.error(
+            "Invalid JSON in typed-JSON transcript",
+            extra={"path": str(path), "error": str(e)},
+        )
         return []
 
     if not isinstance(data, dict):
         logger.error(
-            f"Expected JSON object in typed-JSON transcript {path}, got {type(data).__name__}"
+            "Expected JSON object in typed-JSON transcript",
+            extra={"path": str(path), "actual_type": type(data).__name__},
         )
         return []
 

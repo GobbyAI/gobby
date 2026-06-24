@@ -9,8 +9,7 @@ rules:
     when: >-
       variables.get('enforce_tdd')
       and event.data.get('canonical_tool_kind') == 'write'
-      and first_tdd_code_path(event.data, tool_input)
-      and first_tdd_code_path(event.data, tool_input) not in variables.get('tdd_nudged_files', [])
+      and first_tdd_code_path(event.data, tool_input) not in ([None, ''] + variables.get('tdd_nudged_files', []))
     effects:
       - type: set_variable
         variable: tdd_nudged_files

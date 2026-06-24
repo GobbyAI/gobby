@@ -320,30 +320,30 @@ def create_spawn_agent_registry(
         notify_parent_on_completion: bool = True,
     ) -> dict[str, Any]:
         """
-        Spawn a subagent with the specified configuration.
+                Spawn a subagent with the specified configuration.
 
-        Args:
-            prompt: Required - what the agent should do
-            agent: Agent definition name (defaults to "default")
-            task_id: Optional - link to task (supports N, #N, UUID)
-            isolation: Isolation mode (none/worktree/clone)
-            branch_name: Git branch name (auto-generated from task if not provided)
-            base_branch: Base branch for worktree/clone
-            clone_id: Existing clone ID to reuse
-            worktree_id: Existing worktree ID to reuse
-            workflow: Workflow/pipeline to use
-            provider: AI provider (claude/qwen/codex/droid)
-            model: Model to use
-            reasoning_effort: Optional reasoning override for supported providers/models
-            reasoning_required: Fail instead of warning when requested reasoning is unsupported
-            timeout: Timeout in seconds
-            max_turns: Maximum conversation turns
-            parent_session_id: Session reference (#N, N, UUID, or prefix) for the parent
-            project_path: Project path override
-            notify_parent_on_completion: Whether to notify the parent when the agent completes
+                Args:
+                    prompt: Required - what the agent should do
+                    agent: Agent definition name (defaults to "default")
+                    task_id: Optional - link to task (supports N, #N, UUID)
+                    isolation: Isolation mode (none/worktree/clone)
+                    branch_name: Git branch name (auto-generated from task if not provided)
+                    base_branch: Base branch for worktree/clone
+                    clone_id: Existing clone ID to reuse
+                    worktree_id: Existing worktree ID to reuse
+                    workflow: Workflow/pipeline to use
+        provider: AI provider (claude/grok/qwen/codex/droid/agy)
+                    model: Model to use
+                    reasoning_effort: Optional reasoning override for supported providers/models
+                    reasoning_required: Fail instead of warning when requested reasoning is unsupported
+                    timeout: Timeout in seconds
+                    max_turns: Maximum conversation turns
+                    parent_session_id: Session reference (#N, N, UUID, or prefix) for the parent
+                    project_path: Project path override
+                    notify_parent_on_completion: Whether to notify the parent when the agent completes
 
-        Returns:
-            Dict with success status, run_id, child_session_id, isolation metadata
+                Returns:
+                    Dict with success status, run_id, child_session_id, isolation metadata
         """
         # Resolve parent_session_id to UUID (accepts #N, N, UUID, or prefix)
         resolved_parent_session_id = parent_session_id

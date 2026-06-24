@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 import os
 import time
 from collections.abc import Awaitable, Callable
@@ -223,7 +224,18 @@ class DaemonProxy:
             raw_timeout = arg_map.get("timeout")
             if raw_timeout is None:
                 raw_timeout = arg_map.get("timeout_seconds", 300.0)
-            arg_timeout = float(raw_timeout)
+            try:
+                arg_timeout = float(raw_timeout)
+            except (TypeError, ValueError):
+                return {
+                    "success": False,
+                    "error": f"Invalid wait timeout: {raw_timeout!r}",
+                }
+            if not math.isfinite(arg_timeout) or arg_timeout <= 0:
+                return {
+                    "success": False,
+                    "error": f"Invalid wait timeout: {raw_timeout!r}",
+                }
             timeout = arg_timeout + WAIT_TOOL_HTTP_TIMEOUT_BUFFER_SECONDS
 
         request_path = f"/api/mcp/{server_name}/tools/{tool_name}"

@@ -201,6 +201,7 @@ async def stream_codex_turn(
     event_methods = [
         "turn/started",
         "turn/completed",
+        "turn/failed",
         "thread/closed",
         "agent/messageDelta",
         "item/agentMessage/delta",
@@ -308,14 +309,17 @@ async def stream_codex_turn(
 
             if method == "thread/closed":
                 session._turn_id = None
-                yield DoneEvent(
-                    tool_calls_count=tool_calls_count,
-                    context_window=session._resolve_context_window(),
-                )
-                turn_completed.set()
-                continue
+                if turn_completed.is_set():
+                    continue
+                raise RuntimeError("Codex thread closed before turn completed")
+
+            if method == "turn/failed":
+                error = params.get("error")
+                message = str(error) if error else "Codex turn failed"
+                raise RuntimeError(message)
 
             if method == "turn/completed":
+                turn_completed.set()
                 usage = params.get("usage", {})
                 if not isinstance(usage, dict):
                     usage = {}
@@ -358,8 +362,21 @@ async def stream_codex_turn(
                     context_window=context_window,
                     sdk_session_id=session.sdk_session_id,
                 )
-                turn_completed.set()
+                continue
     except asyncio.CancelledError:
+        active_turn_id = session._turn_id
+        if active_turn_id:
+            try:
+                await asyncio.wait_for(
+                    client.interrupt_turn(thread_id, active_turn_id), timeout=1.0
+                )
+            except (TimeoutError, OSError, RuntimeError) as exc:
+                logger.warning(
+                    "Failed to interrupt cancelled Codex turn %s for session %s: %s",
+                    active_turn_id,
+                    session.conversation_id,
+                    exc,
+                )
         raise
     except Exception as exc:
         logger.error("Codex managed session %s error: %s", session.conversation_id, exc)

@@ -165,17 +165,25 @@ class PipelineStepStorageMixin:
             "se.started_at",
             "se.approval_timeout_seconds",
         )
+        project_predicate = (
+            "pe.project_id IS NULL" if self.project_id is None else "pe.project_id = %s"
+        )
+        params: tuple[Any, ...] = (
+            (StepStatus.WAITING_APPROVAL.value,)
+            if self.project_id is None
+            else (StepStatus.WAITING_APPROVAL.value, self.project_id)
+        )
         rows = self.db.fetchall(
             f"""
-            SELECT se.* FROM step_executions se
-            JOIN pipeline_executions pe ON se.execution_id = pe.id
-            WHERE se.status = %s
-              AND se.approval_timeout_seconds IS NOT NULL
-              AND se.started_at IS NOT NULL
-              AND {timeout_expired_sql}
-              AND pe.project_id = %s
-            """,  # nosec B608 # timeout expression is selected by storage dialect.
-            (StepStatus.WAITING_APPROVAL.value, self.project_id),
+SELECT se.* FROM step_executions se
+JOIN pipeline_executions pe ON se.execution_id = pe.id
+WHERE se.status = %s
+AND se.approval_timeout_seconds IS NOT NULL
+AND se.started_at IS NOT NULL
+AND {timeout_expired_sql}
+AND {project_predicate}
+""",  # nosec B608 # timeout expression is selected by storage dialect.
+            params,
         )
         return [StepExecution.from_row(row) for row in rows]
 

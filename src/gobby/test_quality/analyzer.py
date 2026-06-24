@@ -61,4 +61,6 @@ def analyze_file(
     if file_path.suffix == _PYTHON_SUFFIX:
         return _analyze_python_file(source, relative_path, filename=str(file_path))
 
-    return _analyze_python_file(source, relative_path, filename=str(file_path))
+    raise ValueError(
+        f"Unsupported test file suffix for {file_path}: {file_path.suffix or '<none>'}"
+    )

@@ -453,9 +453,7 @@ def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
         return AIAdapterStyle.LLM_PROVIDER
     if provider == "codex":
         return AIAdapterStyle.DAEMON
-    if provider in {"grok", "qwen"}:
-        return AIAdapterStyle.CLI
-    if provider in {"agy", "droid"}:
+    if provider in {"agy", "droid", "grok", "qwen"}:
         return AIAdapterStyle.CLI
     return None
 

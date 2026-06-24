@@ -142,6 +142,6 @@ def _store_hub_config(
                 store.set(f"skills.hubs.{name}.{key}", value, source="cli")
         finally:
             db.close()
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"Error: Failed to save hub config: {exc}", err=True)
         sys.exit(1)

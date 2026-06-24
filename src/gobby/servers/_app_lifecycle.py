@@ -90,8 +90,8 @@ def create_lifespan(
             )
             hook_manager_kwargs["log_backup_count"] = server.services.config.telemetry.backup_count
 
-            app.state.hook_manager = hook_manager_factory_getter()(**hook_manager_kwargs)
-            server._hook_manager = app.state.hook_manager
+        app.state.hook_manager = hook_manager_factory_getter()(**hook_manager_kwargs)
+        server._hook_manager = app.state.hook_manager
         logger.debug("HookManager initialized in daemon")
 
         if server.services.database:
@@ -164,15 +164,22 @@ def create_lifespan(
                     return
 
                 def _schedule() -> None:
-                    if app.state.session_broadcast_closed:
+                    if app.state.session_broadcast_closed or listener_loop.is_closed():
                         return
-                    task = listener_loop.create_task(
-                        ws_server.broadcast_session_event(event, session_id)
-                    )
+                    try:
+                        task = listener_loop.create_task(
+                            ws_server.broadcast_session_event(event, session_id)
+                        )
+                    except RuntimeError:
+                        logger.debug("Session change broadcast skipped because loop is closed")
+                        return
                     session_broadcast_tasks.add(task)
                     task.add_done_callback(_session_broadcast_done)
 
-                listener_loop.call_soon_threadsafe(_schedule)
+                try:
+                    listener_loop.call_soon_threadsafe(_schedule)
+                except RuntimeError:
+                    logger.debug("Session change broadcast scheduling skipped; loop is closed")
 
             server.session_manager.register_session_change_listener(_broadcast_session_change)
             app.state.session_change_listener = _broadcast_session_change

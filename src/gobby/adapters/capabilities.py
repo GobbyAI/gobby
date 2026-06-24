@@ -219,7 +219,7 @@ ACP_HOOK_ALIASES: dict[str, str] = {
     "notification": "Notification",
 }
 
-ACP_CONTEXT_HOOKS = frozenset(ACP_EVENT_MAP)
+ACP_ADDITIONAL_CONTEXT_HOOKS = frozenset({"SessionStart", "BeforeAgent", "AfterTool"})
 
 
 def _acp_capabilities(source: SessionSource) -> ProviderCapabilities:
@@ -227,7 +227,7 @@ def _acp_capabilities(source: SessionSource) -> ProviderCapabilities:
     for hook_name, event_type in ACP_EVENT_MAP.items():
         context_channel = (
             ContextChannel.ADDITIONAL_CONTEXT
-            if hook_name in ACP_CONTEXT_HOOKS
+            if hook_name in ACP_ADDITIONAL_CONTEXT_HOOKS
             else ContextChannel.NONE
         )
         decision_style = ProviderDecisionStyle.TOP_LEVEL_BLOCK

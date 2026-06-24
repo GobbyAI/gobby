@@ -204,19 +204,31 @@ class MemoryDreamService:
             }
 
         await self._ensure_schema_async()
-        if not dry_run:
-            # The truth-change trigger mutates cooldown/hash state, so it is
-            # skipped for preview-only dry runs (which must write nothing).
-            await self._apply_truth_change_triggers()
-
         redream_hours = _positive_int(
             getattr(self.dream_config, "redream_after_hours", DEFAULT_REDREAM_AFTER_HOURS),
             DEFAULT_REDREAM_AFTER_HOURS,
         )
-        cutoff = (datetime.now(UTC) - timedelta(hours=redream_hours)).isoformat()
-        targets = await asyncio.to_thread(
-            self.memory_manager.list_dream_project_ids, redream_cutoff=cutoff
+        cutoff = (
+            _ALL_MEMORIES_CUTOFF
+            if full_sweep
+            else (datetime.now(UTC) - timedelta(hours=redream_hours)).isoformat()
         )
+        truth_triggered_targets: list[str] = []
+        if dry_run:
+            targets = await asyncio.to_thread(
+                self.memory_manager.list_dream_project_ids, redream_cutoff=cutoff
+            )
+            truth_triggered_targets = await self._truth_changed_project_ids(targets)
+        else:
+            # The truth-change trigger mutates cooldown/hash state, so it is
+            # skipped for preview-only dry runs (which must write nothing).
+            await self._apply_truth_change_triggers()
+            targets = await asyncio.to_thread(
+                self.memory_manager.list_dream_project_ids, redream_cutoff=cutoff
+            )
+        for target in truth_triggered_targets:
+            if target not in targets:
+                targets.append(target)
 
         runs: list[dict[str, Any]] = []
         completed = 0
@@ -268,6 +280,36 @@ class MemoryDreamService:
             "runs": runs,
         }
 
+    async def _truth_changed_project_ids(
+        self, project_ids: list[str | None] | None = None
+    ) -> list[str]:
+        if project_ids is None:
+            project_ids = await asyncio.to_thread(
+                self.memory_manager.list_dream_project_ids,
+                redream_cutoff=_ALL_MEMORIES_CUTOFF,
+            )
+        changed: list[str] = []
+        for project_id in project_ids:
+            if project_id is None or self._is_current_daemon_project(project_id):
+                continue
+            try:
+                repo_path = self._resolve_repo_path(project_id)
+                if not repo_path:
+                    continue
+                digest = build_project_truth_digest(repo_path)
+                if not digest:
+                    continue
+                digest_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+                previous = await asyncio.to_thread(self.store.get_truth_digest_hash, project_id)
+                if previous != digest_hash:
+                    changed.append(project_id)
+            except Exception:
+                logger.exception(
+                    "memory dream: truth-change detection failed for project %s",
+                    project_id,
+                )
+        return changed
+
     async def _apply_truth_change_triggers(self) -> None:
         """Clear the cooldown for projects whose codewiki truth digest changed.
 
@@ -281,13 +323,7 @@ class MemoryDreamService:
         daemon's own project use platform truth rather than a per-project
         codewiki digest and are skipped. Per-project failures are isolated.
         """
-        project_ids = await asyncio.to_thread(
-            self.memory_manager.list_dream_project_ids,
-            redream_cutoff=_ALL_MEMORIES_CUTOFF,
-        )
-        for project_id in project_ids:
-            if project_id is None or self._is_current_daemon_project(project_id):
-                continue
+        for project_id in await self._truth_changed_project_ids():
             try:
                 repo_path = self._resolve_repo_path(project_id)
                 if not repo_path:
@@ -333,6 +369,101 @@ class MemoryDreamService:
             options=options.to_dict(),
         )
         return {"success": True, "run_id": run_id}
+
+    async def start_all_due_projects_async(
+        self,
+        *,
+        dry_run: bool = False,
+        skip_consolidation: bool = False,
+        memory_type: str | None = None,
+        full_sweep: bool = False,
+    ) -> dict[str, Any]:
+        if not self.dream_config.enabled:
+            return {"success": False, "error": "memory dream is disabled"}
+        await self._ensure_schema_async()
+        options = {
+            "aggregate": True,
+            "dry_run": dry_run,
+            "skip_consolidation": skip_consolidation,
+            "memory_type": memory_type,
+            "full_sweep": full_sweep,
+        }
+        run_id = await asyncio.to_thread(
+            self.store.create_run,
+            project_id=None,
+            dry_run=dry_run,
+            options=options,
+        )
+        return {"success": True, "run_id": run_id}
+
+    async def execute_all_due_projects_run(
+        self,
+        run_id: str,
+        *,
+        dry_run: bool = False,
+        skip_consolidation: bool = False,
+        memory_type: str | None = None,
+        full_sweep: bool = False,
+    ) -> dict[str, Any]:
+        await self._ensure_schema_async()
+        try:
+            aggregate = await self.run_all_due_projects(
+                dry_run=dry_run,
+                skip_consolidation=skip_consolidation,
+                memory_type=memory_type,
+                full_sweep=full_sweep,
+            )
+            completed_ts = datetime.now(UTC).isoformat()
+            status = "completed" if aggregate.get("success") else "failed"
+            error = None if aggregate.get("success") else aggregate.get("error", "aggregate failed")
+            run = await asyncio.to_thread(
+                self.store.update_run,
+                run_id,
+                status=status,
+                completed_at=completed_ts,
+                plan={"aggregate": True, "runs": aggregate.get("runs", [])},
+                summary={
+                    "targets": aggregate.get("targets", 0),
+                    "completed": aggregate.get("completed", 0),
+                    "failed": aggregate.get("failed", 0),
+                    "mutations": aggregate.get("mutations", 0),
+                },
+                error=error,
+            )
+            return {
+                "success": bool(aggregate.get("success")),
+                "run_id": run_id,
+                "run": run,
+                "aggregate": aggregate,
+                **({"error": error} if error else {}),
+            }
+        except asyncio.CancelledError:
+            completed_ts = datetime.now(UTC).isoformat()
+            try:
+                await asyncio.to_thread(
+                    self.store.update_run,
+                    run_id,
+                    status="interrupted",
+                    completed_at=completed_ts,
+                    error=INTERRUPTED_CANCELLED_ERROR,
+                )
+            except Exception:
+                logger.warning(
+                    "Failed to persist interrupted aggregate memory dream run %s",
+                    run_id,
+                    exc_info=True,
+                )
+            raise
+        except Exception as exc:  # noqa: BLE001 - failure must be persisted on the run
+            completed_ts = datetime.now(UTC).isoformat()
+            run = await asyncio.to_thread(
+                self.store.update_run,
+                run_id,
+                status="failed",
+                completed_at=completed_ts,
+                error=str(exc),
+            )
+            return {"success": False, "run_id": run_id, "run": run, "error": str(exc)}
 
     def start(self, options: DreamRunOptions) -> dict[str, Any]:
         if not self.dream_config.enabled:

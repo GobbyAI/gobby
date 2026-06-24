@@ -51,7 +51,7 @@ class TestSetProviderValidation:
         server = ConcreteSessionControl()
         ws = _make_ws()
 
-        await server._handle_set_provider(ws, {"provider": "gemini"})
+        await server._handle_set_provider(ws, {"provider": "grok"})
 
         server._send_error.assert_awaited_once()
         assert "conversation_id" in server._send_error.call_args[0][1]
@@ -82,9 +82,9 @@ class TestSetProviderNoExistingSession:
         server = ConcreteSessionControl()
         ws = _make_ws()
 
-        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "gemini"})
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "grok"})
 
-        assert server._pending_providers["conv-1"] == "gemini"
+        assert server._pending_providers["conv-1"] == "grok"
 
     async def test_accepts_droid_provider(self) -> None:
         server = ConcreteSessionControl()
@@ -116,7 +116,7 @@ class TestSetProviderWithExistingSession:
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "gemini"})
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "grok"})
 
         server._cancel_active_chat.assert_awaited_once_with("conv-1")
         session.stop.assert_awaited_once()
@@ -128,10 +128,10 @@ class TestSetProviderWithExistingSession:
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "gemini"})
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "grok"})
 
         server.session_manager.update.assert_called_once_with(
-            "db-456", source="gemini", status="paused"
+            "db-456", source="grok", status="paused"
         )
         assert server.session_manager.update.call_count == 1
         assert server.session_manager.update.call_args is not None
@@ -152,8 +152,8 @@ class TestSetProviderWithExistingSession:
         server._chat_sessions["conv-1"] = session
         ws = _make_ws()
 
-        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "gemini"})
+        await server._handle_set_provider(ws, {"conversation_id": "conv-1", "provider": "grok"})
 
         msg = json.loads(ws.send.call_args[0][0])
         assert msg["old_provider"] == "claude"
-        assert msg["provider"] == "gemini"
+        assert msg["provider"] == "grok"

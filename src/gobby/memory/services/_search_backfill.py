@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import inspect
 from collections.abc import Awaitable, Callable
 
 from gobby.memory.services._search_constants import (
@@ -17,16 +18,18 @@ async def collect_active_results(
     *,
     limit: int,
     collect: Callable[[int], Awaitable[_Candidates]],
-    build: Callable[[_Candidates], list[Memory]],
+    build: Callable[[_Candidates], list[Memory] | Awaitable[list[Memory]]],
 ) -> tuple[list[Memory], _Candidates]:
     """Over-fetch ranked candidates and backfill until ``limit`` active results."""
     candidate_limit = max(limit, 1) * _OVERFETCH_FACTOR
     candidates = await collect(candidate_limit)
-    results = build(candidates)
+    maybe_results = build(candidates)
+    results = await maybe_results if inspect.isawaitable(maybe_results) else maybe_results
     rounds = 0
     while len(results) < limit and not candidates.exhausted and rounds < _MAX_BACKFILL_ROUNDS:
         rounds += 1
         candidate_limit *= _BACKFILL_GROWTH
         candidates = await collect(candidate_limit)
-        results = build(candidates)
+        maybe_results = build(candidates)
+        results = await maybe_results if inspect.isawaitable(maybe_results) else maybe_results
     return results, candidates

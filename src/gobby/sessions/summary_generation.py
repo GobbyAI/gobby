@@ -126,7 +126,8 @@ async def _generate_full_summary(
 
     except Exception as e:
         logger.error(
-            f"Failed to generate full summary for session {session.id}: {e}",
+            "Failed to generate full summary",
+            extra={"session_id": session.id, "error": str(e)},
             exc_info=True,
         )
         return None, str(e)
@@ -185,7 +186,8 @@ async def _generate_delta_summary(
         return merged_markdown, None
     except Exception as e:
         logger.error(
-            f"Failed to merge summary delta for session {session.id}: {e}",
+            "Failed to merge summary delta",
+            extra={"session_id": session.id, "error": str(e)},
             exc_info=True,
         )
         return None, str(e)

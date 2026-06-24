@@ -207,16 +207,16 @@ def register_handoff_tools(
         link_child_session_id: str | None = None,
     ) -> dict[str, Any]:
         """
-        Retrieve handoff context from a session.
+                Retrieve handoff context from a session.
 
-        Args:
-            session_id: Session reference - supports #N, N (seq_num), UUID, or prefix (optional)
-            project_id: Project ID to find parent session in when no caller project context exists
-            source: Filter by CLI source - claude, qwen, codex (optional)
-            link_child_session_id: Session to link as child - supports #N, N, UUID, or prefix (optional)
+                Args:
+                    session_id: Session reference - supports #N, N (seq_num), UUID, or prefix (optional)
+                    project_id: Project ID to find parent session in when no caller project context exists
+        source: Filter by CLI source - claude, grok, qwen, codex, droid, agy (optional)
+                    link_child_session_id: Session to link as child - supports #N, N, UUID, or prefix (optional)
 
-        Returns:
-            Handoff context markdown and session metadata
+                Returns:
+                    Handoff context markdown and session metadata
         """
         from gobby.utils.machine_id import get_machine_id
 

@@ -746,8 +746,7 @@ def uninstall(
         click.echo(f"\nScope: Project ({project_path})")
     else:
         click.echo("\nScope: Global")
-    targets = [*clis_to_uninstall]
-    click.echo(f"Targets to uninstall: {', '.join(targets)}")
+    click.echo(f"Targets to uninstall: {', '.join(clis_to_uninstall)}")
     click.echo("")
 
     # For global uninstall, use Path.home() so uninstallers find ~/.{cli}/

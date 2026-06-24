@@ -117,7 +117,7 @@ def sessions() -> None:
 )
 @click.option(
     "--source",
-    type=click.Choice(["claude", "qwen", "codex", "droid"]),
+    type=click.Choice(["claude", "grok", "qwen", "codex", "droid", "agy"]),
     help="Filter by source",
 )
 @click.option("--limit", "-n", default=20, help="Max sessions to show")
@@ -189,9 +189,9 @@ def show_session(session_id: str, json_format: bool) -> None:
     with session_manager_context() as manager:
         session = manager.get(session_id)
 
-    if not session:
-        click.echo(f"Session not found: {session_id}", err=True)
-        return
+        if not session:
+            click.echo(f"Session not found: {session_id}", err=True)
+            raise SystemExit(1)
 
     if json_format:
         click.echo(json.dumps(session.to_dict(), indent=2, default=str))
@@ -305,7 +305,7 @@ def delete_session(session_id: str) -> None:
         session = manager.get(session_id)
         if not session:
             click.echo(f"Session not found: {session_id}", err=True)
-            return
+            raise SystemExit(1)
 
         success = manager.delete(session.id)
     if success:
@@ -440,7 +440,7 @@ def create_handoff(
             session = manager.get(session_id)
             if not session:
                 click.echo(f"Session not found: {session_id}", err=True)
-                return
+                raise SystemExit(1)
         else:
             # Get most recent active session
             try:
@@ -450,7 +450,7 @@ def create_handoff(
             session = manager.get(session_id)
             if not session:
                 click.echo(f"Session not found: {session_id}", err=True)
-                return
+                raise SystemExit(1)
 
     # Check for transcript
     if not session.transcript_path:

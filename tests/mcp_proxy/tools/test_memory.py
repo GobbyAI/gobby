@@ -12,6 +12,7 @@ Focuses on:
 import asyncio
 import inspect
 import logging
+from collections.abc import Iterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -584,7 +585,7 @@ class TestMemoryDreamTools:
     """Tests for memory dream MCP wrappers."""
 
     @pytest.fixture(autouse=True)
-    def _scoped_project(self):
+    def _scoped_project(self) -> Iterator[None]:
         # Registration captures get_current_project_id as the tool's get_project_id;
         # a concrete project routes the tool to the scoped single-run path. Tests
         # that need the unscoped (all-due-projects) path re-patch this to None.
@@ -675,6 +676,55 @@ class TestMemoryDreamTools:
         assert kwargs["full_sweep"] is True
         # No project context → never the single-run path.
         service.run.assert_not_awaited()
+        service.start_async.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_memory_dream_unscoped_background_returns_aggregate_run_id(
+        self,
+        mock_memory_manager: MagicMock,
+        mock_llm_service: MagicMock,
+    ) -> None:
+        config = SimpleNamespace(memory=SimpleNamespace(dream=SimpleNamespace()))
+        service = MagicMock()
+        service.start_all_due_projects_async = AsyncMock(
+            return_value={"success": True, "run_id": "aggregate-1"}
+        )
+        service.execute_all_due_projects_run = AsyncMock(return_value={"success": True})
+        service.run_all_due_projects = AsyncMock()
+        service.start_async = AsyncMock()
+
+        with patch("gobby.mcp_proxy.tools.memory.get_current_project_id", return_value=None):
+            registry = create_memory_registry(
+                mock_memory_manager,
+                llm_service=mock_llm_service,
+                config=config,
+            )
+            with patch(
+                "gobby.mcp_proxy.tools.memory_dream.MemoryDreamService",
+                return_value=service,
+            ):
+                result = await registry.call(
+                    "memory_dream",
+                    {"dry_run": True, "wait": False, "full_sweep": True},
+                )
+                background_tasks = memory_dream_tools.get_background_tasks()
+                await asyncio.gather(*background_tasks)
+
+        assert result == {"success": True, "run_id": "aggregate-1", "status": "started"}
+        service.start_all_due_projects_async.assert_awaited_once_with(
+            dry_run=True,
+            skip_consolidation=False,
+            memory_type=None,
+            full_sweep=True,
+        )
+        service.execute_all_due_projects_run.assert_awaited_once_with(
+            "aggregate-1",
+            dry_run=True,
+            skip_consolidation=False,
+            memory_type=None,
+            full_sweep=True,
+        )
+        service.run_all_due_projects.assert_not_awaited()
         service.start_async.assert_not_awaited()
 
     @pytest.mark.asyncio

@@ -1185,9 +1185,7 @@ def test_gate_reasoning_effort_skips_agy_without_explicit_model() -> None:
         models=("gemini-3.5-flash", "gemini-3.1-pro"),
         strict_models=True,
     )
-    request = TextGenerationRequest(
-        prompt="summarize", provider="agy", reasoning_effort="auto"
-    )
+    request = TextGenerationRequest(prompt="summarize", provider="agy", reasoning_effort="auto")
 
     gated = _gate_reasoning_effort(request, binding=binding)
 

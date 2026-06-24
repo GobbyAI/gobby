@@ -38,36 +38,39 @@ def register_merge_status_tool(
         if not resolution_id:
             return {"success": False, "error": "resolution_id is required"}
 
-        resolution = merge_storage.get_resolution(resolution_id)
-        if not resolution:
-            return {"success": False, "error": f"Resolution '{resolution_id}' not found"}
+        try:
+            resolution = merge_storage.get_resolution(resolution_id)
+            if not resolution:
+                return {"success": False, "error": f"Resolution '{resolution_id}' not found"}
 
-        (
-            conflict_payloads,
-            pending_count,
-            resolved_count,
-            downgraded,
-        ) = await normalized_status_conflicts(
-            merge_storage=merge_storage,
-            worktree_manager=worktree_manager,
-            git_manager=git_manager,
-            resolution=resolution,
-            include_content=include_content,
-        )
-        if (downgraded or pending_count) and resolution.status == "resolved":
-            resolution = (
-                merge_storage.update_resolution(
-                    resolution_id=resolution_id,
-                    status="pending",
-                    force_status=True,
-                )
-                or resolution
+            (
+                conflict_payloads,
+                pending_count,
+                resolved_count,
+                downgraded,
+            ) = await normalized_status_conflicts(
+                merge_storage=merge_storage,
+                worktree_manager=worktree_manager,
+                git_manager=git_manager,
+                resolution=resolution,
+                include_content=include_content,
             )
+            if (downgraded or pending_count) and resolution.status == "resolved":
+                resolution = (
+                    merge_storage.update_resolution(
+                        resolution_id=resolution_id,
+                        status="pending",
+                        force_status=True,
+                    )
+                    or resolution
+                )
 
-        return {
-            "success": True,
-            "resolution": resolution.to_dict(),
-            "conflicts": conflict_payloads,
-            "pending_count": pending_count,
-            "resolved_count": resolved_count,
-        }
+            return {
+                "success": True,
+                "resolution": resolution.to_dict(),
+                "conflicts": conflict_payloads,
+                "pending_count": pending_count,
+                "resolved_count": resolved_count,
+            }
+        except (OSError, RuntimeError, ValueError) as exc:
+            return {"success": False, "error": str(exc)}

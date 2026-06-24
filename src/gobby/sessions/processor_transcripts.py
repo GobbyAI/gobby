@@ -20,13 +20,7 @@ logger = logging.getLogger(__name__)
 
 class ProcessorTranscriptMixin:
     async def _process_session(self: ProcessorHost, session_id: str, transcript_path: str) -> None:
-        """
-        Process a single session.
-
-        Dispatches to format-specific processing based on file extension:
-        - .json: Full-file parsing with mtime change detection for typed-JSON CLIs
-        - .jsonl/.ndjson/other: Incremental line-by-line with byte offset tracking
-        """
+        """Process a single session."""
         if not await asyncio.to_thread(os.path.exists, transcript_path):
             return
 
@@ -56,9 +50,15 @@ class ProcessorTranscriptMixin:
                         valid_offset = await f.tell()
                     else:
                         break
-
         except (OSError, UnicodeDecodeError) as e:
-            logger.error("Error reading transcript %s: %s", transcript_path, e)
+            logger.error(
+                "Error reading transcript",
+                extra={
+                    "session_id": session_id,
+                    "transcript_path": transcript_path,
+                    "error": str(e),
+                },
+            )
             return
 
         if not new_lines:
@@ -93,7 +93,14 @@ class ProcessorTranscriptMixin:
                 )
                 should_persist_appender = valid_offset == appender_stat.st_size
             except (OSError, ValueError, psycopg.Error) as exc:
-                logger.debug("Failed to update transcript index for %s: %s", session_id, exc)
+                logger.debug(
+                    "Failed to update transcript index",
+                    extra={
+                        "session_id": session_id,
+                        "transcript_path": transcript_path,
+                        "error": str(exc),
+                    },
+                )
 
         if not parsed_messages:
             if appender is not None and appender_stat is not None and should_persist_appender:
@@ -134,7 +141,14 @@ class ProcessorTranscriptMixin:
         await self._render_and_broadcast_messages(session_id, parsed_messages)
         self._message_indices[session_id] = parsed_messages[-1].index
 
-        logger.debug("Processed %s messages for %s", len(parsed_messages), session_id)
+        logger.debug(
+            "Processed transcript messages",
+            extra={
+                "session_id": session_id,
+                "transcript_path": transcript_path,
+                "message_count": len(parsed_messages),
+            },
+        )
 
     async def _process_json_session(
         self: ProcessorHost, session_id: str, transcript_path: str
@@ -159,18 +173,31 @@ class ProcessorTranscriptMixin:
                 raw = await f.read()
             data = json.loads(raw)
         except (json.JSONDecodeError, OSError, UnicodeDecodeError) as e:
-            logger.error("Error reading JSON transcript %s: %s", transcript_path, e)
+            logger.error(
+                "Error reading JSON transcript",
+                extra={
+                    "session_id": session_id,
+                    "transcript_path": transcript_path,
+                    "error": str(e),
+                },
+            )
             return
 
         if not isinstance(data, dict):
-            logger.warning("JSON transcript is not an object: %s", transcript_path)
+            logger.warning(
+                "JSON transcript is not an object",
+                extra={"session_id": session_id, "transcript_path": transcript_path},
+            )
             return
 
         self._revive_expired_terminal_session(session_id)
 
         parser = self._parsers.get(session_id)
         if not parser or not hasattr(parser, "parse_session_json"):
-            logger.warning("No JSON-session transcript parser for session %s", session_id)
+            logger.warning(
+                "No JSON-session transcript parser for session",
+                extra={"session_id": session_id, "transcript_path": transcript_path},
+            )
             return
 
         source = getattr(parser, "cli_name", None)
@@ -214,7 +241,14 @@ class ProcessorTranscriptMixin:
         self._message_indices[session_id] = new_messages[-1].index
         self._last_mtime[session_id] = current_mtime
 
-        logger.debug("Processed %s JSON messages for %s", len(new_messages), session_id)
+        logger.debug(
+            "Processed JSON transcript messages",
+            extra={
+                "session_id": session_id,
+                "transcript_path": transcript_path,
+                "message_count": len(new_messages),
+            },
+        )
 
     async def _render_and_broadcast_messages(
         self: ProcessorHost,

@@ -60,6 +60,7 @@ class FakeGwikiGateway:
         return {"status": "ok"}
 
 
+@pytest.mark.asyncio
 async def test_refresh_runs_codewiki_indexes_changed_vault_docs(tmp_path: Path) -> None:
     gcode = FakeGcodeGateway({"changed_paths": ["repo.md", "files/src/lib.rs.md"]})
     gwiki = FakeGwikiGateway()
@@ -79,6 +80,7 @@ async def test_refresh_runs_codewiki_indexes_changed_vault_docs(tmp_path: Path) 
     assert result.indexed is True
 
 
+@pytest.mark.asyncio
 async def test_refresh_with_external_out_dir_ingests_changed_docs(tmp_path: Path) -> None:
     gcode = FakeGcodeGateway({"changed_paths": ["repo.md", "files/src/lib.rs.md"]})
     gwiki = FakeGwikiGateway()
@@ -106,6 +108,7 @@ async def test_refresh_with_external_out_dir_ingests_changed_docs(tmp_path: Path
     assert result.ingested_paths == tuple(gwiki.ingested)
 
 
+@pytest.mark.asyncio
 async def test_refresh_raises_gateway_construction_error(tmp_path: Path) -> None:
     def fail_factory() -> FakeGcodeGateway:
         raise RuntimeError("constructor failed")
@@ -119,6 +122,7 @@ async def test_refresh_raises_gateway_construction_error(tmp_path: Path) -> None
         await service.refresh(CodewikiRefreshRequest(root_path=str(tmp_path), project_id="proj-1"))
 
 
+@pytest.mark.asyncio
 async def test_refresh_propagates_gcode_failure(tmp_path: Path) -> None:
     service = CodewikiRefreshService(
         gcode_gateway_factory=FailingGcodeGateway,

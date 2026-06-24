@@ -100,6 +100,14 @@ def register_merge_apply_tool(
                 )
                 if validation_error:
                     return {"success": False, "error": validation_error}
+                if conflicts:
+                    return {
+                        "success": False,
+                        "error": (
+                            "Cannot apply resolved conflicts: git has no MERGE_HEAD for "
+                            "this resolution"
+                        ),
+                    }
 
             written: list[str] = []
             for conflict in conflicts:

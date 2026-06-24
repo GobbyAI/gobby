@@ -118,8 +118,7 @@ def test_qwen_blank_reason_uses_sentinel_and_logs_payload(
     assert result["reason"] == ADAPTER_EMPTY_BLOCK_REASON_SENTINEL
     messages = _warning_messages(caplog, logger_name="gobby.adapters.qwen")
     assert any(
-        "QwenAdapter translated block without reason at adapter boundary" in msg
-        for msg in messages
+        "QwenAdapter translated block without reason at adapter boundary" in msg for msg in messages
     )
     assert any(
         "response={'decision': 'block'" in msg and "'context': 'ctx'" in msg for msg in messages

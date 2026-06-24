@@ -21,7 +21,7 @@ pytestmark = pytest.mark.integration
 def test_gemini_image_gen_yaml_absent_from_bundled_agents() -> None:
     """The retired agent template is gone from the bundled agents tree."""
     agents_path = get_bundled_agents_path()
-    names = {path.stem for path in agents_path.glob("*.yaml")}
+    names = {path.stem for path in agents_path.rglob("*.yaml")}
     assert "gemini-image-gen" not in names
 
 

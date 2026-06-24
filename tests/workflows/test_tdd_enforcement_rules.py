@@ -184,8 +184,7 @@ class TestEnforceTddBlockCondition:
         "variables.get('enforce_tdd') "
         "and event.data.get('canonical_tool_kind') == 'write' "
         "and first_tdd_code_path(event.data, tool_input) "
-        "and first_tdd_code_path(event.data, tool_input) "
-        "not in variables.get('tdd_nudged_files', [])"
+        "not in ([None, ''] + variables.get('tdd_nudged_files', []))"
     )
 
     def _eval(

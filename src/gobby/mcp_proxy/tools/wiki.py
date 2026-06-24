@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, Any, Protocol
 
 from gobby.gwiki_gateway import GwikiCommandError, GwikiGateway, GwikiGatewayError
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
+from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.wiki.scope_resolution import ResolvedWikiScope, resolve_wiki_scope
 from gobby.wiki.update_coordinator import WikiUpdateCoordinator
 
@@ -247,11 +248,18 @@ def create_wiki_registry(
         project: str | None = None,
         topic: str | None = None,
     ) -> dict[str, Any]:
+        effective_archive_dir = archive_dir
+        if archive_dir is not None:
+            archive_root = get_archive_dir().resolve(strict=False)
+            candidate = Path(archive_dir).expanduser().resolve(strict=False)
+            if candidate != archive_root and not candidate.is_relative_to(archive_root):
+                return _validation_error("archive_dir must be inside the configured archive root")
+            effective_archive_dir = str(candidate)
         return await _guard(
             lambda: write_call(
                 project,
                 topic,
-                lambda gwiki: gwiki.sync_sessions(archive_dir=archive_dir, limit=limit),
+                lambda gwiki: gwiki.sync_sessions(archive_dir=effective_archive_dir, limit=limit),
             )
         )
 

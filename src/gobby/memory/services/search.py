@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from gobby.memory.services._search_access import update_access_stats as update_memory_access_stats
 from gobby.memory.services._search_backfill import collect_active_results
@@ -165,7 +165,8 @@ class SearchService:
                 query, limit, project_id, memory_type, tags_all, tags_any, tags_none
             )
         else:
-            memories = self._storage.list_memories(
+            memories = await self._run_storage(
+                self._storage.list_memories,
                 project_id=project_id,
                 memory_type=memory_type,
                 limit=limit,
@@ -259,7 +260,14 @@ class SearchService:
         collect: Callable[[int], Awaitable[_Candidates]],
         build: Callable[[_Candidates], list[Memory]],
     ) -> tuple[list[Memory], _Candidates]:
-        return await collect_active_results(limit=limit, collect=collect, build=build)
+        async def _build_with_storage_runner(candidates: _Candidates) -> list[Memory]:
+            return cast(list[Memory], await self._run_storage(build, candidates))
+
+        return await collect_active_results(
+            limit=limit,
+            collect=collect,
+            build=_build_with_storage_runner,
+        )
 
     def _emit_search_debug(
         self,

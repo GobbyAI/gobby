@@ -57,10 +57,13 @@ class TestSourcePagePrompt:
         assert "pg_search BM25" in rendered
         assert "claude-opus-4-8" in rendered
 
-    def test_strict_render_requires_digest_and_meta(self, loader: PromptLoader) -> None:
-        """strict=True fails loudly when digest_markdown / meta are missing."""
-        with pytest.raises(ValueError):
-            loader.render("wiki/source_page", {}, strict=True)
+    def test_strict_render_uses_default_digest_and_meta(self, loader: PromptLoader) -> None:
+        """strict=True renders with default digest_markdown / meta values."""
+        rendered = loader.render("wiki/source_page", {}, strict=True)
+        assert "{{ digest_markdown }}" not in rendered
+        assert "{{ meta }}" not in rendered
+        assert "Metadata:" in rendered
+        assert "Digest:" in rendered
 
     def test_prompt_declares_five_synthesis_sections(self, loader: PromptLoader) -> None:
         """Prompt instructs the five llm-wiki knowledge sections."""
@@ -81,3 +84,11 @@ class TestSourcePagePrompt:
         assert "[[wikilinks]]" in template.content
         # Body only: the model must NOT emit frontmatter; the caller wraps it.
         assert "no frontmatter" in template.content.lower()
+
+    def test_prompt_contradictions_use_only_digest_and_meta(self, loader: PromptLoader) -> None:
+        """Contradiction guidance is limited to the rendered prompt inputs."""
+        template = loader.load("wiki/source_page")
+        content = template.content.lower()
+        assert "known wiki content" not in content
+        assert "outside context" in content
+        assert "digest or metadata contains conflicting claims" in content

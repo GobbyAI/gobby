@@ -33,7 +33,7 @@ class TestSessionSource:
         assert SessionSource.DROID == "droid"
         assert SessionSource.UNKNOWN == "unknown"
 
-    def test_parse_session_source_tolerates_unknown_values(self) -> None:
+    def test_parse_session_source_covers_all_input_shapes(self) -> None:
         assert parse_session_source("claude") is SessionSource.CLAUDE
         assert parse_session_source(" CLAUDE ") is SessionSource.CLAUDE
         assert parse_session_source(SessionSource.QWEN) is SessionSource.QWEN

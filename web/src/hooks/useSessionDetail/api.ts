@@ -13,6 +13,28 @@ async function sessionMetadataFetchError(response: Response): Promise<Error> {
   return new Error(`Session metadata fetch failed (${response.status} ${response.statusText})${detail}`)
 }
 
+function stableFallbackMessageId(
+  prefix: 'chat' | 'hist',
+  message: Record<string, unknown>,
+  fallbackIndex: number,
+): string {
+  const raw = [
+    fallbackIndex,
+    message.message_index,
+    message.created_at,
+    message.timestamp,
+    message.role,
+    message.content_type,
+    message.tool_name,
+    message.content,
+  ].map((value) => String(value ?? '')).join('\u001f')
+  let hash = 0
+  for (let index = 0; index < raw.length; index += 1) {
+    hash = (hash * 31 + raw.charCodeAt(index)) >>> 0
+  }
+  return `${prefix}-${fallbackIndex}-${hash.toString(36)}`
+}
+
 export async function fetchSessionMetadata(sessionId: string): Promise<GobbySession | null> {
   const baseUrl = getBaseUrl()
   const sessionRes = await fetch(`${baseUrl}/api/sessions/${sessionId}`)
@@ -29,9 +51,12 @@ export async function fetchSessionMetadata(sessionId: string): Promise<GobbySess
 
 export function mapRenderedRecordToSessionMessage(
   message: Record<string, unknown>,
+  fallbackIndex = 0,
 ): SessionMessage {
   return {
-    id: String(message.id ?? message.message_index ?? `hist-${Math.random()}`),
+    id: String(
+      message.id ?? message.message_index ?? stableFallbackMessageId('hist', message, fallbackIndex),
+    ),
     role: (message.role as string) ?? 'assistant',
     content: (message.content as string) ?? '',
     timestamp: (message.timestamp as string) ?? '',
@@ -44,7 +69,10 @@ export function mapRenderedRecordToSessionMessage(
   }
 }
 
-function mapWebChatRecordToSessionMessage(message: Record<string, unknown>): SessionMessage {
+function mapWebChatRecordToSessionMessage(
+  message: Record<string, unknown>,
+  fallbackIndex = 0,
+): SessionMessage {
   const content = (message.content as string) ?? ''
   const contentBlocks: ContentBlock[] = []
   if (content) {
@@ -59,7 +87,7 @@ function mapWebChatRecordToSessionMessage(message: Record<string, unknown>): Ses
   }
 
   return {
-    id: String(message.id ?? `chat-${Math.random()}`),
+    id: String(message.id ?? stableFallbackMessageId('chat', message, fallbackIndex)),
     role: (message.role as string) ?? 'assistant',
     content,
     timestamp:
@@ -94,8 +122,8 @@ export async function fetchRenderedSessionMessages(
   }
   const messageData = await messagesRes.json()
   const rawMessages = Array.isArray(messageData?.messages) ? messageData.messages : []
-  const mapped = rawMessages.map((m: Record<string, unknown>) =>
-    mapRenderedRecordToSessionMessage(m),
+  const mapped = rawMessages.map((m: Record<string, unknown>, index: number) =>
+    mapRenderedRecordToSessionMessage(m, offset + index),
   )
   const returnedCount =
     typeof messageData.returned_count === 'number' ? messageData.returned_count : mapped.length
@@ -128,8 +156,8 @@ export async function fetchChatSessionMessages(sessionId: string): Promise<Messa
   }
   const chatData = await chatRes.json()
   const rawMessages = Array.isArray(chatData?.messages) ? chatData.messages : []
-  const mapped = rawMessages.map((m: Record<string, unknown>) =>
-    mapWebChatRecordToSessionMessage(m),
+  const mapped = rawMessages.map((m: Record<string, unknown>, index: number) =>
+    mapWebChatRecordToSessionMessage(m, index),
   )
   return {
     mapped,

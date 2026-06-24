@@ -66,7 +66,10 @@ def _load_summary_prompt_template(
     except FileNotFoundError:
         pass
     except Exception as e:
-        logger.debug("Failed to load summary prompt %s: %s", path, e)
+        logger.debug(
+            "Failed to load summary prompt",
+            extra={"path": str(path), "error": str(e)},
+        )
 
     return prompt_template
 
@@ -89,6 +92,13 @@ async def _build_summary_prompt_context(
 
     digest_markdown = _digest_markdown_for_summary(session)
     source = getattr(session, "source", None) or "claude"
+    if source == "unknown" and any(
+        isinstance(turn.get("content"), (str, list))
+        and isinstance(turn.get("type"), str)
+        and "message" not in turn
+        for turn in turns
+    ):
+        source = "qwen"
     first_digest_turn, recent_digest_turns = _extract_digest_turns(digest_markdown)
     if digest_markdown:
         transcript_summary = _truncate_markdown(
@@ -225,13 +235,19 @@ def _get_claimed_tasks(session_id: str, db: HubDatabase) -> str:
                     blocker_ids = ", ".join(d.depends_on[:8] for d in blockers)
                     line += f"\n  Blocked by: {blocker_ids}"
             except Exception as e:
-                logger.debug(f"Failed to get dependencies for task {task.id}: {e}")
+                logger.debug(
+                    "Failed to get dependencies for claimed task",
+                    extra={"task_id": task.id, "error": str(e)},
+                )
 
             lines.append(line)
 
         return "\n".join(lines)
     except Exception as e:
-        logger.debug(f"Failed to get claimed tasks for session {session_id}: {e}")
+        logger.debug(
+            "Failed to get claimed tasks for session",
+            extra={"session_id": session_id, "error": str(e)},
+        )
         return ""
 
 
@@ -278,5 +294,8 @@ def _get_session_memories(session_id: str, db: HubDatabase) -> str:
 
         return "\n".join(lines)
     except Exception as e:
-        logger.debug(f"Failed to get session memories for {session_id}: {e}")
+        logger.debug(
+            "Failed to get session memories",
+            extra={"session_id": session_id, "error": str(e)},
+        )
         return ""

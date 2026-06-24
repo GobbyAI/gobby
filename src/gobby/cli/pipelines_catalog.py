@@ -4,14 +4,21 @@ Pipeline definition CLI commands.
 
 from __future__ import annotations
 
-import sys
+import asyncio
+import json
 from typing import Any
 
 import click
 
-
-def _facade() -> Any:
-    return sys.modules["gobby.cli.pipelines"]
+from gobby.cli.pipelines_runtime import (
+    get_pipeline_executor,
+    get_project_id,
+    get_project_path,
+    get_workflow_loader,
+    parse_input,
+    try_daemon_run,
+)
+from gobby.workflows.pipeline_state import ApprovalRequired
 
 
 @click.command("list")
@@ -19,9 +26,8 @@ def _facade() -> Any:
 @click.pass_context
 def list_pipelines(ctx: click.Context, json_format: bool) -> None:
     """List available pipeline definitions."""
-    facade = _facade()
-    loader = facade.get_workflow_loader()
-    project_path = facade.get_project_path()
+    loader = get_workflow_loader()
+    project_path = get_project_path()
 
     discovered = loader.discover_pipeline_workflows_sync(
         project_path=str(project_path) if project_path else None
@@ -39,9 +45,7 @@ def list_pipelines(ctx: click.Context, json_format: bool) -> None:
                     "step_count": len(wf.definition.steps),
                 }
             )
-        click.echo(
-            facade.json.dumps({"pipelines": pipeline_list, "count": len(pipeline_list)}, indent=2)
-        )
+        click.echo(json.dumps({"pipelines": pipeline_list, "count": len(pipeline_list)}, indent=2))
         return
 
     if not discovered:
@@ -63,9 +67,8 @@ def list_pipelines(ctx: click.Context, json_format: bool) -> None:
 @click.pass_context
 def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
     """Show pipeline definition details."""
-    facade = _facade()
-    loader = facade.get_workflow_loader()
-    project_path = facade.get_project_path()
+    loader = get_workflow_loader()
+    project_path = get_project_path()
 
     pipeline = loader.load_pipeline_sync(name, project_path=project_path)
     if not pipeline:
@@ -89,7 +92,7 @@ def show_pipeline(ctx: click.Context, name: str, json_format: bool) -> None:
             "inputs": pipeline.inputs,
             "outputs": pipeline.outputs,
         }
-        click.echo(facade.json.dumps(pipeline_dict, indent=2, default=str))
+        click.echo(json.dumps(pipeline_dict, indent=2, default=str))
         return
 
     click.echo(f"Pipeline: {pipeline.name}")
@@ -151,14 +154,13 @@ def run_pipeline(
 
         gobby pipelines run deploy -i env=prod -i version=1.0
     """
-    facade = _facade()
     pipeline: Any = None  # Will be PipelineDefinition after loading
     if not name:
         click.echo("Pipeline name is required.", err=True)
         raise SystemExit(1)
 
-    loader = facade.get_workflow_loader()
-    project_path = facade.get_project_path()
+    loader = get_workflow_loader()
+    project_path = get_project_path()
     pipeline = loader.load_pipeline_sync(name, project_path=project_path)
     if not pipeline:
         click.echo(f"Pipeline '{name}' not found.", err=True)
@@ -168,22 +170,22 @@ def run_pipeline(
     input_dict: dict[str, str] = {}
     for input_str in inputs:
         try:
-            key, value = facade.parse_input(input_str)
+            key, value = parse_input(input_str)
             input_dict[key] = value
         except click.BadParameter as e:
             click.echo(str(e), err=True)
             raise SystemExit(1) from None
 
-    project_id = facade._get_project_id()
+    project_id = get_project_id()
     display_name = name or (pipeline.name if pipeline else None) or "pipeline"
 
     # Try daemon first (has MCP tool access and LLM service)
-    daemon_result = facade._try_daemon_run(name, input_dict, project_id)
+    daemon_result = try_daemon_run(name, input_dict, project_id)
     if daemon_result is not None:
         status = daemon_result.get("status", "")
         if status == "waiting_approval":
             if json_format:
-                click.echo(facade.json.dumps(daemon_result, indent=2))
+                click.echo(json.dumps(daemon_result, indent=2))
             else:
                 click.echo(f"⏸ Pipeline '{display_name}' waiting for approval")
                 click.echo(f"  Execution ID: {daemon_result.get('execution_id', '')}")
@@ -194,7 +196,7 @@ def run_pipeline(
                 click.echo(f"To reject:  gobby pipelines reject {token}")
             return
         if json_format:
-            click.echo(facade.json.dumps(daemon_result, indent=2))
+            click.echo(json.dumps(daemon_result, indent=2))
         else:
             click.echo(f"✓ Pipeline '{display_name}' completed")
             click.echo(f"  Execution ID: {daemon_result.get('execution_id', '')}")
@@ -202,11 +204,11 @@ def run_pipeline(
         return
 
     # Fall back to local executor (no MCP tool access)
-    executor = facade.get_pipeline_executor()
+    executor = get_pipeline_executor()
 
     try:
         # Run the pipeline
-        execution = facade.asyncio.run(
+        execution = asyncio.run(
             executor.execute(
                 pipeline=pipeline,
                 inputs=input_dict,
@@ -223,16 +225,16 @@ def run_pipeline(
             }
             if execution.outputs_json:
                 try:
-                    result["outputs"] = facade.json.loads(execution.outputs_json)
-                except facade.json.JSONDecodeError:
+                    result["outputs"] = json.loads(execution.outputs_json)
+                except json.JSONDecodeError:
                     result["outputs"] = execution.outputs_json
-            click.echo(facade.json.dumps(result, indent=2))
+            click.echo(json.dumps(result, indent=2))
         else:
             click.echo(f"✓ Pipeline '{display_name}' completed")
             click.echo(f"  Execution ID: {execution.id}")
             click.echo(f"  Status: {execution.status.value}")
 
-    except facade.ApprovalRequired as e:
+    except ApprovalRequired as e:
         # Pipeline paused for approval
         if json_format:
             result = {
@@ -242,7 +244,7 @@ def run_pipeline(
                 "token": e.token,
                 "message": e.message,
             }
-            click.echo(facade.json.dumps(result, indent=2))
+            click.echo(json.dumps(result, indent=2))
         else:
             click.echo(f"⏸ Pipeline '{display_name}' waiting for approval")
             click.echo(f"  Execution ID: {e.execution_id}")

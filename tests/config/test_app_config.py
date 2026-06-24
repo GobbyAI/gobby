@@ -327,12 +327,12 @@ class TestSessionSummaryConfig:
         config = SessionSummaryConfig(
             enabled=False,
             profile=FeatureProfile.MID,
-            candidates=["gemini/gemini-2.0-flash"],
+            candidates=["codex/gpt-5.4-mini"],
             prompt="Custom prompt",
         )
         assert config.enabled is False
         assert config.profile == FeatureProfile.MID
-        assert candidate_labels(config.candidates) == ("gemini/gemini-2.0-flash",)
+        assert candidate_labels(config.candidates) == ("codex/gpt-5.4-mini",)
         assert config.prompt == "Custom prompt"
 
 
@@ -354,13 +354,13 @@ class TestSessionWikiConfig:
         config = SessionWikiConfig(
             enabled=False,
             profile=FeatureProfile.MID,
-            candidates=["gemini/gemini-2.0-flash"],
+            candidates=["codex/gpt-5.4-mini"],
             prompt_path="wiki/custom",
             wiki_file_path=".gobby/custom_wiki",
         )
         assert config.enabled is False
         assert config.profile == FeatureProfile.MID
-        assert candidate_labels(config.candidates) == ("gemini/gemini-2.0-flash",)
+        assert candidate_labels(config.candidates) == ("codex/gpt-5.4-mini",)
         assert config.prompt_path == "wiki/custom"
         assert config.wiki_file_path == ".gobby/custom_wiki"
 

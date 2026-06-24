@@ -99,10 +99,7 @@ class PipelineExecutorStepMixin:
                     )
                 elif step.activate_workflow:
                     # activate_workflow steps are not supported in pipeline execution
-                    return {
-                        "error": "activate_workflow pipeline steps are not supported",
-                        "step_id": step.id,
-                    }
+                    raise RuntimeError("activate_workflow pipeline steps are not supported")
                 else:
                     logger.warning(f"Step {step.id} has no action defined")
                     return None
@@ -203,7 +200,10 @@ class PipelineExecutorStepMixin:
                 execution = refreshed
             except Exception as e:
                 logger.error(f"Failed to resume execution after approval: {e}", exc_info=True)
-                # Don't fail the approval if resume fails, but log it
+                refreshed = self.execution_manager.get_execution(execution.id)
+                if refreshed:
+                    execution = refreshed
+                # Don't fail the approval if resume fails, but return refreshed state if available.
         else:
             logger.warning("No loader configured, cannot resume execution automatically")
 
@@ -249,20 +249,14 @@ class PipelineExecutorStepMixin:
         # Check if loader is available
         if not self.loader:
             logger.warning("No loader configured for nested pipeline execution")
-            return {
-                "pipeline": pipeline_name,
-                "error": "No loader configured for nested pipeline execution",
-            }
+            raise RuntimeError("No loader configured for nested pipeline execution")
 
         try:
             # Load the nested pipeline
             nested_pipeline = await self.loader.load_pipeline(pipeline_name)
 
             if not nested_pipeline:
-                return {
-                    "pipeline": pipeline_name,
-                    "error": f"Pipeline '{pipeline_name}' not found",
-                }
+                raise RuntimeError(f"Pipeline '{pipeline_name}' not found")
 
             # Use explicit arguments if provided, otherwise inherit parent inputs
             if explicit_args is not None:
@@ -282,6 +276,10 @@ class PipelineExecutorStepMixin:
                 _pipeline_stack=parent_stack,
                 _parent_session_id=context.get("parent_session_id"),
             )
+            if result.status.value != "completed":
+                raise RuntimeError(
+                    f"Nested pipeline '{pipeline_name}' finished with status {result.status.value}"
+                )
 
             # Surface child pipeline outputs so parent steps can reference them
             # e.g. ${{ dev_loop.output.orchestration_complete }}

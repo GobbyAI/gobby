@@ -74,9 +74,10 @@ def _spawn_configured_stage_agent(
     stage_name: str,
     state: str,
 ) -> Action | None:
-    return _spawn_on_stage(
-        task, context, stage_name, state, _STAGE_AGENT_SLUGS[(stage_name, state)]
-    )
+    agent_slug = _STAGE_AGENT_SLUGS.get((stage_name, state))
+    if agent_slug is None:
+        return None
+    return _spawn_on_stage(task, context, stage_name, state, agent_slug)
 
 
 def _start_configured_stage_pipeline(

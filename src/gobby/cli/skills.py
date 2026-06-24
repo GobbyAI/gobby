@@ -9,9 +9,11 @@ This module provides CLI commands for managing skills:
 
 from __future__ import annotations
 
+import json
 from typing import Any
 
 import click
+import httpx
 
 from gobby.cli._skills_daemon import (
     install_skill as _install_skill,
@@ -89,7 +91,7 @@ def call_skills_tool(
         if isinstance(response, dict):
             return dict(response)
         return None
-    except Exception as exc:
+    except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError) as exc:
         click.echo(f"Error: {exc}", err=True)
         return None
 

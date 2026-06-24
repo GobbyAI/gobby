@@ -164,9 +164,12 @@ def test_assemble_wiki_page_wraps_frontmatter_and_redacts() -> None:
     # Frontmatter (the seam) wraps the body exactly once.
     assert page.startswith("---\n")
     assert page.count("\n---\n") == 1
-    assert 'title: "Session: f0a56143 — 2026-06-03"' in page
+    assert "title: 'Session: f0a56143" in page or 'title: "Session: f0a56143' in page
     assert "type: source" in page
-    assert "tags: [prompt-caching, rust, indexing]" in page
+    assert "tags:" in page
+    assert "- prompt-caching" in page
+    assert "- rust" in page
+    assert "- indexing" in page
     assert "session_id: 169fe279-7e82-402e-ba6c-fe3f26ac8a57" in page
     assert "source: claude-code" in page
     # Redaction applied to the assembled page.
@@ -188,6 +191,15 @@ def test_resolve_wiki_file_path_honors_absolute(tmp_path: Path) -> None:
     abs_dir = tmp_path / "custom_wiki"
     path = resolve_wiki_file_path(session, _config(wiki_file_path=str(abs_dir)))
     assert path == abs_dir / "f0a56143deadbeef.md"
+
+
+def test_resolve_wiki_file_path_sanitizes_session_identifier(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    monkeypatch.setenv("GOBBY_HOME", str(tmp_path))
+    session = _make_session(external_id="../bad/path")
+    path = resolve_wiki_file_path(session, _config())
+    assert path == tmp_path / "session_wiki" / "bad-path.md"
 
 
 # --------------------------------------------------------------------------- #
@@ -300,6 +312,12 @@ async def test_generate_session_wiki_persists_and_writes_file(
     assert kwargs["generation_mode"] == "full"
     assert kwargs["digest_turn_count"] == 3
     assert kwargs["source_context_hash"] == result["source_context_hash"]
+    assert kwargs["source_context_hash"] == wiki_synthesis.wiki_source_context_hash(
+        session=session,
+        digest_markdown=_DIGEST,
+        prompt_path="wiki/source_page",
+        rendered_prompt="RENDERED WIKI PROMPT",
+    )
     assert kwargs["wiki_path"] == str(wiki_file)
     assert "SECRETKEY" not in kwargs["wiki_markdown"]
     assert _HOME not in kwargs["wiki_markdown"]
@@ -310,12 +328,11 @@ async def test_generate_session_wiki_persists_and_writes_file(
 async def test_generate_session_wiki_noop_on_hash_match() -> None:
     session = _make_session()
     # Pre-seed the session with the hash the generator will compute.
-    expected_hash = wiki_synthesis.source_context_hash(
-        {
-            "external_id": session.external_id,
-            "digest_markdown": _DIGEST,
-            "prompt_path": "wiki/source_page",
-        }
+    expected_hash = wiki_synthesis.wiki_source_context_hash(
+        session=session,
+        digest_markdown=_DIGEST,
+        prompt_path="wiki/source_page",
+        rendered_prompt="RENDERED WIKI PROMPT",
     )
     session.wiki_source_context_hash = expected_hash
     session.wiki_digest_turn_count = 3

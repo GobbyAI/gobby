@@ -162,7 +162,7 @@ def set_skill_enabled(storage_factory: StorageFactory, name: str, enabled: bool)
     action = "enabling" if enabled else "disabling"
     try:
         storage.update_skill(skill.id, enabled=enabled)
-    except Exception as exc:
+    except (OSError, RuntimeError, ValueError) as exc:
         click.echo(f"Error {action} skill: {exc}", err=True)
         sys.exit(1)
 

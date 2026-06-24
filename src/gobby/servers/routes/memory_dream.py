@@ -53,14 +53,46 @@ def create_memory_dream_router(server: HTTPServer) -> APIRouter:
         if request.project_id is None:
             # Unscoped trigger → sweep every project with due memories, each
             # judged against its own truth digest, and return an aggregate.
-            result = await service.run_all_due_projects(
+            if request.wait:
+                result = await service.run_all_due_projects(
+                    dry_run=request.dry_run,
+                    skip_consolidation=request.skip_consolidation,
+                    memory_type=request.memory_type,
+                    full_sweep=request.full_sweep,
+                )
+                status = 200 if result.get("success") else 500
+                return JSONResponse(status_code=status, content=result)
+            started = await service.start_all_due_projects_async(
                 dry_run=request.dry_run,
                 skip_consolidation=request.skip_consolidation,
                 memory_type=request.memory_type,
                 full_sweep=request.full_sweep,
             )
-            status = 200 if result.get("success") else 500
-            return JSONResponse(status_code=status, content=result)
+            if not started.get("success"):
+                return JSONResponse(status_code=400, content=started)
+            run_id = str(started["run_id"])
+
+            async def _aggregate_background() -> None:
+                try:
+                    result = await service.execute_all_due_projects_run(
+                        run_id,
+                        dry_run=request.dry_run,
+                        skip_consolidation=request.skip_consolidation,
+                        memory_type=request.memory_type,
+                        full_sweep=request.full_sweep,
+                    )
+                    if not result.get("success"):
+                        logger.warning("Background memory dream failed: %s", result.get("error"))
+                except Exception as exc:
+                    service.record_run_failure(run_id, str(exc))
+                    logger.warning("Background memory dream failed: %s", exc, exc_info=True)
+
+            task = asyncio.create_task(_aggregate_background(), name=f"memory-dream:{run_id}")
+            server.register_background_task(task)
+            return JSONResponse(
+                status_code=202,
+                content={"success": True, "status": "started", "run_id": run_id},
+            )
 
         options = DreamRunOptions(
             dry_run=request.dry_run,

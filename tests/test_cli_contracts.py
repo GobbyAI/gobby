@@ -18,10 +18,6 @@ from gobby.mcp_proxy.tools.wiki import create_wiki_registry
 CONTRACT_DIR = Path(__file__).parent / "contracts"
 CLI_CONTRACT_TOOLS = ("gcode", "gwiki")
 pytestmark = pytest.mark.unit
-PENDING_GWIKI_WRAPPER_FLAGS = {
-    ("search", "--token-budget"),
-    ("ask", "--token-budget"),
-}
 
 
 def _contract(tool: str) -> dict[str, Any]:
@@ -60,10 +56,7 @@ def _allowed_flags(contract: dict[str, Any], command_name: str) -> set[str]:
 
 
 def _allowed_gateway_flags(contract: dict[str, Any], command_name: str) -> set[str]:
-    flags = _allowed_flags(contract, command_name)
-    if contract.get("tool") == "gwiki":
-        flags |= {flag for command, flag in PENDING_GWIKI_WRAPPER_FLAGS if command == command_name}
-    return flags
+    return _allowed_flags(contract, command_name)
 
 
 def _observed_flags(argv: list[str]) -> set[str]:
@@ -305,7 +298,7 @@ def test_wiki_mcp_tools_are_backed_by_documented_gwiki_commands() -> None:
 def test_gwiki_contract_documents_daemon_parsed_keys() -> None:
     contract = _contract("gwiki")
 
-    assert contract["contract_version"] == 5
+    assert contract["contract_version"] == 6
     assert {"changed_paths", "citations", "raw_path", "source_path", "path"} <= _json_keys(
         contract, "ingest-file"
     )

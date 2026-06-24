@@ -134,7 +134,17 @@ async def search_with_graph(
                     qdrant_result,
                 )
             else:
-                logger.warning("Qdrant search failed: %s", qdrant_result)
+                logger.warning(
+                    "Qdrant search failed",
+                    extra={
+                        "caller": caller,
+                        "project_id": project_id,
+                        "limit": candidate_limit,
+                        "path": "qdrant_graph_keyword",
+                        "error": str(qdrant_result),
+                    },
+                    exc_info=qdrant_result,
+                )
             qdrant_results: list[tuple[str, float]] = []
         else:
             qdrant_results = qdrant_result
@@ -142,7 +152,17 @@ async def search_with_graph(
         if isinstance(graph_result, BaseException):
             if isinstance(graph_result, asyncio.CancelledError):
                 raise graph_result
-            logger.warning("Graph search failed: %s", graph_result)
+            logger.warning(
+                "Graph search failed",
+                extra={
+                    "caller": caller,
+                    "project_id": project_id,
+                    "limit": candidate_limit,
+                    "path": "qdrant_graph_keyword",
+                    "error": str(graph_result),
+                },
+                exc_info=graph_result,
+            )
             graph_scored: list[tuple[str, float]] = []
         else:
             graph_scored = graph_result
@@ -153,7 +173,17 @@ async def search_with_graph(
         if isinstance(keyword_result, BaseException):
             if isinstance(keyword_result, asyncio.CancelledError):
                 raise keyword_result
-            logger.debug("Keyword search failed: %s", keyword_result)
+            logger.debug(
+                "Keyword search failed",
+                extra={
+                    "caller": caller,
+                    "project_id": project_id,
+                    "limit": candidate_limit,
+                    "path": "qdrant_graph_keyword",
+                    "error": str(keyword_result),
+                },
+                exc_info=keyword_result,
+            )
             keyword_ranked: list[str] = []
         else:
             keyword_ranked = keyword_result
@@ -278,7 +308,17 @@ async def search_qdrant_keyword(
                     qdrant_result,
                 )
             else:
-                logger.warning("Qdrant search failed: %s", qdrant_result)
+                logger.warning(
+                    "Qdrant search failed",
+                    extra={
+                        "caller": caller,
+                        "project_id": project_id,
+                        "limit": candidate_limit,
+                        "path": "qdrant_keyword",
+                        "error": str(qdrant_result),
+                    },
+                    exc_info=qdrant_result,
+                )
             qdrant_results: list[tuple[str, float]] = []
         else:
             qdrant_results = qdrant_result
@@ -286,7 +326,17 @@ async def search_qdrant_keyword(
         if isinstance(keyword_result, BaseException):
             if isinstance(keyword_result, asyncio.CancelledError):
                 raise keyword_result
-            logger.debug("Keyword search failed: %s", keyword_result)
+            logger.debug(
+                "Keyword search failed",
+                extra={
+                    "caller": caller,
+                    "project_id": project_id,
+                    "limit": candidate_limit,
+                    "path": "qdrant_keyword",
+                    "error": str(keyword_result),
+                },
+                exc_info=keyword_result,
+            )
             keyword_ranked: list[str] = []
         else:
             keyword_ranked = keyword_result

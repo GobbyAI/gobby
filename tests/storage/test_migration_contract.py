@@ -288,6 +288,7 @@ def test_session_wiki_revisions_migration_and_baseline_define_schema() -> None:
         "session_wiki_revisions_generation_mode_valid",
         "sessions_wiki_revision_fk",
         "idx_session_wiki_revisions_session_created",
+        "idx_session_wiki_revisions_previous",
         "idx_sessions_wiki_revision",
     )
     integrity_snippets = (
@@ -317,6 +318,7 @@ def test_session_wiki_revisions_migration_and_baseline_define_schema() -> None:
     idempotency_guards = (
         "ADD COLUMN IF NOT EXISTS",
         "CREATE TABLE IF NOT EXISTS session_wiki_revisions",
+        "CREATE INDEX IF NOT EXISTS idx_session_wiki_revisions_previous",
         "CREATE INDEX IF NOT EXISTS idx_sessions_wiki_revision",
         "WHERE conname = 'sessions_wiki_revision_fk'",
         "WHERE conname = 'sessions_wiki_digest_turn_count_nonnegative'",

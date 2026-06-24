@@ -62,7 +62,7 @@ decisions made, problems solved, and tools/libraries chosen.
 
 ## Contradictions
 
-- Contradicts [[OtherPage]] on: ... (only if applicable)
+- Conflicting claims found within this digest or metadata: ... (only if applicable)
 ```
 
 ## Rules
@@ -71,8 +71,8 @@ decisions made, problems solved, and tools/libraries chosen.
 2. Every claim must be traceable to something in the digest.
 3. Use `[[wikilinks]]` for any person, tool, library, framework, or concept
    mentioned. TitleCase for entities, TitleCase for concepts.
-4. If the session contradicts known wiki content, record BOTH claims under
-   ## Contradictions. Never silently overwrite.
+4. If the digest or metadata contains conflicting claims, record BOTH claims
+   under ## Contradictions. Do not infer contradictions from outside context.
 5. Keep it concise -- the source page is a summary, not a transcript.
 
 ## Session to synthesize

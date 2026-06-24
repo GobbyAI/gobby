@@ -4,7 +4,6 @@ CLI commands for managing Gobby pipelines.
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
 from pathlib import Path
@@ -12,7 +11,7 @@ from typing import Any
 
 import click
 import httpx
-import yaml
+import yaml  # noqa: F401 - used by pipelines_import through this module facade
 
 from gobby.cli.pipelines_catalog import list_pipelines, run_pipeline, show_pipeline
 from gobby.cli.pipelines_import import import_pipeline
@@ -26,8 +25,9 @@ from gobby.cli.pipelines_runs import (
     show_pipeline_run,
 )
 from gobby.workflows.loader import WorkflowLoader
-from gobby.workflows.lobster_compat import LobsterImporter
-from gobby.workflows.pipeline_state import ApprovalRequired
+from gobby.workflows.lobster_compat import (  # noqa: F401 - facade for pipelines_import
+    LobsterImporter,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -227,25 +227,11 @@ pipelines.add_command(import_pipeline)
 
 
 __all__ = [
-    "ApprovalRequired",
-    "LobsterImporter",
-    "Path",
-    "_echo_approval_result",
-    "_get_project_id",
-    "_pipeline_result_dict",
-    "_try_daemon_approval",
-    "_try_daemon_run",
-    "asyncio",
     "approve_pipeline",
-    "get_execution_manager",
-    "get_pipeline_executor",
-    "get_project_path",
-    "get_workflow_loader",
     "history_pipeline",
     "import_pipeline",
     "list_pipeline_runs",
     "list_pipelines",
-    "parse_input",
     "pipeline_runs",
     "pipelines",
     "reject_pipeline",
@@ -253,5 +239,4 @@ __all__ = [
     "search_executions",
     "show_pipeline",
     "show_pipeline_run",
-    "yaml",
 ]

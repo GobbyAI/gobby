@@ -61,7 +61,8 @@ def import_pipeline(ctx: click.Context, path: str, output_path: str | None) -> N
         dest_path.parent.mkdir(parents=True, exist_ok=True)
     else:
         # Save to project workflows directory
-        assert project_path is not None  # guarded by check above
+        if project_path is None:
+            raise RuntimeError("Project path is required when output_path is not provided")
         workflows_dir = project_path / ".gobby" / "workflows"
         workflows_dir.mkdir(parents=True, exist_ok=True)
         dest_path = workflows_dir / f"{pipeline.name}.yaml"

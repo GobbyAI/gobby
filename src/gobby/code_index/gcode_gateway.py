@@ -263,6 +263,8 @@ class GcodeGateway:
     ) -> dict[str, Any]:
         symbol_a = _validate_user_gcode_value("symbol_a", symbol_a)
         symbol_b = _validate_user_gcode_value("symbol_b", symbol_b)
+        if max_depth < 1:
+            raise ValueError("max_depth must be greater than or equal to 1")
         return await self._run_json(
             [
                 "path",

@@ -28,4 +28,4 @@ class LocalPipelineExecutionManager(
             project_id: Project ID for scoping executions
         """
         self.db = db
-        self.project_id = project_id or None
+        self.project_id = project_id

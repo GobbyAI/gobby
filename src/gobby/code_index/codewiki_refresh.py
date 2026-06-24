@@ -75,7 +75,10 @@ class CodewikiRefreshService:
         self._gwiki_gateway_factory = gwiki_gateway_factory or (
             # Codewiki refresh can ingest many generated docs; keep the longer
             # timeout local to this path instead of widening route defaults.
-            lambda root: GwikiGateway(project_root=root, timeout_seconds=120.0)
+            lambda root: GwikiGateway(
+                project_root=root,
+                timeout_seconds=120.0,
+            )
         )
         self._default_out_dir = default_out_dir
 

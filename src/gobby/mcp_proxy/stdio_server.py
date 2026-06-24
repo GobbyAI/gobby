@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Callable
 from dataclasses import dataclass
 from typing import Any, Protocol
@@ -14,6 +15,8 @@ from gobby.mcp_proxy.registries import setup_internal_registries as _setup_inter
 from gobby.mcp_proxy.stdio_proxy import DaemonProxy
 from gobby.mcp_proxy.stdio_results import _strip_none
 from gobby.mcp_proxy.stdio_tools import register_proxy_tools as _register_proxy_tools
+
+logger = logging.getLogger(__name__)
 
 
 class SetupInternalRegistries(Protocol):
@@ -59,6 +62,15 @@ def default_stdio_server_dependencies() -> StdioServerDependencies:
     )
 
 
+def _iter_fastmcp_tools(mcp: FastMCP) -> list[Any]:
+    tool_manager = getattr(mcp, "_tool_manager", None)
+    tools = getattr(tool_manager, "_tools", None)
+    if not isinstance(tools, dict):
+        logger.warning("FastMCP private tool registry is unavailable; parameters not normalized")
+        return []
+    return list(tools.values())
+
+
 def create_stdio_mcp_server(
     *,
     deps: StdioServerDependencies | None = None,
@@ -83,7 +95,7 @@ def create_stdio_mcp_server(
 
     effective_deps.register_proxy_tools(mcp, proxy)
 
-    for tool in mcp._tool_manager._tools.values():
+    for tool in _iter_fastmcp_tools(mcp):
         if tool.parameters:
             tool.parameters = _strip_none(tool.parameters)
 

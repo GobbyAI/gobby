@@ -665,3 +665,4 @@ class TestDefaultRegistry:
         # (#15732). Gemini CLI was removed. No per-CLI source remains pending.
         for source in ("claude", "codex", "droid", "grok", "qwen"):
             assert DEFAULT_PLAN_KEYSTROKES.has_source(source) is True
+        assert DEFAULT_PLAN_KEYSTROKES.has_source("gemini") is False

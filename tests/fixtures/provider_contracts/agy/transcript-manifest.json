@@ -2,7 +2,7 @@
   "provider": "agy",
   "capture_type": "transcript_manifest",
   "cli_version": "1.0.10",
-  "captured_at": "2026-06-22T10:00:00Z",
+  "captured_at": "2026-05-22T17:16:25Z",
   "workspace": "/private/tmp/gobby-contract-probe-15038",
   "project_config": {
     "path_template": "~/.gemini/config/projects/<PROJECT_ID>.json",

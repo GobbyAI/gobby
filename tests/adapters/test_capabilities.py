@@ -74,7 +74,7 @@ def test_current_context_and_decision_capabilities_are_declared() -> None:
     assert codex_pre_tool.decision_style is ProviderDecisionStyle.PRE_TOOL_USE
 
     assert qwen_before_model is not None
-    assert qwen_before_model.context_channel is ContextChannel.ADDITIONAL_CONTEXT
+    assert qwen_before_model.context_channel is ContextChannel.NONE
     assert qwen_before_model.supports_response_field("modify_args")
 
     assert grok_pre_tool is not None
@@ -257,7 +257,7 @@ def test_graceful_error_uses_provider_capability_shape(
     )
 
     assert qwen_result["decision"] == "allow"
-    assert "database unavailable" in qwen_result["hookSpecificOutput"]["additionalContext"]
+    assert "database unavailable" in qwen_result["systemMessage"]
     assert droid_result["continue"] is True
     assert "database unavailable" in droid_result["systemMessage"]
     assert any(call["kind"] == "graceful_error" for call in calls)

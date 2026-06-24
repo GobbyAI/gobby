@@ -8,6 +8,7 @@ return the relabeled row without raising.
 """
 
 import importlib
+import importlib.resources
 
 import pytest
 

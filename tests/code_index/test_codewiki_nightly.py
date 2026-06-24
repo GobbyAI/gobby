@@ -182,6 +182,7 @@ def test_register_codewiki_nightly_crons_covers_each_project_once(
     assert storage.get_job_by_name(codewiki_nightly_job_name(no_repo_project)) is None
 
 
+@pytest.mark.asyncio
 async def test_codewiki_nightly_handler_returns_success_output(tmp_path: Path) -> None:
     service = FakeRefreshService(changed_count=2)
     handler = create_codewiki_nightly_handler(

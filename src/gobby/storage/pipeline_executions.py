@@ -348,8 +348,9 @@ class PipelineExecutionStorageMixin:
         Returns:
             List of PipelineExecution instances awaiting review
         """
-        params: list[Any] = [self.project_id]
-        query = "SELECT * FROM pipeline_executions WHERE project_id = %s"
+        project_predicate, project_params = self._project_predicate()
+        params: list[Any] = list(project_params)
+        query = f"SELECT * FROM pipeline_executions WHERE {project_predicate}"  # nosec B608
 
         query += " AND status IN (%s, %s, %s) AND review_json IS NULL ORDER BY completed_at DESC LIMIT %s"
         params.extend(

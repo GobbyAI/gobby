@@ -32,6 +32,34 @@ GEMINI_FAMILY_MODELS: list[dict[str, Any]] = [
 # Static AGY 1.0.10 text-generation catalog. AGY accepts model display strings on
 # the CLI, while daemon callers route by base canonical IDs and choose the AGY
 # display string via reasoning_effort at the adapter boundary.
+def _agy_model_entry(entry: dict[str, Any]) -> dict[str, Any]:
+    reasoning = entry.get("reasoning")
+    if not isinstance(reasoning, dict):
+        raise ValueError(f"AGY model {entry.get('value')} is missing reasoning metadata")
+    supported_efforts = reasoning.get("supported_efforts")
+    if not isinstance(supported_efforts, list) or not supported_efforts:
+        raise ValueError(f"AGY model {entry.get('value')} has invalid supported_efforts")
+    if not all(isinstance(effort, str) for effort in supported_efforts):
+        raise ValueError(f"AGY model {entry.get('value')} has non-string supported_efforts")
+
+    effort_display = entry.get("effort_display")
+    if not isinstance(effort_display, dict):
+        raise ValueError(f"AGY model {entry.get('value')} is missing effort_display")
+
+    supported_set = set(supported_efforts)
+    display_set = set(effort_display)
+    if display_set != supported_set:
+        raise ValueError(
+            f"AGY model {entry.get('value')} effort_display keys {sorted(display_set)} "
+            f"do not match supported efforts {sorted(supported_set)}"
+        )
+
+    return {
+        **entry,
+        "effort_display": {effort: effort_display[effort] for effort in supported_efforts},
+    }
+
+
 AGY_MODELS: dict[str, dict[str, Any]] = {
     "gemini-3.5-flash": {
         "value": "gemini-3.5-flash",
@@ -126,6 +154,7 @@ AGY_MODELS: dict[str, dict[str, Any]] = {
         },
     },
 }
+AGY_MODELS = {model_id: _agy_model_entry(entry) for model_id, entry in AGY_MODELS.items()}
 
 # Mirrors `droid exec --help` from Factory Droid 0.106.0 and docs.factory.ai/cli.
 DROID_MODEL_CATALOG: list[dict[str, Any]] = [

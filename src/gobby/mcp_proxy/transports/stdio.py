@@ -7,7 +7,7 @@ import re
 import sys
 from collections.abc import Callable, Coroutine
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, TextIO, cast
+from typing import TYPE_CHECKING, Any, TextIO
 
 from mcp import ClientSession
 from mcp.client.stdio import StdioServerParameters, stdio_client
@@ -111,7 +111,7 @@ class StdioTransportConnection(BaseTransportConnection):
         self._stdio_errlog_handle = errlog_path.open("a", encoding="utf-8")
         return self._stdio_errlog_handle
 
-    def _close_stdio_errlog(self, errlog_handle: TextIO | None | object = None) -> None:
+    def _close_stdio_errlog(self, errlog_handle: TextIO | None = None) -> None:
         if errlog_handle is None:
             errlog_handle = self._stdio_errlog_handle
             self._stdio_errlog_handle = None
@@ -119,7 +119,7 @@ class StdioTransportConnection(BaseTransportConnection):
             self._stdio_errlog_handle = None
         if errlog_handle is not None:
             try:
-                cast(TextIO, errlog_handle).close()
+                errlog_handle.close()
             except Exception as exc:
                 logger.warning("Error closing stdio errlog for %s: %s", self.config.name, exc)
 

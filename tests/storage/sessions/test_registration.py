@@ -1,13 +1,12 @@
 """Focused tests for session storage behavior."""
 
-import importlib.resources
 import inspect
 import logging
 from collections.abc import Sequence
 
 import pytest
 
-from gobby.storage import migrations as storage_migrations
+from gobby.storage.migrations import MigrationRunner
 from gobby.storage.session_models import Session
 from gobby.storage.sessions import SYSTEM_SESSION_ID, SessionManager
 from gobby.storage.sessions import _crud as session_crud
@@ -49,18 +48,17 @@ def test_relabel_gemini_sessions_migration_updates_persisted_sources(
         INSERT INTO session_stop_signals(session_id, source, reason, requested_at)
         VALUES (%s, %s, %s, NOW())
         """,
-        (session.id, "gemini", "test",),
+        (
+            session.id,
+            "gemini",
+            "test",
+        ),
     )
 
-    sql = (
-        importlib.resources.files("gobby.storage")
-        .joinpath("migrations/295_relabel_gemini_sessions.postgres.sql")
-        .read_text()
-    )
-    with session_manager.db.transaction() as txn:
-        storage_migrations._execute_sql_script(txn, sql)
-    with session_manager.db.transaction() as txn:
-        storage_migrations._execute_sql_script(txn, sql)
+    session_manager.db.execute("DELETE FROM schema_migrations WHERE version = %s", (295,))
+    runner = MigrationRunner(session_manager.db)
+    runner.apply_pending()
+    runner.apply_pending()
 
     migrated = session_manager.get(session.id)
     assert migrated is not None
