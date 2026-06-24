@@ -157,6 +157,11 @@ class CodeIndexConfig(BaseModel):
         default=5.0,
         description="Sync worker poll interval in seconds",
     )
+    sync_worker_projection_timeout_seconds: float = Field(
+        default=300.0,
+        ge=1,
+        description="Timeout for each per-file graph/vector projection sync command",
+    )
     sync_worker_batch_size: int = Field(
         default=50,
         description="Max files to sync per poll iteration",

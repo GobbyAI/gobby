@@ -104,7 +104,7 @@ class RecordingGcodeGateway(GcodeGateway):
         timeout: float | None = None,
         check_version: bool = True,
     ) -> tuple[bytes, bytes]:
-        command_key = " ".join(command[1:3]) if command[1] == "graph" else command[1]
+        command_key = " ".join(command[1:3]) if command[1] in {"graph", "vector"} else command[1]
         self.argv_by_command[command_key] = list(command)
         return json.dumps({"command": command_key}).encode(), b""
 
@@ -207,6 +207,11 @@ async def test_gcode_gateway_argv_conforms_to_vendored_contract() -> None:
             lambda: gateway.graph_sync_file(project_root, "src/main.py"),
         ),
         (
+            "vector sync-file",
+            "vector sync-file",
+            lambda: gateway.vector_sync_file(project_root, "src/main.py"),
+        ),
+        (
             "graph overview",
             "graph overview",
             lambda: gateway.graph_overview(project_root, limit=25),
@@ -250,7 +255,8 @@ async def test_gcode_gateway_argv_conforms_to_vendored_contract() -> None:
 
     for command_key, cli_name, _call in calls:
         command_contract = _command(contract, cli_name)
-        assert command_contract["daemon_consumed"] is True
+        if cli_name != "vector sync-file":
+            assert command_contract["daemon_consumed"] is True
         argv = gateway.argv_by_command[command_key]
         assert argv[0] == "gcode"
         expected_parts = cli_name.split()
@@ -348,6 +354,7 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
         "search",
         "codewiki",
         "graph sync-file",
+        "vector sync-file",
         "graph overview",
         "graph file",
         "graph neighbors",
@@ -368,6 +375,7 @@ def test_gcode_contract_covers_daemon_consumed_surface() -> None:
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph clear")
     assert {"status", "project_id", "summary"} <= _json_keys(contract, "graph rebuild")
     assert "--allow-missing-indexed-file" in _allowed_flags(contract, "graph sync-file")
+    assert "--allow-missing-indexed-file" in _allowed_flags(contract, "vector sync-file")
 
 
 def _installed_cli_binary(tool: str) -> Path | None:

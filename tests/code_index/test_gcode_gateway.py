@@ -122,6 +122,62 @@ async def test_gateway_checks_version_once_and_builds_sync_file_args(
     assert gateway.checked_version == GCODE_PIN
 
 
+async def test_gateway_forwards_sync_file_timeouts(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    processes = [
+        FakeProcess(stdout=GCODE_PIN_STDOUT),
+        FakeProcess(stdout=b'{"status": "ok"}'),
+        FakeProcess(stdout=b'{"success": true, "file": "src/app.py"}'),
+    ]
+    calls = _patch_subprocess(monkeypatch, processes)
+    timeouts: list[float | None] = []
+
+    async def fake_wait_for(awaitable: Any, timeout: float | None = None) -> Any:
+        timeouts.append(timeout)
+        return await awaitable
+
+    monkeypatch.setattr(asyncio, "wait_for", fake_wait_for)
+    gateway = GcodeGateway(binary="/tmp/gcode", timeout_seconds=7.0)
+
+    assert await gateway.graph_sync_file(tmp_path, "src/app.py", timeout=31.0) == {"status": "ok"}
+    assert await gateway.vector_sync_file(tmp_path, "src/app.py", timeout=32.0) == {
+        "success": True,
+        "file": "src/app.py",
+    }
+
+    assert timeouts == [7.0, 31.0, 32.0]
+    assert calls[1:] == [
+        (
+            "/tmp/gcode",
+            "graph",
+            "sync-file",
+            "--file",
+            "src/app.py",
+            "--project",
+            str(tmp_path),
+            "--allow-missing-indexed-file",
+            "--format",
+            "json",
+            "--quiet",
+        ),
+        (
+            "/tmp/gcode",
+            "vector",
+            "sync-file",
+            "--file",
+            "src/app.py",
+            "--project",
+            str(tmp_path),
+            "--allow-missing-indexed-file",
+            "--format",
+            "json",
+            "--quiet",
+        ),
+    ]
+
+
 async def test_gateway_builds_clear_and_rebuild_args(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -215,6 +271,7 @@ async def test_gateway_builds_vector_and_prune_args_with_timeouts(
             "src/app.py",
             "--project",
             str(tmp_path),
+            "--allow-missing-indexed-file",
             "--format",
             "json",
             "--quiet",

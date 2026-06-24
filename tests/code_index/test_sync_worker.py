@@ -16,6 +16,7 @@ from gobby.code_index.gcode_gateway import (
     GcodeCommandError,
     GcodeIndexedFileNotFoundError,
     GcodeProjectNotFoundError,
+    GcodeTimeoutError,
 )
 from gobby.code_index.models import IndexedFile, IndexedProject
 from gobby.code_index.storage import CodeIndexStorage
@@ -43,23 +44,47 @@ class RecordingGcodeGateway:
         fail: bool = False,
         result: dict[str, Any] | None = None,
         vector_fail: bool = False,
+        graph_timeout: bool = False,
+        vector_timeout: bool = False,
         vector_result: dict[str, Any] | None = None,
     ) -> None:
         self.fail = fail
         self.result = result or {"success": True}
         self.vector_fail = vector_fail
+        self.graph_timeout = graph_timeout
+        self.vector_timeout = vector_timeout
         self.vector_result = vector_result or {"success": True}
         self.synced_files: list[tuple[Path, str]] = []
         self.vector_synced_files: list[tuple[Path, str]] = []
+        self.graph_sync_timeouts: list[float | None] = []
+        self.vector_sync_timeouts: list[float | None] = []
 
-    async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+    async def graph_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         self.synced_files.append((project_root, file_path))
+        self.graph_sync_timeouts.append(timeout)
+        if self.graph_timeout:
+            raise GcodeTimeoutError("gcode timed out: graph sync-file")
         if self.fail:
             raise RuntimeError("boom")
         return self.result
 
-    async def vector_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+    async def vector_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         self.vector_synced_files.append((project_root, file_path))
+        self.vector_sync_timeouts.append(timeout)
+        if self.vector_timeout:
+            raise GcodeTimeoutError("gcode timed out: vector sync-file")
         if self.vector_fail:
             raise RuntimeError("vector boom")
         return self.vector_result
@@ -72,7 +97,13 @@ class IndexedFileNotFoundGcodeGateway:
         self.synced_files: list[tuple[Path, str]] = []
         self.vector_synced_files: list[tuple[Path, str]] = []
 
-    async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+    async def graph_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         self.synced_files.append((project_root, file_path))
         if self.remove_root:
             shutil.rmtree(project_root)
@@ -81,7 +112,13 @@ class IndexedFileNotFoundGcodeGateway:
         stderr = f"indexed file `{file_path}` was not found for project proj-1"
         raise GcodeIndexedFileNotFoundError(["gcode"], 2, stderr, file_path, "proj-1")
 
-    async def vector_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+    async def vector_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         self.vector_synced_files.append((project_root, file_path))
         if self.remove_root:
             shutil.rmtree(project_root)
@@ -92,7 +129,13 @@ class IndexedFileNotFoundGcodeGateway:
 
 
 class CommandErrorGcodeGateway:
-    async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+    async def graph_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         raise GcodeCommandError(
             ["gcode", "graph", "sync-file"],
             2,
@@ -114,7 +157,13 @@ class ProjectNotFoundGcodeGateway:
         self.remove_root = remove_root
         self.synced_files: list[tuple[Path, str]] = []
 
-    async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+    async def graph_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         self.synced_files.append((project_root, file_path))
         if self.remove_root:
             shutil.rmtree(project_root)
@@ -601,6 +650,55 @@ async def test_sync_file_logs_real_graph_failures_as_errors(
 
 
 @pytest.mark.asyncio
+async def test_sync_file_warns_and_retries_when_graph_sync_times_out(
+    caplog: pytest.LogCaptureFixture,
+    code_storage: CodeIndexStorage,
+    tmp_path: Path,
+) -> None:
+    """Graph gcode timeouts stay pending without traceback logs."""
+    project_id = "proj-1"
+    file_path = "src/app.py"
+    _write_source(tmp_path)
+    indexed_file = _indexed_file(vectors_synced=True, graph_synced=False)
+    code_storage.upsert_project_stats(
+        IndexedProject(id=project_id, root_path=str(tmp_path), total_files=1, total_symbols=1)
+    )
+    code_storage.upsert_file(indexed_file)
+    code_storage.record_projection_cleanup_failure(project_id, "graph", "stale graph drift")
+    gcode_gateway = RecordingGcodeGateway(graph_timeout=True)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=code_storage,
+            gcode_gateway=gcode_gateway,
+            config=CodeIndexConfig(
+                embedding_enabled=False,
+                graph_enabled=True,
+                sync_worker_projection_timeout_seconds=124.0,
+            ),
+            project_id=project_id,
+            root=tmp_path,
+            file=indexed_file,
+        )
+
+    assert did_sync is False
+    assert gcode_gateway.synced_files == [(tmp_path, file_path)]
+    assert gcode_gateway.graph_sync_timeouts == [124.0]
+    synced_file = code_storage.get_file(project_id, file_path)
+    assert synced_file is not None
+    assert synced_file.graph_synced is False
+    assert synced_file.graph_sync_attempted_at is not None
+    assert code_storage.list_projection_cleanup_pending()
+    assert any(
+        record.levelno == logging.WARNING
+        and "Sync worker: graph sync timed out for src/app.py" in record.getMessage()
+        and not record.exc_info
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_sync_file_delegates_vector_sync_to_gcode_gateway(
     code_storage: CodeIndexStorage,
     tmp_path: Path,
@@ -633,6 +731,55 @@ async def test_sync_file_delegates_vector_sync_to_gcode_gateway(
     assert synced_file.vectors_synced is True
     assert synced_file.vector_sync_attempted_at is not None
     assert code_storage.list_projection_cleanup_pending() == []
+
+
+@pytest.mark.asyncio
+async def test_sync_file_warns_and_retries_when_vector_sync_times_out(
+    caplog: pytest.LogCaptureFixture,
+    code_storage: CodeIndexStorage,
+    tmp_path: Path,
+) -> None:
+    """Vector gcode timeouts stay pending without traceback logs."""
+    project_id = "proj-1"
+    file_path = "src/app.py"
+    _write_source(tmp_path)
+    indexed_file = _indexed_file(vectors_synced=False, graph_synced=True)
+    code_storage.upsert_project_stats(
+        IndexedProject(id=project_id, root_path=str(tmp_path), total_files=1, total_symbols=1)
+    )
+    code_storage.upsert_file(indexed_file)
+    code_storage.record_projection_cleanup_failure(project_id, "vector", "stale vector drift")
+    gcode_gateway = RecordingGcodeGateway(vector_timeout=True)
+
+    with caplog.at_level(logging.WARNING, logger="gobby.code_index.sync_worker"):
+        did_sync = await _sync_file(
+            storage=code_storage,
+            gcode_gateway=gcode_gateway,
+            config=CodeIndexConfig(
+                embedding_enabled=True,
+                graph_enabled=False,
+                sync_worker_projection_timeout_seconds=123.0,
+            ),
+            project_id=project_id,
+            root=tmp_path,
+            file=indexed_file,
+        )
+
+    assert did_sync is False
+    assert gcode_gateway.vector_synced_files == [(tmp_path, file_path)]
+    assert gcode_gateway.vector_sync_timeouts == [123.0]
+    synced_file = code_storage.get_file(project_id, file_path)
+    assert synced_file is not None
+    assert synced_file.vectors_synced is False
+    assert synced_file.vector_sync_attempted_at is not None
+    assert code_storage.list_projection_cleanup_pending()
+    assert any(
+        record.levelno == logging.WARNING
+        and "Sync worker: vector sync timed out for src/app.py" in record.getMessage()
+        and not record.exc_info
+        for record in caplog.records
+    )
+    assert not any(record.levelno >= logging.ERROR for record in caplog.records)
 
 
 @pytest.mark.asyncio

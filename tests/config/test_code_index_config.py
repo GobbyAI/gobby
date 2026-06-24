@@ -30,6 +30,7 @@ def test_code_index_config_drops_deprecated_vector_batch_size() -> None:
 def test_code_index_config_uses_nested_symbol_summary_defaults() -> None:
     config = CodeIndexConfig()
 
+    assert config.sync_worker_projection_timeout_seconds == 300.0
     assert config.symbol_summary.enabled is True
     assert config.symbol_summary.batch_size == 20
     assert config.symbol_summary.profile == FeatureProfile.LOW
@@ -38,6 +39,12 @@ def test_code_index_config_uses_nested_symbol_summary_defaults() -> None:
     assert candidate_labels(config.symbol_summary.candidates) == candidate_labels(
         DEFAULT_PROFILE_CANDIDATES[FeatureProfile.LOW]
     )
+
+
+def test_code_index_config_accepts_sync_worker_projection_timeout_override() -> None:
+    config = CodeIndexConfig.model_validate({"sync_worker_projection_timeout_seconds": 45.5})
+
+    assert config.sync_worker_projection_timeout_seconds == 45.5
 
 
 def test_code_index_config_migrates_legacy_flat_summary_fields() -> None:

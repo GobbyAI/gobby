@@ -17,6 +17,7 @@ from gobby.code_index.cleanup import purge_missing_project
 from gobby.code_index.gcode_gateway import (
     GcodeIndexedFileNotFoundError,
     GcodeProjectNotFoundError,
+    GcodeTimeoutError,
 )
 
 if TYPE_CHECKING:
@@ -254,7 +255,10 @@ async def _sync_file(
             try:
                 await _run_db(run_db, storage.mark_vector_sync_attempted, current.id)
                 await _sync_vector_file(
-                    gcode_gateway=gcode_gateway, project_root=root, file=current
+                    gcode_gateway=gcode_gateway,
+                    project_root=root,
+                    file=current,
+                    timeout=config.sync_worker_projection_timeout_seconds,
                 )
                 await _run_db(run_db, storage.mark_vectors_synced, current.id, current.content_hash)
                 await _run_db(
@@ -277,6 +281,12 @@ async def _sync_file(
                     run_db=run_db,
                 ):
                     return False
+            except GcodeTimeoutError as e:
+                logger.warning(
+                    "Sync worker: vector sync timed out for %s: %s",
+                    current.file_path,
+                    e,
+                )
             except Exception as e:
                 logger.error(
                     "Sync worker: vector sync failed for %s: %s",
@@ -306,6 +316,7 @@ async def _sync_file(
                         gcode_gateway=gcode_gateway,
                         project_root=root,
                         file=current,
+                        timeout=config.sync_worker_projection_timeout_seconds,
                     )
                     if graph_synced:
                         await _run_db(
@@ -349,6 +360,12 @@ async def _sync_file(
                         current.file_path,
                         e,
                     )
+            except GcodeTimeoutError as e:
+                logger.warning(
+                    "Sync worker: graph sync timed out for %s: %s",
+                    current.file_path,
+                    e,
+                )
             except Exception as e:
                 logger.error(
                     "Sync worker: graph sync failed for %s: %s",
@@ -364,9 +381,11 @@ async def _sync_vector_file(
     gcode_gateway: GcodeGateway,
     project_root: Path,
     file: IndexedFile,
+    *,
+    timeout: float | None = None,
 ) -> bool:
     """Delegate one file's vector projection sync to gcode."""
-    result = await gcode_gateway.vector_sync_file(project_root, file.file_path)
+    result = await gcode_gateway.vector_sync_file(project_root, file.file_path, timeout=timeout)
     if not result.get("success", True):
         raise RuntimeError(result.get("error", "gcode vector sync-file failed"))
     return True
@@ -376,9 +395,11 @@ async def _sync_graph(
     gcode_gateway: GcodeGateway,
     project_root: Path,
     file: IndexedFile,
+    *,
+    timeout: float | None = None,
 ) -> bool:
     """Ask gcode to sync one indexed file into the code graph projection."""
-    result = await gcode_gateway.graph_sync_file(project_root, file.file_path)
+    result = await gcode_gateway.graph_sync_file(project_root, file.file_path, timeout=timeout)
     # Treat stale gcode skip responses as terminal for the daemon queue. gcode
     # owns index eligibility; the daemon should not retry a file gcode skipped.
     if result.get("status") == "skipped" and result.get("reason") == "indexed_file_not_found":

@@ -188,7 +188,13 @@ class GcodeGateway:
     def checked_version(self) -> str | None:
         return self._checked_version
 
-    async def graph_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+    async def graph_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         file_path = _validate_user_gcode_value("file_path", file_path)
         await self._ensure_version()
         args = [
@@ -205,7 +211,7 @@ class GcodeGateway:
             GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION,
         ):
             args.append("--allow-missing-indexed-file")
-        return await self._run_json(args)
+        return await self._run_json(args, timeout=timeout)
 
     async def graph_overview(self, project_root: Path, *, limit: int = 100) -> dict[str, Any]:
         return await self._run_json(
@@ -308,18 +314,30 @@ class GcodeGateway:
             timeout=self._rebuild_timeout_seconds,
         )
 
-    async def vector_sync_file(self, project_root: Path, file_path: str) -> dict[str, Any]:
+    async def vector_sync_file(
+        self,
+        project_root: Path,
+        file_path: str,
+        *,
+        timeout: float | None = None,
+    ) -> dict[str, Any]:
         file_path = _validate_user_gcode_value("file_path", file_path)
-        return await self._run_json(
-            [
-                "vector",
-                "sync-file",
-                "--file",
-                file_path,
-                "--project",
-                str(project_root),
-            ]
-        )
+        await self._ensure_version()
+        args = [
+            "vector",
+            "sync-file",
+            "--file",
+            file_path,
+            "--project",
+            str(project_root),
+        ]
+        assert self._checked_version is not None
+        if is_at_least_version(
+            self._checked_version,
+            GCODE_ALLOW_MISSING_INDEXED_FILE_VERSION,
+        ):
+            args.append("--allow-missing-indexed-file")
+        return await self._run_json(args, timeout=timeout)
 
     async def vector_clear(self, project_root: Path) -> dict[str, Any]:
         return await self._run_json(
