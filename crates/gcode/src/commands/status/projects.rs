@@ -17,15 +17,17 @@ pub fn projects(format: Format) -> anyhow::Result<()> {
             if all_projects.is_empty() {
                 eprintln!("No indexed projects. Run `gcode init` in a project directory.");
             } else {
+                let mut text = String::new();
                 for p in &all_projects {
-                    println!("{} — {}", display_name(p), p.root_path);
-                    println!(
-                        "  {} files, {} symbols | Last indexed: {}",
+                    text.push_str(&format!("{} — {}\n", display_name(p), p.root_path));
+                    text.push_str(&format!(
+                        "  {} files, {} symbols | Last indexed: {}\n",
                         format_coverage(p.total_files, p.total_eligible_files),
                         p.total_symbols,
                         format_timestamp(&p.last_indexed_at)
-                    );
+                    ));
                 }
+                output::print_text(text.trim_end())?;
             }
             Ok(())
         }

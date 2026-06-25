@@ -88,15 +88,7 @@ pub fn invalidate(
 ) -> anyhow::Result<()> {
     let mut tx = conn.transaction()?;
     tx.execute(
-        "DELETE FROM code_symbols WHERE project_id = $1",
-        &[&project_id],
-    )?;
-    tx.execute(
-        "DELETE FROM code_indexed_files WHERE project_id = $1",
-        &[&project_id],
-    )?;
-    tx.execute(
-        "DELETE FROM code_content_chunks WHERE project_id = $1",
+        "DELETE FROM code_calls WHERE project_id = $1",
         &[&project_id],
     )?;
     tx.execute(
@@ -104,7 +96,15 @@ pub fn invalidate(
         &[&project_id],
     )?;
     tx.execute(
-        "DELETE FROM code_calls WHERE project_id = $1",
+        "DELETE FROM code_content_chunks WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    tx.execute(
+        "DELETE FROM code_indexed_files WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    tx.execute(
+        "DELETE FROM code_symbols WHERE project_id = $1",
         &[&project_id],
     )?;
     tx.execute(

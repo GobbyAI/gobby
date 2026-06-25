@@ -262,7 +262,7 @@ fn delivered_action(
             Ok(action)
         }
         Err(error) => {
-            let written = record_delivery_failure(
+            let _ = record_delivery_failure(
                 envelope,
                 report,
                 enqueued_path,
@@ -270,7 +270,7 @@ fn delivered_action(
                 success_failure_kind(body),
                 Some(&error),
             );
-            if written && let Some(path) = enqueued_path {
+            if let Some(path) = enqueued_path {
                 let _ = fs::remove_file(path);
             }
             output::stderr(format_args!(

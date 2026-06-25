@@ -20,12 +20,11 @@ pub(crate) struct InfraDescriptor {
 }
 
 /// Map a [`ServiceKind`] to its curated infrastructure descriptor. Every kind
-/// the system model can surface has a descriptor; a kind with no descriptor is
-/// defensively skipped by the builder. The adapter-module `path:line` citations
-/// point at the real feature-gated / always-compiled adapter modules in the
-/// workspace.
-pub(crate) fn infra_descriptor(kind: ServiceKind) -> Option<InfraDescriptor> {
-    let descriptor = match kind {
+/// the system model can surface has a descriptor. The adapter-module `path:line`
+/// citations point at the real feature-gated / always-compiled adapter modules
+/// in the workspace.
+pub(crate) fn infra_descriptor(kind: ServiceKind) -> InfraDescriptor {
+    match kind {
         ServiceKind::Postgres => InfraDescriptor {
             summary: "The Gobby PostgreSQL hub stores indexed symbols, content chunks, and \
                 config. The CLIs connect read-only or read-write through the `postgres` \
@@ -108,8 +107,7 @@ pub(crate) fn infra_descriptor(kind: ServiceKind) -> Option<InfraDescriptor> {
                 `error.rs::is_ffmpeg_unavailable`) to derived output with explicit \
                 degradation markers instead of failing the run.",
         },
-    };
-    Some(descriptor)
+    }
 }
 
 /// Build the deterministic infra-stack page (#892) from the workspace
@@ -126,15 +124,15 @@ pub(crate) fn build_infrastructure_doc(
     let mut sections: Vec<InfraSection> = model
         .services
         .iter()
-        .filter_map(|boundary| {
-            let descriptor = infra_descriptor(boundary.kind)?;
-            Some(InfraSection {
+        .map(|boundary| {
+            let descriptor = infra_descriptor(boundary.kind);
+            InfraSection {
                 service: boundary.name.clone(),
                 pulled_in_by: boundary.pulled_in_by.clone(),
                 adapter_module: descriptor.adapter_module.to_string(),
                 summary: descriptor.summary.to_string(),
                 degradation: descriptor.degradation.to_string(),
-            })
+            }
         })
         .collect();
     sections.sort_by(|a, b| a.service.cmp(&b.service));

@@ -113,7 +113,7 @@ pub(crate) fn curated_page_body(
             if grounded.trim().is_empty() {
                 CuratedBody {
                     body: Some(structural_body(kind, title, &members, &symbols)),
-                    degraded: false,
+                    degraded: true,
                     verify_notes: Vec::new(),
                 }
             } else {

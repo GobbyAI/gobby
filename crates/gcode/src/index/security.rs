@@ -46,18 +46,11 @@ pub fn is_binary(path: &Path) -> bool {
         Err(_) => return true,
     };
     let mut buf = [0u8; 8192];
-    loop {
-        let n = match file.read(&mut buf) {
-            Ok(n) => n,
-            Err(_) => return true,
-        };
-        if n == 0 {
-            return false;
-        }
-        if buf[..n].contains(&0) {
-            return true;
-        }
-    }
+    let n = match file.read(&mut buf) {
+        Ok(n) => n,
+        Err(_) => return true,
+    };
+    buf[..n].contains(&0)
 }
 
 /// Check if a path should be excluded.

@@ -170,11 +170,21 @@ pub(super) fn clip_link_field(value: &str) -> String {
     if value.len() <= MAX_LINK_FIELD_BYTES {
         return value.to_string();
     }
-    let mut end = MAX_LINK_FIELD_BYTES;
-    while end > 0 && !value.is_char_boundary(end) {
-        end -= 1;
+
+    let hash = gobby_core::indexing::content_hash(value.as_bytes());
+    let suffix_len = HASH_SUFFIX_LEN.min(hash.len());
+    let suffix = &hash[..suffix_len];
+    let prefix_len = MAX_LINK_FIELD_BYTES
+        .saturating_sub(suffix_len)
+        .saturating_sub(1);
+    let mut prefix = String::new();
+    for ch in value.chars() {
+        if prefix.len() + ch.len_utf8() > prefix_len {
+            break;
+        }
+        prefix.push(ch);
     }
-    value[..end].to_string()
+    format!("{prefix}-{suffix}")
 }
 
 pub(super) fn rollback_link_replacement(tx: Transaction<'_>, path: &str) {
@@ -206,7 +216,7 @@ pub fn configured_memory_index_limit_bytes() -> Option<u64> {
 
 #[cfg(test)]
 mod tests {
-    use super::{MAX_LINK_FIELD_BYTES, clip_link_field};
+    use super::{HASH_SUFFIX_LEN, MAX_LINK_FIELD_BYTES, clip_link_field};
 
     #[test]
     fn clip_link_field_preserves_values_within_bound() {
@@ -218,8 +228,14 @@ mod tests {
     fn clip_link_field_truncates_oversized_values() {
         let value = "x".repeat(MAX_LINK_FIELD_BYTES * 4);
         let clipped = clip_link_field(&value);
+        let hash = gobby_core::indexing::content_hash(value.as_bytes());
+        let suffix = &hash[..HASH_SUFFIX_LEN];
+        let prefix = clipped
+            .strip_suffix(suffix)
+            .and_then(|value| value.strip_suffix('-'))
+            .expect("hash-suffixed clip");
         assert!(clipped.len() <= MAX_LINK_FIELD_BYTES);
-        assert!(value.starts_with(&clipped));
+        assert!(value.starts_with(prefix));
     }
 
     #[test]
@@ -228,8 +244,14 @@ mod tests {
         // the result is still valid UTF-8 within the byte budget.
         let value = "é".repeat(MAX_LINK_FIELD_BYTES);
         let clipped = clip_link_field(&value);
+        let hash = gobby_core::indexing::content_hash(value.as_bytes());
+        let suffix = &hash[..HASH_SUFFIX_LEN];
+        let prefix = clipped
+            .strip_suffix(suffix)
+            .and_then(|value| value.strip_suffix('-'))
+            .expect("hash-suffixed clip");
         assert!(clipped.len() <= MAX_LINK_FIELD_BYTES);
-        assert!(value.starts_with(&clipped));
-        assert!(clipped.chars().all(|ch| ch == 'é'));
+        assert!(value.starts_with(prefix));
+        assert!(prefix.chars().all(|ch| ch == 'é'));
     }
 }

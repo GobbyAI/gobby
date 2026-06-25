@@ -288,12 +288,12 @@ pub(crate) fn git_changed_files(
     let output = std::process::Command::new("git")
         .arg("-C")
         .arg(project_root)
-        .args(["diff", "--name-only", since_ref])
+        .args(["diff", "--name-only", "--relative", since_ref])
         .output()
         .map_err(|err| anyhow::anyhow!("failed to run git diff for --since {since_ref}: {err}"))?;
     if !output.status.success() {
         anyhow::bail!(
-            "git diff --name-only {since_ref} failed: {}",
+            "git diff --name-only --relative {since_ref} failed: {}",
             String::from_utf8_lossy(&output.stderr).trim()
         );
     }

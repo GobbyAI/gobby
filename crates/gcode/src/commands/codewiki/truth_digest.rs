@@ -28,9 +28,9 @@ pub(crate) fn build_truth_digest(
     let mut stack = system_model
         .services
         .iter()
-        .filter_map(|boundary| {
-            let descriptor = infra_descriptor(boundary.kind)?;
-            Some(CodewikiTruthStackEntry {
+        .map(|boundary| {
+            let descriptor = infra_descriptor(boundary.kind);
+            CodewikiTruthStackEntry {
                 service: bounded(&boundary.name, MAX_FIELD_CHARS),
                 kind: boundary.kind.kind_slug().to_string(),
                 adapter_module: bounded(descriptor.adapter_module, MAX_PATH_CHARS),
@@ -42,7 +42,7 @@ pub(crate) fn build_truth_digest(
                     .collect(),
                 summary: bounded(descriptor.summary, MAX_FIELD_CHARS),
                 degradation: bounded(descriptor.degradation, MAX_FIELD_CHARS),
-            })
+            }
         })
         .collect::<Vec<_>>();
     stack.sort_by(|a, b| a.service.cmp(&b.service));

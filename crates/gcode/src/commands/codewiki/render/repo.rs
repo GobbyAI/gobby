@@ -87,10 +87,10 @@ pub(crate) fn build_repo_doc(
 
 fn repo_audit_link_key(audit_links: &[(&str, &str)]) -> String {
     let mut key = String::from("repo-audit-links:v1\n");
-    for (path, label) in audit_links {
-        key.push_str(path);
-        key.push('\t');
+    for (label, target) in audit_links {
         key.push_str(label);
+        key.push('\t');
+        key.push_str(target);
         key.push('\n');
     }
     format!("repo-audit-links:{}", hasher::content_hash(key.as_bytes()))

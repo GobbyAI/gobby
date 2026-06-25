@@ -140,6 +140,7 @@
         "source_path",
         "result_type",
         "snippet",
+        "hint",
         "score",
         "sources",
         "explanations",
@@ -213,6 +214,7 @@
         "truncated",
         "truncated_components",
         "warnings",
+        "hint",
         "ai",
         "synthesis"
       ],

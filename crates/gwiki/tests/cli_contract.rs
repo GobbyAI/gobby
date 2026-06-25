@@ -136,7 +136,7 @@ fn representative_ask_output() -> AskOutput {
         truncated: true,
         truncated_components: vec!["evidence".to_string()],
         warnings: vec!["semantic search degraded".to_string()],
-        hint: None,
+        hint: Some("Review grounded citations before trusting synthesis.".to_string()),
         ai: Some(AskAiOutput {
             requested: true,
             requested_mode: "auto",
@@ -185,14 +185,15 @@ fn search_contract_keys_serialize_from_representative_output() {
         .iter()
         .find(|command| command.name == "search")
         .expect("search command contract");
-    let output = serde_json::to_value(SearchOutput::new(
+    let mut search_output = SearchOutput::new(
         ScopeIdentity::topic("contract-guardrails"),
         "contract keys",
         5,
         vec![representative_search_hit()],
         vec!["semantic_unavailable".to_string()],
-    ))
-    .expect("representative search output JSON");
+    );
+    search_output.hint = Some("Narrow the query to reduce token pressure.".to_string());
+    let output = serde_json::to_value(search_output).expect("representative search output JSON");
 
     let missing_key = missing_json_output_key(&search.json_output_keys, &output);
     assert!(
@@ -263,6 +264,7 @@ fn parity_contract_tracks_code_grounding_and_dependency_classification() {
             "truncated",
             "truncated_components",
             "warnings",
+            "hint",
             "ai",
             "synthesis"
         ])

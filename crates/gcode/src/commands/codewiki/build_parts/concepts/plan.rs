@@ -191,11 +191,23 @@ pub(super) fn normalize_concepts(
     // never resolves to the wrong concept page.
     let mut seen = std::collections::BTreeMap::<String, usize>::new();
     for concept in &mut concepts {
-        let count = seen.entry(concept.slug.clone()).or_insert(0);
-        if *count > 0 {
-            concept.slug = format!("{}-{}", concept.slug, *count + 1);
+        let base_slug = concept.slug.clone();
+        let mut count = *seen.get(&base_slug).unwrap_or(&0);
+        let mut final_slug = base_slug.clone();
+        if count > 0 {
+            loop {
+                final_slug = format!("{}-{}", base_slug, count + 1);
+                if !seen.contains_key(&final_slug) {
+                    break;
+                }
+                count += 1;
+            }
+            concept.slug = final_slug.clone();
         }
-        *count += 1;
+        seen.insert(base_slug.clone(), count + 1);
+        if final_slug != base_slug {
+            seen.insert(final_slug, 1);
+        }
     }
     concepts
 }

@@ -2,9 +2,10 @@ use crate::config::Context;
 use crate::db;
 use crate::graph::code_graph;
 use crate::index::indexer;
+use crate::output::Format;
 use crate::vector::code_symbols;
 
-pub fn invalidate(ctx: &Context, force: bool) -> anyhow::Result<()> {
+pub fn invalidate(ctx: &Context, force: bool, _format: Format) -> anyhow::Result<()> {
     if !force {
         let project_name = ctx
             .project_root

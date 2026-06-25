@@ -299,7 +299,7 @@ fn run() -> anyhow::Result<()> {
             ensure_project_fresh(&ctx, cli.no_freshness)?;
             commands::status::run(&ctx, format)
         }
-        Command::Invalidate { force } => commands::status::invalidate(&ctx, force),
+        Command::Invalidate { force } => commands::status::invalidate(&ctx, force, format),
         Command::Graph {
             command:
                 GraphCommand::SyncFile {

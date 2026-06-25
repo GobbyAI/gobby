@@ -186,9 +186,15 @@ fn reconcile_orphan_projects(quiet: bool) -> anyhow::Result<OrphanProjectReconci
     let mut warnings_emitted = 0usize;
 
     for project_id in project_ids {
-        cleanup_orphan_project_projections(&project_id, quiet, &mut totals, &mut warnings_emitted);
-        let counts = delete_orphan_project_sql_rows(&mut conn, &project_id)?;
-        totals.record_sql(project_id, counts);
+        if cleanup_orphan_project_projections(
+            &project_id,
+            quiet,
+            &mut totals,
+            &mut warnings_emitted,
+        ) {
+            let counts = delete_orphan_project_sql_rows(&mut conn, &project_id)?;
+            totals.record_sql(project_id, counts);
+        }
     }
 
     Ok(totals)
@@ -225,24 +231,24 @@ pub(super) fn delete_orphan_project_sql_rows(
     conn: &mut impl GenericClient,
     project_id: &str,
 ) -> anyhow::Result<OrphanSqlDeletionCounts> {
-    let symbols_deleted = conn.execute(
-        "DELETE FROM code_symbols WHERE project_id = $1",
-        &[&project_id],
-    )?;
-    let files_deleted = conn.execute(
-        "DELETE FROM code_indexed_files WHERE project_id = $1",
-        &[&project_id],
-    )?;
-    let content_chunks_deleted = conn.execute(
-        "DELETE FROM code_content_chunks WHERE project_id = $1",
+    let calls_deleted = conn.execute(
+        "DELETE FROM code_calls WHERE project_id = $1",
         &[&project_id],
     )?;
     let imports_deleted = conn.execute(
         "DELETE FROM code_imports WHERE project_id = $1",
         &[&project_id],
     )?;
-    let calls_deleted = conn.execute(
-        "DELETE FROM code_calls WHERE project_id = $1",
+    let content_chunks_deleted = conn.execute(
+        "DELETE FROM code_content_chunks WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    let files_deleted = conn.execute(
+        "DELETE FROM code_indexed_files WHERE project_id = $1",
+        &[&project_id],
+    )?;
+    let symbols_deleted = conn.execute(
+        "DELETE FROM code_symbols WHERE project_id = $1",
         &[&project_id],
     )?;
 
@@ -260,7 +266,8 @@ fn cleanup_orphan_project_projections(
     quiet: bool,
     totals: &mut OrphanProjectReconcileTotals,
     warnings_emitted: &mut usize,
-) {
+) -> bool {
+    let mut cleaned = true;
     let ctx = match Context::resolve_for_project_id_with_services(
         project_id,
         quiet,
@@ -276,18 +283,20 @@ fn cleanup_orphan_project_projections(
             );
             totals.graph_projects_skipped += 1;
             totals.vector_projects_skipped += 1;
-            return;
+            return false;
         }
     };
 
     if ctx.falkordb.is_some() {
         if let Err(error) = code_graph::clear_project(&ctx) {
             warn_orphan_projection_cleanup_failure("graph", project_id, error, warnings_emitted);
+            cleaned = false;
         } else {
             totals.graph_projects_cleared += 1;
         }
     } else {
         totals.graph_projects_skipped += 1;
+        cleaned = false;
     }
 
     if let Some(qdrant) = &ctx.qdrant {
@@ -302,7 +311,9 @@ fn cleanup_orphan_project_projections(
         }
     } else {
         totals.vector_projects_skipped += 1;
+        cleaned = false;
     }
+    cleaned
 }
 
 fn print_orphan_project_reconcile_totals(totals: &OrphanProjectReconcileTotals) {
