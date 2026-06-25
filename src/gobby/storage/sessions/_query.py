@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import builtins
 from collections.abc import Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -289,6 +290,39 @@ class _QueryMixin:
             tuple(params),
         )
         return {row["source"]: int(row["count"]) for row in rows}
+
+    def get_wiki_backfill_candidates(
+        self: _ManagerState,
+        *,
+        project_id: str | None = None,
+        limit: int | None = None,
+        after_id: str | None = None,
+    ) -> builtins.list[Session]:
+        """Coarse prefilter of sessions that may need session-wiki backfill.
+
+        Over-approximation only: a non-deleted, top-level (``agent_depth = 0``)
+        session with a non-empty digest from a non-ephemeral source. The
+        authoritative eligibility — the digest-turn threshold and skip policy
+        (``wiki_generation_skip_reason``) plus wiki validity
+        (``is_wiki_markdown_valid``) — is applied per-row in Python by the
+        caller. Ordered by ``id`` for stable, resumable pagination: pass the
+        last returned id as ``after_id`` to fetch the next page.
+        """
+        conditions, params = _build_session_filters(project_id, None, None)
+        conditions.append("digest_markdown IS NOT NULL")
+        conditions.append("digest_markdown <> ''")
+        conditions.append("COALESCE(agent_depth, 0) = 0")
+        conditions.append("COALESCE(source, '') NOT IN ('pipeline', 'cron')")
+        if after_id is not None:
+            conditions.append("id > %s")
+            params.append(after_id)
+        where_clause = " AND ".join(conditions)
+        sql = f"SELECT * FROM sessions WHERE {where_clause} ORDER BY id ASC"  # nosec B608
+        if limit is not None:
+            sql += " LIMIT %s"
+            params.append(int(limit))
+        rows = self.db.fetchall(sql, tuple(params))
+        return [Session.from_row(row) for row in rows or []]
 
     def fetch_task_refs_by_session(
         self: _ManagerState,

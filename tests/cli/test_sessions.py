@@ -1,10 +1,12 @@
 from datetime import UTC, datetime
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from click.testing import CliRunner
 
 from gobby.cli.sessions import sessions
+from gobby.sessions.wiki_synthesis import WikiBackfillFailure, WikiBackfillResult
 from gobby.storage.session_models import Session
 
 pytestmark = pytest.mark.unit
@@ -186,3 +188,74 @@ def test_renumber_sessions_rejects_removed_dry_run_option(mock_session_manager) 
     assert result.exit_code != 0
     assert "No such option: --dry-run" in result.output
     mock_session_manager.renumber_project_sessions.assert_not_called()
+
+
+class TestBackfillWiki:
+    """Tests for the `sessions backfill-wiki` command."""
+
+    @staticmethod
+    def _config(*, wiki_enabled: bool = True):
+        config = MagicMock()
+        config.session_wiki = SimpleNamespace(
+            enabled=wiki_enabled,
+            prompt_path="wiki/source_page",
+            wiki_file_path=".gobby/session_wiki",
+        )
+        config.session_summary = MagicMock()
+        return config
+
+    def test_dry_run_reports_counts_without_building_llm(self) -> None:
+        config = self._config()
+        backfill_mock = AsyncMock(return_value=WikiBackfillResult(scanned=5, eligible=3, skipped=2))
+        with (
+            patch("gobby.cli.sessions.get_session_manager"),
+            patch("gobby.config.app.load_config", return_value=config),
+            patch("gobby.llm.factory.create_llm_service") as create_llm,
+            patch("gobby.sessions.wiki_synthesis.backfill_session_wikis", backfill_mock),
+        ):
+            result = CliRunner().invoke(sessions, ["backfill-wiki", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert "Would synthesize 3" in result.output
+        create_llm.assert_not_called()  # dry-run never needs an LLM service
+        _, kwargs = backfill_mock.call_args
+        assert kwargs["dry_run"] is True
+        assert kwargs["llm_service"] is None
+
+    def test_disabled_config_short_circuits(self) -> None:
+        config = self._config(wiki_enabled=False)
+        backfill_mock = AsyncMock()
+        with (
+            patch("gobby.cli.sessions.get_session_manager"),
+            patch("gobby.config.app.load_config", return_value=config),
+            patch("gobby.sessions.wiki_synthesis.backfill_session_wikis", backfill_mock),
+        ):
+            result = CliRunner().invoke(sessions, ["backfill-wiki", "--dry-run"])
+
+        assert result.exit_code == 0
+        assert "disabled" in result.output
+        backfill_mock.assert_not_called()
+
+    def test_real_run_reports_failures(self) -> None:
+        config = self._config()
+        backfill_mock = AsyncMock(
+            return_value=WikiBackfillResult(
+                scanned=2,
+                eligible=2,
+                synthesized=1,
+                failed=1,
+                failures=[WikiBackfillFailure("abc123def456", "llm_error", "boom")],
+            )
+        )
+        with (
+            patch("gobby.cli.sessions.get_session_manager"),
+            patch("gobby.config.app.load_config", return_value=config),
+            patch("gobby.llm.factory.create_llm_service"),
+            patch("gobby.sessions.wiki_synthesis.backfill_session_wikis", backfill_mock),
+        ):
+            result = CliRunner().invoke(sessions, ["backfill-wiki"])
+
+        assert result.exit_code == 0
+        assert "Synthesized 1 of 2" in result.output
+        assert "abc123def456" in result.output
+        assert "boom" in result.output

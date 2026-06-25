@@ -520,3 +520,66 @@ class TestSessionManagerPruning:
 
         pending = session_manager.get_pending_transcript_sessions()
         assert len(pending) == 0
+
+    def test_get_wiki_backfill_candidates_filters_coarsely(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """Coarse candidates: digest present, top-level, non-ephemeral source."""
+        pid = sample_project["id"]
+        digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
+
+        def _mk(ext: str, source: str = "claude") -> str:
+            session = session_manager.register(
+                external_id=ext, machine_id="machine", source=source, project_id=pid
+            )
+            return session.id
+
+        eligible = _mk("wiki-eligible")
+        no_digest = _mk("wiki-no-digest")
+        subagent = _mk("wiki-subagent")
+        pipeline = _mk("wiki-pipeline", source="pipeline")
+
+        # Give everyone but `no_digest` a usable digest.
+        for sid in (eligible, subagent, pipeline):
+            session_manager.db.execute(
+                "UPDATE sessions SET digest_markdown = %s WHERE id = %s", (digest, sid)
+            )
+        session_manager.db.execute("UPDATE sessions SET agent_depth = 1 WHERE id = %s", (subagent,))
+
+        ids = {s.id for s in session_manager.get_wiki_backfill_candidates(project_id=pid)}
+        assert eligible in ids
+        assert no_digest not in ids  # empty/NULL digest
+        assert subagent not in ids  # agent_depth > 0
+        assert pipeline not in ids  # ephemeral source
+
+    def test_get_wiki_backfill_candidates_paginates_by_id(
+        self,
+        session_manager: SessionManager,
+        sample_project: dict,
+    ) -> None:
+        """limit + after_id page deterministically by ascending id with no overlap."""
+        pid = sample_project["id"]
+        digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
+        for i in range(5):
+            session = session_manager.register(
+                external_id=f"wiki-page-{i}",
+                machine_id="machine",
+                source="claude",
+                project_id=pid,
+            )
+            session_manager.db.execute(
+                "UPDATE sessions SET digest_markdown = %s WHERE id = %s", (digest, session.id)
+            )
+
+        first = session_manager.get_wiki_backfill_candidates(project_id=pid, limit=2)
+        assert len(first) == 2
+        assert first[0].id < first[1].id  # ascending order
+
+        nxt = session_manager.get_wiki_backfill_candidates(
+            project_id=pid, limit=2, after_id=first[-1].id
+        )
+        assert len(nxt) == 2
+        assert {s.id for s in first}.isdisjoint({s.id for s in nxt})
+        assert first[-1].id < nxt[0].id  # strictly after the cursor

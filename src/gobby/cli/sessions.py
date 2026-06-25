@@ -741,3 +741,74 @@ def backfill_context_windows(dry_run: bool) -> None:
     click.echo(
         f"{verb} {result.updated} of {result.scanned} session(s) ({result.skipped} unchanged)."
     )
+
+
+@sessions.command("backfill-wiki")
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    help="Report how many session wikis would be synthesized without writing anything.",
+)
+@click.option(
+    "--limit",
+    type=int,
+    default=None,
+    help="Bound synthesis attempts (resumable; safe to re-run to fill remaining gaps).",
+)
+def backfill_wiki(dry_run: bool, limit: int | None) -> None:
+    """Re-synthesize session-wiki pages from existing digests.
+
+    One-time-but-reusable backfill over historical sessions. For every eligible
+    session (top-level, non-ephemeral, digest with >= 3 turns, missing/invalid
+    wiki) it re-runs the shared summary+wiki flow from the stored digest — no
+    transcript needed. Idempotent: sessions with a valid, current wiki are
+    skipped, so re-running only fills the gaps and retries prior failures.
+    """
+    from gobby.config.app import load_config
+    from gobby.llm.factory import create_llm_service
+    from gobby.sessions.wiki_synthesis import backfill_session_wikis
+
+    config = load_config()
+    session_wiki_config = getattr(config, "session_wiki", None)
+    if session_wiki_config is None or not getattr(session_wiki_config, "enabled", False):
+        click.echo("session_wiki is disabled in config; nothing to backfill.", err=True)
+        return
+
+    # Dry-run never synthesizes, so it doesn't need an LLM service.
+    llm_service = None if dry_run else create_llm_service(config)
+
+    with session_manager_context() as manager:
+
+        async def _run() -> Any:
+            return await backfill_session_wikis(
+                session_manager=manager,
+                llm_service=llm_service,
+                session_summary_config=config.session_summary,
+                session_wiki_config=session_wiki_config,
+                db=manager.db,
+                dry_run=dry_run,
+                limit=limit,
+                progress=(None if dry_run else click.echo),
+            )
+
+        result = asyncio.run(_run())
+
+    if dry_run:
+        click.echo(
+            f"Would synthesize {result.eligible} wiki page(s) "
+            f"from {result.scanned} candidate session(s) "
+            f"({result.skipped} skipped: already-valid or below threshold)."
+        )
+        return
+
+    click.echo(
+        f"Synthesized {result.synthesized} of {result.eligible} eligible "
+        f"({result.scanned} scanned, {result.skipped} skipped, {result.failed} failed)."
+    )
+    if result.failures:
+        click.echo("\nFailures (re-run to retry):")
+        for failure in result.failures[:20]:
+            detail = failure.error or failure.reason or "unknown"
+            click.echo(f"  {failure.session_id[:12]}: {detail}")
+        if len(result.failures) > 20:
+            click.echo(f"  ... and {len(result.failures) - 20} more")

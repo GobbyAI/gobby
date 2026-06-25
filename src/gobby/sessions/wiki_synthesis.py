@@ -21,6 +21,7 @@ from __future__ import annotations
 import logging
 import re
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -540,3 +541,155 @@ def _write_wiki_file(wiki_path: Path, content: str) -> None:
         wiki_path.write_text(content, encoding="utf-8")
     except OSError as exc:
         logger.warning("Failed to write wiki mirror file %s: %s", wiki_path, exc)
+
+
+# Candidate sessions are paged from the coarse SQL prefilter in chunks of this
+# size; eligibility is then resolved per-row in Python.
+_WIKI_BACKFILL_PAGE_SIZE = 200
+
+#: ``generate_session_wiki`` skip reasons that are NOT failures for an eligible
+#: (missing) wiki. Deliberately narrow: the backfill pre-checks skip policy and
+#: wiki validity, so the only benign non-generated outcome is an unchanged
+#: source-context hash (``noop``). Everything else (``llm_error``,
+#: ``empty_synthesis``, ``invalid_synthesis``, ``prompt_unavailable``,
+#: ``disabled``, ``no_llm_service``, ...) is counted as a failure.
+_BENIGN_WIKI_SKIPS = frozenset({"noop"})
+
+
+@dataclass
+class WikiBackfillFailure:
+    """A single session that could not be (re)synthesized during backfill."""
+
+    session_id: str
+    reason: str | None
+    error: str | None = None
+
+
+@dataclass
+class WikiBackfillResult:
+    """Outcome of a session-wiki backfill pass."""
+
+    scanned: int = 0  # coarse candidates examined
+    eligible: int = 0  # passed skip policy and lacked a valid wiki
+    synthesized: int = 0  # wiki generated this run
+    skipped: int = 0  # ineligible (skip policy / already-valid / benign noop)
+    failed: int = 0  # synthesis attempted but did not produce a valid wiki
+    attempts: int = 0  # synthesis calls made (0 in dry-run)
+    failures: list[WikiBackfillFailure] = field(default_factory=list)
+
+
+async def backfill_session_wikis(
+    *,
+    session_manager: Any,
+    llm_service: Any | None,
+    session_summary_config: Any | None,
+    session_wiki_config: Any | None,
+    db: Any | None = None,
+    dry_run: bool = False,
+    limit: int | None = None,
+    progress: Callable[[str], None] | None = None,
+) -> WikiBackfillResult:
+    """Re-synthesize missing/invalid session wikis from stored digests.
+
+    One-time-but-reusable backfill. Pages through eligible sessions (top-level,
+    non-ephemeral, digest with at least ``WIKI_MIN_DIGEST_TURNS`` turns, and no
+    valid wiki) and re-runs the shared summary+wiki flow from each session's
+    stored digest — no transcript needed. Idempotent: a session whose wiki is
+    already valid is skipped, so re-running only fills gaps and retries prior
+    failures.
+
+    ``limit`` bounds synthesis *attempts* (or, in ``dry_run``, the number of
+    eligible sessions counted), not rows scanned, so a small limit still does
+    real work when early candidates are already valid. Runs sequentially to
+    avoid rate-limit handling for a large one-time batch; one failing session
+    never aborts the batch.
+    """
+    from gobby.sessions.summarize import generate_session_summaries
+
+    result = WikiBackfillResult()
+    after_id: str | None = None
+
+    while True:
+        candidates = session_manager.get_wiki_backfill_candidates(
+            limit=_WIKI_BACKFILL_PAGE_SIZE, after_id=after_id
+        )
+        if not candidates:
+            break
+
+        for session in candidates:
+            after_id = session.id
+            result.scanned += 1
+
+            digest = getattr(session, "digest_markdown", None)
+            if wiki_generation_skip_reason(session, digest) is not None:
+                result.skipped += 1
+                continue
+            if is_wiki_markdown_valid(getattr(session, "wiki_markdown", None)):
+                result.skipped += 1
+                continue
+
+            result.eligible += 1
+            if dry_run:
+                if limit is not None and result.eligible >= limit:
+                    return result
+                continue
+
+            result.attempts += 1
+            try:
+                res = await generate_session_summaries(
+                    session_id=session.id,
+                    session_manager=session_manager,
+                    llm_service=llm_service,
+                    session_summary_config=session_summary_config,
+                    db=db,
+                    set_handoff_ready=False,
+                    session_wiki_config=session_wiki_config,
+                )
+            except Exception as exc:  # noqa: BLE001 — one bad session must not abort the batch
+                result.failed += 1
+                result.failures.append(WikiBackfillFailure(session.id, "exception", str(exc)))
+                if progress:
+                    progress(f"  FAILED {session.id[:12]}: {exc}")
+            else:
+                _record_backfill_outcome(result, session.id, res, progress)
+
+            if limit is not None and result.attempts >= limit:
+                return result
+
+    return result
+
+
+def _record_backfill_outcome(
+    result: WikiBackfillResult,
+    session_id: str,
+    res: dict[str, Any],
+    progress: Callable[[str], None] | None,
+) -> None:
+    """Classify one ``generate_session_summaries`` result into the tally.
+
+    A failed summary call, or a non-generated wiki whose skip reason is not in
+    ``_BENIGN_WIKI_SKIPS``, counts as a failure for an eligible (missing) wiki.
+    """
+    if not res.get("success"):
+        result.failed += 1
+        result.failures.append(WikiBackfillFailure(session_id, "summary_error", res.get("error")))
+        if progress:
+            progress(f"  FAILED {session_id[:12]}: summary {res.get('error')}")
+        return
+
+    wiki = res.get("wiki") or {}
+    if wiki.get("generated"):
+        result.synthesized += 1
+        if progress:
+            progress(f"  synthesized {session_id[:12]} ({wiki.get('wiki_length', 0)} chars)")
+        return
+
+    skip_reason = wiki.get("skipped")
+    if skip_reason in _BENIGN_WIKI_SKIPS:
+        result.skipped += 1
+        return
+
+    result.failed += 1
+    result.failures.append(WikiBackfillFailure(session_id, skip_reason, wiki.get("error")))
+    if progress:
+        progress(f"  FAILED {session_id[:12]}: wiki {skip_reason}")

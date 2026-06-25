@@ -54,6 +54,13 @@ T = TypeVar("T")
 _TRANSCRIPT_INDEX_ERRORS = (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError)
 _WINDOW_ONLY_CONTEXT_SOURCES = frozenset({"droid", "agy", "grok"})
 
+# When a transcript file is gone we still try to regenerate digest-backed
+# artifacts (summary/wiki). If wiki synthesis keeps failing we must not retry it
+# forever — give up and mark the session processed after this many consecutive
+# wiki-synthesis failures. (The `gobby sessions backfill-wiki` command remains a
+# manual escape hatch since it selects by wiki validity, not transcript_processed.)
+WIKI_SELF_HEAL_MAX_FAILURES = 3
+
 
 def _session_int(value: Any) -> int:
     if isinstance(value, bool):
@@ -409,9 +416,13 @@ class SessionLifecycleManager:
 
         Runs memory extraction and summary generation as separate steps
         OUTSIDE _process_session_transcript so they execute even when the
-        JSONL file has already been deleted.  transcript_processed is only
-        set when summaries have been generated (or LLM is unavailable),
-        allowing retry on the next cycle if summary generation fails.
+        JSONL file has already been deleted: a purged-but-digest-backed session
+        still regenerates its summary/wiki from the stored digest. For those
+        recovery cases transcript_processed is only set once both artifacts are
+        complete (valid summary and no wiki refresh needed), allowing retry on
+        the next cycle — bounded by WIKI_SELF_HEAL_MAX_FAILURES so a persistently
+        failing session cannot loop. The normal on-disk path is unchanged
+        (processed once a summary exists, or when the LLM is unavailable).
         """
         sessions = self.session_manager.get_pending_transcript_sessions(
             limit=self.config.transcript_processing_batch_size
@@ -439,8 +450,16 @@ class SessionLifecycleManager:
             except Exception as e:
                 logger.error(f"Failed to process transcript for {session.id}: {e}")
 
-            # If transcript file is gone, no point retrying — mark processed and move on
-            if not session.transcript_path or not os.path.exists(session.transcript_path):
+            # If the transcript file is gone we can't (re)parse it, but a
+            # digest-backed session can still synthesize its summary/wiki from
+            # the stored digest. Only short-circuit when there's nothing left to
+            # do (no usable digest, ephemeral/subagent, or LLM unavailable);
+            # otherwise fall through to digest-backed artifact generation.
+            transcript_missing = not session.transcript_path or not os.path.exists(
+                session.transcript_path
+            )
+            has_usable_digest = bool(digest and digest.strip())
+            if transcript_missing and (skip_llm or not self.llm_service or not has_usable_digest):
                 self.session_manager.mark_transcript_processed(session.id)
                 processed += 1
                 logger.info(
@@ -448,6 +467,11 @@ class SessionLifecycleManager:
                     f"(transcript file missing, no further processing possible)"
                 )
                 continue
+            if transcript_missing:
+                logger.info(
+                    f"Transcript gone for {session.id}; regenerating digest-backed "
+                    f"artifacts (summary/wiki) from the stored digest"
+                )
 
             # Skip LLM-heavy steps for non-human sessions — subagents, pipelines,
             # and cron sessions are ephemeral and not worth the token cost.
@@ -466,20 +490,45 @@ class SessionLifecycleManager:
             except Exception as e:
                 logger.warning(f"Artifact generation failed for {session.id}: {e}")
 
-            # Step 3: Only mark as processed if summaries succeeded or LLM is unavailable.
+            # Step 3: Decide whether the session is settled enough to mark processed.
+            #   - LLM unavailable: nothing more we can do, finalize.
+            #   - Transcript gone (digest-backed recovery): require BOTH artifacts
+            #     complete (valid summary AND no wiki refresh needed) so a transient
+            #     synthesis failure retries next cycle — but give up after repeated
+            #     wiki-synthesis failures so a permanently-failing session can't loop.
+            #   - Normal on-disk path: unchanged (gated on summary presence).
             refreshed = self.session_manager.get(session.id)
-            if refreshed and (refreshed.summary_markdown or not self.llm_service):
+            if not self.llm_service:
+                should_mark = bool(refreshed)
+            elif transcript_missing:
+                if refreshed is None:
+                    wiki_failures = 0
+                    artifacts_complete = False
+                else:
+                    wiki_failures = (
+                        getattr(refreshed, "wiki_synthesis_consecutive_failures", 0) or 0
+                    )
+                    artifacts_complete = is_summary_markdown_valid(
+                        refreshed.summary_markdown
+                    ) and not self._wiki_refresh_needed(refreshed)
+                should_mark = artifacts_complete or wiki_failures >= WIKI_SELF_HEAL_MAX_FAILURES
+            else:
+                should_mark = refreshed is not None and bool(refreshed.summary_markdown)
+
+            if should_mark:
                 self.session_manager.mark_transcript_processed(session.id)
                 processed += 1
                 logger.debug(f"Processed transcript for session {session.id}")
             else:
                 logger.info(
-                    f"Deferring transcript_processed for {session.id} — summaries not yet generated"
+                    f"Deferring transcript_processed for {session.id} — "
+                    f"digest-backed artifacts not yet complete"
                 )
 
             # Step 4: Best-effort backup of the transcript archive
-            # On success, purge DB messages (gzip is now the source of truth)
-            if session.transcript_path and session.external_id:
+            # On success, purge DB messages (gzip is now the source of truth).
+            # Skipped when the file is already gone — nothing to archive.
+            if not transcript_missing and session.transcript_path and session.external_id:
                 try:
                     archive_path = await asyncio.to_thread(
                         backup_transcript,

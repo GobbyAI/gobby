@@ -66,6 +66,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "get": "(self, session_id: 'str') -> 'Session | None'",
     "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'list[Session]'",
     "get_summary_revision": "(self, revision_id: 'str') -> 'dict[str, Any] | None'",
+    "get_wiki_backfill_candidates": "(self, *, project_id: 'str | None' = None, "
+    "limit: 'int | None' = None, after_id: 'str | None' = None) -> 'builtins.list[Session]'",
     "get_wiki_revision": "(self, revision_id: 'str') -> 'dict[str, Any] | None'",
     "get_session_id": "(self, external_id: 'str', source: 'str') -> 'str | None'",
     "get_sessions_since": "(self, since: 'datetime', project_id: 'str | None' = None) "

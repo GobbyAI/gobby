@@ -447,3 +447,220 @@ async def test_generate_session_wiki_empty_required_section_records_invalid_fail
     assert result == {"generated": False, "skipped": "invalid_synthesis"}
     assert manager.persist_calls == []
     assert manager.failure_calls == [(session.id, "invalid_synthesis", None)]
+
+
+# ---------------------------------------------------------------------------
+# backfill_session_wikis — batched historical backfill from stored digests.
+# ---------------------------------------------------------------------------
+
+_VALID_WIKI = "## Summary\n\nReal summary body text.\n\n## Key Claims\n\n- A real claim.\n"
+
+
+class _FakeBackfillManager:
+    """Session-manager stub exposing get_wiki_backfill_candidates over a list."""
+
+    def __init__(self, sessions: list[Any]) -> None:
+        self.db = None
+        self._sessions = sessions
+
+    def get_wiki_backfill_candidates(
+        self, *, limit: int | None = None, after_id: str | None = None
+    ) -> list[Any]:
+        items = [s for s in self._sessions if after_id is None or s.id > after_id]
+        return items[:limit] if limit is not None else items
+
+
+def _patch_generate(
+    monkeypatch: pytest.MonkeyPatch,
+    results: list[Any] | dict[str, Any] | Exception,
+) -> list[str]:
+    """Patch summarize.generate_session_summaries; return its call-id log.
+
+    ``results`` is either a single canned return value / Exception reused for
+    every call, or a list consumed one per call.
+    """
+    calls: list[str] = []
+    queue = list(results) if isinstance(results, list) else None
+
+    async def _fake_gen(*, session_id: str, **kwargs: Any) -> dict[str, Any]:
+        calls.append(session_id)
+        outcome = queue.pop(0) if queue is not None else results
+        if isinstance(outcome, Exception):
+            raise outcome
+        return outcome
+
+    import gobby.sessions.summarize as summarize_mod
+
+    monkeypatch.setattr(summarize_mod, "generate_session_summaries", _fake_gen)
+    return calls
+
+
+async def _run_backfill(manager: Any, **kwargs: Any) -> wiki_synthesis.WikiBackfillResult:
+    return await wiki_synthesis.backfill_session_wikis(
+        session_manager=manager,
+        llm_service=object(),
+        session_summary_config=_config(),
+        session_wiki_config=_config(),
+        db=None,
+        **kwargs,
+    )
+
+
+@pytest.mark.asyncio
+async def test_backfill_dry_run_counts_without_synthesizing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = [
+        _make_session(id="s-00", wiki_markdown=None),  # eligible (missing wiki)
+        _make_session(id="s-01", wiki_markdown=_VALID_WIKI),  # already valid → skip
+        _make_session(id="s-02", source="pipeline"),  # ephemeral → skip
+    ]
+    calls = _patch_generate(monkeypatch, {"success": True, "wiki": {"generated": True}})
+
+    result = await _run_backfill(_FakeBackfillManager(sessions), dry_run=True)
+
+    assert result.scanned == 3
+    assert result.eligible == 1
+    assert result.skipped == 2
+    assert result.synthesized == 0
+    assert result.attempts == 0
+    assert calls == []  # dry-run never calls the trigger
+
+
+@pytest.mark.asyncio
+async def test_backfill_synthesizes_missing_wiki(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [_make_session(id="s-00", wiki_markdown=None)]
+    calls = _patch_generate(
+        monkeypatch, {"success": True, "wiki": {"generated": True, "wiki_length": 321}}
+    )
+
+    result = await _run_backfill(_FakeBackfillManager(sessions))
+
+    assert calls == ["s-00"]
+    assert result.synthesized == 1
+    assert result.failed == 0
+    assert result.eligible == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_skips_already_valid_wiki(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [_make_session(id="s-00", wiki_markdown=_VALID_WIKI)]
+    calls = _patch_generate(monkeypatch, {"success": True, "wiki": {"generated": True}})
+
+    result = await _run_backfill(_FakeBackfillManager(sessions))
+
+    assert calls == []  # valid wiki → no synthesis attempt (idempotent re-run)
+    assert result.skipped == 1
+    assert result.attempts == 0
+
+
+@pytest.mark.asyncio
+async def test_backfill_noop_skip_is_not_a_failure(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [_make_session(id="s-00", wiki_markdown=None)]
+    _patch_generate(monkeypatch, {"success": True, "wiki": {"generated": False, "skipped": "noop"}})
+
+    result = await _run_backfill(_FakeBackfillManager(sessions))
+
+    assert result.synthesized == 0
+    assert result.failed == 0
+    assert result.skipped == 1
+
+
+@pytest.mark.asyncio
+async def test_backfill_wiki_error_counts_as_failed(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [_make_session(id="s-00", wiki_markdown=None)]
+    _patch_generate(
+        monkeypatch,
+        {
+            "success": True,
+            "wiki": {"generated": False, "skipped": "llm_error", "error": "boom"},
+        },
+    )
+
+    result = await _run_backfill(_FakeBackfillManager(sessions))
+
+    assert result.synthesized == 0
+    assert result.failed == 1
+    assert result.failures[0].session_id == "s-00"
+    assert result.failures[0].reason == "llm_error"
+    assert result.failures[0].error == "boom"
+
+
+@pytest.mark.asyncio
+async def test_backfill_summary_failure_counts_as_failed(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = [_make_session(id="s-00", wiki_markdown=None)]
+    _patch_generate(monkeypatch, {"success": False, "error": "No session found"})
+
+    result = await _run_backfill(_FakeBackfillManager(sessions))
+
+    assert result.failed == 1
+    assert result.failures[0].reason == "summary_error"
+    assert result.failures[0].error == "No session found"
+
+
+@pytest.mark.asyncio
+async def test_backfill_one_failure_does_not_abort_batch(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = [
+        _make_session(id="s-00", wiki_markdown=None),
+        _make_session(id="s-01", wiki_markdown=None),
+    ]
+    calls = _patch_generate(
+        monkeypatch,
+        [RuntimeError("kaboom"), {"success": True, "wiki": {"generated": True}}],
+    )
+
+    result = await _run_backfill(_FakeBackfillManager(sessions))
+
+    assert calls == ["s-00", "s-01"]  # batch continued past the first failure
+    assert result.failed == 1
+    assert result.synthesized == 1
+    assert result.failures[0].reason == "exception"
+
+
+@pytest.mark.asyncio
+async def test_backfill_limit_bounds_attempts(monkeypatch: pytest.MonkeyPatch) -> None:
+    sessions = [_make_session(id=f"s-{i:02d}", wiki_markdown=None) for i in range(5)]
+    calls = _patch_generate(monkeypatch, {"success": True, "wiki": {"generated": True}})
+
+    result = await _run_backfill(_FakeBackfillManager(sessions), limit=2)
+
+    assert len(calls) == 2
+    assert result.attempts == 2
+    assert result.synthesized == 2
+
+
+@pytest.mark.asyncio
+async def test_backfill_limit_reaches_attempts_past_skipped(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = [
+        _make_session(id="s-00", wiki_markdown=_VALID_WIKI),
+        _make_session(id="s-01", wiki_markdown=_VALID_WIKI),
+        _make_session(id="s-02", wiki_markdown=None),
+        _make_session(id="s-03", wiki_markdown=None),
+        _make_session(id="s-04", wiki_markdown=None),
+    ]
+    calls = _patch_generate(monkeypatch, {"success": True, "wiki": {"generated": True}})
+
+    result = await _run_backfill(_FakeBackfillManager(sessions), limit=2)
+
+    assert calls == ["s-02", "s-03"]  # skipped 2 valid, attempted 2 eligible
+    assert result.attempts == 2
+    assert result.skipped == 2
+
+
+@pytest.mark.asyncio
+async def test_backfill_dry_run_limit_caps_eligible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    sessions = [_make_session(id=f"s-{i:02d}", wiki_markdown=None) for i in range(5)]
+    calls = _patch_generate(monkeypatch, {"success": True, "wiki": {"generated": True}})
+
+    result = await _run_backfill(_FakeBackfillManager(sessions), dry_run=True, limit=2)
+
+    assert result.eligible == 2  # stops counting once the limit is reached
+    assert calls == []
