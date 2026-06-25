@@ -82,6 +82,14 @@ def _is_missing_tmux_target_error(stderr: str) -> bool:
     return any(fragment in message for fragment in _MISSING_TARGET_ERRORS)
 
 
+def _is_missing_tmux_server_error(stderr: str) -> bool:
+    """Return True when tmux reports that the isolated server is not running."""
+    message = stderr.strip().lower()
+    return "no server running" in message or (
+        message.startswith("error connecting to ") and "(no such file or directory)" in message
+    )
+
+
 def _exact_session_target(name: str) -> str:
     """Return a tmux target that requires an exact session-name match."""
     return f"={name}:"
@@ -246,8 +254,8 @@ class TmuxSessionManager:
 
         try:
             rc, _stdout, stderr = await self._run("list-sessions", timeout=5.0)
-            # rc=1 with "no server running" is fine — server will start on next create
-            if rc == 0 or "no server running" in stderr:
+            # rc=1 with no server is fine; tmux will start it on next create.
+            if rc == 0 or _is_missing_tmux_server_error(stderr):
                 self._health_check_timeout_failures = 0
                 return True
             self._health_check_timeout_failures = 0

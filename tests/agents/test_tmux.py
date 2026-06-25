@@ -1352,6 +1352,44 @@ class TestTmuxSessionManagerExtended:
         assert result is True
 
     @pytest.mark.asyncio
+    async def test_health_check_missing_socket_is_ok(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """health_check returns True for tmux's missing socket wording."""
+        mgr = TmuxSessionManager()
+        stderr = "error connecting to /private/tmp/tmux-501/gobby (No such file or directory)"
+        with (
+            caplog.at_level(logging.WARNING, logger="gobby.agents.tmux.session_manager"),
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.return_value = (1, "", stderr)
+            result = await mgr.health_check()
+        assert result is True
+        assert "tmux health check returned" not in caplog.text
+
+    @pytest.mark.asyncio
+    async def test_health_check_connection_error_with_other_reason_warns(
+        self,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        """health_check still warns for non-missing-socket connection errors."""
+        mgr = TmuxSessionManager()
+        stderr = "error connecting to /private/tmp/tmux-501/gobby (Permission denied)"
+        with (
+            caplog.at_level(logging.WARNING, logger="gobby.agents.tmux.session_manager"),
+            patch.object(mgr, "is_available", return_value=True),
+            patch.object(mgr, "_run", new_callable=AsyncMock) as mock_run,
+        ):
+            mock_run.return_value = (1, "", stderr)
+            result = await mgr.health_check()
+        assert result is False
+        assert "tmux health check returned rc=1" in caplog.text
+        assert stderr in caplog.text
+        mock_run.assert_awaited_once_with("list-sessions", timeout=5.0)
+
+    @pytest.mark.asyncio
     async def test_health_check_unavailable(self) -> None:
         """health_check returns False when tmux is not available."""
         mgr = TmuxSessionManager()
