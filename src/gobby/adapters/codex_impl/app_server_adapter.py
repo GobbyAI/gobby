@@ -714,17 +714,17 @@ class CodexAdapter(BaseAdapter):
     ) -> dict[str, Any]:
         """Convert HookResponse to Codex response format with context injection.
 
-Unlike additionalContext-based hook adapters,
-Codex injects context via the `instructions` field at turn start.
-        This method builds a `context` string from HookResponse metadata
-        for the caller to pass to start_turn(context_prefix=...).
+        Unlike additionalContext-based hook adapters,
+        Codex injects context via the `instructions` field at turn start.
+                This method builds a `context` string from HookResponse metadata
+                for the caller to pass to start_turn(context_prefix=...).
 
-        Args:
-            response: Unified HookResponse.
-            hook_type: Original Codex method (unused, kept for interface).
+                Args:
+                    response: Unified HookResponse.
+                    hook_type: Original Codex method (unused, kept for interface).
 
-        Returns:
-            Dict with decision and optional context field.
+                Returns:
+                    Dict with decision and optional context field.
         """
         # Map HookResponse decision to Codex rich approval format
         if response.decision == "deny":

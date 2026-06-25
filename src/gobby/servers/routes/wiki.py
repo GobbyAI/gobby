@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, cast
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
@@ -287,7 +287,8 @@ async def _wiki_synthesis_failures_by_source(
         return {}
 
     project_id = resolved.project_id if resolved.topic is None else None
-    return await server.run_db(count_failures, project_id=project_id)
+    result = await server.run_db(count_failures, project_id=project_id)
+    return cast(dict[str, int], result)
 
 
 def _runner(server: HTTPServer) -> object | None:
