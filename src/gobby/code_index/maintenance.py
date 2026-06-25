@@ -126,7 +126,11 @@ async def _run_maintenance(
                 if not result.success:
                     detail = result.stderr.strip() or result.stdout.strip() or "<no output>"
                     if result.timed_out:
-                        logger.warning(f"Maintenance reindex timed out for {project.id}")
+                        logger.error(
+                            "Maintenance reindex timed out for %s: %s",
+                            project.id,
+                            detail,
+                        )
                     else:
                         error = _classify_gcode_command_error(
                             result.command,
@@ -136,14 +140,12 @@ async def _run_maintenance(
                         if isinstance(error, GcodeProjectNotFoundError):
                             purge_project = True
                         else:
-                            logger.warning(
+                            logger.error(
                                 f"Maintenance reindex failed for {project.id} "
                                 f"(exit code {result.returncode}): {detail}"
                             )
             except Exception as e:
-                logger.warning(
-                    "Maintenance reindex failed for %s: %s", project.id, e, exc_info=True
-                )
+                logger.exception("Maintenance reindex failed for %s: %s", project.id, e)
 
             if purge_project:
                 await purge_missing_project(

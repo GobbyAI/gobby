@@ -315,6 +315,61 @@ async def test_maintenance_purges_indexed_project_when_gcode_rejects_existing_ro
 
 
 @pytest.mark.asyncio
+async def test_maintenance_logs_unexpected_reindex_failure_at_error(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    root = tmp_path / "repo"
+    root.mkdir()
+    project = IndexedProject(
+        id="proj-failed",
+        root_path=str(root),
+        total_files=2,
+        total_symbols=3,
+    )
+    storage = MagicMock()
+    storage.list_projection_cleanup_pending.return_value = []
+    storage.list_indexed_projects.return_value = [project]
+    diagnostic = 'ERROR: invalid byte sequence for encoding "UTF8": 0x00'
+    gcode_gateway = RecordingGcodeGateway(
+        maintenance_result=_gcode_result(
+            (
+                "/tmp/gcode",
+                "index",
+                "--project",
+                str(root),
+                "--quiet",
+            ),
+            returncode=1,
+            stderr=diagnostic,
+        )
+    )
+
+    async def run_db(func: Callable[..., T], *args: Any, **kwargs: Any) -> T:
+        return func(*args, **kwargs)
+
+    context: _MaintenanceContext = SimpleNamespace(
+        storage=storage,
+        clear_graph=AsyncMock(return_value={"success": True}),
+        gcode_gateway=gcode_gateway,
+        config=SimpleNamespace(
+            graph_enabled=True,
+            embedding_enabled=True,
+            maintenance_index_timeout_seconds=30,
+        ),
+        run_db=run_db,
+    )
+
+    with caplog.at_level(logging.ERROR, logger="gobby.code_index.maintenance"):
+        await _run_maintenance(context)
+
+    assert "Maintenance reindex failed for proj-failed (exit code 1)" in caplog.text
+    assert diagnostic in caplog.text
+    assert any(record.levelno == logging.ERROR for record in caplog.records)
+    storage.delete_project_index.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
     tmp_path: Path,
     caplog: pytest.LogCaptureFixture,
