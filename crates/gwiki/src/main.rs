@@ -274,6 +274,10 @@ struct SyncSessionsArgs {
     /// Maximum number of archives to process.
     #[arg(long, value_name = "N", value_parser = parse_positive_usize)]
     limit: Option<usize>,
+
+    /// Include raw transcript archives when no daemon synthesis exists.
+    #[arg(long)]
+    raw: bool,
 }
 
 #[derive(Debug, Args)]
@@ -627,6 +631,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 archive_dir: args.archive_dir,
                 wiki_dir: args.wiki_dir,
                 limit: args.limit,
+                raw: args.raw,
             },
         }),
         CliCommand::Refresh(args) => Ok(Command::Refresh {

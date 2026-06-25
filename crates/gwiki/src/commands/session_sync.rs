@@ -52,6 +52,7 @@ pub(crate) fn execute(
                 &archive_dir,
                 &wiki_dir,
                 options.limit,
+                options.raw,
                 &fetched_at,
             )?
         };
@@ -72,6 +73,7 @@ pub(crate) fn execute(
         &archive_dir,
         &wiki_dir,
         options.limit,
+        options.raw,
         &fetched_at,
     )?;
     let counts = index_counts(&store);

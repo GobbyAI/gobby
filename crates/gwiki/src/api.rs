@@ -189,6 +189,7 @@ pub struct SyncSessionsOptions {
     pub archive_dir: Option<PathBuf>,
     pub wiki_dir: Option<PathBuf>,
     pub limit: Option<usize>,
+    pub raw: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

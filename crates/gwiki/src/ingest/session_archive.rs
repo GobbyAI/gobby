@@ -113,6 +113,7 @@ pub(crate) fn sync_session_transcript_archives(
     archive_dir: &Path,
     wiki_dir: &Path,
     limit: Option<usize>,
+    include_raw: bool,
     fetched_at: &str,
 ) -> Result<SessionArchiveBatchIngest, WikiError> {
     if matches!(limit, Some(0)) {
@@ -234,6 +235,14 @@ pub(crate) fn sync_session_transcript_archives(
                         archive_path: path,
                         content_hash: String::new(),
                         reason: "superseded_by_synthesis".to_string(),
+                    });
+                    continue;
+                }
+                if !include_raw {
+                    skipped.push(SkippedSessionArchive {
+                        archive_path: path,
+                        content_hash: String::new(),
+                        reason: "raw_fallback_disabled".to_string(),
                     });
                     continue;
                 }

@@ -368,8 +368,11 @@ fn sync_sessions_cli_flags_map_to_command_options() {
         "sync-sessions",
         "--archive-dir",
         "/tmp/session_transcripts",
+        "--wiki-dir",
+        "/tmp/session_wiki",
         "--limit",
         "3",
+        "--raw",
     ])
     .expect("parse sync-sessions command");
     let CliCommand::SyncSessions(args) = cli.command else {
@@ -379,7 +382,12 @@ fn sync_sessions_cli_flags_map_to_command_options() {
         args.archive_dir.as_deref(),
         Some(std::path::Path::new("/tmp/session_transcripts"))
     );
+    assert_eq!(
+        args.wiki_dir.as_deref(),
+        Some(std::path::Path::new("/tmp/session_wiki"))
+    );
     assert_eq!(args.limit, Some(3));
+    assert!(args.raw);
 
     let command = command_from_cli(CliCommand::SyncSessions(args), cli.scope.into())
         .expect("map sync-sessions command");
@@ -394,7 +402,32 @@ fn sync_sessions_cli_flags_map_to_command_options() {
         options.archive_dir.as_deref(),
         Some(std::path::Path::new("/tmp/session_transcripts"))
     );
+    assert_eq!(
+        options.wiki_dir.as_deref(),
+        Some(std::path::Path::new("/tmp/session_wiki"))
+    );
     assert_eq!(options.limit, Some(3));
+    assert!(options.raw);
+
+    let default_cli = Cli::try_parse_from(["gwiki", "sync-sessions"])
+        .expect("parse default sync-sessions command");
+    let CliCommand::SyncSessions(default_args) = default_cli.command else {
+        panic!("expected parsed sync-sessions command");
+    };
+    assert!(!default_args.raw);
+    let default_command = command_from_cli(
+        CliCommand::SyncSessions(default_args),
+        default_cli.scope.into(),
+    )
+    .expect("map default sync-sessions command");
+    let Command::SyncSessions {
+        options: default_options,
+        ..
+    } = default_command
+    else {
+        panic!("expected sync-sessions command");
+    };
+    assert!(!default_options.raw);
 }
 
 #[test]

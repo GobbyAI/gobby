@@ -8,6 +8,9 @@ use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef};
 use crate::store::MemoryWikiStore;
 use crate::support::text::slugify_with_options;
 
+const INCLUDE_RAW: bool = true;
+const SYNTHESIS_ONLY: bool = false;
+
 #[test]
 fn sync_session_archives_ingests_gzip_and_indexes_once() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -25,6 +28,7 @@ fn sync_session_archives_ingests_gzip_and_indexes_once() {
         &archive_dir,
         &temp.path().join("session_wiki"),
         None,
+        INCLUDE_RAW,
         "2026-06-16T20:05:00Z",
     )
     .expect("sync archives");
@@ -61,6 +65,7 @@ fn sync_session_archives_treats_missing_archive_dir_as_empty() {
         &temp.path().join("missing-session-transcripts"),
         &temp.path().join("missing-session-wiki"),
         None,
+        SYNTHESIS_ONLY,
         "2026-06-16T20:05:00Z",
     )
     .expect("sync missing archive dir");
@@ -91,6 +96,7 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
         &archive_dir,
         &temp.path().join("session_wiki"),
         None,
+        INCLUDE_RAW,
         "2026-06-16T20:05:00Z",
     )
     .expect("first sync");
@@ -103,6 +109,7 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
         &archive_dir,
         &temp.path().join("session_wiki"),
         None,
+        INCLUDE_RAW,
         "2026-06-16T20:06:00Z",
     )
     .expect("second sync");
@@ -133,6 +140,7 @@ fn sync_session_archives_reports_bad_gzip_without_blocking_good_archives() {
         &archive_dir,
         &temp.path().join("session_wiki"),
         None,
+        INCLUDE_RAW,
         "2026-06-16T20:05:00Z",
     )
     .expect("sync archives");
@@ -207,6 +215,7 @@ fn synthesis_first_ingests_wiki_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T00:00:00Z",
     )
     .expect("sync");
@@ -259,6 +268,7 @@ fn raw_archive_without_synthesis_uses_session_location() {
         &archive_dir,
         &vault.join("missing-session-wiki"),
         None,
+        INCLUDE_RAW,
         "2026-06-24T00:05:00Z",
     )
     .expect("sync");
@@ -278,6 +288,100 @@ fn raw_archive_without_synthesis_uses_session_location() {
     assert!(derived.contains(&format!("session:{external_id}")));
     assert!(derived.contains("source_archive:"));
     assert!(derived.contains("## Messages"));
+}
+
+#[test]
+fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let vault = temp.path();
+    let archive_dir = vault.join("session_transcripts");
+    fs::create_dir(&archive_dir).expect("archive dir");
+    let external_id = "22223333-4444-5555-6666-777788889999";
+    let archive_path = archive_dir.join(format!("{external_id}.jsonl.gz"));
+    fs::write(&archive_path, b"not gzip").expect("raw archive");
+
+    let mut store = MemoryWikiStore::default();
+    let report = sync_session_transcript_archives(
+        vault,
+        &mut store,
+        &archive_dir,
+        &vault.join("missing-session-wiki"),
+        None,
+        SYNTHESIS_ONLY,
+        "2026-06-24T00:05:00Z",
+    )
+    .expect("sync");
+
+    assert_eq!(report.status(), "skipped");
+    assert_eq!(report.scanned, 1);
+    assert!(report.accepted.is_empty());
+    assert_eq!(report.skipped.len(), 1);
+    assert_eq!(report.skipped[0].archive_path, archive_path);
+    assert_eq!(report.skipped[0].reason, "raw_fallback_disabled");
+    assert!(report.failed.is_empty());
+
+    let preserve_temp = tempfile::tempdir().expect("preserve tempdir");
+    let preserve_vault = preserve_temp.path();
+    let preserve_archive_dir = preserve_vault.join("session_transcripts");
+    fs::create_dir(&preserve_archive_dir).expect("archive dir");
+    let preserve_id = "99998888-7777-6666-5555-444433332222";
+    write_archive(
+        &preserve_archive_dir.join(format!("{preserve_id}.jsonl.gz")),
+        br#"{"type":"session","timestamp":"2026-06-24T00:00:00Z","payload":{"title":"Raw preserve","messages":[{"role":"user","content":"Keep this raw fallback."}]}}"#,
+    );
+
+    let mut store = MemoryWikiStore::default();
+    let initial = sync_session_transcript_archives(
+        preserve_vault,
+        &mut store,
+        &preserve_archive_dir,
+        &preserve_vault.join("missing-session-wiki"),
+        None,
+        INCLUDE_RAW,
+        "2026-06-24T00:05:00Z",
+    )
+    .expect("initial sync");
+    assert_eq!(initial.accepted.len(), 1);
+    let record_id = initial.accepted[0].result.record.id.clone();
+
+    let mut rerun_store = MemoryWikiStore::default();
+    let rerun = sync_session_transcript_archives(
+        preserve_vault,
+        &mut rerun_store,
+        &preserve_archive_dir,
+        &preserve_vault.join("missing-session-wiki"),
+        None,
+        SYNTHESIS_ONLY,
+        "2026-06-24T00:06:00Z",
+    )
+    .expect("rerun sync");
+
+    assert_eq!(rerun.status(), "skipped");
+    assert!(rerun.accepted.is_empty());
+    assert_eq!(rerun.skipped.len(), 1);
+    assert_eq!(rerun.skipped[0].reason, "raw_fallback_disabled");
+    assert!(rerun.failed.is_empty());
+    assert!(rerun.reconciled.is_empty());
+    let manifest = SourceManifest::read(preserve_vault).expect("manifest");
+    let sessions: Vec<_> = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == SourceKind::Session)
+        .collect();
+    assert_eq!(sessions.len(), 1);
+    assert_eq!(sessions[0].id, record_id);
+    assert_eq!(
+        sessions[0].canonical_location,
+        format!("session:{preserve_id}")
+    );
+    assert!(
+        preserve_vault
+            .join("knowledge")
+            .join("sources")
+            .join(format!("{record_id}.md"))
+            .exists(),
+        "raw-backed manifest entry remains while archive is present"
+    );
 }
 
 #[test]
@@ -304,6 +408,7 @@ fn synthesis_suppresses_matching_raw_archive() {
         &archive_dir,
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T00:05:00Z",
     )
     .expect("sync");
@@ -355,6 +460,7 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T00:00:00Z",
     )
     .expect("first sync");
@@ -375,6 +481,7 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T01:00:00Z",
     )
     .expect("second sync");
@@ -422,6 +529,7 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T00:00:00Z",
     )
     .expect("first sync");
@@ -448,6 +556,7 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T01:00:00Z",
     )
     .expect("second sync");
@@ -505,6 +614,7 @@ fn synthesis_supersedes_legacy_raw_location_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T00:00:00Z",
     )
     .expect("sync");
@@ -541,6 +651,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T00:00:00Z",
     )
     .expect("first sync");
@@ -562,6 +673,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T01:00:00Z",
     )
     .expect("second sync");
@@ -614,6 +726,7 @@ fn limit_does_not_false_delete_uncapped_sessions() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T00:00:00Z",
     )
     .expect("initial sync");
@@ -629,6 +742,7 @@ fn limit_does_not_false_delete_uncapped_sessions() {
         &vault.join("missing-archives"),
         &wiki_dir,
         Some(1),
+        SYNTHESIS_ONLY,
         "2026-06-24T01:00:00Z",
     )
     .expect("capped sync");
@@ -662,6 +776,7 @@ fn same_content_at_two_session_locations_ingests_twice() {
         &archive_dir,
         &vault.join("missing-session-wiki"),
         None,
+        INCLUDE_RAW,
         "2026-06-24T00:05:00Z",
     )
     .expect("sync");
@@ -725,6 +840,7 @@ fn legacy_raw_entry_sharing_hash_is_superseded_by_id() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
+        SYNTHESIS_ONLY,
         "2026-06-24T00:00:00Z",
     )
     .expect("sync");
