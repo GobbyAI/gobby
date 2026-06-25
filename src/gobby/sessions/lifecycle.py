@@ -28,6 +28,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_window_metadata,
 )
 from gobby.sessions.message_stats import MessageProtocol, compute_message_stats
+from gobby.sessions.session_wiki_file import session_wiki_path_exists
 from gobby.sessions.summarize import TURN_PATTERN
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
@@ -53,13 +54,6 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 _TRANSCRIPT_INDEX_ERRORS = (OSError, UnicodeDecodeError, json.JSONDecodeError, ValueError)
 _WINDOW_ONLY_CONTEXT_SOURCES = frozenset({"droid", "agy", "grok"})
-
-# When a transcript file is gone we still try to regenerate digest-backed
-# artifacts (summary/wiki). If wiki synthesis keeps failing we must not retry it
-# forever — give up and mark the session processed after this many consecutive
-# wiki-synthesis failures. (The `gobby sessions backfill-wiki` command remains a
-# manual escape hatch since it selects by wiki validity, not transcript_processed.)
-WIKI_SELF_HEAL_MAX_FAILURES = 3
 
 
 def _session_int(value: Any) -> int:
@@ -417,12 +411,11 @@ class SessionLifecycleManager:
         Runs memory extraction and summary generation as separate steps
         OUTSIDE _process_session_transcript so they execute even when the
         JSONL file has already been deleted: a purged-but-digest-backed session
-        still regenerates its summary/wiki from the stored digest. For those
-        recovery cases transcript_processed is only set once both artifacts are
-        complete (valid summary and no wiki refresh needed), allowing retry on
-        the next cycle — bounded by WIKI_SELF_HEAL_MAX_FAILURES so a persistently
-        failing session cannot loop. The normal on-disk path is unchanged
-        (processed once a summary exists, or when the LLM is unavailable).
+        still regenerates its summary (and its mirror wiki file) from the stored
+        digest. For those recovery cases transcript_processed is only set once
+        the summary is valid, allowing retry on the next cycle. The normal
+        on-disk path is unchanged (processed once a summary exists, or when the
+        LLM is unavailable).
         """
         sessions = self.session_manager.get_pending_transcript_sessions(
             limit=self.config.transcript_processing_batch_size
@@ -492,26 +485,20 @@ class SessionLifecycleManager:
 
             # Step 3: Decide whether the session is settled enough to mark processed.
             #   - LLM unavailable: nothing more we can do, finalize.
-            #   - Transcript gone (digest-backed recovery): require BOTH artifacts
-            #     complete (valid summary AND no wiki refresh needed) so a transient
-            #     synthesis failure retries next cycle — but give up after repeated
-            #     wiki-synthesis failures so a permanently-failing session can't loop.
+            #   - Transcript gone (digest-backed recovery): finalize once the
+            #     summary is valid. The summary is the durable artifact (persisted
+            #     to the hub); the flat wiki file is a best-effort mirror that
+            #     _generate_artifacts_if_needed already (re)wrote in step 2, so a
+            #     transient summary failure retries next cycle without looping on
+            #     the free local file write.
             #   - Normal on-disk path: unchanged (gated on summary presence).
             refreshed = self.session_manager.get(session.id)
             if not self.llm_service:
                 should_mark = bool(refreshed)
             elif transcript_missing:
-                if refreshed is None:
-                    wiki_failures = 0
-                    artifacts_complete = False
-                else:
-                    wiki_failures = (
-                        getattr(refreshed, "wiki_synthesis_consecutive_failures", 0) or 0
-                    )
-                    artifacts_complete = is_summary_markdown_valid(
-                        refreshed.summary_markdown
-                    ) and not self._wiki_refresh_needed(refreshed)
-                should_mark = artifacts_complete or wiki_failures >= WIKI_SELF_HEAL_MAX_FAILURES
+                should_mark = refreshed is not None and is_summary_markdown_valid(
+                    refreshed.summary_markdown
+                )
             else:
                 should_mark = refreshed is not None and bool(refreshed.summary_markdown)
 
@@ -551,62 +538,15 @@ class SessionLifecycleManager:
 
         return processed
 
-    def _wiki_refresh_needed(self, session: Any) -> bool:
-        """Return true when the session's wiki page is missing or stale.
-
-        Mirrors the wiki generator's skip policy so this gate never asks for a
-        wiki it would refuse to produce. The authoritative noop check (source
-        hash) still runs inside ``generate_session_wiki``; this is a cheap
-        over-approximation, so a false positive merely no-ops downstream.
-        """
-        from gobby.sessions.summary_refresh import coerce_digest_turn_count, digest_turn_count
-        from gobby.sessions.wiki_synthesis import (
-            WIKI_PROMPT_PATH,
-            _render_wiki_prompt,
-            is_wiki_markdown_valid,
-            wiki_generation_skip_reason,
-            wiki_source_context_hash,
-        )
-
-        config = self.session_wiki_config
-        if config is None or not getattr(config, "enabled", False):
-            return False
-        digest_markdown = getattr(session, "digest_markdown", None)
-        if wiki_generation_skip_reason(session, digest_markdown) is not None:
-            return False
-        if not isinstance(digest_markdown, str):
-            return False
-        if not is_wiki_markdown_valid(getattr(session, "wiki_markdown", None)):
-            return True
-        prompt_path = getattr(config, "prompt_path", WIKI_PROMPT_PATH)
-        prompt = _render_wiki_prompt(
-            session=session,
-            digest_markdown=digest_markdown,
-            prompt_path=prompt_path,
-            db=self.db,
-            session_manager=self.session_manager,
-        )
-        if not prompt:
-            return False
-        current_hash = wiki_source_context_hash(
-            session=session,
-            digest_markdown=digest_markdown,
-            prompt_path=prompt_path,
-            rendered_prompt=prompt,
-        )
-        previous_hash = getattr(session, "wiki_source_context_hash", None)
-        current = digest_turn_count(digest_markdown)
-        previous = coerce_digest_turn_count(getattr(session, "wiki_digest_turn_count", None))
-        return previous_hash != current_hash or previous is None or current != previous
-
     async def _generate_artifacts_if_needed(self, session_id: str) -> None:
-        """Generate session artifacts (summary and/or wiki) that are missing.
+        """Generate the session summary (and its mirror wiki file) when missing.
 
         Safety net for ungraceful exits — if on_session_end or /clear never
         triggered generation, this catches it during background transcript
-        processing. Proceeds when the summary is missing/invalid OR the wiki is
-        missing/stale; the shared summary flow no-ops whichever artifact is
-        already current, so only the missing artifact(s) are produced.
+        processing. Proceeds when the summary is missing/invalid OR the flat
+        wiki file is absent; the summary flow no-ops an already-valid summary
+        and restores a missing flat wiki file, so only the missing artifact is
+        produced.
         """
         if not self.llm_service:
             return
@@ -615,9 +555,9 @@ class SessionLifecycleManager:
         if not session:
             return
 
-        summary_ok = is_summary_markdown_valid(session.summary_markdown)
-        wiki_needed = self._wiki_refresh_needed(session)
-        if summary_ok and not wiki_needed:
+        if is_summary_markdown_valid(session.summary_markdown) and session_wiki_path_exists(
+            session
+        ):
             return
 
         digest_markdown = getattr(session, "digest_markdown", None)

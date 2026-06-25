@@ -393,29 +393,22 @@ async def generate_session_summaries(
         f"Session summary generated for {session_id} ({(len(full_markdown) if full_markdown else 0)} chars)",
     )
 
-    # Tail: synthesize the durable knowledge-wiki page from the same digest.
-    # Gated by session_wiki.enabled; best-effort so a wiki failure never breaks
-    # summary generation. Hanging it here means every summary-producing caller
-    # (lifecycle/background, dispatcher, CLI/server/MCP refresh) produces both
-    # artifacts with no caller drift.
-    wiki_result: dict[str, Any] = {"generated": False, "skipped": "not_requested"}
-    if session_wiki_config is not None:
-        from gobby.sessions.wiki_synthesis import generate_session_wiki
+    # Tail: the session wiki page IS the summary. Write the redacted
+    # summary_markdown to the flat session-wiki file gwiki ingests. Best-effort
+    # so a wiki-file failure never breaks summary generation, and hung here so
+    # every summary-producing caller (lifecycle/background, dispatcher,
+    # CLI/server/MCP refresh) emits the file with no caller drift. Written
+    # whenever the summary is valid — including noop refreshes, which restores a
+    # missing flat file without re-running the summary LLM.
+    final_summary = full_markdown if isinstance(full_markdown, str) else ""
+    session_wiki_result: dict[str, Any] = {"written": False, "skipped": "invalid_summary"}
+    try:
+        from gobby.sessions.session_wiki_file import write_session_wiki_page
 
-        try:
-            wiki_result = await generate_session_wiki(
-                session=session,
-                digest_markdown=digest_markdown,
-                session_manager=session_manager,
-                llm_service=llm_service,
-                session_wiki_config=session_wiki_config,
-                db=db,
-                db_runner=db_runner,
-                project_path=str(cwd),
-            )
-        except Exception as e:  # noqa: BLE001 — boundary: wiki must not break summary
-            logger.warning(f"Wiki synthesis failed for session {session_id}: {e}")
-            wiki_result = {"generated": False, "skipped": "error", "error": str(e)}
+        session_wiki_result = write_session_wiki_page(session, final_summary)
+    except Exception as e:  # noqa: BLE001 — boundary: wiki file must not break summary
+        logger.warning(f"Session wiki file write failed for session {session_id}: {e}")
+        session_wiki_result = {"written": False, "skipped": "error", "error": str(e)}
 
     return {
         "success": True,
@@ -429,7 +422,7 @@ async def generate_session_summaries(
         "source_context_hash": source_hash,
         "source_digest_turn_count": current_digest_turn_count,
         "files_written": files_written,
-        "wiki": wiki_result,
+        "session_wiki_file": session_wiki_result,
         "context_summary": {
             "has_active_task": bool(handoff_ctx.active_gobby_task),
             "files_modified_count": len(handoff_ctx.files_modified),

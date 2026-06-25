@@ -11,7 +11,7 @@ import psycopg
 import pytest
 
 from gobby.config.sessions import SessionLifecycleConfig
-from gobby.sessions.lifecycle import WIKI_SELF_HEAL_MAX_FAILURES, SessionLifecycleManager
+from gobby.sessions.lifecycle import SessionLifecycleManager
 from gobby.sessions.transcript_index import load_index_sidecar
 from gobby.storage.session_models import Session
 
@@ -463,8 +463,9 @@ class TestSessionLifecycleManager:
         """A purged transcript with a usable digest regenerates artifacts.
 
         Instead of short-circuiting, the loop falls through to
-        _generate_artifacts_if_needed so the summary/wiki are rebuilt from the
-        stored digest; with both artifacts complete the session is finalized.
+        _generate_artifacts_if_needed so the summary (and its mirror wiki file)
+        are rebuilt from the stored digest; once the summary is valid the
+        session is finalized.
         """
         digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
         session = MagicMock(spec=Session)
@@ -479,7 +480,6 @@ class TestSessionLifecycleManager:
 
         refreshed = MagicMock()
         refreshed.summary_markdown = "valid summary"
-        refreshed.wiki_synthesis_consecutive_failures = 0
         manager.session_manager.get.return_value = refreshed
 
         with (
@@ -487,7 +487,6 @@ class TestSessionLifecycleManager:
             patch.object(
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_gen,
-            patch.object(manager, "_wiki_refresh_needed", return_value=False),
             patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
         ):
             processed = await manager._process_pending_transcripts()
@@ -495,6 +494,42 @@ class TestSessionLifecycleManager:
         mock_gen.assert_awaited_once_with("s1")  # did NOT short-circuit
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert processed == 1
+
+    @pytest.mark.asyncio
+    async def test_missing_transcript_invalid_summary_stays_unprocessed(self, manager):
+        """A digest-backed recovery defers until the summary itself is valid.
+
+        The flat wiki file is a best-effort mirror written inside
+        _generate_artifacts_if_needed; only the durable summary gates
+        finalization, so an invalid summary retries on the next cycle.
+        """
+        digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
+        session = MagicMock(spec=Session)
+        session.id = "s1"
+        session.transcript_path = "/nonexistent/missing-s1.jsonl"
+        session.external_id = "ext-s1"
+        session.agent_depth = 0
+        session.source = "claude"
+        session.digest_markdown = digest
+        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
+        manager.llm_service = MagicMock()
+
+        refreshed = MagicMock()
+        refreshed.summary_markdown = None
+        manager.session_manager.get.return_value = refreshed
+
+        with (
+            patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
+            patch.object(
+                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
+            ) as mock_gen,
+            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=False),
+        ):
+            processed = await manager._process_pending_transcripts()
+
+        mock_gen.assert_awaited_once_with("s1")  # synthesis was attempted...
+        manager.session_manager.mark_transcript_processed.assert_not_called()  # ...but deferred
+        assert processed == 0
 
     @pytest.mark.asyncio
     async def test_missing_transcript_no_digest_marks_processed(self, manager):
@@ -519,72 +554,6 @@ class TestSessionLifecycleManager:
 
         mock_gen.assert_not_awaited()  # short-circuited — nothing to synthesize
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
-        assert processed == 1
-
-    @pytest.mark.asyncio
-    async def test_missing_transcript_wiki_fails_stays_unprocessed(self, manager):
-        """When digest-backed wiki synthesis fails, the session is deferred (retried)."""
-        digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
-        session = MagicMock(spec=Session)
-        session.id = "s1"
-        session.transcript_path = "/nonexistent/missing-s1.jsonl"
-        session.external_id = "ext-s1"
-        session.agent_depth = 0
-        session.source = "claude"
-        session.digest_markdown = digest
-        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
-        manager.llm_service = MagicMock()
-
-        refreshed = MagicMock()
-        refreshed.summary_markdown = "valid summary"
-        refreshed.wiki_synthesis_consecutive_failures = 1  # below the give-up cap
-        manager.session_manager.get.return_value = refreshed
-
-        with (
-            patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
-            patch.object(
-                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
-            ) as mock_gen,
-            patch.object(manager, "_wiki_refresh_needed", return_value=True),  # wiki still missing
-            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
-        ):
-            processed = await manager._process_pending_transcripts()
-
-        mock_gen.assert_awaited_once_with("s1")  # synthesis was attempted...
-        manager.session_manager.mark_transcript_processed.assert_not_called()  # ...but deferred
-        assert processed == 0
-
-    @pytest.mark.asyncio
-    async def test_missing_transcript_gives_up_after_max_wiki_failures(self, manager):
-        """A persistently-failing wiki is finalized after the failure cap (no infinite retry)."""
-        digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
-        session = MagicMock(spec=Session)
-        session.id = "s1"
-        session.transcript_path = "/nonexistent/missing-s1.jsonl"
-        session.external_id = "ext-s1"
-        session.agent_depth = 0
-        session.source = "claude"
-        session.digest_markdown = digest
-        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
-        manager.llm_service = MagicMock()
-
-        refreshed = MagicMock()
-        refreshed.summary_markdown = "valid summary"
-        refreshed.wiki_synthesis_consecutive_failures = WIKI_SELF_HEAL_MAX_FAILURES
-        manager.session_manager.get.return_value = refreshed
-
-        with (
-            patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
-            patch.object(
-                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
-            ) as mock_gen,
-            patch.object(manager, "_wiki_refresh_needed", return_value=True),
-            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
-        ):
-            processed = await manager._process_pending_transcripts()
-
-        mock_gen.assert_awaited_once_with("s1")  # attempted before giving up
-        manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")  # gave up
         assert processed == 1
 
     @pytest.mark.asyncio
@@ -806,13 +775,24 @@ class TestGenerateArtifactsIfNeeded:
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
-    async def test_session_already_has_summary(self, manager):
-        """Skips when session already has summary."""
+    async def test_session_has_summary_and_wiki_file_skips(self, manager):
+        """Skips when the session has a valid summary AND the flat wiki file exists."""
         manager.llm_service = MagicMock()
         session = MagicMock()
-        session.summary_markdown = "existing summary"
+        session.summary_markdown = "## Current State\nexisting summary"
         manager.session_manager.get.return_value = session
-        await manager._generate_artifacts_if_needed("sess-1")
+
+        with (
+            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
+            patch("gobby.sessions.lifecycle.session_wiki_path_exists", return_value=True),
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                new_callable=AsyncMock,
+            ) as mock_gen,
+        ):
+            await manager._generate_artifacts_if_needed("sess-1")
+
+        mock_gen.assert_not_awaited()
         assert manager.session_manager.get.call_args.args == ("sess-1",)
 
     @pytest.mark.asyncio
@@ -881,34 +861,32 @@ class TestGenerateArtifactsIfNeeded:
             assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
 
     @pytest.mark.asyncio
-    async def test_valid_summary_missing_wiki_still_triggers(self, manager):
-        """Valid summary but missing wiki still triggers generation (Blocker-1 fix).
+    async def test_valid_summary_missing_wiki_file_still_triggers(self, manager):
+        """Valid summary but missing flat wiki file still triggers generation.
 
-        The extended artifact gate must proceed when the wiki is missing even
-        though the summary is already valid, passing the wiki config through.
+        The artifact gate must proceed when the flat wiki file is absent even
+        though the summary is already valid, so the summary flow no-ops the
+        summary and restores the missing mirror file.
         """
         manager.llm_service = MagicMock()
-        manager.session_wiki_config = SimpleNamespace(enabled=True)
         session = MagicMock()
         session.summary_markdown = "## Current State\nvalid summary"
-        session.wiki_markdown = None
         session.digest_markdown = "### Turn 1\na\n### Turn 2\nb\n### Turn 3\nc"
-        session.wiki_source_context_hash = None
-        session.wiki_digest_turn_count = None
-        session.agent_depth = 0
-        session.source = "claude-code"
         session.transcript_path = None
         manager.session_manager.get.return_value = session
 
-        with patch(
-            "gobby.sessions.summarize.generate_session_summaries",
-            new_callable=AsyncMock,
-        ) as mock_gen:
+        with (
+            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
+            patch("gobby.sessions.lifecycle.session_wiki_path_exists", return_value=False),
+            patch(
+                "gobby.sessions.summarize.generate_session_summaries",
+                new_callable=AsyncMock,
+            ) as mock_gen,
+        ):
             await manager._generate_artifacts_if_needed("sess-1")
 
         mock_gen.assert_awaited_once()
         assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
-        assert mock_gen.await_args.kwargs["session_wiki_config"] is manager.session_wiki_config
 
 
 class TestPurgeSoftDeletedDefinitions:
