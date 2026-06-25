@@ -4,9 +4,9 @@ use std::path::{Path, PathBuf};
 use serde_json::json;
 
 use super::helpers::{
-    display_path, document_kind_name, ingestion_status, platform_path_from_display,
-    rollback_chunk_replacement, rollback_link_replacement, scoped_id, scoped_text_id,
-    validate_chunk_paths, validate_link_paths,
+    clip_link_field, display_path, document_kind_name, ingestion_status,
+    platform_path_from_display, rollback_chunk_replacement, rollback_link_replacement, scoped_id,
+    scoped_text_id, validate_chunk_paths, validate_link_paths,
 };
 use super::link_kind;
 use super::{
@@ -265,8 +265,11 @@ impl WikiIndexStore for PostgresWikiStore<'_> {
         }
 
         for link in links {
-            let target_path = link.target.clone();
-            let link_text = link.alias.clone().unwrap_or_else(|| link.target.clone());
+            // Clip unbounded fields so the gwiki_links_scope_idx composite row
+            // stays under Postgres's 8191-byte btree limit; the id is derived
+            // from the clipped values to keep insert/conflict keys consistent.
+            let target_path = clip_link_field(&link.target);
+            let link_text = clip_link_field(link.alias.as_deref().unwrap_or(link.target.as_str()));
             let link_kind = link_kind(&link.target);
             let id = scoped_text_id(
                 "link",

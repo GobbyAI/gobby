@@ -9,6 +9,15 @@ use super::{
 pub(super) const MAX_ID_LEN: usize = 63;
 pub(super) const HASH_SUFFIX_LEN: usize = 12;
 
+/// Maximum byte length stored for a link's `target_path` / `link_text`.
+///
+/// `gwiki_links_scope_idx` is a UNIQUE btree over
+/// `(scope_kind, scope_id, path, target_path, link_text, link_kind)`. Postgres
+/// caps btree index rows at 8191 bytes, and transcript markdown can carry links
+/// whose text runs into the kilobytes, so each unbounded field is clipped well
+/// under that ceiling to keep the composite row indexable.
+pub(super) const MAX_LINK_FIELD_BYTES: usize = 1024;
+
 pub(super) fn display_path(path: &Path) -> String {
     path.to_string_lossy().replace('\\', "/")
 }
@@ -152,6 +161,22 @@ fn has_uri_scheme(target: &str) -> bool {
         && chars.all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '.' | '-'))
 }
 
+/// Clip a link field to [`MAX_LINK_FIELD_BYTES`] on a UTF-8 char boundary.
+///
+/// Returns the value unchanged when it already fits, so normal links keep their
+/// exact text; only pathological oversized values (typically transcript code
+/// blocks mis-parsed as links) are truncated to stay within the btree row limit.
+pub(super) fn clip_link_field(value: &str) -> String {
+    if value.len() <= MAX_LINK_FIELD_BYTES {
+        return value.to_string();
+    }
+    let mut end = MAX_LINK_FIELD_BYTES;
+    while end > 0 && !value.is_char_boundary(end) {
+        end -= 1;
+    }
+    value[..end].to_string()
+}
+
 pub(super) fn rollback_link_replacement(tx: Transaction<'_>, path: &str) {
     if let Err(error) = tx.rollback() {
         log::error!("failed to rollback gwiki link replacement for {path}: {error}");
@@ -176,5 +201,35 @@ pub fn configured_memory_index_limit_bytes() -> Option<u64> {
                 None
             }),
         Err(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{MAX_LINK_FIELD_BYTES, clip_link_field};
+
+    #[test]
+    fn clip_link_field_preserves_values_within_bound() {
+        let value = "https://example.com/page#anchor";
+        assert_eq!(clip_link_field(value), value);
+    }
+
+    #[test]
+    fn clip_link_field_truncates_oversized_values() {
+        let value = "x".repeat(MAX_LINK_FIELD_BYTES * 4);
+        let clipped = clip_link_field(&value);
+        assert!(clipped.len() <= MAX_LINK_FIELD_BYTES);
+        assert!(value.starts_with(&clipped));
+    }
+
+    #[test]
+    fn clip_link_field_respects_utf8_char_boundaries() {
+        // "é" is two bytes; force truncation to land mid-character and assert
+        // the result is still valid UTF-8 within the byte budget.
+        let value = "é".repeat(MAX_LINK_FIELD_BYTES);
+        let clipped = clip_link_field(&value);
+        assert!(clipped.len() <= MAX_LINK_FIELD_BYTES);
+        assert!(value.starts_with(&clipped));
+        assert!(clipped.chars().all(|ch| ch == 'é'));
     }
 }
