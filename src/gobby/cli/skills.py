@@ -41,9 +41,16 @@ from gobby.cli._skills_scaffold import create_skill as _create_skill
 from gobby.cli._skills_scaffold import init_skills as _init_skills
 from gobby.cli._skills_validation import validate_skill as _validate_skill
 from gobby.config.app import DaemonConfig
+from gobby.skills import metadata as skills_metadata
 from gobby.storage.hub.runtime import open_runtime_hub_database
 from gobby.storage.skills import LocalSkillManager
 from gobby.utils.daemon_client import DaemonClient
+
+get_nested_value = skills_metadata.get_nested_value
+get_skill_category = skills_metadata.get_skill_category
+get_skill_tags = skills_metadata.get_skill_tags
+set_nested_value = skills_metadata.set_nested_value
+unset_nested_value = skills_metadata.unset_nested_value
 
 
 def get_skill_storage() -> LocalSkillManager:
@@ -91,7 +98,7 @@ def call_skills_tool(
         if isinstance(response, dict):
             return dict(response)
         return None
-    except (httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError) as exc:
+    except (ConnectionError, httpx.HTTPError, json.JSONDecodeError, TypeError, ValueError) as exc:
         click.echo(f"Error: {exc}", err=True)
         return None
 

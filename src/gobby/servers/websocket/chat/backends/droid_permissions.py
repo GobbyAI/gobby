@@ -82,11 +82,6 @@ class DroidPermissionResolver:
             ):
                 return DROID_PERMISSION_CANCEL
 
-        if session.chat_mode == "plan":
-            if self._plan_mode_blocks_tool(tool_name, tool_input):
-                return DROID_PERMISSION_CANCEL
-            return await self._resolve_plan_mode_request(session, tool_payloads)
-
         if session.chat_mode == "bypass":
             return DROID_PERMISSION_PROCEED_ONCE
 
@@ -104,6 +99,11 @@ class DroidPermissionResolver:
             for tool_name, tool_input, _tool_id in tool_payloads
         ):
             return DROID_PERMISSION_PROCEED_ONCE
+
+        if session.chat_mode == "plan":
+            if self._plan_mode_blocks_tool(tool_name, tool_input):
+                return DROID_PERMISSION_CANCEL
+            return await self._resolve_plan_mode_request(session, tool_payloads)
 
         approval_tool_name, approval_input = self._approval_prompt_payload(tool_payloads)
         approval = await session._wait_for_tool_approval(approval_tool_name, approval_input)

@@ -39,6 +39,7 @@ async def test_terminal_compact_self_schedules_pending_marker_fallback() -> None
     agent_run_manager.get_by_session.return_value = None
     tmux = MagicMock()
     tmux.send_keys = AsyncMock(return_value=True)
+    tmux.capture_pane = AsyncMock(return_value="")
     db = MagicMock()
 
     with patch(

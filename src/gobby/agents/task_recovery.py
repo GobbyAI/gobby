@@ -129,7 +129,7 @@ class TaskRecoveryHandler:
             return None
 
         task_id = db_run.task_id
-        owner_session_id = db_run.child_session_id
+        owner_session_id = db_run.child_session_id or db_run.claimed_session_id
 
         if not task_id and owner_session_id:
             tasks = await self._run_db(

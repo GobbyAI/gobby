@@ -284,13 +284,13 @@ class TestPreserveContextOnCompact:
         assert len(effects) == 5
         assert all(e.type == "set_variable" for e in effects)
 
-    def test_has_gemini_filter(self, db, manager) -> None:
-        """Should filter out automatic gemini compactions."""
+    def test_has_no_gemini_filter(self, db, manager) -> None:
+        """Gemini is retired, so no Gemini-specific compact filter is installed."""
         _sync_bundled(db)
         row = manager.get_by_name("preserve-context-on-compact")
         body = RuleDefinitionBody.model_validate_json(row.definition_json)
         assert body.when is not None
-        assert "gemini" in body.when
+        assert "gemini" not in body.when
 
     def test_resets_injected_memory_ids(self, db, manager) -> None:
         """Should reset injected_memory_ids to empty list."""

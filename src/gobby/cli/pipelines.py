@@ -4,6 +4,7 @@ CLI commands for managing Gobby pipelines.
 
 from __future__ import annotations
 
+import asyncio  # noqa: F401 - facade for split pipeline modules
 import json
 import logging
 from pathlib import Path

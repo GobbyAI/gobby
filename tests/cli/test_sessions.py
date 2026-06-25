@@ -86,7 +86,7 @@ def test_show_session_not_found(mock_session_manager) -> None:
     with patch("gobby.cli.sessions.resolve_session_id", side_effect=lambda x: x):
         result = runner.invoke(sessions, ["show", "invalid-id"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "Session not found: invalid-id" in result.output
 
 

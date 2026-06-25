@@ -102,6 +102,7 @@ def client(http_server: HTTPServer) -> Iterator[TestClient]:
         mock_instance = MockHM.return_value
         mock_instance._stop_registry = MagicMock()
         mock_instance.shutdown = MagicMock()
+        mock_instance.shutdown_async = AsyncMock()
         with TestClient(http_server.app) as client:
             yield client
 

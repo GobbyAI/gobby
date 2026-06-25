@@ -220,7 +220,7 @@ ACP_HOOK_ALIASES: dict[str, str] = {
     "notification": "Notification",
 }
 
-ACP_ADDITIONAL_CONTEXT_HOOKS = frozenset({"SessionStart", "BeforeAgent", "AfterTool"})
+ACP_ADDITIONAL_CONTEXT_HOOKS = frozenset({"SessionStart", "BeforeAgent", "BeforeTool", "AfterTool"})
 
 
 def _acp_capabilities(source: SessionSource) -> ProviderCapabilities:

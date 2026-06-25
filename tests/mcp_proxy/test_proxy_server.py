@@ -605,4 +605,10 @@ async def test_call_tool_top_level_wrapper_fields_win_and_nested_session_id_stay
     assert resolved == "platform-session"
     assert call_args.args[0] == "outer-server"
     assert call_args.args[1] == "outer-tool"
-    assert call_args.args[2] == {"session_id": "inner-session", "value": "ok"}
+    assert call_args.args[2] == {
+        "server_name": "inner-server",
+        "tool_name": "inner-tool",
+        "session_id": "inner-session",
+        "project_id": "inner-project",
+        "value": "ok",
+    }

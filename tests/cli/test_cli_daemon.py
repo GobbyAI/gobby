@@ -377,7 +377,7 @@ class TestStartCommand:
             result = runner.invoke(cli, ["start"], env={"HOME": str(temp_dir)})
 
         assert result.exit_code == 0
-        assert "no Anthropic/OpenAI/Google API/provider credential env vars detected" in (
+        assert "no Anthropic/OpenAI/Qwen API/provider credential env vars detected" in (
             result.output
         )
 

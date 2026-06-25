@@ -90,9 +90,12 @@ def create_lifespan(
             )
             hook_manager_kwargs["log_backup_count"] = server.services.config.telemetry.backup_count
 
-        app.state.hook_manager = hook_manager_factory_getter()(**hook_manager_kwargs)
+        if not getattr(app.state, "hook_manager", None):
+            app.state.hook_manager = hook_manager_factory_getter()(**hook_manager_kwargs)
+            logger.debug("HookManager initialized in daemon")
+        else:
+            logger.debug("Reusing preconfigured HookManager in daemon")
         server._hook_manager = app.state.hook_manager
-        logger.debug("HookManager initialized in daemon")
 
         if server.services.database:
             from gobby.servers.pending_interactions import PendingInteractionManager

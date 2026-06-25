@@ -98,8 +98,7 @@ class PipelineExecutorStepMixin:
                         self.session_manager,
                     )
                 elif step.activate_workflow:
-                    # activate_workflow steps are not supported in pipeline execution
-                    raise RuntimeError("activate_workflow pipeline steps are not supported")
+                    return {"error": "activate_workflow pipeline steps are not supported"}
                 else:
                     logger.warning(f"Step {step.id} has no action defined")
                     return None
@@ -246,12 +245,11 @@ class PipelineExecutorStepMixin:
 
         logger.info(f"Invoking nested pipeline: {pipeline_name}")
 
-        # Check if loader is available
-        if not self.loader:
-            logger.warning("No loader configured for nested pipeline execution")
-            raise RuntimeError("No loader configured for nested pipeline execution")
-
         try:
+            # Check if loader is available
+            if not self.loader:
+                raise RuntimeError("No loader configured for nested pipeline execution")
+
             # Load the nested pipeline
             nested_pipeline = await self.loader.load_pipeline(pipeline_name)
 

@@ -916,10 +916,9 @@ class TestStopSignalEdgeCases:
             test_mode=True,
             session_manager=session_storage,
         )
-        # No hook_manager on app.state
-
-        test_client = TestClient(server.app)
-        response = test_client.get("/api/sessions/test-session/stop")
+        with TestClient(server.app) as test_client:
+            del test_client.app.state.hook_manager
+            response = test_client.get("/api/sessions/test-session/stop")
 
         assert response.status_code == 503
         assert "Hook manager not available" in response.json()["detail"]
@@ -934,10 +933,9 @@ class TestStopSignalEdgeCases:
             test_mode=True,
             session_manager=session_storage,
         )
-        # No hook_manager on app.state
-
-        test_client = TestClient(server.app)
-        response = test_client.delete("/api/sessions/test-session/stop")
+        with TestClient(server.app) as test_client:
+            del test_client.app.state.hook_manager
+            response = test_client.delete("/api/sessions/test-session/stop")
 
         assert response.status_code == 503
         assert "Hook manager not available" in response.json()["detail"]

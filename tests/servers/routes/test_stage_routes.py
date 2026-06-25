@@ -31,6 +31,7 @@ def stage_client(task_manager: LocalTaskManager) -> Iterator[TestClient]:
     with patch("gobby.servers.app_factory.HookManager") as hook_manager:
         hook_manager.return_value._stop_registry = MagicMock()
         hook_manager.return_value.shutdown = MagicMock()
+        hook_manager.return_value.shutdown_async = AsyncMock()
         with TestClient(server.app) as client:
             yield client
 
@@ -540,6 +541,7 @@ def test_stage_transition_broadcasts(
     with patch("gobby.servers.app_factory.HookManager") as hook_manager:
         hook_manager.return_value._stop_registry = MagicMock()
         hook_manager.return_value.shutdown = MagicMock()
+        hook_manager.return_value.shutdown_async = AsyncMock()
         with TestClient(server.app) as client:
             response = client.patch(
                 f"/api/tasks/{task.id}/stages/development",
@@ -579,6 +581,7 @@ def test_move_to_stage_broadcasts_full_stage_payload(
     with patch("gobby.servers.app_factory.HookManager") as hook_manager:
         hook_manager.return_value._stop_registry = MagicMock()
         hook_manager.return_value.shutdown = MagicMock()
+        hook_manager.return_value.shutdown_async = AsyncMock()
         with TestClient(server.app) as client:
             response = client.patch(
                 f"/api/tasks/{task.id}/stages/development",

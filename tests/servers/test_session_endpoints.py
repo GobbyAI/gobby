@@ -627,6 +627,7 @@ class TestStopSignalEndpoints:
 
     def test_stop_signal_without_hook_manager(self, client: TestClient) -> None:
         """Test stop signal endpoints when hook manager not available."""
+        del client.app.state.hook_manager
         response = client.post("/api/sessions/test-session/stop")
         assert response.status_code == 503
         assert "Hook manager not available" in response.json()["detail"]

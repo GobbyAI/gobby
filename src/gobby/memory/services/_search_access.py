@@ -41,7 +41,7 @@ def update_access_stats(
 
         try:
             storage.update_access_stats(memory.id, now.isoformat())
-        except (OSError, RuntimeError, ValueError) as exc:
+        except Exception as exc:
             if "malformed" in str(exc):
                 logger.warning(
                     "Failed to update access stats for %s: %s "

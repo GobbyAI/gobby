@@ -98,11 +98,11 @@ class _TestHandler(SessionEventHandlerMixin):
 class TestDeriveTranscriptPath:
     """Tests for _derive_transcript_path."""
 
-    def test_gemini_source(self) -> None:
+    def test_qwen_source(self) -> None:
         handler = _TestHandler()
-        with patch.object(handler, "_find_gemini_transcript", return_value="/tmp/g.json"):
-            result = handler._derive_transcript_path("gemini", {}, "ext-1")
-        assert result == "/tmp/g.json"
+        with patch.object(handler, "_find_qwen_transcript", return_value="/tmp/q.json"):
+            result = handler._derive_transcript_path("qwen", {}, "ext-1")
+        assert result == "/tmp/q.json"
 
     def test_unknown_source(self) -> None:
         handler = _TestHandler()
@@ -111,70 +111,59 @@ class TestDeriveTranscriptPath:
 
 
 # ---------------------------------------------------------------------------
-# _find_gemini_transcript tests
+# _find_qwen_transcript tests
 # ---------------------------------------------------------------------------
 
 
-class TestFindGeminiTranscript:
-    """Tests for _find_gemini_transcript."""
+class TestFindQwenTranscript:
+    """Tests for _find_qwen_transcript."""
 
     def test_no_cwd(self) -> None:
         handler = _TestHandler()
-        result = handler._find_gemini_transcript({}, "ext-1")
+        result = handler._find_qwen_transcript({}, "ext-1")
         assert result is None
 
     def test_chats_dir_not_exists(self, tmp_path) -> None:
         handler = _TestHandler()
-        result = handler._find_gemini_transcript({"cwd": str(tmp_path)}, "ext-1")
+        result = handler._find_qwen_transcript({"cwd": str(tmp_path)}, "ext-1")
         assert result is None
 
-    def test_match_by_prefix(self, tmp_path) -> None:
+    def test_match_by_prefix(self, tmp_path, monkeypatch) -> None:
+        import hashlib
+
         handler = _TestHandler()
         cwd = str(tmp_path / "project")
+        project_hash = hashlib.sha256(cwd.encode()).hexdigest()
+        chats_dir = tmp_path / ".qwen" / "tmp" / project_hash / "chats"
+        chats_dir.mkdir(parents=True)
+        (chats_dir / "session-2024-01-01T10-00-abcdefgh.json").touch()
 
-        # We need to mock this since we can't create in $HOME
-        with patch("gobby.hooks.event_handlers._session_start.Path") as MockPath:
-            mock_home = MagicMock()
-            MockPath.home.return_value = mock_home
+        import gobby.hooks.event_handlers._session_start as session_mod
 
-            mock_home.__truediv__ = MagicMock(return_value=MagicMock())
-            # Build chain: home / ".gemini" / "tmp" / hash / "chats"
-            chain = MagicMock()
-            mock_home.__truediv__.return_value = chain
-            chain.__truediv__ = MagicMock(return_value=chain)
-            chain.exists.return_value = True
+        monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
 
-            mock_file = MagicMock()
-            mock_file.__str__ = lambda self: "/fake/session-20240101-abcdefgh.json"
-            chain.glob.return_value = [mock_file]
+        result = handler._find_qwen_transcript({"cwd": cwd}, "abcdefgh-1234")
+        assert result is not None
+        assert "abcdefgh" in result
 
-            result = handler._find_gemini_transcript({"cwd": cwd}, "abcdefgh-1234")
-            assert result == "/fake/session-20240101-abcdefgh.json"
-            assert "abcdefgh" in result
-
-    def test_fallback_most_recent(self, tmp_path) -> None:
+    def test_fallback_most_recent(self, tmp_path, monkeypatch) -> None:
         """When prefix doesn't match, falls back to most recent."""
+        import hashlib
+
         handler = _TestHandler()
+        cwd = str(tmp_path / "project")
+        project_hash = hashlib.sha256(cwd.encode()).hexdigest()
+        chats_dir = tmp_path / ".qwen" / "tmp" / project_hash / "chats"
+        chats_dir.mkdir(parents=True)
+        (chats_dir / "session-2024-01-01T10-00-recent.json").touch()
 
-        with patch("gobby.hooks.event_handlers._session_start.Path") as MockPath:
-            mock_home = MagicMock()
-            MockPath.home.return_value = mock_home
+        import gobby.hooks.event_handlers._session_start as session_mod
 
-            chain = MagicMock()
-            mock_home.__truediv__.return_value = chain
-            chain.__truediv__ = MagicMock(return_value=chain)
-            chain.exists.return_value = True
+        monkeypatch.setattr(session_mod.Path, "home", staticmethod(lambda: tmp_path))
 
-            # No prefix match
-            chain.glob.side_effect = [
-                [],  # prefix match
-                [MagicMock(__str__=lambda self: "/fake/session-recent.json")],  # fallback
-            ]
-
-            result = handler._find_gemini_transcript({"cwd": "/some/cwd"}, "")
-            # Verify it attempted the fallback glob (returns None since mock file isn't readable)
-            assert chain.glob.call_count >= 1
-            assert result is None
+        result = handler._find_qwen_transcript({"cwd": cwd}, "")
+        assert result is not None
+        assert "recent" in result
 
 
 # ---------------------------------------------------------------------------

@@ -10,11 +10,15 @@ from typing import Any
 
 import click
 
-from gobby.skills.metadata import get_skill_category, get_skill_tags
 from gobby.storage.skills import LocalSkillManager
 
 StorageFactory = Callable[[], LocalSkillManager]
 JsonOutput = Callable[[list[Any]], None]
+_FACADE_MODULE = "gobby.cli.skills"
+
+
+def _facade() -> Any:
+    return sys.modules[_FACADE_MODULE]
 
 
 def output_json(skills_list: list[Any]) -> None:
@@ -45,11 +49,12 @@ def list_skills(
     )
 
     if tags:
+        facade = _facade()
         tags_list = [tag.strip() for tag in tags.split(",") if tag.strip()]
         if tags_list:
             filtered_skills = []
             for skill in skills_list:
-                skill_tags = get_skill_tags(skill)
+                skill_tags = facade.get_skill_tags(skill)
                 if any(tag in skill_tags for tag in tags_list):
                     filtered_skills.append(skill)
             skills_list = filtered_skills[:limit]
@@ -62,9 +67,10 @@ def list_skills(
         click.echo("No skills found.")
         return
 
+    facade = _facade()
     for skill in skills_list:
         category_suffix = ""
-        skill_category = get_skill_category(skill)
+        skill_category = facade.get_skill_category(skill)
         if skill_category:
             category_suffix = f" [{skill_category}]"
 
@@ -86,6 +92,7 @@ def show_skill(storage_factory: StorageFactory, name: str, json_output: bool) ->
         sys.exit(1)
 
     if json_output:
+        facade = _facade()
         output = {
             "name": skill.name,
             "description": skill.description,
@@ -96,8 +103,8 @@ def show_skill(storage_factory: StorageFactory, name: str, json_output: bool) ->
             "source_path": skill.source_path,
             "compatibility": skill.compatibility if hasattr(skill, "compatibility") else None,
             "content": skill.content,
-            "category": get_skill_category(skill),
-            "tags": get_skill_tags(skill),
+            "category": facade.get_skill_category(skill),
+            "tags": facade.get_skill_tags(skill),
         }
         click.echo(json.dumps(output, indent=2))
         return

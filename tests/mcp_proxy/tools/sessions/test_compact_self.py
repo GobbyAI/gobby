@@ -87,12 +87,13 @@ def _register_compact_self(
 
     tmux_manager = MagicMock()
     tmux_manager.send_keys = AsyncMock(return_value=tmux_send_keys_returns)
+    tmux_manager.capture_pane = AsyncMock(return_value="")
 
     with patch(
         "gobby.mcp_proxy.tools.sessions._terminal.LocalAgentRunManager",
         return_value=agent_run_manager,
     ):
-        register_terminal_tools(registry, session_manager, MagicMock())
+        register_terminal_tools(registry, session_manager, tmux_manager)
 
     return registry, tmux_manager
 
@@ -140,8 +141,8 @@ class TestCompactSelfCLIMap:
     def test_codex_maps_to_slash_compact(self) -> None:
         assert _CLI_COMPACT_COMMANDS["codex"] == "/compact"
 
-    def test_gemini_maps_to_slash_compress(self) -> None:
-        assert _CLI_COMPACT_COMMANDS["gemini"] == "/compress"
+    def test_gemini_is_retired(self) -> None:
+        assert "gemini" not in _CLI_COMPACT_COMMANDS
 
     def test_qwen_maps_to_slash_compress(self) -> None:
         assert _CLI_COMPACT_COMMANDS["qwen"] == "/compress"
@@ -221,6 +222,7 @@ class TestCompactSelfTerminalPath:
     async def test_codex_compaction_interrupt_failure_returns_false(self) -> None:
         tmux = MagicMock()
         tmux.send_keys = AsyncMock(return_value=False)
+        tmux.capture_pane = AsyncMock(return_value="")
 
         ok, reason = await _send_codex_compaction_command(
             tmux,
@@ -235,20 +237,15 @@ class TestCompactSelfTerminalPath:
         assert "compaction interrupt" in reason
         tmux.send_keys.assert_awaited_once_with("%12", "C-c", literal=False)
 
-    def test_gemini_session_fires_slash_compress(self) -> None:
+    def test_gemini_session_is_not_compactable(self) -> None:
         session = _make_terminal_session("gemini")
         registry, tmux = _register_compact_self(session)
 
         result = _call_compact_self(registry, tmux, session_id="s1")
 
-        assert result["compacted"] is True
-        assert result["command"] == "/compress"
-        assert result["interrupted"] is True
-        assert result["continuation_pending"] is True
-        assert tmux.send_keys.await_args_list == [
-            call("%12", "Escape", literal=False),
-            call("%12", "/compress\n", literal=True),
-        ]
+        assert result["compacted"] is False
+        assert "no compaction command known" in result["reason"]
+        tmux.send_keys.assert_not_awaited()
 
     def test_qwen_session_fires_slash_compress(self) -> None:
         session = _make_terminal_session("qwen")
@@ -452,6 +449,7 @@ class TestCompactSelfTerminalPath:
         agent_run_manager.get_by_session.return_value = None
 
         tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="")
 
         async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
             events.append(f"tmux:{keys}")
@@ -568,6 +566,7 @@ class TestCompactSelfTerminalPath:
         agent_run_manager.get_by_session.return_value = None
 
         tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="")
 
         async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
             events.append(f"tmux:{keys}")
@@ -696,6 +695,7 @@ class TestCompactSelfTerminalPath:
         agent_run_manager.get_by_session.return_value = None
 
         tmux = MagicMock()
+        tmux.capture_pane = AsyncMock(return_value="")
 
         async def send_keys(_target: str, keys: str, *, literal: bool) -> bool:
             events.append(f"tmux:{keys}")

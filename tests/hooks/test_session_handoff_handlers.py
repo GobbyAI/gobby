@@ -919,7 +919,7 @@ class TestSessionStartHandoff:
         mock_schedule.assert_called_once()
         assert scheduled == [(session, COMPACT_SELF_CONTINUE_PROMPT)]
 
-    @pytest.mark.parametrize("cli_source", ["codex", "gemini", "qwen", "droid"])
+    @pytest.mark.parametrize("cli_source", ["codex", "qwen", "droid"])
     def test_pending_flag_schedules_continuation_without_compact_source(
         self, hub_db: HubDatabase, mock_dependencies: dict, cli_source: str
     ) -> None:

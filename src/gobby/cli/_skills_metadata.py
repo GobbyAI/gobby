@@ -9,10 +9,14 @@ from typing import Any
 
 import click
 
-from gobby.skills.metadata import get_nested_value, set_nested_value, unset_nested_value
 from gobby.storage.skills import LocalSkillManager
 
 StorageFactory = Callable[[], LocalSkillManager]
+_FACADE_MODULE = "gobby.cli.skills"
+
+
+def _facade() -> Any:
+    return sys.modules[_FACADE_MODULE]
 
 
 def get_metadata(storage_factory: StorageFactory, name: str, key: str) -> None:
@@ -28,7 +32,7 @@ def get_metadata(storage_factory: StorageFactory, name: str, key: str) -> None:
         click.echo("null")
         return
 
-    value = get_nested_value(skill.metadata, key)
+    value = _facade().get_nested_value(skill.metadata, key)
     if value is None:
         click.echo(f"Key not found: {key}")
         sys.exit(1)
@@ -52,7 +56,7 @@ def set_metadata(storage_factory: StorageFactory, name: str, key: str, value: st
     except json.JSONDecodeError:
         parsed_value = value
 
-    new_metadata = set_nested_value(skill.metadata or {}, key, parsed_value)
+    new_metadata = _facade().set_nested_value(skill.metadata or {}, key, parsed_value)
     try:
         storage.update_skill(skill.id, metadata=new_metadata)
     except (OSError, RuntimeError, ValueError) as exc:
@@ -74,7 +78,7 @@ def unset_metadata(storage_factory: StorageFactory, name: str, key: str) -> None
         click.echo(f"Key not found: {key}")
         return
 
-    new_metadata = unset_nested_value(skill.metadata, key)
+    new_metadata = _facade().unset_nested_value(skill.metadata, key)
     try:
         storage.update_skill(skill.id, metadata=new_metadata)
     except (OSError, RuntimeError, ValueError) as exc:

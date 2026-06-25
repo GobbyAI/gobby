@@ -3,7 +3,7 @@
 from collections.abc import Iterator
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
@@ -147,5 +147,6 @@ def client(http_server: HTTPServer) -> Iterator[TestClient]:
         mock_instance = MockHM.return_value
         mock_instance._stop_registry = MagicMock()
         mock_instance.shutdown = MagicMock()
+        mock_instance.shutdown_async = AsyncMock()
         with TestClient(http_server.app) as client:
             yield client

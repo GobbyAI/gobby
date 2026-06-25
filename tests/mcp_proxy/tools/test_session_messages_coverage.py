@@ -916,12 +916,12 @@ class TestSessionStats:
         session_manager.count.side_effect = [
             100,  # Total
             50,  # claude
-            30,  # gemini
             0,  # grok (will be excluded)
             0,  # qwen (will be excluded)
             0,  # codex (will be excluded)
             0,  # droid (will be excluded)
             0,  # agy (will be excluded)
+            30,  # unknown
         ]
         session_manager.count_by_status.return_value = {
             "active": 10,
@@ -937,7 +937,7 @@ class TestSessionStats:
         assert result["total"] == 100
         assert result["by_status"]["active"] == 10
         assert result["by_source"]["claude"] == 50
-        assert result["by_source"]["gemini"] == 30
+        assert result["by_source"]["unknown"] == 30
         assert "codex" not in result["by_source"]  # Zero count excluded
 
 

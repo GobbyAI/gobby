@@ -135,7 +135,7 @@ def test_show_session_not_found(mock_session_manager, mock_resolve_session) -> N
     runner = CliRunner()
     result = runner.invoke(sessions, ["show", "missing"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "Session not found" in result.output
 
 
@@ -174,7 +174,7 @@ def test_delete_session_not_found(mock_session_manager, mock_resolve_session) ->
     runner = CliRunner()
     result = runner.invoke(sessions, ["delete", "missing", "--yes"])
 
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "Session not found" in result.output
     mock_session_manager.db.close.assert_called_once_with()
 
@@ -424,7 +424,7 @@ def test_create_handoff_no_session(mock_session_manager, mock_resolve_session) -
     mock_session_manager.get.return_value = None
     runner = CliRunner()
     result = runner.invoke(sessions, ["create-handoff", "-s", "missing"])
-    assert result.exit_code == 0
+    assert result.exit_code == 1
     assert "Session not found" in result.output
 
 
