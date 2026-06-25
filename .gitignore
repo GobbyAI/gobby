@@ -237,20 +237,10 @@ __marimo__/
 !.gobby/plans/
 !.gobby/plans/**
 
-# Project wiki vault content is tracked; runtime/editor state stays local.
-gobby-wiki/.gwiki/
-gobby-wiki/_meta/
-gobby-wiki/_meta/**
-gobby-wiki/meta/health/
-gobby-wiki/meta/health/**
-gobby-wiki/**/*.lock
-gobby-wiki/**/.lock
-gobby-wiki/.obsidian/workspace*.json
-gobby-wiki/.obsidian/app.json
-gobby-wiki/.obsidian/appearance.json
-gobby-wiki/.obsidian/core-plugins.json
-gobby-wiki/.obsidian/core-plugins-migration.json
-gobby-wiki/.obsidian/hotkeys.json
+# Project wiki vault lives on the `wiki` branch, republished by
+# .githooks/pre-push on pushes to main. Keep the working vault local here so it
+# stays out of active-branch diffs.
+gobby-wiki/
 screenshots/
 reports/
 bandit_report.json

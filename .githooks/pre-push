@@ -1,0 +1,46 @@
+#!/bin/sh
+# Publish the project wiki vault to the `wiki` branch whenever `main` is pushed.
+#
+# The vault lives at gobby-wiki/ (gitignored on active branches) and is checked
+# out as a sibling worktree on the `wiki` branch. This hook mirrors the working
+# copy into that worktree, commits, and pushes origin/wiki. It is best-effort:
+# failures are reported but never block the push to main (exit 0).
+#
+# One-time setup per clone:
+#   git worktree add --orphan -b wiki ../gobby-wiki
+#
+# If this clone already uses a generated .git/hooks/pre-push, keep it and chain
+# this script from there instead of replacing core.hooksPath.
+set -u
+
+repo_root=$(git rev-parse --show-toplevel) || exit 0
+wt="$repo_root/../gobby-wiki"
+
+publish() {
+	if [ ! -e "$wt/.git" ]; then
+		echo "pre-push: wiki worktree not found at $wt; skipping vault publish" >&2
+		echo "pre-push: create it with 'git worktree add --orphan -b wiki $wt'" >&2
+		return 0
+	fi
+	if [ ! -d "$repo_root/gobby-wiki" ]; then
+		echo "pre-push: no gobby-wiki/ to publish; skipping" >&2
+		return 0
+	fi
+	rsync -a --delete --exclude '.git' "$repo_root/gobby-wiki/" "$wt/gobby-wiki/" || return 0
+	git -C "$wt" add -A -f gobby-wiki
+	if git -C "$wt" diff --cached --quiet; then
+		echo "pre-push: vault unchanged; nothing to publish" >&2
+		return 0
+	fi
+	git -C "$wt" commit -q -m "vault: sync from $(git -C "$repo_root" rev-parse --short HEAD)"
+	git -C "$wt" push -q origin HEAD:wiki || echo "pre-push: vault publish push failed (non-fatal)" >&2
+}
+
+# stdin: <local_ref> <local_sha> <remote_ref> <remote_sha> per ref being pushed
+while read -r _local_ref _local_sha remote_ref _remote_sha; do
+	case "$remote_ref" in
+	refs/heads/main) publish ;;
+	esac
+done
+
+exit 0
