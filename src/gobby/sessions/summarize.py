@@ -203,7 +203,6 @@ async def generate_session_summaries(
     compact_only: bool = False,
     full_only: bool = False,
     run_db: Callable[..., Awaitable[Any]] | None = None,
-    session_wiki_config: Any | None = None,
 ) -> dict[str, Any]:
     """Generate summary_markdown for a session.
 
@@ -223,10 +222,6 @@ async def generate_session_summaries(
         compact_only: Ignored (kept for API compatibility).
         full_only: Ignored (kept for API compatibility).
         run_db: Optional bounded executor bridge for hub database storage calls.
-        session_wiki_config: Feature config for the session knowledge-synthesis
-            (wiki) artifact. When provided and enabled, a concise cross-linked
-            wiki page is synthesized from the same digest at the tail of this
-            flow so every summary-producing caller also produces the wiki page.
 
     Returns:
         Dict with success status, markdown lengths, and context summary.

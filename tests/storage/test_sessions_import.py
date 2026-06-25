@@ -35,8 +35,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "count": "(self, project_id: 'str | None' = None, status: 'str | None' = None, "
     "source: 'str | None' = None) -> 'int'",
     "count_by_status": "(self, project_id: 'str | None' = None) -> 'dict[str, int]'",
-    "count_wiki_synthesis_failures_by_source": "(self, project_id: 'str | None' = None) -> "
-    "'dict[str, int]'",
     "create_web_chat_session": "(self, *, machine_id: 'str', project_id: 'str', "
     "source: 'str', title: 'str | None' = None, model: 'str | None' = None, "
     "is_local: 'bool' = False, chat_mode: 'str | None' = None, sandbox_enabled: 'bool', "
@@ -66,9 +64,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "get": "(self, session_id: 'str') -> 'Session | None'",
     "get_pending_transcript_sessions": "(self, limit: 'int' = 10) -> 'list[Session]'",
     "get_summary_revision": "(self, revision_id: 'str') -> 'dict[str, Any] | None'",
-    "get_wiki_backfill_candidates": "(self, *, project_id: 'str | None' = None, "
-    "limit: 'int | None' = None, after_id: 'str | None' = None) -> 'builtins.list[Session]'",
-    "get_wiki_revision": "(self, revision_id: 'str') -> 'dict[str, Any] | None'",
     "get_session_id": "(self, external_id: 'str', source: 'str') -> 'str | None'",
     "get_sessions_since": "(self, since: 'datetime', project_id: 'str | None' = None) "
     "-> 'list[Session]'",
@@ -87,8 +82,6 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "project_id: 'str | None') -> 'str | None'",
     "list_summary_revisions": "(self, session_id: 'str', *, limit: 'int' = 20) -> "
     "'list[dict[str, Any]]'",
-    "list_wiki_revisions": "(self, session_id: 'str', *, limit: 'int' = 20) -> "
-    "'list[dict[str, Any]]'",
     "mark_had_edits": "(self, session_id: 'str') -> 'Session | None'",
     "mark_session_expired": "(self, session_id: 'str') -> 'bool'",
     "mark_transcript_processed": "(self, session_id: 'str') -> 'Session | None'",
@@ -103,15 +96,8 @@ EXPECTED_PUBLIC_METHOD_SIGNATURES = {
     "previous_revision_id: 'str | None' = None, "
     "metadata_json: 'Mapping[str, Any] | None' = None, "
     "summary_path: 'str | None' = None) -> 'Session | None'",
-    "persist_wiki_state": "(self, session_id: 'str', *, wiki_markdown: 'str', "
-    "generation_mode: 'str', source_context_hash: 'str | None' = None, "
-    "digest_turn_count: 'int | None' = None, previous_revision_id: 'str | None' = None, "
-    "metadata_json: 'Mapping[str, Any] | None' = None, "
-    "wiki_path: 'str | None' = None) -> 'Session | None'",
     "prune_empty_sessions": "(self, min_age_hours: 'int' = 1) -> 'int'",
     "recalculate_stats": "(self, session_id: 'str') -> 'Session | None'",
-    "record_wiki_synthesis_failure": "(self, session_id: 'str', reason: 'str', "
-    "error: 'str | None' = None) -> 'Session | None'",
     "record_skills_used": "(self, session_id: 'str', skill_names: 'list[str]') -> 'int'",
     "register": "(self, external_id: 'str', machine_id: 'str', source: 'str', "
     "project_id: 'str | None', title: 'str | None' = None, "

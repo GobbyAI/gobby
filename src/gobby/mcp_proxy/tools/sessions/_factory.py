@@ -60,7 +60,6 @@ def create_session_messages_registry(
     session_summary_config = (
         getattr(config, "session_summary", None) if config is not None else None
     )
-    session_wiki_config = getattr(config, "session_wiki", None) if config is not None else None
 
     # --- Message Tools ---
     # Register if transcript_reader or session_manager is available
@@ -77,7 +76,6 @@ def create_session_messages_registry(
             transcript_processor=transcript_processor,
             session_summary_config=session_summary_config,
             inter_session_message_manager=inter_session_message_manager,
-            session_wiki_config=session_wiki_config,
         )
 
     # --- Session CRUD Tools ---
@@ -124,7 +122,6 @@ def create_session_messages_registry(
             llm_service=llm_service,
             session_summary_config=session_summary_config,
             web_chat_session_registry=web_chat_session_registry,
-            session_wiki_config=session_wiki_config,
         )
 
     return registry

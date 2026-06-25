@@ -93,14 +93,19 @@ def test_postgres_pending_migration_logs_warning(caplog: pytest.LogCaptureFixtur
     assert "Applying PostgreSQL migration 295_add_needed_column" in caplog.text
 
 
-def test_postgres_migration_discovery_is_empty_after_flattening() -> None:
+def test_postgres_migration_discovery_finds_post_baseline_migrations() -> None:
     module = _migration_module()
     hub = _PostgresMigrationHub()
     runner = module.MigrationRunner(hub)
 
     discovered = runner._discover_migrations()
 
-    assert discovered == []
+    # Only post-baseline incremental migrations remain on disk; the rest is
+    # folded into postgres_baseline_schema.sql. 298 drops the session wiki schema.
+    assert [(migration.version, migration.name) for migration in discovered] == [
+        (295, "relabel_gemini_sessions"),
+        (298, "drop_session_wiki_schema"),
+    ]
 
 
 def test_split_statements_respecting_dollar_quotes_keeps_function_bodies_intact() -> None:

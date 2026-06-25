@@ -184,17 +184,27 @@ def test_legacy_migration_api_is_absent_from_source_and_runtime() -> None:
         assert removed not in assignments
 
 
-def test_no_postgres_sql_migrations_exist_after_flattening() -> None:
+def test_postgres_migrations_limited_to_known_post_baseline() -> None:
     migrations_dir = SRC_ROOT / "storage" / "migrations"
 
-    assert _tracked_migration_names(migrations_dir) == []
+    # Post-flatten the baseline schema carries the squashed state; only these
+    # incremental migrations remain on disk for already-provisioned hubs. A
+    # stray .sql file here would silently run against every existing DB.
+    assert _tracked_migration_names(migrations_dir) == [
+        "295_relabel_gemini_sessions.postgres.sql",
+        "298_drop_session_wiki_schema.postgres.sql",
+    ]
 
 
 def test_postgres_baseline_version_is_flattened_to_297() -> None:
     import gobby.storage.migrations as module
 
+    # Baseline stays 297: bumping it would reclassify existing 297 hubs as
+    # corrupt_partial (recreation-required) instead of upgrading in place. The
+    # session-wiki drop ships as pending migration 298 (> baseline), so
+    # latest_known_version reflects the migration file.
     assert module.BASELINE_VERSION == 297
-    assert module.latest_known_version() == 297
+    assert module.latest_known_version() == 298
 
 
 def test_postgres_baseline_defines_implementation_domain_and_current_config_state() -> None:
@@ -260,10 +270,13 @@ def test_session_summary_revisions_baseline_defines_schema() -> None:
     _assert_contains_all("summary revision integrity baseline", baseline, integrity_snippets)
 
 
-def test_session_wiki_revisions_baseline_defines_schema() -> None:
+def test_session_wiki_schema_removed_from_baseline_and_dropped_by_migration() -> None:
+    # The session wiki page is now the session summary; the second wiki
+    # narrative, its 11 sessions.wiki_* columns, and session_wiki_revisions are
+    # gone. Fresh DBs (baseline at 298) must never create any of it, and the
+    # 298 migration must drop it from already-provisioned 297 hubs.
     baseline = _baseline_text()
-
-    session_columns = (
+    removed_objects = (
         "wiki_path",
         "wiki_markdown",
         "wiki_revision_id",
@@ -271,54 +284,37 @@ def test_session_wiki_revisions_baseline_defines_schema() -> None:
         "wiki_digest_turn_count",
         "wiki_generation_mode",
         "wiki_generated_at",
-    )
-    revision_snippets = (
+        "wiki_synthesis_consecutive_failures",
+        "wiki_synthesis_last_failure_reason",
+        "wiki_synthesis_last_error",
+        "wiki_synthesis_last_failed_at",
         "session_wiki_revisions",
-        "wiki_markdown TEXT NOT NULL",
-        "generation_mode TEXT NOT NULL",
-        "source_context_hash TEXT",
-        "digest_turn_count INTEGER",
-        "previous_revision_id TEXT",
-        "metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb",
-        "session_wiki_revisions_digest_turn_count_nonnegative",
-        "session_wiki_revisions_generation_mode_valid",
         "sessions_wiki_revision_fk",
-        "idx_session_wiki_revisions_session_created",
-        "idx_session_wiki_revisions_previous",
         "idx_sessions_wiki_revision",
-    )
-    integrity_snippets = (
-        "sessions_wiki_digest_turn_count_nonnegative",
-        "session_wiki_revisions_id_session_id_unique",
-        "session_wiki_revisions_previous_same_session_fk",
-        "FOREIGN KEY (previous_revision_id, session_id)",
-        "FOREIGN KEY (wiki_revision_id, id)",
-        "REFERENCES session_wiki_revisions(id, session_id)",
-        "ON DELETE SET NULL (wiki_revision_id)",
-        "UNIQUE (id, session_id)",
-    )
-
-    # Baseline (applied first on a fresh DB) must define the full wiki schema.
-    for column in session_columns:
-        assert column in baseline
-    _assert_contains_all("session wiki revision baseline", baseline, revision_snippets)
-    _assert_contains_all("wiki revision integrity baseline", baseline, integrity_snippets)
-
-
-def test_wiki_synthesis_failure_baseline_defines_session_state() -> None:
-    baseline = _baseline_text()
-
-    snippets = (
-        "wiki_synthesis_consecutive_failures INTEGER NOT NULL DEFAULT 0",
-        "wiki_synthesis_last_failure_reason TEXT",
-        "wiki_synthesis_last_error TEXT",
-        "wiki_synthesis_last_failed_at TIMESTAMPTZ",
-        "sessions_wiki_synthesis_consecutive_failures_nonnegative",
-        "wiki_synthesis_consecutive_failures >= 0",
         "idx_sessions_wiki_synthesis_failures_source",
-        "WHERE wiki_synthesis_consecutive_failures > 0",
+        "sessions_wiki_digest_turn_count_nonnegative",
+        "sessions_wiki_synthesis_consecutive_failures_nonnegative",
     )
-    _assert_contains_all("wiki synthesis failure baseline", baseline, snippets)
+    _assert_absent_all("session wiki baseline removal", baseline, removed_objects)
+
+    migration = (
+        SRC_ROOT / "storage" / "migrations" / "298_drop_session_wiki_schema.postgres.sql"
+    ).read_text()
+    _assert_contains_all(
+        "session wiki drop migration",
+        migration,
+        (
+            "DROP CONSTRAINT IF EXISTS sessions_wiki_revision_fk",
+            "DROP INDEX IF EXISTS idx_sessions_wiki_revision",
+            "DROP INDEX IF EXISTS idx_sessions_wiki_synthesis_failures_source",
+            "DROP CONSTRAINT IF EXISTS sessions_wiki_digest_turn_count_nonnegative",
+            "DROP COLUMN IF EXISTS wiki_path",
+            "DROP COLUMN IF EXISTS wiki_markdown",
+            "DROP COLUMN IF EXISTS wiki_synthesis_consecutive_failures",
+            "DROP COLUMN IF EXISTS wiki_synthesis_last_failed_at",
+            "DROP TABLE IF EXISTS session_wiki_revisions CASCADE",
+        ),
+    )
 
 
 def test_code_index_baseline_defines_projection_and_failure_tables() -> None:

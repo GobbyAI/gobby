@@ -73,7 +73,6 @@ from gobby.config.sessions import (
     MessageTrackingConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
-    SessionWikiConfig,
 )
 from gobby.config.skills import SkillsConfig
 from gobby.config.system_loops import SystemLoopsConfig
@@ -209,10 +208,6 @@ class DaemonConfig(BaseModel):
     session_summary: SessionSummaryConfig = Field(
         default_factory=SessionSummaryConfig,
         description="Session summary generation configuration",
-    )
-    session_wiki: SessionWikiConfig = Field(
-        default_factory=SessionWikiConfig,
-        description="Session knowledge-synthesis (wiki) generation configuration",
     )
     compact_handoff: CompactHandoffConfig = Field(
         default_factory=CompactHandoffConfig,

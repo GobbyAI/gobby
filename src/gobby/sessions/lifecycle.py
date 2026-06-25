@@ -97,7 +97,6 @@ class SessionLifecycleManager:
         memory_sync_manager: Any | None = None,
         kg_queue_config: Any | None = None,
         memory_dream_config: Any | None = None,
-        session_wiki_config: Any | None = None,
     ):
         self.db = db
         self.config = config
@@ -106,7 +105,6 @@ class SessionLifecycleManager:
         self.memory_manager = memory_manager
         self.llm_service = llm_service
         self.session_summary_config = session_summary_config
-        self.session_wiki_config = session_wiki_config
         self.memory_sync_manager = memory_sync_manager
         self._kg_queue_config = kg_queue_config
         self._memory_dream_config = memory_dream_config
@@ -577,7 +575,6 @@ class SessionLifecycleManager:
                 session_summary_config=self.session_summary_config,
                 db=self.db,
                 set_handoff_ready=False,  # already expired, don't change status
-                session_wiki_config=self.session_wiki_config,
             )
         except Exception as e:
             logger.warning(f"Artifact generation failed for session {session_id}: {e}")

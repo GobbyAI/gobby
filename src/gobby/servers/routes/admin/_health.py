@@ -266,11 +266,6 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             "handoff_ready": 0,
             "total": 0,
         }
-        wiki_synthesis_stats: dict[str, Any] = {
-            "degraded": False,
-            "failed_sessions": 0,
-            "by_source": {},
-        }
         if server.session_manager is not None:
             try:
                 # Use count_by_status for efficient grouped counts
@@ -281,23 +276,6 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
                 session_stats["handoff_ready"] = status_counts.get("handoff_ready", 0)
             except Exception as e:
                 logger.warning(f"Failed to get session stats: {e}")
-            try:
-                count_wiki_failures = getattr(
-                    server.session_manager,
-                    "count_wiki_synthesis_failures_by_source",
-                    None,
-                )
-                if callable(count_wiki_failures):
-                    by_source = await server.run_db(count_wiki_failures)
-                    failed_sessions = sum(by_source.values())
-                    wiki_synthesis_stats = {
-                        "degraded": failed_sessions > 0,
-                        "failed_sessions": failed_sessions,
-                        "by_source": by_source,
-                    }
-            except Exception as e:
-                logger.warning(f"Failed to get wiki synthesis stats: {e}")
-        session_stats["wiki_synthesis"] = wiki_synthesis_stats
 
         # Get task statistics using efficient count queries
         task_stats: dict[str, Any] = {

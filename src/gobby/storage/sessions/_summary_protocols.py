@@ -29,24 +29,4 @@ class SummaryUpdateHost(Protocol):
         summary_path: str | None = None,
     ) -> Session | None: ...
 
-    def persist_wiki_state(
-        self,
-        session_id: str,
-        *,
-        wiki_markdown: str,
-        generation_mode: str,
-        source_context_hash: str | None = None,
-        digest_turn_count: int | None = None,
-        previous_revision_id: str | None = None,
-        metadata_json: Mapping[str, Any] | None = None,
-        wiki_path: str | None = None,
-    ) -> Session | None: ...
-
-    def record_wiki_synthesis_failure(
-        self,
-        session_id: str,
-        reason: str,
-        error: str | None = None,
-    ) -> Session | None: ...
-
     def _notify_session_change(self, event: str, session_id: str) -> None: ...

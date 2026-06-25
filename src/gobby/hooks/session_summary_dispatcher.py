@@ -20,12 +20,10 @@ class SessionSummaryDispatcher:
         database: Any,
         loop: asyncio.AbstractEventLoop | None,
         logger: logging.Logger,
-        session_wiki_config: Any | None = None,
     ) -> None:
         self.session_manager = session_manager
         self.llm_service = llm_service
         self.session_summary_config = session_summary_config
-        self.session_wiki_config = session_wiki_config
         self.database = database
         self.loop = loop
         self.logger = logger
@@ -49,7 +47,6 @@ class SessionSummaryDispatcher:
                     session_summary_config=self.session_summary_config,
                     db=self.database,
                     set_handoff_ready=set_handoff_ready,
-                    session_wiki_config=self.session_wiki_config,
                 )
             except Exception as exc:
                 self.logger.error(

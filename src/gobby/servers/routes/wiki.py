@@ -3,7 +3,7 @@ from __future__ import annotations
 import tempfile
 from collections.abc import Awaitable, Callable, Sequence
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, Body, File, HTTPException, Query, UploadFile
 
@@ -34,11 +34,9 @@ def create_wiki_router(server: HTTPServer) -> APIRouter:
         topic: str | None = Query(None),
     ) -> dict[str, Any]:
         resolved = await _resolve_scope(server, project, topic)
-        synthesis_failures = await _wiki_synthesis_failures_by_source(server, resolved)
         return await collect_wiki_status(
             gateway=_gateway_from_scope(resolved),
             runner=_runner(server),
-            synthesis_failures_by_source=synthesis_failures,
         )
 
     @router.post("/index")
@@ -275,20 +273,6 @@ def _gateway_from_scope(resolved: ResolvedWikiScope) -> GwikiGateway:
         topic=resolved.topic,
         timeout_seconds=30.0,
     )
-
-
-async def _wiki_synthesis_failures_by_source(
-    server: HTTPServer,
-    resolved: ResolvedWikiScope,
-) -> dict[str, int]:
-    session_manager = getattr(server, "session_manager", None)
-    count_failures = getattr(session_manager, "count_wiki_synthesis_failures_by_source", None)
-    if not callable(count_failures):
-        return {}
-
-    project_id = resolved.project_id if resolved.topic is None else None
-    result = await server.run_db(count_failures, project_id=project_id)
-    return cast(dict[str, int], result)
 
 
 def _runner(server: HTTPServer) -> object | None:

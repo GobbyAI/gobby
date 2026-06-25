@@ -169,17 +169,6 @@ CREATE TABLE sessions (
     summary_digest_turn_count INTEGER,
     summary_generation_mode TEXT,
     summary_generated_at TIMESTAMPTZ,
-    wiki_path TEXT,
-    wiki_markdown TEXT,
-    wiki_revision_id TEXT,
-    wiki_source_context_hash TEXT,
-    wiki_digest_turn_count INTEGER,
-    wiki_generation_mode TEXT,
-    wiki_generated_at TIMESTAMPTZ,
-    wiki_synthesis_consecutive_failures INTEGER NOT NULL DEFAULT 0,
-    wiki_synthesis_last_failure_reason TEXT,
-    wiki_synthesis_last_error TEXT,
-    wiki_synthesis_last_failed_at TIMESTAMPTZ,
     git_branch TEXT,
     parent_session_id TEXT REFERENCES sessions(id) DEFERRABLE INITIALLY IMMEDIATE,
     transcript_processed BOOLEAN DEFAULT FALSE,
@@ -253,15 +242,6 @@ CONSTRAINT sessions_summary_digest_turn_count_nonnegative
 CHECK (
     summary_digest_turn_count IS NULL
     OR summary_digest_turn_count >= 0
-),
-CONSTRAINT sessions_wiki_digest_turn_count_nonnegative
-CHECK (
-    wiki_digest_turn_count IS NULL
-    OR wiki_digest_turn_count >= 0
-),
-CONSTRAINT sessions_wiki_synthesis_consecutive_failures_nonnegative
-CHECK (
-    wiki_synthesis_consecutive_failures >= 0
 )
 );
 
@@ -321,50 +301,6 @@ CREATE INDEX idx_session_summary_revisions_previous
     ON session_summary_revisions(previous_revision_id);
 
 CREATE INDEX idx_sessions_summary_revision ON sessions(summary_revision_id);
-
-CREATE TABLE session_wiki_revisions (
-    id TEXT PRIMARY KEY,
-    session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE DEFERRABLE INITIALLY IMMEDIATE,
-    wiki_markdown TEXT NOT NULL,
-    generation_mode TEXT NOT NULL,
-    source_context_hash TEXT,
-    digest_turn_count INTEGER,
-    previous_revision_id TEXT,
-    metadata_json JSONB NOT NULL DEFAULT '{}'::jsonb,
-    created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-CONSTRAINT session_wiki_revisions_digest_turn_count_nonnegative
-CHECK (digest_turn_count IS NULL OR digest_turn_count >= 0),
-CONSTRAINT session_wiki_revisions_generation_mode_valid
-CHECK (
-generation_mode IN ('agent_authored', 'full', 'delta', 'digest_fallback', 'noop')
-),
-CONSTRAINT session_wiki_revisions_id_session_id_unique
-UNIQUE (id, session_id),
-CONSTRAINT session_wiki_revisions_previous_same_session_fk
-FOREIGN KEY (previous_revision_id, session_id)
-REFERENCES session_wiki_revisions(id, session_id)
-ON DELETE SET NULL (previous_revision_id)
-DEFERRABLE INITIALLY IMMEDIATE
-);
-
-ALTER TABLE sessions
-    ADD CONSTRAINT sessions_wiki_revision_fk
-    FOREIGN KEY (wiki_revision_id, id)
-    REFERENCES session_wiki_revisions(id, session_id)
-    ON DELETE SET NULL (wiki_revision_id)
-    DEFERRABLE INITIALLY IMMEDIATE;
-
-CREATE INDEX idx_session_wiki_revisions_session_created
-    ON session_wiki_revisions(session_id, created_at DESC);
-
-CREATE INDEX idx_session_wiki_revisions_previous
-    ON session_wiki_revisions(previous_revision_id);
-
-CREATE INDEX idx_sessions_wiki_revision ON sessions(wiki_revision_id);
-
-CREATE INDEX idx_sessions_wiki_synthesis_failures_source
-ON sessions(source)
-WHERE wiki_synthesis_consecutive_failures > 0;
 
 CREATE INDEX idx_sessions_agent_depth ON sessions(agent_depth);
 

@@ -57,7 +57,6 @@ from gobby.config.sessions import (
     MessageTrackingConfig,
     SessionLifecycleConfig,
     SessionSummaryConfig,
-    SessionWikiConfig,
 )
 from gobby.config.tasks import (
     CompactHandoffConfig,
@@ -348,35 +347,6 @@ class TestSessionSummaryConfig:
         assert config.profile == FeatureProfile.MID
         assert candidate_labels(config.candidates) == ("codex/gpt-5.4-mini",)
         assert config.prompt == "Custom prompt"
-
-
-class TestSessionWikiConfig:
-    """Tests for SessionWikiConfig."""
-
-    def test_default_values(self) -> None:
-        """Wiki config defaults mirror the summary feature (LOW/claude-haiku)."""
-        config = SessionWikiConfig()
-        assert config.enabled is True
-        assert config.profile == FeatureProfile.LOW
-        assert "claude/haiku" in candidate_labels(config.candidates)
-        # prompt_path is a PromptLoader path, NOT literal prompt text.
-        assert config.prompt_path == "wiki/source_page"
-        assert config.wiki_file_path == ".gobby/session_wiki"
-
-    def test_custom_values(self) -> None:
-        """Wiki config honors overrides."""
-        config = SessionWikiConfig(
-            enabled=False,
-            profile=FeatureProfile.MID,
-            candidates=["codex/gpt-5.4-mini"],
-            prompt_path="wiki/custom",
-            wiki_file_path=".gobby/custom_wiki",
-        )
-        assert config.enabled is False
-        assert config.profile == FeatureProfile.MID
-        assert candidate_labels(config.candidates) == ("codex/gpt-5.4-mini",)
-        assert config.prompt_path == "wiki/custom"
-        assert config.wiki_file_path == ".gobby/custom_wiki"
 
 
 class TestMCPClientProxyConfig:
@@ -1936,7 +1906,6 @@ class TestDaemonConfigComposition:
         assert isinstance(config.compact_handoff, CompactHandoffConfig)
         assert isinstance(config.context_injection, ContextInjectionConfig)
         assert isinstance(config.session_summary, SessionSummaryConfig)
-        assert isinstance(config.session_wiki, SessionWikiConfig)
         assert isinstance(config.session_lifecycle, SessionLifecycleConfig)
         assert isinstance(config.message_tracking, MessageTrackingConfig)
 

@@ -579,13 +579,10 @@ class TestExportMerge:
             "content": (
                 "PostgreSQL migrations are flattened at baseline version 297. "
                 "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 297`, "
-                "and `src/gobby/storage/migrations/` has no active SQL migration files; "
-                "historical PostgreSQL baseline states below v297 are intentionally "
-                "unsupported/reset-required. Fresh databases rely on "
-                "`postgres_baseline_schema.sql`, which already includes the folded "
-                "v295-v297 objects such as `session_wiki_revisions`, "
-                "`sessions_wiki_revision_fk`, and "
-                "`idx_sessions_wiki_synthesis_failures_source`."
+                "and `src/gobby/storage/migrations/` holds only post-baseline SQL "
+                "migration files; historical PostgreSQL baseline states below v297 "
+                "are intentionally unsupported/reset-required. Fresh databases rely "
+                "on `postgres_baseline_schema.sql` for the folded baseline schema."
             ),
             "created_at": "2026-05-18T14:43:36.509768+00:00",
             "tags": ["storage", "postgres", "migrations"],
@@ -597,12 +594,10 @@ class TestExportMerge:
             "content": (
                 "PostgreSQL migrations are flattened at baseline version 297. "
                 "`src/gobby/storage/migrations.py` has `BASELINE_VERSION = 297`, "
-                "and `src/gobby/storage/migrations/` has no active SQL migration files; "
-                "historical PostgreSQL baseline states below v297 are intentionally "
-                "unsupported/reset-required. Fresh databases rely on "
-                "`postgres_baseline_schema.sql`, which includes the folded v295-v297 "
-                "objects: `session_wiki_revisions`, `sessions_wiki_revision_fk`, "
-                "and `idx_sessions_wiki_synthesis_failures_source`."
+                "and `src/gobby/storage/migrations/` holds only post-baseline SQL "
+                "migration files; historical PostgreSQL baseline states below v297 "
+                "are intentionally unsupported/reset-required. Fresh databases rely "
+                "on `postgres_baseline_schema.sql` for the folded baseline state."
             ),
             "created_at": "2026-05-17T20:19:19.756488+00:00",
             "tags": ["storage", "migrations", "baseline", "postgres", "v297"],
