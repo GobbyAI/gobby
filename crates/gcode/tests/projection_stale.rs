@@ -4,9 +4,8 @@ mod serial_db {
     use serde_json::Value;
     use std::process::Command;
 
-    const GCODE_POSTGRES_TEST_DATABASE_URL_ENV: &str = "GCODE_POSTGRES_TEST_DATABASE_URL";
-    const GOBBY_POSTGRES_TEST_DATABASE_URL_ENV: &str = "GOBBY_POSTGRES_TEST_DATABASE_URL";
-    const DATABASE_URL_ENV: &str = "DATABASE_URL";
+    use gobby_code::test_env;
+
     const PROJECT_ID: &str = "gcode-projection-stale-missing-file";
     const FILE_PATH: &str = "src/lib.rs";
 
@@ -17,7 +16,7 @@ mod serial_db {
     )]
     #[serial_test::serial(serial_db)]
     fn vector_sync_file_allows_deleted_indexed_file_row() {
-        let database_url = postgres_test_database_url("projection stale tests");
+        let database_url = test_env::postgres_test_database_url("projection stale tests");
         let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");
         cleanup_project(&mut conn, PROJECT_ID).expect("pre-clean project rows");
         let _cleanup = ProjectCleanup {
@@ -88,10 +87,10 @@ mod serial_db {
     )]
     #[serial_test::serial(serial_db)]
     fn prune_reconciles_orphan_project_rows_without_touching_valid_project() {
-        let database_url = postgres_test_database_url("projection stale tests");
+        let database_url = test_env::postgres_test_database_url("projection stale tests");
         let mut conn = Client::connect(&database_url, NoTls).expect("connect PostgreSQL");
-        let valid_project_id = "gcode-prune-valid-project";
-        let orphan_project_id = "gcode-prune-orphan-project";
+        let valid_project_id = "11111111-2222-4333-8444-555555555555";
+        let orphan_project_id = "66666666-7777-4888-9999-aaaaaaaaaaaa";
         cleanup_project(&mut conn, valid_project_id).expect("pre-clean valid project rows");
         cleanup_project(&mut conn, orphan_project_id).expect("pre-clean orphan project rows");
         let _valid_cleanup = ProjectCleanup {
@@ -158,48 +157,6 @@ mod serial_db {
         assert_eq!(project_child_row_count(&mut conn, orphan_project_id), 0);
         assert_eq!(project_child_row_count(&mut conn, valid_project_id), 2);
         assert_eq!(indexed_project_count(&mut conn, valid_project_id), 1);
-    }
-
-    fn postgres_test_database_url(purpose: &str) -> String {
-        postgres_test_database_url_from_env().unwrap_or_else(|| {
-            panic!(
-                "{purpose} requires a PostgreSQL test database URL; set \
-                 {GCODE_POSTGRES_TEST_DATABASE_URL_ENV}, \
-                 {GOBBY_POSTGRES_TEST_DATABASE_URL_ENV}, {DATABASE_URL_ENV}, \
-                 or GOBBY_POSTGRES_TEST_* components"
-            )
-        })
-    }
-
-    fn postgres_test_database_url_from_env() -> Option<String> {
-        [
-            GCODE_POSTGRES_TEST_DATABASE_URL_ENV,
-            GOBBY_POSTGRES_TEST_DATABASE_URL_ENV,
-            DATABASE_URL_ENV,
-        ]
-        .iter()
-        .find_map(|name| non_empty_env(name))
-        .or_else(postgres_test_database_url_from_parts)
-    }
-
-    fn postgres_test_database_url_from_parts() -> Option<String> {
-        let database = non_empty_env("GOBBY_POSTGRES_TEST_DB")?;
-        let user = non_empty_env("GOBBY_POSTGRES_TEST_USER")?;
-        let password = non_empty_env("GOBBY_POSTGRES_TEST_PASSWORD").unwrap_or_default();
-        let host =
-            non_empty_env("GOBBY_POSTGRES_TEST_HOST").unwrap_or_else(|| "localhost".to_string());
-        let port = non_empty_env("GOBBY_POSTGRES_TEST_PORT").unwrap_or_else(|| "5432".to_string());
-
-        Some(format!(
-            "postgresql://{user}:{password}@{host}:{port}/{database}"
-        ))
-    }
-
-    fn non_empty_env(name: &str) -> Option<String> {
-        std::env::var(name)
-            .ok()
-            .map(|value| value.trim().to_string())
-            .filter(|value| !value.is_empty())
     }
 
     struct ProjectCleanup {

@@ -95,6 +95,9 @@ tempfile = "3"
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[build-dependencies]
+gobby-core = { path = "../gcore", version = "0.6.0" }
+
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }
 proptest = "1"

@@ -6,7 +6,6 @@ const DEFAULT_MAX_INBOX_ITEM_BYTES: u64 = 500_000_000;
 use crate::error::WikiError;
 use anyhow::{Context, anyhow, bail};
 use gobby_core::provisioning::{StandaloneConfig, gcore_config_path};
-use serde::Deserialize;
 use std::net::{SocketAddr, ToSocketAddrs};
 use std::path::Path;
 use std::time::Duration;
@@ -16,12 +15,6 @@ const GOBBY_POSTGRES_DSN_ENV: &str = "GOBBY_POSTGRES_DSN";
 const GWIKI_BROKER_TIMEOUT_MS_ENV: &str = "GWIKI_BROKER_TIMEOUT_MS";
 const LOCAL_CLI_TOKEN_FILENAME: &str = "local_cli_token";
 const DEFAULT_BROKER_TIMEOUT: Duration = Duration::from_millis(7000);
-
-#[derive(Deserialize)]
-struct HubBootstrap {
-    hub_backend: Option<String>,
-    database_url: Option<String>,
-}
 
 #[derive(Debug)]
 struct ValidatedDaemonUrl {
@@ -42,7 +35,9 @@ pub(crate) fn database_url() -> anyhow::Result<Option<String>> {
             log::debug!("failed to resolve brokered gwiki database URL: {error}");
         }
     }
-    if let Some(database_url) = resolve_database_url_from_bootstrap_file(&bootstrap_path)? {
+    if let Some(database_url) =
+        gobby_core::bootstrap::postgres_database_url_from_bootstrap_file(&bootstrap_path)?
+    {
         return Ok(Some(database_url));
     }
     resolve_database_url_from_gcore_config(&home)
@@ -72,20 +67,6 @@ fn resolve_database_url_from_gcore_config(home: &Path) -> anyhow::Result<Option<
     Ok(config
         .get("databases.postgres.dsn")
         .and_then(|value| non_empty_trimmed(Some(value.to_string()))))
-}
-
-fn resolve_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {
-    if !path.exists() {
-        return Ok(None);
-    }
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read Gobby bootstrap at {}", path.display()))?;
-    let bootstrap: HubBootstrap = serde_yaml::from_str(&contents)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
-    if matches!(bootstrap.hub_backend.as_deref(), Some(backend) if backend != "postgres") {
-        return Ok(None);
-    }
-    Ok(non_empty_trimmed(bootstrap.database_url))
 }
 
 fn resolve_brokered_database_url_at(

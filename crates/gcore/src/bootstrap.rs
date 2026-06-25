@@ -24,6 +24,12 @@ pub const DEFAULT_BIND_HOST: &str = "127.0.0.1";
 
 const BOOTSTRAP_FILENAME: &str = "bootstrap.yaml";
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HubDatabaseBootstrap {
+    pub hub_backend: Option<String>,
+    pub database_url: Option<String>,
+}
+
 /// A daemon endpoint as advertised by bootstrap.yaml.
 ///
 /// `host` is returned verbatim from the config (or [`DEFAULT_BIND_HOST`]);
@@ -89,6 +95,67 @@ pub fn read_daemon_endpoint_at(path: &Path) -> DaemonEndpoint {
         .unwrap_or_else(|| DEFAULT_BIND_HOST.to_string());
 
     DaemonEndpoint { host, port }
+}
+
+pub fn read_hub_database_bootstrap_file(
+    path: &Path,
+) -> anyhow::Result<Option<HubDatabaseBootstrap>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+
+    let contents = std::fs::read_to_string(path).map_err(|error| {
+        anyhow::anyhow!(
+            "failed to read Gobby bootstrap at {}: {error}",
+            path.display()
+        )
+    })?;
+    parse_hub_database_bootstrap(&contents)
+        .map(Some)
+        .map_err(|error| anyhow::anyhow!("failed to parse {}: {error}", path.display()))
+}
+
+pub fn parse_hub_database_bootstrap(contents: &str) -> anyhow::Result<HubDatabaseBootstrap> {
+    let yaml: serde_yaml::Value = serde_yaml::from_str(contents)?;
+    let Some(map) = yaml.as_mapping() else {
+        anyhow::bail!("bootstrap.yaml must be a mapping");
+    };
+
+    Ok(HubDatabaseBootstrap {
+        hub_backend: optional_string_field(map, "hub_backend")?,
+        database_url: optional_string_field(map, "database_url")?,
+    })
+}
+
+pub fn postgres_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {
+    let Some(bootstrap) = read_hub_database_bootstrap_file(path)? else {
+        return Ok(None);
+    };
+    Ok(postgres_database_url_from_bootstrap(&bootstrap))
+}
+
+pub fn postgres_database_url_from_bootstrap(bootstrap: &HubDatabaseBootstrap) -> Option<String> {
+    if matches!(bootstrap.hub_backend.as_deref(), Some("postgres")) {
+        bootstrap.database_url.clone()
+    } else {
+        None
+    }
+}
+
+fn optional_string_field(map: &serde_yaml::Mapping, name: &str) -> anyhow::Result<Option<String>> {
+    let key = serde_yaml::Value::String(name.to_string());
+    match map.get(&key) {
+        Some(value) => match value.as_str() {
+            Some(text) => Ok(non_empty_trimmed(text)),
+            None => anyhow::bail!("bootstrap.yaml field `{name}` must be a string"),
+        },
+        None => Ok(None),
+    }
+}
+
+fn non_empty_trimmed(value: &str) -> Option<String> {
+    let trimmed = value.trim();
+    (!trimmed.is_empty()).then(|| trimmed.to_string())
 }
 
 #[cfg(test)]
@@ -175,5 +242,77 @@ mod tests {
             }
         }
         assert_eq!(path, Some(dir.path().join("bootstrap.yaml")));
+    }
+
+    #[test]
+    fn postgres_database_url_missing_file_returns_none() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("does-not-exist.yaml");
+
+        assert_eq!(
+            postgres_database_url_from_bootstrap_file(&path).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn postgres_database_url_reads_postgres_url() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(
+            &path,
+            "hub_backend: postgres\ndatabase_url: postgresql://localhost/gobby\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            postgres_database_url_from_bootstrap_file(&path)
+                .unwrap()
+                .as_deref(),
+            Some("postgresql://localhost/gobby")
+        );
+    }
+
+    #[test]
+    fn postgres_database_url_trims_url() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(
+            &path,
+            "hub_backend: postgres\ndatabase_url: '  postgresql://localhost/gobby  '\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            postgres_database_url_from_bootstrap_file(&path)
+                .unwrap()
+                .as_deref(),
+            Some("postgresql://localhost/gobby")
+        );
+    }
+
+    #[test]
+    fn postgres_database_url_ignores_non_postgres_backend() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(
+            &path,
+            "hub_backend: local-file\ndatabase_url: postgresql://localhost/gobby\n",
+        )
+        .unwrap();
+
+        assert_eq!(
+            postgres_database_url_from_bootstrap_file(&path).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn postgres_database_url_malformed_yaml_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(&path, "hub_backend: [").unwrap();
+
+        assert!(postgres_database_url_from_bootstrap_file(&path).is_err());
     }
 }

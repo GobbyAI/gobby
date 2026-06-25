@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use anyhow::{Context as _, anyhow, bail};
+use gobby_core::bootstrap::HubDatabaseBootstrap;
 use gobby_core::provisioning::{GCORE_CONFIG_FILENAME, StandaloneConfig};
 use serde::Deserialize;
 
@@ -15,12 +16,6 @@ const DEFAULT_BROKER_TIMEOUT: Duration = Duration::from_millis(7000);
 #[derive(Debug, Deserialize)]
 struct BrokerDatabaseUrlResponse {
     database_url: String,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct BootstrapDatabase {
-    hub_backend: String,
-    database_url: Option<String>,
 }
 
 /// Return Gobby home, respecting `GOBBY_HOME` when the daemon was configured with it.
@@ -156,12 +151,9 @@ fn resolve_recorded_hub_database_url(
 }
 
 fn resolve_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {
-    if !path.exists() {
+    let Some(bootstrap) = gobby_core::bootstrap::read_hub_database_bootstrap_file(path)? else {
         return Ok(None);
-    }
-    let contents = std::fs::read_to_string(path)
-        .with_context(|| format!("failed to read Gobby bootstrap at {}", path.display()))?;
-    let bootstrap = parse_bootstrap_database(&contents)?;
+    };
     resolve_database_url_from_bootstrap(&bootstrap).map(Some)
 }
 
@@ -185,36 +177,15 @@ fn resolve_database_url_from_env(
     None
 }
 
-fn parse_bootstrap_database(contents: &str) -> anyhow::Result<BootstrapDatabase> {
-    let yaml: serde_yaml::Value =
-        serde_yaml::from_str(contents).context("failed to parse bootstrap.yaml")?;
-    let Some(map) = yaml.as_mapping() else {
-        bail!("bootstrap.yaml must be a mapping");
-    };
-
-    let get_string = |name: &str| -> anyhow::Result<Option<String>> {
-        let key = serde_yaml::Value::String(name.to_string());
-        match map.get(&key) {
-            Some(value) => match value.as_str() {
-                Some(text) if !text.trim().is_empty() => Ok(Some(text.to_string())),
-                Some(_) | None => bail!("bootstrap.yaml field `{name}` must be a string"),
-            },
-            None => Ok(None),
-        }
-    };
-
-    Ok(BootstrapDatabase {
-        hub_backend: get_string("hub_backend")?
-            .context("bootstrap.yaml must include `hub_backend: postgres`")?,
-        database_url: get_string("database_url")?,
-    })
-}
-
-fn resolve_database_url_from_bootstrap(bootstrap: &BootstrapDatabase) -> anyhow::Result<String> {
-    if bootstrap.hub_backend != "postgres" {
+fn resolve_database_url_from_bootstrap(bootstrap: &HubDatabaseBootstrap) -> anyhow::Result<String> {
+    let hub_backend = bootstrap
+        .hub_backend
+        .as_deref()
+        .context("bootstrap.yaml must include `hub_backend: postgres`")?;
+    if hub_backend != "postgres" {
         bail!(
             "gcode requires `hub_backend: postgres` in bootstrap.yaml. Current hub_backend is `{}`. Configure the Gobby PostgreSQL hub before running gcode.",
-            bootstrap.hub_backend
+            hub_backend
         );
     }
 
@@ -359,9 +330,9 @@ mod tests {
     use std::net::TcpListener;
     use std::thread;
 
-    fn bootstrap(hub_backend: &str, database_url: Option<&str>) -> BootstrapDatabase {
-        BootstrapDatabase {
-            hub_backend: hub_backend.to_string(),
+    fn bootstrap(hub_backend: &str, database_url: Option<&str>) -> HubDatabaseBootstrap {
+        HubDatabaseBootstrap {
+            hub_backend: Some(hub_backend.to_string()),
             database_url: database_url.map(str::to_string),
         }
     }
@@ -522,7 +493,11 @@ mod tests {
 
     #[test]
     fn missing_hub_backend_fails_clearly() {
-        let err = parse_bootstrap_database("database_url: postgresql://inline/db\n")
+        let bootstrap = gobby_core::bootstrap::parse_hub_database_bootstrap(
+            "database_url: postgresql://inline/db\n",
+        )
+        .expect("parse bootstrap");
+        let err = resolve_database_url_from_bootstrap(&bootstrap)
             .expect_err("missing hub_backend must fail");
 
         assert!(err.to_string().contains("hub_backend: postgres"));
@@ -538,13 +513,13 @@ mod tests {
 
     #[test]
     fn parse_bootstrap_database_reads_postgres_fields() {
-        let parsed = parse_bootstrap_database(
+        let parsed = gobby_core::bootstrap::parse_hub_database_bootstrap(
             "hub_backend: postgres\n\
              database_url: postgresql://inline/db\n",
         )
         .expect("parse bootstrap");
 
-        assert_eq!(parsed.hub_backend, "postgres");
+        assert_eq!(parsed.hub_backend.as_deref(), Some("postgres"));
         assert_eq!(
             parsed.database_url.as_deref(),
             Some("postgresql://inline/db")
