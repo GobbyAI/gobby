@@ -45,6 +45,21 @@ fn explicit_file_route_sends_unsupported_text_to_content_only() {
 }
 
 #[test]
+fn explicit_file_route_skips_late_nul_files() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    let mut content = vec![b'a'; 8192 + 128];
+    content.push(0);
+    content.extend_from_slice(b"still binary\n");
+    write_file(root, "src/lib.rs", &content);
+
+    assert_eq!(
+        explicit_file_route(root, &root.join("src/lib.rs"), DEFAULT_EXCLUDES),
+        ExplicitFileRoute::Skip
+    );
+}
+
+#[test]
 fn explicit_file_routes_follow_respect_gitignore_setting() {
     let tmp = tempfile::tempdir().expect("tempdir");
     let root = tmp.path();

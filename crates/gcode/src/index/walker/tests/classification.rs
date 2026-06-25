@@ -134,6 +134,13 @@ fn oversized_data_blob() -> Vec<u8> {
     vec![b'a'; crate::index::MAX_DATA_LANGUAGE_AST_SIZE as usize + 1]
 }
 
+fn late_nul_blob() -> Vec<u8> {
+    let mut content = vec![b'a'; 8192 + 128];
+    content.push(0);
+    content.extend_from_slice(b"still binary\n");
+    content
+}
+
 #[test]
 fn classifies_oversized_json_as_content_only_but_small_json_as_ast() {
     let tmp = tempfile::tempdir().expect("tempdir");
@@ -179,5 +186,31 @@ fn keeps_oversized_source_language_as_ast() {
     assert_eq!(
         classify_file(root, &root.join("src/big.rs"), &excludes),
         Some(FileClassification::Ast)
+    );
+}
+
+#[test]
+fn skips_content_only_file_with_late_nul_byte() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, "README.md", &late_nul_blob());
+    let excludes: Vec<&str> = Vec::new();
+
+    assert_eq!(
+        classify_file(root, &root.join("README.md"), &excludes),
+        None
+    );
+}
+
+#[test]
+fn skips_ast_source_file_with_late_nul_byte() {
+    let tmp = tempfile::tempdir().expect("tempdir");
+    let root = tmp.path();
+    write_file(root, "src/lib.rs", &late_nul_blob());
+    let excludes: Vec<&str> = Vec::new();
+
+    assert_eq!(
+        classify_file(root, &root.join("src/lib.rs"), &excludes),
+        None
     );
 }
