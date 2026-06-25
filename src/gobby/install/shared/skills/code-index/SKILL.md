@@ -43,7 +43,7 @@ When navigating code for context or understanding:
 3. **Navigate by structure/ID**: use `gcode outline path/to/file` to survey structure, then `gcode symbol <full-uuid>` or `gcode symbols <full-uuid> <full-uuid> ...` using IDs from search or outline.
 4. **Fetch tight neighboring context only when needed**: use `sed`/`awk` only for tight neighboring context (1-3 lines) after symbol retrieval.
 
-Search output is intentionally snippet-sized. Broad file reads and wide line ranges are noisy, so use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol` when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
+Search output is intentionally snippet-sized. Use `gcode symbol-at` when a file/line is known, or `gcode outline` then `gcode symbol` when navigating by structure/ID, before reaching for broad `sed`, `awk`, or full-file reads.
 
 ## Navigation
 
@@ -61,6 +61,9 @@ Use these **before making changes** to understand what you'll affect:
 - `gcode callers <symbol-id>` — who calls this function/method? Prefer a full symbol ID after resolving one
 - `gcode usages <symbol-id>` — all usages (calls + imports). Prefer a full symbol ID after resolving one
 - `gcode imports <file>` — what does this file import?
+- `gcode path <from> <to>` — shortest CALLS path between two symbol queries (requires the graph backend); `--max-depth` bounds the hop search
+
+`gcode search`, `gcode usages`, and `gcode blast-radius` accept `--token-budget <N>` to trim returned rows to an approximate token budget — useful when feeding bounded context to an agent.
 
 ## Graph Lifecycle
 
@@ -74,6 +77,9 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 - `gcode graph clear` — clear the current project's graph projection
 - `gcode graph clear --project-id <id>` — clear a projection without resolving a project root
 - `gcode graph rebuild` — rebuild it (cheaper than `gcode invalidate` + reindex; doesn't touch PostgreSQL symbol/content rows)
+- `gcode graph cleanup-orphans` — remove graph projection data for files missing from PostgreSQL and run project graph orphan cleanup
+- `gcode vector cleanup-orphans` — remove Qdrant code-symbol vectors for files missing from PostgreSQL, without resolving embeddings
+- `gcode prune` — remove stale project records globally and reconcile graph and vector projections for all remaining indexed projects; use `--project` to scope projection cleanup
 
 ## When to use which
 
@@ -90,6 +96,7 @@ for the UI, but graph sync/read/lifecycle behavior lives in `gcode`.
 | What breaks if I change X | `gcode blast-radius <name>` |
 | Who calls a function | `gcode callers <symbol-id>` |
 | All references to a symbol | `gcode usages <symbol-id>` |
+| Shortest call path between two symbols | `gcode path <from> <to>` |
 
 ## Output and global flags
 
