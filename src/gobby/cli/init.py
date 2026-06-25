@@ -11,6 +11,8 @@ from pathlib import Path
 
 import click
 
+from gobby.cli._install_prompts import _echo_wiki_setup_summary
+from gobby.cli.installers.git_hooks import install_git_hooks
 from gobby.utils.native_bin import resolve_native_bin
 from gobby.utils.project_init import initialize_project
 
@@ -88,6 +90,9 @@ def init(
         except (subprocess.TimeoutExpired, subprocess.SubprocessError, OSError) as e:
             click.echo(f"Code indexing skipped: {e}", err=True)
 
+    _maybe_install_git_hooks_for_init(Path(result.project_path).resolve())
+
+    if not result.already_existed:
         # Check tmux availability
         import shutil
 
@@ -155,6 +160,53 @@ def init(
         team_id=linear_team_id,
         linear_project_id=linear_project_id,
     )
+
+
+def _maybe_install_git_hooks_for_init(project_path: Path) -> None:
+    """Install Git hooks/wiki setup during init when project is a Git top-level root."""
+    git_root = _git_toplevel(project_path)
+    if git_root is None:
+        return
+
+    if git_root != project_path:
+        click.echo(
+            "  Warning: Git hooks/wiki setup skipped: "
+            f"{project_path} is inside Git repository {git_root}. "
+            "Run `gobby init` from the repository root to enable it."
+        )
+        return
+
+    hook_result = install_git_hooks(project_path)
+    if not hook_result.get("success"):
+        click.echo(f"  Warning: Git hooks/wiki setup skipped: {hook_result.get('error')}")
+        return
+
+    installed = hook_result.get("installed") or []
+    skipped = hook_result.get("skipped") or []
+    if installed:
+        click.echo(f"Git hooks installed: {', '.join(installed)}")
+    elif skipped:
+        click.echo("Git hooks already installed")
+    else:
+        click.echo("Git hooks checked")
+    _echo_wiki_setup_summary(hook_result.get("wiki_setup"))
+
+
+def _git_toplevel(project_path: Path) -> Path | None:
+    if not project_path.exists():
+        return None
+
+    proc = subprocess.run(
+        ["git", "-C", str(project_path), "rev-parse", "--show-toplevel"],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if proc.returncode != 0:
+        return None
+
+    root = proc.stdout.strip()
+    return Path(root).resolve() if root else None
 
 
 def _maybe_run_linear_setup(

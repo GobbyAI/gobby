@@ -441,9 +441,36 @@ def _run_git_hooks_install(
                 click.echo(f"  - {hook}")
         if not result.get("installed") and not result.get("skipped"):
             click.echo("No hooks to install")
+        _echo_wiki_setup_summary(result.get("wiki_setup"))
     else:
         click.echo(f"Failed: {result['error']}", err=True)
     click.echo("")
+
+
+def _echo_wiki_setup_summary(wiki_setup: dict[str, Any] | None) -> None:
+    """Echo wiki branch setup details from git hook installation."""
+    if not wiki_setup:
+        return
+
+    click.echo("Wiki branch setup:")
+    if wiki_setup.get("success"):
+        worktree_path = wiki_setup.get("worktree_path")
+        if worktree_path:
+            click.echo(f"  - Worktree: {worktree_path}")
+        if wiki_setup.get("gitignore_updated"):
+            click.echo("  - Added gobby-wiki/ to .gitignore")
+        else:
+            click.echo("  - .gitignore already covers gobby-wiki/")
+    else:
+        click.echo("  - Skipped")
+
+    tracked_files = wiki_setup.get("tracked_files") or []
+    if tracked_files:
+        click.echo(f"  - Tracked gobby-wiki files: {len(tracked_files)}")
+        click.echo("  - Manual cleanup: git rm --cached -r gobby-wiki")
+
+    for warning in wiki_setup.get("warnings") or []:
+        click.echo(f"  - Warning: {warning}")
 
 
 def _run_qdrant_install(

@@ -18,6 +18,8 @@ import time
 from pathlib import Path
 from typing import Any
 
+from .wiki_branch_setup import default_wiki_setup_result, setup_wiki_branch
+
 logger = logging.getLogger(__name__)
 
 # Markers for identifying Gobby hook sections
@@ -128,16 +130,71 @@ fi
 # Gobby verification runner for pre-push
 # Runs configured verification commands (type_check, unit_tests, security, etc.)
 
-# Skip verification for branch deletions (no code being pushed)
-DELETE_ONLY=true
-while read local_ref local_sha remote_ref remote_sha; do
-    if [ "$local_sha" != "0000000000000000000000000000000000000000" ]; then
-        DELETE_ONLY=false
-        break
-    fi
-done
-if [ "$DELETE_ONLY" = true ]; then
+# Capture pre-push refs once so delete checks, verification, and wiki publishing
+# all use the same stdin payload.
+PUSH_REFS=$(cat)
+ZERO_SHA="0000000000000000000000000000000000000000"
+
+DELETE_ONLY=false
+WIKI_ONLY=false
+if [ -n "$PUSH_REFS" ]; then
+    DELETE_ONLY=true
+    WIKI_ONLY=true
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        if [ -z "$local_ref" ]; then
+            continue
+        fi
+
+        if [ "$local_sha" != "$ZERO_SHA" ]; then
+            DELETE_ONLY=false
+        fi
+
+        branch="${local_ref#refs/heads/}"
+        if [ "$branch" = "$local_ref" ]; then
+            branch="${remote_ref#refs/heads/}"
+        fi
+        if [ "$branch" != "wiki" ]; then
+            WIKI_ONLY=false
+        fi
+    done <<< "$PUSH_REFS"
+fi
+if [ "$DELETE_ONLY" = true ] || [ "$WIKI_ONLY" = true ]; then
     exit 0
+fi
+
+REMOTE_NAME="${1:-origin}"
+DEFAULT_BRANCH=$(
+    git symbolic-ref --quiet --short "refs/remotes/${REMOTE_NAME}/HEAD" 2>/dev/null \
+        | sed "s#^${REMOTE_NAME}/##"
+)
+if [ -z "$DEFAULT_BRANCH" ]; then
+    if git show-ref --verify --quiet refs/heads/main \
+        || git show-ref --verify --quiet "refs/remotes/${REMOTE_NAME}/main"; then
+        DEFAULT_BRANCH="main"
+    elif git show-ref --verify --quiet refs/heads/master \
+        || git show-ref --verify --quiet "refs/remotes/${REMOTE_NAME}/master"; then
+        DEFAULT_BRANCH="master"
+    else
+        DEFAULT_BRANCH=$(git branch --show-current 2>/dev/null || true)
+    fi
+fi
+
+PUBLISH_WIKI=false
+if [ -n "$DEFAULT_BRANCH" ] && [ "$DEFAULT_BRANCH" != "wiki" ] && [ -n "$PUSH_REFS" ]; then
+    while read -r local_ref local_sha remote_ref remote_sha; do
+        if [ -z "$local_ref" ] || [ "$local_sha" = "$ZERO_SHA" ]; then
+            continue
+        fi
+
+        branch="${local_ref#refs/heads/}"
+        if [ "$branch" = "$local_ref" ]; then
+            branch="${remote_ref#refs/heads/}"
+        fi
+        if [ "$branch" = "$DEFAULT_BRANCH" ]; then
+            PUBLISH_WIKI=true
+            break
+        fi
+    done <<< "$PUSH_REFS"
 fi
 
 # Gobby sync — export tasks and memories before push
@@ -166,6 +223,43 @@ if command -v gobby >/dev/null 2>&1; then
     if [ $GOBBY_EXIT -ne 0 ]; then
         echo "Gobby pre-push verification failed"
         exit $GOBBY_EXIT
+    fi
+fi
+
+if [ "$PUBLISH_WIKI" = true ]; then
+    REPO_ROOT=$(git rev-parse --show-toplevel 2>/dev/null || true)
+    if [ -n "$REPO_ROOT" ] && [ -d "$REPO_ROOT/gobby-wiki" ]; then
+        REPO_NAME=$(basename "$REPO_ROOT")
+        REPO_PARENT=$(cd "$REPO_ROOT/.." && pwd)
+        WIKI_WORKTREE="$REPO_PARENT/${REPO_NAME}-wiki"
+
+        if [ ! -d "$WIKI_WORKTREE" ]; then
+            echo "gobby: wiki publish skipped; missing worktree at $WIKI_WORKTREE" >&2
+            echo "gobby: run 'gobby install --hooks' from $REPO_ROOT to configure it." >&2
+        elif ! git -C "$WIKI_WORKTREE" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+            echo "gobby: wiki publish skipped; $WIKI_WORKTREE is not a Git worktree" >&2
+        elif [ "$(git -C "$WIKI_WORKTREE" branch --show-current 2>/dev/null)" != "wiki" ]; then
+            echo "gobby: wiki publish skipped; $WIKI_WORKTREE is not on branch wiki" >&2
+        else
+            find "$WIKI_WORKTREE" -mindepth 1 -maxdepth 1 ! -name .git -exec rm -rf {} +
+            if command -v rsync >/dev/null 2>&1; then
+                rsync -a --delete --exclude .git "$REPO_ROOT/gobby-wiki"/ "$WIKI_WORKTREE"/
+            else
+                (cd "$REPO_ROOT/gobby-wiki" && tar --exclude .git -cf - .) \
+                    | (cd "$WIKI_WORKTREE" && tar -xf -)
+            fi
+
+            git -C "$WIKI_WORKTREE" add -A
+            if ! git -C "$WIKI_WORKTREE" diff --cached --quiet --exit-code; then
+                if ! git -C "$WIKI_WORKTREE" commit -m "gobby: sync wiki vault" --no-verify; then
+                    echo "gobby: wiki publish warning; failed to commit wiki vault" >&2
+                fi
+            fi
+
+            if ! git -C "$WIKI_WORKTREE" push "$REMOTE_NAME" wiki; then
+                echo "gobby: wiki publish warning; failed to push branch wiki" >&2
+            fi
+        fi
     fi
 fi
 """,
@@ -381,6 +475,7 @@ def install_git_hooks(
         "skipped": [],
         "backups": [],
         "precommit_installed": False,
+        "wiki_setup": default_wiki_setup_result(),
         "error": None,
     }
 
@@ -460,6 +555,7 @@ def install_git_hooks(
             "Pre-commit detected - gobby hooks will run verification first, then pre-commit framework"
         )
 
+    result["wiki_setup"] = setup_wiki_branch(project_path)
     result["success"] = True
     return result
 

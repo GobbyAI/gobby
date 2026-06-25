@@ -184,10 +184,20 @@ class TestInstallCommand:
             "success": True,
             "installed": ["pre-commit", "post-merge"],
             "skipped": [],
+            "wiki_setup": {
+                "success": True,
+                "gitignore_updated": True,
+                "worktree_path": "/fake/repo-wiki",
+                "branch": "wiki",
+                "warnings": [],
+                "tracked_files": [],
+            },
         }
         result = runner.invoke(install, ["--hooks"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "pre-commit" in result.output
+        assert "Wiki branch setup:" in result.output
+        assert "/fake/repo-wiki" in result.output
 
     def test_install_claude_targeted_skips_embedding_and_services(
         self,
