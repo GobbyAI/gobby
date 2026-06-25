@@ -885,6 +885,15 @@ fn render_session_wiki_markdown(
     {
         fields.push(("model", MetadataValue::string(model)));
     }
+    // Preserve the daemon page's `project:` provenance inside the machine-global
+    // `sessions` topic. Named `session_project` so it reads as provenance rather
+    // than a gwiki scope key. See gobby-cli #940 / session-wiki Model B.
+    if let Some(project) = page
+        .field("project")
+        .and_then(|value| non_empty_string(value))
+    {
+        fields.push(("session_project", MetadataValue::string(project)));
+    }
     let tags = page.tags();
     if !tags.is_empty() {
         fields.push(("tags", MetadataValue::json(&tags)));
@@ -1035,7 +1044,22 @@ mod tests {
         );
         assert!(!derived.contains("type: source"));
         assert!(!derived.contains("session_id: sess-1"));
-        assert!(!derived.contains("project: proj-1"));
+        // The daemon `project:` line is stripped, but its value is preserved as a
+        // gwiki-owned `session_project` field. Match on exact lines: a substring
+        // check is ambiguous because `session_project: proj-1` contains the
+        // `project: proj-1` substring.
+        assert!(
+            derived
+                .lines()
+                .any(|line| line.trim() == "session_project: proj-1"),
+            "expected preserved session_project provenance, got:\n{derived}"
+        );
+        assert!(
+            !derived
+                .lines()
+                .any(|line| line.trim_start().starts_with("project:")),
+            "expected raw daemon project: line to be stripped, got:\n{derived}"
+        );
 
         // gwiki-owned frontmatter.
         assert!(derived.contains("source_kind: session"));
