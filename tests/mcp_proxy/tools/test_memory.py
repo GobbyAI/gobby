@@ -708,9 +708,13 @@ class TestMemoryDreamTools:
                     {"dry_run": True, "wait": False, "full_sweep": True},
                 )
                 background_tasks = memory_dream_tools.get_background_tasks()
-                await asyncio.gather(*background_tasks)
+                assert len(background_tasks) == 1
+                assert background_tasks[0].get_name() == "memory-dream:aggregate-1"
+                background_results = await asyncio.gather(*background_tasks)
 
         assert result == {"success": True, "run_id": "aggregate-1", "status": "started"}
+        assert background_results == [{"success": True}]
+        assert memory_dream_tools.get_background_tasks() == ()
         service.start_all_due_projects_async.assert_awaited_once_with(
             dry_run=True,
             skip_consolidation=False,
