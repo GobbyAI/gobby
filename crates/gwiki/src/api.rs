@@ -190,6 +190,10 @@ pub struct SyncSessionsOptions {
     pub wiki_dir: Option<PathBuf>,
     pub limit: Option<usize>,
     pub raw: bool,
+    /// Generate a daemon-equivalent summary for raw archives that have no daemon
+    /// synthesis, instead of the structural skeleton. Degrades to skeleton when
+    /// AI is unavailable.
+    pub summarize: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

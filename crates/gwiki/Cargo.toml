@@ -1,6 +1,6 @@
 [package]
 name = "gobby-wiki"
-version = "0.6.3"
+version = "0.6.4"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -47,6 +47,8 @@ uuid = { version = "1", features = ["v4", "v5"] }
 regex = "1"
 scraper = "0.27"
 log = "0.4"
+# Renders the vendored shared session-summary prompt for standalone --summarize.
+minijinja = "2"
 percent-encoding = "2"
 url = "2"
 tempfile = "3"

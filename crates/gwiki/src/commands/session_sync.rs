@@ -60,6 +60,15 @@ pub(crate) fn execute(
     );
     let output_scope = resolved_scope_identity(&scope);
     let fetched_at = collect_timestamp()?;
+    // `--summarize` takes precedence over `--raw`: it also processes raw archives,
+    // just with an LLM summary instead of a skeleton.
+    let raw_mode = if options.summarize {
+        session_archive::RawArchiveMode::Summarize
+    } else if options.raw {
+        session_archive::RawArchiveMode::Skeleton
+    } else {
+        session_archive::RawArchiveMode::Skip
+    };
     if let Some(database_url) = database_url_for(COMMAND)? {
         let mut conn = connect_postgres_index(&database_url, COMMAND)?;
         let search_scope = search_scope_for_resolved(&scope);
@@ -71,7 +80,7 @@ pub(crate) fn execute(
                 &archive_dir,
                 &wiki_dir,
                 options.limit,
-                options.raw,
+                raw_mode,
                 &fetched_at,
             )?
         };
@@ -92,7 +101,7 @@ pub(crate) fn execute(
         &archive_dir,
         &wiki_dir,
         options.limit,
-        options.raw,
+        raw_mode,
         &fetched_at,
     )?;
     let counts = index_counts(&store);

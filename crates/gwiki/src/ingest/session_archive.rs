@@ -12,8 +12,8 @@ use crate::sources::{SourceKind, SourceManifest, SourceRecord};
 use crate::store::WikiIndexStore;
 
 use super::session::{
-    SessionFileSnapshot, SessionWikiFileSnapshot, ingest_session_file_without_index,
-    ingest_session_wiki_file_without_index,
+    SessionFileSnapshot, SessionSummarizer, SessionWikiFileSnapshot,
+    ingest_session_file_without_index, ingest_session_wiki_file_without_index,
 };
 
 /// Compound suffix of daemon-synthesized session wiki files in the wiki dir.
@@ -107,13 +107,26 @@ enum SessionSourceFile {
     RawArchive(PathBuf),
 }
 
+/// How to treat a raw transcript archive that has no daemon synthesis. Daemon
+/// synthesis pages are always ingested regardless of this mode.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum RawArchiveMode {
+    /// Ignore raw archives (default): only daemon synthesis pages are ingested.
+    Skip,
+    /// Ingest a structural skeleton page from the raw transcript (`--raw`).
+    Skeleton,
+    /// Generate a daemon-equivalent summary via the shared handoff prompt,
+    /// falling back to the skeleton when AI is unavailable (`--summarize`).
+    Summarize,
+}
+
 pub(crate) fn sync_session_transcript_archives(
     vault_root: &Path,
     store: &mut impl WikiIndexStore,
     archive_dir: &Path,
     wiki_dir: &Path,
     limit: Option<usize>,
-    include_raw: bool,
+    raw_mode: RawArchiveMode,
     fetched_at: &str,
 ) -> Result<SessionArchiveBatchIngest, WikiError> {
     if matches!(limit, Some(0)) {
@@ -157,6 +170,21 @@ pub(crate) fn sync_session_transcript_archives(
         .filter(|entry| entry.kind == SourceKind::Session)
         .map(|entry| (entry.canonical_location.clone(), entry.content_hash.clone()))
         .collect::<HashSet<(String, String)>>();
+    // Session pages already in the manifest. The `--summarize` path is gated on
+    // page *existence* (not content hash) because LLM output is nondeterministic:
+    // re-summarizing every run would superfluously regenerate and supersede. A
+    // later daemon synthesis still supersedes a standalone page via the Synthesis
+    // arm, which does not consult this set.
+    let existing_session_pages = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == SourceKind::Session)
+        .map(|entry| entry.canonical_location.clone())
+        .collect::<HashSet<String>>();
+    // Resolve AI once for the whole batch; `None` means standalone summarization
+    // is unavailable (mode not Summarize, AI routed off, or no `ai` feature) and
+    // raw archives fall back to skeleton pages.
+    let summarizer = SessionSummarizer::resolve(raw_mode == RawArchiveMode::Summarize);
     let scanned = work.len();
     let mut accepted = Vec::new();
     let mut skipped = Vec::new();
@@ -238,7 +266,9 @@ pub(crate) fn sync_session_transcript_archives(
                     });
                     continue;
                 }
-                if !include_raw {
+                // Only `Skip` mode ignores raw archives; both Skeleton and
+                // Summarize process them (Summarize even without --raw).
+                if raw_mode == RawArchiveMode::Skip {
                     skipped.push(SkippedSessionArchive {
                         archive_path: path,
                         content_hash: String::new(),
@@ -260,7 +290,65 @@ pub(crate) fn sync_session_transcript_archives(
                 // still seeds the title and the `source_archive` provenance field.
                 let external_id = external_id.unwrap_or_else(|| file_name.clone());
                 let canonical_location = format!("session:{external_id}");
-                // Dedup per canonical location, not globally.
+
+                // Standalone summary path: generate the daemon-format page once per
+                // session. Gated on page existence (idempotent) because LLM output
+                // is nondeterministic; a later daemon synthesis still supersedes it.
+                if raw_mode == RawArchiveMode::Summarize {
+                    if existing_session_pages.contains(&canonical_location) {
+                        skipped.push(SkippedSessionArchive {
+                            archive_path: path,
+                            content_hash,
+                            reason: "session_page_present".to_string(),
+                        });
+                        continue;
+                    }
+                    if let Some(summarizer) = &summarizer
+                        && let Some(md_bytes) =
+                            summarizer.summarize_archive(&path, &bytes, &external_id)
+                    {
+                        let snapshot = SessionWikiFileSnapshot {
+                            external_id: external_id.clone(),
+                            path: path.clone(),
+                            fetched_at: fetched_at.to_string(),
+                            bytes: md_bytes,
+                        };
+                        match ingest_session_wiki_file_without_index(vault_root, snapshot) {
+                            Ok(result) => {
+                                let archive_path = path.clone();
+                                let new_id = result.record.id.clone();
+                                known_session_hashes.insert((
+                                    result.record.canonical_location.clone(),
+                                    result.record.content_hash.clone(),
+                                ));
+                                accepted.push(AcceptedSessionArchive {
+                                    archive_path: path,
+                                    result,
+                                });
+                                if let Err(error) = supersede_session_page(
+                                    vault_root,
+                                    &manifest,
+                                    &external_id,
+                                    &new_id,
+                                ) {
+                                    failed.push(SessionArchiveFailure::from_wiki_error(
+                                        &archive_path,
+                                        error,
+                                    ));
+                                }
+                            }
+                            Err(error) => {
+                                failed.push(SessionArchiveFailure::from_wiki_error(&path, error));
+                            }
+                        }
+                        continue;
+                    }
+                    // Summary unavailable (AI off/empty/error): fall through to the
+                    // skeleton below so the session still lands as a page.
+                }
+
+                // Skeleton page: the default --raw path, or the summarize fallback.
+                // Dedup per canonical location keeps raw re-ingests idempotent.
                 if known_session_hashes
                     .contains(&(canonical_location.clone(), content_hash.clone()))
                 {

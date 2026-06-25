@@ -278,6 +278,13 @@ struct SyncSessionsArgs {
     /// Include raw transcript archives when no daemon synthesis exists.
     #[arg(long)]
     raw: bool,
+
+    /// For archives with no daemon synthesis, generate a daemon-equivalent
+    /// summary (shared handoff prompt) instead of the structural skeleton.
+    /// Processes raw archives even without --raw; degrades to the skeleton when
+    /// AI is unavailable. A later daemon synthesis supersedes the page.
+    #[arg(long)]
+    summarize: bool,
 }
 
 #[derive(Debug, Args)]
@@ -632,6 +639,7 @@ fn command_from_cli(command: CliCommand, scope: ScopeSelection) -> Result<Comman
                 wiki_dir: args.wiki_dir,
                 limit: args.limit,
                 raw: args.raw,
+                summarize: args.summarize,
             },
         }),
         CliCommand::Refresh(args) => Ok(Command::Refresh {

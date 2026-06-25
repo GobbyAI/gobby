@@ -146,6 +146,15 @@ pub(super) fn render_session_wiki_markdown(
     {
         fields.push(("session_project", MetadataValue::string(project)));
     }
+    // Standalone `gwiki sync-sessions --summarize` pages carry `summary_mode` so
+    // the vault can distinguish them from richer daemon synthesis (gobby-cli
+    // #950). Daemon flat files omit this key, so they are unaffected.
+    if let Some(summary_mode) = page
+        .field("summary_mode")
+        .and_then(|value| non_empty_string(value))
+    {
+        fields.push(("session_summary_mode", MetadataValue::string(summary_mode)));
+    }
     let tags = page.tags();
     if !tags.is_empty() {
         fields.push(("tags", MetadataValue::json(&tags)));

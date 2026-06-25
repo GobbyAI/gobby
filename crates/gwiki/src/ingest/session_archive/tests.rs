@@ -8,9 +8,6 @@ use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef};
 use crate::store::MemoryWikiStore;
 use crate::support::text::slugify_with_options;
 
-const INCLUDE_RAW: bool = true;
-const SYNTHESIS_ONLY: bool = false;
-
 #[test]
 fn sync_session_archives_ingests_gzip_and_indexes_once() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -28,7 +25,7 @@ fn sync_session_archives_ingests_gzip_and_indexes_once() {
         &archive_dir,
         &temp.path().join("session_wiki"),
         None,
-        INCLUDE_RAW,
+        RawArchiveMode::Skeleton,
         "2026-06-16T20:05:00Z",
     )
     .expect("sync archives");
@@ -65,7 +62,7 @@ fn sync_session_archives_treats_missing_archive_dir_as_empty() {
         &temp.path().join("missing-session-transcripts"),
         &temp.path().join("missing-session-wiki"),
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-16T20:05:00Z",
     )
     .expect("sync missing archive dir");
@@ -96,7 +93,7 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
         &archive_dir,
         &temp.path().join("session_wiki"),
         None,
-        INCLUDE_RAW,
+        RawArchiveMode::Skeleton,
         "2026-06-16T20:05:00Z",
     )
     .expect("first sync");
@@ -109,7 +106,7 @@ fn sync_session_archives_skips_previously_ingested_hashes() {
         &archive_dir,
         &temp.path().join("session_wiki"),
         None,
-        INCLUDE_RAW,
+        RawArchiveMode::Skeleton,
         "2026-06-16T20:06:00Z",
     )
     .expect("second sync");
@@ -140,7 +137,7 @@ fn sync_session_archives_reports_bad_gzip_without_blocking_good_archives() {
         &archive_dir,
         &temp.path().join("session_wiki"),
         None,
-        INCLUDE_RAW,
+        RawArchiveMode::Skeleton,
         "2026-06-16T20:05:00Z",
     )
     .expect("sync archives");
@@ -215,7 +212,7 @@ fn synthesis_first_ingests_wiki_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
     )
     .expect("sync");
@@ -268,7 +265,7 @@ fn raw_archive_without_synthesis_uses_session_location() {
         &archive_dir,
         &vault.join("missing-session-wiki"),
         None,
-        INCLUDE_RAW,
+        RawArchiveMode::Skeleton,
         "2026-06-24T00:05:00Z",
     )
     .expect("sync");
@@ -307,7 +304,7 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
         &archive_dir,
         &vault.join("missing-session-wiki"),
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:05:00Z",
     )
     .expect("sync");
@@ -337,7 +334,7 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
         &preserve_archive_dir,
         &preserve_vault.join("missing-session-wiki"),
         None,
-        INCLUDE_RAW,
+        RawArchiveMode::Skeleton,
         "2026-06-24T00:05:00Z",
     )
     .expect("initial sync");
@@ -351,7 +348,7 @@ fn raw_archive_fallback_requires_opt_in_and_preserves_present_manifest_entry() {
         &preserve_archive_dir,
         &preserve_vault.join("missing-session-wiki"),
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:06:00Z",
     )
     .expect("rerun sync");
@@ -408,7 +405,7 @@ fn synthesis_suppresses_matching_raw_archive() {
         &archive_dir,
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:05:00Z",
     )
     .expect("sync");
@@ -460,7 +457,7 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
     )
     .expect("first sync");
@@ -481,7 +478,7 @@ fn fresh_synthesis_supersedes_previous_synthesis_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T01:00:00Z",
     )
     .expect("second sync");
@@ -529,7 +526,7 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
     )
     .expect("first sync");
@@ -556,7 +553,7 @@ fn failed_fresh_synthesis_preserves_previous_synthesis_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T01:00:00Z",
     )
     .expect("second sync");
@@ -614,7 +611,7 @@ fn synthesis_supersedes_legacy_raw_location_page() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
     )
     .expect("sync");
@@ -651,7 +648,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
     )
     .expect("first sync");
@@ -673,7 +670,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T01:00:00Z",
     )
     .expect("second sync");
@@ -726,7 +723,7 @@ fn limit_does_not_false_delete_uncapped_sessions() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
     )
     .expect("initial sync");
@@ -742,7 +739,7 @@ fn limit_does_not_false_delete_uncapped_sessions() {
         &vault.join("missing-archives"),
         &wiki_dir,
         Some(1),
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T01:00:00Z",
     )
     .expect("capped sync");
@@ -776,7 +773,7 @@ fn same_content_at_two_session_locations_ingests_twice() {
         &archive_dir,
         &vault.join("missing-session-wiki"),
         None,
-        INCLUDE_RAW,
+        RawArchiveMode::Skeleton,
         "2026-06-24T00:05:00Z",
     )
     .expect("sync");
@@ -840,7 +837,7 @@ fn legacy_raw_entry_sharing_hash_is_superseded_by_id() {
         &vault.join("missing-archives"),
         &wiki_dir,
         None,
-        SYNTHESIS_ONLY,
+        RawArchiveMode::Skip,
         "2026-06-24T00:00:00Z",
     )
     .expect("sync");
@@ -874,4 +871,92 @@ fn session_entry_count(vault: &Path) -> usize {
         .iter()
         .filter(|entry| entry.kind == SourceKind::Session)
         .count()
+}
+
+#[test]
+fn standalone_summary_page_records_summary_mode_provenance() {
+    // A standalone `--summarize` page is wrapped in the daemon `.md` format with
+    // `summary_mode: standalone`; ingestion must surface it as
+    // `session_summary_mode` so the vault can distinguish it from daemon synthesis.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let bytes = b"---\ntitle: Refactor the indexer\nsource: claude\nmodel: claude-opus-4-8\ntags: []\nsession_id: sess-standalone\nsummary_mode: standalone\n---\n## Current State\nAll tests pass.\n".to_vec();
+    let snapshot = SessionWikiFileSnapshot {
+        external_id: "sess-standalone".to_string(),
+        path: temp.path().join("session_wiki").join("sess-standalone.md"),
+        fetched_at: "2026-06-25T00:00:00Z".to_string(),
+        bytes,
+    };
+
+    let result =
+        ingest_session_wiki_file_without_index(temp.path(), snapshot).expect("ingest standalone");
+
+    let derived = fs::read_to_string(
+        temp.path()
+            .join("knowledge")
+            .join("sources")
+            .join(format!("{}.md", result.record.id)),
+    )
+    .expect("derived markdown");
+    assert!(
+        derived.contains("session_summary_mode: standalone"),
+        "expected standalone provenance, got: {derived}"
+    );
+    assert!(derived.contains("session_type: claude"));
+    assert!(derived.contains("## Current State"));
+    assert!(derived.contains("All tests pass."));
+}
+
+#[test]
+fn summarize_skips_archives_that_already_have_a_session_page() {
+    // `--summarize` is idempotent: once a session page exists it is left alone
+    // (no regeneration, no AI call) because LLM output is nondeterministic.
+    let temp = tempfile::tempdir().expect("tempdir");
+    let archive_dir = temp.path().join("session_transcripts");
+    fs::create_dir(&archive_dir).expect("archive dir");
+    write_archive(
+        &archive_dir.join("sess-idem.jsonl.gz"),
+        br#"{"type":"session","timestamp":"2026-06-20T10:00:00Z","payload":{"title":"Idempotent","messages":[{"role":"user","content":"hello"}]}}"#,
+    );
+    let wiki_dir = temp.path().join("session_wiki");
+
+    // First run ingests a skeleton page so a session page exists on disk.
+    let mut store = MemoryWikiStore::default();
+    let first = sync_session_transcript_archives(
+        temp.path(),
+        &mut store,
+        &archive_dir,
+        &wiki_dir,
+        None,
+        RawArchiveMode::Skeleton,
+        "2026-06-20T10:05:00Z",
+    )
+    .expect("first sync");
+    assert_eq!(first.accepted.len(), 1);
+
+    // Second run with --summarize (and --raw off) must short-circuit on the
+    // existing page before any AI resolution/generation work.
+    let mut store = MemoryWikiStore::default();
+    let second = sync_session_transcript_archives(
+        temp.path(),
+        &mut store,
+        &archive_dir,
+        &wiki_dir,
+        None,
+        RawArchiveMode::Summarize,
+        "2026-06-20T10:06:00Z",
+    )
+    .expect("second sync");
+    assert!(second.accepted.is_empty());
+    assert!(
+        second
+            .skipped
+            .iter()
+            .any(|skip| skip.reason == "session_page_present"),
+        "expected session_page_present skip, got: {:?}",
+        second
+            .skipped
+            .iter()
+            .map(|skip| skip.reason.as_str())
+            .collect::<Vec<_>>()
+    );
 }

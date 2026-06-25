@@ -13,6 +13,7 @@ mod grok;
 mod metadata;
 mod qwen;
 mod redaction;
+mod summarize;
 
 use codex::CODEX_SESSION_ADAPTER;
 use daemon_wiki::{DaemonWikiPage, render_session_wiki_markdown};
@@ -24,6 +25,7 @@ pub(crate) use metadata::ParsedSessionMetadata;
 use metadata::session_metadata_fields;
 use qwen::QWEN_SESSION_ADAPTER;
 use redaction::{redact_session_markdown, redact_session_text};
+pub(crate) use summarize::SessionSummarizer;
 
 use crate::WikiError;
 use crate::ingest::{
@@ -101,9 +103,7 @@ pub(crate) fn ingest_session_file_without_index(
     vault_root: &Path,
     snapshot: SessionFileSnapshot,
 ) -> Result<IngestResult, WikiError> {
-    let envelopes = read_session_archive(&snapshot.path, &snapshot.bytes)?;
-    let adapters = default_session_adapters();
-    let parsed = parse_session_archive(&envelopes, &adapters)?;
+    let parsed = parse_session_archive_bytes(&snapshot.path, &snapshot.bytes)?;
     let title =
         non_empty_string(&parsed.title).unwrap_or_else(|| markdown_title(&snapshot.file_name));
     let source_location = redact_session_text(&snapshot.location);
@@ -214,6 +214,18 @@ pub(crate) fn parse_session_archive(
     };
 
     adapter.parse(envelopes)
+}
+
+/// Decode a raw `.jsonl.gz` archive's bytes into a [`ParsedSession`] using the
+/// default per-CLI adapters. Shared by the skeleton ingest path and the
+/// standalone `--summarize` generator.
+pub(crate) fn parse_session_archive_bytes(
+    path: &Path,
+    bytes: &[u8],
+) -> Result<ParsedSession, WikiError> {
+    let envelopes = read_session_archive(path, bytes)?;
+    let adapters = default_session_adapters();
+    parse_session_archive(&envelopes, &adapters)
 }
 
 fn read_session_archive(
