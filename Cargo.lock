@@ -2198,7 +2198,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-wiki"
-version = "0.6.2"
+version = "0.6.3"
 dependencies = [
  "anyhow",
  "calamine",
