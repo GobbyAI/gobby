@@ -76,7 +76,7 @@ def test_code_index_config_maintenance_defaults() -> None:
     config = CodeIndexConfig()
 
     assert config.maintenance_interval_seconds == 3600
-    assert config.maintenance_index_timeout_seconds == 120
+    assert config.maintenance_index_timeout_seconds == 900
     assert config.nightly_full_reindex_enabled is True
     assert config.nightly_full_reindex_cron == "0 2 * * *"
     assert config.nightly_full_reindex_timezone is None

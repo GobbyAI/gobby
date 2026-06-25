@@ -86,7 +86,7 @@ async def _run_maintenance(
     await _retry_pending_projection_cleanups(context)
     projects = await context.run_db(context.storage.list_indexed_projects)
     gcode_gateway = context.gcode_gateway
-    index_timeout = getattr(context.config, "maintenance_index_timeout_seconds", 120)
+    index_timeout = context.config.maintenance_index_timeout_seconds
 
     if gcode_gateway is None:
         logger.warning("gcode unavailable — skipping maintenance index. Run `gobby install`.")

@@ -196,7 +196,7 @@ code_index:
   enabled: true
   auto_index_on_commit: true
   maintenance_interval_seconds: 3600
-  maintenance_index_timeout_seconds: 120
+  maintenance_index_timeout_seconds: 900
   nightly_full_reindex_enabled: true
   nightly_full_reindex_cron: "0 2 * * *"
   nightly_full_reindex_timezone: null

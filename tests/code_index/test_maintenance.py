@@ -30,6 +30,7 @@ class _MaintenanceConfig(Protocol):
     graph_enabled: bool
     embedding_enabled: bool
     missing_root_purge_observations: int
+    maintenance_index_timeout_seconds: int
 
 
 def _gcode_result(
@@ -143,6 +144,7 @@ async def test_maintenance_purges_indexed_project_after_missing_threshold(
             graph_enabled=True,
             embedding_enabled=True,
             missing_root_purge_observations=2,
+            maintenance_index_timeout_seconds=900,
         ),
         run_db=run_db,
     )
@@ -223,7 +225,11 @@ async def test_maintenance_retries_pending_vector_projection_cleanup(tmp_path: P
         storage=storage,
         clear_graph=AsyncMock(return_value={"success": True}),
         gcode_gateway=gcode_gateway,
-        config=SimpleNamespace(graph_enabled=True, embedding_enabled=True),
+        config=SimpleNamespace(
+            graph_enabled=True,
+            embedding_enabled=True,
+            maintenance_index_timeout_seconds=900,
+        ),
         run_db=run_db,
     )
 
@@ -397,6 +403,7 @@ async def test_maintenance_logs_and_raises_on_unexpected_delete_counts(
             graph_enabled=True,
             embedding_enabled=True,
             missing_root_purge_observations=1,
+            maintenance_index_timeout_seconds=900,
         ),
         run_db=run_db,
     )

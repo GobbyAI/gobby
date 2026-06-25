@@ -56,7 +56,7 @@ class CodeIndexConfig(BaseModel):
         description="Lightweight background reindex interval in seconds",
     )
     maintenance_index_timeout_seconds: int = Field(
-        default=120,
+        default=900,
         ge=1,
         description="Timeout for each lightweight maintenance gcode index command",
     )

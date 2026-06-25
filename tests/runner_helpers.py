@@ -64,7 +64,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     set_mock_default(config.code_index.symbol_summary, "enabled", False)
     set_mock_default(config.code_index.symbol_summary, "batch_size", 20)
     set_mock_default(config.code_index, "maintenance_interval_seconds", 3600)
-    set_mock_default(config.code_index, "maintenance_index_timeout_seconds", 120)
+    set_mock_default(config.code_index, "maintenance_index_timeout_seconds", 900)
     set_mock_default(config.code_index, "nightly_full_reindex_enabled", True)
     set_mock_default(config.code_index, "nightly_full_reindex_cron", "0 2 * * *")
     set_mock_default(config.code_index, "nightly_full_reindex_timezone", None)
