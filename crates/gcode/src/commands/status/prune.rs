@@ -268,6 +268,7 @@ fn cleanup_orphan_project_projections(
     warnings_emitted: &mut usize,
 ) -> bool {
     let mut cleaned = true;
+    let mut skipped = false;
     let ctx = match Context::resolve_for_project_id_with_services(
         project_id,
         quiet,
@@ -296,6 +297,7 @@ fn cleanup_orphan_project_projections(
         }
     } else {
         totals.graph_projects_skipped += 1;
+        skipped = true;
     }
 
     if let Some(qdrant) = &ctx.qdrant {
@@ -313,8 +315,15 @@ fn cleanup_orphan_project_projections(
         }
     } else {
         totals.vector_projects_skipped += 1;
+        skipped = true;
     }
-    cleaned
+    orphan_projection_cleanup_confirmed(cleaned, skipped)
+}
+
+fn orphan_projection_cleanup_confirmed(cleaned: bool, skipped: bool) -> bool {
+    // Keep SQL discovery rows when any projection store was skipped; they are
+    // what lets a later prune with full service config find and clear orphans.
+    cleaned && !skipped
 }
 
 fn print_orphan_project_reconcile_totals(totals: &OrphanProjectReconcileTotals) {
@@ -538,6 +547,14 @@ mod tests {
             projection_cleanup_scope(Some("/tmp/project")),
             ProjectionCleanupScope::ResolvedProjectOverride
         );
+    }
+
+    #[test]
+    fn orphan_projection_cleanup_requires_confirmed_non_skipped_cleanup() {
+        assert!(orphan_projection_cleanup_confirmed(true, false));
+        assert!(!orphan_projection_cleanup_confirmed(true, true));
+        assert!(!orphan_projection_cleanup_confirmed(false, false));
+        assert!(!orphan_projection_cleanup_confirmed(false, true));
     }
 
     #[test]
