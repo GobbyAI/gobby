@@ -86,6 +86,29 @@ class RecordingGateway:
         return _result("index", {"status": "indexed"})
 
 
+class LargeHealthGateway(RecordingGateway):
+    def __init__(self, broken_links: list[dict[str, str]]) -> None:
+        super().__init__()
+        self.broken_links = broken_links
+
+    async def health(self) -> dict[str, Any]:
+        self.calls.append(("health", {}))
+        return _result(
+            "health",
+            {
+                "status": "degraded",
+                "root": "/wiki/root",
+                "scope": "project:alpha",
+                "command": "health",
+                "json_path": "meta/health/latest.json",
+                "text_path": "meta/health/latest.md",
+                "broken_links": self.broken_links,
+                "stale_pages": [],
+                "metadata": {"full": "details stay in health artifacts"},
+            },
+        )
+
+
 class RecordingCoordinator:
     def __init__(self) -> None:
         self.results: list[dict[str, Any]] = []
@@ -157,6 +180,36 @@ async def test_cron_history_is_user_visible() -> None:
     assert output["changed_paths"] == ["raw/changed.md"]
     assert output["result"]["indexed"] == {"documents": 1, "chunks": 3}
     assert output["result"]["gwiki"]["command"] == "refresh"
+
+
+@pytest.mark.asyncio
+async def test_health_cron_history_summarizes_large_payloads() -> None:
+    broken_links = [
+        {"source": f"wiki/page-{index}.md", "target": f"missing-{index}.md"} for index in range(250)
+    ]
+    gateway = LargeHealthGateway(broken_links)
+    handler = create_wiki_health_handler(gateway=gateway, scope="project:alpha")
+
+    output = json.loads(await handler(_job("health")))
+
+    assert output["purpose"] == "Run wiki health checks"
+    assert output["scope"] == "project:alpha"
+    assert output["command"] == "health"
+    assert output["status"] == "degraded"
+    assert output["result"]["status"] == "degraded"
+    assert output["result"]["scope"] == "project:alpha"
+    assert output["result"]["command"] == "health"
+    assert output["result"]["root"] == "/wiki/root"
+    assert output["result"]["json_path"] == "meta/health/latest.json"
+    assert output["result"]["text_path"] == "meta/health/latest.md"
+    assert output["result"]["broken_links_count"] == len(broken_links)
+    assert output["result"]["broken_links_sample"] == broken_links[:10]
+    assert len(output["result"]["broken_links_sample"]) == 10
+    assert output["result"]["stale_pages_count"] == 0
+    assert output["result"]["stale_pages_sample"] == []
+    assert "broken_links" not in output["result"]
+    assert "metadata" not in output["result"]
+    assert output["result"]["gwiki"] == {"ok": True, "command": "health", "stderr": ""}
 
 
 @pytest.mark.asyncio

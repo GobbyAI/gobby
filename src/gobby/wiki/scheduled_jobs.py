@@ -22,6 +22,16 @@ WIKI_REFRESH_INTERVAL_SECONDS = 60 * 60
 WIKI_HEALTH_INTERVAL_SECONDS = 30 * 60
 WIKI_AUDIT_INTERVAL_SECONDS = 24 * 60 * 60
 WIKI_SYNC_SESSIONS_INTERVAL_SECONDS = 24 * 60 * 60
+WIKI_HEALTH_HISTORY_SAMPLE_SIZE = 10
+
+_HEALTH_HISTORY_LIST_FIELDS = (
+    "broken_links",
+    "stale_pages",
+    "stale_citations",
+    "uncited_sources",
+    "uncompiled_sources",
+    "duplicate_concepts",
+)
 
 
 class WikiGatewayProtocol(Protocol):
@@ -81,7 +91,7 @@ def create_wiki_health_handler(
 ) -> CronHandler:
     async def health_handler(job: CronJob) -> str:
         result = await gateway.health()
-        return _history_output(
+        return _health_history_output(
             purpose="Run wiki health checks",
             scope=scope,
             command="health",
@@ -372,12 +382,48 @@ def _history_output(
     changed_paths: list[str] | None = None,
 ) -> str:
     payload = _payload(gwiki_result)
+    return _history_output_json(
+        purpose=purpose,
+        scope=scope,
+        command=command,
+        status=_status(gwiki_result, payload),
+        result=_visible_result(gwiki_result, payload),
+        changed_paths=changed_paths,
+    )
+
+
+def _health_history_output(
+    *,
+    purpose: str,
+    scope: str,
+    command: str,
+    gwiki_result: dict[str, Any],
+) -> str:
+    payload = _payload(gwiki_result)
+    return _history_output_json(
+        purpose=purpose,
+        scope=scope,
+        command=command,
+        status=_status(gwiki_result, payload),
+        result=_visible_health_result(gwiki_result, _compact_health_payload(payload)),
+    )
+
+
+def _history_output_json(
+    *,
+    purpose: str,
+    scope: str,
+    command: str,
+    status: str,
+    result: dict[str, Any],
+    changed_paths: list[str] | None = None,
+) -> str:
     output: dict[str, Any] = {
         "purpose": purpose,
         "scope": scope,
         "command": command,
-        "status": _status(gwiki_result, payload),
-        "result": _visible_result(gwiki_result, payload),
+        "status": status,
+        "result": result,
     }
     if changed_paths is not None:
         output["changed_paths"] = changed_paths
@@ -395,6 +441,35 @@ def _visible_result(result: dict[str, Any], payload: dict[str, Any]) -> dict[str
     if "index_handoff" in result:
         visible["index_handoff"] = result["index_handoff"]
     return visible
+
+
+def _visible_health_result(result: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+    visible = dict(payload)
+    visible["gwiki"] = {
+        "ok": result.get("ok"),
+        "command": result.get("command"),
+        "stderr": result.get("stderr", ""),
+    }
+    return visible
+
+
+def _compact_health_payload(
+    payload: dict[str, Any],
+    *,
+    sample_size: int = WIKI_HEALTH_HISTORY_SAMPLE_SIZE,
+) -> dict[str, Any]:
+    compact: dict[str, Any] = {}
+    for key, value in payload.items():
+        if key in _HEALTH_HISTORY_LIST_FIELDS and isinstance(value, list):
+            compact[f"{key}_count"] = len(value)
+            compact[f"{key}_sample"] = value[:sample_size]
+        elif _is_json_scalar(value):
+            compact[key] = value
+    return compact
+
+
+def _is_json_scalar(value: object) -> bool:
+    return value is None or isinstance(value, str | int | float | bool)
 
 
 def _refresh_changed_paths(result: dict[str, Any]) -> list[str]:
