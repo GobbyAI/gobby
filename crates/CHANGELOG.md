@@ -7,6 +7,84 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.2] — gcode — 2026-06-26
+
+### Fixed
+
+#### gcode
+
+- **Late-NUL files skipped** — files that read clean on the first pass but turn
+  out to contain NUL bytes are now skipped during indexing instead of producing
+  corrupt symbol/content rows (#17356).
+- **Orphan project-row reconciliation** — `gcode` reconciles orphaned
+  code-index project rows so stale project records no longer block re-indexing
+  (#928, Gobby #17344).
+- Assorted CodeRabbit triage fixes (#927, #951, #956).
+
+## [0.6.5] — gwiki — 2026-06-26
+
+Covers the `0.6.0` → `0.6.5` gap: session knowledge-synthesis (epic #920) plus
+follow-up indexing fixes.
+
+### Added
+
+#### gwiki
+
+- **`sync-sessions --summarize`** — standalone session-summary generation: when
+  a raw transcript archive has no daemon-synthesized page, `gwiki` renders the
+  shared `handoff/session_end` prompt directly from the transcript and wraps it
+  in the daemon `.md` format so it flows through the normal wiki-file ingest
+  path. Falls back to a skeleton page when text generation is routed off (#950).
+- **`sync-sessions --wiki-dir <PATH>`** — point `sync-sessions` at the
+  daemon-synthesized session-wiki directory (defaults to `~/.gobby/session_wiki/`)
+  (#924).
+
+### Changed
+
+#### gwiki
+
+- **Synthesis-first session sourcing** — `sync-sessions` now sources
+  daemon-synthesized session wiki pages first and treats raw `*.jsonl.gz`
+  archives as fallback, keyed on the canonical `session:{external_id}` so a
+  session is one logical source across synthesis and raw, with latest-wins
+  replacement (#925, #926).
+- **Raw transcript fallback is opt-in** — raw archives are used only for
+  presence reconciliation unless `--raw` is passed (#936).
+- **Machine-global default scope** — a `sync-sessions` run with no `--topic` /
+  `--project` now defaults to the machine-global `sessions` scope, since session
+  pages are machine-wide rather than project-scoped (#941).
+- **Hardened session-sync & graph-sync** — vanished session sources are
+  reconciled, the FalkorDB wiki projection is incremental (scoped edge/node
+  cleanup instead of whole-scope DETACH DELETE + rebuild), and session-page
+  removal is crash-consistent (#933).
+
+### Fixed
+
+#### gwiki
+
+- **btree-limit link clipping** — `link_text` / `target_path` are clipped on a
+  UTF-8 char boundary before the scoped link id is computed, so transcript links
+  longer than the 8191-byte Postgres btree row limit no longer fail indexing
+  atomically and strand orphan vault files (#939).
+
+## [0.6.2] — ghook — 2026-06-26
+
+### Added
+
+#### ghook
+
+- **Failure diagnostics** — `ghook` records hook-dispatch failures and surfaces
+  them through `--diagnose` (v2 `diagnose-output` schema), so lost or failed
+  envelopes are observable instead of silent (#929).
+- **Antigravity CLI (`agy`) support** — `agy` joins the recognized host CLIs for
+  hook dispatch, config, and diagnostics (#931).
+
+### Fixed
+
+#### ghook
+
+- Assorted CodeRabbit triage fixes (#951, #956).
+
 ## [1.3.0] — gcode — 2026-06-23
 
 Covers the `1.1.0` → `1.3.0` gap: the intermediate `1.2.0` was never logged, so
