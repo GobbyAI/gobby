@@ -1,6 +1,6 @@
 [package]
 name = "gobby-code"
-version = "1.3.2"
+version = "1.3.3"
 edition = "2024"
 rust-version = "1.88"
 authors = ["Josh Wilhelmi <hello@gobby.ai>"]
@@ -22,7 +22,7 @@ path = "src/main.rs"
 
 [dependencies]
 # Internal
-gobby-core = { path = "../gcore", version = "0.6.0", features = ["postgres", "falkor", "qdrant", "search", "indexing", "graph-analytics", "ai"] }
+gobby-core = { path = "../gcore", version = "0.6.1", features = ["postgres", "falkor", "qdrant", "search", "indexing", "graph-analytics", "ai"] }
 
 # CLI
 clap = { version = "4", features = ["derive"] }
@@ -96,7 +96,7 @@ tempfile = "3"
 libc = "0.2"
 
 [build-dependencies]
-gobby-core = { path = "../gcore", version = "0.6.0" }
+gobby-core = { path = "../gcore", version = "0.6.1" }
 
 [dev-dependencies]
 insta = { version = "1", features = ["json"] }

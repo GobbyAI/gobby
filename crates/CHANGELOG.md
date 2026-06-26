@@ -7,6 +7,36 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.3] — gcode — 2026-06-26
+
+### Fixed
+
+#### gcode
+
+- **Windows release binaries restored** — the `gcode` release build no longer
+  fails on `x86_64-pc-windows-msvc` / `aarch64-pc-windows-msvc`. gcode's
+  build-dependency on `gobby-core` dragged a non-vendored `openssl-sys` into the
+  build-script dependency graph, which has no system OpenSSL on the Windows
+  runners, so the `release` job was skipped. Fixed upstream in `gobby-core`
+  0.6.1 (vendored OpenSSL is now unconditional); gcode pins `gobby-core = 0.6.1`.
+  Supersedes 1.3.2, which published to crates.io but shipped no GitHub binaries.
+
+## [0.6.1] — gobby-core — 2026-06-26
+
+### Fixed
+
+#### gobby-core
+
+- **Vendored OpenSSL is now unconditional** — `openssl` is a non-optional
+  dependency built with the `vendored` feature instead of being gated behind the
+  `postgres` feature. The always-compiled `fernet`/`secrets` path pulls
+  `openssl-sys` into every dependency graph, including graphs that omit
+  `postgres` (ghook's whole graph, gcode's build-dependency graph). Cargo's
+  resolver keeps build-dependency and no-`postgres` feature sets separate, so the
+  previous `postgres`-gated vendored flag never reached them and they fell back
+  to a missing system OpenSSL on the Windows release runners. Forcing `vendored`
+  here links OpenSSL statically across every consumer and target.
+
 ## [1.3.2] — gcode — 2026-06-26
 
 ### Fixed
