@@ -85,3 +85,11 @@ class PipelineCompletionSubscriberMixin:
             TERMINAL_AGENT_RUN_STATUSES,
         )
         return max(cursor.rowcount, 0) if cursor else 0
+
+
+class CompletionSubscriberManager(PipelineCompletionSubscriberMixin):
+    """Projectless manager for completion subscriber CRUD."""
+
+    def __init__(self, db: HubDatabase) -> None:
+        self.db = db
+        self.project_id = None

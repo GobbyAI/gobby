@@ -1,5 +1,0 @@
-name: pipeline-worker
-retired: true
-enabled: false
-replacement: null
-description: Retired bundled agent tombstone.

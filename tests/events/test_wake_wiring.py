@@ -271,7 +271,7 @@ class TestAutoSubscribeLineage:
     def test_auto_subscribe_registers_and_persists(self, db: HubDatabase) -> None:
         """_auto_subscribe_lineage registers event and persists to DB."""
         from gobby.mcp_proxy.tools.workflows._pipelines import _auto_subscribe_lineage
-        from gobby.storage.pipelines import LocalPipelineExecutionManager
+        from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 
         registry = CompletionEventRegistry()
 
@@ -291,7 +291,7 @@ class TestAutoSubscribeLineage:
         assert registry.get_continuation_prompt("pe-test-1") == "Check results"
 
         # Verify DB persistence
-        em = LocalPipelineExecutionManager(db=db, project_id="")
+        em = CompletionSubscriberManager(db=db)
         db_subs = em.get_completion_subscribers("pe-test-1")
         assert "sess-1" in db_subs
 

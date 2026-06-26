@@ -11,6 +11,7 @@ from typing import Any, cast
 
 _FACADE_MODULE = "gobby.cli.installers.mcp_config"
 _LOGGER = logging.getLogger(_FACADE_MODULE)
+_ORIGINAL_COPY2 = _copy2
 
 _GOBBY_MCP_COMMAND = "gobby"
 _GOBBY_MCP_ARGS = ["mcp-server"]
@@ -25,7 +26,9 @@ def _facade_attr(name: str, default: Any) -> Any:
 
 
 def _facade_copy2(src: Path, dst: Path) -> None:
-    copy_func = cast(Callable[[Path, Path], Any], _facade_attr("copy2", _copy2))
+    copy_func = cast(Callable[[Path, Path], Any], _copy2)
+    if _copy2 is _ORIGINAL_COPY2:
+        copy_func = cast(Callable[[Path, Path], Any], _facade_attr("copy2", _copy2))
     copy_func(src, dst)
 
 

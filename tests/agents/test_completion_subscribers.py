@@ -39,12 +39,12 @@ def test_completion_subscriber_lineage_includes_parent_chain() -> None:
     assert subscribers == ["root-session", "child-session"]
 
 
-def test_subscribe_agent_completion_does_not_swallow_manager_constructor_errors() -> None:
+def test_subscribe_agent_completion_does_not_swallow_subscriber_manager_errors() -> None:
     with patch(
-        "gobby.storage.pipelines.LocalPipelineExecutionManager",
-        side_effect=ValueError("bad project id"),
+        "gobby.storage.pipeline_subscribers.CompletionSubscriberManager",
+        side_effect=ValueError("bad subscriber store"),
     ):
-        with pytest.raises(ValueError, match="bad project id"):
+        with pytest.raises(ValueError, match="bad subscriber store"):
             subscribe_agent_completion(
                 completion_registry=None,
                 run_id="run-1",

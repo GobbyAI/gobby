@@ -376,7 +376,7 @@ def register_health_routes(router: APIRouter, server: "HTTPServer") -> None:
             from gobby.storage.pipelines import LocalPipelineExecutionManager
 
             def _collect_pipeline_stats() -> dict[str, Any]:
-                mgr = LocalPipelineExecutionManager(db=server.services.database, project_id="")
+                mgr = LocalPipelineExecutionManager(db=server.services.database, project_id=None)
                 status_counts = mgr.count_by_status()
                 stats = dict(pipeline_stats)
                 for key in ["running", "waiting_approval", "completed", "failed"]:

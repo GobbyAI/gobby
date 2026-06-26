@@ -97,10 +97,10 @@ def _auto_subscribe_lineage(
     # Persist subscribers to DB for restart recovery
     if db is not None:
         try:
-            from gobby.storage.pipelines import LocalPipelineExecutionManager
+            from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
 
-            # Use a lightweight manager just for subscriber CRUD
-            em = LocalPipelineExecutionManager(db=db, project_id="")
+            # Use a lightweight manager just for subscriber CRUD.
+            em = CompletionSubscriberManager(db=db)
             em.add_completion_subscribers(completion_id, lineage_ids)
         except Exception:
             logger.debug(

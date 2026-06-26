@@ -1483,7 +1483,7 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
     from gobby.storage.build_history import BuildHistoryStorage
-    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
     from gobby.storage.sessions import SessionManager
 
     sync_bundled_agents(temp_db)
@@ -1547,9 +1547,7 @@ async def test_spawn_action_subscribes_build_coordinator_completion(
         "run-coordinated",
         subscribers=[coordinator.id],
     )
-    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
-        "run-coordinated"
-    )
+    subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers("run-coordinated")
     assert subscribers == [coordinator.id]
 
 
@@ -1560,7 +1558,7 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
     """Spawn action skips cross project build coordinator completion."""
     from gobby.dispatch.spawn import _subscribe_build_coordinator_completion
     from gobby.storage.build_history import BuildHistoryStorage
-    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
 
@@ -1596,7 +1594,7 @@ def test_spawn_action_skips_cross_project_build_coordinator_completion(
     )
 
     completion_registry.register.assert_not_called()
-    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
+    subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers(
         "run-cross-project"
     )
     assert subscribers == []
@@ -1609,7 +1607,7 @@ def test_spawn_action_allows_explicit_cross_project_build_coordinator_completion
     """Spawn action subscribes a cross-project coordinator when build metadata authorizes it."""
     from gobby.dispatch.spawn import _subscribe_build_coordinator_completion
     from gobby.storage.build_history import BuildHistoryStorage
-    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
     from gobby.storage.projects import LocalProjectManager
     from gobby.storage.sessions import SessionManager
 
@@ -1652,7 +1650,7 @@ def test_spawn_action_allows_explicit_cross_project_build_coordinator_completion
         "run-cross-project-explicit",
         subscribers=[coordinator.id],
     )
-    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
+    subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers(
         "run-cross-project-explicit"
     )
     assert subscribers == [coordinator.id]
@@ -1666,7 +1664,7 @@ async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
     from gobby.agents.sync import sync_bundled_agents
     from gobby.dispatch import dispatcher
     from gobby.storage.agents import LocalAgentRunManager
-    from gobby.storage.pipelines import LocalPipelineExecutionManager
+    from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
     from gobby.storage.sessions import SessionManager
 
     sync_bundled_agents(temp_db)
@@ -1713,9 +1711,7 @@ async def test_spawn_action_without_coordinator_does_not_subscribe_launcher(
 
     assert result.executed == 1
     completion_registry.register.assert_not_called()
-    subscribers = LocalPipelineExecutionManager(temp_db, project_id="").get_completion_subscribers(
-        "run-unattended"
-    )
+    subscribers = CompletionSubscriberManager(temp_db).get_completion_subscribers("run-unattended")
     assert subscribers == []
 
 

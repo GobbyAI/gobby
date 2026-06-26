@@ -72,11 +72,11 @@ def subscribe_agent_completion(
 
     if db is not None:
         try:
-            from gobby.storage.pipelines import LocalPipelineExecutionManager
+            from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
         except ImportError:
             logger.debug("Could not load pipeline execution manager", exc_info=True)
         else:
-            manager = LocalPipelineExecutionManager(db=db, project_id="")
+            manager = CompletionSubscriberManager(db=db)
             try:
                 manager.add_completion_subscribers(run_id, subscribers)
             except (sqlite3.DatabaseError, psycopg.Error):
@@ -92,12 +92,12 @@ def subscribe_agent_completion(
 def remove_agent_completion_subscribers(*, db: HubDatabase, run_id: str) -> None:
     """Remove durable completion subscribers for an agent run."""
     try:
-        from gobby.storage.pipelines import LocalPipelineExecutionManager
+        from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
     except ImportError:
         logger.debug("Could not load pipeline execution manager", exc_info=True)
         return
 
-    manager = LocalPipelineExecutionManager(db=db, project_id="")
+    manager = CompletionSubscriberManager(db=db)
     try:
         manager.remove_completion_subscribers(run_id)
     except (sqlite3.DatabaseError, psycopg.Error):

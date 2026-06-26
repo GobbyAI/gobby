@@ -281,7 +281,8 @@ def test_graceful_error_uses_provider_capability_shape(
     )
 
     assert qwen_result["decision"] == "allow"
-    assert "database unavailable" in qwen_result["systemMessage"]
+    assert "database unavailable" in qwen_result["hookSpecificOutput"]["additionalContext"]
+    assert "systemMessage" not in qwen_result
     assert droid_result["continue"] is True
     assert "database unavailable" in droid_result["systemMessage"]
     assert any(call["kind"] == "graceful_error" for call in calls)

@@ -107,16 +107,16 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         from gobby.storage.pipelines import LocalPipelineExecutionManager
         from gobby.workflows.pipeline_state import ExecutionStatus
 
-        execution_manager = LocalPipelineExecutionManager(
-            db=server.services.database, project_id=project_id or ""
-        )
-
         status_filter = None
         if status:
             try:
                 status_filter = ExecutionStatus(status)
             except ValueError:
                 raise HTTPException(status_code=400, detail=f"Invalid status: {status}") from None
+
+        execution_manager = LocalPipelineExecutionManager(
+            db=server.services.database, project_id=project_id
+        )
 
         executions = execution_manager.list_executions(
             status=status_filter,
@@ -206,16 +206,16 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         if not q or not q.strip():
             raise HTTPException(status_code=400, detail="Query parameter 'q' is required")
 
-        execution_manager = LocalPipelineExecutionManager(
-            db=server.services.database, project_id=project_id or ""
-        )
-
         status_filter = None
         if status:
             try:
                 status_filter = ExecutionStatus(status)
             except ValueError:
                 raise HTTPException(status_code=400, detail=f"Invalid status: {status}") from None
+
+        execution_manager = LocalPipelineExecutionManager(
+            db=server.services.database, project_id=project_id
+        )
 
         executions = execution_manager.search_executions(
             query=q.strip(),
@@ -335,7 +335,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
         execution_manager = LocalPipelineExecutionManager(
-            db=server.services.database, project_id=""
+            db=server.services.database, project_id=None
         )
 
         # Fetch execution
@@ -397,7 +397,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         from gobby.workflows.pipeline_state import ApprovalRequired
 
         # Look up the execution's project from the approval token
-        global_mgr = LocalPipelineExecutionManager(db=server.services.database, project_id="")
+        global_mgr = LocalPipelineExecutionManager(db=server.services.database, project_id=None)
         step = global_mgr.get_step_by_approval_token(token)
         if not step:
             raise HTTPException(status_code=404, detail="Invalid approval token")
@@ -448,7 +448,7 @@ def create_pipelines_router(server: "HTTPServer") -> APIRouter:
         from gobby.storage.pipelines import LocalPipelineExecutionManager
 
         # Look up the execution's project from the rejection token
-        global_mgr = LocalPipelineExecutionManager(db=server.services.database, project_id="")
+        global_mgr = LocalPipelineExecutionManager(db=server.services.database, project_id=None)
         step = global_mgr.get_step_by_approval_token(token)
         if not step:
             raise HTTPException(status_code=404, detail="Invalid rejection token")
