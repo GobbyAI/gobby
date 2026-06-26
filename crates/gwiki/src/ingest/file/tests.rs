@@ -451,7 +451,7 @@ fn codex_jsonl_session_routes_to_session_orchestrator() {
 }
 
 #[test]
-fn gemini_jsonl_session_routes_to_session_orchestrator() {
+fn gemini_jsonl_session_is_not_supported() {
     let temp = tempfile::tempdir().expect("tempdir");
     let file_path = temp.path().join("gemini.jsonl");
     std::fs::write(
@@ -467,7 +467,7 @@ fn gemini_jsonl_session_routes_to_session_orchestrator() {
     let ai_context = no_ai_context();
     let options = ingest_options();
 
-    let result = ingest_path(
+    let error = ingest_path(
         temp.path(),
         &mut store,
         &scope,
@@ -476,17 +476,9 @@ fn gemini_jsonl_session_routes_to_session_orchestrator() {
         &file_path,
         "2026-06-16T20:06:00Z",
     )
-    .expect("ingest Gemini session archive");
+    .expect_err("raw Gemini session archives should not be parsed");
 
-    assert_eq!(result.record.kind, SourceKind::Session);
-    assert!(result.asset_path.is_none());
-    let raw_markdown =
-        std::fs::read_to_string(temp.path().join(&result.raw_path)).expect("session markdown");
-    assert!(raw_markdown.contains("session_type: gemini-cli"));
-    assert!(raw_markdown.contains("# Gemini CLI session"));
-    assert!(raw_markdown.contains("Reply with exactly OK."));
-    assert!(raw_markdown.contains("### assistant"));
-    assert!(raw_markdown.contains("OK"));
+    assert!(error.to_string().contains("unsupported session transcript"));
 }
 
 #[test]

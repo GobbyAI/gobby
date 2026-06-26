@@ -19,7 +19,6 @@ fn malformed_stdin_uses_cli_specific_json_error_contract() -> TestResult {
     for (cli, hook_type, expected_exit) in [
         ("claude", "session-start", 2),
         ("codex", "SessionStart", 2),
-        ("gemini", "SessionStart", 1),
         ("qwen", "SessionStart", 1),
         ("droid", "SessionStart", 1),
         ("grok", "session_start", 2),
@@ -108,6 +107,33 @@ fn missing_cli_or_type_prints_empty_json_and_exits_two() -> TestResult {
         assert_json_stdout(&output, serde_json::json!({}))?;
         assert_stderr_empty(&output, "missing flag")?;
     }
+
+    Ok(())
+}
+
+#[test]
+fn removed_gemini_cli_noops_before_dispatch_side_effects() -> TestResult {
+    let home = tempfile::tempdir()?;
+    let gobby_home = tempfile::tempdir()?;
+    let daemon_url = closed_local_url()?;
+
+    let output = run_ghook_with_dirs(
+        home.path(),
+        gobby_home.path(),
+        Some("gemini"),
+        Some("SessionStart"),
+        &daemon_url,
+        VALID_STDIN,
+        &[],
+    )?;
+
+    assert_eq!(output.status.code(), Some(0));
+    assert_json_stdout(&output, serde_json::json!({}))?;
+    assert_stderr_empty(&output, "removed gemini")?;
+    assert!(
+        !gobby_home.path().join("hooks").exists(),
+        "removed Gemini invocations must not create an inbox"
+    );
 
     Ok(())
 }

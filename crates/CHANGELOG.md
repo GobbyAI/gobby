@@ -7,6 +7,24 @@ All notable changes to gobby-cli are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Removed
+
+#### ghook
+
+- **Gemini CLI active hook support** — `ghook` no longer recognizes Gemini CLI
+  in its live CLI registry or diagnose output. Stale Gobby-owned
+  `--cli=gemini` hook invocations now no-op with `{}` and exit 0 before enqueue
+  or POST, so old hook configs fail quiet instead of falling through to the
+  unknown-CLI Claude fallback.
+
+#### gwiki
+
+- **Raw Gemini transcript fallback** — `gwiki --raw` no longer parses Gemini
+  `--output-format stream-json` JSONL archives. Daemon-normalized
+  `gobby.session` pages still ingest through the generic session path.
+
 ## [1.3.3] — gcode — 2026-06-26
 
 ### Fixed

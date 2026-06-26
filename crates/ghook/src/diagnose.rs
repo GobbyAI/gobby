@@ -141,6 +141,15 @@ mod tests {
     }
 
     #[test]
+    fn gemini_cli_marked_not_recognized() {
+        let d = diagnose("gemini", "SessionStart");
+        assert!(!d.cli_recognized);
+        assert!(d.source.is_none());
+        assert!(!d.critical);
+        assert!(!d.terminal_context_enabled);
+    }
+
+    #[test]
     fn claude_session_start_is_critical_with_terminal_context() {
         let d = diagnose("claude", "session-start");
         assert!(d.cli_recognized);

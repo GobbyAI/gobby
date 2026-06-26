@@ -8,7 +8,6 @@ mod codex;
 mod daemon_wiki;
 mod derived;
 mod droid;
-mod gemini;
 mod grok;
 mod metadata;
 mod qwen;
@@ -19,7 +18,6 @@ use codex::CODEX_SESSION_ADAPTER;
 use daemon_wiki::{DaemonWikiPage, render_session_wiki_markdown};
 use derived::write_session_derived_markdown;
 use droid::DROID_SESSION_ADAPTER;
-use gemini::GEMINI_SESSION_ADAPTER;
 use grok::GROK_SESSION_ADAPTER;
 pub(crate) use metadata::ParsedSessionMetadata;
 use metadata::session_metadata_fields;
@@ -287,7 +285,7 @@ fn normalize_session_archive_value(value: Value) -> Result<SessionArchiveEnvelop
     })
 }
 
-fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 7] {
+fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 6] {
     [
         &COMMON_SESSION_ADAPTER,
         &GROK_SESSION_ADAPTER,
@@ -295,7 +293,6 @@ fn default_session_adapters() -> [&'static dyn SessionTranscriptAdapter; 7] {
         &QWEN_SESSION_ADAPTER,
         &CLAUDE_CODE_ADAPTER,
         &CODEX_SESSION_ADAPTER,
-        &GEMINI_SESSION_ADAPTER,
     ]
 }
 

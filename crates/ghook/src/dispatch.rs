@@ -22,7 +22,12 @@ pub(crate) fn run_gobby_owned(args: &Args) -> ExitCode {
         return ExitCode::from(2);
     };
 
-    // Daemon-spawned ACP subprocesses (gemini --acp, qwen --acp) set
+    if is_removed_cli(cli) {
+        emit_empty_json();
+        return ExitCode::SUCCESS;
+    }
+
+    // Daemon-spawned ACP subprocesses (for example qwen --acp) set
     // GOBBY_HOOKS_DISABLED=1 to stop their inherited SessionStart hook from
     // registering phantom sessions. Short-circuit before any side effects: no
     // enqueue, no POST, no terminal-context enrichment.
@@ -215,6 +220,10 @@ fn hooks_disabled_by_env() -> bool {
     std::env::var_os("GOBBY_HOOKS_DISABLED").is_some_and(|v| v == "1")
 }
 
+fn is_removed_cli(cli: &str) -> bool {
+    cli.eq_ignore_ascii_case("gemini")
+}
+
 fn build_dispatch_envelope(
     cfg: &CliConfig,
     hook_type: &str,
@@ -355,7 +364,7 @@ mod tests {
     fn dispatch_envelope_nulls_tmux_fields_for_missing_or_invalid_tmux_pane() {
         for pane in [None, Some(""), Some("17"), Some("%"), Some("%x")] {
             with_tmux_env(Some("/tmp/tmux-501/default,12345,0"), pane, || {
-                let cfg = CliConfig::for_dispatch("gemini");
+                let cfg = CliConfig::for_dispatch("qwen");
                 let envelope = build_dispatch_envelope(
                     &cfg,
                     "SessionStart",
@@ -375,7 +384,7 @@ mod tests {
         }
 
         with_tmux_env(None, Some("%17"), || {
-            let cfg = CliConfig::for_dispatch("gemini");
+            let cfg = CliConfig::for_dispatch("qwen");
             let envelope = build_dispatch_envelope(
                 &cfg,
                 "SessionStart",

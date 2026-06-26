@@ -59,7 +59,7 @@ pub(crate) fn action_from_success_response(
     // second stderr+exit(2) channel on top makes Claude render every
     // PreToolUse deny twice. Mirror the daemon contract: only the
     // top-level continue:false + stopReason shape (HARD_STOP) becomes
-    // exit 2. Codex/Gemini/Qwen keep the is_blocked path below.
+    // exit 2. Codex/Qwen keep the is_blocked path below.
     if canonical_source == "claude" {
         let map = result.as_object();
         let continue_false =

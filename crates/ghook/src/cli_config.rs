@@ -27,11 +27,6 @@ impl CliConfig {
                     .collect(),
                 json_error_exit_code: 2,
             }),
-            "gemini" => Some(Self {
-                source: "gemini",
-                critical_hooks: ["SessionStart"].into_iter().collect(),
-                json_error_exit_code: 1,
-            }),
             "qwen" => Some(Self {
                 source: "qwen",
                 critical_hooks: ["SessionStart"].into_iter().collect(),
@@ -86,9 +81,8 @@ mod tests {
     }
 
     #[test]
-    fn gemini_json_parse_errors_exit_one() {
-        let c = CliConfig::for_cli("gemini").unwrap();
-        assert_eq!(c.json_error_exit_code, 1);
+    fn gemini_is_no_longer_registered() {
+        assert!(CliConfig::for_cli("gemini").is_none());
     }
 
     #[test]
