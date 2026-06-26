@@ -276,3 +276,8 @@ scratchpad/
 # Built web UI assets staged into the wheel by build_backend (regenerated each build)
 src/gobby/ui/
 gobby_yc_demo_script.md
+
+# >>> GOBBY WIKI START >>>
+# Gobby local wiki vault; pre-push publishes it to branch `wiki`.
+gobby-wiki/
+# <<< GOBBY WIKI END <<<
