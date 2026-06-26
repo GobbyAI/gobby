@@ -326,8 +326,6 @@ jobs:
     runs-on: ubuntu-latest
     permissions:
       contents: read
-      id-token: write # Required for crates.io trusted publishing via GitHub OIDC.
-    environment: crates-io
 
     steps:
       - uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5
@@ -355,7 +353,7 @@ jobs:
             echo "gobby-wiki ${version} not on crates.io (HTTP 404); will publish."
             echo "skip=false" >> "$GITHUB_OUTPUT"
           elif [ "$code" = "403" ]; then
-            echo "::error::crates.io denied version check for gobby-wiki ${version}: HTTP 403 (curl exit ${curl_status}). Verify registry access and trusted publishing permissions." >&2
+            echo "::error::crates.io denied version check for gobby-wiki ${version}: HTTP 403 (curl exit ${curl_status}). Verify registry access." >&2
             exit 1
           elif [ "$curl_status" -ne 0 ]; then
             echo "::error::crates.io version check failed (curl exit ${curl_status}, HTTP ${code:-unknown})." >&2
@@ -365,16 +363,11 @@ jobs:
             exit 1
           fi
 
-      - name: Authenticate to crates.io
-        id: auth
-        if: steps.published.outputs.skip != 'true'
-        uses: rust-lang/crates-io-auth-action@bbd81622f20ce9e2dd9622e3218b975523e45bbe
-
       - name: Publish gobby-wiki to crates.io
         if: steps.published.outputs.skip != 'true'
         env:
-          CRATES_IO_TOKEN: ${{ steps.auth.outputs.token }}
-        run: cargo publish -p gobby-wiki --locked --token "$CRATES_IO_TOKEN"
+          CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
+        run: cargo publish -p gobby-wiki --locked
 
   release:
     needs: [build, publish]
