@@ -432,21 +432,17 @@ fn service_boundaries(
         }
     }
 
-    // ghook always enqueues to ~/.gobby/hooks/inbox regardless of features.
-    // Attribute the boundary to the hook-dispatcher member (bin-only crate at
-    // crates/ghook) when present, else to the workspace generically.
-    let ghook_owner = crates
+    // ghook enqueues to ~/.gobby/hooks/inbox regardless of features, but only
+    // assert that boundary when the hook-dispatcher member was parsed.
+    if let Some(ghook_owner) = crates
         .iter()
         .find(|c| c.is_binary && !c.is_lib && c.path == "crates/ghook")
-        .map(|c| c.name.clone());
-    let inbox_provenance = match ghook_owner {
-        Some(name) => format!("{name} (always)"),
-        None => "workspace (always)".to_string(),
-    };
-    by_kind
-        .entry(ServiceKind::GhookInbox)
-        .or_default()
-        .insert(inbox_provenance);
+    {
+        by_kind
+            .entry(ServiceKind::GhookInbox)
+            .or_default()
+            .insert(format!("{} (always)", ghook_owner.name));
+    }
 
     // The daemon URL resolver is always-compiled in gobby_core::daemon_url, so
     // the daemon boundary exists for the workspace even absent the `ai`
@@ -690,15 +686,34 @@ mod tests {
             "EmbeddingApi must not appear without the ai feature"
         );
 
-        // The daemon boundary is always present (gobby_core::daemon_url) and
-        // the ghook inbox boundary is always present.
+        // The daemon boundary is always present (gobby_core::daemon_url), but
+        // ghook inbox needs the crates/ghook binary member.
         assert!(model.services.iter().any(|s| s.kind == ServiceKind::Daemon));
         assert!(
             model
                 .services
                 .iter()
-                .any(|s| s.kind == ServiceKind::GhookInbox)
+                .all(|s| s.kind != ServiceKind::GhookInbox)
         );
+    }
+
+    #[test]
+    fn ghook_binary_member_yields_inbox_boundary() {
+        let core_manifest = "[package]\nname = \"gobby-core\"\nversion = \"0.5.0\"\n\n[lib]\npath = \"src/lib.rs\"\n";
+        let ghook_manifest = "[package]\nname = \"gobby-hooks\"\nversion = \"0.5.0\"\n\n[[bin]]\nname = \"ghook\"\npath = \"src/main.rs\"\n";
+        let (_dir, root) = fixture_workspace(&[
+            ("crates/gcore", core_manifest),
+            ("crates/ghook", ghook_manifest),
+        ]);
+
+        let model = build_system_model(&root);
+        let inbox = model
+            .services
+            .iter()
+            .find(|service| service.kind == ServiceKind::GhookInbox)
+            .expect("ghook inbox boundary present");
+
+        assert_eq!(inbox.pulled_in_by, vec!["gobby-hooks (always)".to_string()]);
     }
 
     #[test]

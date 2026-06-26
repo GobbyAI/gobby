@@ -463,8 +463,10 @@ pub(crate) fn is_valid_mermaid(block: &str) -> bool {
     let Some(header) = content.next() else {
         return false;
     };
-    let header = header.trim();
-    if !VALID_HEADERS.iter().any(|h| header.starts_with(h)) {
+    let Some(header_token) = header.split_whitespace().next() else {
+        return false;
+    };
+    if !VALID_HEADERS.contains(&header_token) {
         return false;
     }
     // At least one content line beyond the header.
@@ -899,6 +901,12 @@ mod tests {
     #[test]
     fn validator_rejects_unrecognized_header() {
         let block = "```mermaid\nbananas\n    a --> b\n```\n";
+        assert!(!is_valid_mermaid(block));
+    }
+
+    #[test]
+    fn validator_rejects_valid_header_prefix() {
+        let block = "```mermaid\nflowcharting TD\n    a --> b\n```\n";
         assert!(!is_valid_mermaid(block));
     }
 

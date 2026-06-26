@@ -149,6 +149,7 @@ fn record_failure_to_dir(dir: &Path, ctx: FailureContext<'_>) -> Result<PathBuf>
     let path = dir.join(file_name);
     let bytes = serde_json::to_vec_pretty(&artifact).context("serialize ghook failure artifact")?;
     transport::atomic_write(&path, &bytes).context("write ghook failure artifact")?;
+    prune_old_failure_artifacts(dir, &path).context("prune old ghook failure artifacts")?;
     Ok(path)
 }
 
@@ -203,6 +204,26 @@ fn read_failure_entries(dir: &Path) -> Vec<FailureEntry> {
             Some(FailureEntry { path, modified_at })
         })
         .collect()
+}
+
+fn prune_old_failure_artifacts(dir: &Path, keep_path: &Path) -> Result<()> {
+    let mut entries = read_failure_entries(dir);
+    if entries.len() <= RECENT_FAILURE_LIMIT {
+        return Ok(());
+    }
+
+    entries.sort_by(|a, b| {
+        (b.path == keep_path)
+            .cmp(&(a.path == keep_path))
+            .then_with(|| b.modified_at.cmp(&a.modified_at))
+            .then_with(|| b.path.cmp(&a.path))
+    });
+    for entry in entries.into_iter().skip(RECENT_FAILURE_LIMIT) {
+        fs::remove_file(&entry.path).with_context(|| {
+            format!("remove old ghook failure artifact {}", entry.path.display())
+        })?;
+    }
+    Ok(())
 }
 
 fn cap_response_body(body: &str) -> (String, bool) {
@@ -395,5 +416,39 @@ mod tests {
             .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("tmp"))
             .count();
         assert_eq!(tmp_files, 0);
+    }
+
+    #[test]
+    fn record_failure_prunes_oldest_json_artifacts() {
+        let dir = tempdir().unwrap();
+        for index in 0..RECENT_FAILURE_LIMIT {
+            fs::write(dir.path().join(format!("{index:02}-old.json")), "{}").unwrap();
+        }
+        fs::write(dir.path().join("ignored.tmp"), "{}").unwrap();
+
+        let envelope = envelope();
+        let path = record_failure_to_dir(
+            dir.path(),
+            FailureContext {
+                envelope: &envelope,
+                envelope_id: Some("env"),
+                failure_kind: FailureKind::Connect,
+                status_code: None,
+                error: Some("connection refused"),
+                response_body: None,
+                transport_error: Some("connection refused"),
+                daemon_url: "http://localhost:60887",
+            },
+        )
+        .unwrap();
+
+        let json_files = fs::read_dir(dir.path())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().and_then(|ext| ext.to_str()) == Some("json"))
+            .count();
+        assert_eq!(json_files, RECENT_FAILURE_LIMIT);
+        assert!(path.exists(), "newly written failure artifact is retained");
+        assert!(dir.path().join("ignored.tmp").exists());
     }
 }

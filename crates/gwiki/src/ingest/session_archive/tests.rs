@@ -8,6 +8,8 @@ use crate::sources::{CompileStatus, IngestionMethod, SourceDraftRef};
 use crate::store::MemoryWikiStore;
 use crate::support::text::slugify_with_options;
 
+mod summary;
+
 #[test]
 fn sync_session_archives_ingests_gzip_and_indexes_once() {
     let temp = tempfile::tempdir().expect("tempdir");
@@ -638,7 +640,9 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
     let wiki_dir = vault.join("session_wiki");
     fs::create_dir(&wiki_dir).expect("wiki dir");
     let external_id = "11111111-2222-3333-4444-555555555555";
+    let survivor_id = "22222222-3333-4444-5555-666666666666";
     write_session_wiki(&wiki_dir, external_id, "## Summary\n\nWill vanish later.\n");
+    write_session_wiki(&wiki_dir, survivor_id, "## Summary\n\nStays present.\n");
 
     // First sync ingests the synthesis into a persistent store.
     let mut store = MemoryWikiStore::default();
@@ -652,14 +656,25 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         "2026-06-24T00:00:00Z",
     )
     .expect("first sync");
-    assert_eq!(first.accepted.len(), 1);
-    let record_id = first.accepted[0].result.record.id.clone();
+    assert_eq!(first.accepted.len(), 2);
+    let record_id = first
+        .accepted
+        .iter()
+        .find(|archive| {
+            archive.result.record.canonical_location == format!("session:{external_id}")
+        })
+        .expect("vanishing session accepted")
+        .result
+        .record
+        .id
+        .clone();
     let derived = vault
         .join("knowledge")
         .join("sources")
         .join(format!("{record_id}.md"));
     assert!(derived.exists());
     assert!(indexed_store_text(&store).contains("Will vanish later"));
+    assert!(indexed_store_text(&store).contains("Stays present"));
 
     // The session source disappears (daemon removed the synthesized page).
     fs::remove_file(wiki_dir.join(format!("{external_id}.md"))).expect("remove synthesis");
@@ -689,11 +704,15 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
     assert!(!derived.exists());
     assert!(!vault.join("raw").join(format!("{record_id}.md")).exists());
     let manifest = SourceManifest::read(vault).expect("manifest");
-    assert!(
-        !manifest
-            .entries
-            .iter()
-            .any(|entry| entry.kind == SourceKind::Session)
+    let session_entries = manifest
+        .entries
+        .iter()
+        .filter(|entry| entry.kind == SourceKind::Session)
+        .collect::<Vec<_>>();
+    assert_eq!(session_entries.len(), 1);
+    assert_eq!(
+        session_entries[0].canonical_location,
+        format!("session:{survivor_id}")
     );
     assert!(
         store
@@ -702,6 +721,7 @@ fn vanished_session_source_is_reconciled_and_triggers_index() {
         "index cascade deletes the vanished derived page"
     );
     assert!(!indexed_store_text(&store).contains("Will vanish later"));
+    assert!(indexed_store_text(&store).contains("Stays present"));
 }
 
 #[test]
@@ -753,6 +773,62 @@ fn limit_does_not_false_delete_uncapped_sessions() {
         session_entry_count(vault),
         2,
         "both sessions survive a --limit run"
+    );
+}
+
+#[test]
+fn empty_discovery_preserves_existing_manifest_sessions() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let vault = temp.path();
+    let archive_dir = vault.join("session_transcripts");
+    fs::create_dir(&archive_dir).expect("archive dir");
+    let external_id = "33333333-4444-5555-6666-777777777777";
+    write_archive(
+        &archive_dir.join(format!("{external_id}.jsonl.gz")),
+        br#"{"type":"session","timestamp":"2026-06-24T00:00:00Z","payload":{"title":"Raw preserve","messages":[{"role":"user","content":"Keep me when discovery is empty."}]}}"#,
+    );
+
+    let mut store = MemoryWikiStore::default();
+    let first = sync_session_transcript_archives(
+        vault,
+        &mut store,
+        &archive_dir,
+        &vault.join("missing-session-wiki"),
+        None,
+        RawArchiveMode::Skeleton,
+        "2026-06-24T00:05:00Z",
+    )
+    .expect("initial sync");
+    assert_eq!(first.accepted.len(), 1);
+    let record_id = first.accepted[0].result.record.id.clone();
+    fs::remove_dir_all(&archive_dir).expect("remove archive dir");
+
+    let second = sync_session_transcript_archives(
+        vault,
+        &mut store,
+        &vault.join("missing-session-transcripts"),
+        &vault.join("missing-session-wiki"),
+        None,
+        RawArchiveMode::Skip,
+        "2026-06-24T01:00:00Z",
+    )
+    .expect("empty discovery sync");
+
+    assert_eq!(second.status(), "empty");
+    assert!(second.reconciled.is_empty());
+    let manifest = SourceManifest::read(vault).expect("manifest");
+    assert!(manifest.entries.iter().any(|entry| {
+        entry.kind == SourceKind::Session
+            && entry.id == record_id
+            && entry.canonical_location == format!("session:{external_id}")
+    }));
+    assert!(
+        vault
+            .join("knowledge")
+            .join("sources")
+            .join(format!("{record_id}.md"))
+            .exists(),
+        "session page remains when discovery finds no present locations"
     );
 }
 
@@ -871,92 +947,4 @@ fn session_entry_count(vault: &Path) -> usize {
         .iter()
         .filter(|entry| entry.kind == SourceKind::Session)
         .count()
-}
-
-#[test]
-fn standalone_summary_page_records_summary_mode_provenance() {
-    // A standalone `--summarize` page is wrapped in the daemon `.md` format with
-    // `summary_mode: standalone`; ingestion must surface it as
-    // `session_summary_mode` so the vault can distinguish it from daemon synthesis.
-    let temp = tempfile::tempdir().expect("tempdir");
-    let bytes = b"---\ntitle: Refactor the indexer\nsource: claude\nmodel: claude-opus-4-8\ntags: []\nsession_id: sess-standalone\nsummary_mode: standalone\n---\n## Current State\nAll tests pass.\n".to_vec();
-    let snapshot = SessionWikiFileSnapshot {
-        external_id: "sess-standalone".to_string(),
-        path: temp.path().join("session_wiki").join("sess-standalone.md"),
-        fetched_at: "2026-06-25T00:00:00Z".to_string(),
-        bytes,
-    };
-
-    let result =
-        ingest_session_wiki_file_without_index(temp.path(), snapshot).expect("ingest standalone");
-
-    let derived = fs::read_to_string(
-        temp.path()
-            .join("knowledge")
-            .join("sources")
-            .join(format!("{}.md", result.record.id)),
-    )
-    .expect("derived markdown");
-    assert!(
-        derived.contains("session_summary_mode: standalone"),
-        "expected standalone provenance, got: {derived}"
-    );
-    assert!(derived.contains("session_type: claude"));
-    assert!(derived.contains("## Current State"));
-    assert!(derived.contains("All tests pass."));
-}
-
-#[test]
-fn summarize_skips_archives_that_already_have_a_session_page() {
-    // `--summarize` is idempotent: once a session page exists it is left alone
-    // (no regeneration, no AI call) because LLM output is nondeterministic.
-    let temp = tempfile::tempdir().expect("tempdir");
-    let archive_dir = temp.path().join("session_transcripts");
-    fs::create_dir(&archive_dir).expect("archive dir");
-    write_archive(
-        &archive_dir.join("sess-idem.jsonl.gz"),
-        br#"{"type":"session","timestamp":"2026-06-20T10:00:00Z","payload":{"title":"Idempotent","messages":[{"role":"user","content":"hello"}]}}"#,
-    );
-    let wiki_dir = temp.path().join("session_wiki");
-
-    // First run ingests a skeleton page so a session page exists on disk.
-    let mut store = MemoryWikiStore::default();
-    let first = sync_session_transcript_archives(
-        temp.path(),
-        &mut store,
-        &archive_dir,
-        &wiki_dir,
-        None,
-        RawArchiveMode::Skeleton,
-        "2026-06-20T10:05:00Z",
-    )
-    .expect("first sync");
-    assert_eq!(first.accepted.len(), 1);
-
-    // Second run with --summarize (and --raw off) must short-circuit on the
-    // existing page before any AI resolution/generation work.
-    let mut store = MemoryWikiStore::default();
-    let second = sync_session_transcript_archives(
-        temp.path(),
-        &mut store,
-        &archive_dir,
-        &wiki_dir,
-        None,
-        RawArchiveMode::Summarize,
-        "2026-06-20T10:06:00Z",
-    )
-    .expect("second sync");
-    assert!(second.accepted.is_empty());
-    assert!(
-        second
-            .skipped
-            .iter()
-            .any(|skip| skip.reason == "session_page_present"),
-        "expected session_page_present skip, got: {:?}",
-        second
-            .skipped
-            .iter()
-            .map(|skip| skip.reason.as_str())
-            .collect::<Vec<_>>()
-    );
 }

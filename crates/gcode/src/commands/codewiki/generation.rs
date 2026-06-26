@@ -391,13 +391,11 @@ pub(crate) fn generate_hierarchical_docs_core(
         .with_source_sensitive_key(),
     )?;
     progress.emit("generating architecture docs");
-    // Architecture and infrastructure invalidate on the SystemModel digest, not
-    // their source-file set (Leaf H, #893): a function-body edit leaves the
-    // model — crates, edges, service boundaries, runtime modes, features —
-    // unchanged, so the page is kept; a Cargo.toml dependency or feature change
-    // shifts the digest and rebuilds it. Test/AI-off entry points pass no model
-    // and fall back to the old full source-set reuse.
-    let system_model_key = system_model.map(|model| {
+    // Architecture is keyed by the SystemModel plus architecture prompt inputs:
+    // a function-body edit leaves it alone, while graph/prose evidence changes
+    // rebuild it. Test/AI-off entry points pass no model and fall back to the
+    // old full source-set reuse.
+    let architecture_key = system_model.map(|model| {
         architecture_invalidation_key(
             model,
             &file_docs,
@@ -406,6 +404,7 @@ pub(crate) fn generate_hierarchical_docs_core(
             &input.leading_chunks,
         )
     });
+    let infrastructure_key = system_model.map(infrastructure_invalidation_key);
     let subsystem_names = cluster::subsystem_roots(&files);
     let architecture_sources = span_files(
         &module_docs
@@ -414,7 +413,7 @@ pub(crate) fn generate_hierarchical_docs_core(
             .flat_map(|module| module.source_spans.iter().cloned())
             .collect::<Vec<_>>(),
     );
-    let reused_architecture = match system_model_key.as_deref() {
+    let reused_architecture = match architecture_key.as_deref() {
         Some(key) => reuse
             .as_deref_mut()
             .and_then(|plan| plan.reusable_page_keyed("code/_architecture.md", key)),
@@ -425,7 +424,7 @@ pub(crate) fn generate_hierarchical_docs_core(
     let architecture_built = match reused_architecture {
         Some(page) => {
             progress.emit("reusing architecture docs (system model unchanged)");
-            match system_model_key.clone() {
+            match architecture_key.clone() {
                 Some(key) => BuiltDoc::derived("code/_architecture.md", page, key),
                 None => BuiltDoc::healthy("code/_architecture.md", page),
             }
@@ -449,7 +448,7 @@ pub(crate) fn generate_hierarchical_docs_core(
                     .any(|source| source == "model-unavailable"),
                 summary: None,
                 neighbors: BTreeSet::new(),
-                invalidation_key: system_model_key.clone(),
+                invalidation_key: architecture_key.clone(),
                 invalidation_key_requires_sources: false,
             }
         }
@@ -462,7 +461,7 @@ pub(crate) fn generate_hierarchical_docs_core(
     progress.emit("generating infrastructure docs");
     if let Some(infrastructure_doc) = infrastructure_doc {
         let content = render_infrastructure_doc(&infrastructure_doc);
-        emit(match system_model_key.clone() {
+        emit(match infrastructure_key.clone() {
             Some(key) => BuiltDoc::derived("code/infrastructure.md", content, key),
             None => BuiltDoc::healthy("code/infrastructure.md", content),
         })?;
@@ -611,6 +610,10 @@ fn architecture_invalidation_key(
     }
 
     format!("architecture:{}", hasher::content_hash(key.as_bytes()))
+}
+
+fn infrastructure_invalidation_key(system_model: &SystemModel) -> String {
+    format!("infrastructure:{}", system_model.digest())
 }
 
 fn push_span_key(out: &mut String, prefix: &str, span: &SourceSpan) {

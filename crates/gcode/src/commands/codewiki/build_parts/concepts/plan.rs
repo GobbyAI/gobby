@@ -269,9 +269,9 @@ pub(super) fn normalize_narrative_pages(
             page.title = page.title.trim().to_string();
             page.summary = page.summary.trim().to_string();
             page.slug = slugify(if page.slug.trim().is_empty() {
-                &page.title
+                page.title.as_str()
             } else {
-                &page.slug
+                strip_ordinal_slug_prefix(page.slug.trim())
             });
             page.concepts = page
                 .concepts
@@ -352,13 +352,25 @@ pub(super) fn normalize_narrative_pages(
     // the bare ordinal so a page is never named `NN-`.
     for (index, page) in ordered.iter_mut().enumerate() {
         let ordinal = index + 1;
-        page.slug = if page.slug.is_empty() {
+        let title_slug = slugify(&page.title);
+        page.slug = if title_slug.is_empty() {
             format!("{ordinal:02}")
         } else {
-            format!("{ordinal:02}-{}", page.slug)
+            format!("{ordinal:02}-{title_slug}")
         };
     }
     ordered
+}
+
+fn strip_ordinal_slug_prefix(slug: &str) -> &str {
+    let Some((prefix, suffix)) = slug.split_once('-') else {
+        return slug;
+    };
+    if prefix.len() == 2 && prefix.chars().all(|c| c.is_ascii_digit()) && !suffix.is_empty() {
+        suffix
+    } else {
+        slug
+    }
 }
 
 fn concept_key_map(concepts: &[ConceptModule]) -> std::collections::BTreeMap<String, String> {
@@ -433,7 +445,7 @@ mod tests {
             &[],
         );
         let after = normalize_narrative_pages(
-            vec![narrative_page("cli-runtime", "CLI Runtime")],
+            vec![narrative_page("04-cli-entrypoints", "CLI Runtime")],
             &[],
             &[],
             &[],

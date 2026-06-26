@@ -111,20 +111,27 @@ pub fn read_hub_database_bootstrap_file(
         )
     })?;
     parse_hub_database_bootstrap(&contents)
-        .map(Some)
         .map_err(|error| anyhow::anyhow!("failed to parse {}: {error}", path.display()))
 }
 
-pub fn parse_hub_database_bootstrap(contents: &str) -> anyhow::Result<HubDatabaseBootstrap> {
+pub fn parse_hub_database_bootstrap(
+    contents: &str,
+) -> anyhow::Result<Option<HubDatabaseBootstrap>> {
+    if contents.trim().is_empty() {
+        return Ok(None);
+    }
     let yaml: serde_yaml::Value = serde_yaml::from_str(contents)?;
+    if yaml.is_null() {
+        return Ok(None);
+    }
     let Some(map) = yaml.as_mapping() else {
         anyhow::bail!("bootstrap.yaml must be a mapping");
     };
 
-    Ok(HubDatabaseBootstrap {
+    Ok(Some(HubDatabaseBootstrap {
         hub_backend: optional_string_field(map, "hub_backend")?,
         database_url: optional_string_field(map, "database_url")?,
-    })
+    }))
 }
 
 pub fn postgres_database_url_from_bootstrap_file(path: &Path) -> anyhow::Result<Option<String>> {
@@ -256,6 +263,30 @@ mod tests {
     }
 
     #[test]
+    fn postgres_database_url_empty_file_returns_none() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(&path, "").unwrap();
+
+        assert_eq!(
+            postgres_database_url_from_bootstrap_file(&path).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn postgres_database_url_null_file_returns_none() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(&path, "null\n").unwrap();
+
+        assert_eq!(
+            postgres_database_url_from_bootstrap_file(&path).unwrap(),
+            None
+        );
+    }
+
+    #[test]
     fn postgres_database_url_reads_postgres_url() {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
@@ -312,6 +343,15 @@ mod tests {
         let dir = tempdir().unwrap();
         let path = dir.path().join("bootstrap.yaml");
         fs::write(&path, "hub_backend: [").unwrap();
+
+        assert!(postgres_database_url_from_bootstrap_file(&path).is_err());
+    }
+
+    #[test]
+    fn postgres_database_url_non_empty_scalar_yaml_errors() {
+        let dir = tempdir().unwrap();
+        let path = dir.path().join("bootstrap.yaml");
+        fs::write(&path, "postgres\n").unwrap();
 
         assert!(postgres_database_url_from_bootstrap_file(&path).is_err());
     }

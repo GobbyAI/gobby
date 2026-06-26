@@ -106,11 +106,14 @@ pub(crate) fn render_file_doc(file: &FileDoc) -> String {
             None => inline_code(&symbol.symbol.qualified_name),
         };
         let purpose_cell = match &symbol.deprecation {
-            Some(reason) if !reason.is_empty() => format!(
-                "⚠️ **deprecated** — {} {}",
-                reason,
-                neutralize_symbol_purpose_links(&symbol.purpose)
-            ),
+            Some(reason) if !reason.is_empty() => {
+                let reason = neutralize_symbol_purpose_links(reason);
+                format!(
+                    "⚠️ **deprecated** — {} {}",
+                    reason,
+                    neutralize_symbol_purpose_links(&symbol.purpose)
+                )
+            }
             Some(_) => format!(
                 "⚠️ **deprecated** {}",
                 neutralize_symbol_purpose_links(&symbol.purpose)

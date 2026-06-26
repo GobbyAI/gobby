@@ -35,10 +35,15 @@ pub(crate) fn database_url() -> anyhow::Result<Option<String>> {
             log::debug!("failed to resolve brokered gwiki database URL: {error}");
         }
     }
-    if let Some(database_url) =
-        gobby_core::bootstrap::postgres_database_url_from_bootstrap_file(&bootstrap_path)?
-    {
-        return Ok(Some(database_url));
+    match gobby_core::bootstrap::postgres_database_url_from_bootstrap_file(&bootstrap_path) {
+        Ok(Some(database_url)) => return Ok(Some(database_url)),
+        Ok(None) => {}
+        Err(error) => {
+            log::debug!(
+                "failed to resolve gwiki database URL from bootstrap file {}: {error}",
+                bootstrap_path.display()
+            );
+        }
     }
     resolve_database_url_from_gcore_config(&home)
 }
@@ -275,6 +280,28 @@ mod tests {
                 .to_string()
                 .contains("must resolve only to loopback addresses")
         );
+    }
+
+    #[test]
+    #[serial_test::serial]
+    fn database_url_logs_bad_bootstrap_and_falls_back_to_gcore_config() {
+        let home = tempfile::tempdir().expect("create home");
+        fs::write(home.path().join("bootstrap.yaml"), "hub_backend: [")
+            .expect("write bad bootstrap");
+        fs::write(
+            home.path().join("gcore.yaml"),
+            "databases:\n  postgres:\n    dsn: postgresql://gcore.example/gobby\n",
+        )
+        .expect("write gcore config");
+        let _env = EnvGuard::set("GOBBY_HOME", home.path().as_os_str())
+            .and_unset("GWIKI_DATABASE_URL")
+            .and_unset("GOBBY_POSTGRES_DSN");
+
+        let resolved = database_url()
+            .expect("resolve database url")
+            .expect("gcore database url");
+
+        assert_eq!(resolved, "postgresql://gcore.example/gobby");
     }
 
     fn spawn_database_url_broker(

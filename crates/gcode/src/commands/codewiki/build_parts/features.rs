@@ -86,11 +86,11 @@ fn resolve_gcode_handler(command: &str) -> (&'static str, &'static str) {
         "setup" => ("crates/gcode/src/commands/setup.rs", "commands::setup::run"),
         "index" => ("crates/gcode/src/commands/index.rs", "commands::index::run"),
         "status" => (
-            "crates/gcode/src/commands/status.rs",
+            "crates/gcode/src/commands/status/current.rs",
             "commands::status::run",
         ),
         "invalidate" => (
-            "crates/gcode/src/commands/status.rs",
+            "crates/gcode/src/commands/status/invalidate.rs",
             "commands::status::invalidate",
         ),
         "search" => (
@@ -215,15 +215,15 @@ fn resolve_gcode_handler(command: &str) -> (&'static str, &'static str) {
             "commands::embeddings_doctor::run",
         ),
         "repo-outline" => (
-            "crates/gcode/src/commands/status.rs",
+            "crates/gcode/src/commands/status/repo_outline.rs",
             "commands::status::repo_outline",
         ),
         "projects" => (
-            "crates/gcode/src/commands/status.rs",
+            "crates/gcode/src/commands/status/projects.rs",
             "commands::status::projects",
         ),
         "prune" => (
-            "crates/gcode/src/commands/status.rs",
+            "crates/gcode/src/commands/status/prune.rs",
             "commands::status::prune",
         ),
         _ => ("", ""),

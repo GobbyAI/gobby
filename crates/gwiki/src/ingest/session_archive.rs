@@ -398,18 +398,20 @@ pub(crate) fn sync_session_transcript_archives(
     // pre-limit present set so a `--limit` run never false-deletes uncapped
     // sessions. Entries supersede already removed return `None` here (no-op).
     let mut reconciled = Vec::new();
-    for entry in &manifest.entries {
-        if entry.kind != SourceKind::Session
-            || present_locations.contains(&entry.canonical_location)
-        {
-            continue;
-        }
-        if let Some(removed) = remove_session_page(vault_root, &entry.id)? {
-            reconciled.push(ReconciledSessionArchive {
-                source_id: removed.id,
-                canonical_location: removed.canonical_location,
-                content_hash: removed.content_hash,
-            });
+    if !present_locations.is_empty() {
+        for entry in &manifest.entries {
+            if entry.kind != SourceKind::Session
+                || present_locations.contains(&entry.canonical_location)
+            {
+                continue;
+            }
+            if let Some(removed) = remove_session_page(vault_root, &entry.id)? {
+                reconciled.push(ReconciledSessionArchive {
+                    source_id: removed.id,
+                    canonical_location: removed.canonical_location,
+                    content_hash: removed.content_hash,
+                });
+            }
         }
     }
 

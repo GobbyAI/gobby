@@ -166,10 +166,30 @@ impl<'a> DocSink<'a> {
     /// Write one doc unless it is provably unchanged, then flush the meta log
     /// so what is on disk always matches what the meta records.
     pub(crate) fn persist(&mut self, doc: &BuiltDoc) -> anyhow::Result<bool> {
-        let source_hashes = source_hashes_for_doc(self.project_root, &doc.content)?;
-        let neighbor_hashes = neighbor_hashes_for_doc(self.project_root, &doc.neighbors)?;
         let target = safe_doc_path(self.out_dir, &doc.path)?;
         let previous_meta = self.previous_docs.get(&doc.path);
+        if let (Some(since), Some(meta)) = (self.since.as_ref(), previous_meta)
+            && doc.invalidation_key.is_none()
+            && target.exists()
+            && !meta.degraded
+            && meta.ai_mode == self.ai_mode
+            && meta.render_version == CODEWIKI_RENDER_VERSION
+            && !meta.source_hashes.is_empty()
+            && (doc.summary.is_none() || meta.summary.is_some())
+            && meta
+                .source_hashes
+                .keys()
+                .chain(meta.neighbor_hashes.keys())
+                .all(|file| !since.contains(file))
+        {
+            self.next_docs.insert(doc.path.clone(), meta.clone());
+            self.seen.insert(doc.path.clone());
+            self.flush()?;
+            return Ok(false);
+        }
+
+        let source_hashes = source_hashes_for_doc(self.project_root, &doc.content)?;
+        let neighbor_hashes = neighbor_hashes_for_doc(self.project_root, &doc.neighbors)?;
         // Two invalidation models share this gate (Leaf H, #893):
         //
         // * A *derived aggregate page* (architecture/infrastructure/feature

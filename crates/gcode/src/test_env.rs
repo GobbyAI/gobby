@@ -99,7 +99,7 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
+    #[serial_test::serial(serial_db)]
     fn test_env_prefers_gcode_specific_database_url() {
         with_postgres_test_env(
             &[
@@ -125,7 +125,7 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
+    #[serial_test::serial(serial_db)]
     fn test_env_uses_component_var_fallback() {
         with_postgres_test_env(
             &[
@@ -147,7 +147,7 @@ mod tests {
     }
 
     #[test]
-    #[serial_test::serial]
+    #[serial_test::serial(serial_db)]
     fn test_env_uses_bootstrap_fallback() {
         let dir = tempfile::tempdir().unwrap();
         std::fs::write(

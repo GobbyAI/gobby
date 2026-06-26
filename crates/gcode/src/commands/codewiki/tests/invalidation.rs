@@ -248,6 +248,10 @@ fn leading_chunk_change_rewrites_architecture_with_same_system_model() {
         second.iter().any(|p| p == "code/_architecture.md"),
         "architecture prompt input changed, so the page must rebuild: {second:?}"
     );
+    assert!(
+        !second.iter().any(|p| p == "code/infrastructure.md"),
+        "infrastructure is keyed only on the SystemModel digest and must not rebuild: {second:?}"
+    );
 }
 
 #[test]

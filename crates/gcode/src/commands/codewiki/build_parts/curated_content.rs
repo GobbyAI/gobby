@@ -99,10 +99,12 @@ pub(crate) fn curated_page_body(
             // claims as frontmatter-only notes.
             // Curated pages carry no per-file relationship facts; the verifier
             // audits them against members/symbols/source excerpts only.
+            let verification_evidence =
+                verifier_evidence_rows(members.iter().chain(symbols.iter()));
             let (text, verify_notes) = match verify_with_notes(
                 verify,
                 &text,
-                &[],
+                &verification_evidence,
                 &sources,
                 &RelationshipFacts::default(),
             ) {
@@ -188,6 +190,38 @@ fn symbol_evidence_rows(
     rows.sort_by(|a, b| a.name.cmp(&b.name));
     rows.truncate(MAX_PAGE_SYMBOL_ROWS);
     rows
+}
+
+fn verifier_evidence_rows<'a>(
+    rows: impl Iterator<Item = &'a prompts::PageEvidenceRow>,
+) -> Vec<prompts::SymbolSummary> {
+    rows.enumerate()
+        .map(|(index, row)| {
+            let (line_start, line_end) = citation_line_range(&row.citation).unwrap_or((1, 1));
+            prompts::SymbolSummary {
+                name: row.name.clone(),
+                kind: row.kind.clone(),
+                component_id: format!("curated-evidence-{}", index + 1),
+                component_label: row.citation.clone(),
+                line_start,
+                line_end,
+                purpose: row.summary.clone(),
+            }
+        })
+        .collect()
+}
+
+fn citation_line_range(citation: &str) -> Option<(usize, usize)> {
+    let inner = citation.strip_prefix('[')?.strip_suffix(']')?;
+    let (_file, range) = inner.rsplit_once(':')?;
+    let (start, end) = match range.split_once('-') {
+        Some((start, end)) => (start.parse().ok()?, end.parse().ok()?),
+        None => {
+            let line = range.parse().ok()?;
+            (line, line)
+        }
+    };
+    Some((start, end))
 }
 
 fn span_citation(spans: &[SourceSpan], fallback: &str) -> String {
@@ -595,6 +629,34 @@ mod flow_tests {
 
     fn file_lookup(docs: &[FileDoc]) -> BTreeMap<&str, &FileDoc> {
         docs.iter().map(|doc| (doc.path.as_str(), doc)).collect()
+    }
+
+    #[test]
+    fn verifier_evidence_preserves_curated_members_and_symbols() {
+        let members = [prompts::PageEvidenceRow {
+            name: "walker".to_string(),
+            kind: "module".to_string(),
+            citation: "[src/walker.rs:10-12]".to_string(),
+            summary: "Discovers candidate files.".to_string(),
+        }];
+        let symbols = [prompts::PageEvidenceRow {
+            name: "parse_plan".to_string(),
+            kind: "function".to_string(),
+            citation: "[src/plan.rs:42]".to_string(),
+            summary: "Parses the navigation JSON.".to_string(),
+        }];
+
+        let rows = verifier_evidence_rows(members.iter().chain(symbols.iter()));
+
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0].name, "walker");
+        assert_eq!(rows[0].kind, "module");
+        assert_eq!(rows[0].component_label, "[src/walker.rs:10-12]");
+        assert_eq!((rows[0].line_start, rows[0].line_end), (10, 12));
+        assert_eq!(rows[0].purpose, "Discovers candidate files.");
+        assert_eq!(rows[1].name, "parse_plan");
+        assert_eq!(rows[1].component_label, "[src/plan.rs:42]");
+        assert_eq!((rows[1].line_start, rows[1].line_end), (42, 42));
     }
 
     #[test]

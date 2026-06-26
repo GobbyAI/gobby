@@ -522,13 +522,16 @@ fn mermaid_blocks(page: &str) -> Vec<String> {
             while j < lines.len() && lines[j].trim() != "```" {
                 j += 1;
             }
-            if j < lines.len() {
-                let mut block = lines[start..=j].join("\n");
-                block.push('\n');
-                blocks.push(block);
-                i = j + 1;
-                continue;
-            }
+            assert!(
+                j < lines.len(),
+                "unterminated mermaid fence starting at rendered line {}",
+                start + 1
+            );
+            let mut block = lines[start..=j].join("\n");
+            block.push('\n');
+            blocks.push(block);
+            i = j + 1;
+            continue;
         }
         i += 1;
     }

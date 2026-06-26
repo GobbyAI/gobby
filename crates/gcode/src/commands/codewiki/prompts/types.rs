@@ -1,4 +1,3 @@
-#[allow(clippy::too_many_arguments)]
 /// One source-grounded row for a curated page content prompt: a member
 /// module/file or a key symbol paired with a `file:line` citation.
 /// [`ChildSummary`] alone carries no location, so the content pass would have

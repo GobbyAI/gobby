@@ -496,7 +496,8 @@ mod tests {
         let bootstrap = gobby_core::bootstrap::parse_hub_database_bootstrap(
             "database_url: postgresql://inline/db\n",
         )
-        .expect("parse bootstrap");
+        .expect("parse bootstrap")
+        .expect("bootstrap data");
         let err = resolve_database_url_from_bootstrap(&bootstrap)
             .expect_err("missing hub_backend must fail");
 
@@ -517,7 +518,8 @@ mod tests {
             "hub_backend: postgres\n\
              database_url: postgresql://inline/db\n",
         )
-        .expect("parse bootstrap");
+        .expect("parse bootstrap")
+        .expect("bootstrap data");
 
         assert_eq!(parsed.hub_backend.as_deref(), Some("postgres"));
         assert_eq!(

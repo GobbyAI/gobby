@@ -296,22 +296,23 @@ fn cleanup_orphan_project_projections(
         }
     } else {
         totals.graph_projects_skipped += 1;
-        cleaned = false;
     }
 
     if let Some(qdrant) = &ctx.qdrant {
         match code_symbols::delete_project_collection(qdrant, project_id) {
             Ok(deleted) => totals.vector_collections_deleted += deleted,
-            Err(error) => warn_orphan_projection_cleanup_failure(
-                "vector",
-                project_id,
-                anyhow::Error::from(error),
-                warnings_emitted,
-            ),
+            Err(error) => {
+                warn_orphan_projection_cleanup_failure(
+                    "vector",
+                    project_id,
+                    anyhow::Error::from(error),
+                    warnings_emitted,
+                );
+                cleaned = false;
+            }
         }
     } else {
         totals.vector_projects_skipped += 1;
-        cleaned = false;
     }
     cleaned
 }
