@@ -45,12 +45,24 @@ pub fn is_binary(path: &Path) -> bool {
         Ok(f) => f,
         Err(_) => return true,
     };
+    // Scan the whole stream, not just the first 8KB: NUL bytes can appear late
+    // (a clean prefix followed by binary garbage corrupts the index — gobby-cli
+    // #17356 / Gobby #17344). The read is bounded: `is_safe_text_file` already
+    // rejects files larger than MAX_FILE_SIZE before this runs, so the loop reads
+    // at most that cap. Do not narrow this back to a single read.
     let mut buf = [0u8; 8192];
-    let n = match file.read(&mut buf) {
-        Ok(n) => n,
-        Err(_) => return true,
-    };
-    buf[..n].contains(&0)
+    loop {
+        let n = match file.read(&mut buf) {
+            Ok(n) => n,
+            Err(_) => return true,
+        };
+        if n == 0 {
+            return false;
+        }
+        if buf[..n].contains(&0) {
+            return true;
+        }
+    }
 }
 
 /// Check if a path should be excluded.
