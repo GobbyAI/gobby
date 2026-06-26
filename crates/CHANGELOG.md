@@ -96,6 +96,12 @@ follow-up indexing fixes.
   UTF-8 char boundary before the scoped link id is computed, so transcript links
   longer than the 8191-byte Postgres btree row limit no longer fail indexing
   atomically and strand orphan vault files (#939).
+- **Windows build** — `gwiki` now compiles on `x86_64-pc-windows-msvc` /
+  `aarch64-pc-windows-msvc`. The log de-duplication path read a file's
+  volume-serial + file-index identity through the unstable `windows_by_handle`
+  std accessors (nightly-only); it now reads the same fields via the stable
+  `GetFileInformationByHandle` Win32 API, so the windows-msvc release legs build
+  and `gwiki` ships Windows binaries for the first time (#961).
 
 ## [0.6.2] — ghook — 2026-06-26
 

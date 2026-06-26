@@ -128,18 +128,33 @@ fn same_file_identity(left: &Path, right: &Path) -> bool {
 }
 
 #[cfg(windows)]
+#[allow(dead_code, reason = "reserved gwiki CLI/API split")]
 fn same_file_identity(left: &Path, right: &Path) -> bool {
-    use std::os::windows::fs::MetadataExt;
+    use std::os::windows::io::AsRawHandle;
+    use windows_sys::Win32::Foundation::HANDLE;
+    use windows_sys::Win32::Storage::FileSystem::{
+        BY_HANDLE_FILE_INFORMATION, GetFileInformationByHandle,
+    };
 
     fn identity(path: &Path) -> Option<(u32, u32, u32)> {
-        let metadata = std::fs::metadata(path).ok()?;
-        if metadata.file_index_high() == 0 && metadata.file_index_low() == 0 {
+        // The std MetadataExt accessors for volume serial + file index are still
+        // unstable (windows_by_handle), so read them off the open file handle
+        // via GetFileInformationByHandle to stay on stable Rust.
+        let file = std::fs::File::open(path).ok()?;
+        let mut info: BY_HANDLE_FILE_INFORMATION = unsafe { std::mem::zeroed() };
+        // SAFETY: `file` owns a valid handle for the duration of the call, and
+        // `info` is a properly aligned, writable output buffer.
+        let ok = unsafe { GetFileInformationByHandle(file.as_raw_handle() as HANDLE, &mut info) };
+        if ok == 0 {
+            return None;
+        }
+        if info.nFileIndexHigh == 0 && info.nFileIndexLow == 0 {
             return None;
         }
         Some((
-            metadata.volume_serial_number(),
-            metadata.file_index_high(),
-            metadata.file_index_low(),
+            info.dwVolumeSerialNumber,
+            info.nFileIndexHigh,
+            info.nFileIndexLow,
         ))
     }
 

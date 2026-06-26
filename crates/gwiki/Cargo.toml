@@ -64,10 +64,11 @@ zip = { version = "4", default-features = false, features = ["deflate"], optiona
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"
 
+[target.'cfg(windows)'.dependencies]
+# Win32 file-identity in log.rs (GetFileInformationByHandle) plus symlink handling
+# in compile::tests::compile_rejects_target_page_through_symlinked_parent.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Storage_FileSystem"] }
+
 [dev-dependencies]
 gobby-core = { path = "../gcore", version = "0.6.1", features = ["postgres", "falkor", "qdrant", "indexing", "search", "graph-analytics", "ai"] }
 serial_test = "3"
-
-[target.'cfg(windows)'.dev-dependencies]
-# Reserved for Windows symlink handling in compile::tests::compile_rejects_target_page_through_symlinked_parent.
-windows-sys = { version = "0.61", features = ["Win32_Storage_FileSystem"] }
