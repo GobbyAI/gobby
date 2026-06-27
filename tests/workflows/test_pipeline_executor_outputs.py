@@ -164,7 +164,7 @@ class TestBuildOutputs:
                     "status": "completed",
                     "output": {
                         "agents": [
-                            {"provider": "gemini"},
+                            {"provider": "codex"},
                             {"provider": "claude"},
                         ]
                     },

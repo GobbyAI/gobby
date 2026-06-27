@@ -52,8 +52,8 @@ class TestProviderResolution:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         agent_body = AgentDefinitionBody(
-            name="gemini-worker",
-            provider="gemini",
+            name="codex-worker",
+            provider="codex",
         )
         runner = _make_runner()
 
@@ -92,9 +92,9 @@ class TestProviderResolution:
             )
 
         assert result["success"] is True
-        # Verify execute_spawn was called with gemini as the provider
+        # Verify execute_spawn was called with codex as the provider
         spawn_request = mock_execute.call_args[0][0]
-        assert spawn_request.provider == "gemini"
+        assert spawn_request.provider == "codex"
 
     @pytest.mark.asyncio
     async def test_explicit_provider_overrides_agent_body(self) -> None:
@@ -102,8 +102,8 @@ class TestProviderResolution:
         from gobby.mcp_proxy.tools.spawn_agent._implementation import spawn_agent_impl
 
         agent_body = AgentDefinitionBody(
-            name="gemini-worker",
-            provider="gemini",
+            name="codex-worker",
+            provider="codex",
         )
         runner = _make_runner()
 

@@ -763,12 +763,12 @@ class TestExecuteSpawn:
         assert "session_manager is required" in (result.error or "")
 
     @pytest.mark.asyncio
-    async def test_gemini_terminal_spawn_is_rejected(self):
-        """Gemini is no longer a supported spawn provider."""
+    async def test_unknown_terminal_spawn_is_rejected(self):
+        """Unsupported providers must not fall through to Claude."""
         request = SpawnRequest(
             prompt="Test",
             cwd="/path",
-            provider="gemini",
+            provider="unknown",
             session_id="sess",
             run_id="run",
             parent_session_id="parent",
@@ -779,7 +779,7 @@ class TestExecuteSpawn:
         result = await execute_spawn(request)
 
         assert result.success is False
-        assert "Gemini provider is no longer supported" in (result.error or "")
+        assert "Unsupported spawn provider: unknown" in (result.error or "")
 
     @pytest.mark.asyncio
     async def test_qwen_terminal_spawn_failure_propagates_error(self):

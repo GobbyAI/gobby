@@ -2,13 +2,12 @@
 
 These JSONL files are golden stdout streams captured from real ACP CLI runs.
 Filenames pin the provider and CLI version, for example:
-`gemini-0.40.1-session-new-prompt.stdout.jsonl`.
+`qwen-0.15.6-session-new-prompt.stdout.jsonl`.
 
 To re-record a fixture:
 
-1. Capture the current CLI version with `gemini --version`, `qwen --version`,
-   or `grok version`.
-2. Start the CLI in ACP mode with `gemini --acp`, `qwen --acp`, or
+1. Capture the current CLI version with `qwen --version` or `grok version`.
+2. Start the CLI in ACP mode with `qwen --acp` or
    `grok agent --no-leader --always-approve stdio`.
 3. Send the same JSON-RPC request sequence used by
    `tests/adapters/test_acp_contract_fixtures.py`: `initialize`, then

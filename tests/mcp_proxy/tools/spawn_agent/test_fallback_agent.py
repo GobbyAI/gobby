@@ -43,7 +43,7 @@ class TestFallbackAgent:
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When primary provider has failed, factory loads fallback agent."""
-        self._create_agent(manager, "dev-gemini", provider="gemini", fallback_agent="dev-claude")
+        self._create_agent(manager, "dev-codex", provider="codex", fallback_agent="dev-claude")
         self._create_agent(manager, "dev-claude", provider="claude", model="opus")
 
         runner = MagicMock()
@@ -55,7 +55,7 @@ class TestFallbackAgent:
             ),
             patch(
                 "gobby.agents.provider_rotation.get_failed_providers_for_task",
-                return_value=["gemini"],
+                return_value=["codex"],
             ),
             patch(
                 "gobby.mcp_proxy.tools.spawn_agent._factory.spawn_agent_impl",
@@ -73,7 +73,7 @@ class TestFallbackAgent:
 
             await tool_fn(
                 prompt="fix the bug",
-                agent="dev-gemini",
+                agent="dev-codex",
                 task_id="task-123",
             )
 
@@ -88,7 +88,7 @@ class TestFallbackAgent:
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """When primary provider has NOT failed, use primary agent."""
-        self._create_agent(manager, "dev-gemini2", provider="gemini", fallback_agent="dev-claude2")
+        self._create_agent(manager, "dev-codex2", provider="codex", fallback_agent="dev-claude2")
         self._create_agent(manager, "dev-claude2", provider="claude", model="opus")
 
         runner = MagicMock()
@@ -117,21 +117,21 @@ class TestFallbackAgent:
 
             await tool_fn(
                 prompt="fix the bug",
-                agent="dev-gemini2",
+                agent="dev-codex2",
                 task_id="task-123",
             )
 
             # Should keep primary agent
             call_kwargs = mock_impl.call_args.kwargs
-            assert call_kwargs["agent_body"].name == "dev-gemini2"
-            assert call_kwargs["agent_body"].provider == "gemini"
+            assert call_kwargs["agent_body"].name == "dev-codex2"
+            assert call_kwargs["agent_body"].provider == "codex"
 
     @pytest.mark.asyncio
     async def test_no_fallback_when_no_fallback_agent_set(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Agent without fallback_agent doesn't attempt rotation."""
-        self._create_agent(manager, "dev-solo", provider="gemini")  # no fallback
+        self._create_agent(manager, "dev-solo", provider="codex")  # no fallback
 
         runner = MagicMock()
 
@@ -167,7 +167,7 @@ class TestFallbackAgent:
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
         """Explicit provider= param skips fallback (caller chose the provider)."""
-        self._create_agent(manager, "dev-explicit", provider="gemini", fallback_agent="dev-fb")
+        self._create_agent(manager, "dev-explicit", provider="codex", fallback_agent="dev-fb")
         self._create_agent(manager, "dev-fb", provider="claude")
 
         runner = MagicMock()
@@ -193,11 +193,11 @@ class TestFallbackAgent:
             await tool_fn(
                 prompt="fix the bug",
                 agent="dev-explicit",
-                provider="gemini",  # explicit override
+                provider="codex",  # explicit override
                 task_id="task-123",
             )
 
-            # Should NOT fall back — caller explicitly chose gemini
+            # Should NOT fall back — caller explicitly chose codex
             call_kwargs = mock_impl.call_args.kwargs
             assert call_kwargs["agent_body"].name == "dev-explicit"
 
@@ -205,7 +205,7 @@ class TestFallbackAgent:
         """AgentDefinitionBody with fallback_agent serializes/deserializes."""
         body = AgentDefinitionBody(
             name="test-fb",
-            provider="gemini",
+            provider="codex",
             fallback_agent="test-fb-claude",
         )
         dumped = body.model_dump_json()

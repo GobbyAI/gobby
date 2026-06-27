@@ -330,7 +330,7 @@ async def test_option_yolo_native_drives_bypass_no_auto_continue() -> None:
 async def test_option_yolo_managed_drives_bypass_and_auto_continues() -> None:
     """approve_yolo -> bypass mode + auto-continue on a managed CLI."""
     host = _make_host()
-    session = _make_session(provider="gemini", has_pending_plan=True, plan_auto_switch=False)
+    session = _make_session(provider="codex", has_pending_plan=True, plan_auto_switch=False)
     host._chat_sessions["c"] = session
     websocket = AsyncMock()
 

@@ -71,10 +71,10 @@ class TestListAgentDefinitions:
 
     def test_summary_fields(self, temp_db: HubDatabase) -> None:
         mgr = _setup(temp_db)
-        _insert_agent(mgr, "summary-test", provider="gemini", surfaces=["spawn", "persona"])
+        _insert_agent(mgr, "summary-test", provider="codex", surfaces=["spawn", "persona"])
         result = list_agent_definitions(mgr)
         agent = result["agents"][0]
-        assert agent["provider"] == "gemini"
+        assert agent["provider"] == "codex"
         assert agent["source"] == "installed"
         assert agent["surfaces"] == ["spawn", "persona"]
 
@@ -157,14 +157,14 @@ class TestCreateAgentDefinition:
                 "description": "Full agent",
                 "role": "dev",
                 "goal": "build things",
-                "provider": "gemini",
-                "model": "flash",
+                "provider": "codex",
+                "model": "gpt-5.4",
                 "timeout": 300.0,
                 "max_turns": 20,
             },
         )
         assert result["success"] is True
-        assert result["agent"]["provider"] == "gemini"
+        assert result["agent"]["provider"] == "codex"
 
     def test_duplicate_fails(self, temp_db: HubDatabase) -> None:
         mgr = _setup(temp_db)

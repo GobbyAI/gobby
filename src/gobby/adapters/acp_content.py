@@ -147,7 +147,7 @@ def extract_text(content: Any) -> str:
 
     parts: list[str] = []
     for block in _iter_content_blocks(content):
-        if block.get("type") == "text":
+        if block.get("type") in (None, "text"):
             text = _block_text(block)
             if text:
                 parts.append(text)

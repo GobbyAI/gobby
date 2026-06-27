@@ -324,7 +324,7 @@ class TestSpawnAgentImplErrorBranches:
             base_branch="main",
             project_id=sample_project["id"],
             project_path=str(tmp_path / "repo"),
-            provider="gemini",
+            provider="codex",
             parent_session_id="sess-1",
         )
 
@@ -367,7 +367,7 @@ class TestSpawnAgentImplErrorBranches:
         repair.assert_awaited_once_with(
             main_repo_path=str(tmp_path / "repo"),
             isolated_path=str(worktree_path),
-            provider="gemini",
+            provider="codex",
         )
 
     @pytest.mark.asyncio
@@ -434,7 +434,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
-                provider="gemini",
+                provider="codex",
                 worktree_id="wt-1",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
@@ -450,7 +450,7 @@ class TestSpawnAgentImplErrorBranches:
         repair.assert_awaited_once_with(
             main_repo_path=str(tmp_path / "repo"),
             isolated_path=str(worktree_path),
-            provider="gemini",
+            provider="codex",
         )
         mock_execute.assert_awaited_once()
         spawn_request = mock_execute.await_args.args[0]
@@ -537,7 +537,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
-                provider="gemini",
+                provider="codex",
                 worktree_id="wt-old",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
@@ -634,7 +634,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
-                provider="gemini",
+                provider="codex",
                 worktree_id="wt-1",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
@@ -723,7 +723,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
-                provider="gemini",
+                provider="codex",
                 task_id="#123",
                 task_manager=task_manager,
                 worktree_id="wt-1",
@@ -921,7 +921,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
-                provider="gemini",
+                provider="codex",
                 worktree_id="wt-1",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,
@@ -980,7 +980,7 @@ class TestSpawnAgentImplErrorBranches:
                 prompt="test",
                 runner=runner,
                 parent_session_id="sess-1",
-                provider="gemini",
+                provider="codex",
                 worktree_id="wt-1",
                 worktree_storage=worktree_storage,
                 git_manager=git_manager,

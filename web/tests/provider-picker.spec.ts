@@ -42,7 +42,6 @@ function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
         body: JSON.stringify({
           providers: [
             { name: "claude", available: true },
-            { name: "gemini", available: true },
             { name: "codex", available: true },
           ],
         }),
@@ -79,15 +78,6 @@ function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
               source: "static",
             },
             {
-                provider: "gemini",
-                available: true,
-                models: [
-                { value: "gemini-3.1-pro-preview", label: "Gemini 3.1 Pro" },
-                { value: "gemini-3-flash-preview", label: "Gemini 3 Flash" },
-                ],
-                source: "static",
-              },
-            {
               provider: "codex",
               available: true,
               models: [
@@ -109,6 +99,24 @@ function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
         status: 200,
         contentType: "application/json",
         body: JSON.stringify({ enabled: false, stt_available: false }),
+      });
+      return;
+    }
+
+    if (path === "/api/projects") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify([
+          {
+            id: "proj-1",
+            display_name: "Project One",
+            repo_path: "/tmp/project-one",
+            github_repo: null,
+            session_count: 0,
+            open_task_count: 0,
+          },
+        ]),
       });
       return;
     }
@@ -159,7 +167,7 @@ function mockApiRoutes(page: Parameters<typeof test>[0]["page"]) {
   });
 }
 
-test.beforeEach(async ({ page }) => {
+async function prepareProviderPickerPage(page: Parameters<typeof test>[0]["page"]) {
   await page.addInitScript(({ conversationId }: { conversationId: string }) => {
     localStorage.setItem("gobby-conversation-id", conversationId);
     localStorage.removeItem("gobby-db-session-id");
@@ -176,11 +184,12 @@ test.beforeEach(async ({ page }) => {
   }, { conversationId: CURRENT_CONVERSATION_ID });
 
   await mockApiRoutes(page);
-});
+}
 
 test("provider chip repairs an invalid persisted provider/model pair", async ({
   page,
 }) => {
+  await prepareProviderPickerPage(page);
   await page.addInitScript(() => {
     localStorage.setItem("gobby-selected-provider", "claude");
     localStorage.setItem(
@@ -216,10 +225,10 @@ test("provider chip repairs an invalid persisted provider/model pair", async ({
 
   await page.goto("/#chat");
 
-  const providerButton = page.getByLabel("Select provider and model");
+  const providerButton = page.getByLabel("Select provider");
   const modelButton = page.getByLabel("Select model");
   await expect(providerButton).toBeVisible();
-  await expect(providerButton).toContainText("Claude");
+  await expect(providerButton).toHaveAttribute("title", "Claude");
   await expect(modelButton).not.toContainText("GPT 5.4");
   await expect(modelButton).toContainText("Opus");
 });
@@ -227,6 +236,7 @@ test("provider chip repairs an invalid persisted provider/model pair", async ({
 test("provider chip normalizes canonical model ids to the matching alias", async ({
   page,
 }) => {
+  await prepareProviderPickerPage(page);
   await page.addInitScript(() => {
     localStorage.setItem("gobby-selected-provider", "claude");
     localStorage.setItem(
@@ -262,147 +272,18 @@ test("provider chip normalizes canonical model ids to the matching alias", async
 
   await page.goto("/#chat");
 
-  const providerButton = page.getByLabel("Select provider and model");
+  const providerButton = page.getByLabel("Select provider");
   const modelButton = page.getByLabel("Select model");
   await expect(providerButton).toBeVisible();
-  await expect(providerButton).toContainText("Claude");
+  await expect(providerButton).toHaveAttribute("title", "Claude");
   await expect(modelButton).not.toContainText("Haiku");
   await expect(modelButton).toContainText("Opus");
-});
-
-test("Gemini picker selection sticks visually on a fresh chat", async ({
-  page,
-}) => {
-  const outboundMessages: Array<Record<string, unknown>> = [];
-  const conversationProviders = new Map<string, string>();
-
-  await page.routeWebSocket("**/ws", (ws) => {
-    ws.onMessage((raw) => {
-      const msg = JSON.parse(String(raw)) as Record<string, unknown>;
-      outboundMessages.push(msg);
-
-      if (msg.type === "subscribe") {
-        ws.send(
-          JSON.stringify({
-            type: "connection_established",
-            conversation_ids: [CURRENT_CONVERSATION_ID],
-          }),
-        );
-        ws.send(
-          JSON.stringify({
-            type: "subscribe_success",
-            events: msg.events ?? [],
-          }),
-        );
-        return;
-      }
-
-      if (msg.type === "set_provider") {
-        conversationProviders.set(
-          String(msg.conversation_id),
-          String(msg.provider),
-        );
-        ws.send(
-          JSON.stringify({
-            type: "provider_switched",
-            conversation_id: msg.conversation_id,
-            old_provider: null,
-            provider: msg.provider,
-          }),
-        );
-        return;
-      }
-
-      if (msg.type === "set_agent") {
-        ws.send(
-          JSON.stringify({
-            type: "agent_changed",
-            conversation_id: msg.conversation_id,
-            agent_name: msg.agent_name,
-          }),
-        );
-        return;
-      }
-
-      if (msg.type === "chat_message") {
-        const provider =
-          (msg.provider as string | undefined) ??
-          conversationProviders.get(String(msg.conversation_id)) ??
-          "claude";
-
-        ws.send(
-          JSON.stringify({
-            type: "session_info",
-            conversation_id: msg.conversation_id,
-            session_ref: "#501",
-            agent_name: "default",
-          }),
-        );
-        ws.send(
-          JSON.stringify({
-            type: "chat_stream",
-            message_id: "assistant-provider-test",
-            conversation_id: msg.conversation_id,
-            request_id: msg.request_id,
-            content: `${provider} reply`,
-            done: false,
-          }),
-        );
-        ws.send(
-          JSON.stringify({
-            type: "chat_stream",
-            message_id: "assistant-provider-test",
-            conversation_id: msg.conversation_id,
-            request_id: msg.request_id,
-            content: "",
-            done: true,
-          }),
-        );
-      }
-    });
-  });
-
-  await page.goto("/#chat");
-  await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
-
-  await page.getByLabel("Select provider and model").click();
-  await expect(page.getByRole("option", { name: "Gemini", exact: true })).toBeVisible();
-  await expect(page.getByRole("option", { name: "Claude", exact: true })).toBeVisible();
-  await expect(page.getByRole("option", { name: "Codex", exact: true })).toBeVisible();
-  await page.getByRole("option", { name: "Gemini", exact: true }).click();
-  await expect(page.getByLabel("Select provider and model")).toContainText("Gemini");
-
-  await page.getByLabel("Select model").click();
-  await expect(page.getByRole("option", { name: "Gemini 3.1 Pro", exact: true })).toBeVisible();
-  await expect(page.getByRole("option", { name: "Gemini 3 Flash", exact: true })).toBeVisible();
-
-  await page.screenshot({
-    path: "tests/screenshots/provider-picker-initial.png",
-    fullPage: true,
-  });
-
-  await page.getByRole("option", { name: "Gemini 3.1 Pro", exact: true }).click();
-
-  await expect(page.getByLabel("Select provider and model")).toContainText("Gemini");
-  await expect(page.getByLabel("Select model")).toContainText("Gemini 3.1 Pro");
-  await expect
-    .poll(() => page.evaluate(() => localStorage.getItem("gobby-selected-provider")))
-    .toBe("gemini");
-
-  await page.screenshot({
-    path: "tests/screenshots/provider-picker-gemini-selected.png",
-    fullPage: true,
-  });
-
-  await page.screenshot({
-    path: "tests/screenshots/provider-picker-gemini-chat.png",
-    fullPage: true,
-  });
 });
 
 test("Codex picker shows friendly labels and no Default placeholder", async ({
   page,
 }) => {
+  await prepareProviderPickerPage(page);
   const outboundMessages: Array<Record<string, unknown>> = [];
 
   await page.routeWebSocket("**/ws", (ws) => {
@@ -442,10 +323,10 @@ test("Codex picker shows friendly labels and no Default placeholder", async ({
   await page.goto("/#chat");
   await expect(page.getByRole("textbox", { name: /message input/i })).toBeVisible();
 
-  await page.getByLabel("Select provider and model").click();
+  await page.getByLabel("Select provider").click();
   await expect(page.getByRole("option", { name: "Codex", exact: true })).toBeVisible();
   await page.getByRole("option", { name: "Codex", exact: true }).click();
-  await expect(page.getByLabel("Select provider and model")).toContainText("Codex");
+  await expect(page.getByLabel("Select provider")).toHaveAttribute("title", "Codex");
 
   await page.getByLabel("Select model").click();
   await expect(page.getByRole("option", { name: "GPT 5.4", exact: true })).toBeVisible();
@@ -456,7 +337,7 @@ test("Codex picker shows friendly labels and no Default placeholder", async ({
 
   await page.getByRole("option", { name: "GPT 5.4", exact: true }).click();
 
-  await expect(page.getByLabel("Select provider and model")).toContainText("Codex");
+  await expect(page.getByLabel("Select provider")).toHaveAttribute("title", "Codex");
   await expect(page.getByLabel("Select model")).toContainText("GPT 5.4");
 
   await page.screenshot({

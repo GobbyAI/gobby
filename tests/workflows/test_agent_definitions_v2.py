@@ -80,8 +80,8 @@ class TestAgentDefinitionBodyModel:
             goal="Ensure code quality",
             personality="Thorough and detail-oriented",
             instructions="You are a QA agent. Only write test files.",
-            provider="gemini",
-            model="gemini-2.5-pro",
+            provider="codex",
+            model="gpt-5.4",
             isolation="worktree",
             base_branch="develop",
             timeout=300.0,
@@ -95,8 +95,8 @@ class TestAgentDefinitionBodyModel:
         assert body.goal == "Ensure code quality"
         assert body.personality == "Thorough and detail-oriented"
         assert body.instructions == "You are a QA agent. Only write test files."
-        assert body.provider == "gemini"
-        assert body.model == "gemini-2.5-pro"
+        assert body.provider == "codex"
+        assert body.model == "gpt-5.4"
         assert body.isolation == "worktree"
         assert body.base_branch == "develop"
         assert body.timeout == 300.0
@@ -364,8 +364,8 @@ class TestAgentDefinitionStorage:
             name="qa",
             description="QA agent",
             instructions="Test everything.",
-            provider="gemini",
-            model="gemini-2.5-pro",
+            provider="codex",
+            model="gpt-5.4",
             isolation="worktree",
             base_branch="develop",
             timeout=300.0,

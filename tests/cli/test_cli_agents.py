@@ -123,7 +123,7 @@ def mock_failed_run():
     run.parent_session_id = "sess-parent123"
     run.child_session_id = None
     run.workflow_name = None
-    run.provider = "gemini"
+    run.provider = "codex"
     run.model = None
     run.status = "error"
     run.prompt = "Failed task prompt"
@@ -140,7 +140,7 @@ def mock_failed_run():
         "parent_session_id": "sess-parent123",
         "child_session_id": None,
         "workflow_name": None,
-        "provider": "gemini",
+        "provider": "codex",
         "model": None,
         "status": "error",
         "prompt": "Failed task prompt",

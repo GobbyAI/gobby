@@ -95,19 +95,19 @@ class TestAgentRun:
         """Test converting AgentRun to dictionary."""
         agent_run = agent_manager.create(
             parent_session_id=sample_session["id"],
-            provider="gemini",
+            provider="codex",
             prompt="Test prompt for dict",
             workflow_name="plan-execute",
-            model="gemini-pro",
+            model="gpt-5.4",
         )
 
         d = agent_run.to_dict()
         assert d["id"] == agent_run.id
         assert d["parent_session_id"] == sample_session["id"]
-        assert d["provider"] == "gemini"
+        assert d["provider"] == "codex"
         assert d["prompt"] == "Test prompt for dict"
         assert d["workflow_name"] == "plan-execute"
-        assert d["model"] == "gemini-pro"
+        assert d["model"] == "gpt-5.4"
         assert d["status"] == "pending"
         assert d["child_session_id"] is None
         assert d["claimed_session_id"] is None
@@ -946,7 +946,7 @@ class TestLocalAgentRunManager:
         )
         agent_manager.create(
             parent_session_id=sample_session["id"],
-            provider="gemini",
+            provider="qwen",
             prompt="Run 2",
         )
         agent_manager.create(
@@ -1071,12 +1071,12 @@ class TestLocalAgentRunManager:
         session2 = session_manager.register(
             external_id="session-2",
             machine_id="machine-2",
-            source="gemini",
+            source="qwen",
             project_id=sample_project["id"],
         )
         run2 = agent_manager.create(
             parent_session_id=session2.id,
-            provider="gemini",
+            provider="qwen",
             prompt="Run 2",
         )
         run3 = agent_manager.create(

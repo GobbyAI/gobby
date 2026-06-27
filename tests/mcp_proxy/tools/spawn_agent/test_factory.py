@@ -482,8 +482,8 @@ class TestSpawnAgentParamOverrides:
     async def test_provider_override_omits_agent_definition_model(self, mock_runner) -> None:
         agent_body = AgentDefinitionBody(
             name="merge-worker",
-            provider="gemini",
-            model="gemini-3.1-pro-preview",
+            provider="codex",
+            model="gpt-5.4",
         )
 
         spawn_request = await self._spawn_request_for(
@@ -502,8 +502,8 @@ class TestSpawnAgentParamOverrides:
     async def test_provider_override_preserves_explicit_model(self, mock_runner) -> None:
         agent_body = AgentDefinitionBody(
             name="merge-worker",
-            provider="gemini",
-            model="gemini-3.1-pro-preview",
+            provider="codex",
+            model="gpt-5.4",
         )
 
         spawn_request = await self._spawn_request_for(
@@ -523,8 +523,8 @@ class TestSpawnAgentParamOverrides:
     async def test_provider_override_blank_model_uses_provider_default(self, mock_runner) -> None:
         agent_body = AgentDefinitionBody(
             name="merge-worker",
-            provider="gemini",
-            model="gemini-3.1-pro-preview",
+            provider="codex",
+            model="gpt-5.4",
         )
 
         spawn_request = await self._spawn_request_for(
@@ -544,8 +544,8 @@ class TestSpawnAgentParamOverrides:
     async def test_no_provider_override_keeps_agent_definition_model(self, mock_runner) -> None:
         agent_body = AgentDefinitionBody(
             name="merge-worker",
-            provider="gemini",
-            model="gemini-3.1-pro-preview",
+            provider="codex",
+            model="gpt-5.4",
         )
 
         spawn_request = await self._spawn_request_for(
@@ -556,8 +556,8 @@ class TestSpawnAgentParamOverrides:
             },
         )
 
-        assert spawn_request.provider == "gemini"
-        assert spawn_request.model == "gemini-3.1-pro-preview"
+        assert spawn_request.provider == "codex"
+        assert spawn_request.model == "gpt-5.4"
 
     @pytest.mark.asyncio
     async def test_model_prefix_infers_provider_without_provider_override(
@@ -565,8 +565,8 @@ class TestSpawnAgentParamOverrides:
     ) -> None:
         agent_body = AgentDefinitionBody(
             name="merge-worker",
-            provider="gemini",
-            model="gemini-3.1-pro-preview",
+            provider="codex",
+            model="gpt-5.4",
         )
 
         spawn_request = await self._spawn_request_for(
@@ -585,8 +585,8 @@ class TestSpawnAgentParamOverrides:
     async def test_claude_fable_model_prefix_infers_provider(self, mock_runner) -> None:
         agent_body = AgentDefinitionBody(
             name="merge-worker",
-            provider="gemini",
-            model="gemini-3.1-pro-preview",
+            provider="codex",
+            model="gpt-5.4",
         )
 
         spawn_request = await self._spawn_request_for(
@@ -607,8 +607,8 @@ class TestSpawnAgentParamOverrides:
 
         agent_body = AgentDefinitionBody(
             name="merge-worker",
-            provider="gemini",
-            model="gemini-3.1-pro-preview",
+            provider="codex",
+            model="gpt-5.4",
         )
         registry = create_spawn_agent_registry(mock_runner, db=MagicMock())
 
@@ -631,7 +631,7 @@ class TestSpawnAgentParamOverrides:
                     "prompt": "Test prompt",
                     "parent_session_id": "parent-789",
                     "agent": "merge-worker",
-                    "provider": "gemini",
+                    "provider": "codex",
                     "model": "claude/sonnet-4-6",
                 },
             )

@@ -63,11 +63,11 @@ class TestWebChatRuntimeManager:
         assert isinstance(qwen_session, QwenManagedChatSession)
         assert isinstance(codex_session, CodexManagedChatSession)
 
-    def test_create_session_rejects_removed_gemini_provider(self) -> None:
+    def test_create_session_rejects_unsupported_provider(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
 
-        with pytest.raises(RuntimeError, match="Gemini web chat is no longer supported"):
-            manager.create_session(provider="gemini", conversation_id="conv-gemini")
+        with pytest.raises(RuntimeError, match="Unsupported web chat provider: unknown"):
+            manager.create_session(provider="unknown", conversation_id="conv-unknown")
 
     def test_health_snapshot_contains_droid(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)
@@ -324,8 +324,13 @@ class TestGrokBackend:
             }
         )
         assert isinstance(second_events[-1], DoneEvent)
-        assert PYTHON_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
-        assert TASK_TRANSITIONS_SKILL_DIRECTIVE in backend.send_message.call_args_list[1].args[1]
+        second_prompt = "\n".join(
+            block["text"]
+            for block in backend.send_message.call_args_list[1].args[1]
+            if isinstance(block, dict) and isinstance(block.get("text"), str)
+        )
+        assert PYTHON_SKILL_DIRECTIVE in second_prompt
+        assert TASK_TRANSITIONS_SKILL_DIRECTIVE in second_prompt
 
     @pytest.mark.asyncio
     async def test_managed_session_suppresses_tool_call_when_pre_tool_blocks(self) -> None:

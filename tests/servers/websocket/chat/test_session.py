@@ -512,7 +512,7 @@ class TestCreateChatSessionInner:
         mixin.session_manager.db = MagicMock()
         mixin.session_manager.get.return_value = existing_db_sess
 
-        await mixin._create_chat_session_inner("conv-existing", provider="gemini")
+        await mixin._create_chat_session_inner("conv-existing", provider="unknown")
 
         mixin.web_chat_runtime_manager.create_session.assert_called_once_with(
             provider="codex",

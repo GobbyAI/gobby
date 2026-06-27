@@ -42,7 +42,6 @@ from gobby.config.tmux import TmuxConfig
 # Gobby-managed Claude agents must use Gobby's spawn/session controls. Native Claude
 # delegation bypasses project context, depth limits, sandbox metadata, and task ownership.
 _CLAUDE_MANAGED_AGENT_DISALLOWED_TOOLS = ["Workflow", "Task"]
-_GEMINI_UNAVAILABLE_REASON = "Gemini provider is no longer supported by Gobby."
 
 __all__ = [
     "SpawnRequest",
@@ -96,16 +95,15 @@ async def execute_spawn(request: SpawnRequest) -> SpawnResult:
             status="failed",
             error=AGY_UNAVAILABLE_REASON,
         )
-    elif request.provider == "gemini":
-        return SpawnResult(
-            success=False,
-            run_id=request.run_id,
-            child_session_id=None,
-            status="failed",
-            error=_GEMINI_UNAVAILABLE_REASON,
-        )
-    # Unknown providers intentionally preserve the historical Claude fallback.
-    return await _spawn_claude_terminal(request)
+    elif request.provider == "claude":
+        return await _spawn_claude_terminal(request)
+    return SpawnResult(
+        success=False,
+        run_id=request.run_id,
+        child_session_id=None,
+        status="failed",
+        error=f"Unsupported spawn provider: {request.provider}",
+    )
 
 
 async def _spawn_claude_terminal(request: SpawnRequest) -> SpawnResult:

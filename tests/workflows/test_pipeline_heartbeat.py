@@ -354,7 +354,7 @@ async def test_stale_task_with_terminal_agent_run_recovered(
     # Create a terminal (error) agent run for this task
     agent_run_manager.create(
         parent_session_id=SESSION_ID,
-        provider="gemini",
+        provider="codex",
         prompt="do stuff",
         task_id=task_id,
     )
@@ -392,7 +392,7 @@ async def test_stale_task_with_commits_promoted_to_needs_review(
     # Create a terminal agent run
     agent_run_manager.create(
         parent_session_id=SESSION_ID,
-        provider="gemini",
+        provider="codex",
         prompt="implement feature",
         task_id=task_id,
     )

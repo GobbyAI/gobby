@@ -221,12 +221,12 @@ class TestSpawnAgentIsolation:
             mock_execute.assert_awaited_once()
 
     @pytest.mark.asyncio
-    async def test_gemini_worktree_spawn_keeps_agent_sandbox_enabled(
+    async def test_codex_worktree_spawn_keeps_agent_sandbox_enabled(
         self, mock_runner, build_agent_body
     ) -> None:
         from gobby.mcp_proxy.tools.spawn_agent import create_spawn_agent_registry
 
-        agent_body = build_agent_body(provider="gemini")
+        agent_body = build_agent_body(provider="codex")
         worktree_storage = MagicMock()
         git_manager = MagicMock()
         registry = create_spawn_agent_registry(
@@ -266,9 +266,9 @@ class TestSpawnAgentIsolation:
             mock_handler = MagicMock()
             mock_handler.prepare_environment = AsyncMock(
                 return_value=IsolationContext(
-                    cwd="/tmp/worktrees/gemini-branch",
-                    branch_name="gemini-branch",
-                    worktree_id="wt-gemini",
+                    cwd="/tmp/worktrees/codex-branch",
+                    branch_name="codex-branch",
+                    worktree_id="wt-codex",
                     isolation_type="worktree",
                 )
             )
@@ -293,8 +293,8 @@ class TestSpawnAgentIsolation:
         assert result["success"] is True
         mock_execute.assert_awaited_once()
         spawn_request = mock_execute.await_args.args[0]
-        assert spawn_request.provider == "gemini"
-        assert spawn_request.worktree_id == "wt-gemini"
+        assert spawn_request.provider == "codex"
+        assert spawn_request.worktree_id == "wt-codex"
         assert spawn_request.sandbox_config is not None
         assert spawn_request.sandbox_config.enabled is True
 

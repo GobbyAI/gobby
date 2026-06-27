@@ -257,8 +257,8 @@ class TestCreateDefinition:
                 "surfaces": ["spawn", "persona"],
                 "role": "tester",
                 "goal": "test things",
-                "provider": "gemini",
-                "model": "flash",
+                "provider": "codex",
+                "model": "gpt-5.4",
                 "mode": "interactive",
                 "isolation": "worktree",
                 "base_branch": "develop",
@@ -770,7 +770,7 @@ class TestListDefinitionsSourceFilter:
             enabled=True,
         )
         body2 = AgentDefinitionBody(
-            name="src-b", sources=["gemini"], provider="gemini", mode="autonomous"
+            name="src-b", sources=["codex"], provider="codex", mode="autonomous"
         )
         agent_manager.create(
             name="src-b",

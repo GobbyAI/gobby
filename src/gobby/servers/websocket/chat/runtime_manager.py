@@ -243,8 +243,6 @@ class WebChatRuntimeManager:
                 _model=model,
                 reasoning_effort=reasoning_effort,
             )
-        if provider == "gemini":
-            raise RuntimeError("Gemini web chat is no longer supported by Gobby")
         if provider == "agy":
             raise RuntimeError("AGY has no documented machine transport for live web chat yet")
         if provider == "codex":
@@ -264,6 +262,8 @@ class WebChatRuntimeManager:
                 _model=model,
                 reasoning_effort=reasoning_effort,
             )
+        if provider != "claude":
+            raise RuntimeError(f"Unsupported web chat provider: {provider}")
 
         session: ChatSessionProtocol = self._claude_backend.create_session(conversation_id)
         if isinstance(session, ChatSession) and model:

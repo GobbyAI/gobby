@@ -146,9 +146,9 @@ class TestProviderNormalization:
             definition_json=json.dumps(body),
             source="test",
         )
-        result = resolve_agent("test2", db, cli_source="gemini")
+        result = resolve_agent("test2", db, cli_source="codex")
         assert result is not None
-        assert result.provider == "gemini"
+        assert result.provider == "codex"
 
     def test_claude_source_maps_to_claude(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
@@ -167,7 +167,7 @@ class TestProviderNormalization:
     def test_explicit_provider_not_overridden(
         self, db: HubDatabase, manager: LocalWorkflowDefinitionManager
     ) -> None:
-        body = {"name": "test4", "provider": "gemini"}
+        body = {"name": "test4", "provider": "codex"}
         manager.create(
             name="test4",
             workflow_type="agent",
@@ -176,7 +176,7 @@ class TestProviderNormalization:
         )
         result = resolve_agent("test4", db, cli_source="claude")
         assert result is not None
-        assert result.provider == "gemini"
+        assert result.provider == "codex"
 
 
 def test_memory_recall_helper_is_not_resolvable_agent(db: HubDatabase) -> None:
