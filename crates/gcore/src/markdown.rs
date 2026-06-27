@@ -51,7 +51,7 @@ fn normalize_body(body: &str) -> String {
         if let Some(active) = fence {
             if markdown_fence_closes(raw, active) {
                 fence = None;
-                lines.push(BodyLine::FenceClose(raw.to_string()));
+                lines.push(BodyLine::FenceClose(raw.trim_end().to_string()));
             } else {
                 lines.push(BodyLine::FenceContent(raw.to_string()));
             }
@@ -261,6 +261,15 @@ mod tests {
         assert_eq!(
             normalize_markdown(input),
             "# A\n\n```rust\nfn main() {\n\n\n}\n```\n\ntext\n"
+        );
+    }
+
+    #[test]
+    fn markdown_normalizes_fence_close_trailing_whitespace() {
+        let input = "# A\n  ```rust\nlet value = 1;  \n  ```   \ntext\n";
+        assert_eq!(
+            normalize_markdown(input),
+            "# A\n\n  ```rust\nlet value = 1;  \n  ```\n\ntext\n"
         );
     }
 

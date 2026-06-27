@@ -11,6 +11,8 @@ mod support;
 #[path = "concepts/types.rs"]
 mod types;
 
+pub(crate) use plan::default_chapter_links;
+
 use plan::{curated_navigation_prompt, fallback_plan, parse_plan};
 use render::render_curated_navigation_docs;
 use spans::all_input_spans;

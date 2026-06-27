@@ -1,3 +1,4 @@
+use super::super::build::default_chapter_links;
 use super::super::*;
 use super::{cell_summary, model_degraded_sources};
 use crate::index::hasher;
@@ -144,24 +145,14 @@ pub(crate) fn render_repo_doc(
     // appendix below (#853 root cause: the reference dump crowded out the
     // narrative entry points).
     doc.push_str("## Start here — guided tour\n\n");
-    doc.push_str(
-        "New to this codebase? Begin with [[code/narrative/01-introduction|Introduction]].\n\n",
-    );
-    for (index, (slug, title)) in [
-        ("01-introduction", "Introduction"),
-        ("02-architecture", "Architecture"),
-        ("03-indexing-pipeline", "Indexing Pipeline"),
-        ("04-search-rrf", "Search/RRF"),
-        ("05-codewiki-generation", "CodeWiki Generation"),
-        ("06-gwiki-vault", "Gwiki Vault"),
-        ("07-graph-vector-storage", "Graph/Vector Storage"),
-        ("08-cli-contracts", "CLI Contracts"),
-        ("09-failure-modes", "Failure Modes"),
-        ("10-contributor-guide", "Contributor Guide"),
-    ]
-    .iter()
-    .enumerate()
-    {
+    let chapter_links = default_chapter_links();
+    if let Some((slug, title)) = chapter_links.first() {
+        let _ = std::fmt::Write::write_fmt(
+            &mut doc,
+            format_args!("New to this codebase? Begin with [[code/narrative/{slug}|{title}]].\n\n"),
+        );
+    }
+    for (index, (slug, title)) in chapter_links.iter().enumerate() {
         let _ = std::fmt::Write::write_fmt(
             &mut doc,
             format_args!(

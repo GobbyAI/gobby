@@ -109,6 +109,24 @@ const DEFAULT_CHAPTERS: [DefaultChapter; 10] = [
     },
 ];
 
+pub(crate) fn default_chapter_links() -> Vec<(String, &'static str)> {
+    DEFAULT_CHAPTERS
+        .iter()
+        .enumerate()
+        .map(|(index, chapter)| (ordinal_narrative_slug(index, chapter.title), chapter.title))
+        .collect()
+}
+
+fn ordinal_narrative_slug(index: usize, title: &str) -> String {
+    let ordinal = index + 1;
+    let title_slug = slugify(title);
+    if title_slug.is_empty() {
+        format!("{ordinal:02}")
+    } else {
+        format!("{ordinal:02}-{title_slug}")
+    }
+}
+
 pub(super) fn curated_navigation_prompt(files: &[FileDoc], modules: &[ModuleDoc]) -> String {
     let mut prompt = String::from(
         "Build a curated handbook layer over the existing grounded reference.\n\
@@ -416,13 +434,7 @@ pub(super) fn normalize_narrative_pages(
     // cross-page link dangles. A title that slugifies to nothing falls back to
     // the bare ordinal so a page is never named `NN-`.
     for (index, page) in ordered.iter_mut().enumerate() {
-        let ordinal = index + 1;
-        let title_slug = slugify(&page.title);
-        page.slug = if title_slug.is_empty() {
-            format!("{ordinal:02}")
-        } else {
-            format!("{ordinal:02}-{title_slug}")
-        };
+        page.slug = ordinal_narrative_slug(index, &page.title);
     }
     ordered
 }
