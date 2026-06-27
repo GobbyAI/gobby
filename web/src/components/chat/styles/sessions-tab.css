@@ -323,9 +323,10 @@
 /* Filled-accent pill — same shared active-state treatment used by
    SegmentedControl's active option and .activity-filter-button when its
    dropdown is open. Chip pills mark a session as having a given mode
-   active (tmux/web/auto/sandbox/local), so they always read as "on". */
+   active (tmux/web/acp/auto/sandbox/local), so they always read as "on". */
 .chip--tmux,
 .chip--web,
+.chip--acp,
 .chip--auto,
 .chip--sandbox,
 .chip--local {
@@ -342,6 +343,7 @@
 [data-theme="light"] :is(
   .chip--tmux,
   .chip--web,
+  .chip--acp,
   .chip--auto,
   .chip--sandbox,
   .chip--local

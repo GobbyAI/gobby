@@ -1,4 +1,4 @@
-import type { GobbySession } from "../../types/sessions";
+import type { AcpSessionInfo, GobbySession } from "../../types/sessions";
 
 export interface RunningAgent {
   run_id: string;
@@ -30,6 +30,9 @@ export interface WatchingSessionEntry {
   hasTmux: boolean;
   sandboxEnabled: boolean;
   isLocal: boolean;
+  // Present only on ACP-backed rows; drives the leading "ACP" kind chip and
+  // (in later tasks) the capability-gated row actions. Detect via Boolean(acp).
+  acp?: AcpSessionInfo | null;
 }
 
 export interface SessionContextMenu {
@@ -98,6 +101,15 @@ function getSessionTypeBadge(sessionType: string | undefined): Badge {
   return { label: "tmux", className: "chip chip--tmux" };
 }
 
+// The session's canonical kind. ACP rows replace the web/tmux chip with an
+// "ACP" chip so ACP reads as a first-class kind alongside WEB and TMUX.
+function getKindBadge(entry: WatchingSessionEntry): Badge {
+  if (entry.acp) {
+    return { label: "ACP", className: "chip chip--acp" };
+  }
+  return getSessionTypeBadge(entry.sessionType);
+}
+
 function getAgentBadge(agentRunId: string | null | undefined): Badge | null {
   if (!agentRunId) return null;
   return { label: "auto", className: "chip chip--auto" };
@@ -114,8 +126,11 @@ function getLocalBadge(entry: WatchingSessionEntry): Badge | null {
 }
 
 export function renderBadges(entry: WatchingSessionEntry) {
-  const badges = [
-    getSessionTypeBadge(entry.sessionType),
+  // The kind chip (web/tmux/ACP) leads, outside the alphabetical sort, so the
+  // session's identity stays in a stable first position. Mode chips follow,
+  // sorted, since their presence varies per row.
+  const kindBadge = getKindBadge(entry);
+  const modeBadges = [
     getLocalBadge(entry),
     getSandboxBadge(entry.sandboxEnabled),
     getAgentBadge(entry.agentRunId),
@@ -127,7 +142,8 @@ export function renderBadges(entry: WatchingSessionEntry) {
 
   return (
     <>
-      {badges.map((badge) => (
+      <span className={kindBadge.className}>{kindBadge.label}</span>
+      {modeBadges.map((badge) => (
         <span
           key={`${badge.className}:${badge.label}`}
           className={badge.className}

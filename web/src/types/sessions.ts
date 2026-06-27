@@ -1,3 +1,20 @@
+/**
+ * Normalized ACP lifecycle block, computed per request by the backend
+ * (`acp_session_mapping`) and attached only to ACP-backed web_chat rows.
+ * Presence — `Boolean(session.acp)` — is the sole ACP detection signal; the
+ * `source` string (e.g. `grok`/`qwen`) is never used to detect ACP-ness.
+ * Capabilities are agent-gated: today's providers advertise none, so every
+ * flag degrades to `false` (ACP chip shows, zero lifecycle actions).
+ */
+export interface AcpSessionInfo {
+  capabilities: {
+    resume: boolean;
+    close: boolean;
+    delete: boolean;
+  };
+  additional_directories: string[];
+}
+
 export interface GobbySession {
   id: string;
   ref: string;
@@ -40,6 +57,9 @@ export interface GobbySession {
   workflow_name?: string | null;
   parent_session_id: string | null;
   session_type: string;
+  // Present only on ACP-backed web_chat rows; absent for every other session.
+  // Detect ACP-ness with `Boolean(session.acp)`, never the `source` string.
+  acp?: AcpSessionInfo | null;
   terminal_context: Record<string, unknown> | null;
   sandbox_enabled?: boolean;
   sandbox_policy_hash?: string | null;
