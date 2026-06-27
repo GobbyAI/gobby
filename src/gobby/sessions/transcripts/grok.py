@@ -13,6 +13,7 @@ from gobby.sessions.transcripts.base import (
     ParsedMessage,
     ParsedToolEvent,
     TokenUsage,
+    _unknown_block_message,
 )
 
 logger = logging.getLogger(__name__)
@@ -131,7 +132,15 @@ class GrokTranscriptParser(BaseTranscriptParser):
                 usage=usage,
             )
 
-        return None
+        block_type = update_type or "<missing>"
+        return _unknown_block_message(
+            index=index,
+            block_type=block_type,
+            raw=update,
+            timestamp=timestamp,
+            message_id=message_id,
+            usage=usage,
+        )
 
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2

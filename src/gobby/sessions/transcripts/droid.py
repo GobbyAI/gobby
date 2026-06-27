@@ -18,6 +18,7 @@ from gobby.sessions.transcripts.base import (
     ParseEvent,
     RawLine,
     TokenUsage,
+    _unknown_block_message,
     annotate_record_source,
 )
 
@@ -127,14 +128,28 @@ class DroidTranscriptParser(BaseTranscriptParser):
         record_type = record.get("type")
         if record_type in {"session_start", "todo_state"}:
             return []
+        timestamp_raw = record.get("timestamp")
+        timestamp = _parse_timestamp(timestamp_raw if isinstance(timestamp_raw, str) else None)
+        message_id_raw = record.get("id")
+        message_id = message_id_raw if isinstance(message_id_raw, str) else None
         if record_type != "message":
+            record_block_type = str(record_type or "<missing>")
             self.error_log.log_unknown_block(
                 index,
                 self.session_id,
-                str(record_type or "<missing>"),
+                record_block_type,
                 record,
             )
-            return []
+            return [
+                _unknown_block_message(
+                    index=index,
+                    block_type=record_block_type,
+                    raw=record,
+                    timestamp=timestamp,
+                    message_id=message_id,
+                    model=self._sidecar_model,
+                )
+            ]
 
         message = record.get("message") or {}
         if not isinstance(message, dict):
@@ -146,18 +161,13 @@ class DroidTranscriptParser(BaseTranscriptParser):
         if not isinstance(content_blocks, list):
             return []
 
-        timestamp_raw = record.get("timestamp")
-        timestamp = _parse_timestamp(timestamp_raw if isinstance(timestamp_raw, str) else None)
-        message_id_raw = record.get("id")
-        message_id = message_id_raw if isinstance(message_id_raw, str) else None
-
         out: list[ParsedMessage] = []
         for block in content_blocks:
             if not isinstance(block, dict):
                 continue
-            block_type = block.get("type")
+            raw_block_type = block.get("type")
 
-            if block_type == "text":
+            if raw_block_type == "text":
                 raw_text = block.get("text")
                 if not isinstance(raw_text, str):
                     continue
@@ -179,7 +189,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                         model=self._sidecar_model,
                     )
                 )
-            elif block_type == "thinking":
+            elif raw_block_type == "thinking":
                 thinking = block.get("thinking")
                 if not isinstance(thinking, str) or not thinking.strip():
                     continue
@@ -198,7 +208,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                         model=self._sidecar_model,
                     )
                 )
-            elif block_type == "tool_use":
+            elif raw_block_type == "tool_use":
                 tool_input = block.get("input")
                 tool_name = block.get("name")
                 tool_use_id = block.get("id")
@@ -218,7 +228,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
                         model=self._sidecar_model,
                     )
                 )
-            elif block_type == "tool_result":
+            elif raw_block_type == "tool_result":
                 content_value = block.get("content")
                 is_error = bool(block.get("is_error"))
                 result_payload = {"content": content_value, "is_error": is_error}
@@ -240,11 +250,23 @@ class DroidTranscriptParser(BaseTranscriptParser):
                     )
                 )
             else:
+                block_type = str(raw_block_type or "<missing>")
                 self.error_log.log_unknown_block(
                     index,
                     self.session_id,
-                    str(block_type or "<missing>"),
+                    block_type,
                     block,
+                )
+                out.append(
+                    _unknown_block_message(
+                        index=index,
+                        block_type=block_type,
+                        raw=block,
+                        role=role,
+                        timestamp=timestamp,
+                        message_id=message_id,
+                        model=self._sidecar_model,
+                    )
                 )
 
         return out

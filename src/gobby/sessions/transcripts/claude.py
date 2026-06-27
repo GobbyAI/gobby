@@ -19,6 +19,7 @@ from gobby.sessions.transcripts.base import (
     ParseEvent,
     RawLine,
     TokenUsage,
+    _unknown_block_message,
     annotate_record_source,
 )
 
@@ -411,6 +412,18 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 message_id=message_id,
             )
 
+        def _make_unknown(*, role: str, block_type: str, raw: dict[str, Any]) -> ParsedMessage:
+            return _unknown_block_message(
+                index=index,
+                block_type=block_type,
+                raw=raw,
+                role=role,
+                timestamp=timestamp,
+                message_id=message_id,
+                model=model,
+                usage=usage,
+            )
+
         if self._is_hook_blocking_error(data):
             content = self._extract_hook_blocking_content(data)
             results.append(
@@ -454,6 +467,13 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                                 tool_use_id=block.get("tool_use_id"),
                             )
                         )
+                    else:
+                        if text_parts:
+                            results.append(_make_msg(role="user", content=" ".join(text_parts)))
+                            text_parts = []
+                        block_type = str(btype or "<missing>")
+                        self.error_log.log_unknown_block(index, self.session_id, block_type, block)
+                        results.append(_make_unknown(role="user", block_type=block_type, raw=block))
                 # Remaining text
                 if text_parts:
                     results.append(_make_msg(role="user", content=" ".join(text_parts)))
@@ -494,6 +514,17 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                         val = block.get("thinking") or ""
                         if val.strip():
                             thinking_parts.append(val)
+                    else:
+                        if text_parts:
+                            results.append(
+                                _make_msg(role="assistant", content=" ".join(text_parts))
+                            )
+                            text_parts = []
+                        block_type = str(btype or "<missing>")
+                        self.error_log.log_unknown_block(index, self.session_id, block_type, block)
+                        results.append(
+                            _make_unknown(role="assistant", block_type=block_type, raw=block)
+                        )
                 # Remaining text
                 if text_parts:
                     results.append(_make_msg(role="assistant", content=" ".join(text_parts)))
@@ -521,6 +552,10 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 )
             )
         # else: unknown type, return empty list
+        else:
+            block_type = str(msg_type or "<missing>")
+            self.error_log.log_unknown_block(index, self.session_id, block_type, data)
+            results.append(_make_unknown(role="assistant", block_type=block_type, raw=data))
 
         return results
 
@@ -641,7 +676,15 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             content = str(tool_result)
 
         else:
-            return None
+            return _unknown_block_message(
+                index=index,
+                block_type=str(msg_type or "<missing>"),
+                raw=data,
+                timestamp=timestamp,
+                usage=usage,
+                model=model,
+                message_id=message_id,
+            )
 
         return ParsedMessage(
             index=index,

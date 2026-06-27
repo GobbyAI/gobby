@@ -34,6 +34,7 @@ from gobby.sessions.transcripts.base import (
     ParseEvent,
     RawLine,
     TokenUsage,
+    _unknown_block_message,
     annotate_record_source,
 )
 
@@ -187,13 +188,20 @@ class CodexTranscriptParser(BaseTranscriptParser):
         if payload_type in {"reasoning", "tool_search_call", "tool_search_output"}:
             return None
 
+        block_type = f"response_item/{payload_type or '<missing>'}"
         self.error_log.log_unknown_block(
             line_num=index,
             session_id=self.session_id,
-            block_type=f"response_item/{payload_type}",
+            block_type=block_type,
             raw=data,
         )
-        return None
+        return _unknown_block_message(
+            index=index,
+            block_type=block_type,
+            raw=payload,
+            timestamp=timestamp,
+            message_id=self._message_id_for(index, payload.get("id")),
+        )
 
     def _parse_message(
         self,

@@ -16,6 +16,7 @@ from gobby.sessions.transcripts.base import (
     ParseEvent,
     RawLine,
     TokenUsage,
+    _unknown_block_message,
     annotate_record_source,
 )
 
@@ -262,8 +263,17 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
             return None
 
         else:
+            block_type = str(event_type or "<missing>")
             logger.debug("Unknown %s event type: %s", self.cli_name, event_type)
-            return None
+            return _unknown_block_message(
+                index=index,
+                block_type=block_type,
+                raw=data,
+                role="assistant",
+                timestamp=timestamp,
+                message_id=self._message_id_for("jsonl", index, data.get("id")),
+                usage=self._extract_usage(data),
+            )
 
         if not role:
             return None
@@ -382,7 +392,17 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
         if msg_type in self.ignored_session_message_types:
             return []
 
-        return []
+        return [
+            _unknown_block_message(
+                index=start_index,
+                block_type=str(msg_type or "<missing>"),
+                raw=msg,
+                role="assistant",
+                timestamp=timestamp,
+                message_id=self._message_id_for("json", start_index, msg.get("id")),
+                usage=self._extract_usage(msg),
+            )
+        ]
 
     def _parse_session_assistant_message(
         self,
