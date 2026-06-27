@@ -117,6 +117,32 @@ def _append_protocol_tool_call_block(
     )
 
 
+def _append_orphan_tool_result_block(msg: ParsedMessage, state: RenderState) -> None:
+    if state.current_message is None:
+        return
+
+    tool_name = msg.tool_name or "unknown_result"
+    tool_type, server_name = classify_tool(tool_name)
+    content = msg.tool_result or msg.content
+    arguments = msg.tool_input or {}
+    tool_call = RenderedToolCall(
+        id=msg.tool_use_id or f"orphan-result-{msg.index}",
+        tool_name=tool_name,
+        server_name=server_name or "unknown",
+        tool_type=tool_type,
+        arguments=arguments,
+        result=ToolResult(
+            content=content,
+            kind="json" if msg.tool_result else "text",
+            metadata=extract_result_metadata(tool_type, content, arguments),
+        ),
+        status="completed",
+    )
+    state.current_message.content_blocks.append(
+        ContentBlock(type="tool_chain", tool_calls=[tool_call], source_line=msg.index)
+    )
+
+
 def _process_message_block(
     msg: ParsedMessage,
     state: RenderState,
@@ -141,6 +167,10 @@ def _process_message_block(
             return
 
     if not state.current_message:
+        return
+
+    if msg.content_type in ["tool_result", "mcp_tool_result"]:
+        _append_orphan_tool_result_block(msg, state)
         return
 
     # Update metadata
