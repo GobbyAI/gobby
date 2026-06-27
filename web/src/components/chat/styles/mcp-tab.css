@@ -36,18 +36,23 @@
   background: var(--bg-primary);
 }
 
-.activity-mcp-server-group {
-  border-bottom: 1px solid var(--border);
-}
-
 .activity-mcp-row {
   display: flex;
   align-items: center;
+  gap: 0.45rem;
   min-height: var(--activity-panel-row-height);
+  padding: 0.35rem 0.25rem 0.35rem 0.75rem;
   color: var(--text-primary);
+  cursor: pointer;
   transition:
     background 0.15s,
     box-shadow 0.15s;
+}
+
+/* The flat ARIA tree drops the per-server group wrapper; a top divider on each
+   server row (after the first) separates server groups. */
+.activity-mcp-server-row:not(:first-child) {
+  border-top: 1px solid var(--border);
 }
 
 .activity-mcp-row:hover {
@@ -94,24 +99,33 @@
   color: var(--color-info);
 }
 
-.activity-mcp-row-main {
-  display: flex;
-  align-items: center;
-  gap: 0.45rem;
-  min-width: 0;
-  flex: 1 1 auto;
-  min-height: var(--activity-panel-row-height);
-  padding: 0.35rem 0.25rem 0.35rem 0.75rem;
-  border: 0;
-  background: transparent;
-  color: inherit;
-  text-align: left;
-  font: inherit;
-  cursor: pointer;
+/* Tool rows indent under their server (the server row's chevron column). */
+.activity-mcp-tool-row {
+  padding-left: 2.55rem;
 }
 
-.activity-mcp-tool-row .activity-mcp-row-main {
-  padding-left: 2.55rem;
+/* Chevron expand/collapse control, modeled on the Tasks tree row toggle. */
+.activity-mcp-row-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 1.25rem;
+  height: 1.25rem;
+  flex-shrink: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 0.35rem;
+  background: transparent;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition:
+    background 0.15s,
+    color 0.15s;
+}
+
+.activity-mcp-row-toggle:hover {
+  background: var(--bg-primary);
+  color: var(--text-primary);
 }
 
 .activity-mcp-row-chevron {

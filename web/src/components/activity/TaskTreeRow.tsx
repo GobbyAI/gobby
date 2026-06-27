@@ -1,4 +1,4 @@
-import type { MouseEvent } from "react";
+import type { KeyboardEvent, MouseEvent } from "react";
 import type { GobbyTask } from "../../hooks/useTasks";
 import { PriorityGlyph, StatusDot, TypeBadge } from "../tasks/TaskBadges";
 import {
@@ -22,9 +22,10 @@ interface TaskTreeRowProps {
   isBusy: boolean;
   onSelect: (taskId: string) => void;
   onToggleOpen: (taskId: string) => void;
-  onNavigate: (taskId: string, key: "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight") => void;
   onMenuButtonClick: (event: MouseEvent<HTMLButtonElement>, task: GobbyTask) => void;
   rowRef: (node: HTMLDivElement | null) => void;
+  tabIndex: number;
+  onKeyDown: (event: KeyboardEvent<HTMLDivElement>) => void;
 }
 
 const TASK_ROW_BASE_INDENT_REM = 0.75;
@@ -77,9 +78,10 @@ export function TaskTreeRow({
   isBusy,
   onSelect,
   onToggleOpen,
-  onNavigate,
   onMenuButtonClick,
   rowRef,
+  tabIndex,
+  onKeyDown,
 }: TaskTreeRowProps) {
   const task = row.node.task;
   const { taskState, displayState, stateSummary, failed } = deriveSafeTaskState(task);
@@ -108,26 +110,14 @@ export function TaskTreeRow({
       }}
       className={taskRowClass}
       role="treeitem"
-      tabIndex={isSelected ? 0 : -1}
+      tabIndex={tabIndex}
       aria-level={row.depth + 1}
       aria-expanded={row.isInternal ? row.isOpen : undefined}
+      aria-selected={isSelected}
       aria-label={`${labelRef} ${labelTitle}: ${stateSummary}`}
       title={stateSummary}
       onClick={() => onSelect(task.id)}
-      onKeyDown={(event) => {
-        if (event.key === "Enter" || event.key === " ") {
-          event.preventDefault();
-          onSelect(task.id);
-        } else if (
-          event.key === "ArrowDown" ||
-          event.key === "ArrowUp" ||
-          event.key === "ArrowLeft" ||
-          event.key === "ArrowRight"
-        ) {
-          event.preventDefault();
-          onNavigate(task.id, event.key);
-        }
-      }}
+      onKeyDown={onKeyDown}
     >
       {row.isInternal ? (
         <button

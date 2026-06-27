@@ -1,7 +1,11 @@
-import { useCallback, useRef } from "react";
+import { useMemo } from "react";
 import type { MouseEvent } from "react";
 
 import type { GobbyTask } from "../../hooks/useTasks";
+import {
+  useTreeKeyboardNavigation,
+  type TreeNavItem,
+} from "../../hooks/useTreeKeyboardNavigation";
 import { ActivityPanelEmpty, TasksEmptyIcon } from "./ActivityPanelEmpty";
 import { TaskTreeRow } from "./TaskTreeRow";
 import type { VisibleTaskRow } from "./TasksTabModel";
@@ -38,64 +42,23 @@ export function TasksTabList({
   onToggleOpen,
   onMenuButtonClick,
 }: TasksTabListProps) {
-  const rowRefs = useRef<Map<string, HTMLDivElement>>(new Map());
+  const navItems = useMemo<TreeNavItem[]>(
+    () =>
+      visibleRows.map((row) => ({
+        id: row.node.task.id,
+        depth: row.depth,
+        isExpandable: row.isInternal,
+        isExpanded: row.isOpen,
+      })),
+    [visibleRows],
+  );
 
-  const setRowRef = useCallback((taskId: string, node: HTMLDivElement | null) => {
-    if (node) {
-      rowRefs.current.set(taskId, node);
-    } else {
-      rowRefs.current.delete(taskId);
-    }
-  }, []);
-
-  const selectAndFocusTask = useCallback((taskId: string) => {
-    onSelect(taskId);
-    requestAnimationFrame(() => rowRefs.current.get(taskId)?.focus());
-  }, [onSelect]);
-
-  const handleNavigate = useCallback((
-    taskId: string,
-    key: "ArrowDown" | "ArrowUp" | "ArrowLeft" | "ArrowRight",
-  ) => {
-    const index = visibleRows.findIndex((row) => row.node.task.id === taskId);
-    if (index === -1) return;
-    const row = visibleRows[index];
-
-    if (key === "ArrowDown") {
-      const next = visibleRows[index + 1];
-      if (next) selectAndFocusTask(next.node.task.id);
-      return;
-    }
-
-    if (key === "ArrowUp") {
-      const previous = visibleRows[index - 1];
-      if (previous) selectAndFocusTask(previous.node.task.id);
-      return;
-    }
-
-    if (key === "ArrowRight") {
-      if (row.isInternal && !row.isOpen) {
-        onToggleOpen(taskId);
-        requestAnimationFrame(() => rowRefs.current.get(taskId)?.focus());
-        return;
-      }
-      const child = visibleRows[index + 1];
-      if (row.isInternal && row.isOpen && child && child.depth > row.depth) {
-        selectAndFocusTask(child.node.task.id);
-      }
-      return;
-    }
-
-    if (row.isInternal && row.isOpen) {
-      onToggleOpen(taskId);
-      requestAnimationFrame(() => rowRefs.current.get(taskId)?.focus());
-      return;
-    }
-    const parent = [...visibleRows.slice(0, index)]
-      .reverse()
-      .find((candidate) => candidate.depth === row.depth - 1);
-    if (parent) selectAndFocusTask(parent.node.task.id);
-  }, [onToggleOpen, selectAndFocusTask, visibleRows]);
+  const { setRowRef, handleKeyDown, getTabIndex } = useTreeKeyboardNavigation({
+    items: navItems,
+    selectedId: selectedTaskId,
+    onSelect,
+    onToggle: onToggleOpen,
+  });
 
   return (
     <div
@@ -127,9 +90,10 @@ export function TasksTabList({
               isBusy={activeTaskActionId === task.id}
               onSelect={onSelect}
               onToggleOpen={onToggleOpen}
-              onNavigate={handleNavigate}
               onMenuButtonClick={onMenuButtonClick}
               rowRef={(node) => setRowRef(task.id, node)}
+              tabIndex={getTabIndex(task.id)}
+              onKeyDown={(event) => handleKeyDown(task.id, event)}
             />
           );
         })

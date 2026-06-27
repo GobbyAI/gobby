@@ -1,5 +1,5 @@
 import { useState, type ReactNode } from "react";
-import { render, screen, waitFor, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -103,11 +103,11 @@ function renderMcp(props = makeProps()) {
   return render(<Harness props={props}><ActivityActionButtons /></Harness>);
 }
 
-function listItemFor(text: string) {
-  const list = screen.getByRole("list", { name: "MCP servers and tools" });
-  return within(list)
+function treeItemFor(text: string) {
+  const tree = screen.getByRole("tree", { name: "MCP servers and tools" });
+  return within(tree)
     .getAllByText(text)[0]
-    .closest('[role="listitem"]') as HTMLElement;
+    .closest('[role="treeitem"]') as HTMLElement;
 }
 
 describe("ActivityMcpTab", () => {
@@ -131,26 +131,132 @@ describe("ActivityMcpTab", () => {
     vi.unstubAllGlobals();
   });
 
-  it("renders a two-level server/tool tree and supports expansion", async () => {
+  it("renders a two-level ARIA tree and expands via the chevron", async () => {
     const user = userEvent.setup();
     renderMcp();
 
-    const serverRow = await screen.findByText("gobby-tasks");
-    expect(
-      within(listItemFor("gobby-tasks")).getByRole("button", {
-        name: "Toggle gobby-tasks server tools",
-      }),
-    ).toHaveAttribute("aria-expanded", "false");
+    await screen.findByText("gobby-tasks");
+    const serverRow = treeItemFor("gobby-tasks");
+    expect(serverRow).toHaveAttribute("role", "treeitem");
+    expect(serverRow).toHaveAttribute("aria-level", "1");
+    expect(serverRow).toHaveAttribute("aria-expanded", "false");
     expect(screen.queryByText("list_tasks")).toBeNull();
 
+    await user.click(
+      within(serverRow).getByRole("button", {
+        name: "Expand gobby-tasks tools",
+      }),
+    );
+
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "true");
+    const toolRow = treeItemFor("list_tasks");
+    expect(toolRow).toHaveAttribute("role", "treeitem");
+    expect(toolRow).toHaveAttribute("aria-level", "2");
+  });
+
+  it("selects a server row on click without toggling expansion", async () => {
+    const user = userEvent.setup();
+    renderMcp();
+
+    const serverRow = await screen.findByText("gobby-tasks").then(() =>
+      treeItemFor("gobby-tasks"),
+    );
     await user.click(serverRow);
 
-    expect(
-      within(listItemFor("gobby-tasks")).getByRole("button", {
-        name: "Toggle gobby-tasks server tools",
-      }),
-    ).toHaveAttribute("aria-expanded", "true");
+    // Clicking the row selects it (canonical tree semantics) but does not expand.
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-selected", "true");
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("list_tasks")).toBeNull();
+  });
+
+  it("navigates the tree with arrow keys and activates with Enter", async () => {
+    const fetchToolSchema = vi.fn(makeProps().fetchToolSchema);
+    renderMcp(makeProps({ fetchToolSchema }));
+
+    await screen.findByText("gobby-tasks");
+    const serverRow = treeItemFor("gobby-tasks");
+    // The first row is the tree's tab entry point even with nothing selected.
+    expect(serverRow).toHaveAttribute("tabindex", "0");
+
+    // ArrowRight expands a collapsed server.
+    fireEvent.keyDown(serverRow, { key: "ArrowRight" });
+    expect(serverRow).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("list_tasks")).toBeInTheDocument();
+
+    // ArrowRight again moves the roving anchor into the first tool.
+    fireEvent.keyDown(serverRow, { key: "ArrowRight" });
+    const toolRow = treeItemFor("list_tasks");
+    expect(toolRow).toHaveAttribute("tabindex", "0");
+    expect(serverRow).toHaveAttribute("tabindex", "-1");
+
+    // Enter activates the focused tool (loads its schema).
+    fireEvent.keyDown(toolRow, { key: "Enter" });
+    await waitFor(() => {
+      expect(fetchToolSchema).toHaveBeenCalledWith("gobby-tasks", "list_tasks");
+    });
+
+    // ArrowLeft from a leaf returns the anchor to the parent server.
+    fireEvent.keyDown(toolRow, { key: "ArrowLeft" });
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute("tabindex", "0");
+  });
+
+  it("activates nested controls via keyboard without the row swallowing keys", async () => {
+    const user = userEvent.setup();
+    renderMcp();
+
+    await screen.findByText("gobby-tasks");
+    const serverRow = treeItemFor("gobby-tasks");
+    const chevron = within(serverRow).getByRole("button", {
+      name: "Expand gobby-tasks tools",
+    });
+
+    chevron.focus();
+    await user.keyboard("{Enter}");
+
+    // The chevron toggled expansion, and the row was NOT also selected — i.e.
+    // the treeitem keydown handler did not swallow the Enter meant for the button.
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "true");
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-selected", "false");
+    expect(screen.getByText("list_tasks")).toBeInTheDocument();
+  });
+
+  it("opens the kebab menu via keyboard without selecting the row", async () => {
+    const user = userEvent.setup();
+    renderMcp();
+
+    await screen.findByText("gobby-tasks");
+    const serverRow = treeItemFor("gobby-tasks");
+    const kebab = within(serverRow).getByRole("button", {
+      name: "Open actions for gobby-tasks server",
+    });
+
+    kebab.focus();
+    await user.keyboard("{Enter}");
+
+    expect(
+      screen.getByRole("menuitem", { name: "View details" }),
+    ).toBeInTheDocument();
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-selected", "false");
+  });
+
+  it("auto-expands matching servers on search but still allows collapse", async () => {
+    const user = userEvent.setup();
+    renderMcp();
+
+    await user.type(screen.getByPlaceholderText("Search MCP"), "list");
+
+    // "list" matches gobby-tasks via its list_tasks tool, which auto-expands.
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "true");
+    expect(screen.getByText("list_tasks")).toBeInTheDocument();
+
+    // Collapsing mid-search sticks (does not immediately re-expand).
+    await user.click(
+      within(treeItemFor("gobby-tasks")).getByRole("button", {
+        name: "Collapse gobby-tasks tools",
+      }),
+    );
+    expect(treeItemFor("gobby-tasks")).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText("list_tasks")).toBeNull();
   });
 
   it("searches server names, tool names, and tool briefs", async () => {
@@ -241,7 +347,12 @@ describe("ActivityMcpTab", () => {
     const fetchToolSchema = vi.fn(makeProps().fetchToolSchema);
     renderMcp(makeProps({ fetchToolSchema }));
 
-    await user.click(await screen.findByText("gobby-tasks"));
+    await screen.findByText("gobby-tasks");
+    await user.click(
+      within(treeItemFor("gobby-tasks")).getByRole("button", {
+        name: "Expand gobby-tasks tools",
+      }),
+    );
     await user.click(await screen.findByText("list_tasks"));
 
     await waitFor(() => {
@@ -262,7 +373,12 @@ describe("ActivityMcpTab", () => {
     }));
     renderMcp(makeProps({ callTool }));
 
-    await user.click(await screen.findByText("gobby-tasks"));
+    await screen.findByText("gobby-tasks");
+    await user.click(
+      within(treeItemFor("gobby-tasks")).getByRole("button", {
+        name: "Expand gobby-tasks tools",
+      }),
+    );
     await user.click(await screen.findByText("create_task"));
     await screen.findByText("create_task schema");
 
