@@ -258,9 +258,7 @@ def _has_guardrail_value(value: Any) -> bool:
     if isinstance(value, str):
         return bool(value.strip())
     if isinstance(value, dict):
-        return any(
-            _has_guardrail_value(key) or _has_guardrail_value(item) for key, item in value.items()
-        )
+        return any(_has_guardrail_value(item) for item in value.values())
     if isinstance(value, list | tuple | set):
         return any(_has_guardrail_value(item) for item in value)
     return bool(value)

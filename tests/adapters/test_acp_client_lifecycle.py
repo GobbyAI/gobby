@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import logging
 from typing import Any
 
 import pytest
@@ -127,6 +129,41 @@ async def test_start_advertises_terminal_capability_and_gates_session_load(
 
 
 @pytest.mark.asyncio
+async def test_start_logs_initialize_response_with_provider_context(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    init_result = {"protocolVersion": 1, "agentCapabilities": {}}
+    process = _FakeProcess(
+        [
+            {"jsonrpc": "2.0", "id": 1, "result": init_result},
+            {"jsonrpc": "2.0", "id": 2, "result": {"sessionId": "new-session"}},
+        ]
+    )
+
+    async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
+        return process
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    client = _StubACPClient(cli_path="/usr/bin/stub-acp", purpose="diagnostics")
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.adapters.acp_client"):
+        await client.start()
+
+    records = [
+        record for record in caplog.records if record.getMessage() == "ACP initialize response"
+    ]
+    assert len(records) == 1
+    record = records[0]
+    assert record.provider == "stub-acp"
+    assert record.provider_display == "Stub ACP"
+    assert record.purpose == "diagnostics"
+    assert record.payload == init_result
+
+    await client.stop()
+
+
+@pytest.mark.asyncio
 async def test_start_rejects_incompatible_protocol_version(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -198,3 +235,44 @@ async def test_cancel_session_sends_out_of_band_notification() -> None:
             "params": {"sessionId": "sess-1"},
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_send_cancellation_preserves_cancelled_error_when_cancel_session_fails(
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    client = _StubACPClient(cli_path="/usr/bin/stub-acp")
+    client._started = True
+    client._session_state.update_session_info({"sessionId": "sess-1"})
+    client._process = _FakeProcess([])
+    cancelled_sessions: list[str | None] = []
+
+    async def write_json_rpc_message(_message: dict[str, Any]) -> None:
+        return None
+
+    async def cancel_session(session_id: str | None = None) -> None:
+        cancelled_sessions.append(session_id)
+        raise BrokenPipeError("closed")
+
+    class CancelledStream:
+        def __aiter__(self) -> CancelledStream:
+            return self
+
+        async def __anext__(self) -> Any:
+            raise asyncio.CancelledError
+
+    def read_stream(**_kwargs: Any) -> CancelledStream:
+        return CancelledStream()
+
+    monkeypatch.setattr(client, "_write_json_rpc_message", write_json_rpc_message)
+    monkeypatch.setattr(client, "cancel_session", cancel_session)
+    monkeypatch.setattr(client, "_read_stream", read_stream)
+
+    with caplog.at_level(logging.DEBUG, logger="gobby.adapters.acp_client"):
+        with pytest.raises(asyncio.CancelledError):
+            async for _event in client.send("hello"):
+                pass
+
+    assert cancelled_sessions == ["sess-1"]
+    assert "session/cancel failed during prompt cancellation" in caplog.text

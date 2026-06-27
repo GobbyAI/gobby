@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import sys
 from pathlib import Path
@@ -310,6 +311,39 @@ async def test_terminal_output_rejects_invalid_terminal_id() -> None:
     assert response["id"] == "output-1"
     assert response["error"]["code"] == -32602
     assert "term_missing" in response["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_wait_for_exit_times_out_with_json_rpc_error() -> None:
+    """A hanging wait_for_exit returns a bounded error instead of blocking the reader."""
+    client = _recording_client()
+    client._request_timeout = 0.001
+
+    class HangingTerminalManager:
+        async def wait_for_exit(self, _terminal_id: str) -> dict[str, int | str | None]:
+            await asyncio.Event().wait()
+            return {"exitCode": 0, "signal": None}
+
+    client._terminal_manager = HangingTerminalManager()
+
+    events = [
+        event
+        async for event in acp_client_requests.handle_client_request(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": "wait-1",
+                "method": "terminal/wait_for_exit",
+                "params": {"sessionId": "sess-1", "terminalId": "term_hangs"},
+            },
+        )
+    ]
+
+    assert events == []
+    response = _written_messages(client)[0]
+    assert response["id"] == "wait-1"
+    assert response["error"]["code"] == -32000
+    assert "terminal/wait_for_exit timed out" in response["error"]["message"]
 
 
 @pytest.mark.asyncio

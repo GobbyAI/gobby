@@ -56,6 +56,13 @@ DEFAULT_ACP_PROMPT_TIMEOUT_SECONDS = 120.0
 ACP_PROMPT_TIMEOUT_ENV_QWEN = "GOBBY_QWEN_ACP_PROMPT_TIMEOUT_SECONDS"
 ACP_PROMPT_TIMEOUT_ENV_GROK = "GOBBY_GROK_ACP_PROMPT_TIMEOUT_SECONDS"
 
+__all__ = [
+    "ACPClient",
+    "ACP_PROMPT_TIMEOUT_ENV_GROK",
+    "ACP_PROMPT_TIMEOUT_ENV_QWEN",
+    "StreamEvent",
+]
+
 # asyncio subprocess pipes default to a 64 KiB StreamReader limit. A single
 # stdout JSON-RPC line larger than that raises LimitOverrunError from
 # readline(), which kills the ACP session. ACP agents routinely emit larger
@@ -268,7 +275,15 @@ class ACPClient:
                     "clientCapabilities": dict(DEFAULT_ACP_CLIENT_CAPABILITIES),
                 },
             )
-            logger.debug(f"ACP initialize response: {init_result}")
+            logger.debug(
+                "ACP initialize response",
+                extra={
+                    "provider": self.cli_name,
+                    "provider_display": self.display_name,
+                    "purpose": self._purpose,
+                    "payload": init_result,
+                },
+            )
             negotiated_version = init_result.get("protocolVersion")
             if negotiated_version != self.protocol_version:
                 raise RuntimeError(
@@ -585,7 +600,19 @@ class ACPClient:
             ):
                 yield event
         except asyncio.CancelledError:
-            await self.cancel_session(target_session_id)
+            try:
+                await self.cancel_session(target_session_id)
+            except Exception:
+                logger.debug(
+                    "%s ACP session/cancel failed during prompt cancellation",
+                    self.display_name,
+                    extra={
+                        "provider": self.cli_name,
+                        "purpose": self._purpose,
+                        "session_id": target_session_id,
+                    },
+                    exc_info=True,
+                )
             raise
         finally:
             if self._active_prompt_request_id == request_id:

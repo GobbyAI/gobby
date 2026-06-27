@@ -49,6 +49,42 @@ async def test_high_risk_weak_lesson_records_memory_without_task(
 
 
 @pytest.mark.asyncio
+async def test_guardrail_signal_ignores_dict_keys(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    result = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding={
+            "title": "Guardrail signal from dictionary keys",
+            "pattern_id": "dict-key-guardrail-signal",
+            "lesson_type": "review-signal",
+            "principle": {"non_empty_key": ""},
+            "root_cause": {},
+            "prevention": {"another_key": "  "},
+            "path": {"src/gobby/example.py": ""},
+        },
+        evidence={"changed_files": {"src/gobby/example.py": ""}},
+        risk="high",
+    )
+
+    assert result["guardrail_target"] is None
+    assert result["skipped_reason"] == "insufficient_guardrail_signal"
+    assert set(result["missing_guardrail_fields"]) == {
+        "prevention",
+        "principle_or_root_cause",
+        "implementation_anchor",
+    }
+    assert len(fake_memory_manager.memories) == 1
+    assert fake_task_manager.created == []
+
+
+@pytest.mark.asyncio
 async def test_high_risk_actionable_first_occurrence_creates_test_by_default(
     fake_memory_manager,
     fake_task_manager,

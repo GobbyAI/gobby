@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
@@ -284,7 +285,17 @@ async def _handle_terminal_request(
         if method == "terminal/output":
             result = await manager.output(terminal_id)
         elif method == "terminal/wait_for_exit":
-            result = await manager.wait_for_exit(terminal_id)
+            timeout = float(getattr(client, "_request_timeout", 30.0))
+            try:
+                result = await asyncio.wait_for(manager.wait_for_exit(terminal_id), timeout=timeout)
+            except TimeoutError:
+                await write_json_rpc_error(
+                    client,
+                    request.get("id"),
+                    code=-32000,
+                    message=f"{method} timed out after {timeout:.1f}s",
+                )
+                return
         elif method == "terminal/kill":
             result = await manager.kill(terminal_id)
         elif method == "terminal/release":
