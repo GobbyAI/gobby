@@ -50,7 +50,6 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
     # forward-compatibility with Claude Code's classic transcript format.
     _SKIPPED_RECORD_TYPES: ClassVar[frozenset[str]] = frozenset(
         {
-            "ai-title",
             "queue-operation",
             "last-prompt",
             "attachment",
@@ -599,6 +598,17 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             if data.get("subtype") == "compact_boundary":
                 results.append(_make_compaction_summary())
 
+        elif msg_type == "ai-title":
+            ai_title = data.get("aiTitle")
+            if isinstance(ai_title, str) and ai_title.strip():
+                results.append(
+                    _make_msg(
+                        role="system",
+                        content=ai_title,
+                        content_type="session_title",
+                    )
+                )
+
         elif msg_type in self._SKIPPED_RECORD_TYPES:
             # Known session-metadata envelope record — recognized, not rendered.
             pass
@@ -740,6 +750,14 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 content = f"{content} ({trigger})"
             uuid = data.get("uuid")
             tool_use_id = uuid if isinstance(uuid, str) else None
+
+        elif msg_type == "ai-title":
+            ai_title = data.get("aiTitle")
+            if not isinstance(ai_title, str) or not ai_title.strip():
+                return None
+            role = "system"
+            content = ai_title
+            content_type = "session_title"
 
         elif msg_type in self._SKIPPED_RECORD_TYPES:
             return None  # known session-metadata envelope record — not rendered

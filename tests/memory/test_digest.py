@@ -16,6 +16,7 @@ from gobby.llm.base import LLMProviderCancellation
 from gobby.memory.digest import (
     _build_title_synthesis_prompt,
     _build_turn_record_prompt,
+    _can_replace_with_native_title,
     _get_next_turn_number,
     _parse_turn_record_response,
     _read_last_turn_from_transcript,
@@ -30,6 +31,8 @@ from gobby.memory.digest import (
 from gobby.memory.title_heuristics import (
     build_heuristic_title,
     heuristic_title_from_transcript,
+    is_template_placeholder,
+    normalize_native_title,
     normalize_title_candidate,
 )
 from tests._timing import wait_forever
@@ -267,6 +270,58 @@ class TestBuildHeuristicTitle:
     def test_plain_prompt_unaffected_by_slash_stripping(self) -> None:
         assert build_heuristic_title("hello world") == "Hello world"
 
+    @pytest.mark.parametrize(
+        "prompt",
+        [
+            "<user_query>",
+            "<user_prompt>",
+            "<prompt>",
+            "<input>",
+            "<USER_QUERY>",
+        ],
+    )
+    def test_rejects_angle_bracket_placeholders(self, prompt: str) -> None:
+        assert build_heuristic_title(prompt) is None
+
+
+class TestNormalizeNativeTitle:
+    """Tests for CLI-native title validation (Claude ai-title, Droid sessionTitle)."""
+
+    def test_accepts_clean_title(self) -> None:
+        assert normalize_native_title("Fix authentication bug") == "Fix authentication bug"
+
+    def test_rejects_new_session_placeholder(self) -> None:
+        assert normalize_native_title("New Session") is None
+        assert normalize_native_title("new session") is None
+
+    def test_rejects_multiline_content(self) -> None:
+        assert normalize_native_title("Line one\nLine two") is None
+
+    def test_rejects_excessively_long_content(self) -> None:
+        assert normalize_native_title("A" * 201) is None
+
+    def test_rejects_xml_block_content(self) -> None:
+        assert normalize_native_title("I will help. <function_calls> stuff") is None
+        assert normalize_native_title("<invoke name=\"test\">") is None
+        assert normalize_native_title("<parameter name=\"x\">") is None
+
+    def test_rejects_non_string(self) -> None:
+        assert normalize_native_title(None) is None
+        assert normalize_native_title(123) is None
+
+    def test_rejects_empty(self) -> None:
+        assert normalize_native_title("") is None
+        assert normalize_native_title("   ") is None
+
+    def test_truncates_long_but_valid_title(self) -> None:
+        title = "A" * 100
+        result = normalize_native_title(title)
+        assert result is not None
+        assert len(result) == 80
+
+    def test_rejects_template_placeholder(self) -> None:
+        assert normalize_native_title("<user_query>") is None
+
 
 class TestNormalizeTitleCandidate:
     """Tests for LLM title candidate cleanup."""
@@ -338,6 +393,77 @@ class TestShouldUpdateDigestTitle:
         session.title_source = title_source
 
         assert _should_update_digest_title(session) is expected
+
+    def test_native_title_is_refinable_by_digest(self) -> None:
+        session = MagicMock()
+        session.title = "Fix auth bug"
+        session.title_source = "native"
+        assert _should_update_digest_title(session) is True
+
+
+class TestCanReplaceWithNativeTitle:
+    """Tests for CLI-native title replacement policy."""
+
+    def test_replaces_empty_title(self) -> None:
+        session = MagicMock()
+        session.title = ""
+        session.title_source = ""
+        assert _can_replace_with_native_title(session) is True
+
+    def test_replaces_provisional_title(self) -> None:
+        session = MagicMock()
+        session.title = "#42 codex"
+        session.title_source = "provisional"
+        assert _can_replace_with_native_title(session) is True
+
+    def test_replaces_heuristic_title(self) -> None:
+        session = MagicMock()
+        session.title = "Fix the auth"
+        session.title_source = "heuristic"
+        assert _can_replace_with_native_title(session) is True
+
+    def test_replaces_existing_native_title(self) -> None:
+        """Claude may emit multiple ai-title updates; latest wins."""
+        session = MagicMock()
+        session.title = "Old native title"
+        session.title_source = "native"
+        assert _can_replace_with_native_title(session) is True
+
+    def test_denies_manual_title(self) -> None:
+        session = MagicMock()
+        session.title = "My custom title"
+        session.title_source = "manual"
+        assert _can_replace_with_native_title(session) is False
+
+    def test_denies_llm_title(self) -> None:
+        """LLM digest has more context; native should not override it."""
+        session = MagicMock()
+        session.title = "Comprehensive digest title"
+        session.title_source = "llm"
+        assert _can_replace_with_native_title(session) is False
+
+
+class TestIsTemplatePlaceholder:
+    """Tests for placeholder detection including angle-bracket patterns."""
+
+    @pytest.mark.parametrize(
+        "value",
+        [
+            "<user_query>",
+            "<user_prompt>",
+            "<prompt>",
+            "<input>",
+            "<USER_QUERY>",
+        ],
+    )
+    def test_angle_bracket_placeholders(self, value: str) -> None:
+        assert is_template_placeholder(value) is True
+
+    def test_bracketed_numbered_placeholder(self) -> None:
+        assert is_template_placeholder("[3-5 word session title]") is True
+
+    def test_normal_text_not_placeholder(self) -> None:
+        assert is_template_placeholder("Fix the auth bug") is False
 
 
 class TestBootstrapSessionTitle:

@@ -286,3 +286,54 @@ def test_session_processor_registers_droid_parser_with_transcript_path() -> None
     parser = processor._parsers["session-id"]
     assert isinstance(parser, DroidTranscriptParser)
     assert parser._transcript_path == FIXTURE_JSONL
+
+
+def test_session_start_with_title_emits_session_title() -> None:
+    """session_start with a non-placeholder sessionTitle emits a session_title ParsedMessage."""
+    parser = DroidTranscriptParser(session_id="test-session")
+    line = json.dumps(
+        {
+            "type": "session_start",
+            "sessionTitle": "Investigate tmux title issues",
+            "timestamp": "2026-04-22T10:00:00Z",
+        }
+    )
+    msgs = parser._expand_line(line, 0)
+    assert len(msgs) == 1
+    assert msgs[0].content_type == "session_title"
+    assert msgs[0].role == "system"
+    assert msgs[0].content == "Investigate tmux title issues"
+
+    single = parser.parse_line(line, 0)
+    assert single is not None
+    assert single.content_type == "session_title"
+
+
+def test_session_start_placeholder_title_still_emits_message() -> None:
+    """session_start with 'New Session' still emits a session_title ParsedMessage;
+    the processor's normalize_native_title handles rejecting the placeholder."""
+    parser = DroidTranscriptParser(session_id="test-session")
+    line = json.dumps(
+        {
+            "type": "session_start",
+            "sessionTitle": "New Session",
+            "timestamp": "2026-04-22T10:00:00Z",
+        }
+    )
+    msgs = parser._expand_line(line, 0)
+    assert len(msgs) == 1
+    assert msgs[0].content_type == "session_title"
+    assert msgs[0].content == "New Session"
+
+
+def test_session_start_without_title_is_skipped() -> None:
+    """session_start with no sessionTitle field produces no message."""
+    parser = DroidTranscriptParser(session_id="test-session")
+    line = json.dumps(
+        {
+            "type": "session_start",
+            "timestamp": "2026-04-22T10:00:00Z",
+        }
+    )
+    assert parser._expand_line(line, 0) == []
+    assert parser.parse_line(line, 0) is None

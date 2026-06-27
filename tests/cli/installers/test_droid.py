@@ -57,7 +57,7 @@ def test_install_droid_global_writes_hooks_and_mcp(
     assert result["trust"]["skipped"] is True
     assert result["trust"]["files_written"] == []
 
-    hooks_file = droid_env / ".factory" / "hooks" / "hooks.json"
+    hooks_file = droid_env / ".factory" / "hooks.json"
     hooks = _load_json(hooks_file)["hooks"]
     assert tuple(hooks) == DROID_PASCAL_HOOK_NAMES
     for hook_type in DROID_PASCAL_HOOK_NAMES:
@@ -77,7 +77,7 @@ def test_install_droid_project_mode_writes_project_hooks(
     result = install_droid(project_path, mode="project")
 
     assert result["success"] is True
-    assert (project_path / ".factory" / "hooks" / "hooks.json").exists()
+    assert (project_path / ".factory" / "hooks.json").exists()
     assert (project_path / ".factory" / "mcp.json").exists()
 
 
@@ -129,7 +129,7 @@ def test_install_droid_is_idempotent_and_preserves_file_text(
     droid_env: Path,
 ) -> None:
     first = install_droid(project_path, mode="global")
-    hooks_file = droid_env / ".factory" / "hooks" / "hooks.json"
+    hooks_file = droid_env / ".factory" / "hooks.json"
     original_text = hooks_file.read_text()
 
     second = install_droid(project_path, mode="global")
@@ -144,7 +144,7 @@ def test_install_droid_creates_backup_when_rewriting_existing_hooks(
     project_path: Path,
     droid_env: Path,
 ) -> None:
-    hooks_file = droid_env / ".factory" / "hooks" / "hooks.json"
+    hooks_file = droid_env / ".factory" / "hooks.json"
     hooks_file.parent.mkdir(parents=True)
     hooks_file.write_text(json.dumps({"hooks": {"Other": [{"command": "custom"}]}}))
 
@@ -160,7 +160,7 @@ def test_uninstall_droid_removes_only_gobby_entries(
     project_path: Path,
     droid_env: Path,
 ) -> None:
-    hooks_file = droid_env / ".factory" / "hooks" / "hooks.json"
+    hooks_file = droid_env / ".factory" / "hooks.json"
     hooks_file.parent.mkdir(parents=True)
     hooks_file.write_text(
         json.dumps(
@@ -220,7 +220,7 @@ def test_install_droid_warns_when_ghook_is_outdated(
         result = install_droid(project_path, mode="global")
 
     assert result["success"] is True
-    assert (droid_env / ".factory" / "hooks" / "hooks.json").exists()
+    assert (droid_env / ".factory" / "hooks.json").exists()
     assert any(
         "ghook 0.0.1 does not support droid yet" in warning
         and f"ghook >= {_MIN_GHOOK_VERSION_FOR_DROID}" in warning
@@ -251,7 +251,7 @@ def test_install_droid_warns_when_ghook_version_cannot_be_checked(
         result = install_droid(project_path, mode="global")
 
     assert result["success"] is True
-    assert (droid_env / ".factory" / "hooks" / "hooks.json").exists()
+    assert (droid_env / ".factory" / "hooks.json").exists()
     assert any("ghook" in warning and "version" in warning for warning in result["warnings"])
 
 

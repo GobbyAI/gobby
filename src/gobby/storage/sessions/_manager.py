@@ -60,6 +60,7 @@ class SessionManager(
         "heuristic",
         "llm",
         "manual",
+        "native",
         PROVISIONAL_TITLE_SOURCE,
     }
 

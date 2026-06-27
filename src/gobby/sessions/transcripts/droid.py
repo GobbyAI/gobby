@@ -142,6 +142,23 @@ class DroidTranscriptParser(BaseTranscriptParser):
         message_id = message_id_raw if isinstance(message_id_raw, str) else None
         record_type = record.get("type")
         if record_type == "session_start":
+            session_title = record.get("sessionTitle")
+            if isinstance(session_title, str) and session_title.strip():
+                return [
+                    ParsedMessage(
+                        index=index,
+                        role="system",
+                        content=session_title,
+                        content_type="session_title",
+                        tool_name=None,
+                        tool_input=None,
+                        tool_result=None,
+                        timestamp=timestamp,
+                        raw_json=record,
+                        message_id=message_id,
+                        model=self._sidecar_model,
+                    )
+                ]
             return []
         if record_type == "todo_state":
             todos = record.get("todos")

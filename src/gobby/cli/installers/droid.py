@@ -58,7 +58,7 @@ def _droid_hooks_file(project_path: Path, mode: str) -> Path:
         return Path(override).expanduser()
     if hooks_dir := os.environ.get("GOBBY_HOOKS_DIR"):
         return Path(hooks_dir).expanduser() / "hooks.json"
-    return _factory_dir(project_path, mode) / "hooks" / "hooks.json"
+    return _factory_dir(project_path, mode) / "hooks.json"
 
 
 def _droid_mcp_file(project_path: Path, mode: str) -> Path:
@@ -268,7 +268,7 @@ def install_droid(project_path: Path, mode: str = "global") -> dict[str, Any]:
     try:
         install_global_hooks()
         if mode == "global":
-            cleaned = clean_project_hooks(project_path / ".factory" / "hooks" / "hooks.json")
+            cleaned = clean_project_hooks(project_path / ".factory" / "hooks.json")
             if cleaned:
                 result["project_hooks_cleaned"] = cleaned
     except OSError as exc:

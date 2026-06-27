@@ -1603,3 +1603,146 @@ class TestCodexMcpTranscriptProcessing:
 
         hook_manager.handle.assert_not_called()
         assert processor._byte_offsets["sid"] == transcript.stat().st_size
+
+
+class TestExtractNativeTitles:
+    """Tests for _extract_native_titles — intercepts session_title messages
+    before stats/render, updates the session title, and returns non-title msgs."""
+
+    def _make_title_msg(self, content: str, index: int = 0) -> ParsedMessage:
+        return ParsedMessage(
+            index=index,
+            role="system",
+            content=content,
+            content_type="session_title",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+        )
+
+    def _make_text_msg(self, content: str, index: int = 1) -> ParsedMessage:
+        return ParsedMessage(
+            index=index,
+            role="user",
+            content=content,
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+        )
+
+    def test_extracts_title_and_returns_non_title_messages(self, mock_db) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = ""
+        session.title_source = ""
+        session_manager.get.return_value = session
+        processor.session_manager = session_manager
+
+        messages = [
+            self._make_title_msg("Fix auth bug", index=0),
+            self._make_text_msg("Hello world", index=1),
+        ]
+        result = processor._extract_native_titles("sid", messages)
+
+        assert len(result) == 1
+        assert result[0].content_type == "text"
+        session_manager.update_title.assert_called_once_with(
+            "sid", "Fix auth bug", title_source="native"
+        )
+
+    def test_skips_when_session_manager_is_none(self, mock_db) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        processor.session_manager = None
+
+        messages = [self._make_title_msg("Fix auth bug")]
+        result = processor._extract_native_titles("sid", messages)
+
+        assert len(result) == 0
+
+    def test_skips_when_title_is_manual(self, mock_db) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = "My manual title"
+        session.title_source = "manual"
+        session_manager.get.return_value = session
+        processor.session_manager = session_manager
+
+        messages = [self._make_title_msg("Native title")]
+        result = processor._extract_native_titles("sid", messages)
+
+        assert len(result) == 0
+        session_manager.update_title.assert_not_called()
+
+    def test_skips_when_title_is_llm(self, mock_db) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = "LLM digest title"
+        session.title_source = "llm"
+        session_manager.get.return_value = session
+        processor.session_manager = session_manager
+
+        messages = [self._make_title_msg("Native title")]
+        result = processor._extract_native_titles("sid", messages)
+
+        assert len(result) == 0
+        session_manager.update_title.assert_not_called()
+
+    def test_rejects_garbage_native_title(self, mock_db) -> None:
+        """Droid sessionTitle that's a response dump is rejected by normalize_native_title."""
+        processor = SessionMessageProcessor(mock_db)
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = ""
+        session.title_source = ""
+        session_manager.get.return_value = session
+        processor.session_manager = session_manager
+
+        garbage = "I will help. <function_calls> stuff " * 20
+        messages = [self._make_title_msg(garbage)]
+        result = processor._extract_native_titles("sid", messages)
+
+        assert len(result) == 0
+        session_manager.update_title.assert_not_called()
+
+    def test_no_title_messages_returns_unchanged(self, mock_db) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        processor.session_manager = MagicMock()
+
+        messages = [self._make_text_msg("Hello", index=0), self._make_text_msg("World", index=1)]
+        result = processor._extract_native_titles("sid", messages)
+
+        assert result == messages
+
+    def test_empty_messages_returns_empty(self, mock_db) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        result = processor._extract_native_titles("sid", [])
+        assert result == []
+
+    def test_latest_title_wins_for_multiple_title_messages(self, mock_db) -> None:
+        """Claude may emit multiple ai-title updates; the last one wins."""
+        processor = SessionMessageProcessor(mock_db)
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = "Old title"
+        session.title_source = "native"
+        session_manager.get.return_value = session
+        processor.session_manager = session_manager
+
+        messages = [
+            self._make_title_msg("First title", index=0),
+            self._make_title_msg("Updated title", index=1),
+        ]
+        result = processor._extract_native_titles("sid", messages)
+
+        assert len(result) == 0
+        session_manager.update_title.assert_called_once_with(
+            "sid", "Updated title", title_source="native"
+        )

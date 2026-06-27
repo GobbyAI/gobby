@@ -361,7 +361,7 @@ def _should_update_digest_title(session: SessionTitlePolicy) -> bool:
         return False
     if not existing_title:
         return True
-    return title_source in {"heuristic", "llm", "provisional"} or not title_source
+    return title_source in {"heuristic", "llm", "provisional", "native"} or not title_source
 
 
 def _can_replace_with_heuristic_title(session: Any) -> bool:
@@ -371,6 +371,24 @@ def _can_replace_with_heuristic_title(session: Any) -> bool:
     if title_source == "manual":
         return False
     return not existing_title or title_source == "provisional"
+
+
+def _can_replace_with_native_title(session: Any) -> bool:
+    """Return whether a CLI-native title may set this session title.
+
+    Native titles (Claude ``ai-title``, Droid ``sessionTitle``) are
+    AI-synthesized by the CLI itself. They may replace heuristic or provisional
+    bootstrap titles, and Claude may emit multiple ``ai-title`` updates (latest
+    wins). They may NOT override manual titles (user intent) or LLM digest titles
+    (which have full conversation context).
+    """
+    existing_title = str(getattr(session, "title", "") or "").strip()
+    title_source = str(getattr(session, "title_source", "") or "").strip().lower()
+    if title_source == "manual":
+        return False
+    if title_source == "llm":
+        return False
+    return not existing_title or title_source in {"provisional", "heuristic", "native"}
 
 
 async def bootstrap_session_title(

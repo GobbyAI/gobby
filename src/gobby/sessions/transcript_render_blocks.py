@@ -19,7 +19,7 @@ from gobby.sessions.transcript_render_models import (
 from gobby.sessions.transcript_tool_metadata import classify_tool, extract_result_metadata
 from gobby.sessions.transcripts.base import ParsedMessage, TranscriptParserErrorLog
 
-_INTERNAL_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt"})
+_INTERNAL_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt", "session_title"})
 
 
 def _is_hook_feedback(msg: ParsedMessage) -> bool:

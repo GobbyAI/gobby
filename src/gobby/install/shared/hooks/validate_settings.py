@@ -110,7 +110,7 @@ CLI_VALIDATION_CONFIGS: dict[str, ValidationConfig] = {
     ),
     "droid": ValidationConfig(
         cli_name="Factory droid",
-        settings_dir=".factory/hooks",
+        settings_dir=".factory",
         settings_file="hooks.json",
         required_hooks=DROID_PASCAL_HOOK_NAMES,
         nested=True,

@@ -47,11 +47,26 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
     re.IGNORECASE,
 )
 
+# Matches unsubstituted template variables wrapped in angle brackets that some
+# CLIs (e.g. Grok) send as the prompt value instead of the actual user input.
+_ANGLE_BRACKET_PLACEHOLDER_RE = re.compile(r"^<[a-z_][a-z0-9_]*>$", re.IGNORECASE)
+
+# Droid's default session-start title placeholder.
+_NATIVE_PLACEHOLDER_TITLES = frozenset({"new session"})
+
+# Reject native titles longer than this before truncation — if it's this long,
+# it's a response dump, not a title.
+_NATIVE_TITLE_MAX_RAW_LENGTH = 200
+
+# XML-like block markers that indicate a raw response dump, not a title.
+_NATIVE_TITLE_REJECT_MARKERS = ("<function_calls>", "<invoke", "<parameter")
+
 __all__ = [
     "LIFECYCLE_CMDS",
     "build_heuristic_title",
     "heuristic_title_from_transcript",
     "is_template_placeholder",
+    "normalize_native_title",
     "normalize_title_candidate",
 ]
 
@@ -146,6 +161,11 @@ def _is_control_marker(value: str) -> bool:
     return bool(_TITLE_CONTROL_MARKER_RE.fullmatch(normalized))
 
 
+def _is_angle_bracket_placeholder(value: str) -> bool:
+    """Return True for unsubstituted template variables like ``<user_query>``."""
+    return bool(_ANGLE_BRACKET_PLACEHOLDER_RE.fullmatch(value.strip()))
+
+
 def build_heuristic_title(prompt_text: Any) -> str | None:
     """Derive a cheap bootstrap title from the first meaningful user prompt."""
     raw_text = _coerce_prompt_text(prompt_text)
@@ -154,6 +174,8 @@ def build_heuristic_title(prompt_text: Any) -> str | None:
     if _is_control_marker(raw_text):
         return None
     if synthetic_body_reason(raw_text):
+        return None
+    if _is_angle_bracket_placeholder(raw_text):
         return None
 
     cleaned = _TITLE_CODE_BLOCK_RE.sub(" ", raw_text)
@@ -282,6 +304,37 @@ def normalize_title_candidate(value: Any) -> str | None:
     return title
 
 
+def normalize_native_title(value: Any) -> str | None:
+    """Validate and normalize a CLI-native session title (Claude ai-title, Droid sessionTitle).
+
+    Native titles are AI-synthesized by the CLI itself, but quality varies:
+    Droid's ``sessionTitle`` is sometimes the entire first assistant response
+    (hundreds of chars, markdown, raw ``<function_calls>`` blocks) rather than a
+    concise title. This function rejects garbage and returns a clean truncated
+    title, or ``None`` when the value is not title-like.
+    """
+    if not isinstance(value, str):
+        return None
+    title = value.strip()
+    if not title:
+        return None
+    if title.lower() in _NATIVE_PLACEHOLDER_TITLES:
+        return None
+    if "\n" in title:
+        return None
+    if len(title) > _NATIVE_TITLE_MAX_RAW_LENGTH:
+        return None
+    if any(marker in title for marker in _NATIVE_TITLE_REJECT_MARKERS):
+        return None
+    if is_template_placeholder(title):
+        return None
+    return _truncate_title(title)
+
+
 def is_template_placeholder(value: str) -> bool:
     """Return True for prompt-template placeholders echoed by the LLM."""
-    return bool(_TEMPLATE_PLACEHOLDER_RE.fullmatch(value.strip()))
+    stripped = value.strip()
+    return bool(
+        _TEMPLATE_PLACEHOLDER_RE.fullmatch(stripped)
+        or _ANGLE_BRACKET_PLACEHOLDER_RE.fullmatch(stripped)
+    )

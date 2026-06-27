@@ -105,6 +105,10 @@ class ProcessorHost(Protocol):
 
     def _stats_from_session_manager(self, session_id: str) -> MessageStats: ...
 
+    def _extract_native_titles(
+        self, session_id: str, messages: list[ParsedMessage]
+    ) -> list[ParsedMessage]: ...
+
     async def _persist_usage_events(
         self,
         session_id: str,

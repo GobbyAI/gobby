@@ -537,7 +537,6 @@ class TestClaudeRecordEnvelopes:
     @pytest.mark.parametrize(
         "record_type",
         [
-            "ai-title",
             "queue-operation",
             "last-prompt",
             "attachment",
@@ -555,6 +554,32 @@ class TestClaudeRecordEnvelopes:
     )
     def test_known_envelope_records_are_dropped(self, parser, record_type) -> None:
         line = json.dumps({"type": record_type, "foo": "bar", "timestamp": "2024-01-01T12:00:00Z"})
+        assert parser._expand_line(line, 0) == []
+        assert parser.parse_line(line, 0) is None
+
+    def test_ai_title_emits_session_title(self, parser) -> None:
+        """ai-title records emit a ParsedMessage with content_type=session_title."""
+        line = json.dumps(
+            {
+                "type": "ai-title",
+                "aiTitle": "Fix authentication bug",
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 1
+        assert msgs[0].content_type == "session_title"
+        assert msgs[0].role == "system"
+        assert msgs[0].content == "Fix authentication bug"
+
+        single = parser.parse_line(line, 0)
+        assert single is not None
+        assert single.content_type == "session_title"
+        assert single.content == "Fix authentication bug"
+
+    def test_ai_title_empty_is_dropped(self, parser) -> None:
+        """ai-title with missing or empty aiTitle is silently dropped."""
+        line = json.dumps({"type": "ai-title", "timestamp": "2024-01-01T12:00:00Z"})
         assert parser._expand_line(line, 0) == []
         assert parser.parse_line(line, 0) is None
 

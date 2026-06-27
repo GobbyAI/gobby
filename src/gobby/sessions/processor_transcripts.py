@@ -10,6 +10,8 @@ import os
 import aiofiles
 import psycopg
 
+from gobby.memory.digest import _can_replace_with_native_title
+from gobby.memory.title_heuristics import normalize_native_title
 from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.processor_types import ProcessorHost
 from gobby.sessions.transcript_normalization import normalize_transcript_records
@@ -20,6 +22,34 @@ logger = logging.getLogger(__name__)
 
 
 class ProcessorTranscriptMixin:
+    def _extract_native_titles(
+        self: ProcessorHost, session_id: str, messages: list[ParsedMessage]
+    ) -> list[ParsedMessage]:
+        """Extract CLI-native session titles, update the session, and return non-title messages.
+
+        ``session_title`` messages are metadata, not conversation content — they
+        must not inflate ``message_count`` or be rendered as chat cards. This
+        method intercepts them before stats/render, calls ``update_title`` with
+        ``title_source="native"`` when the precedence policy allows it, and
+        returns the remaining messages for normal processing.
+        """
+        if not messages:
+            return messages
+        title_msgs = [m for m in messages if m.content_type == "session_title"]
+        if not title_msgs:
+            return messages
+
+        if self.session_manager:
+            session = self.session_manager.get(session_id)
+            if session is not None and _can_replace_with_native_title(session):
+                # Use the last title message (latest ai-title update wins).
+                raw_title = title_msgs[-1].content
+                title = normalize_native_title(raw_title)
+                if title:
+                    self.session_manager.update_title(session_id, title, title_source="native")
+
+        return [m for m in messages if m.content_type != "session_title"]
+
     async def _process_session(self: ProcessorHost, session_id: str, transcript_path: str) -> None:
         """Process a single session."""
         if not await asyncio.to_thread(os.path.exists, transcript_path):
@@ -78,6 +108,8 @@ class ProcessorTranscriptMixin:
         parsed_messages: list[ParsedMessage] = [
             r for r in parsed_records if isinstance(r, ParsedMessage)
         ]
+
+        parsed_messages = self._extract_native_titles(session_id, parsed_messages)
 
         self._byte_offsets[session_id] = valid_offset
         appender = self._index_appenders.get(session_id)
@@ -216,6 +248,8 @@ class ProcessorTranscriptMixin:
 
         last_index = self._message_indices.get(session_id, -1)
         new_messages = [m for m in all_messages if m.index > last_index]
+
+        new_messages = self._extract_native_titles(session_id, new_messages)
 
         if not new_messages:
             self._last_mtime[session_id] = current_mtime
