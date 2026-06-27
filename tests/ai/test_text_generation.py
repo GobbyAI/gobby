@@ -3379,6 +3379,13 @@ def test_agy_cli_text_generate_adapter_rejects_unmapped_explicit_model() -> None
         adapter.build_command(TextGenerationRequest(prompt="explain", model="not-real"))
 
 
+def test_agy_cli_text_generate_adapter_rejects_blank_explicit_model() -> None:
+    adapter = AgyCLITextGenerateAdapter(command_path="/usr/local/bin/agy")
+
+    with pytest.raises(ValueError, match="Unsupported AGY model"):
+        adapter.build_command(TextGenerationRequest(prompt="explain", model="   "))
+
+
 @pytest.mark.parametrize(
     "stdout_bytes",
     [

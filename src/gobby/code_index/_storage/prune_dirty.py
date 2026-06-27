@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import Any
+
 from gobby.code_index.models import CodeIndexPruneDirtyProject
 from gobby.storage.hub.protocol import HubDatabase
 
@@ -48,13 +50,25 @@ class CodeIndexPruneStorageMixin:
             rowcount = cursor.rowcount
             return isinstance(rowcount, int) and rowcount > 0
 
-    def list_prune_dirty_projects(self, limit: int = 100) -> list[CodeIndexPruneDirtyProject]:
+    def list_prune_dirty_projects(
+        self,
+        limit: int = 100,
+        after: tuple[Any, Any, str] | None = None,
+    ) -> list[CodeIndexPruneDirtyProject]:
         """List dirty prune roots, oldest first."""
-        rows = self.db.fetchall(
-            """SELECT project_id, root_path, reason, attempts, last_error, created_at, updated_at
-               FROM code_index_prune_dirty_projects
-               ORDER BY updated_at ASC, created_at ASC
-               LIMIT %s""",
-            (limit,),
-        )
+        params: tuple[Any, ...]
+        if after is None:
+            query = """SELECT project_id, root_path, reason, attempts, last_error, created_at, updated_at
+                       FROM code_index_prune_dirty_projects
+                       ORDER BY updated_at ASC, created_at ASC, project_id ASC
+                       LIMIT %s"""
+            params = (limit,)
+        else:
+            query = """SELECT project_id, root_path, reason, attempts, last_error, created_at, updated_at
+                       FROM code_index_prune_dirty_projects
+                       WHERE (updated_at, created_at, project_id) > (%s, %s, %s)
+                       ORDER BY updated_at ASC, created_at ASC, project_id ASC
+                       LIMIT %s"""
+            params = (*after, limit)
+        rows = self.db.fetchall(query, params)
         return [CodeIndexPruneDirtyProject.from_row(row) for row in rows]

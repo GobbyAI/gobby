@@ -64,6 +64,29 @@ class TestLifespan:
                 assert hook_manager_kwargs["database"] is session_storage.db
                 assert hook_manager_kwargs["session_manager"] is session_storage
 
+    def test_lifespan_rejects_non_awaitable_hook_manager_shutdown(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """HookManager shutdown_async must preserve its async contract."""
+        services = ServiceContainer(
+            config=None,
+            database=session_storage.db,
+            session_manager=session_storage,
+            task_manager=MagicMock(),
+        )
+        server = HTTPServer(
+            services=services,
+            port=60887,
+            test_mode=True,
+        )
+
+        with patch("gobby.servers.app_factory.HookManager") as MockHM:
+            MockHM.return_value.shutdown_async = MagicMock(return_value=None)
+            with pytest.raises(RuntimeError, match="shutdown_async"):
+                with TestClient(server.app):
+                    pass
+
     def test_lifespan_cleans_up_voice_resources(self, session_storage: SessionManager) -> None:
         """Test that lifespan uses the explicit voice cleanup hook on shutdown."""
         services = ServiceContainer(

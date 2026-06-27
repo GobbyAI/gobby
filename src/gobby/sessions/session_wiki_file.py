@@ -29,6 +29,7 @@ logger = logging.getLogger(__name__)
 #: Ephemeral session sources that never warrant a durable wiki page. Mirrors the
 #: summary skip policy so the wiki page never appears where the summary wouldn't.
 _EPHEMERAL_SOURCES = ("pipeline", "cron")
+_WIKI_MTIME_TOLERANCE_SECONDS = 1.0
 
 # Redaction patterns applied once to the assembled page before it is written.
 # Order matters: specific secrets first, then the home-directory path.
@@ -159,7 +160,7 @@ def session_wiki_path_is_fresh(session: Any) -> bool:
     summary_generated_at = _parse_datetime(getattr(session, "summary_generated_at", None))
     if summary_generated_at is None:
         return True
-    return stat.st_mtime >= summary_generated_at.timestamp()
+    return stat.st_mtime + _WIKI_MTIME_TOLERANCE_SECONDS >= summary_generated_at.timestamp()
 
 
 def _write_file(path: Path, content: str) -> bool:

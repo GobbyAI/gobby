@@ -73,7 +73,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     set_mock_default(
         config.code_index,
         "maintenance_log_file",
-        "/tmp/gobby-test-code-index-maintenance.log",
+        f"/tmp/gobby-test-code-index-maintenance-{id(config)}.log",
     )
     set_mock_default(config.code_index, "sync_worker_interval_seconds", 5)
     set_mock_default(config.code_index, "sync_worker_batch_size", 50)

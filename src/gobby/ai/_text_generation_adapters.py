@@ -433,7 +433,8 @@ class AgyCLITextGenerateAdapter:
             request.model,
             request.reasoning_effort,
         )
-        if model:
+        if request.model is not None:
+            assert model is not None
             command.extend(["--model", resolve_agy_display(model, reasoning_effort)])
         command.extend(["--print", _compose_prompt(request)])
         return command

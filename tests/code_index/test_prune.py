@@ -57,8 +57,22 @@ class PruneStorage:
     def list_indexed_projects(self) -> list[IndexedProject]:
         return self.projects
 
-    def list_prune_dirty_projects(self, _limit: int) -> list[Any]:
-        return self.dirty_projects
+    def list_prune_dirty_projects(
+        self,
+        limit: int,
+        after: tuple[Any, Any, str] | None = None,
+    ) -> list[Any]:
+        dirty_projects = sorted(
+            self.dirty_projects,
+            key=lambda dirty: (dirty.updated_at, dirty.created_at, dirty.project_id),
+        )
+        if after is not None:
+            dirty_projects = [
+                dirty
+                for dirty in dirty_projects
+                if (dirty.updated_at, dirty.created_at, dirty.project_id) > after
+            ]
+        return dirty_projects[:limit]
 
     def get_pending_sync_files(
         self,
@@ -137,8 +151,21 @@ def _project(project_id: str, root_path: Path | None) -> IndexedProject:
     )
 
 
-def _dirty(project_id: str, root_path: Path, reason: str = "orphan_files") -> Any:
-    return SimpleNamespace(project_id=project_id, root_path=str(root_path), reason=reason)
+def _dirty(
+    project_id: str,
+    root_path: Path,
+    reason: str = "orphan_files",
+    *,
+    updated_at: str = "2026-01-01T00:00:00+00:00",
+    created_at: str = "2026-01-01T00:00:00+00:00",
+) -> Any:
+    return SimpleNamespace(
+        project_id=project_id,
+        root_path=str(root_path),
+        reason=reason,
+        updated_at=updated_at,
+        created_at=created_at,
+    )
 
 
 @pytest.mark.asyncio
@@ -252,8 +279,12 @@ async def test_dirty_prune_drains_until_storage_is_empty(tmp_path: Path) -> None
     root_two.mkdir()
 
     class PagingPruneStorage(PruneStorage):
-        def list_prune_dirty_projects(self, _limit: int) -> list[Any]:
-            return self.dirty_projects[:1]
+        def list_prune_dirty_projects(
+            self,
+            _limit: int,
+            after: tuple[Any, Any, str] | None = None,
+        ) -> list[Any]:
+            return super().list_prune_dirty_projects(1, after)
 
         def clear_prune_dirty(self, project_id: str) -> bool:
             self.dirty_projects = [
@@ -272,6 +303,49 @@ async def test_dirty_prune_drains_until_storage_is_empty(tmp_path: Path) -> None
     assert result == "Code index prune completed: proj-1:pruned, proj-2:pruned"
     assert gateway.targeted_roots == [root_one, root_two]
     assert storage.dirty_projects == []
+
+
+@pytest.mark.asyncio
+async def test_dirty_prune_respects_limit(tmp_path: Path) -> None:
+    roots = [tmp_path / name for name in ("one", "two", "three")]
+    for root in roots:
+        root.mkdir()
+
+    storage = PruneStorage()
+    storage.dirty_projects = [
+        _dirty("proj-1", roots[0]),
+        _dirty("proj-2", roots[1]),
+        _dirty("proj-3", roots[2]),
+    ]
+    gateway = PruneGateway()
+    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    result = await pruner.prune_dirty_projects(limit=2)
+
+    assert result == "Code index prune completed: proj-1:pruned, proj-2:pruned"
+    assert gateway.targeted_roots == roots[:2]
+
+
+@pytest.mark.asyncio
+async def test_dirty_prune_touches_deferred_rows_after_scan(tmp_path: Path) -> None:
+    root_one = tmp_path / "one"
+    root_two = tmp_path / "two"
+    root_one.mkdir()
+    root_two.mkdir()
+
+    storage = PruneStorage()
+    storage.dirty_projects = [_dirty("proj-1", root_one), _dirty("proj-2", root_two)]
+    storage.pending_by_project["proj-1"] = [object()]
+    gateway = PruneGateway()
+    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    result = await pruner.prune_dirty_projects(limit=2)
+
+    assert result == "Code index prune completed: proj-1:deferred_pending_sync, proj-2:pruned"
+    assert gateway.targeted_roots == [root_two]
+    assert storage.marked_dirty == [("proj-1", str(root_one), "orphan_files")]
 
 
 @pytest.mark.asyncio

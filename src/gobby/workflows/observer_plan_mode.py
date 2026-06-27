@@ -116,7 +116,7 @@ def detect_plan_mode_from_context(
                 variables["mode_level"],
                 indicator,
             )
-        if variables.get("plan_mode"):
+        if variables.get("plan_mode") or variables.get("plan_skill_loaded"):
             variables["plan_mode"] = False
             variables["plan_skill_loaded"] = False
             logger.info("Session %s: plan_mode=False", session_id)

@@ -95,11 +95,24 @@ def find_json_session_transcript(
             handler.logger.debug("Found %s transcript by prefix: %s", cli_label, matches[0])
             return str(matches[0])
 
-    all_sessions = sorted(
-        chats_dir.glob("session-*.json"),
-        key=lambda path: path.stat().st_mtime,
-        reverse=True,
-    )
+    session_candidates = []
+    for path in chats_dir.glob("session-*.json"):
+        try:
+            session_candidates.append((path.stat().st_mtime, path))
+        except OSError:
+            handler.logger.debug(
+                "Skipping %s transcript that could not be statted: %s",
+                cli_label,
+                path,
+            )
+    all_sessions = [
+        path
+        for _mtime, path in sorted(
+            session_candidates,
+            key=lambda candidate: candidate[0],
+            reverse=True,
+        )
+    ]
     if all_sessions:
         handler.logger.debug("Found %s transcript (most recent): %s", cli_label, all_sessions[0])
         return str(all_sessions[0])

@@ -69,6 +69,7 @@ def _logger(log_file: str) -> logging.Logger:
             expanded,
             exc,
         )
+        _LOGGERS[expanded] = _FALLBACK_LOGGER
         return _FALLBACK_LOGGER
 
     logger = logging.getLogger(f"gobby.code_index.maintenance_file.{expanded}")

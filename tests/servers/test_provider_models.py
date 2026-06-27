@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -867,7 +868,7 @@ class TestProviderModelCatalog:
             timeout=10,
         )
         version_output = f"{version_result.stdout}\n{version_result.stderr}"
-        if "1.0.10" not in version_output:
+        if re.search(r"(?<![\d.])1\.0\.10(?![\d.])", version_output) is None:
             pytest.skip(f"agy models fixture is pinned to 1.0.10; found {version_output.strip()}")
         result = subprocess.run(
             [agy, "models"],

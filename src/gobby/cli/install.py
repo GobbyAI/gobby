@@ -428,7 +428,7 @@ def install(
             clis_to_install.append("droid")
 
         # Check for git
-        if (project_path / ".git").exists():
+        if clis_to_install != ["agy"] and (project_path / ".git").exists():
             install_hooks = True
 
         if not clis_to_install and not install_hooks:

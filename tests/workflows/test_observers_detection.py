@@ -1,3 +1,4 @@
+# mypy: disable-error-code="no-untyped-def,type-arg,attr-defined"
 """Tests for detection functions in observers module."""
 
 import json
@@ -5,6 +6,7 @@ import logging
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from types import SimpleNamespace
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -32,7 +34,7 @@ SESSION_ID = "test-session"
 
 
 @pytest.fixture
-def variables():
+def variables() -> dict[str, Any]:
     """Create empty variables dict."""
     return {}
 
@@ -125,6 +127,18 @@ class TestDetectPlanModeFromContext:
     def test_detects_exited_plan_mode(self, variables) -> None:
         variables["mode_level"] = 0
         variables["plan_mode"] = True
+        variables["plan_skill_loaded"] = True
+        prompt = "<system-reminder>Exited Plan Mode</system-reminder>. Now implement."
+        detect_plan_mode_from_context(prompt, variables, SESSION_ID)
+        assert variables.get("mode_level") != 0
+        assert variables.get("plan_mode") is False
+        assert variables.get("plan_skill_loaded") is False
+
+    def test_system_reminder_exit_clears_plan_skill_loaded_without_plan_mode(
+        self, variables: dict[str, Any]
+    ) -> None:
+        variables["mode_level"] = 0
+        variables["plan_mode"] = False
         variables["plan_skill_loaded"] = True
         prompt = "<system-reminder>Exited Plan Mode</system-reminder>. Now implement."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
@@ -231,19 +245,19 @@ class TestDetectPlanModeFromContext:
 
     # --- ACP-style plan marker detection ---
 
-    def test_detects_acp_active_approval_mode_plan(self, variables) -> None:
+    def test_detects_acp_active_approval_mode_plan(self, variables: dict[str, Any]) -> None:
         prompt = "# Active Approval Mode: Plan\nPlease analyze the codebase."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 0
         assert variables.get("plan_mode") is True
 
-    def test_detects_acp_operating_in_plan_mode(self, variables) -> None:
+    def test_detects_acp_operating_in_plan_mode(self, variables: dict[str, Any]) -> None:
         prompt = "You are operating in **Plan Mode**. Research only."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 0
         assert variables.get("plan_mode") is True
 
-    def test_detects_acp_exit_via_execute_mode(self, variables) -> None:
+    def test_detects_acp_exit_via_execute_mode(self, variables: dict[str, Any]) -> None:
         variables["mode_level"] = 0
         variables["chat_mode"] = "bypass"
         variables["plan_mode"] = True
@@ -254,7 +268,9 @@ class TestDetectPlanModeFromContext:
         assert variables.get("plan_mode") is False
         assert variables.get("plan_skill_loaded") is False
 
-    def test_acp_markers_inside_conversation_history_ignored(self, variables) -> None:
+    def test_acp_markers_inside_conversation_history_ignored(
+        self, variables: dict[str, Any]
+    ) -> None:
         prompt = (
             "<conversation-history>\n"
             "# Active Approval Mode: Plan\n"

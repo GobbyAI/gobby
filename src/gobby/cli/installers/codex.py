@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import Any, cast
 
 import tomlkit
+from tomlkit.exceptions import TOMLKitError
 from tomlkit.items import Table
 from tomlkit.toml_document import TOMLDocument
 
@@ -604,7 +605,7 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
 
     try:
         trust_result = seed_gobby_home_trust("codex")
-    except Exception as e:
+    except (OSError, ValueError, TOMLKitError) as e:
         result["error"] = f"Failed to seed Codex trust: {e}"
         return result
     result["trust"] = trust_result

@@ -58,14 +58,21 @@ class CodeIndexPruner:
         self._project_locks: dict[str, asyncio.Lock] = {}
 
     async def prune_dirty_projects(self, *, limit: int = 100) -> str:
-        del limit  # Dirty prune retries drain fixed 1000-row pages.
         outcomes: list[str] = []
         processed_project_ids: set[str] = set()
-        while True:
+        deferred_dirty_projects: list[Any] = []
+        after: tuple[Any, Any, str] | None = None
+        remaining = max(0, limit)
+        while remaining > 0:
             dirty_projects = await self._context.run_db(
                 self._context.storage.list_prune_dirty_projects,
-                1000,
+                min(remaining, 1000),
+                after,
             )
+            if not dirty_projects:
+                break
+
+            after = _dirty_prune_cursor(dirty_projects[-1])
             pending = [
                 dirty for dirty in dirty_projects if dirty.project_id not in processed_project_ids
             ]
@@ -74,14 +81,27 @@ class CodeIndexPruner:
 
             for dirty in pending:
                 processed_project_ids.add(dirty.project_id)
-                outcomes.append(
-                    await self.prune_project(
-                        project_id=dirty.project_id,
-                        root_path=dirty.root_path,
-                        dirty=True,
-                        reason=dirty.reason,
-                    )
+                outcome = await self.prune_project(
+                    project_id=dirty.project_id,
+                    root_path=dirty.root_path,
+                    dirty=True,
+                    reason=dirty.reason,
                 )
+                outcomes.append(outcome)
+                remaining -= 1
+                if outcome.endswith(":deferred_pending_sync") or outcome.endswith(
+                    ":skipped_locked"
+                ):
+                    deferred_dirty_projects.append(dirty)
+                if remaining <= 0:
+                    break
+        for dirty in deferred_dirty_projects:
+            await self._context.run_db(
+                self._context.storage.mark_prune_dirty,
+                dirty.project_id,
+                dirty.root_path,
+                dirty.reason,
+            )
         if not outcomes:
             return "Code index prune skipped: dirty=0"
         return "Code index prune completed: " + ", ".join(outcomes)
@@ -320,6 +340,10 @@ def _retry_projects(projects: list[Any], result: GcodeCommandResult) -> list[Any
     if not failed_ids:
         return projects_with_roots
     return [project for project in projects_with_roots if str(project.id) in failed_ids]
+
+
+def _dirty_prune_cursor(dirty: Any) -> tuple[Any, Any, str]:
+    return (dirty.updated_at, dirty.created_at, dirty.project_id)
 
 
 def _failed_project_ids(text: str) -> set[str]:

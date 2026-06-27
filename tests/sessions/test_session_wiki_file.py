@@ -149,3 +149,17 @@ def test_session_wiki_path_is_fresh_uses_summary_generated_at(
     os.utime(path, (future_mtime, future_mtime))
 
     assert swf.session_wiki_path_is_fresh(session) is True
+
+
+def test_session_wiki_path_is_fresh_allows_same_second_filesystem_mtime(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    session = _session(summary_generated_at="2026-05-02T12:00:00.750000+00:00")
+    path = swf.resolve_session_wiki_path(session)
+    path.parent.mkdir(parents=True)
+    path.write_text("fresh enough", encoding="utf-8")
+    same_second_mtime = 1_777_723_200
+    os.utime(path, (same_second_mtime, same_second_mtime))
+
+    assert swf.session_wiki_path_is_fresh(session) is True

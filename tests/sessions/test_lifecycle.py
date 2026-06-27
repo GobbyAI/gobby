@@ -1,3 +1,4 @@
+# mypy: disable-error-code="no-untyped-def,no-untyped-call,assignment,attr-defined,union-attr"
 import asyncio
 import os
 import time
@@ -82,7 +83,10 @@ class TestSessionLifecycleManager:
         assert manager._expire_task is None
 
     @pytest.mark.asyncio
-    async def test_stop_cancels_background_tasks(self, manager):
+    async def test_stop_cancels_background_tasks(
+        self,
+        manager: SessionLifecycleManager,
+    ) -> None:
         """Test that stop() cancels tasks."""
         await manager.start()
 
@@ -95,13 +99,20 @@ class TestSessionLifecycleManager:
         assert process_task.cancelled() or process_task.done()
 
     @pytest.mark.asyncio
-    async def test_stop_returns_when_cancelled_task_is_slow_to_drain(self, manager, monkeypatch):
+    async def test_stop_returns_when_cancelled_task_is_slow_to_drain(
+        self,
+        manager: SessionLifecycleManager,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """Shutdown should not block on best-effort background work."""
 
-        async def slow_to_cancel():
+        async def slow_to_cancel() -> None:
             await asyncio.Event().wait()
 
-        async def fake_wait(tasks, timeout):
+        async def fake_wait(
+            tasks: set[asyncio.Task[None]],
+            timeout: float | None,
+        ) -> tuple[set[asyncio.Task[None]], set[asyncio.Task[None]]]:
             assert timeout == 0.01
             return set(), set(tasks)
 
@@ -495,6 +506,8 @@ class TestSessionLifecycleManager:
 
         mock_gen.assert_awaited_once_with("s1")  # did NOT short-circuit
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
+        assert manager.session_manager.get.call_args.args == ("s1",)
+        assert session.digest_markdown == digest
         assert processed == 1
 
     @pytest.mark.asyncio
@@ -520,13 +533,17 @@ class TestSessionLifecycleManager:
 
         with (
             patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
-            patch.object(manager, "_generate_artifacts_if_needed", new_callable=AsyncMock),
+            patch.object(
+                manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
+            ) as mock_gen,
             patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
             patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=False),
         ):
             processed = await manager._process_pending_transcripts()
 
+        mock_gen.assert_awaited_once_with("s1")
         manager.session_manager.mark_transcript_processed.assert_not_called()
+        assert manager.session_manager.get.call_args.args == ("s1",)
         assert processed == 0
 
     @pytest.mark.asyncio
@@ -563,6 +580,8 @@ class TestSessionLifecycleManager:
 
         mock_gen.assert_awaited_once_with("s1")  # synthesis was attempted...
         manager.session_manager.mark_transcript_processed.assert_not_called()  # ...but deferred
+        assert manager.session_manager.get.call_args.args == ("s1",)
+        assert refreshed.summary_markdown is None
         assert processed == 0
 
     @pytest.mark.asyncio
@@ -588,6 +607,8 @@ class TestSessionLifecycleManager:
 
         mock_gen.assert_not_awaited()  # short-circuited — nothing to synthesize
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
+        assert manager.session_manager.get.call_count == 0
+        assert session.digest_markdown is None
         assert processed == 1
 
     @pytest.mark.asyncio
@@ -828,6 +849,7 @@ class TestGenerateArtifactsIfNeeded:
 
         mock_gen.assert_not_awaited()
         assert manager.session_manager.get.call_args.args == ("sess-1",)
+        assert session.summary_markdown.startswith("## Current State")
 
     @pytest.mark.asyncio
     async def test_sentinel_summary_does_not_count_as_existing_summary(self, manager):
@@ -847,6 +869,8 @@ class TestGenerateArtifactsIfNeeded:
 
         mock_gen.assert_awaited_once()
         assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
+        assert session.digest_markdown.startswith("### Turn")
+        assert session.transcript_path is None
 
     @pytest.mark.asyncio
     async def test_session_no_transcript_path(self, manager):
@@ -921,6 +945,7 @@ class TestGenerateArtifactsIfNeeded:
 
         mock_gen.assert_awaited_once()
         assert mock_gen.await_args.kwargs["session_id"] == "sess-1"
+        assert session.transcript_path is None
 
 
 class TestPurgeSoftDeletedDefinitions:

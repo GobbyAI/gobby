@@ -294,7 +294,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_agy", return_value=agy_result) as mock_agy,
-            patch("gobby.cli.install._run_git_hooks_install"),
+            patch("gobby.cli.install._run_git_hooks_install") as mock_hooks,
             patch("gobby.cli.install._run_embedding_install", return_value="none"),
             patch("gobby.cli.install._maybe_start_daemon_after_install"),
         ):
@@ -304,6 +304,7 @@ class TestInstallCommand:
         assert "Components to configure: agy" in result.output
         assert "AGY CLI" in result.output
         mock_agy.assert_called_once()
+        mock_hooks.assert_not_called()
 
     def test_install_all_no_ext_services_runs_embedding_only(
         self,

@@ -438,6 +438,15 @@ def test_prune_dirty_projects_round_trip(code_storage: CodeIndexStorage) -> None
         "proj-2": ("/repo/two", "invalidate", 0),
     }
     assert dirty_by_project["proj-1"].last_error == "gcode prune failed"
+    first_page = code_storage.list_prune_dirty_projects(limit=1)
+    cursor = (
+        first_page[-1].updated_at,
+        first_page[-1].created_at,
+        first_page[-1].project_id,
+    )
+    next_page = code_storage.list_prune_dirty_projects(limit=10, after=cursor)
+    assert {row.project_id for row in first_page + next_page} == {"proj-1", "proj-2"}
+    assert {row.project_id for row in first_page}.isdisjoint({row.project_id for row in next_page})
     assert code_storage.clear_prune_dirty("proj-1") is True
     assert code_storage.clear_prune_dirty("proj-1") is False
     assert [row.project_id for row in code_storage.list_prune_dirty_projects()] == ["proj-2"]
