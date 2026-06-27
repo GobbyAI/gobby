@@ -354,6 +354,26 @@ pub mod ai_keys {
     pub const TEXT_GENERATE_VERIFY_MODEL: &str = "ai.text_generate.verify_model";
     pub const TEXT_GENERATE_VERIFY_API_KEY: &str = "ai.text_generate.verify_api_key";
 
+    /// Namespace for per-feature-profile text-generation overrides resolved in
+    /// standalone Direct mode (`feature_low` / `feature_mid` / `feature_high`).
+    /// Each profile may set any of the `PROFILE_*` suffixes below under
+    /// `ai.text_generate.profiles.<profile>.<suffix>`; unset fields fall back to
+    /// the base `ai.text_generate.<field>` binding.
+    pub const TEXT_GENERATE_PROFILES_NAMESPACE: &str = "ai.text_generate.profiles";
+
+    pub const PROFILE_API_BASE: &str = "api_base";
+    pub const PROFILE_API_KEY: &str = "api_key";
+    pub const PROFILE_MODEL: &str = "model";
+    pub const PROFILE_PROVIDER: &str = "provider";
+    pub const PROFILE_REASONING_EFFORT: &str = "reasoning_effort";
+
+    /// Build the dotted config key for a named text-generation feature profile,
+    /// e.g. `text_generate_profile_key("feature_high", PROFILE_MODEL)` yields
+    /// `ai.text_generate.profiles.feature_high.model`.
+    pub fn text_generate_profile_key(profile: &str, suffix: &str) -> String {
+        format!("{TEXT_GENERATE_PROFILES_NAMESPACE}.{profile}.{suffix}")
+    }
+
     const ALL_KEYS: &[&str] = &[
         ROUTING,
         MAX_CONCURRENCY,

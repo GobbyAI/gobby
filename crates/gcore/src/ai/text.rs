@@ -67,7 +67,7 @@ fn request_body(
     body
 }
 
-fn chat_completion_usage(value: &Value) -> Option<TokenUsage> {
+pub(crate) fn chat_completion_usage(value: &Value) -> Option<TokenUsage> {
     let usage = value.get("usage")?;
     Some(TokenUsage {
         input_tokens: usage

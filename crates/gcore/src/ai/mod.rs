@@ -12,6 +12,7 @@ use crate::config::{AiCapability, AiRouting, CapabilityBinding};
 
 pub mod daemon;
 pub mod embeddings;
+pub mod generation;
 pub mod probe;
 pub mod text;
 pub mod transcription;
@@ -208,7 +209,7 @@ fn apply_api_key(request: RequestBuilder, binding: &CapabilityBinding) -> Reques
     }
 }
 
-fn timeout_for(capability: AiCapability) -> Duration {
+pub(crate) fn timeout_for(capability: AiCapability) -> Duration {
     match capability {
         AiCapability::AudioTranscribe | AiCapability::AudioTranslate => STT_CHUNK_TIMEOUT,
         AiCapability::Embed => EMBEDDINGS_TIMEOUT,
@@ -261,7 +262,7 @@ fn jitter() -> Duration {
     Duration::from_millis(u64::from(rand::random::<u8>() % 50))
 }
 
-fn parse_json_response(response: Response) -> Result<serde_json::Value, AiError> {
+pub(crate) fn parse_json_response(response: Response) -> Result<serde_json::Value, AiError> {
     let status = response.status();
     let retry_after = response
         .headers()
@@ -309,7 +310,7 @@ fn parse_retry_after(value: &str) -> Option<Duration> {
     Some(delay.min(MAX_BACKOFF))
 }
 
-fn reqwest_error(error: reqwest::Error) -> AiError {
+pub(crate) fn reqwest_error(error: reqwest::Error) -> AiError {
     AiError::transport_failure(
         error.status().map(|status| status.as_u16()),
         None,
@@ -341,12 +342,12 @@ fn chat_completions_url(cfg: &AiContext, capability: AiCapability) -> Result<Str
     Ok(format!("{}/v1/chat/completions", chat_api_root(api_base)))
 }
 
-fn chat_api_root(api_base: &str) -> &str {
+pub(crate) fn chat_api_root(api_base: &str) -> &str {
     let trimmed = api_base.trim_end_matches('/');
     trimmed.strip_suffix("/v1").unwrap_or(trimmed)
 }
 
-fn chat_completion_content(value: &serde_json::Value) -> Result<String, AiError> {
+pub(crate) fn chat_completion_content(value: &serde_json::Value) -> Result<String, AiError> {
     value
         .get("choices")
         .and_then(serde_json::Value::as_array)
@@ -358,7 +359,7 @@ fn chat_completion_content(value: &serde_json::Value) -> Result<String, AiError>
         .ok_or_else(|| AiError::parse_failure("chat completion response missing message content"))
 }
 
-fn chat_completion_model(value: &serde_json::Value) -> Option<String> {
+pub(crate) fn chat_completion_model(value: &serde_json::Value) -> Option<String> {
     value
         .get("model")
         .and_then(serde_json::Value::as_str)

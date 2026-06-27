@@ -1,7 +1,8 @@
 use std::time::Duration;
 
 use gobby_core::ai::{
-    daemon::generate_via_daemon_with_max_tokens, effective_route,
+    daemon::generate_via_daemon_with_max_tokens,
+    effective_route,
     text::{generate_text, generate_text_with_max_tokens},
 };
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};

@@ -253,6 +253,17 @@ pub fn resolve_capability_routing(
         .unwrap_or_default()
 }
 
+/// Resolve a single AI config setting by key, applying the shared
+/// secret/env-pattern resolution rules. Returns `None` when the key is absent,
+/// resolves to empty, or still contains an unresolved `${...}` pattern.
+///
+/// This is the public entry point used by profile-aware generation resolvers
+/// (e.g. `ai.text_generate.profiles.<profile>.<field>`) so dotted-key lookups
+/// reuse the same resolution path as binding resolution.
+pub fn resolve_ai_setting(source: &mut impl ConfigSource, key: &str) -> Option<String> {
+    resolve_ai_config_value(source, key)
+}
+
 /// Resolve a capability binding from config only.
 pub fn resolve_capability_binding(
     source: &mut impl ConfigSource,
