@@ -7,7 +7,25 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
-DEFAULT_ACP_CLIENT_CAPABILITIES: Mapping[str, bool] = MappingProxyType({"terminal": True})
+DEFAULT_ACP_CLIENT_CAPABILITIES: Mapping[str, Any] = MappingProxyType(
+    {
+        "terminal": True,
+        "fs": {
+            "readTextFile": True,
+            "writeTextFile": True,
+        },
+    }
+)
+
+
+def copy_default_acp_client_capabilities() -> dict[str, Any]:
+    return {
+        "terminal": True,
+        "fs": {
+            "readTextFile": True,
+            "writeTextFile": True,
+        },
+    }
 
 
 def extract_session_id(payload: Any) -> str | None:
@@ -93,10 +111,13 @@ class ACPSessionState:
         result: Any,
         *,
         fallback_session_id: str | None = None,
+        fallback_roots: Iterable[str] | None = None,
     ) -> dict[str, Any]:
         self._session_info = dict(result) if isinstance(result, dict) else {}
         self._session_id = extract_session_id(self._session_info) or fallback_session_id
         roots = extract_root_uris(self._session_info)
+        if not roots and fallback_roots is not None:
+            roots = tuple(root for root in fallback_roots if root)
         if roots:
             self._root_uris = roots
         return self.session_info

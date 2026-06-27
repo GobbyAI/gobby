@@ -94,6 +94,10 @@ def test_session_state_copies_capabilities_and_tracks_roots() -> None:
     assert state.session_id == "nested-session"
     assert state.root_uris == ("file:///workspace", "/tmp/project")
 
+    state.update_session_info({"sessionId": "fallback-session"}, fallback_roots=("/tmp/fallback",))
+
+    assert state.root_uris == ("/tmp/fallback",)
+
 
 @pytest.mark.asyncio
 async def test_start_advertises_terminal_capability_and_gates_session_load(
@@ -120,7 +124,13 @@ async def test_start_advertises_terminal_capability_and_gates_session_load(
 
     messages = _written_messages(process)
     assert messages[0]["method"] == "initialize"
-    assert messages[0]["params"]["clientCapabilities"] == {"terminal": True}
+    assert messages[0]["params"]["clientCapabilities"] == {
+        "terminal": True,
+        "fs": {
+            "readTextFile": True,
+            "writeTextFile": True,
+        },
+    }
     assert client.agent_capabilities == {"loadSession": False}
     assert [message["method"] for message in messages] == ["initialize", "session/new"]
     assert client.session_id == "new-session"

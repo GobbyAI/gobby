@@ -28,8 +28,8 @@ from types import MappingProxyType
 from typing import Any, ClassVar
 
 from gobby.adapters.acp_session_state import (
-    DEFAULT_ACP_CLIENT_CAPABILITIES,
     ACPSessionState,
+    copy_default_acp_client_capabilities,
 )
 from gobby.adapters.acp_session_state import (
     extract_session_id as _extract_session_id,
@@ -272,7 +272,7 @@ class ACPClient:
                         "name": "gobby",
                         "version": "1.0.0",
                     },
-                    "clientCapabilities": dict(DEFAULT_ACP_CLIENT_CAPABILITIES),
+                    "clientCapabilities": copy_default_acp_client_capabilities(),
                 },
             )
             logger.debug(
@@ -370,7 +370,10 @@ class ACPClient:
         if reasoning_effort:
             session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/new", session_params)
-        return self._session_state.update_session_info(result)
+        return self._session_state.update_session_info(
+            result,
+            fallback_roots=(session_params["cwd"],),
+        )
 
     async def load_session(
         self,
@@ -397,7 +400,11 @@ class ACPClient:
         if reasoning_effort:
             session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/load", session_params)
-        return self._session_state.update_session_info(result, fallback_session_id=session_id)
+        return self._session_state.update_session_info(
+            result,
+            fallback_session_id=session_id,
+            fallback_roots=(session_params["cwd"],),
+        )
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Send a JSON-RPC request and wait for the response.

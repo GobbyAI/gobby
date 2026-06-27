@@ -104,11 +104,15 @@ class _RecordingStdin:
         return None
 
 
-def _recording_client() -> SimpleNamespace:
+def _recording_client(root: Path | None = None) -> SimpleNamespace:
+    root_uris = (root.as_uri(),) if root is not None else ()
     return SimpleNamespace(
         _process=SimpleNamespace(stdin=_RecordingStdin()),
         _terminal_manager=ACPTerminalManager(),
         _cwd=None,
+        _session_state=SimpleNamespace(root_uris=root_uris),
+        session_id="sess-1",
+        cli_name="gemini",
         display_name="Gemini",
     )
 
@@ -231,6 +235,142 @@ async def test_request_permission_cancels_when_pre_tool_blocks() -> None:
     response = _written_messages(client)[0]
     assert "error" not in response
     assert response["result"] == {"outcome": {"outcome": "cancelled"}}
+
+
+@pytest.mark.asyncio
+async def test_filesystem_read_uses_one_based_line_and_limit(tmp_path: Path) -> None:
+    target = tmp_path / "notes.txt"
+    target.write_text("one\ntwo\nthree\nfour\n", encoding="utf-8")
+    client = _recording_client(tmp_path)
+    request = {
+        "jsonrpc": "2.0",
+        "id": "read-1",
+        "method": "fs/read_text_file",
+        "params": {
+            "sessionId": "sess-1",
+            "path": str(target),
+            "line": 2,
+            "limit": 2,
+        },
+    }
+
+    events = [event async for event in acp_client_requests.handle_client_request(client, request)]
+
+    assert events == []
+    response = _written_messages(client)[0]
+    assert response["id"] == "read-1"
+    assert response["result"] == {"content": "two\nthree\n"}
+
+
+@pytest.mark.asyncio
+async def test_filesystem_read_rejects_out_of_root_path(tmp_path: Path) -> None:
+    root = tmp_path / "root"
+    root.mkdir()
+    outside = tmp_path / "outside.txt"
+    outside.write_text("secret\n", encoding="utf-8")
+    client = _recording_client(root)
+    request = {
+        "jsonrpc": "2.0",
+        "id": "read-outside",
+        "method": "fs/read_text_file",
+        "params": {"sessionId": "sess-1", "path": str(outside)},
+    }
+
+    events = [event async for event in acp_client_requests.handle_client_request(client, request)]
+
+    assert events == []
+    response = _written_messages(client)[0]
+    assert response["id"] == "read-outside"
+    assert response["error"] == {"code": -32602, "message": "path is outside the ACP session root"}
+
+
+@pytest.mark.asyncio
+async def test_filesystem_write_creates_file_and_returns_null_result(tmp_path: Path) -> None:
+    target = tmp_path / "created.txt"
+    client = _recording_client(tmp_path)
+    request = {
+        "jsonrpc": "2.0",
+        "id": "write-1",
+        "method": "fs/write_text_file",
+        "params": {
+            "sessionId": "sess-1",
+            "path": str(target),
+            "content": "created\n",
+        },
+    }
+
+    events = [event async for event in acp_client_requests.handle_client_request(client, request)]
+
+    assert [event.event_type for event in events] == ["tool_call", "tool_result"]
+    assert events[0].data["tool_name"] == "write_text_file"
+    assert events[0].data["tool_input"] == {"path": str(target), "content": "created\n"}
+    assert events[1].data["success"] is True
+    assert events[1].data["result"] == {"path": str(target), "bytes": 8}
+    assert target.read_text(encoding="utf-8") == "created\n"
+    response = _written_messages(client)[0]
+    assert response["id"] == "write-1"
+    assert response["result"] is None
+
+
+@pytest.mark.asyncio
+async def test_filesystem_write_replaces_existing_file_atomically(tmp_path: Path) -> None:
+    target = tmp_path / "config.txt"
+    target.write_text("old\n", encoding="utf-8")
+    client = _recording_client(tmp_path)
+    request = {
+        "jsonrpc": "2.0",
+        "id": "write-2",
+        "method": "fs/write_text_file",
+        "params": {
+            "sessionId": "sess-1",
+            "path": str(target),
+            "content": "new\n",
+        },
+    }
+
+    events = [event async for event in acp_client_requests.handle_client_request(client, request)]
+
+    assert [event.event_type for event in events] == ["tool_call", "tool_result"]
+    assert target.read_text(encoding="utf-8") == "new\n"
+    assert _written_messages(client)[0]["result"] is None
+
+
+@pytest.mark.asyncio
+async def test_filesystem_write_does_not_execute_when_pre_tool_blocks(tmp_path: Path) -> None:
+    target = tmp_path / "blocked.txt"
+    client = _recording_client(tmp_path)
+    pre_tool_callback = AsyncMock(return_value={"decision": "deny", "reason": "no writes"})
+    request = {
+        "jsonrpc": "2.0",
+        "id": "write-blocked",
+        "method": "fs/write_text_file",
+        "params": {
+            "sessionId": "sess-1",
+            "path": str(target),
+            "content": "blocked\n",
+        },
+    }
+
+    events = [
+        event
+        async for event in acp_client_requests.handle_client_request(
+            client,
+            request,
+            pre_tool_callback=pre_tool_callback,
+        )
+    ]
+
+    assert events == []
+    pre_tool_callback.assert_awaited_once_with(
+        {
+            "tool_name": "write_text_file",
+            "tool_input": {"path": str(target), "content": "blocked\n"},
+        }
+    )
+    assert not target.exists()
+    response = _written_messages(client)[0]
+    assert response["id"] == "write-blocked"
+    assert response["error"] == {"code": -32000, "message": "no writes"}
 
 
 @pytest.mark.asyncio

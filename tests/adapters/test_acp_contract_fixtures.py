@@ -161,7 +161,13 @@ def _assert_initialize_request(request: dict[str, Any]) -> None:
     assert request["jsonrpc"] == "2.0"
     assert request["params"]["protocolVersion"] == 1
     assert request["params"]["clientInfo"] == {"name": "gobby", "version": "1.0.0"}
-    assert request["params"]["clientCapabilities"] == {"terminal": True}
+    assert request["params"]["clientCapabilities"] == {
+        "terminal": True,
+        "fs": {
+            "readTextFile": True,
+            "writeTextFile": True,
+        },
+    }
 
 
 def _assert_authenticate_request(request: dict[str, Any]) -> None:

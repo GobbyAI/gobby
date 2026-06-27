@@ -5,10 +5,17 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from collections.abc import AsyncIterator, Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
+from pathlib import Path
 from typing import Any
 
 from gobby.adapters.acp_client import StreamEvent, _make_id
+from gobby.adapters.acp_filesystem import (
+    ACPFileSystemError,
+    read_text_file,
+    roots_for_client,
+    write_text_file,
+)
 from gobby.adapters.acp_terminal import TerminalNotFoundError
 
 logger = logging.getLogger(__name__)
@@ -16,7 +23,7 @@ PreToolCallback = Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
 _PRE_TOOL_DENY_DECISIONS = {"deny", "block", "decline", "reject"}
 
 
-async def write_json_rpc_result(client: Any, request_id: Any, result: dict[str, Any]) -> None:
+async def write_json_rpc_result(client: Any, request_id: Any, result: Any) -> None:
     process = getattr(client, "_process", None)
     if not process or not process.stdin:
         return
@@ -51,6 +58,13 @@ async def handle_client_request(
     pre_tool_callback: PreToolCallback | None = None,
 ) -> AsyncIterator[StreamEvent]:
     method = request.get("method")
+    if method in {"fs/read_text_file", "fs/write_text_file"}:
+        async for event in _handle_filesystem_request(
+            client, request, pre_tool_callback=pre_tool_callback
+        ):
+            yield event
+        return
+
     if method in {
         "terminal/create",
         "terminal/output",
@@ -76,6 +90,145 @@ async def handle_client_request(
         code=-32601,
         message=f"Unknown client request method: {method}",
     )
+
+
+async def _handle_filesystem_request(
+    client: Any,
+    request: dict[str, Any],
+    *,
+    pre_tool_callback: PreToolCallback | None = None,
+) -> AsyncIterator[StreamEvent]:
+    method = str(request.get("method") or "")
+    params = request.get("params")
+    if not isinstance(params, dict):
+        await write_json_rpc_error(
+            client,
+            request.get("id"),
+            code=-32602,
+            message=f"{method} params must be an object",
+        )
+        return
+
+    session_error = _validate_session_id(client, params)
+    if session_error is not None:
+        await write_json_rpc_error(client, request.get("id"), code=-32602, message=session_error)
+        return
+
+    roots = roots_for_client(client)
+    try:
+        if method == "fs/read_text_file":
+            content = await asyncio.to_thread(
+                read_text_file,
+                params.get("path"),
+                roots,
+                line=params.get("line"),
+                limit=params.get("limit"),
+            )
+            await write_json_rpc_result(client, request.get("id"), {"content": content})
+            return
+        if method == "fs/write_text_file":
+            async for event in _handle_write_text_file(
+                client,
+                request,
+                params,
+                roots,
+                pre_tool_callback=pre_tool_callback,
+            ):
+                yield event
+            return
+    except ACPFileSystemError as exc:
+        await write_json_rpc_error(client, request.get("id"), code=exc.code, message=str(exc))
+        return
+
+    await write_json_rpc_error(
+        client,
+        request.get("id"),
+        code=-32601,
+        message=f"Unknown filesystem method: {method}",
+    )
+
+
+async def _handle_write_text_file(
+    client: Any,
+    request: dict[str, Any],
+    params: dict[str, Any],
+    roots: Iterable[Path],
+    *,
+    pre_tool_callback: PreToolCallback | None = None,
+) -> AsyncIterator[StreamEvent]:
+    path = params.get("path")
+    tool_input = {"path": path, "content": params.get("content")}
+    pre_tool_response = await _apply_pre_tool_decision(
+        pre_tool_callback,
+        tool_name="write_text_file",
+        tool_input=tool_input,
+    )
+    if is_pre_tool_decision_denied(pre_tool_response):
+        await write_json_rpc_error(
+            client,
+            request.get("id"),
+            code=-32000,
+            message=pre_tool_denial_reason(pre_tool_response),
+        )
+        return
+
+    call_id = str(request.get("id") or f"fs-write-{_make_id()}")
+    yield StreamEvent(
+        event_type="tool_call",
+        data={
+            "call_id": call_id,
+            "tool_name": "write_text_file",
+            "tool_input": tool_input,
+            "mcp_server": getattr(client, "cli_name", "filesystem"),
+            "pre_tool_checked": pre_tool_callback is not None,
+            "pre_tool_response": pre_tool_response,
+        },
+    )
+
+    try:
+        byte_count = await asyncio.to_thread(
+            write_text_file, path, roots, content=params.get("content")
+        )
+    except ACPFileSystemError as exc:
+        yield StreamEvent(
+            event_type="tool_result",
+            data={"call_id": call_id, "success": False, "result": None, "error": str(exc)},
+        )
+        await write_json_rpc_error(client, request.get("id"), code=exc.code, message=str(exc))
+        return
+    except OSError as exc:
+        yield StreamEvent(
+            event_type="tool_result",
+            data={"call_id": call_id, "success": False, "result": None, "error": str(exc)},
+        )
+        await write_json_rpc_error(
+            client,
+            request.get("id"),
+            code=-32000,
+            message=f"failed to write file: {exc}",
+        )
+        return
+
+    result = {"path": path, "bytes": byte_count}
+    yield StreamEvent(
+        event_type="tool_result",
+        data={"call_id": call_id, "success": True, "result": result, "error": None},
+    )
+    await write_json_rpc_result(client, request.get("id"), None)
+
+
+def _validate_session_id(client: Any, params: dict[str, Any]) -> str | None:
+    session_id = params.get("sessionId")
+    if not isinstance(session_id, str) or not session_id:
+        return "sessionId is required"
+    current_session_id = getattr(client, "session_id", None)
+    if (
+        isinstance(current_session_id, str)
+        and current_session_id
+        and current_session_id != session_id
+    ):
+        return "sessionId does not match the active ACP session"
+    return None
 
 
 def is_pre_tool_decision_denied(response: Any) -> bool:
