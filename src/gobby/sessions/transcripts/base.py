@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 logger = logging.getLogger(__name__)
 
@@ -120,6 +120,79 @@ class ParsedMessage:
     source: str | None = None
     source_ref: str | None = None
     source_line: int | None = None
+
+
+DecodeFailureKind = Literal["empty", "non_json", "truncated"]
+
+
+def _unknown_block_message(
+    *,
+    index: int,
+    block_type: str,
+    raw: dict[str, Any],
+    role: str = "assistant",
+    timestamp: datetime,
+    message_id: str | None = None,
+    model: str | None = None,
+    usage: TokenUsage | None = None,
+) -> ParsedMessage:
+    content = _unknown_block_content(block_type=block_type, raw=raw)
+    return ParsedMessage(
+        index=index,
+        role=role,
+        content=content,
+        content_type=block_type,
+        tool_name=None,
+        tool_input=None,
+        tool_result=None,
+        timestamp=timestamp,
+        raw_json=raw,
+        usage=usage,
+        model=model,
+        message_id=message_id,
+    )
+
+
+def _unknown_block_content(*, block_type: str, raw: dict[str, Any]) -> str:
+    for key in ("text", "content"):
+        value = raw.get(key)
+        if isinstance(value, str):
+            return value
+        if value is not None:
+            return json.dumps(value, sort_keys=True, separators=(",", ":"), default=str)
+    return f"[unsupported block: {block_type}]"
+
+
+def _classify_decode_failure(raw_text: str, error: json.JSONDecodeError) -> DecodeFailureKind:
+    stripped = raw_text.strip()
+    if not stripped:
+        return "empty"
+    if stripped[0] not in {"{", "[", '"'}:
+        return "non_json"
+
+    message = error.msg.lower()
+    trimmed_end = len(raw_text.rstrip())
+    near_end = error.pos >= max(0, trimmed_end - 2)
+
+    if "unterminated" in message:
+        return "truncated"
+
+    if near_end and any(
+        marker in message
+        for marker in (
+            "eof",
+            "expecting ',' delimiter",
+            "expecting delimiter",
+        )
+    ):
+        return "truncated"
+
+    if near_end and "expecting value" in message:
+        prefix = raw_text[: error.pos].rstrip()
+        if prefix.endswith(("{", "[", ":", ",")):
+            return "truncated"
+
+    return "non_json"
 
 
 @dataclass
