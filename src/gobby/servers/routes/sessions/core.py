@@ -28,6 +28,7 @@ from gobby.servers.routes.sessions.statusline_activity import (
     record_statusline_seen,
     should_emit_statusline_gap_warning,
 )
+from gobby.sessions.acp_lifecycle import attach_acp_block
 from gobby.storage.token_events import TokenEventStore, build_session_usage_payload
 from gobby.telemetry.instruments import inc_counter
 
@@ -620,6 +621,7 @@ def register_core_routes(
                 session.closed_task_refs = refs["closed"]
 
             # Enrich sessions with counts
+            acp_runtime_manager = getattr(server.services, "web_chat_runtime_manager", None)
             session_list = []
             for session in sessions:
                 # If resumability requested, skip non-resumable sessions
@@ -629,6 +631,9 @@ def register_core_routes(
                         continue
 
                 session_data = session.to_dict()
+                # Computed ACP enrichment (not persisted): present only for ACP
+                # web-chat rows, so the UI's Boolean(session.acp) detection works.
+                attach_acp_block(session_data, session, acp_runtime_manager)
                 if include_resumability:
                     session_data["is_resumable"] = is_resumable
                     session_data["resume_blocked_reason"] = blocked_reason
