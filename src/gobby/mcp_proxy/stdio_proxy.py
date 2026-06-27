@@ -56,6 +56,12 @@ class DaemonProxyDependencies:
     logger: logging.Logger
 
 
+# Retry interval for session bootstrap lookups via find_by_terminal_context.
+# A failed lookup (parent_pid mismatch, daemon busy, session not yet active)
+# is retried after this delay rather than permanently giving up.
+_BOOTSTRAP_RETRY_INTERVAL_SECONDS: float = 10.0
+
+
 def default_daemon_proxy_dependencies() -> DaemonProxyDependencies:
     return DaemonProxyDependencies(
         load_config=_load_config,
@@ -79,18 +85,22 @@ class DaemonProxy:
         self._deps_factory = deps_factory or default_daemon_proxy_dependencies
         self._project_id: str | None = self._deps_factory().read_project_id()
         self._session_id: str | None = os.environ.get("GOBBY_SESSION_ID") or None
-        self._session_bootstrap_attempted = bool(self._session_id)
+        self._last_bootstrap_attempt_at: float = 0.0
         self._last_health_ok_at = 0.0
 
     async def _resolve_session_id(self) -> str | None:
-        if self._session_id or self._session_bootstrap_attempted or not self._project_id:
+        if self._session_id:
             return self._session_id
-
+        if not self._project_id:
+            return None
+        now = time.monotonic()
+        if now - self._last_bootstrap_attempt_at < _BOOTSTRAP_RETRY_INTERVAL_SECONDS:
+            return self._session_id
+        self._last_bootstrap_attempt_at = now
         resolved_session_id = await self._deps_factory().resolve_session_id_from_terminal_context(
             self.base_url,
             self._project_id,
         )
-        self._session_bootstrap_attempted = True
         if resolved_session_id is not None:
             self._session_id = resolved_session_id
         return self._session_id
@@ -108,7 +118,7 @@ class DaemonProxy:
         """Make HTTP request to daemon."""
         if session_id:
             self._session_id = session_id
-            self._session_bootstrap_attempted = True
+            self._last_bootstrap_attempt_at = time.monotonic()
 
         if preflight:
             now = time.monotonic()

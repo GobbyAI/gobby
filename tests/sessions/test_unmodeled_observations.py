@@ -121,3 +121,71 @@ def test_synthetic_unknown_tool_name_is_excluded(temp_db: HubDatabase) -> None:
         if row.name == "unknown"
     ]
     assert rows == []
+
+
+def test_observe_block_type_does_not_raise_keyerror_on_logging() -> None:
+    """The ``observed_name`` extra key must not conflict with LogRecord.name.
+
+    Regression: ``"name"`` was previously used in the ``extra`` dict, which
+    Python's logging module reserves for the logger name. This raised
+    ``KeyError: "Attempt to overwrite 'name' in LogRecord"`` on every grok
+    session processor poll, crashing transcript ingestion.
+    """
+    import logging
+
+    tracker = ObservationTracker(store=None)
+    msg = _message(index=200, content_type="new_block", raw_type="new_block")
+
+    # Force INFO level so the logger.info path in _observe fires
+    obs_logger = logging.getLogger("gobby.sessions.unmodeled_observations")
+    original_level = obs_logger.level
+    obs_logger.setLevel(logging.INFO)
+    try:
+        # Must not raise KeyError
+        tracker.observe_block_type(
+            msg,
+            session_id="session-log-test",
+            source="grok",
+            block_type="new_block",
+        )
+    finally:
+        obs_logger.setLevel(original_level)
+
+
+def test_observe_tool_name_does_not_raise_keyerror_on_persist_failure() -> None:
+    """The debug-path extra dict must also use ``observed_name``.
+
+    Covers the ``logger.debug`` call in the ``except Exception`` block when
+    ``store.record()`` raises — the second ``extra`` dict that had ``"name"``.
+    """
+    import logging
+    from unittest.mock import MagicMock
+
+    failing_store = MagicMock(spec=UnmodeledObservationStore)
+    failing_store.record.side_effect = RuntimeError("DB is down")
+
+    tracker = ObservationTracker(store=failing_store)
+    msg = _message(
+        index=201,
+        content_type="tool_use",
+        raw_type="function_call",
+        tool_name="FailingTool",
+        tool_input={"x": 1},
+    )
+
+    # Force DEBUG level so the logger.debug path in the except block fires
+    obs_logger = logging.getLogger("gobby.sessions.unmodeled_observations")
+    original_level = obs_logger.level
+    obs_logger.setLevel(logging.DEBUG)
+    try:
+        # Must not raise KeyError from the debug logging path
+        tracker.observe_tool_name(
+            msg,
+            session_id="session-log-test-debug",
+            source="grok",
+            tool_name="FailingTool",
+            server_name="srv",
+            tool_type="call",
+        )
+    finally:
+        obs_logger.setLevel(original_level)

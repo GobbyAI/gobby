@@ -9,7 +9,7 @@ from typing import Any
 
 import httpx
 
-SESSION_BOOTSTRAP_TIMEOUT_SECONDS = 1.0
+SESSION_BOOTSTRAP_TIMEOUT_SECONDS = 3.0
 
 
 def read_project_id() -> str | None:

@@ -303,7 +303,7 @@ class ACPHookAdapter(BaseAdapter):
 
         ACP-style providers expect responses in this format:
         {
-            "decision": "allow" | "deny" | "block",
+            "decision": "allow" | "deny",     # "block" is mapped to "deny"
             "continue": True/False,            # False only for hard-stop denials
             "reason": "...",                   # Optional reason for decision
             "hookSpecificOutput": {            # Hook-specific response data
@@ -331,9 +331,9 @@ class ACPHookAdapter(BaseAdapter):
         hook_event_name = self._response_hook_event_name(hook_type)
         resolved_hook_type = hook_event_name or hook_type
         is_denied = response.decision in ("deny", "block")
-        recoverable_denial_hook = capability is not None and resolved_hook_type in {
-            "BeforeTool",
-            "AfterTool",
+        recoverable_denial_hook = capability is not None and capability.event_type in {
+            HookEventType.BEFORE_TOOL,
+            HookEventType.AFTER_TOOL,
         }
         should_continue = not is_denied or recoverable_denial_hook
         event_logger = self._event_logger()
@@ -354,7 +354,7 @@ class ACPHookAdapter(BaseAdapter):
             should_continue = False
 
         result: dict[str, Any] = {
-            "decision": response.decision,
+            "decision": "deny" if is_denied else response.decision,
             "continue": should_continue,
         }
 

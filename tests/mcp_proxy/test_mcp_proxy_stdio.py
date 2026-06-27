@@ -736,6 +736,9 @@ class TestDaemonProxy:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         proxy = DaemonProxy(60887)
+        # Avoid session-resolution monotonic calls interfering with the
+        # preflight-cache side_effect sequence.
+        proxy._project_id = None
         mock_response = MagicMock(status_code=200)
         mock_response.json.return_value = {"success": True}
         with (
@@ -1190,10 +1193,10 @@ class TestDaemonProxyMethods:
         assert result == {"success": True}
         _, kwargs = mock_client.request.call_args
         assert "X-Gobby-Session-Id" not in kwargs["headers"]
-        assert proxy._session_bootstrap_attempted is True
+        assert proxy._last_bootstrap_attempt_at > 0
 
     @pytest.mark.asyncio
-    async def test_request_bootstrap_no_match_marks_attempted(self) -> None:
+    async def test_request_bootstrap_no_match_retries_after_interval(self) -> None:
         from gobby.mcp_proxy.stdio import DaemonProxy
 
         with (
@@ -1207,11 +1210,18 @@ class TestDaemonProxyMethods:
             new_callable=AsyncMock,
             return_value=None,
         ) as mock_bootstrap:
+            # First attempt — lookup fires, returns None
             assert await proxy._resolve_session_id() is None
-            assert proxy._session_bootstrap_attempted is True
-            assert await proxy._resolve_session_id() is None
+            assert mock_bootstrap.await_count == 1
 
-        assert mock_bootstrap.await_count == 1
+            # Second call within retry interval — lookup is skipped
+            assert await proxy._resolve_session_id() is None
+            assert mock_bootstrap.await_count == 1
+
+            # Advance past the retry interval — lookup fires again
+            proxy._last_bootstrap_attempt_at = 0.0
+            assert await proxy._resolve_session_id() is None
+            assert mock_bootstrap.await_count == 2
 
     @pytest.mark.asyncio
     async def test_list_tools(self) -> None:

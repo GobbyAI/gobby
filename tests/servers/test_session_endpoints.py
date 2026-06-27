@@ -382,6 +382,101 @@ class TestSessionEndpoints:
         assert response.status_code == 400
         assert response.json()["detail"] == "parent_pid must be a positive integer"
 
+    def test_find_by_terminal_context_matches_by_tmux_pane_when_pid_differs(
+        self,
+        client: TestClient,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        """Sessions can match by tmux_pane alone when stored parent_pid differs.
+
+        This covers the case where ghook (hook command) and the MCP stdio proxy
+        see different parent PIDs because the CLI spawns them through different
+        process trees. The caller still sends a positive parent_pid, but the
+        stored session's parent_pid may not match — terminal-context fields
+        like tmux_pane provide the fallback identity.
+        """
+        session = session_storage.register(
+            external_id="grok-pid-mismatch",
+            machine_id="machine",
+            source="grok",
+            project_id=test_project["id"],
+            terminal_context={"parent_pid": 44483, "tmux_pane": "%51"},
+        )
+
+        response = client.post(
+            "/api/sessions/find_by_terminal_context",
+            json={
+                "project_id": test_project["id"],
+                "parent_pid": 99999,
+                "terminal_context": {"tmux_pane": "%51"},
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["session"]["id"] == session.id
+
+    def test_find_by_terminal_context_no_match_when_pid_and_context_both_mismatch(
+        self,
+        client: TestClient,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        """No session is returned when parent_pid differs and no context overlaps."""
+        session_storage.register(
+            external_id="grok-no-overlap",
+            machine_id="machine",
+            source="grok",
+            project_id=test_project["id"],
+            terminal_context={"parent_pid": 44483, "tmux_pane": "%51"},
+        )
+
+        response = client.post(
+            "/api/sessions/find_by_terminal_context",
+            json={
+                "project_id": test_project["id"],
+                "parent_pid": 99999,
+                "terminal_context": {"tmux_pane": "%99"},
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["session"] is None
+
+    def test_find_by_terminal_context_prefers_pid_match_over_context_only(
+        self,
+        client: TestClient,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        """A pid+pane match wins over a pane-only match."""
+        pid_match_session = session_storage.register(
+            external_id="grok-pid-match",
+            machine_id="machine",
+            source="grok",
+            project_id=test_project["id"],
+            terminal_context={"parent_pid": 4242, "tmux_pane": "%10"},
+        )
+        session_storage.register(
+            external_id="grok-pane-only",
+            machine_id="machine",
+            source="grok",
+            project_id=test_project["id"],
+            terminal_context={"parent_pid": 55555, "tmux_pane": "%10"},
+        )
+
+        response = client.post(
+            "/api/sessions/find_by_terminal_context",
+            json={
+                "project_id": test_project["id"],
+                "parent_pid": 4242,
+                "terminal_context": {"tmux_pane": "%10"},
+            },
+        )
+
+        assert response.status_code == 200
+        assert response.json()["session"]["id"] == pid_match_session.id
+
     def test_find_current_malformed_json(self, client: TestClient) -> None:
         """Test find_current with malformed JSON returns 500 error.
 

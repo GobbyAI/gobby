@@ -171,7 +171,7 @@ class TestHandleNative:
 
         result = adapter.handle_native(native_event, mock_hook_manager)
 
-        assert result["decision"] == "block"
+        assert result["decision"] == "deny"
         assert result["continue"] is True
 
     def test_handle_native_after_agent_block_stops_when_cancelled(
@@ -193,7 +193,7 @@ class TestHandleNative:
 
         result = adapter.handle_native(native_event, mock_hook_manager)
 
-        assert result["decision"] == "block"
+        assert result["decision"] == "deny"
         assert result["continue"] is False
 
 

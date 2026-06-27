@@ -363,12 +363,12 @@ class TestTranslateFromHookResponse:
         assert result["reason"] == "Policy violation"
 
     def test_block_decision(self, adapter: QwenAdapter) -> None:
-        """Unknown/no-hook-type block decisions remain hard stops."""
+        """Unknown/no-hook-type block decisions are mapped to deny (hard stops)."""
         response = HookResponse(decision="block", reason="Blocked by workflow")
 
         result = adapter.translate_from_hook_response(response)
 
-        assert result["decision"] == "block"
+        assert result["decision"] == "deny"
         assert result["continue"] is False
         assert result["reason"] == "Blocked by workflow"
 
@@ -384,7 +384,7 @@ class TestTranslateFromHookResponse:
         result = adapter.translate_from_hook_response(response, hook_type="BeforeTool")
 
         assert result == {
-            "decision": "block",
+            "decision": "deny",
             "continue": True,
             "reason": reason,
         }
@@ -405,7 +405,7 @@ class TestTranslateFromHookResponse:
 
         result = adapter.translate_from_hook_response(response, hook_type="FutureHook")
 
-        assert result["decision"] == "block"
+        assert result["decision"] == "deny"
         assert result["continue"] is False
         assert result["reason"] == "Unsupported hook"
 
@@ -601,3 +601,62 @@ class TestTranslateFromHookResponse:
         )
         result = adapter.translate_from_hook_response(response, hook_type="BeforeTool")
         assert "hookSpecificOutput" not in result
+
+
+class TestBlockToDenyMapping:
+    """Verify that ``block`` decisions are mapped to ``deny`` for ACP providers.
+
+    Grok's hook runner only accepts ``"allow"`` and ``"deny"``; emitting
+    ``"block"`` causes a fail-open error that silently disables rule enforcement.
+    """
+
+    @pytest.mark.parametrize(
+        ("adapter_cls", "hook_type"),
+        [
+            (QwenAdapter, "BeforeTool"),
+            (QwenAdapter, "AfterTool"),
+            # Grok uses snake_case hook names
+            ("GrokAdapter", "pre_tool_use"),
+            ("GrokAdapter", "post_tool_use"),
+        ],
+        ids=["qwen-before-tool", "qwen-after-tool", "grok-pre-tool-use", "grok-post-tool-use"],
+    )
+    def test_block_maps_to_deny_recoverable(
+        self,
+        adapter_cls: type,
+        hook_type: str,
+    ) -> None:
+        """Block on a tool hook maps to deny with continue=True (recoverable)."""
+        from gobby.adapters.grok import GrokAdapter
+
+        adapter = GrokAdapter() if adapter_cls == "GrokAdapter" else adapter_cls()
+        response = HookResponse(decision="block", reason="Rule enforced")
+        result = adapter.translate_from_hook_response(response, hook_type=hook_type)
+        assert result["decision"] == "deny"
+        assert result["continue"] is True
+        assert result["reason"] == "Rule enforced"
+
+    @pytest.mark.parametrize(
+        ("adapter_cls", "hook_type"),
+        [
+            (QwenAdapter, "SessionStart"),
+            (QwenAdapter, "AfterAgent"),
+            ("GrokAdapter", "session_start"),
+            ("GrokAdapter", "stop"),
+        ],
+        ids=["qwen-session-start", "qwen-after-agent", "grok-session-start", "grok-stop"],
+    )
+    def test_block_maps_to_deny_hard_stop(
+        self,
+        adapter_cls: type,
+        hook_type: str,
+    ) -> None:
+        """Block on a non-tool hook maps to deny with continue=False (hard stop)."""
+        from gobby.adapters.grok import GrokAdapter
+
+        adapter = GrokAdapter() if adapter_cls == "GrokAdapter" else adapter_cls()
+        response = HookResponse(decision="block", reason="Hard stop gate")
+        result = adapter.translate_from_hook_response(response, hook_type=hook_type)
+        assert result["decision"] == "deny"
+        assert result["continue"] is False
+        assert result["reason"] == "Hard stop gate"

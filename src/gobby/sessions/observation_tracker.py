@@ -106,7 +106,7 @@ class ObservationTracker:
                 "session_id": resolved_session_id,
                 "source": resolved_source,
                 "kind": kind,
-                "name": name,
+                "observed_name": name,
                 "server_name": server_name,
                 "tool_type": tool_type,
                 "source_ref": source_ref,
@@ -140,7 +140,7 @@ class ObservationTracker:
                     "session_id": resolved_session_id,
                     "source": resolved_source,
                     "kind": kind,
-                    "name": name,
+                    "observed_name": name,
                 },
                 exc_info=True,
             )

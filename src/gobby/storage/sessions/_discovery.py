@@ -270,12 +270,15 @@ class _DiscoveryMixin:
             session = Session.from_row(row)
             stored_context = session.terminal_context or {}
             stored_parent_pid = _normalize_context_parent_pid(stored_context.get("parent_pid"))
-            if stored_parent_pid != normalized_parent_pid:
-                continue
+            pid_match = stored_parent_pid == normalized_parent_pid
             match_score = _terminal_context_match_score(requested_context, stored_context)
             if match_score is None:
                 continue
-
+            if not pid_match and match_score == 0:
+                # No terminal-context overlap and no pid match — skip.
+                continue
+            if pid_match:
+                match_score += 100  # weight pid match heavily
             matches.append((match_score, session))
 
         if not matches:
