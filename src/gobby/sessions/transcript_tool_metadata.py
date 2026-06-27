@@ -14,6 +14,7 @@ TOOL_TYPE_MAP = {
     "MultiEdit": "edit",
     "Grep": "grep",
     "Glob": "glob",
+    "tool_search": "search",
     "WebSearch": "web_search",
     "WebFetch": "web_fetch",
     "AskUserQuestion": "ask_user",

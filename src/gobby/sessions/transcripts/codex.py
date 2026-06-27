@@ -87,6 +87,47 @@ def _normalize_tool_output(output: Any) -> tuple[str, dict[str, Any]]:
     return str(output), {"output": output}
 
 
+def _tool_search_use_id(payload: dict[str, Any]) -> str | None:
+    """Return the ID that pairs Codex tool_search calls and outputs."""
+    for key in ("call_id", "id"):
+        value = payload.get(key)
+        if value is None:
+            continue
+        text = str(value)
+        if text:
+            return text
+    return None
+
+
+def _parse_tool_search_input(payload: dict[str, Any]) -> dict[str, Any]:
+    """Normalize Codex tool_search query arguments."""
+    for key in ("arguments", "input", "content"):
+        parsed = _parse_tool_payload(payload.get(key))
+        if parsed:
+            return dict(parsed)
+
+    tool_input: dict[str, Any] = {}
+    for key in ("query", "limit"):
+        if key in payload:
+            tool_input[key] = payload[key]
+    return tool_input
+
+
+def _tool_search_output(payload: dict[str, Any]) -> Any:
+    """Extract the user-visible Codex tool_search output payload."""
+    if "output" in payload:
+        return payload["output"]
+
+    result: dict[str, Any] = {}
+    for key in ("tools", "tools_count", "status", "execution"):
+        if key in payload:
+            result[key] = payload[key]
+    if result:
+        return result
+
+    return {key: value for key, value in payload.items() if key not in {"type", "id", "call_id"}}
+
+
 class CodexTranscriptParser(BaseTranscriptParser):
     """
     Parses JSONL transcript files from Codex.
@@ -101,6 +142,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
         logger_instance: logging.Logger | None = None,
     ):
         super().__init__(cli_name="codex", session_id=session_id, logger_instance=logger_instance)
+        self._last_tool_search_use_id: str | None = None
 
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2
@@ -181,11 +223,20 @@ class CodexTranscriptParser(BaseTranscriptParser):
 
         if payload_type == "message":
             return self._parse_message(data, payload, index, timestamp)
-        if payload_type in {"function_call", "custom_tool_call", "web_search_call"}:
+        if payload_type in {
+            "function_call",
+            "custom_tool_call",
+            "web_search_call",
+            "tool_search_call",
+        }:
             return self._parse_tool_call(data, payload, index, timestamp)
-        if payload_type in {"function_call_output", "custom_tool_call_output"}:
+        if payload_type in {
+            "function_call_output",
+            "custom_tool_call_output",
+            "tool_search_output",
+        }:
             return self._parse_tool_call_output(data, payload, index, timestamp)
-        if payload_type in {"reasoning", "tool_search_call", "tool_search_output"}:
+        if payload_type == "reasoning":
             return None
 
         block_type = f"response_item/{payload_type or '<missing>'}"
@@ -241,7 +292,12 @@ class CodexTranscriptParser(BaseTranscriptParser):
         payload_type = payload.get("type")
         call_id = payload.get("call_id")
 
-        if payload_type == "web_search_call":
+        if payload_type == "tool_search_call":
+            call_id = _tool_search_use_id(payload) or f"tool-search-{index}"
+            self._last_tool_search_use_id = call_id
+            name = "tool_search"
+            tool_input = _parse_tool_search_input(payload)
+        elif payload_type == "web_search_call":
             action = payload.get("action")
             if not isinstance(action, dict):
                 action = {}
@@ -282,8 +338,19 @@ class CodexTranscriptParser(BaseTranscriptParser):
         index: int,
         timestamp: datetime,
     ) -> ParsedMessage:
-        output = payload.get("output", "")
-        call_id = payload.get("call_id")
+        payload_type = payload.get("type")
+        tool_name = None
+        if payload_type == "tool_search_output":
+            output = _tool_search_output(payload)
+            call_id = _tool_search_use_id(payload)
+            if call_id is None:
+                call_id = self._last_tool_search_use_id or f"tool-search-{index}"
+            if call_id == self._last_tool_search_use_id:
+                self._last_tool_search_use_id = None
+            tool_name = "tool_search"
+        else:
+            output = payload.get("output", "")
+            call_id = payload.get("call_id")
         content, tool_result = _normalize_tool_output(output)
 
         return ParsedMessage(
@@ -291,7 +358,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
             role="tool",
             content=content,
             content_type="tool_result",
-            tool_name=None,
+            tool_name=tool_name,
             tool_input=None,
             tool_result=tool_result,
             timestamp=timestamp,

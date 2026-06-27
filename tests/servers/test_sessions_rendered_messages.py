@@ -1,5 +1,6 @@
 """Tests for rendered messages endpoint in session routes."""
 
+import json
 from pathlib import Path
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
@@ -7,7 +8,11 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 from fastapi.testclient import TestClient
 
+from gobby.sessions.transcript_normalization import normalize_transcript_records
+from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcript_window import WindowResult
+from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -96,6 +101,85 @@ class TestGetMessagesRendered:
         mock_reader.get_rendered_window.assert_called_once_with(
             session_id=session.id, limit=100, offset=0, order="head"
         )
+
+    def test_get_messages_returns_codex_tool_search_card(
+        self,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+    ) -> None:
+        """Test that Codex tool_search pairs reach the messages API as a tool card."""
+        session = session_storage.register(
+            external_id="codex-tool-search",
+            machine_id="machine",
+            source="codex",
+            project_id=test_project["id"],
+        )
+        parser = CodexTranscriptParser()
+        records = parser.parse_lines(
+            [
+                json.dumps(
+                    {
+                        "timestamp": "2024-06-15T10:30:00Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "tool_search_call",
+                            "call_id": "call-search",
+                            "id": "tsc-1",
+                            "arguments": {"query": "mcp__gobby list_tools", "limit": 3},
+                        },
+                    }
+                ),
+                json.dumps(
+                    {
+                        "timestamp": "2024-06-15T10:30:01Z",
+                        "type": "response_item",
+                        "payload": {
+                            "type": "tool_search_output",
+                            "call_id": "call-search",
+                            "tools": [{"name": "mcp__gobby", "type": "namespace", "tool_count": 8}],
+                            "tools_count": 1,
+                        },
+                    }
+                ),
+            ]
+        )
+        normalized = normalize_transcript_records(records, source="codex")
+        messages: list[ParsedMessage] = []
+        for record in normalized:
+            assert isinstance(record, ParsedMessage)
+            messages.append(record)
+        rendered = render_transcript(messages, cli_name="codex", source="codex")
+
+        mock_reader = AsyncMock()
+        mock_reader.get_rendered_window = AsyncMock(
+            return_value=WindowResult(
+                groups=rendered,
+                returned_count=1,
+                total_groups=1,
+                parsed_message_count=len(messages),
+            )
+        )
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+            transcript_reader=mock_reader,
+        )
+
+        response = TestClient(server.app).get(f"/api/sessions/{session.id}/messages")
+
+        assert response.status_code == 200
+        data = response.json()
+        block = data["messages"][0]["content_blocks"][0]
+        assert block["type"] == "tool_chain"
+        tool_call = block["tool_calls"][0]
+        assert tool_call["id"] == "call-search"
+        assert tool_call["tool_name"] == "tool_search"
+        assert tool_call["tool_type"] == "search"
+        assert tool_call["result"]["content"] == {
+            "tools": [{"name": "mcp__gobby", "type": "namespace", "tool_count": 8}],
+            "tools_count": 1,
+        }
 
     def test_get_messages_tail_order(
         self,

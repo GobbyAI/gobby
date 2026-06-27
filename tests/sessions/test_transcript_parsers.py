@@ -10,6 +10,8 @@ from typing import Any
 
 import pytest
 
+from gobby.sessions.transcript_normalization import normalize_transcript_records
+from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
 from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
@@ -1013,6 +1015,35 @@ class TestCodexTranscriptParser:
         )
 
     @staticmethod
+    def _tool_search_call(
+        arguments: dict[str, Any],
+        call_id: str | None = "call-search",
+        response_id: str | None = "tsc-1",
+        ts: str = "2024-06-15T10:30:00Z",
+    ) -> str:
+        payload: dict[str, Any] = {
+            "type": "tool_search_call",
+            "arguments": arguments,
+            "status": "completed",
+        }
+        if call_id is not None:
+            payload["call_id"] = call_id
+        if response_id is not None:
+            payload["id"] = response_id
+        return json.dumps({"timestamp": ts, "type": "response_item", "payload": payload})
+
+    @staticmethod
+    def _tool_search_output(
+        output: dict[str, Any],
+        call_id: str | None = "call-search",
+        ts: str = "2024-06-15T10:30:00Z",
+    ) -> str:
+        payload: dict[str, Any] = {"type": "tool_search_output", **output}
+        if call_id is not None:
+            payload["call_id"] = call_id
+        return json.dumps({"timestamp": ts, "type": "response_item", "payload": payload})
+
+    @staticmethod
     def _reasoning(
         ts: str = "2024-06-15T10:30:00Z",
         **extra: Any,
@@ -1189,16 +1220,99 @@ class TestCodexTranscriptParser:
 
         monkeypatch.setattr(parser.error_log, "log_unknown_block", _log_unknown_block)
 
-        for payload_type in ("tool_search_call", "tool_search_output"):
-            line = json.dumps(
+        call = parser.parse_line(
+            self._tool_search_call(
+                {"query": "gobby-skills list_mcp_servers", "limit": 8},
+                call_id="call-search",
+                response_id="tsc-1",
+            ),
+            0,
+        )
+        assert isinstance(call, ParsedMessage)
+        assert call.content_type == "tool_use"
+        assert call.tool_name == "tool_search"
+        assert call.tool_input == {"query": "gobby-skills list_mcp_servers", "limit": 8}
+        assert call.tool_use_id == "call-search"
+        assert call.message_id == "tsc-1"
+
+        result = parser.parse_line(
+            self._tool_search_output(
                 {
-                    "timestamp": "2024-06-15T10:30:00Z",
-                    "type": "response_item",
-                    "payload": {"type": payload_type, "status": "completed"},
-                }
-            )
-            assert parser.parse_line(line, 0) is None
+                    "tools": [{"name": "mcp__gobby", "type": "namespace", "tool_count": 8}],
+                    "tools_count": 1,
+                    "status": "completed",
+                },
+                call_id=None,
+            ),
+            1,
+        )
+        assert isinstance(result, ParsedMessage)
+        assert result.content_type == "tool_result"
+        assert result.tool_name == "tool_search"
+        assert result.tool_use_id == "call-search"
+        assert result.tool_result == {
+            "tools": [{"name": "mcp__gobby", "type": "namespace", "tool_count": 8}],
+            "tools_count": 1,
+            "status": "completed",
+        }
         assert calls == []
+
+    def test_parse_line_tool_search_standalone_output_uses_fallback_id(self, parser) -> None:
+        result = parser.parse_line(
+            self._tool_search_output(
+                {"tools": [{"name": "mcp__gobby", "type": "namespace"}], "tools_count": 1},
+                call_id=None,
+            ),
+            7,
+        )
+
+        assert isinstance(result, ParsedMessage)
+        assert result.content_type == "tool_result"
+        assert result.tool_name == "tool_search"
+        assert result.tool_use_id == "tool-search-7"
+        assert result.tool_result == {
+            "tools": [{"name": "mcp__gobby", "type": "namespace"}],
+            "tools_count": 1,
+        }
+
+    def test_tool_search_pair_normalizes_and_renders_as_tool_chain(self, parser) -> None:
+        records = parser.parse_lines(
+            [
+                self._tool_search_call(
+                    {"query": "mcp__gobby list_tools", "limit": 3},
+                    call_id="call-search",
+                    response_id="tsc-1",
+                ),
+                self._tool_search_output(
+                    {
+                        "tools": [{"name": "mcp__gobby", "type": "namespace", "tool_count": 8}],
+                        "tools_count": 1,
+                    },
+                    call_id="call-search",
+                ),
+            ]
+        )
+        normalized = normalize_transcript_records(records, source="codex")
+        messages: list[ParsedMessage] = []
+        for record in normalized:
+            assert isinstance(record, ParsedMessage)
+            messages.append(record)
+
+        rendered = render_transcript(messages, cli_name="codex", source="codex")
+
+        assert len(rendered) == 1
+        block = rendered[0].content_blocks[0]
+        assert block.type == "tool_chain"
+        assert block.tool_calls is not None
+        tool_call = block.tool_calls[0]
+        assert tool_call.id == "call-search"
+        assert tool_call.tool_name == "tool_search"
+        assert tool_call.tool_type == "search"
+        assert tool_call.result is not None
+        assert tool_call.result.content == {
+            "tools": [{"name": "mcp__gobby", "type": "namespace", "tool_count": 8}],
+            "tools_count": 1,
+        }
 
     def test_parse_line_invalid_json(self, parser) -> None:
         assert parser.parse_line("not valid json", 0) is None
