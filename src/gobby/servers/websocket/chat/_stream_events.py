@@ -5,12 +5,16 @@ from __future__ import annotations
 import logging
 from collections.abc import Sized
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
 from typing import Any
 from uuid import uuid4
 
 from gobby.llm.claude_models import (
     DoneEvent,
     SessionConfigOptionsEvent,
+    SessionInfoUpdateEvent,
+    SessionModeUpdateEvent,
+    SessionUsageUpdateEvent,
     TextChunk,
     ThinkingEvent,
     ToolCallEvent,
@@ -90,6 +94,12 @@ class ChatStreamEventHandler:
             return await self._handle_tool_result(event)
         if isinstance(event, SessionConfigOptionsEvent):
             return await self._handle_session_config_options(event)
+        if isinstance(event, SessionInfoUpdateEvent):
+            return await self._handle_session_info_update(event, session)
+        if isinstance(event, SessionModeUpdateEvent):
+            return await self._handle_session_mode_update(event)
+        if isinstance(event, SessionUsageUpdateEvent):
+            return await self._handle_session_usage_update(event, session)
         if isinstance(event, DoneEvent):
             return await self._handle_done(event, session)
         return True
@@ -115,6 +125,66 @@ class ChatStreamEventHandler:
                 config_options=event.config_options,
             )
         )
+
+    async def _handle_session_info_update(
+        self,
+        event: SessionInfoUpdateEvent,
+        session: Any,
+    ) -> bool:
+        info = event.session_info
+        payload = self._msg(type="session_info")
+        db_session_id = getattr(session, "db_session_id", None)
+        if isinstance(db_session_id, str) and db_session_id:
+            payload["db_session_id"] = db_session_id
+        seq_num = getattr(session, "seq_num", None)
+        if isinstance(seq_num, int) and seq_num > 0:
+            payload["session_ref"] = f"#{seq_num}"
+
+        if "title" in info:
+            title = info.get("title")
+            if isinstance(title, str) or title is None:
+                payload["title"] = title
+                payload["session_title"] = title
+
+        updated_at = info.get("updatedAt")
+        if isinstance(updated_at, str) and updated_at:
+            payload["updated_at"] = updated_at
+
+        return await self.transport.safe_send(payload)
+
+    async def _handle_session_mode_update(self, event: SessionModeUpdateEvent) -> bool:
+        if event.chat_mode is None:
+            return True
+        return await self.transport.safe_send(
+            self._msg(
+                type="mode_changed",
+                mode=event.chat_mode,
+                reason="acp_current_mode_update",
+                provider_current_mode_id=event.current_mode_id,
+            )
+        )
+
+    async def _handle_session_usage_update(
+        self,
+        event: SessionUsageUpdateEvent,
+        session: Any,
+    ) -> bool:
+        session_id = getattr(session, "db_session_id", None)
+        if not isinstance(session_id, str) or not session_id:
+            session_id = self.conversation_id
+        payload = self._msg(
+            type="session_usage_updated",
+            session_id=session_id,
+            updated_at=datetime.now(UTC).isoformat(),
+            **event.usage,
+        )
+        project_id = getattr(session, "project_id", None)
+        if isinstance(project_id, str) and project_id:
+            payload["project_id"] = project_id
+        model = getattr(session, "model", None)
+        if isinstance(model, str) and model:
+            payload["model"] = model
+        return await self.transport.safe_send(payload)
 
     async def _handle_text(self, event: TextChunk, session: Any) -> bool:
         content = event.content

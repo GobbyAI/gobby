@@ -15,6 +15,9 @@ from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
     SessionConfigOptionsEvent,
+    SessionInfoUpdateEvent,
+    SessionModeUpdateEvent,
+    SessionUsageUpdateEvent,
     TextChunk,
     ThinkingEvent,
     ToolCallEvent,
@@ -29,6 +32,15 @@ from gobby.servers.websocket.chat.backends.base import (
 from gobby.servers.websocket.chat.permissions import ManagedWebChatPermissionsMixin
 
 logger = logging.getLogger(__name__)
+
+_ACP_MODE_TO_GOBBY_MODE = {
+    "plan": "plan",
+    "act": "normal",
+    "normal": "normal",
+    "accept_edits": "normal",
+    "yolo": "bypass",
+    "bypass": "bypass",
+}
 
 
 @dataclass
@@ -131,6 +143,35 @@ class ACPManagedChatSession(
                             stream_event.data,
                         )
                         yield SessionConfigOptionsEvent(config_options=config_options)
+                        continue
+                    elif stream_event.event_type == "plan_update":
+                        plan_text = _format_plan_update(stream_event.data)
+                        await self._maybe_broadcast_pending_plan(
+                            plan_text,
+                            bool(plan_text),
+                            structured=True,
+                        )
+                        continue
+                    elif stream_event.event_type == "session_info_update":
+                        session_info = _session_info_update_payload(stream_event.data)
+                        self.last_activity = _updated_at_or_now(session_info.get("updatedAt"))
+                        yield SessionInfoUpdateEvent(session_info=session_info)
+                        continue
+                    elif stream_event.event_type == "current_mode_update":
+                        current_mode_id = stream_event.data.get("current_mode_id")
+                        if isinstance(current_mode_id, str) and current_mode_id:
+                            chat_mode = _map_acp_mode_to_gobby_mode(current_mode_id)
+                            if chat_mode is not None:
+                                self.set_chat_mode(chat_mode)
+                            yield SessionModeUpdateEvent(
+                                current_mode_id=current_mode_id,
+                                chat_mode=chat_mode,
+                            )
+                        continue
+                    elif stream_event.event_type == "usage_update":
+                        yield SessionUsageUpdateEvent(
+                            usage=_normalize_usage_update(stream_event.data)
+                        )
                         continue
                     elif stream_event.event_type == "error":
                         message = str(stream_event.data.get("message", ""))
@@ -323,6 +364,79 @@ class ACPManagedChatSession(
         self.auth_methods = cast("list[dict[str, Any]]", auth_state["auth_methods"])
         self.auth_logout_supported = bool(auth_state["auth_logout_supported"])
         return auth_state
+
+
+def _map_acp_mode_to_gobby_mode(mode_id: str) -> str | None:
+    return _ACP_MODE_TO_GOBBY_MODE.get(mode_id.strip().lower())
+
+
+def _format_plan_update(update: dict[str, Any]) -> str:
+    entries = update.get("entries")
+    if isinstance(entries, list):
+        lines: list[str] = []
+        for entry in entries:
+            if not isinstance(entry, dict):
+                continue
+            content = entry.get("content")
+            if not isinstance(content, str) or not content.strip():
+                continue
+            status = entry.get("status")
+            if isinstance(status, str) and status:
+                lines.append(f"- [{status}] {content.strip()}")
+            else:
+                lines.append(f"- {content.strip()}")
+        return "\n".join(lines)
+
+    content = update.get("content") or update.get("plan")
+    return content.strip() if isinstance(content, str) else ""
+
+
+def _session_info_update_payload(update: dict[str, Any]) -> dict[str, Any]:
+    session_info = update.get("session_info")
+    if not isinstance(session_info, dict):
+        session_info = {}
+    payload = dict(session_info)
+    for key in ("title", "updatedAt"):
+        if key in update:
+            payload[key] = update[key]
+    return payload
+
+
+def _updated_at_or_now(value: Any) -> datetime:
+    if isinstance(value, str) and value:
+        try:
+            return datetime.fromisoformat(value.replace("Z", "+00:00")).astimezone(UTC)
+        except ValueError:
+            logger.debug("Ignoring invalid ACP updatedAt value: %r", value)
+    return datetime.now(UTC)
+
+
+def _normalize_usage_update(update: dict[str, Any]) -> dict[str, Any]:
+    context_window = _nonnegative_int(update.get("size"))
+    context_used_tokens = _nonnegative_int(update.get("used"))
+    context_usage_ratio: float | None = None
+    if context_window and context_used_tokens is not None:
+        context_usage_ratio = min(1.0, context_used_tokens / context_window)
+
+    payload: dict[str, Any] = {
+        "context_window": context_window,
+        "context_used_tokens": context_used_tokens,
+        "context_usage_ratio": context_usage_ratio,
+        "context_usage_source": "acp",
+        "context_usage_confidence": "reported",
+    }
+    cost = update.get("cost")
+    if isinstance(cost, dict):
+        payload["cost"] = dict(cost)
+    return payload
+
+
+def _nonnegative_int(value: Any) -> int | None:
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value if value >= 0 else None
+    return None
 
 
 __all__ = ["ACPManagedChatSession"]

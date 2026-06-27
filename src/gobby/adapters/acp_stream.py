@@ -95,6 +95,23 @@ def normalize_notification(
         if update_type == "config_option_update":
             return StreamEvent(event_type="config_option_update", data=update)
 
+        if update_type == "plan":
+            return StreamEvent(event_type="plan_update", data=update)
+
+        if update_type == "current_mode_update":
+            data = dict(update)
+            data["current_mode_id"] = update.get("currentModeId")
+            return StreamEvent(event_type="current_mode_update", data=data)
+
+        if update_type == "session_info_update":
+            data = dict(update)
+            session_info = update.get("sessionInfo")
+            data["session_info"] = session_info if isinstance(session_info, dict) else {}
+            return StreamEvent(event_type="session_info_update", data=data)
+
+        if update_type == "usage_update":
+            return StreamEvent(event_type="usage_update", data=dict(update))
+
         if update_type == "tool_call":
             tool_input = {}
             for input_key in ("rawInput", "input"):

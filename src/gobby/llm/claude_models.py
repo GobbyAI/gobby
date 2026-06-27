@@ -62,6 +62,33 @@ class SessionConfigOptionsEvent:
 
 
 @dataclass
+class SessionInfoUpdateEvent:
+    """Event when ACP session metadata changes."""
+
+    session_info: dict[str, Any]
+    """Complete ACP sessionInfo update payload."""
+
+
+@dataclass
+class SessionModeUpdateEvent:
+    """Event when ACP reports a current session mode change."""
+
+    current_mode_id: str
+    """Provider-reported ACP currentModeId."""
+
+    chat_mode: str | None = None
+    """Mapped Gobby chat mode when the ACP mode is a known Gobby posture."""
+
+
+@dataclass
+class SessionUsageUpdateEvent:
+    """Event when ACP reports usage/context-window data."""
+
+    usage: dict[str, Any]
+    """Normalized usage payload for websocket consumers."""
+
+
+@dataclass
 class DoneEvent:
     """Event when streaming is complete."""
 
@@ -113,4 +140,7 @@ ChatEvent = (
     | DoneEvent
     | ThinkingEvent
     | SessionConfigOptionsEvent
+    | SessionInfoUpdateEvent
+    | SessionModeUpdateEvent
+    | SessionUsageUpdateEvent
 )

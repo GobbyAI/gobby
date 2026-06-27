@@ -13,7 +13,14 @@ from typing import Any
 
 import pytest
 
-from gobby.llm.claude_models import DoneEvent, ToolCallEvent, ToolResultEvent
+from gobby.llm.claude_models import (
+    DoneEvent,
+    SessionInfoUpdateEvent,
+    SessionModeUpdateEvent,
+    SessionUsageUpdateEvent,
+    ToolCallEvent,
+    ToolResultEvent,
+)
 from gobby.servers.websocket.chat._stream_events import (
     ChatStreamEventHandler,
     ChatStreamEventState,
@@ -71,6 +78,87 @@ def _make_handler(
         ChatStreamEventState(assistant_message_id="assistant-1"),
         None,
     )
+
+
+@pytest.mark.asyncio
+async def test_session_update_events_emit_existing_websocket_frames() -> None:
+    """ACP session updates flow through existing session/mode/usage frames."""
+    transport = _FakeTransport()
+    handler = _make_handler(transport, AssistantContentBlocks())
+    session = SimpleNamespace(
+        db_session_id="db-1",
+        seq_num=12,
+        project_id="project-1",
+        model="gpt-5.4",
+    )
+
+    await handler.handle_event(
+        SessionInfoUpdateEvent(
+            session_info={
+                "title": "ACP title",
+                "updatedAt": "2026-06-27T05:00:00Z",
+            }
+        ),
+        session,
+    )
+    await handler.handle_event(
+        SessionModeUpdateEvent(current_mode_id="yolo", chat_mode="bypass"),
+        session,
+    )
+    await handler.handle_event(
+        SessionUsageUpdateEvent(
+            usage={
+                "context_window": 1000,
+                "context_used_tokens": 250,
+                "context_usage_ratio": 0.25,
+                "context_usage_source": "acp",
+                "context_usage_confidence": "reported",
+                "cost": {"currency": "USD", "amount": 0.01},
+            }
+        ),
+        session,
+    )
+
+    assert transport.sent[0] == {
+        "type": "session_info",
+        "message_id": "assistant-1",
+        "conversation_id": "conv-1",
+        "db_session_id": "db-1",
+        "session_ref": "#12",
+        "title": "ACP title",
+        "session_title": "ACP title",
+        "updated_at": "2026-06-27T05:00:00Z",
+    }
+    assert transport.sent[1] == {
+        "type": "mode_changed",
+        "message_id": "assistant-1",
+        "conversation_id": "conv-1",
+        "mode": "bypass",
+        "reason": "acp_current_mode_update",
+        "provider_current_mode_id": "yolo",
+    }
+    assert transport.sent[2]["type"] == "session_usage_updated"
+    assert transport.sent[2]["session_id"] == "db-1"
+    assert transport.sent[2]["project_id"] == "project-1"
+    assert transport.sent[2]["model"] == "gpt-5.4"
+    assert transport.sent[2]["context_window"] == 1000
+    assert transport.sent[2]["context_used_tokens"] == 250
+    assert transport.sent[2]["context_usage_ratio"] == 0.25
+    assert transport.sent[2]["cost"] == {"currency": "USD", "amount": 0.01}
+
+
+@pytest.mark.asyncio
+async def test_unknown_provider_mode_does_not_emit_mode_changed() -> None:
+    transport = _FakeTransport()
+    handler = _make_handler(transport, AssistantContentBlocks())
+
+    handled = await handler.handle_event(
+        SessionModeUpdateEvent(current_mode_id="research", chat_mode=None),
+        SimpleNamespace(),
+    )
+
+    assert handled is True
+    assert transport.sent == []
 
 
 @pytest.mark.asyncio

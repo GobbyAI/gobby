@@ -15,7 +15,12 @@ from typing import Any
 import pytest
 
 from gobby.adapters.acp_client import StreamEvent
-from gobby.llm.claude_models import DoneEvent
+from gobby.llm.claude_models import (
+    DoneEvent,
+    SessionInfoUpdateEvent,
+    SessionModeUpdateEvent,
+    SessionUsageUpdateEvent,
+)
 from gobby.servers.websocket.chat.backends.acp_session import ACPManagedChatSession
 
 pytestmark = [pytest.mark.unit]
@@ -143,3 +148,93 @@ async def test_thinking_chunks_excluded_from_broadcast_plan() -> None:
     assert "reason about the repo" not in (content or "")
     assert input_data == {"plan": "## Plan\n\n1. Do the thing"}
     assert session.has_pending_plan is True
+
+
+@pytest.mark.asyncio
+async def test_protocol_plan_update_broadcasts_structured_plan() -> None:
+    session, broadcasts = _make_session(
+        "plan",
+        [
+            StreamEvent(
+                event_type="plan_update",
+                data={
+                    "entries": [
+                        {"content": "Inspect ACP updates", "status": "pending"},
+                        {"content": "Wire existing session UI", "status": "completed"},
+                    ],
+                },
+            )
+        ],
+    )
+
+    events = [e async for e in session.send_message("draft a plan")]
+
+    assert len(broadcasts) == 1
+    content, input_data = broadcasts[0]
+    assert content == ("- [pending] Inspect ACP updates\n- [completed] Wire existing session UI")
+    assert input_data == {"plan": content}
+    assert session.has_pending_plan is True
+    assert any(isinstance(e, DoneEvent) for e in events)
+
+
+@pytest.mark.asyncio
+async def test_session_update_events_translate_to_shared_chat_events() -> None:
+    session, _broadcasts = _make_session(
+        "plan",
+        [
+            StreamEvent(
+                event_type="session_info_update",
+                data={
+                    "session_info": {
+                        "title": "ACP title",
+                        "updatedAt": "2026-06-27T05:00:00Z",
+                    },
+                },
+            ),
+            StreamEvent(event_type="current_mode_update", data={"current_mode_id": "yolo"}),
+            StreamEvent(
+                event_type="usage_update",
+                data={
+                    "size": 1000,
+                    "used": 250,
+                    "cost": {"currency": "USD", "amount": 0.01},
+                },
+            ),
+        ],
+    )
+    persisted_modes: list[str] = []
+    session._on_mode_persist = persisted_modes.append
+
+    events = [e async for e in session.send_message("continue")]
+
+    info_event = next(e for e in events if isinstance(e, SessionInfoUpdateEvent))
+    mode_event = next(e for e in events if isinstance(e, SessionModeUpdateEvent))
+    usage_event = next(e for e in events if isinstance(e, SessionUsageUpdateEvent))
+    assert info_event.session_info["title"] == "ACP title"
+    assert mode_event.current_mode_id == "yolo"
+    assert mode_event.chat_mode == "bypass"
+    assert session.chat_mode == "bypass"
+    assert persisted_modes == ["bypass"]
+    assert usage_event.usage == {
+        "context_window": 1000,
+        "context_used_tokens": 250,
+        "context_usage_ratio": 0.25,
+        "context_usage_source": "acp",
+        "context_usage_confidence": "reported",
+        "cost": {"currency": "USD", "amount": 0.01},
+    }
+
+
+@pytest.mark.asyncio
+async def test_unknown_acp_mode_does_not_change_gobby_mode() -> None:
+    session, _broadcasts = _make_session(
+        "plan",
+        [StreamEvent(event_type="current_mode_update", data={"current_mode_id": "research"})],
+    )
+
+    events = [e async for e in session.send_message("continue")]
+
+    mode_event = next(e for e in events if isinstance(e, SessionModeUpdateEvent))
+    assert mode_event.current_mode_id == "research"
+    assert mode_event.chat_mode is None
+    assert session.chat_mode == "plan"

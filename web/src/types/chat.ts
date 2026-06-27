@@ -82,6 +82,7 @@ export const AUTONOMOUS_CHAT_MODES: ChatModeInfo[] = CHAT_MODES.filter(
 export function normalizeChatMode(mode: string | null | undefined): ChatMode {
   if (mode === "act") return "normal";
   if (mode === "accept_edits") return "normal";
+  if (mode === "yolo") return "bypass";
   if (mode === "bypass" || mode === "normal" || mode === "plan") return mode;
   return "plan";
 }
@@ -248,6 +249,7 @@ export interface SessionObservationMeta {
   chatMode?: ChatMode | null;
   gitBranch?: string | null;
   contextWindow?: number | null;
+  updatedAt?: string | null;
   agentRunId?: string | null;
   workflowName?: string | null;
   agentName?: string | null;

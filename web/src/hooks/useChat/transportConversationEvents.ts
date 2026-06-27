@@ -1,5 +1,10 @@
 import { normalizeChatMode } from "../../types/chat";
-import type { AcpAuthMethod, AcpConfigOption, ApprovalOption } from "../../types/chat";
+import type {
+  AcpAuthMethod,
+  AcpConfigOption,
+  ApprovalOption,
+  SessionObservationMeta,
+} from "../../types/chat";
 import {
   saveConversationId,
   saveDbSessionId,
@@ -88,6 +93,36 @@ function applyAcpAuthState(
   ctx.setAcpAuthLogoutSupported(data.auth_logout_supported === true);
 }
 
+function readNullableString(
+  data: Record<string, unknown>,
+  key: string,
+): string | null | undefined {
+  const value = data[key];
+  if (typeof value === "string" || value === null) return value;
+  return undefined;
+}
+
+function readSessionTitle(data: Record<string, unknown>): string | null | undefined {
+  const explicit = readNullableString(data, "session_title");
+  return explicit !== undefined ? explicit : readNullableString(data, "title");
+}
+
+function patchSessionMeta(
+  meta: SessionObservationMeta | null,
+  patch: {
+    title: string | null | undefined;
+    updatedAt: string | undefined;
+  },
+): SessionObservationMeta | null {
+  if (!meta) return meta;
+  const { title, updatedAt } = patch;
+  return {
+    ...meta,
+    ...(title !== undefined ? { title } : {}),
+    ...(updatedAt !== undefined ? { updatedAt } : {}),
+  };
+}
+
 export function handlePlanPendingApproval(
   data: Record<string, unknown>,
   ctx: UseChatTransportParams,
@@ -173,6 +208,34 @@ export function handleSessionInfo(
   if (wtPath !== undefined) ctx.setWorktreePath(wtPath);
   const agentName = data.agent_name as string | undefined;
   if (agentName) ctx.setActiveAgent(agentName);
+  const matchesCurrentConversation =
+    !infoConvId || infoConvId === ctx.conversationIdRef.current;
+  if (matchesCurrentConversation) {
+    const title = readSessionTitle(data);
+    const updatedAt =
+      typeof data.updated_at === "string" ? data.updated_at : undefined;
+    if (title !== undefined) ctx.setSessionTitle(title);
+    if (title !== undefined || updatedAt !== undefined) {
+      const applyPatch = (prev: SessionObservationMeta | null) =>
+        patchSessionMeta(prev, { title, updatedAt });
+      const currentSessionId = dbSid ?? ctx.dbSessionIdRef.current;
+      ctx.setMainSessionMeta(applyPatch);
+      if (
+        !ctx.viewingSessionIdRef.current ||
+        ctx.viewingSessionIdRef.current === currentSessionId ||
+        ctx.viewingSessionIdRef.current === ctx.conversationIdRef.current
+      ) {
+        ctx.setViewingSessionMeta(applyPatch);
+      }
+      if (
+        !ctx.attachedSessionIdRef.current ||
+        ctx.attachedSessionIdRef.current === currentSessionId ||
+        ctx.attachedSessionIdRef.current === ctx.conversationIdRef.current
+      ) {
+        ctx.setAttachedSessionMeta(applyPatch);
+      }
+    }
+  }
   // Reconcile the mode radio to the backend session's authoritative chat_mode.
   // A session can restore a persisted mode (e.g. bypass) that differs from the
   // UI's optimistic default (Plan); without this the UI showed read-only Plan
@@ -180,16 +243,20 @@ export function handleSessionInfo(
   // suppressed (#15709). Update local state only (no set_mode echo) to avoid a
   // set_mode -> mode_changed loop, mirroring handleSessionContinued.
   const infoMode = data.chat_mode as string | undefined;
-  if (infoMode && (!infoConvId || infoConvId === ctx.conversationIdRef.current)) {
+  if (infoMode && matchesCurrentConversation) {
     const restored = normalizeChatMode(infoMode);
     if (restored !== ctx.currentModeRef.current) {
       ctx.currentModeRef.current = restored;
       ctx.onModeChangedRef.current?.(restored);
     }
   }
-  if (!infoConvId || infoConvId === ctx.conversationIdRef.current) {
-    ctx.setAcpConfigOptions(readAcpConfigOptions(data));
-    applyAcpAuthState(data, ctx);
+  if (matchesCurrentConversation) {
+    if ("config_options" in data) {
+      ctx.setAcpConfigOptions(readAcpConfigOptions(data));
+    }
+    if ("auth_methods" in data || "auth_logout_supported" in data) {
+      applyAcpAuthState(data, ctx);
+    }
   }
 }
 

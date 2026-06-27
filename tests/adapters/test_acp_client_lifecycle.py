@@ -576,6 +576,75 @@ def test_normalize_notification_maps_config_option_update() -> None:
     assert event.data["configOptions"][0]["currentValue"] == "deep"
 
 
+def test_normalize_notification_maps_session_update_variants() -> None:
+    plan = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "plan",
+                    "entries": [{"content": "Inspect", "status": "pending"}],
+                },
+            },
+        }
+    )
+    mode = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "current_mode_update",
+                    "currentModeId": "yolo",
+                },
+            },
+        }
+    )
+    session_info = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "session_info_update",
+                    "sessionInfo": {
+                        "title": "ACP title",
+                        "updatedAt": "2026-06-27T05:00:00Z",
+                    },
+                },
+            },
+        }
+    )
+    usage = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "usage_update",
+                    "size": 1000,
+                    "used": 250,
+                    "cost": {"currency": "USD", "amount": 0.01},
+                },
+            },
+        }
+    )
+    unknown = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {"update": {"sessionUpdate": "future_update", "value": True}},
+        }
+    )
+
+    assert plan.event_type == "plan_update"
+    assert plan.data["entries"][0]["content"] == "Inspect"
+    assert mode.event_type == "current_mode_update"
+    assert mode.data["current_mode_id"] == "yolo"
+    assert session_info.event_type == "session_info_update"
+    assert session_info.data["session_info"]["title"] == "ACP title"
+    assert usage.event_type == "usage_update"
+    assert usage.data["used"] == 250
+    assert usage.data["cost"]["amount"] == 0.01
+    assert unknown.event_type == "future_update"
+
+
 @pytest.mark.asyncio
 async def test_start_rejects_incompatible_protocol_version(
     monkeypatch: pytest.MonkeyPatch,

@@ -295,4 +295,88 @@ describe("useChat project and mode controls", () => {
     ]);
     expect(result.current.acpAuthLogoutSupported).toBe(true);
   });
+
+  it("updates ACP session metadata, mode, and usage on existing surfaces", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    const modeChanges: string[] = [];
+    act(() => ws.simulateOpen());
+    act(() => {
+      result.current.setOnModeChanged((mode) => modeChanges.push(mode));
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_info",
+        conversation_id: result.current.conversationId,
+        db_session_id: "db-1",
+        config_options: [
+          {
+            id: "model",
+            name: "Model",
+            type: "select",
+            currentValue: "fast",
+            options: [{ value: "fast", name: "Fast" }],
+          },
+        ],
+        auth_methods: [{ id: "browser", name: "Browser" }],
+        auth_logout_supported: true,
+      });
+    });
+
+    expect(result.current.acpConfigOptions).toHaveLength(1);
+    expect(result.current.acpAuthMethods).toEqual([
+      { id: "browser", name: "Browser" },
+    ]);
+    expect(result.current.acpAuthLogoutSupported).toBe(true);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_info",
+        conversation_id: result.current.conversationId,
+        db_session_id: "db-1",
+        session_title: "ACP title",
+        updated_at: "2026-06-27T05:00:00Z",
+      });
+    });
+
+    expect(result.current.sessionTitle).toBe("ACP title");
+    expect(result.current.acpConfigOptions).toHaveLength(1);
+    expect(result.current.acpAuthMethods).toEqual([
+      { id: "browser", name: "Browser" },
+    ]);
+    expect(result.current.acpAuthLogoutSupported).toBe(true);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "mode_changed",
+        conversation_id: result.current.conversationId,
+        mode: "yolo",
+        reason: "acp_current_mode_update",
+      });
+    });
+
+    expect(modeChanges[modeChanges.length - 1]).toBe("bypass");
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_usage_updated",
+        session_id: "db-1",
+        context_window: 1000,
+        context_used_tokens: 250,
+        context_usage_ratio: 0.25,
+        context_usage_source: "acp",
+        context_usage_confidence: "reported",
+        updated_at: "2026-06-27T05:01:00Z",
+      });
+    });
+
+    expect(result.current.contextUsage.totalInputTokens).toBe(250);
+    expect(result.current.contextUsage.contextWindow).toBe(1000);
+    expect(result.current.contextUsage.contextUsageRatio).toBe(0.25);
+    expect(result.current.contextUsage.contextUsageSource).toBe("acp");
+    expect(result.current.contextUsage.contextUsageConfidence).toBe("reported");
+  });
 });

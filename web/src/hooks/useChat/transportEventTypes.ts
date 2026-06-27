@@ -187,6 +187,9 @@ export interface SessionInfoMessage {
   session_ref?: string;
   db_session_id?: string;
   conversation_id?: string;
+  title?: string | null;
+  session_title?: string | null;
+  updated_at?: string;
   current_branch?: string;
   worktree_path?: string;
   agent_name?: string;
