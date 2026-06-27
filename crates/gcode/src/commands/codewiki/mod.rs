@@ -50,9 +50,9 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // (Aggregate -> feature_high, Module -> feature_mid, Standard -> feature_low) and
 // the Direct route honors per-tier profile targets, so cached pages written under
 // the prior None-profile defaults re-render.
-// 17 (#976): the repo overview gains a bounded code-graph dependency diagram, so
-// prior on-disk overview pages re-render to pick it up.
-const CODEWIKI_RENDER_VERSION: u32 = 17;
+// 18 (#985): AI route/fallback/status frontmatter and metadata are explicit, and
+// the rejected repo-level code-graph dependency diagram is absent again.
+const CODEWIKI_RENDER_VERSION: u32 = 18;
 
 /// Default daemon feature profile for the grounded verification pass (#904):
 /// `feature_mid` (sonnet) runs the "is this claim supported by the cited
@@ -129,9 +129,7 @@ pub use system_model::{
 // Model-seeded architectural Mermaid diagrams for the architecture page (#891).
 #[cfg(test)]
 pub(crate) use architecture_diagrams::is_valid_mermaid;
-pub(crate) use architecture_diagrams::{
-    render_architecture_diagrams, render_dependency_diagram, render_service_matrix,
-};
+pub(crate) use architecture_diagrams::{render_architecture_diagrams, render_service_matrix};
 // Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,
@@ -168,13 +166,13 @@ pub use types::{
     ProseRegister, TextGenerator, TextVerifier,
 };
 pub(crate) use types::{
-    ArchitectureDoc, ArchitectureSubsystem, BuiltDoc, CodewikiDocMeta, CodewikiFileSnapshot,
-    CodewikiGraph, CodewikiIndexSnapshot, CodewikiMeta, CodewikiSymbolSnapshot,
-    CodewikiTruthDigest, CodewikiTruthStackEntry, CodewikiTruthSuperseded, DeprecatedSymbol,
-    DeprecationIndex, DeprecationsDoc, FeatureCatalogDoc, FileDoc, FileLink, HotspotFinding,
-    HotspotNode, HotspotsDoc, InfraSection, InfrastructureDoc, ModuleDoc, ModuleLink,
-    OnboardingDoc, OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc, TestIndex,
-    VerifyNote, ranked_source_excerpts, source_excerpt_for_file,
+    AiGenerationStatus, ArchitectureDoc, ArchitectureSubsystem, BuiltDoc, CodewikiAiOutcome,
+    CodewikiDocMeta, CodewikiFileSnapshot, CodewikiGraph, CodewikiIndexSnapshot, CodewikiMeta,
+    CodewikiSymbolSnapshot, CodewikiTruthDigest, CodewikiTruthStackEntry, CodewikiTruthSuperseded,
+    DeprecatedSymbol, DeprecationIndex, DeprecationsDoc, FeatureCatalogDoc, FileDoc, FileLink,
+    HotspotFinding, HotspotNode, HotspotsDoc, InfraSection, InfrastructureDoc, ModuleDoc,
+    ModuleLink, OnboardingDoc, OnboardingEntryPoint, OnboardingStep, SourceSpan, SymbolDoc,
+    TestIndex, VerifyNote, ranked_source_excerpts, source_excerpt_for_file,
 };
 // Feature catalog row/section types (#888) are only named by the catalog's
 // drift-guard tests; the lib builds the page through `FeatureCatalogDoc`.

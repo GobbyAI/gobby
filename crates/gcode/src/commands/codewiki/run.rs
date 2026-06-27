@@ -1,5 +1,8 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
+
+use gobby_core::ai::AiNoticeKind;
+use gobby_core::config::AiRouting;
 
 use crate::commands::scope;
 use crate::config::{self, Context};
@@ -83,13 +86,21 @@ pub fn run(
     // test-count collapse. Read straight off the project root; unreadable files
     // are skipped — never an error, never degrading.
     let audit_context = build_audit_context(&ctx.project_root, &input);
-    let mut generator = resolve_text_generator(ctx, &ai);
+    let resolved_generator = resolve_text_generator(ctx, &ai);
+    let mut ai_notices = AiRunNotices::default();
+    ai_notices.warn_once(ctx, resolved_generator.notice_kind());
+    let ai_outcome = resolved_generator.ai_outcome();
+    let no_generator_reason = resolved_generator.no_generator_reason;
+    let mut generator = resolved_generator.generator;
     let mut verifier = resolve_text_verifier(ctx, &ai);
     let ai_enabled = generator.is_some();
-    let ai_mode = if ai_enabled {
-        ai_depth.mode_label()
-    } else {
+    let ai_mode = if ai_outcome.route == AiRouting::Off
+        && !ai_outcome.fallback
+        && no_generator_reason.is_none()
+    {
         "off"
+    } else {
+        ai_depth.mode_label()
     };
     let out_dir = out.unwrap_or_else(|| DEFAULT_OUT_DIR.to_string());
     let out_path = Path::new(&out_dir);
@@ -127,11 +138,17 @@ pub fn run(
     } else {
         None
     };
-    let mut reuse_plan =
-        ReusePlan::load_with_since(&ctx.project_root, out_path, ai_mode, since_changed.clone())?;
+    let mut reuse_plan = ReusePlan::load_with_since_and_ai_outcome(
+        &ctx.project_root,
+        out_path,
+        ai_mode,
+        since_changed.clone(),
+        ai_outcome,
+    )?;
     let mut reuse = Some(&mut reuse_plan);
     let mut sink =
         DocSink::open_with_prune_scope(&ctx.project_root, out_path, ai_mode, doc_scope.clone())?
+            .with_ai_outcome(ai_outcome)
             .with_since(since_changed);
     let mut generated_pages = 0_usize;
     let mut module_count = 0_usize;
@@ -190,6 +207,7 @@ pub fn run(
     // before `finish` consumes the sink.
     let degraded_pages = sink.degraded_docs().to_vec();
     if !degraded_pages.is_empty() && !ctx.quiet {
+        ai_notices.warn_once(ctx, Some(AiNoticeKind::GenerationFailed));
         // Warn on stderr at parity with the per-file "text generation failed ...
         // record degraded: true" line (text/generation.rs), so a degraded
         // curated/aggregate pass is visible regardless of --verbose rather than
@@ -241,6 +259,40 @@ pub fn run(
     }?;
 
     Ok(())
+}
+
+#[derive(Default)]
+struct AiRunNotices {
+    emitted: BTreeSet<AiNoticeKind>,
+}
+
+impl AiRunNotices {
+    fn warn_once(&mut self, ctx: &Context, notice: Option<AiNoticeKind>) {
+        if ctx.quiet {
+            return;
+        }
+        let Some(notice) = notice else {
+            return;
+        };
+        if !self.emitted.insert(notice) {
+            return;
+        }
+        let message = match notice {
+            AiNoticeKind::AutoFallbackToDirect => {
+                "codewiki: AI auto routing could not use the daemon; falling back to Direct generation"
+            }
+            AiNoticeKind::AutoFallbackToOff => {
+                "codewiki: AI auto routing found no daemon or usable Direct config; writing structural docs"
+            }
+            AiNoticeKind::NoGenerator => {
+                "codewiki: AI generation was requested but no usable generator is configured; writing structural docs"
+            }
+            AiNoticeKind::GenerationFailed => {
+                "codewiki: AI generation failed; affected pages record degraded status"
+            }
+        };
+        eprintln!("{message}");
+    }
 }
 
 /// Repair-only entry for `codewiki --repair-citations`: re-anchors every

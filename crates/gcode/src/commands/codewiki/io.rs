@@ -1,4 +1,5 @@
 use super::*;
+use gobby_core::config::AiRouting;
 
 pub fn write_doc_set(out_dir: &Path, docs: &[(String, String)]) -> anyhow::Result<()> {
     std::fs::create_dir_all(out_dir)?;
@@ -100,6 +101,7 @@ pub(crate) struct DocSink<'a> {
     project_root: &'a Path,
     out_dir: &'a Path,
     ai_mode: String,
+    ai_outcome: CodewikiAiOutcome,
     previous_docs: BTreeMap<String, CodewikiDocMeta>,
     next_docs: BTreeMap<String, CodewikiDocMeta>,
     seen: BTreeSet<String>,
@@ -141,6 +143,7 @@ impl<'a> DocSink<'a> {
             project_root,
             out_dir,
             ai_mode: ai_mode.to_string(),
+            ai_outcome: CodewikiAiOutcome::default(),
             previous_docs: previous.docs.clone(),
             // An interrupted run must not lose entries for docs it never
             // reached, so the next meta starts from the previous entries and
@@ -155,6 +158,11 @@ impl<'a> DocSink<'a> {
         })
     }
 
+    pub(crate) fn with_ai_outcome(mut self, ai_outcome: CodewikiAiOutcome) -> Self {
+        self.ai_outcome = ai_outcome;
+        self
+    }
+
     /// Scopes the sink's rewrite decisions to a `--since` change set: a
     /// source-provenance page whose sources and neighbors are all outside the
     /// set is left untouched (Leaf H, #893). `None` keeps the full-scan default.
@@ -167,12 +175,17 @@ impl<'a> DocSink<'a> {
     /// so what is on disk always matches what the meta records.
     pub(crate) fn persist(&mut self, doc: &BuiltDoc) -> anyhow::Result<bool> {
         let target = safe_doc_path(self.out_dir, &doc.path)?;
+        let write_outcome = self.ai_outcome.for_doc(doc.degraded);
+        let content = apply_ai_outcome_to_markdown(&doc.content, write_outcome);
         let previous_meta = self.previous_docs.get(&doc.path);
         if let (Some(since), Some(meta)) = (self.since.as_ref(), previous_meta)
             && doc.invalidation_key.is_none()
             && target.exists()
             && !meta.degraded
             && meta.ai_mode == self.ai_mode
+            && meta.ai_route == self.ai_outcome.route_label()
+            && meta.ai_fallback == self.ai_outcome.fallback
+            && meta.ai_generation_status == self.ai_outcome.status.as_str()
             && meta.render_version == CODEWIKI_RENDER_VERSION
             && !meta.source_hashes.is_empty()
             && (doc.summary.is_none() || meta.summary.is_some())
@@ -188,7 +201,7 @@ impl<'a> DocSink<'a> {
             return Ok(false);
         }
 
-        let source_hashes = source_hashes_for_doc(self.project_root, &doc.content)?;
+        let source_hashes = source_hashes_for_doc(self.project_root, &content)?;
         let neighbor_hashes = neighbor_hashes_for_doc(self.project_root, &doc.neighbors)?;
         // Two invalidation models share this gate (Leaf H, #893):
         //
@@ -211,6 +224,9 @@ impl<'a> DocSink<'a> {
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
                     && meta.ai_mode == self.ai_mode
+                    && meta.ai_route == self.ai_outcome.route_label()
+                    && meta.ai_fallback == self.ai_outcome.fallback
+                    && meta.ai_generation_status == self.ai_outcome.status.as_str()
                     && meta.render_version == CODEWIKI_RENDER_VERSION
                     && match &doc.invalidation_key {
                         Some(key) => {
@@ -239,6 +255,9 @@ impl<'a> DocSink<'a> {
             && previous_meta.is_some_and(|meta| {
                 !meta.degraded
                     && meta.ai_mode == self.ai_mode
+                    && meta.ai_route == self.ai_outcome.route_label()
+                    && meta.ai_fallback == self.ai_outcome.fallback
+                    && meta.ai_generation_status == self.ai_outcome.status.as_str()
                     && meta.render_version == CODEWIKI_RENDER_VERSION
                     && source_hash_key_sets_match(&meta.source_hashes, &source_hashes)
                     && source_hash_key_sets_match(&meta.neighbor_hashes, &neighbor_hashes)
@@ -259,7 +278,7 @@ impl<'a> DocSink<'a> {
             // healthy prose for unchanged sources.
             previous_meta.cloned().unwrap_or_default()
         } else {
-            write_doc(self.out_dir, &doc.path, &doc.content)?;
+            write_doc(self.out_dir, &doc.path, &content)?;
             self.generated_docs.push(doc.path.clone());
             if doc.degraded {
                 self.degraded_docs.push(doc.path.clone());
@@ -275,6 +294,9 @@ impl<'a> DocSink<'a> {
                     doc.summary.clone()
                 },
                 ai_mode: self.ai_mode.clone(),
+                ai_route: write_outcome.route_label().to_string(),
+                ai_fallback: write_outcome.fallback,
+                ai_generation_status: write_outcome.status.as_str().to_string(),
                 render_version: CODEWIKI_RENDER_VERSION,
                 neighbor_hashes,
                 invalidation_key: doc.invalidation_key.clone(),
@@ -351,6 +373,99 @@ impl<'a> DocSink<'a> {
         };
         write_codewiki_meta(self.out_dir, &meta)?;
         Ok(self.generated_docs)
+    }
+}
+
+const AI_NOTICE_START: &str = "<!-- codewiki-ai-notice:start -->\n";
+const AI_NOTICE_END: &str = "<!-- codewiki-ai-notice:end -->\n";
+
+fn apply_ai_outcome_to_markdown(content: &str, outcome: CodewikiAiOutcome) -> String {
+    let Some((frontmatter_body, rest)) = split_frontmatter(content) else {
+        return content.to_string();
+    };
+
+    let mut out = String::from("---\n");
+    for line in frontmatter_body.lines() {
+        if !is_ai_frontmatter_line(line) {
+            out.push_str(line);
+            out.push('\n');
+        }
+    }
+    out.push_str("ai_route: ");
+    out.push_str(outcome.route_label());
+    out.push('\n');
+    out.push_str("ai_fallback: ");
+    out.push_str(if outcome.fallback { "true" } else { "false" });
+    out.push('\n');
+    out.push_str("ai_generation_status: ");
+    out.push_str(outcome.status.as_str());
+    out.push('\n');
+    out.push_str("---\n");
+
+    let rest = strip_existing_ai_notice(rest);
+    if let Some(note) = ai_body_note(outcome) {
+        out.push('\n');
+        out.push_str(AI_NOTICE_START);
+        out.push_str("> **AI notice:** ");
+        out.push_str(note);
+        out.push_str("\n\n");
+        out.push_str(AI_NOTICE_END);
+    }
+    out.push_str(rest);
+    out
+}
+
+fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
+    let first_line_end = content.find('\n')? + 1;
+    if content[..first_line_end].trim_end_matches(['\r', '\n']) != "---" {
+        return None;
+    }
+
+    let mut cursor = first_line_end;
+    for line in content[first_line_end..].split_inclusive('\n') {
+        let line_end = cursor + line.len();
+        if line.trim_end_matches(['\r', '\n']) == "---" {
+            return Some((&content[first_line_end..cursor], &content[line_end..]));
+        }
+        cursor = line_end;
+    }
+    None
+}
+
+fn is_ai_frontmatter_line(line: &str) -> bool {
+    let key = line.trim_start();
+    key.starts_with("ai_route:")
+        || key.starts_with("ai_fallback:")
+        || key.starts_with("ai_generation_status:")
+}
+
+fn strip_existing_ai_notice(rest: &str) -> &str {
+    let Some(start) = rest.find(AI_NOTICE_START) else {
+        return rest;
+    };
+    if rest[..start].trim().is_empty()
+        && let Some(end) = rest[start + AI_NOTICE_START.len()..].find(AI_NOTICE_END)
+    {
+        let after = start + AI_NOTICE_START.len() + end + AI_NOTICE_END.len();
+        return &rest[after..];
+    }
+    rest
+}
+
+fn ai_body_note(outcome: CodewikiAiOutcome) -> Option<&'static str> {
+    match outcome.status {
+        AiGenerationStatus::Degraded => {
+            Some("AI generation failed for this page; structural fallback content is shown.")
+        }
+        AiGenerationStatus::Skipped if outcome.fallback || outcome.route != AiRouting::Off => {
+            Some("AI generation did not run; this page contains structural documentation only.")
+        }
+        AiGenerationStatus::Generated if outcome.fallback && outcome.route == AiRouting::Direct => {
+            Some(
+                "Auto routing could not use the daemon, so this page was generated through the Direct route.",
+            )
+        }
+        _ => None,
     }
 }
 

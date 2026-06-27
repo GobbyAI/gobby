@@ -2,11 +2,11 @@ use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use gobby_core::ai::effective_route;
 use gobby_core::ai::generation::{
     DirectGenerationTarget, GenerationTier, generate_one_shot, profile_for_tier,
     resolve_direct_generation_target,
 };
+use gobby_core::ai::{AiNoticeKind, resolve_route_observed};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
 
@@ -40,6 +40,7 @@ pub(crate) fn execute(
     let daemon_report = daemon::probe_daemon_capabilities();
     let transport = resolve_explainer_transport(ai);
     let route_label = transport.route_label();
+    let notice = transport.notice_kind();
     let mut generate = |prompt: &ExplainerPrompt| transport.generate(prompt);
     let generator: Option<ExplainerGenerator<'_>> = if transport.is_active() {
         Some(&mut generate)
@@ -64,6 +65,11 @@ pub(crate) fn execute(
         .explainer
         .clone()
         .unwrap_or_else(ExplainerReport::skipped);
+    let notice = if explainer.status == "failed" {
+        Some(AiNoticeKind::GenerationFailed)
+    } else {
+        notice
+    };
     let output_scope = resolved_scope_identity(&resolved_scope);
     let payload = serde_json::json!({
         "command": "compile",
@@ -81,6 +87,8 @@ pub(crate) fn execute(
         "ai": {
             "requested_mode": routing_label(ai),
             "route": route_label,
+            "fallback": transport.fallback(),
+            "notice": notice.map(ai_notice_label),
             "status": explainer.status,
             "model": explainer.model,
             "error": explainer.error,
@@ -89,11 +97,15 @@ pub(crate) fn execute(
             "fallback_sections": explainer.fallback_sections,
         },
     });
+    let notice_text = notice
+        .map(|notice| format!("\nAI notice: {}", ai_notice_label(notice)))
+        .unwrap_or_default();
     let text = format!(
         "Compiled wiki article
 Scope: {output_scope}
-Article: {}",
-        outcome.article_path.display()
+Article: {}{}",
+        outcome.article_path.display(),
+        notice_text
     );
     Ok(super::scoped_outcome(
         "compile",
@@ -255,10 +267,14 @@ enum ExplainerTransport {
     Off,
     Unresolved {
         route: AiRouting,
+        fallback: bool,
+        notice: Option<AiNoticeKind>,
         error: String,
     },
     Resolved {
         route: AiRouting,
+        fallback: bool,
+        notice: Option<AiNoticeKind>,
         context: Box<AiContext>,
         /// Per-tier direct-generation target resolved for `COMPILE_TIER`,
         /// present only on the Direct route; the Daemon route forwards the
@@ -279,6 +295,20 @@ impl ExplainerTransport {
         }
     }
 
+    fn fallback(&self) -> bool {
+        match self {
+            Self::Off => false,
+            Self::Unresolved { fallback, .. } | Self::Resolved { fallback, .. } => *fallback,
+        }
+    }
+
+    fn notice_kind(&self) -> Option<AiNoticeKind> {
+        match self {
+            Self::Off => None,
+            Self::Unresolved { notice, .. } | Self::Resolved { notice, .. } => *notice,
+        }
+    }
+
     fn generate(&self, prompt: &ExplainerPrompt) -> Result<ExplainerResponse, String> {
         match self {
             Self::Off => Err("AI synthesis is off".to_string()),
@@ -287,6 +317,7 @@ impl ExplainerTransport {
                 route,
                 context,
                 target,
+                ..
             } => {
                 let result = generate_one_shot(
                     context,
@@ -326,7 +357,8 @@ fn resolve_explainer_transport(requested: AiRouting) -> ExplainerTransport {
                     forced_routing: Some(requested),
                 },
             );
-            match effective_route(&context, AiCapability::TextGenerate) {
+            let observed = resolve_route_observed(&context, AiCapability::TextGenerate);
+            match observed.route {
                 route @ (AiRouting::Daemon | AiRouting::Direct) => {
                     // The Direct route needs a concrete per-tier target resolved
                     // from the same config source (hub config_store plus any
@@ -338,8 +370,25 @@ fn resolve_explainer_transport(requested: AiRouting) -> ExplainerTransport {
                             &profile_for_tier(COMPILE_TIER, None),
                         )
                     });
+                    if target
+                        .as_ref()
+                        .is_some_and(|target| target.api_base().is_none())
+                    {
+                        return ExplainerTransport::Unresolved {
+                            route,
+                            fallback: observed.fallback,
+                            notice: Some(AiNoticeKind::NoGenerator),
+                            error: "direct AI synthesis requires ai.text_generate api_base"
+                                .to_string(),
+                        };
+                    }
                     ExplainerTransport::Resolved {
                         route,
+                        fallback: observed.fallback,
+                        notice: observed.reason.or_else(|| {
+                            (observed.fallback && route == AiRouting::Direct)
+                                .then_some(AiNoticeKind::AutoFallbackToDirect)
+                        }),
                         context: Box::new(context),
                         target,
                     }
@@ -350,6 +399,14 @@ fn resolve_explainer_transport(requested: AiRouting) -> ExplainerTransport {
         Err(error) => match requested {
             AiRouting::Daemon | AiRouting::Direct => ExplainerTransport::Unresolved {
                 route: requested,
+                fallback: false,
+                notice: Some(AiNoticeKind::NoGenerator),
+                error: error.to_string(),
+            },
+            AiRouting::Auto => ExplainerTransport::Unresolved {
+                route: AiRouting::Off,
+                fallback: true,
+                notice: Some(AiNoticeKind::NoGenerator),
                 error: error.to_string(),
             },
             _ => ExplainerTransport::Off,
@@ -366,10 +423,22 @@ fn routing_label(route: AiRouting) -> &'static str {
     }
 }
 
+fn ai_notice_label(notice: AiNoticeKind) -> &'static str {
+    match notice {
+        AiNoticeKind::AutoFallbackToDirect => "auto_fallback_to_direct",
+        AiNoticeKind::AutoFallbackToOff => "auto_fallback_to_off",
+        AiNoticeKind::NoGenerator => "no_generator",
+        AiNoticeKind::GenerationFailed => "generation_failed",
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::sources::{CompileStatus, IngestionMethod, SourceKind};
+    use gobby_core::ai::ObservedAiRoute;
+    use gobby_core::ai_context::{AiBindings, AiLimiter};
+    use gobby_core::config::{AiTuning, CapabilityBinding};
     use std::fs;
 
     #[test]
@@ -377,6 +446,77 @@ mod tests {
         use gobby_core::ai::generation::FEATURE_HIGH;
         assert_eq!(COMPILE_TIER, GenerationTier::Aggregate);
         assert_eq!(profile_for_tier(COMPILE_TIER, None), FEATURE_HIGH);
+    }
+
+    #[test]
+    fn observed_auto_daemon_up_ignores_direct_config() {
+        let context = ai_context(AiRouting::Auto, Some("http://direct.test"));
+
+        assert_eq!(
+            gobby_core::ai::resolve_route_observed_with_probe(
+                &context,
+                AiCapability::TextGenerate,
+                |_| true,
+            ),
+            ObservedAiRoute {
+                route: AiRouting::Daemon,
+                fallback: false,
+                reason: None,
+            }
+        );
+    }
+
+    #[test]
+    fn observed_explicit_daemon_stays_daemon_when_probe_unavailable() {
+        let context = ai_context(AiRouting::Daemon, Some("http://direct.test"));
+
+        assert_eq!(
+            gobby_core::ai::resolve_route_observed_with_probe(
+                &context,
+                AiCapability::TextGenerate,
+                |_| false,
+            ),
+            ObservedAiRoute {
+                route: AiRouting::Daemon,
+                fallback: false,
+                reason: None,
+            }
+        );
+    }
+
+    fn ai_context(routing: AiRouting, api_base: Option<&str>) -> AiContext {
+        let binding = CapabilityBinding {
+            routing,
+            transport: None,
+            api_base: api_base.map(str::to_string),
+            api_key: None,
+            model: None,
+            provider: None,
+            task: None,
+            language: None,
+            target_lang: None,
+            profile: None,
+            candidates: None,
+            reasoning_effort: None,
+            verify_profile: None,
+            verify_model: None,
+            verify_api_key: None,
+        };
+        AiContext {
+            bindings: AiBindings {
+                embed: binding.clone(),
+                audio_transcribe: binding.clone(),
+                audio_translate: binding.clone(),
+                vision_extract: binding.clone(),
+                text_generate: binding,
+            },
+            tuning: AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: AiLimiter::new(1),
+            project_id: None,
+        }
     }
 
     fn source_record(

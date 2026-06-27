@@ -1,32 +1,28 @@
-//! Mermaid diagrams for the codewiki pages.
+//! Architectural Mermaid diagrams for the codewiki architecture page.
 //!
-//! Two diagram families live here, sharing the Mermaid label/id/fence helpers
-//! and the valid-Mermaid gate:
+//! Leaf B of epic #886 (#891). Renders *topology* and *runtime-flow* diagrams
+//! from the deterministic [`SystemModel`] built by Leaf A
+//! ([`super::system_model::build_system_model`]) — crate↔crate↔service
+//! topology plus the standalone-vs-daemon runtime branch, and at least one
+//! runtime-flow sequence the model can express.
 //!
-//! * **Architecture diagrams** (#886/#891) — *topology* and *runtime-flow*
-//!   diagrams for the architecture page, seeded strictly from the deterministic
-//!   [`SystemModel`] built by [`super::system_model::build_system_model`]
-//!   (crate↔crate↔service topology plus the standalone-vs-daemon runtime
-//!   branch). These read workspace facts on disk only — never the code graph —
-//!   and never invent components absent from the model.
-//! * **Dependency diagram** (#976) — a *bounded* subsystem dependency flowchart
-//!   for the repo overview ([`render_dependency_diagram`]), aggregated from
-//!   indexed code-graph import edges. This is the deliberately-bounded successor
-//!   to the per-symbol FalkorDB call/import-edge dumps removed in #884: it is
-//!   subsystem-level and capped at [`MAX_DEPENDENCY_DIAGRAM_NODES`] with an
-//!   explicit truncation label, so it can never become an unbounded hairball.
+//! These are *architectural* diagrams seeded strictly from workspace facts on
+//! disk, NOT the per-symbol FalkorDB call/import-edge dumps that commit #884
+//! deliberately removed. The model is the only source; nothing here reads the
+//! code graph or invents components absent from the model.
 //!
-//! Shared invariants (the #884 / #878 contract):
+//! Invariants (the #884 / #878 contract):
 //!
 //! * **Valid-Mermaid gate.** Every block is checked by [`is_valid_mermaid`]
 //!   before it is emitted. A block that fails the gate is OMITTED; a broken or
 //!   unparseable ```` ```mermaid ```` fence is never written.
-//! * **Non-degrading.** A SystemModel too sparse to draw, or an unavailable code
-//!   graph, yields no diagram — but that is *normal*, not degradation. Omitting
-//!   a diagram never sets `degraded` on the page; `degraded:model-unavailable`
-//!   stays reserved for genuine AI-generation fallback.
+//! * **Non-degrading.** A SystemModel too sparse to draw (no crates/edges from
+//!   a fully-partial model) yields no diagram, but that is *normal*, not
+//!   degradation. Omitting a diagram never sets `degraded` on the page;
+//!   `degraded:model-unavailable` stays reserved for genuine generation
+//!   fallback.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::fmt::Write as _;
 
 use super::system_model::{Edge, RuntimeMode, ServiceKind, SystemModel};
@@ -80,91 +76,6 @@ only when that routing is selected), and **always** (always-on transport).\n\n",
             section.push('\n');
         }
         section.push('\n');
-    }
-    Some(section)
-}
-
-/// Upper bound on nodes drawn in the overview dependency diagram. Larger graphs
-/// are truncated to the highest-connectivity nodes with an explicit label, so a
-/// big monorepo never renders an unreadable hairball on the landing page.
-const MAX_DEPENDENCY_DIAGRAM_NODES: usize = 18;
-
-/// Render a bounded Mermaid dependency flowchart from subsystem-level import
-/// edges (see [`super::render::collect_subsystem_dependency_edges`]), or `None`
-/// when there is nothing well-formed to draw. Unlike the [`SystemModel`]-seeded
-/// architecture diagrams, this is derived from the *indexed code graph*, so it
-/// is the overview page's view of how the codebase actually wires together.
-///
-/// Nodes are ranked by total degree (ties broken by name for determinism) and
-/// capped at [`MAX_DEPENDENCY_DIAGRAM_NODES`]; edges touching a dropped node are
-/// removed and the omission is labelled. The fenced block passes the shared
-/// [`is_valid_mermaid`] gate before it is returned, so a malformed diagram is
-/// dropped rather than shipped.
-pub(crate) fn render_dependency_diagram(edges: &BTreeSet<(String, String)>) -> Option<String> {
-    if edges.is_empty() {
-        return None;
-    }
-
-    let mut degree: BTreeMap<&str, usize> = BTreeMap::new();
-    for (from, to) in edges {
-        *degree.entry(from.as_str()).or_default() += 1;
-        *degree.entry(to.as_str()).or_default() += 1;
-    }
-    let total_nodes = degree.len();
-
-    let mut ranked: Vec<(&str, usize)> = degree.into_iter().collect();
-    ranked.sort_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(b.0)));
-    let kept: BTreeSet<&str> = ranked
-        .into_iter()
-        .take(MAX_DEPENDENCY_DIAGRAM_NODES)
-        .map(|(name, _)| name)
-        .collect();
-
-    let kept_edges: Vec<&(String, String)> = edges
-        .iter()
-        .filter(|(from, to)| kept.contains(from.as_str()) && kept.contains(to.as_str()))
-        .collect();
-    if kept_edges.is_empty() {
-        return None;
-    }
-
-    let mut drawn: BTreeSet<&str> = BTreeSet::new();
-    for (from, to) in &kept_edges {
-        drawn.insert(from.as_str());
-        drawn.insert(to.as_str());
-    }
-
-    let mut body = String::from("flowchart LR\n");
-    for node in &drawn {
-        let _ = writeln!(body, "    {}[\"{}\"]", node_id(node), mermaid_label(node));
-    }
-    for (from, to) in &kept_edges {
-        let _ = writeln!(body, "    {} --> {}", node_id(from), node_id(to));
-    }
-
-    let block = fence(&body);
-    if !is_valid_mermaid(&block) {
-        return None;
-    }
-
-    let mut section = String::from("## Module Dependencies\n\n");
-    section.push_str(
-        "Import dependencies between top-level subsystems, derived from the indexed \
-         code graph. An arrow points from a subsystem to one it imports.\n\n",
-    );
-    section.push_str(&block);
-    let dropped = total_nodes.saturating_sub(drawn.len());
-    if dropped > 0 {
-        let noun = if dropped == 1 {
-            "subsystem"
-        } else {
-            "subsystems"
-        };
-        let _ = write!(
-            section,
-            "\n_Showing the {} highest-connectivity subsystems; {dropped} more {noun} omitted._\n",
-            drawn.len()
-        );
     }
     Some(section)
 }
@@ -687,48 +598,7 @@ appears by name only.\n\n",
 mod tests {
     use super::*;
     use crate::commands::codewiki::system_model::{Crate, ServiceBoundary};
-    use std::collections::{BTreeMap, BTreeSet};
-
-    #[test]
-    fn dependency_diagram_renders_bounded_valid_mermaid() {
-        let edges: BTreeSet<(String, String)> = [
-            ("crates/gcode".to_string(), "crates/gcore".to_string()),
-            ("crates/gwiki".to_string(), "crates/gcore".to_string()),
-        ]
-        .into_iter()
-        .collect();
-        let section = render_dependency_diagram(&edges).expect("diagram for non-empty edges");
-        assert!(section.contains("## Module Dependencies"), "{section}");
-        assert!(section.contains("flowchart LR"), "{section}");
-        assert!(section.contains("-->"), "{section}");
-        // Three nodes, none dropped: no truncation label.
-        assert!(!section.contains("omitted"), "{section}");
-    }
-
-    #[test]
-    fn dependency_diagram_is_none_without_edges() {
-        let edges: BTreeSet<(String, String)> = BTreeSet::new();
-        assert!(render_dependency_diagram(&edges).is_none());
-    }
-
-    #[test]
-    fn dependency_diagram_truncates_large_graph_with_label() {
-        // A 26-node chain mod00 -> ... -> mod25: interior nodes have degree 2 and
-        // outrank the two degree-1 endpoints, so the top-18 cap drops 8 nodes and
-        // the omission is labelled. The fence still passes the valid-Mermaid gate
-        // (the renderer returns None otherwise, which `expect` would catch).
-        let mut edges: BTreeSet<(String, String)> = BTreeSet::new();
-        for i in 0..25 {
-            edges.insert((format!("mod{i:02}"), format!("mod{:02}", i + 1)));
-        }
-        let section = render_dependency_diagram(&edges).expect("diagram for chain");
-        assert!(section.contains("more subsystems omitted"), "{section}");
-        let node_lines = section.matches("[\"mod").count();
-        assert!(
-            node_lines <= MAX_DEPENDENCY_DIAGRAM_NODES,
-            "drew {node_lines} nodes: {section}"
-        );
-    }
+    use std::collections::BTreeMap;
 
     fn step(id: &str, label: &str, role: Option<&str>) -> ConceptualFlowStep {
         ConceptualFlowStep {

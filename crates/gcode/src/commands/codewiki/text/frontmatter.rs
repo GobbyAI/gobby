@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::commands::codewiki::{SourceSpan, VerifyNote};
+use crate::commands::codewiki::{CodewikiAiOutcome, SourceSpan, VerifyNote};
 
 #[derive(serde::Serialize)]
 struct Frontmatter<'a> {
@@ -14,6 +14,9 @@ struct Frontmatter<'a> {
     generated_by: &'static str,
     trust: &'static str,
     freshness: &'static str,
+    ai_route: &'static str,
+    ai_fallback: bool,
+    ai_generation_status: &'static str,
     #[serde(skip_serializing_if = "Option::is_none")]
     degraded: Option<bool>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
@@ -92,6 +95,7 @@ fn frontmatter_with_options(
 ) -> String {
     let (source_files, provenance_truncated) =
         frontmatter_source_files(source_spans, include_ranges);
+    let ai_outcome = CodewikiAiOutcome::default();
     let data = Frontmatter {
         title,
         kind,
@@ -100,6 +104,9 @@ fn frontmatter_with_options(
         generated_by: gobby_core::codewiki_contract::GENERATED_BY_CODEWIKI,
         trust: gobby_core::codewiki_contract::TRUST_GENERATED,
         freshness: gobby_core::codewiki_contract::FRESHNESS_INDEXED,
+        ai_route: ai_outcome.route_label(),
+        ai_fallback: ai_outcome.fallback,
+        ai_generation_status: ai_outcome.status.as_str(),
         degraded: (!degraded_sources.is_empty()).then_some(true),
         degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
         verify_notes: verify_notes

@@ -196,12 +196,15 @@ mod serial_db {
             count_text_visible(&mut conn, "parentonly", &ctx, None, &[]),
             1
         );
-        assert_eq!(count_text_visible(&mut conn, "++", &ctx, None, &[]), 3);
+        assert_eq!(count_text_visible(&mut conn, "marker", &ctx, None, &[]), 3);
         assert_eq!(
             count_content_visible(&mut conn, "parentonly", &ctx, None, &[]),
             1
         );
-        assert_eq!(count_content_visible(&mut conn, "++", &ctx, None, &[]), 3);
+        assert_eq!(
+            count_content_visible(&mut conn, "marker", &ctx, None, &[]),
+            3
+        );
 
         cleanup
             .cleanup()
@@ -502,14 +505,15 @@ fn insert_file(
 
 fn insert_symbol(conn: &mut Client, project_id: &str, file_path: &str, name: &str, kind: &str) {
     let id = format!("{project_id}:{file_path}:{name}");
-    let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &name, &kind];
+    let summary = name.replace('_', " ").replace('+', " plus ");
+    let params: &[&(dyn ToSql + Sync)] = &[&id, &project_id, &file_path, &name, &kind, &summary];
     conn.execute(
         "INSERT INTO code_symbols
                 (id, project_id, file_path, name, qualified_name, kind, language, byte_start,
                  byte_end, line_start, line_end, signature, docstring, parent_symbol_id,
                  content_hash, summary, created_at, updated_at)
              VALUES ($1, $2, $3, $4, $4, $5, 'rust', 0, 1, 1, 1, $4, NULL, NULL,
-                     'hash', NULL, NOW(), NOW())",
+                     'hash', $6, NOW(), NOW())",
         params,
     )
     .expect("insert symbol");

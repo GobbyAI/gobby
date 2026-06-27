@@ -1,8 +1,8 @@
-use gobby_core::ai::effective_route;
 use gobby_core::ai::generation::{
     DirectGenerationTarget, GenerationTier, generate_one_shot, profile_for_tier,
     resolve_direct_generation_target,
 };
+use gobby_core::ai::{AiNoticeKind, resolve_route_observed};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
 
@@ -39,7 +39,14 @@ pub(super) fn synthesize(
             forced_routing: Some(requested_mode),
         },
     );
-    let route = effective_route(&context, AiCapability::TextGenerate);
+    let observed = resolve_route_observed(&context, AiCapability::TextGenerate);
+    let route = observed.route;
+    if let Some(notice) = observed.reason.or_else(|| {
+        (observed.fallback && route == AiRouting::Direct)
+            .then_some(AiNoticeKind::AutoFallbackToDirect)
+    }) {
+        push_ai_notice_warning(output, notice);
+    }
     output.ai = Some(AskAiOutput {
         requested: true,
         requested_mode: routing_label(requested_mode),
@@ -56,6 +63,14 @@ pub(super) fn synthesize(
             // built from; the Daemon route forwards the profile name instead.
             let target =
                 resolve_direct_generation_target(&mut source, &profile_for_tier(ASK_TIER, None));
+            if target.api_base().is_none() {
+                push_ai_notice_warning(output, AiNoticeKind::NoGenerator);
+                return mark_ai_unavailable(
+                    output,
+                    require_ai,
+                    Some("direct AI synthesis requires ai.text_generate api_base".to_string()),
+                );
+            }
             generate_synthesis(output, plan, &context, route, Some(&target), require_ai)
         }
         AiRouting::Daemon => generate_synthesis(output, plan, &context, route, None, require_ai),
@@ -91,7 +106,10 @@ fn generate_synthesis(
             );
             Ok(())
         }
-        Err(error) => mark_ai_unavailable(output, require_ai, Some(error.to_string())),
+        Err(error) => {
+            push_ai_notice_warning(output, AiNoticeKind::GenerationFailed);
+            mark_ai_unavailable(output, require_ai, Some(error.to_string()))
+        }
     }
 }
 
@@ -163,6 +181,22 @@ fn mark_ai_unavailable(
         ai.error = error;
     }
     Ok(())
+}
+
+fn push_ai_notice_warning(output: &mut AskOutput, notice: AiNoticeKind) {
+    let warning = ai_notice_label(notice).to_string();
+    if !output.warnings.contains(&warning) {
+        output.warnings.push(warning);
+    }
+}
+
+fn ai_notice_label(notice: AiNoticeKind) -> &'static str {
+    match notice {
+        AiNoticeKind::AutoFallbackToDirect => "ai_auto_fallback_to_direct",
+        AiNoticeKind::AutoFallbackToOff => "ai_auto_fallback_to_off",
+        AiNoticeKind::NoGenerator => "ai_no_generator",
+        AiNoticeKind::GenerationFailed => "ai_generation_failed",
+    }
 }
 
 fn synthesis_system() -> &'static str {

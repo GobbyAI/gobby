@@ -1,4 +1,5 @@
 use gobby_core::ai_types::AiError;
+use gobby_core::config::AiRouting;
 
 use super::support::*;
 use super::*;
@@ -294,22 +295,30 @@ fn generation_failure_records_degradation_in_frontmatter_and_meta() {
     }
     assert!(!doc(&docs, "code/_onboarding.md").degraded);
 
-    write_incremental_doc_set_with_snapshot(
-        project.path(),
-        &out_dir,
-        &docs,
-        None,
-        "symbols",
-        DocPruneScope::unscoped(),
-    )
-    .expect("write docs");
+    let mut sink = DocSink::open(project.path(), &out_dir, "symbols")
+        .expect("sink opens")
+        .with_ai_outcome(CodewikiAiOutcome::generated(AiRouting::Daemon, false));
+    for doc in &docs {
+        sink.persist(doc).expect("doc persists");
+    }
+    sink.finish(None).expect("sink finishes");
     let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
     let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
-    for path in ["code/repo.md", "code/modules/src.md"] {
+    for path in [
+        "code/repo.md",
+        "code/modules/src.md",
+        "code/files/src/lib.rs.md",
+    ] {
         assert_eq!(
             meta["docs"][path]["degraded"],
             serde_json::Value::Bool(true),
             "{path} degradation lands in _meta/codewiki.json"
+        );
+        assert_eq!(meta["docs"][path]["ai_route"], "daemon", "{path} route");
+        assert_eq!(meta["docs"][path]["ai_fallback"], false, "{path} fallback");
+        assert_eq!(
+            meta["docs"][path]["ai_generation_status"], "degraded",
+            "{path} status"
         );
     }
     assert!(
@@ -382,4 +391,235 @@ fn transient_generation_failure_retries_to_healthy_doc() {
     assert!(!repo.degraded, "retried generation produces a healthy doc");
     assert!(repo.content.contains("Generated prose."));
     assert!(docs.iter().all(|doc| !doc.degraded));
+}
+
+#[test]
+fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
+    struct Case {
+        name: &'static str,
+        outcome: CodewikiAiOutcome,
+        degraded: bool,
+        route: &'static str,
+        fallback: bool,
+        status: &'static str,
+        note: Option<&'static str>,
+    }
+
+    let cases = [
+        Case {
+            name: "off",
+            outcome: CodewikiAiOutcome::skipped(AiRouting::Off, false),
+            degraded: false,
+            route: "off",
+            fallback: false,
+            status: "skipped",
+            note: None,
+        },
+        Case {
+            name: "daemon_generated",
+            outcome: CodewikiAiOutcome::generated(AiRouting::Daemon, false),
+            degraded: false,
+            route: "daemon",
+            fallback: false,
+            status: "generated",
+            note: None,
+        },
+        Case {
+            name: "auto_fallback_direct",
+            outcome: CodewikiAiOutcome::generated(AiRouting::Direct, true),
+            degraded: false,
+            route: "direct",
+            fallback: true,
+            status: "generated",
+            note: Some("Direct route"),
+        },
+        Case {
+            name: "auto_fallback_off",
+            outcome: CodewikiAiOutcome::skipped(AiRouting::Off, true),
+            degraded: false,
+            route: "off",
+            fallback: true,
+            status: "skipped",
+            note: Some("structural documentation only"),
+        },
+        Case {
+            name: "direct_no_generator",
+            outcome: CodewikiAiOutcome::skipped(AiRouting::Direct, false),
+            degraded: false,
+            route: "direct",
+            fallback: false,
+            status: "skipped",
+            note: Some("structural documentation only"),
+        },
+        Case {
+            name: "daemon_failed",
+            outcome: CodewikiAiOutcome::generated(AiRouting::Daemon, false),
+            degraded: true,
+            route: "daemon",
+            fallback: false,
+            status: "degraded",
+            note: Some("generation failed"),
+        },
+    ];
+
+    for case in cases {
+        let project = tempfile::tempdir().expect("project tempdir");
+        std::fs::create_dir_all(project.path().join("src")).expect("source dir");
+        std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n")
+            .expect("write source");
+        let out_dir = project.path().join(format!("out-{}", case.name));
+        let mut doc = BuiltDoc::healthy(
+            "code/repo.md",
+            format!(
+                "{}# Repo\n\nStructural body.\n",
+                frontmatter_with_degradation_without_ranges(
+                    "Repo",
+                    "repo",
+                    &[SourceSpan {
+                        file: "src/lib.rs".to_string(),
+                        line_start: 1,
+                        line_end: 1,
+                    }],
+                    &[],
+                )
+            ),
+        );
+        doc.degraded = case.degraded;
+
+        let mut sink = DocSink::open(project.path(), &out_dir, "sections")
+            .expect("sink opens")
+            .with_ai_outcome(case.outcome);
+        sink.persist(&doc).expect("doc persisted");
+        sink.finish(None).expect("sink finishes");
+
+        let markdown = std::fs::read_to_string(out_dir.join("code/repo.md")).expect("read page");
+        let frontmatter = parse_yaml_frontmatter(&markdown);
+        assert_eq!(
+            frontmatter.get("type").and_then(serde_yaml::Value::as_str),
+            Some("repo"),
+            "{} type",
+            case.name
+        );
+        assert_eq!(
+            frontmatter
+                .get("ai_route")
+                .and_then(serde_yaml::Value::as_str),
+            Some(case.route),
+            "{} route",
+            case.name
+        );
+        assert_eq!(
+            frontmatter
+                .get("ai_fallback")
+                .and_then(serde_yaml::Value::as_bool),
+            Some(case.fallback),
+            "{} fallback",
+            case.name
+        );
+        assert_eq!(
+            frontmatter
+                .get("ai_generation_status")
+                .and_then(serde_yaml::Value::as_str),
+            Some(case.status),
+            "{} status",
+            case.name
+        );
+        match case.note {
+            Some(note) => assert!(markdown.contains(note), "{} note missing", case.name),
+            None => assert!(
+                !markdown.contains("codewiki-ai-notice:start"),
+                "{} unexpected AI body note",
+                case.name
+            ),
+        }
+
+        let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
+        let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
+        let doc_meta = &meta["docs"]["code/repo.md"];
+        assert_eq!(doc_meta["ai_route"], case.route, "{} meta route", case.name);
+        assert_eq!(
+            doc_meta["ai_fallback"], case.fallback,
+            "{} meta fallback",
+            case.name
+        );
+        assert_eq!(
+            doc_meta["ai_generation_status"], case.status,
+            "{} meta status",
+            case.name
+        );
+    }
+}
+
+#[test]
+fn ai_frontmatter_schema_is_present_on_representative_page_kinds() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    std::fs::create_dir_all(project.path().join("src/nested")).expect("source dirs");
+    std::fs::write(project.path().join("src/lib.rs"), "pub struct Client;\n").expect("write lib");
+    std::fs::write(
+        project.path().join("src/nested/api.rs"),
+        "pub fn serve() {}\n",
+    )
+    .expect("write api");
+    let out_dir = project.path().join("codewiki");
+    let mut progress = CodewikiProgress::silent();
+    let docs = generate_hierarchical_docs_with_progress(
+        &depth_probe_input(),
+        None,
+        AiDepth::Files,
+        &mut progress,
+    );
+
+    let mut sink = DocSink::open(project.path(), &out_dir, "files")
+        .expect("sink opens")
+        .with_ai_outcome(CodewikiAiOutcome::generated(AiRouting::Daemon, false));
+    for doc in &docs {
+        sink.persist(doc).expect("doc persists");
+    }
+    sink.finish(None).expect("sink finishes");
+
+    for (path, expected_type) in [
+        ("code/repo.md", "code_repo"),
+        ("code/modules/src.md", "code_module"),
+        ("code/files/src/lib.rs.md", "code_file"),
+        ("code/_architecture.md", "code_architecture"),
+        ("code/_onboarding.md", "code_onboarding"),
+    ] {
+        let markdown = std::fs::read_to_string(out_dir.join(path)).expect("read page");
+        let frontmatter = parse_yaml_frontmatter(&markdown);
+        assert_eq!(
+            frontmatter.get("type").and_then(serde_yaml::Value::as_str),
+            Some(expected_type),
+            "{path} type"
+        );
+        assert_eq!(
+            frontmatter
+                .get("ai_route")
+                .and_then(serde_yaml::Value::as_str),
+            Some("daemon"),
+            "{path} route"
+        );
+        assert_eq!(
+            frontmatter
+                .get("ai_fallback")
+                .and_then(serde_yaml::Value::as_bool),
+            Some(false),
+            "{path} fallback"
+        );
+        assert_eq!(
+            frontmatter
+                .get("ai_generation_status")
+                .and_then(serde_yaml::Value::as_str),
+            Some("generated"),
+            "{path} status"
+        );
+    }
+}
+
+fn parse_yaml_frontmatter(markdown: &str) -> serde_yaml::Value {
+    let yaml = markdown
+        .strip_prefix("---\n")
+        .and_then(|body| body.split_once("\n---\n"))
+        .map(|(yaml, _)| yaml)
+        .expect("frontmatter block");
+    serde_yaml::from_str(yaml).expect("parse frontmatter")
 }

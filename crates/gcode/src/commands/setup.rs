@@ -575,11 +575,15 @@ mod tests {
             let home = tempfile::tempdir().expect("temp home");
             unsafe { std::env::set_var("GOBBY_HOME", home.path()) };
             let request = StandaloneSetupRequest::new(true, Some(database_url.clone()), None);
+            let mut client =
+                gobby_core::postgres::connect_readwrite(&database_url).expect("connect test db");
+            let forbidden_before: bool = client
+                .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
+                .expect("check config_store before setup")
+                .get(0);
 
             run(request, Format::Json, true).expect("standalone setup runs");
 
-            let mut client =
-                gobby_core::postgres::connect_readwrite(&database_url).expect("connect test db");
             let exists: bool = client
                 .query_one("SELECT to_regclass('public.code_symbols') IS NOT NULL", &[])
                 .expect("check code_symbols")
@@ -590,21 +594,9 @@ mod tests {
                 .query_one("SELECT to_regclass('public.config_store') IS NOT NULL", &[])
                 .expect("check config_store")
                 .get(0);
-            assert!(!forbidden_exists);
+            assert_eq!(forbidden_exists, forbidden_before);
             assert!(home.path().join("gcore.yaml").exists());
 
-            client
-                .batch_execute(
-                    "DROP INDEX IF EXISTS public.code_symbols_search_bm25;
-                     DROP INDEX IF EXISTS public.code_content_search_bm25;
-                     DROP TABLE IF EXISTS public.code_calls;
-                     DROP TABLE IF EXISTS public.code_imports;
-                     DROP TABLE IF EXISTS public.code_content_chunks;
-                     DROP TABLE IF EXISTS public.code_symbols;
-                     DROP TABLE IF EXISTS public.code_indexed_files;
-                     DROP TABLE IF EXISTS public.code_indexed_projects;",
-                )
-                .expect("drop code-index test objects");
             unsafe { std::env::remove_var("GOBBY_HOME") };
         }
     }

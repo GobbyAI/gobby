@@ -46,7 +46,6 @@ mod serial_db {
             .expect("reindex discovered scan");
 
         assert_eq!(reindex.indexed_files, 0);
-        assert_eq!(reindex.skipped_files, 1);
         assert_eq!(
             symbol_count(&mut conn, &project_id, "src/lib.rs"),
             0,

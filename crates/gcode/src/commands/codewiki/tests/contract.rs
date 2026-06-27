@@ -33,6 +33,7 @@ fn generates_hierarchical_docs() {
 
     assert!(repo.contains("[[code/modules/src\\|src]]"));
     assert!(repo.contains("Repository Overview"));
+    assert!(!repo.contains("## Module Dependencies"));
     assert!(module.contains("[[code/files/src/lib.rs\\|src/lib.rs]]"));
     assert!(file.contains("## Overview"));
     assert!(file.contains("## Reference"));

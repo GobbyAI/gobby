@@ -17,6 +17,9 @@ pub const PROVENANCE_RANGES_KEY: &str = "ranges";
 pub const GENERATED_BY_KEY: &str = "generated_by";
 pub const TRUST_KEY: &str = "trust";
 pub const FRESHNESS_KEY: &str = "freshness";
+pub const AI_ROUTE_KEY: &str = "ai_route";
+pub const AI_FALLBACK_KEY: &str = "ai_fallback";
+pub const AI_GENERATION_STATUS_KEY: &str = "ai_generation_status";
 pub const DEGRADED_KEY: &str = "degraded";
 pub const DEGRADED_SOURCES_KEY: &str = "degraded_sources";
 /// Count of provenance files omitted by the per-page cap. Emitted only when
@@ -46,6 +49,9 @@ provenance:
 generated_by: gcode-codewiki
 trust: generated
 freshness: indexed
+ai_route: off
+ai_fallback: false
+ai_generation_status: skipped
 degraded: true
 degraded_sources:
 - model_provider_unavailable
@@ -71,6 +77,9 @@ mod tests {
             GENERATED_BY_KEY,
             TRUST_KEY,
             FRESHNESS_KEY,
+            AI_ROUTE_KEY,
+            AI_FALLBACK_KEY,
+            AI_GENERATION_STATUS_KEY,
             DEGRADED_KEY,
             DEGRADED_SOURCES_KEY,
         ] {

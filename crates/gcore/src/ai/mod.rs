@@ -29,21 +29,49 @@ const MAX_RETRIES: usize = 2;
 const BASE_BACKOFF: Duration = Duration::from_millis(250);
 const MAX_BACKOFF: Duration = Duration::from_secs(30);
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ObservedAiRoute {
+    pub route: AiRouting,
+    pub fallback: bool,
+    pub reason: Option<AiNoticeKind>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum AiNoticeKind {
+    AutoFallbackToDirect,
+    AutoFallbackToOff,
+    NoGenerator,
+    GenerationFailed,
+}
+
 pub fn effective_route(context: &AiContext, capability: AiCapability) -> AiRouting {
-    effective_route_with_probe(context, capability, |capability| {
+    resolve_route_observed(context, capability).route
+}
+
+pub fn resolve_route_observed(context: &AiContext, capability: AiCapability) -> ObservedAiRoute {
+    resolve_route_observed_with_probe(context, capability, |capability| {
         probe::probe_daemon_capability(capability).available
     })
 }
 
+#[cfg(test)]
 fn effective_route_with_probe(
     context: &AiContext,
     capability: AiCapability,
     mut daemon_available: impl FnMut(AiCapability) -> bool,
 ) -> AiRouting {
+    resolve_route_observed_with_probe(context, capability, &mut daemon_available).route
+}
+
+pub fn resolve_route_observed_with_probe(
+    context: &AiContext,
+    capability: AiCapability,
+    mut daemon_available: impl FnMut(AiCapability) -> bool,
+) -> ObservedAiRoute {
     match context.binding(capability).routing {
-        AiRouting::Off => AiRouting::Off,
-        AiRouting::Direct => AiRouting::Direct,
-        AiRouting::Daemon => AiRouting::Daemon,
+        AiRouting::Off => observed(AiRouting::Off, false, None),
+        AiRouting::Direct => observed(AiRouting::Direct, false, None),
+        AiRouting::Daemon => observed(AiRouting::Daemon, false, None),
         AiRouting::Auto => daemon_route_or_fallback(context, capability, &mut daemon_available),
     }
 }
@@ -52,13 +80,21 @@ fn daemon_route_or_fallback(
     context: &AiContext,
     capability: AiCapability,
     daemon_available: &mut impl FnMut(AiCapability) -> bool,
-) -> AiRouting {
+) -> ObservedAiRoute {
     // Auto is fail-safe: use daemon only when its status route advertises the
     // capability, then fall back to a configured direct route or Off.
     if daemon_available(capability) {
-        AiRouting::Daemon
+        observed(AiRouting::Daemon, false, None)
     } else {
-        direct_route_or_off(context, capability)
+        match direct_route_or_off(context, capability) {
+            AiRouting::Direct => observed(
+                AiRouting::Direct,
+                true,
+                Some(AiNoticeKind::AutoFallbackToDirect),
+            ),
+            AiRouting::Off => observed(AiRouting::Off, true, Some(AiNoticeKind::AutoFallbackToOff)),
+            route => observed(route, true, None),
+        }
     }
 }
 
@@ -73,6 +109,14 @@ fn direct_route_or_off(context: &AiContext, capability: AiCapability) -> AiRouti
         AiRouting::Direct
     } else {
         AiRouting::Off
+    }
+}
+
+fn observed(route: AiRouting, fallback: bool, reason: Option<AiNoticeKind>) -> ObservedAiRoute {
+    ObservedAiRoute {
+        route,
+        fallback,
+        reason,
     }
 }
 
@@ -509,6 +553,52 @@ mod tests {
     }
 
     #[test]
+    fn observed_route_reports_auto_fallback_reasons() {
+        use crate::config::{AiRouting, AiTuning};
+
+        let context = AiContext {
+            bindings: crate::ai_context::AiBindings {
+                embed: binding(AiRouting::Auto, None),
+                audio_transcribe: binding(AiRouting::Auto, Some("http://direct.test")),
+                audio_translate: binding(AiRouting::Auto, Some("http://direct.test")),
+                vision_extract: binding(AiRouting::Auto, None),
+                text_generate: binding(AiRouting::Auto, Some("http://direct.test")),
+            },
+            tuning: AiTuning {
+                max_concurrency: 1,
+                keep_alive: None,
+            },
+            limiter: crate::ai_context::AiLimiter::new(1),
+            project_id: None,
+        };
+
+        assert_eq!(
+            resolve_route_observed_with_probe(&context, AiCapability::TextGenerate, |_| true),
+            ObservedAiRoute {
+                route: AiRouting::Daemon,
+                fallback: false,
+                reason: None,
+            }
+        );
+        assert_eq!(
+            resolve_route_observed_with_probe(&context, AiCapability::TextGenerate, |_| false),
+            ObservedAiRoute {
+                route: AiRouting::Direct,
+                fallback: true,
+                reason: Some(AiNoticeKind::AutoFallbackToDirect),
+            }
+        );
+        assert_eq!(
+            resolve_route_observed_with_probe(&context, AiCapability::VisionExtract, |_| false),
+            ObservedAiRoute {
+                route: AiRouting::Off,
+                fallback: true,
+                reason: Some(AiNoticeKind::AutoFallbackToOff),
+            }
+        );
+    }
+
+    #[test]
     fn effective_route_explicit_routing_modes_are_forced() {
         use crate::config::{AiRouting, AiTuning};
 
@@ -543,6 +633,22 @@ mod tests {
         assert_eq!(
             effective_route_with_probe(&context, AiCapability::Embed, |_| true),
             AiRouting::Daemon
+        );
+        assert_eq!(
+            resolve_route_observed_with_probe(&context, AiCapability::TextGenerate, |_| false),
+            ObservedAiRoute {
+                route: AiRouting::Direct,
+                fallback: false,
+                reason: None,
+            }
+        );
+        assert_eq!(
+            resolve_route_observed_with_probe(&context, AiCapability::AudioTranscribe, |_| false),
+            ObservedAiRoute {
+                route: AiRouting::Daemon,
+                fallback: false,
+                reason: None,
+            }
         );
     }
 

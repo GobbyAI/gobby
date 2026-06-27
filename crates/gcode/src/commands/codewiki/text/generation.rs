@@ -5,14 +5,16 @@ use gobby_core::ai::generation::{
     resolve_direct_generation_target,
 };
 use gobby_core::ai::{
-    daemon::generate_via_daemon_with_max_tokens, effective_route, text::generate_text,
+    AiNoticeKind, daemon::generate_via_daemon_with_max_tokens, effective_route,
+    resolve_route_observed, text::generate_text,
 };
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
 use gobby_core::ai_types::AiError;
 use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::commands::codewiki::{
-    CodewikiAiOptions, DEFAULT_VERIFY_PROFILE, PromptTier, TextGenerator, TextVerifier, prompts,
+    CodewikiAiOptions, CodewikiAiOutcome, DEFAULT_VERIFY_PROFILE, PromptTier, TextGenerator,
+    TextVerifier, prompts,
 };
 use crate::config::{self, Context};
 use crate::{db, secrets};
@@ -21,14 +23,66 @@ use crate::{db, secrets};
 pub(super) const GENERATION_RETRY_BACKOFF: [Duration; 2] =
     [Duration::from_millis(200), Duration::from_millis(500)];
 
+pub(crate) struct ResolvedTextGenerator {
+    pub(crate) generator: Option<Box<TextGenerator<'static>>>,
+    pub(crate) ai_route: AiRouting,
+    pub(crate) ai_fallback: bool,
+    pub(crate) no_generator_reason: Option<AiNoticeKind>,
+}
+
+impl ResolvedTextGenerator {
+    fn skipped(
+        ai_route: AiRouting,
+        ai_fallback: bool,
+        no_generator_reason: Option<AiNoticeKind>,
+    ) -> Self {
+        Self {
+            generator: None,
+            ai_route,
+            ai_fallback,
+            no_generator_reason,
+        }
+    }
+
+    pub(crate) fn ai_outcome(&self) -> CodewikiAiOutcome {
+        if self.generator.is_some() {
+            CodewikiAiOutcome::generated(self.ai_route, self.ai_fallback)
+        } else {
+            CodewikiAiOutcome::skipped(self.ai_route, self.ai_fallback)
+        }
+    }
+
+    pub(crate) fn notice_kind(&self) -> Option<AiNoticeKind> {
+        self.no_generator_reason.or_else(|| {
+            (self.ai_fallback && self.ai_route == AiRouting::Direct)
+                .then_some(AiNoticeKind::AutoFallbackToDirect)
+        })
+    }
+}
+
 pub(crate) fn resolve_text_generator(
     ctx: &Context,
     ai: &CodewikiAiOptions,
-) -> Option<Box<TextGenerator<'static>>> {
-    let ai_context = resolve_ai_context(ctx, ai.routing).ok()?;
-    let route = effective_route(&ai_context, AiCapability::TextGenerate);
+) -> ResolvedTextGenerator {
+    let ai_context = match resolve_ai_context(ctx, ai.routing) {
+        Ok(ai_context) => ai_context,
+        Err(_) => {
+            let requested = ai.routing.unwrap_or(AiRouting::Auto);
+            let (route, fallback) = match requested {
+                AiRouting::Auto => (AiRouting::Off, true),
+                route => (route, false),
+            };
+            return ResolvedTextGenerator::skipped(
+                route,
+                fallback,
+                Some(AiNoticeKind::NoGenerator),
+            );
+        }
+    };
+    let observed = resolve_route_observed(&ai_context, AiCapability::TextGenerate);
+    let route = observed.route;
     if matches!(route, AiRouting::Off | AiRouting::Auto) {
-        return None;
+        return ResolvedTextGenerator::skipped(route, observed.fallback, observed.reason);
     }
 
     // Aggregate prose (curated narrative/concepts, repo/architecture/modules) is
@@ -42,11 +96,21 @@ pub(crate) fn resolve_text_generator(
     let aggregate_profile = ai.aggregate_profile.clone();
     let direct_targets = matches!(route, AiRouting::Direct)
         .then(|| resolve_direct_tier_targets(ctx, aggregate_profile.as_deref()));
+    if direct_targets
+        .as_ref()
+        .is_some_and(|targets| !targets.has_usable_target())
+    {
+        return ResolvedTextGenerator::skipped(
+            route,
+            observed.fallback,
+            Some(AiNoticeKind::NoGenerator),
+        );
+    }
     let max_tokens = ai.prose_depth.max_tokens();
     let register = ai.register;
     let mut warned = false;
     let quiet = ctx.quiet;
-    Some(Box::new(move |prompt, system, tier| {
+    let generator: Box<TextGenerator<'static>> = Box::new(move |prompt, system, tier| {
         let gen_tier = generation_tier(tier);
         let target = direct_targets
             .as_ref()
@@ -77,7 +141,13 @@ pub(crate) fn resolve_text_generator(
                 None
             }
         }
-    }))
+    });
+    ResolvedTextGenerator {
+        generator: Some(generator),
+        ai_route: route,
+        ai_fallback: observed.fallback,
+        no_generator_reason: None,
+    }
 }
 
 /// Maps the codewiki prompt tier onto the shared, provider-neutral generation
@@ -106,6 +176,12 @@ impl DirectTierTargets {
             GenerationTier::Module => &self.module,
             GenerationTier::Standard => &self.standard,
         }
+    }
+
+    fn has_usable_target(&self) -> bool {
+        self.aggregate.api_base().is_some()
+            || self.module.api_base().is_some()
+            || self.standard.api_base().is_some()
     }
 }
 
@@ -400,6 +476,38 @@ mod tests {
         assert_eq!(
             profile_for_tier(generation_tier(PromptTier::Standard), None),
             FEATURE_LOW
+        );
+    }
+
+    #[test]
+    fn resolved_text_generator_classifies_notice_kinds() {
+        let no_generator = ResolvedTextGenerator::skipped(
+            AiRouting::Direct,
+            false,
+            Some(AiNoticeKind::NoGenerator),
+        );
+
+        assert_eq!(no_generator.notice_kind(), Some(AiNoticeKind::NoGenerator));
+        assert_eq!(no_generator.ai_outcome().route, AiRouting::Direct);
+        assert_eq!(
+            no_generator.ai_outcome().status,
+            crate::commands::codewiki::AiGenerationStatus::Skipped
+        );
+
+        let fallback_direct = ResolvedTextGenerator {
+            generator: Some(Box::new(|_, _, _| Some("generated".to_string()))),
+            ai_route: AiRouting::Direct,
+            ai_fallback: true,
+            no_generator_reason: None,
+        };
+
+        assert_eq!(
+            fallback_direct.notice_kind(),
+            Some(AiNoticeKind::AutoFallbackToDirect)
+        );
+        assert_eq!(
+            fallback_direct.ai_outcome().status,
+            crate::commands::codewiki::AiGenerationStatus::Generated
         );
     }
 }

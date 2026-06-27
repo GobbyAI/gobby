@@ -447,6 +447,77 @@ fn normalize_verify_note_reason(reason: &str) -> String {
     truncated
 }
 
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) enum AiGenerationStatus {
+    Generated,
+    Degraded,
+    Skipped,
+}
+
+impl AiGenerationStatus {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Generated => "generated",
+            Self::Degraded => "degraded",
+            Self::Skipped => "skipped",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+pub(crate) struct CodewikiAiOutcome {
+    pub(crate) route: AiRouting,
+    pub(crate) fallback: bool,
+    pub(crate) status: AiGenerationStatus,
+}
+
+impl CodewikiAiOutcome {
+    pub(crate) fn skipped(route: AiRouting, fallback: bool) -> Self {
+        Self {
+            route,
+            fallback,
+            status: AiGenerationStatus::Skipped,
+        }
+    }
+
+    pub(crate) fn generated(route: AiRouting, fallback: bool) -> Self {
+        Self {
+            route,
+            fallback,
+            status: AiGenerationStatus::Generated,
+        }
+    }
+
+    pub(crate) fn for_doc(self, degraded: bool) -> Self {
+        if degraded {
+            Self {
+                status: AiGenerationStatus::Degraded,
+                ..self
+            }
+        } else {
+            self
+        }
+    }
+
+    pub(crate) fn route_label(self) -> &'static str {
+        ai_route_label(self.route)
+    }
+}
+
+impl Default for CodewikiAiOutcome {
+    fn default() -> Self {
+        Self::skipped(AiRouting::Off, false)
+    }
+}
+
+pub(crate) fn ai_route_label(route: AiRouting) -> &'static str {
+    match route {
+        AiRouting::Daemon => "daemon",
+        AiRouting::Direct => "direct",
+        AiRouting::Auto | AiRouting::Off => "off",
+    }
+}
+
 #[derive(Debug, Clone, Serialize)]
 pub struct CodewikiRunSummary {
     pub command: &'static str,
@@ -494,6 +565,12 @@ pub(crate) struct CodewikiDocMeta {
     /// per-doc modes existed inherit the run-level `ai_mode` at read time.
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub(crate) ai_mode: String,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) ai_route: String,
+    #[serde(default)]
+    pub(crate) ai_fallback: bool,
+    #[serde(default, skip_serializing_if = "String::is_empty")]
+    pub(crate) ai_generation_status: String,
     /// Render-template version for deterministic markdown emitted after model
     /// generation. Missing versions force a one-time rewrite on upgrade.
     #[serde(default)]

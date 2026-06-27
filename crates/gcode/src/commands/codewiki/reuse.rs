@@ -2,7 +2,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use super::io::{read_codewiki_meta, safe_doc_path};
-use super::{BuiltDoc, CODEWIKI_RENDER_VERSION, CodewikiDocMeta, SourceSpan};
+use super::{BuiltDoc, CODEWIKI_RENDER_VERSION, CodewikiAiOutcome, CodewikiDocMeta, SourceSpan};
 use crate::index::hasher;
 
 /// Decides whether a doc's previous content can be reused without any LLM
@@ -12,6 +12,7 @@ pub(crate) struct ReusePlan {
     project_root: PathBuf,
     out_dir: PathBuf,
     ai_mode: String,
+    ai_outcome: CodewikiAiOutcome,
     docs: BTreeMap<String, CodewikiDocMeta>,
     /// Lazy current-content hashes; `None` records an unhashable file so a
     /// missing source is probed once and never reused.
@@ -31,16 +32,43 @@ pub(crate) struct ReusePlan {
 impl ReusePlan {
     #[cfg(test)]
     pub(crate) fn load(project_root: &Path, out_dir: &Path, ai_mode: &str) -> anyhow::Result<Self> {
-        Self::load_with_since(project_root, out_dir, ai_mode, None)
+        Self::load_with_ai_outcome(project_root, out_dir, ai_mode, CodewikiAiOutcome::default())
+    }
+
+    #[cfg(test)]
+    pub(crate) fn load_with_ai_outcome(
+        project_root: &Path,
+        out_dir: &Path,
+        ai_mode: &str,
+        ai_outcome: CodewikiAiOutcome,
+    ) -> anyhow::Result<Self> {
+        Self::load_with_since_and_ai_outcome(project_root, out_dir, ai_mode, None, ai_outcome)
     }
 
     /// Like [`ReusePlan::load`] but scoping the change set to the files git
     /// reports changed since a ref. `None` is the full-scan default (Leaf H).
+    #[cfg(test)]
     pub(crate) fn load_with_since(
         project_root: &Path,
         out_dir: &Path,
         ai_mode: &str,
         since: Option<BTreeSet<String>>,
+    ) -> anyhow::Result<Self> {
+        Self::load_with_since_and_ai_outcome(
+            project_root,
+            out_dir,
+            ai_mode,
+            since,
+            CodewikiAiOutcome::default(),
+        )
+    }
+
+    pub(crate) fn load_with_since_and_ai_outcome(
+        project_root: &Path,
+        out_dir: &Path,
+        ai_mode: &str,
+        since: Option<BTreeSet<String>>,
+        ai_outcome: CodewikiAiOutcome,
     ) -> anyhow::Result<Self> {
         let previous = read_codewiki_meta(out_dir)?;
         let mut recorded_hashes = BTreeMap::new();
@@ -53,6 +81,7 @@ impl ReusePlan {
             project_root: project_root.to_path_buf(),
             out_dir: out_dir.to_path_buf(),
             ai_mode: ai_mode.to_string(),
+            ai_outcome,
             docs: previous.docs,
             current_hashes: BTreeMap::new(),
             since,
@@ -88,6 +117,7 @@ impl ReusePlan {
         let entry = self.docs.get(doc_path)?;
         if entry.degraded
             || entry.ai_mode != self.ai_mode
+            || !entry_matches_ai_outcome(entry, self.ai_outcome)
             || entry.render_version != CODEWIKI_RENDER_VERSION
             || entry.invalidation_key.as_deref() != Some(invalidation_key)
         {
@@ -194,6 +224,7 @@ impl ReusePlan {
         // hashes cannot see (#677).
         if entry.degraded
             || entry.ai_mode != self.ai_mode
+            || !entry_matches_ai_outcome(entry, self.ai_outcome)
             || entry.render_version != CODEWIKI_RENDER_VERSION
             || entry.source_hashes.is_empty()
         {
@@ -258,4 +289,10 @@ pub(crate) fn span_files(spans: &[SourceSpan]) -> BTreeSet<String> {
 /// size and same keys — so an added or dropped file fails the match.
 fn set_matches(recorded: &BTreeMap<String, String>, current: &BTreeSet<String>) -> bool {
     recorded.len() == current.len() && recorded.keys().all(|file| current.contains(file))
+}
+
+fn entry_matches_ai_outcome(entry: &CodewikiDocMeta, ai_outcome: CodewikiAiOutcome) -> bool {
+    entry.ai_route == ai_outcome.route_label()
+        && entry.ai_fallback == ai_outcome.fallback
+        && entry.ai_generation_status == ai_outcome.status.as_str()
 }
