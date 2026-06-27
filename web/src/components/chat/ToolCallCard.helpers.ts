@@ -292,7 +292,7 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
         tool_calls: calls,
         hasErrors: calls.some((entry) => entry.status === 'error'),
         allCompleted: calls.every((entry) => entry.status === 'completed'),
-        hasInFlight: calls.some((entry) => entry.status === 'calling'),
+      hasInFlight: calls.some((entry) => entry.status === 'calling' || entry.status === 'pending'),
       })
     } else {
       for (let k = i; k < j; k++) {
@@ -307,13 +307,27 @@ export function groupToolCalls(toolCalls: ToolCall[]): ToolCallSegment[] {
 }
 
 export function hasVisibleToolCall(call: ToolCall): boolean {
-  if (call.status === 'calling' || call.status === 'pending_approval' || call.status === 'error') {
+  if (
+    call.status === 'calling' ||
+    call.status === 'pending' ||
+    call.status === 'pending_approval' ||
+    call.status === 'error'
+  ) {
     return true
   }
   if (call.tool_name === 'AskUserQuestion') {
     return true
   }
   if (call.arguments && Object.keys(call.arguments).length > 0) {
+    return true
+  }
+  if (call.content_blocks && call.content_blocks.length > 0) {
+    return true
+  }
+  if (call.locations && call.locations.length > 0) {
+    return true
+  }
+  if (call.raw_output != null) {
     return true
   }
   return call.result != null

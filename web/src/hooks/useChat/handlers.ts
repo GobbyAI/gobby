@@ -88,6 +88,7 @@ const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
 
   setMessages((prev) => {
     const existingIndex = prev.findIndex((m) => m.id === chunk.message_id);
+    const incomingBlocks = chunk.content_blocks || [];
 
     if (existingIndex >= 0) {
       const updated = [...prev];
@@ -105,6 +106,9 @@ const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
           blocks.push({ type: "text", content: chunk.content });
         }
       }
+      if (incomingBlocks.length > 0) {
+        blocks.push(...incomingBlocks);
+      }
       updated[existingIndex] = {
         ...existing,
         content: existing.content + chunk.content,
@@ -119,9 +123,12 @@ const handleChatStream = useCallback((chunk: ChatStreamChunk) => {
           role: "assistant" as const,
           content: chunk.content,
           timestamp: new Date(),
-          contentBlocks: chunk.content
-            ? [{ type: "text" as const, content: chunk.content }]
-            : [],
+          contentBlocks: [
+            ...(chunk.content
+              ? [{ type: "text" as const, content: chunk.content }]
+              : []),
+            ...incomingBlocks,
+          ],
         },
       ];
     }
@@ -235,6 +242,10 @@ const handleToolStatus = useCallback((status: ToolStatusMessage) => {
         arguments: status.arguments,
         result,
         error: status.error,
+        tool_kind: status.tool_kind,
+        locations: status.locations,
+        content_blocks: status.content_blocks,
+        raw_output: status.raw_output,
       };
       return [
         ...prev,
@@ -264,8 +275,15 @@ const handleToolStatus = useCallback((status: ToolStatusMessage) => {
       callRef = {
         ...existing,
         status: status.status,
-        result,
-        error: status.error,
+        arguments: status.arguments ?? existing.arguments,
+        result: result ?? existing.result,
+        error: status.error ?? existing.error,
+        tool_kind: status.tool_kind ?? existing.tool_kind,
+        locations: status.locations ?? existing.locations,
+        content_blocks: status.content_blocks
+          ? [...(existing.content_blocks || []), ...status.content_blocks]
+          : existing.content_blocks,
+        raw_output: status.raw_output ?? existing.raw_output,
       };
       toolCalls[existingIdx] = callRef;
     } else {
@@ -279,6 +297,10 @@ const handleToolStatus = useCallback((status: ToolStatusMessage) => {
         arguments: status.arguments,
         result,
         error: status.error,
+        tool_kind: status.tool_kind,
+        locations: status.locations,
+        content_blocks: status.content_blocks,
+        raw_output: status.raw_output,
       };
       toolCalls.push(callRef);
     }

@@ -6,6 +6,14 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import Any
 
+from gobby.adapters.acp_content import (
+    extract_text as _extract_content_text,
+)
+from gobby.adapters.acp_content import (
+    normalize_acp_content_blocks,
+    normalize_tool_call_update,
+)
+
 
 @dataclass
 class StreamEvent:
@@ -64,12 +72,14 @@ def normalize_notification(
         text = text_extractor(content)
 
         if update_type == "agent_message_chunk":
+            content_blocks = normalize_acp_content_blocks(content, include_text=False)
             return StreamEvent(
                 event_type="content_delta",
                 data={
                     "content": text,
                     "role": "assistant",
                     "message_id": update.get("messageId"),
+                    "content_blocks": content_blocks,
                 },
             )
 
@@ -113,20 +123,35 @@ def normalize_notification(
             return StreamEvent(event_type="available_commands_update", data=dict(update))
 
         if update_type == "tool_call":
-            tool_input = {}
-            for input_key in ("rawInput", "input"):
-                if input_key in update:
-                    value = update[input_key]
-                    tool_input = value if isinstance(value, dict) else {}
-                    break
             return StreamEvent(
                 event_type="tool_call",
-                data={
-                    "call_id": update.get("toolCallId"),
-                    "tool_name": update.get("title") or update.get("name"),
-                    "tool_input": tool_input,
-                },
+                data=normalize_tool_call_update(update),
             )
+
+        if update_type == "tool_call_update":
+            data = normalize_tool_call_update(update)
+            if data.get("tool_status") in {"completed", "error"}:
+                raw_output = data.get("raw_output")
+                result = None
+                if raw_output is not None:
+                    result = {
+                        "kind": "json",
+                        "content": raw_output,
+                        "truncated": False,
+                    }
+                return StreamEvent(
+                    event_type="tool_result",
+                    data={
+                        **data,
+                        "success": data.get("tool_status") != "error",
+                        "result": result,
+                        "error": _tool_error(raw_output)
+                        if data.get("tool_status") == "error"
+                        else None,
+                    },
+                )
+            data["is_update"] = True
+            return StreamEvent(event_type="tool_call", data=data)
 
         return StreamEvent(event_type=update_type or method, data=update)
 
@@ -150,20 +175,14 @@ def normalize_notification(
 
 def extract_text(content: Any) -> str:
     """Extract text from ACP content payloads."""
-    if isinstance(content, str):
-        return content
+    return _extract_content_text(content)
 
-    if isinstance(content, dict):
-        if content.get("type") == "text":
-            return str(content.get("text", ""))
-        if "text" in content:
-            return str(content.get("text", ""))
-        if "content" in content:
-            return str(content.get("content", ""))
-        return ""
 
-    if isinstance(content, list):
-        parts = [extract_text(item) for item in content]
-        return "".join(part for part in parts if part)
-
-    return ""
+def _tool_error(raw_output: Any) -> str | None:
+    if not isinstance(raw_output, dict):
+        return None
+    for key in ("error", "message"):
+        value = raw_output.get(key)
+        if isinstance(value, str) and value:
+            return value
+    return None

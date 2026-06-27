@@ -266,6 +266,60 @@ def test_normalize_notification_maps_session_update_variants() -> None:
             },
         }
     )
+    rich_chunk = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "agent_message_chunk",
+                    "content": [
+                        {"type": "text", "text": "See "},
+                        {
+                            "type": "resource_link",
+                            "uri": "file:///src/app.py",
+                            "name": "src/app.py",
+                        },
+                    ],
+                },
+            },
+        }
+    )
+    tool_call = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "tool_call",
+                    "toolCallId": "tool-1",
+                    "title": "Edit",
+                    "kind": "edit",
+                    "status": "pending",
+                    "rawInput": {"path": "src/app.py"},
+                },
+            },
+        }
+    )
+    tool_update = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "tool-1",
+                    "status": "completed",
+                    "content": [
+                        {
+                            "type": "diff",
+                            "path": "src/app.py",
+                            "oldText": "old",
+                            "newText": "new",
+                        }
+                    ],
+                    "rawOutput": {"stdout": "ok"},
+                },
+            },
+        }
+    )
     unknown = _StubACPClient._normalize_notification(
         {
             "method": "session/update",
@@ -284,7 +338,42 @@ def test_normalize_notification_maps_session_update_variants() -> None:
     assert usage.data["cost"]["amount"] == 0.01
     assert available_commands.event_type == "available_commands_update"
     assert available_commands.data["commands"][0]["name"] == "research"
+    assert rich_chunk.event_type == "content_delta"
+    assert rich_chunk.data["content"] == "See "
+    assert rich_chunk.data["content_blocks"] == [
+        {
+            "type": "resource_link",
+            "uri": "file:///src/app.py",
+            "name": "src/app.py",
+        }
+    ]
+    assert tool_call.event_type == "tool_call"
+    assert tool_call.data["tool_status"] == "pending"
+    assert tool_call.data["tool_kind"] == "edit"
+    assert tool_update.event_type == "tool_result"
+    assert tool_update.data["success"] is True
+    assert tool_update.data["raw_output"] == {"stdout": "ok"}
+    assert tool_update.data["content_blocks"][0]["type"] == "diff"
     assert unknown.event_type == "future_update"
+
+
+@pytest.mark.asyncio
+async def test_send_accepts_structured_prompt_blocks() -> None:
+    process = _FakeProcess([{"jsonrpc": "2.0", "id": 1, "result": {"stats": {}}}])
+    client = _StubACPClient(cli_path="/usr/bin/stub-acp")
+    client._process = process
+    client._started = True
+    client._session_state.update_session_info({"sessionId": "sess-1"})
+
+    prompt = [
+        {"type": "text", "text": "hello"},
+        {"type": "resource_link", "uri": "file:///src/app.py", "name": "src/app.py"},
+    ]
+
+    events = [event async for event in client.send(prompt)]
+
+    assert events[-1].event_type == "result"
+    assert _written_messages(process)[0]["params"]["prompt"] == prompt
 
 
 @pytest.mark.asyncio

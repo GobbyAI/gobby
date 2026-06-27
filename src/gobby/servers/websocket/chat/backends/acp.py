@@ -132,6 +132,11 @@ class ACPWebChatBackend:
         """ACP session lifecycle capabilities advertised by this provider's agent."""
         return self._client.session_capabilities
 
+    @property
+    def agent_capabilities(self) -> dict[str, Any]:
+        """ACP agent capabilities advertised by this provider."""
+        return self._client.agent_capabilities
+
     async def list_sessions(
         self,
         *,
@@ -241,7 +246,7 @@ class ACPWebChatBackend:
     async def send_message(
         self,
         session: ACPManagedChatSession,
-        prompt: str,
+        prompt: str | list[dict[str, Any]],
     ) -> AsyncIterator[StreamEvent]:
         if not self._health.available:
             raise RuntimeError(

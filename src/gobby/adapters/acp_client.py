@@ -674,7 +674,7 @@ class ACPClient:
 
     async def send(
         self,
-        message: str,
+        message: str | list[dict[str, Any]],
         *,
         session_id: str | None = None,
         model: str | None = None,
@@ -720,12 +720,13 @@ class ACPClient:
             await self._io_lock.acquire()
             lock_acquired = True
             request_id = next(self._request_ids)
+            prompt = message if isinstance(message, list) else [{"type": "text", "text": message}]
             request: dict[str, Any] = {
                 "jsonrpc": "2.0",
                 "method": "session/prompt",
                 "params": {
                     "sessionId": target_session_id,
-                    "prompt": [{"type": "text", "text": message}],
+                    "prompt": prompt,
                 },
                 "id": request_id,
             }
@@ -737,7 +738,11 @@ class ACPClient:
             self._active_prompt_session_id = target_session_id
             self._active_prompt_request_id = request_id
             await self._write_json_rpc_message(request)
-            logger.debug("Sent prompt to %s ACP: %r", self.display_name, message[:80])
+            logger.debug(
+                "Sent prompt to %s ACP: %r",
+                self.display_name,
+                self._extract_text_content(prompt)[:80],
+            )
 
             async for event in self._read_stream(
                 expected_response_id=request_id,

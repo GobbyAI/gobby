@@ -18,6 +18,9 @@ class TextChunk:
     content: str
     """The text content."""
 
+    content_blocks: list[dict[str, Any]] | None = None
+    """Structured non-text content blocks carried with this chunk."""
+
 
 @dataclass
 class ToolCallEvent:
@@ -35,6 +38,21 @@ class ToolCallEvent:
     arguments: dict[str, Any]
     """Arguments passed to the tool."""
 
+    status: str | None = None
+    """Provider-reported tool call status."""
+
+    tool_kind: str | None = None
+    """Provider-reported tool kind."""
+
+    locations: list[dict[str, Any]] | None = None
+    """Provider-reported locations related to the tool call."""
+
+    content_blocks: list[dict[str, Any]] | None = None
+    """Structured tool content emitted with the call."""
+
+    raw_output: Any = None
+    """Raw provider output emitted before terminal completion."""
+
 
 @dataclass
 class ToolResultEvent:
@@ -51,6 +69,15 @@ class ToolResultEvent:
 
     error: str | None = None
     """Error message if failed."""
+
+    locations: list[dict[str, Any]] | None = None
+    """Provider-reported locations related to the tool result."""
+
+    content_blocks: list[dict[str, Any]] | None = None
+    """Structured tool content emitted with the result."""
+
+    raw_output: Any = None
+    """Raw provider output for the tool result."""
 
 
 @dataclass

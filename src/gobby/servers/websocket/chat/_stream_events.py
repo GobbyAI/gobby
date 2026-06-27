@@ -191,6 +191,7 @@ class ChatStreamEventHandler:
 
     async def _handle_text(self, event: TextChunk, session: Any) -> bool:
         content = event.content
+        content_blocks = event.content_blocks or []
         session_obj = self.owner._chat_sessions.get(self.conversation_id)
         if session_obj and getattr(session_obj, "_plan_approval_completed", False):
             session_obj._plan_approval_completed = False
@@ -209,8 +210,14 @@ class ChatStreamEventHandler:
             self.state.has_sent_text = True
         self.state.accumulated_text += content
         self.assistant_blocks.append_text(content)
+        self.assistant_blocks.append_blocks(content_blocks)
         if not await self.transport.safe_send(
-            self._msg(type="chat_stream", content=content, done=False)
+            self._msg(
+                type="chat_stream",
+                content=content,
+                content_blocks=content_blocks,
+                done=False,
+            )
         ):
             return False
 
@@ -258,15 +265,24 @@ class ChatStreamEventHandler:
             tool_name=event.tool_name,
             server_name=event.server_name,
             arguments=event.arguments,
+            status=event.status,
+            tool_kind=event.tool_kind,
+            locations=event.locations,
+            content_blocks=event.content_blocks,
+            raw_output=event.raw_output,
         )
         sent = await self.transport.safe_send(
             self._msg(
                 type="tool_status",
                 tool_call_id=event.tool_call_id,
-                status="calling",
+                status=event.status or "calling",
                 tool_name=event.tool_name,
                 server_name=event.server_name,
                 arguments=event.arguments,
+                tool_kind=event.tool_kind,
+                locations=event.locations,
+                content_blocks=event.content_blocks,
+                raw_output=event.raw_output,
             )
         )
 
@@ -305,6 +321,9 @@ class ChatStreamEventHandler:
             success=event.success,
             result=event.result,
             error=event.error,
+            locations=event.locations,
+            content_blocks=event.content_blocks,
+            raw_output=event.raw_output,
         )
         return await self.transport.safe_send(
             self._msg(
@@ -313,6 +332,9 @@ class ChatStreamEventHandler:
                 status="completed" if event.success else "error",
                 result=event.result,
                 error=event.error,
+                locations=event.locations,
+                content_blocks=event.content_blocks,
+                raw_output=event.raw_output,
             )
         )
 

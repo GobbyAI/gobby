@@ -182,6 +182,13 @@ describe("useChat streaming and event handling", () => {
         message_id: "msg-1",
         request_id: requestId,
         content: "",
+        content_blocks: [
+          {
+            type: "resource_link",
+            uri: "file:///src/app.py",
+            name: "src/app.py",
+          },
+        ],
         done: false,
       });
     });
@@ -197,6 +204,10 @@ describe("useChat streaming and event handling", () => {
         tool_name: "read_file",
         server_name: "gobby",
         arguments: { path: "/tmp/test" },
+        tool_kind: "read",
+        locations: [{ uri: "file:///tmp/test", line: 1 }],
+        content_blocks: [{ type: "terminal", terminal_id: "term-1" }],
+        raw_output: { progress: "starting" },
       });
     });
 
@@ -209,6 +220,48 @@ describe("useChat streaming and event handling", () => {
     expect(msg.toolCalls?.length).toBeGreaterThanOrEqual(1);
     expect(msg.toolCalls?.[0].tool_name).toBe("read_file");
     expect(msg.toolCalls?.[0].tool_type).toBe("read");
+    expect(msg.toolCalls?.[0].tool_kind).toBe("read");
+    expect(msg.toolCalls?.[0].locations).toEqual([{ uri: "file:///tmp/test", line: 1 }]);
+    expect(msg.toolCalls?.[0].content_blocks).toEqual([
+      { type: "terminal", terminal_id: "term-1" },
+    ]);
+    expect(msg.toolCalls?.[0].raw_output).toEqual({ progress: "starting" });
+    expect(msg.contentBlocks?.[0]).toEqual({
+      type: "resource_link",
+      uri: "file:///src/app.py",
+      name: "src/app.py",
+    });
+
+    act(() => {
+      ws.simulateMessage({
+        type: "tool_status",
+        message_id: "msg-1",
+        request_id: requestId,
+        tool_call_id: "tc-1",
+        status: "completed",
+        content_blocks: [
+          {
+            type: "diff",
+            path: "/tmp/test",
+            old_text: "old",
+            new_text: "new",
+          },
+        ],
+        raw_output: { stdout: "ok" },
+      });
+    });
+
+    const updated = result.current.messages.filter((m) => m.role === "assistant")[0];
+    expect(updated.toolCalls?.[0].content_blocks).toEqual([
+      { type: "terminal", terminal_id: "term-1" },
+      {
+        type: "diff",
+        path: "/tmp/test",
+        old_text: "old",
+        new_text: "new",
+      },
+    ]);
+    expect(updated.toolCalls?.[0].raw_output).toEqual({ stdout: "ok" });
   });
 
   it("stopStreaming stops streaming", async () => {

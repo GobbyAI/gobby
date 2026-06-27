@@ -19,6 +19,7 @@ from gobby.llm.claude_models import (
     SessionInfoUpdateEvent,
     SessionModeUpdateEvent,
     SessionUsageUpdateEvent,
+    TextChunk,
     ToolCallEvent,
     ToolResultEvent,
 )
@@ -71,7 +72,7 @@ def _make_handler(
     persistence: _FakePersistence | None = None,
 ) -> ChatStreamEventHandler:
     return ChatStreamEventHandler(
-        SimpleNamespace(),
+        SimpleNamespace(_chat_sessions={}),
         "conv-1",
         transport,
         persistence or _FakePersistence(),
@@ -170,6 +171,85 @@ async def test_session_update_events_emit_existing_websocket_frames() -> None:
             }
         ],
     }
+
+
+@pytest.mark.asyncio
+async def test_rich_content_blocks_flow_through_chat_stream() -> None:
+    transport = _FakeTransport()
+    blocks = AssistantContentBlocks()
+    handler = _make_handler(transport, blocks)
+    rich_block = {
+        "type": "resource_link",
+        "uri": "file:///src/app.py",
+        "name": "src/app.py",
+    }
+
+    await handler.handle_event(
+        TextChunk(content="", content_blocks=[rich_block]),
+        SimpleNamespace(),
+    )
+
+    assert transport.sent[-1]["type"] == "chat_stream"
+    assert transport.sent[-1]["content_blocks"] == [rich_block]
+    assert blocks.blocks == [rich_block]
+
+
+@pytest.mark.asyncio
+async def test_tool_status_preserves_acp_metadata_and_content_blocks() -> None:
+    transport = _FakeTransport()
+    blocks = AssistantContentBlocks()
+    handler = _make_handler(transport, blocks)
+    diff_block = {
+        "type": "diff",
+        "path": "src/app.py",
+        "old_text": "old",
+        "new_text": "new",
+    }
+
+    await handler.handle_event(
+        ToolCallEvent(
+            tool_call_id="tool-1",
+            tool_name="Edit",
+            server_name="qwen",
+            arguments={"path": "src/app.py"},
+            status="pending",
+            tool_kind="edit",
+            locations=[{"uri": "file:///src/app.py", "line": 12}],
+            content_blocks=[diff_block],
+            raw_output={"progress": 0},
+        ),
+        SimpleNamespace(),
+    )
+
+    calling = transport.sent[-1]
+    assert calling["status"] == "pending"
+    assert calling["tool_kind"] == "edit"
+    assert calling["locations"] == [{"uri": "file:///src/app.py", "line": 12}]
+    assert calling["content_blocks"] == [diff_block]
+    assert blocks.blocks[0]["tool_calls"][0]["content_blocks"] == [diff_block]
+
+    await handler.handle_event(
+        ToolResultEvent(
+            tool_call_id="tool-1",
+            success=True,
+            result=None,
+            content_blocks=[{"type": "terminal", "terminal_id": "term-1"}],
+            raw_output={"stdout": "ok"},
+        ),
+        SimpleNamespace(),
+    )
+
+    completed = transport.sent[-1]
+    assert completed["status"] == "completed"
+    assert completed["content_blocks"] == [{"type": "terminal", "terminal_id": "term-1"}]
+    assert completed["raw_output"] == {"stdout": "ok"}
+    tool_call = blocks.blocks[0]["tool_calls"][0]
+    assert tool_call["status"] == "completed"
+    assert tool_call["content_blocks"] == [
+        diff_block,
+        {"type": "terminal", "terminal_id": "term-1"},
+    ]
+    assert tool_call["raw_output"] == {"stdout": "ok"}
 
 
 @pytest.mark.asyncio

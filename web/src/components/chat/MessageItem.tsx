@@ -8,6 +8,7 @@ import { GobbyLogo } from '../shared/GobbyLogo'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
 import { ToolCallCards } from './ToolCallCard'
+import { RichContentBlocks } from './RichContentBlocks'
 import { UnknownBlockCard } from './UnknownBlockCard'
 import { splitProtocolContent } from './protocolContent'
 
@@ -295,6 +296,21 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
                   <div key={`${message.id}-b${i}`} className="my-1 p-2 rounded bg-accent/10 border border-accent/20 text-xs italic">
                     Search result included.
                   </div>
+                )
+              }
+              if (
+                block.type === 'resource_link' ||
+                block.type === 'resource' ||
+                block.type === 'audio' ||
+                block.type === 'diff' ||
+                block.type === 'terminal'
+              ) {
+                return (
+                  <RichContentBlocks
+                    key={`${message.id}-b${i}`}
+                    blocks={[block]}
+                    idPrefix={`${message.id}-b${i}`}
+                  />
                 )
               }
               if (block.type === 'unknown') {

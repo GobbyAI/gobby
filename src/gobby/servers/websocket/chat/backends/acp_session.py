@@ -12,6 +12,7 @@ from typing import Any
 from gobby.adapters.acp_client import StreamEvent
 from gobby.adapters.acp_client_requests import is_pre_tool_decision_denied
 from gobby.adapters.acp_commands import normalize_available_commands
+from gobby.adapters.acp_content import normalize_prompt_blocks
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
@@ -115,9 +116,11 @@ class ACPManagedChatSession(
                 if resp and resp.get("context"):
                     context_parts.append(str(resp["context"]))
 
-            full_prompt = prompt
-            if context_parts:
-                full_prompt = f"{'\n\n'.join(context_parts)}\n\n{prompt}"
+            prompt_payload = normalize_prompt_blocks(
+                content,
+                agent_capabilities=getattr(self._backend, "agent_capabilities", {}),
+                prefix_text="\n\n".join(context_parts) if context_parts else None,
+            )
 
             self._is_first_turn = False
             saw_content_delta = False
@@ -126,7 +129,7 @@ class ACPManagedChatSession(
             plan_text_parts: list[str] = []
 
             try:
-                async for stream_event in self._backend.send_message(self, full_prompt):
+                async for stream_event in self._backend.send_message(self, prompt_payload):
                     if stream_event.event_type == "init":
                         self.sdk_session_id = (
                             stream_event.data.get("session_id")
@@ -182,21 +185,22 @@ class ACPManagedChatSession(
                             allow_message_fallback=not saw_content_delta,
                         )
                         if isinstance(chat_event, ToolCallEvent):
-                            pre_tool_response = None
-                            if stream_event.data.get("pre_tool_checked"):
-                                pre_tool_response = stream_event.data.get("pre_tool_response")
-                            else:
-                                pre_tool_response = await self._apply_pre_tool_lifecycle(
-                                    chat_event.tool_name,
-                                    chat_event.arguments,
-                                )
-                            if is_pre_tool_decision_denied(pre_tool_response):
-                                blocked_tool_call_ids.add(chat_event.tool_call_id)
-                                continue
-                            pending_tool_calls[chat_event.tool_call_id] = {
-                                "tool_name": chat_event.tool_name,
-                                "tool_input": chat_event.arguments,
-                            }
+                            if not stream_event.data.get("is_update"):
+                                pre_tool_response = None
+                                if stream_event.data.get("pre_tool_checked"):
+                                    pre_tool_response = stream_event.data.get("pre_tool_response")
+                                else:
+                                    pre_tool_response = await self._apply_pre_tool_lifecycle(
+                                        chat_event.tool_name,
+                                        chat_event.arguments,
+                                    )
+                                if is_pre_tool_decision_denied(pre_tool_response):
+                                    blocked_tool_call_ids.add(chat_event.tool_call_id)
+                                    continue
+                                pending_tool_calls[chat_event.tool_call_id] = {
+                                    "tool_name": chat_event.tool_name,
+                                    "tool_input": chat_event.arguments,
+                                }
                         if chat_event is not None:
                             yield chat_event
                         continue
@@ -265,8 +269,12 @@ class ACPManagedChatSession(
     ) -> ChatEvent | None:
         if event.event_type == "content_delta":
             content = event.data.get("content", "")
-            if content:
-                return TextChunk(content=content)
+            content_blocks = event.data.get("content_blocks")
+            if content or content_blocks:
+                return TextChunk(
+                    content=content,
+                    content_blocks=content_blocks if isinstance(content_blocks, list) else None,
+                )
             return None
 
         if event.event_type == "message" and allow_message_fallback:
@@ -300,6 +308,11 @@ class ACPManagedChatSession(
                 tool_name=str(tool_name),
                 server_name=mcp_server or self.provider,
                 arguments=tool_input,
+                status=event.data.get("tool_status"),
+                tool_kind=event.data.get("tool_kind"),
+                locations=event.data.get("locations"),
+                content_blocks=event.data.get("content_blocks"),
+                raw_output=event.data.get("raw_output"),
             )
 
         if event.event_type == "tool_result":
@@ -313,6 +326,9 @@ class ACPManagedChatSession(
                 success=success,
                 result=result,
                 error=error,
+                locations=event.data.get("locations"),
+                content_blocks=event.data.get("content_blocks"),
+                raw_output=event.data.get("raw_output"),
             )
 
         if event.event_type == "error":

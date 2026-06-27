@@ -82,6 +82,10 @@ export interface ToolCall {
   arguments?: Record<string, unknown>;
   result?: ToolResult; // NEW: typed result instead of unknown
   error?: string;
+  tool_kind?: string;
+  locations?: Record<string, unknown>[];
+  content_blocks?: ContentBlock[];
+  raw_output?: unknown;
 }
 
 /**
@@ -137,6 +141,27 @@ export type ContentBlock =
     }
   | { type: "document"; source: { name?: string } & Record<string, unknown> }
   | { type: "web_search_result"; content: Record<string, unknown> }
+  | {
+      type: "resource_link";
+      uri: string;
+      name?: string;
+      description?: string;
+      mime_type?: string;
+    }
+  | { type: "resource"; resource: Record<string, unknown> }
+  | {
+      type: "audio";
+      data?: string;
+      url?: string;
+      mime_type?: string;
+    }
+  | {
+      type: "diff";
+      path?: string;
+      old_text?: string;
+      new_text?: string;
+    }
+  | { type: "terminal"; terminal_id?: string }
   | {
       type: "unknown";
       block_type: string;

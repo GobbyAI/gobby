@@ -1,6 +1,7 @@
 import type {
   AcpAvailableCommand,
   ApprovalOption,
+  ContentBlock,
   ToolResult,
 } from "../../types/chat";
 
@@ -9,6 +10,7 @@ export interface ChatStreamChunk {
   message_id: string;
   request_id?: string;
   content: string;
+  content_blocks?: ContentBlock[];
   done: boolean;
   tool_calls_count?: number;
   session_ref?: string;
@@ -36,12 +38,16 @@ export interface ToolStatusMessage {
   message_id: string;
   request_id?: string;
   tool_call_id: string;
-  status: "calling" | "completed" | "error" | "pending_approval";
+  status: "calling" | "completed" | "error" | "pending" | "pending_approval";
   tool_name?: string;
   server_name?: string;
   arguments?: Record<string, unknown>;
   result?: ToolResult;
   error?: string;
+  tool_kind?: string;
+  locations?: Record<string, unknown>[];
+  content_blocks?: ContentBlock[];
+  raw_output?: unknown;
 }
 
 export interface ChatThinkingMessage {

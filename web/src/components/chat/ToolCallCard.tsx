@@ -8,6 +8,7 @@ import { Badge } from './ui/Badge'
 import { Button } from '../shared/Button'
 import { JsonBlock } from './JsonBlock'
 import { PanelIcon } from './icons/PanelIcon'
+import { RichContentBlocks } from './RichContentBlocks'
 import { useArtifactContext } from './artifacts/ArtifactContext'
 import {
   COMPACT_HEADER_NAMES,
@@ -142,6 +143,27 @@ function ToolErrorBody({ error }: { error: string }) {
       )}
     </div>
   )
+}
+
+function formatToolLocation(location: Record<string, unknown>): string {
+  const uri = stringValue(location.uri) || stringValue(location.path) || stringValue(location.file)
+  const line = numberValue(location.line) ?? numberValue(location.startLine)
+  const column = numberValue(location.column) ?? numberValue(location.startColumn)
+  const suffix = [
+    line != null ? line : null,
+    column != null ? column : null,
+  ].filter((value) => value != null).join(':')
+  if (uri && suffix) return `${uri}:${suffix}`
+  if (uri) return uri
+  return JSON.stringify(location)
+}
+
+function stringValue(value: unknown): string | null {
+  return typeof value === 'string' && value ? value : null
+}
+
+function numberValue(value: unknown): number | null {
+  return typeof value === 'number' && Number.isFinite(value) ? value : null
 }
 
 const IMAGE_EXTENSIONS = new Set(['png', 'jpg', 'jpeg', 'gif', 'svg', 'webp'])
@@ -334,7 +356,12 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
     return <ToolApprovalCard call={call} onRespondToApproval={onRespondToApproval} />
   }
 
-  const hasDetails = call.arguments || call.result != null || call.error
+  const hasDetails = call.arguments ||
+    call.result != null ||
+    call.error ||
+    Boolean(call.content_blocks?.length) ||
+    Boolean(call.locations?.length) ||
+    call.raw_output != null
 
   return (
     <div className={cn(
@@ -350,6 +377,11 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
       >
         <StatusIcon status={call.status} />
         <span className="font-mono text-foreground">{displayName}</span>
+        {call.tool_kind && (
+          <span className="rounded bg-muted px-1.5 py-0.5 text-[11px] text-muted-foreground">
+            {call.tool_kind}
+          </span>
+        )}
         {summary && isFileHeader ? (
           <>
             <span className="text-muted-foreground text-xs truncate hidden @sm:inline">{summary}</span>
@@ -380,10 +412,34 @@ const ToolCallItem = memo(function ToolCallItem({ call, onRespond, onRespondToAp
           {call.arguments && Object.keys(call.arguments).length > 0 && !isCompact && (
             <ToolArgumentsContent args={call.arguments} callId={call.id} />
           )}
+          {call.locations && call.locations.length > 0 && (
+            <div>
+              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Locations</div>
+              <div className="space-y-1 font-mono text-muted-foreground">
+                {call.locations.map((location, index) => (
+                  <div key={`${call.id}-loc-${index}`} className="truncate">
+                    {formatToolLocation(location)}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+          {call.content_blocks && call.content_blocks.length > 0 && (
+            <div className="min-w-0 max-w-full overflow-hidden">
+              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Content</div>
+              <RichContentBlocks blocks={call.content_blocks} idPrefix={`tool-content-${call.id}`} />
+            </div>
+          )}
           {call.status === 'completed' && call.result != null && toolType !== 'edit' && (
             <div className="min-w-0 max-w-full overflow-hidden">
               <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Result</div>
               <ToolResultContent call={call} />
+            </div>
+          )}
+          {call.raw_output != null && (
+            <div className="min-w-0 max-w-full overflow-hidden">
+              <div className={cn('text-muted-foreground', TOOL_CARD_SPACING.label)}>Raw Output</div>
+              <JsonBlock value={call.raw_output} />
             </div>
           )}
           {call.status === 'error' && call.error && (
@@ -671,9 +727,9 @@ function StatusIcon({ status }: { status: string }) {
       </svg>
     )
   }
-  if (status === 'pending_approval') {
+  if (status === 'pending' || status === 'pending_approval') {
     return (
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground" aria-label="Pending approval" role="img">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-warning-foreground" aria-label="Pending" role="img">
         <circle cx="12" cy="12" r="10" />
         <polyline points="12 6 12 12 16 14" />
       </svg>

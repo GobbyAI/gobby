@@ -31,7 +31,7 @@ def _extract_text(content: str | list[dict[str, Any]]) -> str:
     parts: list[str] = []
     for block in content:
         if isinstance(block, dict) and block.get("type") == "text":
-            text = block.get("text", "")
+            text = block.get("text", block.get("content", ""))
             if isinstance(text, str):
                 parts.append(text)
     return "\n".join(parts)

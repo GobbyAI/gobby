@@ -167,6 +167,28 @@ describe('MessageItem', () => {
     expect(img.getAttribute('src')).toBe('https://example.test/generated.png')
   })
 
+  it('renders ACP resource link blocks', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: [
+            {
+              type: 'resource_link',
+              uri: 'file:///src/app.py',
+              name: 'src/app.py',
+              description: 'Agent referenced source',
+            },
+          ],
+        })}
+      />,
+    )
+
+    expect(screen.getByText('src/app.py')).toBeTruthy()
+    expect(screen.getByText('Agent referenced source')).toBeTruthy()
+    expect(screen.getByText('file:///src/app.py')).toBeTruthy()
+  })
+
   it('renders stored image attachments inline', () => {
     render(
       <MessageItem

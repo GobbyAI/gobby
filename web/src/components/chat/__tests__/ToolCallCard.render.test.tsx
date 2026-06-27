@@ -375,4 +375,40 @@ describe('ToolCallCard rendering', () => {
     expect(container.textContent).toContain('system_instructions')
     expect(container.textContent).toContain('environment_context')
   })
+
+  it('renders ACP tool metadata, diff content, terminal blocks, and raw output', () => {
+    const { container } = renderWithProviders(
+      <ToolCallCards
+        toolCalls={[
+          makeCall({
+            id: 'tool-acp',
+            tool_name: 'edit',
+            tool_kind: 'edit',
+            locations: [{ uri: 'file:///src/app.py', line: 12, column: 4 }],
+            content_blocks: [
+              {
+                type: 'diff',
+                path: 'src/app.py',
+                old_text: 'old',
+                new_text: 'new',
+              },
+              { type: 'terminal', terminal_id: 'term-1' },
+              {
+                type: 'resource_link',
+                uri: 'file:///src/app.py',
+                name: 'src/app.py',
+              },
+            ],
+            raw_output: { stdout: 'ok' },
+          }),
+        ]}
+      />,
+    )
+
+    expect(screen.getAllByText('edit')).toHaveLength(2)
+    expect(screen.getByText('file:///src/app.py:12:4')).toBeInTheDocument()
+    expect(screen.getAllByText('src/app.py').length).toBeGreaterThanOrEqual(1)
+    expect(screen.getByText('Terminal term-1')).toBeInTheDocument()
+    expect(container.textContent).toContain('"stdout": "ok"')
+  })
 })
