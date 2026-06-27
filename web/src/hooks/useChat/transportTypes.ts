@@ -4,8 +4,9 @@ import type {
   SetStateAction,
 } from "react";
 import type {
-  ApprovalOption,
+  AcpAuthMethod,
   AcpConfigOption,
+  ApprovalOption,
   ChatMessage,
   ChatMode,
   ContextUsage,
@@ -98,6 +99,8 @@ export interface HandlerCallbacks {
 
 export interface StateSetters {
   setActiveAgent: Setter<string>;
+  setAcpAuthLogoutSupported: Setter<boolean>;
+  setAcpAuthMethods: Setter<AcpAuthMethod[]>;
   setAcpConfigOptions: Setter<AcpConfigOption[]>;
   setAttachedSessionId: Setter<string | null>;
   setAttachedSessionMeta: Setter<SessionObservationMeta | null>;

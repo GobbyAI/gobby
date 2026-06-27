@@ -6,6 +6,8 @@ import type {
   DeleteConversationAction,
   RespondToApprovalAction,
   RespondToQuestionAction,
+  SendAcpAuthenticateAction,
+  SendAcpLogoutAction,
   SendAgentChangeAction,
   SendAttachedSessionModeAction,
   SendModeAction,
@@ -22,6 +24,7 @@ export function useChatControlActions(
 ): ChatControlActions {
   const {
     activeRequestIdRef,
+    acpAuthLogoutSupportedRef,
     attachedSessionIdRef,
     attachedSessionMetaRef,
     conversationIdRef,
@@ -143,6 +146,31 @@ export function useChatControlActions(
     [],
   );
 
+  const sendAcpAuthenticate: SendAcpAuthenticateAction = useCallback((methodId) => {
+    if (!methodId) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!conversationIdRef.current) return;
+    wsRef.current.send(
+      JSON.stringify({
+        type: "authenticate_session",
+        conversation_id: conversationIdRef.current,
+        method_id: methodId,
+      }),
+    );
+  }, []);
+
+  const sendAcpLogout: SendAcpLogoutAction = useCallback(() => {
+    if (!acpAuthLogoutSupportedRef.current) return;
+    if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+    if (!conversationIdRef.current) return;
+    wsRef.current.send(
+      JSON.stringify({
+        type: "logout_session",
+        conversation_id: conversationIdRef.current,
+      }),
+    );
+  }, []);
+
   const sendProjectChange: SendProjectChangeAction = useCallback((projectId) => {
     if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
     if (!conversationIdRef.current) return;
@@ -247,6 +275,8 @@ export function useChatControlActions(
     stopStreaming,
     sendMode,
     sendSessionConfigOption,
+    sendAcpAuthenticate,
+    sendAcpLogout,
     sendAttachedSessionMode,
     sendProjectChange,
     sendAgentChange,

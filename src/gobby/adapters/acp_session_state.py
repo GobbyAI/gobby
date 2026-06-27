@@ -8,6 +8,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
 
+from gobby.adapters.acp_auth import normalize_auth_methods, supports_auth_logout
 from gobby.adapters.acp_config_options import normalize_config_options
 
 DEFAULT_ACP_CLIENT_CAPABILITIES: Mapping[str, Any] = MappingProxyType(
@@ -85,6 +86,8 @@ class ACPSessionState:
     _session_id: str | None = None
     _session_info: dict[str, Any] = field(default_factory=dict)
     _agent_capabilities: dict[str, Any] = field(default_factory=dict)
+    _auth_methods: tuple[dict[str, Any], ...] = ()
+    _auth_logout_supported: bool = False
     _config_options: tuple[dict[str, Any], ...] = ()
     _root_uris: tuple[str, ...] = ()
 
@@ -101,6 +104,14 @@ class ACPSessionState:
         return dict(self._agent_capabilities)
 
     @property
+    def auth_methods(self) -> list[dict[str, Any]]:
+        return deepcopy(list(self._auth_methods))
+
+    @property
+    def auth_logout_supported(self) -> bool:
+        return self._auth_logout_supported
+
+    @property
     def config_options(self) -> list[dict[str, Any]]:
         return deepcopy(list(self._config_options))
 
@@ -110,6 +121,11 @@ class ACPSessionState:
 
     def update_agent_capabilities(self, capabilities: Any) -> None:
         self._agent_capabilities = dict(capabilities) if isinstance(capabilities, dict) else {}
+        self._auth_logout_supported = supports_auth_logout(self._agent_capabilities)
+
+    def update_auth_methods(self, auth_methods: Any) -> list[dict[str, Any]]:
+        self._auth_methods = tuple(normalize_auth_methods(auth_methods))
+        return self.auth_methods
 
     def supports_session_load(self) -> bool:
         return self._agent_capabilities.get("loadSession") is True
@@ -150,3 +166,5 @@ class ACPSessionState:
     def reset(self) -> None:
         self.clear_session()
         self._agent_capabilities = {}
+        self._auth_methods = ()
+        self._auth_logout_supported = False

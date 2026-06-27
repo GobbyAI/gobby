@@ -13,6 +13,7 @@ import {
   handleConnectionEstablished,
   handleModeChanged,
   handlePlanPendingApproval,
+  handleSessionAuthState,
   handleSessionConfigOptions,
   handleSessionContinued,
   handleSessionInfo,
@@ -145,6 +146,9 @@ export function routeTransportMessage(
       return;
     case "session_config_options":
       handleSessionConfigOptions(data, ctx);
+      return;
+    case "session_auth_state":
+      handleSessionAuthState(data, ctx);
       return;
     case "worktree_switched":
       handleWorktreeSwitched(data, ctx);

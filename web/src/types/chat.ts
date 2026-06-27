@@ -26,6 +26,13 @@ export interface AcpConfigOption {
   options: AcpConfigOptionValue[];
 }
 
+export interface AcpAuthMethod {
+  id: string;
+  name: string;
+  description?: string;
+  type?: string;
+}
+
 /**
  * One selectable plan-acceptance choice. Sourced from the backend registry
  * (gobby.adapters.plan_options) and emitted in the plan_pending_approval
@@ -290,6 +297,10 @@ export interface ChatState {
   onModeChange: (mode: ChatMode) => void;
   acpConfigOptions?: AcpConfigOption[];
   onAcpConfigOptionChange?: (configId: string, value: string) => void;
+  acpAuthMethods?: AcpAuthMethod[];
+  acpAuthLogoutSupported?: boolean;
+  onAcpAuthenticate?: (methodId: string) => void;
+  onAcpLogout?: () => void;
   onModeChangeLocal?: (mode: ChatMode) => void;
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void;
   activeAgent?: string;

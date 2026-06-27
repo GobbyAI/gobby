@@ -241,6 +241,13 @@ class TestClassifyChatError:
         assert code == "AUTH_ERROR"
         assert "authentication" in msg.lower()
 
+    def test_acp_auth_required(self) -> None:
+        msg, code = ChatMessagingMixin._classify_chat_error(
+            Exception("ACP session/new error: auth_required")
+        )
+        assert code == "AUTH_REQUIRED"
+        assert "authentication required" in msg.lower()
+
     def test_forbidden(self) -> None:
         msg, code = ChatMessagingMixin._classify_chat_error(Exception("403 Forbidden"))
         assert code == "AUTH_ERROR"

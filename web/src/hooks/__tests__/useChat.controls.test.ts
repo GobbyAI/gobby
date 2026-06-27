@@ -187,4 +187,112 @@ describe("useChat project and mode controls", () => {
     ]);
     expect(calls.some((message) => message.type === "set_mode")).toBe(false);
   });
+
+  it("tracks ACP auth state and sends auth actions without set_mode", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_info",
+        conversation_id: result.current.conversationId,
+        auth_methods: [
+          {
+            id: "browser",
+            name: "Browser",
+            description: "Open browser login",
+          },
+          { id: "", name: "Broken" },
+        ],
+        auth_logout_supported: true,
+      });
+    });
+
+    expect(result.current.acpAuthMethods).toEqual([
+      {
+        id: "browser",
+        name: "Browser",
+        description: "Open browser login",
+      },
+    ]);
+    expect(result.current.acpAuthLogoutSupported).toBe(true);
+
+    ws.send.mockClear();
+
+    act(() => {
+      result.current.sendAcpAuthenticate("browser");
+      result.current.sendAcpLogout();
+    });
+
+    const supportedCalls = ws.send.mock.calls.map((c) => JSON.parse(c[0]));
+    expect(supportedCalls).toEqual([
+      {
+        type: "authenticate_session",
+        conversation_id: result.current.conversationId,
+        method_id: "browser",
+      },
+      {
+        type: "logout_session",
+        conversation_id: result.current.conversationId,
+      },
+    ]);
+    expect(supportedCalls.some((message) => message.type === "set_mode")).toBe(false);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_auth_state",
+        conversation_id: result.current.conversationId,
+        auth_methods: [{ id: "cached_token", name: "Cached token" }],
+        auth_logout_supported: false,
+      });
+    });
+
+    expect(result.current.acpAuthMethods).toEqual([
+      { id: "cached_token", name: "Cached token" },
+    ]);
+    expect(result.current.acpAuthLogoutSupported).toBe(false);
+
+    ws.send.mockClear();
+
+    act(() => {
+      result.current.sendAcpLogout();
+    });
+
+    expect(ws.send).not.toHaveBeenCalled();
+  });
+
+  it("updates ACP auth state from auth_required chat errors", async () => {
+    await loadModule();
+    const { result } = renderHook(() => useChat());
+
+    const ws = mockWs.instances[0];
+    act(() => ws.simulateOpen());
+
+    act(() => {
+      result.current.sendMessage("hello");
+    });
+    const chatMessage = JSON.parse(
+      ws.send.mock.calls[ws.send.mock.calls.length - 1]?.[0] ?? "{}",
+    );
+
+    act(() => {
+      ws.simulateMessage({
+        type: "chat_error",
+        request_id: chatMessage.request_id,
+        error: "Authentication required. Choose a sign-in method to continue.",
+        code: "AUTH_REQUIRED",
+        auth_required: true,
+        auth_methods: [{ id: "browser", name: "Browser" }],
+        auth_logout_supported: true,
+      });
+    });
+
+    expect(result.current.acpAuthMethods).toEqual([
+      { id: "browser", name: "Browser" },
+    ]);
+    expect(result.current.acpAuthLogoutSupported).toBe(true);
+  });
 });

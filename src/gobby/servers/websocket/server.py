@@ -284,6 +284,8 @@ class WebSocketServer(
                 "delete_chat": self._handle_delete_chat,
                 "set_mode": self._handle_set_mode,
                 "set_session_config_option": self._handle_set_session_config_option,
+                "authenticate_session": self._handle_authenticate_session,
+                "logout_session": self._handle_logout_session,
                 "plan_approval_response": self._handle_plan_approval_response,
                 "set_project": self._handle_set_project,
                 "set_worktree": self._handle_set_worktree,

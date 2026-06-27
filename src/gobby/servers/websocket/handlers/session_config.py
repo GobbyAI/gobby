@@ -360,6 +360,97 @@ async def handle_set_session_config_option(
     )
 
 
+async def handle_authenticate_session(
+    mixin: SessionControlMixin,
+    websocket: Any,
+    data: dict[str, Any],
+) -> None:
+    """Authenticate an active ACP-backed session with the selected method."""
+    conversation_id = data.get("conversation_id")
+    method_id = data.get("method_id")
+    if not isinstance(conversation_id, str) or not conversation_id:
+        await mixin._send_error(websocket, "conversation_id is required")
+        return
+    if not isinstance(method_id, str) or not method_id:
+        await mixin._send_error(websocket, "method_id is required")
+        return
+
+    session = mixin._chat_sessions.get(conversation_id)
+    if session is None:
+        await mixin._send_error(websocket, "Conversation session is not active")
+        return
+    authenticator = getattr(session, "authenticate", None)
+    if not callable(authenticator):
+        await mixin._send_error(websocket, "Session does not support authentication")
+        return
+
+    try:
+        auth_state = await authenticator(method_id=method_id)
+    except Exception as exc:
+        logger.warning(
+            "Failed to authenticate conversation %s with method %s: %s",
+            conversation_id[:8],
+            method_id,
+            exc,
+            exc_info=True,
+        )
+        await mixin._send_error(websocket, f"Failed to authenticate session: {exc}")
+        return
+
+    await websocket.send(
+        json.dumps(
+            {
+                "type": "session_auth_state",
+                "conversation_id": conversation_id,
+                **auth_state,
+            }
+        )
+    )
+
+
+async def handle_logout_session(
+    mixin: SessionControlMixin,
+    websocket: Any,
+    data: dict[str, Any],
+) -> None:
+    """Log out an active ACP-backed session when supported by the provider."""
+    conversation_id = data.get("conversation_id")
+    if not isinstance(conversation_id, str) or not conversation_id:
+        await mixin._send_error(websocket, "conversation_id is required")
+        return
+
+    session = mixin._chat_sessions.get(conversation_id)
+    if session is None:
+        await mixin._send_error(websocket, "Conversation session is not active")
+        return
+    logout = getattr(session, "logout", None)
+    if not callable(logout):
+        await mixin._send_error(websocket, "Session does not support logout")
+        return
+
+    try:
+        auth_state = await logout()
+    except Exception as exc:
+        logger.warning(
+            "Failed to log out conversation %s: %s",
+            conversation_id[:8],
+            exc,
+            exc_info=True,
+        )
+        await mixin._send_error(websocket, f"Failed to log out session: {exc}")
+        return
+
+    await websocket.send(
+        json.dumps(
+            {
+                "type": "session_auth_state",
+                "conversation_id": conversation_id,
+                **auth_state,
+            }
+        )
+    )
+
+
 async def handle_set_project(
     mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
 ) -> None:

@@ -1,5 +1,5 @@
 import { normalizeChatMode } from "../../types/chat";
-import type { AcpConfigOption, ApprovalOption } from "../../types/chat";
+import type { AcpAuthMethod, AcpConfigOption, ApprovalOption } from "../../types/chat";
 import {
   saveConversationId,
   saveDbSessionId,
@@ -59,6 +59,33 @@ function readAcpConfigOptions(data: Record<string, unknown>): AcpConfigOption[] 
   const raw = data.config_options;
   if (!Array.isArray(raw)) return [];
   return raw.filter(isAcpConfigOption);
+}
+
+function isAcpAuthMethod(value: unknown): value is AcpAuthMethod {
+  if (!value || typeof value !== "object") return false;
+  const method = value as Record<string, unknown>;
+  return (
+    typeof method.id === "string" &&
+    method.id.length > 0 &&
+    typeof method.name === "string" &&
+    method.name.length > 0 &&
+    (method.description === undefined || typeof method.description === "string") &&
+    (method.type === undefined || typeof method.type === "string")
+  );
+}
+
+function readAcpAuthMethods(data: Record<string, unknown>): AcpAuthMethod[] {
+  const raw = data.auth_methods;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isAcpAuthMethod);
+}
+
+function applyAcpAuthState(
+  data: Record<string, unknown>,
+  ctx: UseChatTransportParams,
+) {
+  ctx.setAcpAuthMethods(readAcpAuthMethods(data));
+  ctx.setAcpAuthLogoutSupported(data.auth_logout_supported === true);
 }
 
 export function handlePlanPendingApproval(
@@ -162,6 +189,7 @@ export function handleSessionInfo(
   }
   if (!infoConvId || infoConvId === ctx.conversationIdRef.current) {
     ctx.setAcpConfigOptions(readAcpConfigOptions(data));
+    applyAcpAuthState(data, ctx);
   }
 }
 
@@ -172,6 +200,15 @@ export function handleSessionConfigOptions(
   const msgConvId = data.conversation_id as string | undefined;
   if (msgConvId && msgConvId !== ctx.conversationIdRef.current) return;
   ctx.setAcpConfigOptions(readAcpConfigOptions(data));
+}
+
+export function handleSessionAuthState(
+  data: Record<string, unknown>,
+  ctx: UseChatTransportParams,
+) {
+  const msgConvId = data.conversation_id as string | undefined;
+  if (msgConvId && msgConvId !== ctx.conversationIdRef.current) return;
+  applyAcpAuthState(data, ctx);
 }
 
 export function handleWorktreeSwitched(

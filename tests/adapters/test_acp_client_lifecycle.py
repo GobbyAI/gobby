@@ -9,6 +9,7 @@ from typing import Any
 
 import pytest
 
+from gobby.adapters.acp_auth import normalize_auth_methods
 from gobby.adapters.acp_client import ACPClient
 from gobby.adapters.acp_config_options import normalize_config_options
 from gobby.adapters.acp_session_state import ACPSessionState
@@ -20,6 +21,10 @@ class _StubACPClient(ACPClient):
     cli_name = "stub-acp"
     display_name = "Stub ACP"
     prompt_timeout_env = "GOBBY_STUB_ACP_PROMPT_TIMEOUT_SECONDS"
+
+
+class _CachedAuthACPClient(_StubACPClient):
+    supports_cached_auth = True
 
 
 class _RecordingStdin:
@@ -148,6 +153,59 @@ def test_normalize_config_options_preserves_order_and_ignores_invalid_entries() 
             "options": [{"value": "enabled", "name": "Enabled"}],
         },
     ]
+
+
+def test_normalize_auth_methods_preserves_order_and_defaults_type() -> None:
+    auth_methods = normalize_auth_methods(
+        [
+            {
+                "id": "browser",
+                "name": "Browser",
+                "description": "Open a browser login",
+                "type": "browser",
+            },
+            {
+                "id": "cached_token",
+                "name": "Cached token",
+            },
+            {"id": "", "name": "Broken"},
+            {"id": "missing-name"},
+            "not-an-auth-method",
+        ]
+    )
+
+    assert auth_methods == [
+        {
+            "id": "browser",
+            "name": "Browser",
+            "description": "Open a browser login",
+            "type": "browser",
+        },
+        {
+            "id": "cached_token",
+            "name": "Cached token",
+            "type": "agent",
+        },
+    ]
+
+
+def test_session_state_tracks_auth_methods_and_logout_capability() -> None:
+    state = ACPSessionState()
+
+    state.update_agent_capabilities({"auth": {"logout": {}}})
+    methods = state.update_auth_methods(
+        [
+            {
+                "id": "browser",
+                "name": "Browser",
+            }
+        ]
+    )
+
+    assert state.auth_logout_supported is True
+    assert methods == [{"id": "browser", "name": "Browser", "type": "agent"}]
+    methods[0]["name"] = "Mutated"
+    assert state.auth_methods == [{"id": "browser", "name": "Browser", "type": "agent"}]
 
 
 def test_session_state_tracks_config_options_from_complete_session_payloads() -> None:
@@ -301,6 +359,124 @@ async def test_start_stores_config_options_from_session_setup(
     ]
 
     await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_stores_auth_methods_and_logout_capability(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _FakeProcess(
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": 1,
+                    "agentCapabilities": {"auth": {"logout": {}}},
+                    "authMethods": [
+                        {
+                            "id": "browser",
+                            "name": "Browser",
+                            "description": "Open browser login",
+                        }
+                    ],
+                },
+            },
+        ]
+    )
+
+    async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
+        return process
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    client = _StubACPClient(cli_path="/usr/bin/stub-acp")
+
+    await client.start(auto_session=False)
+
+    assert client.auth_methods == [
+        {
+            "id": "browser",
+            "name": "Browser",
+            "description": "Open browser login",
+            "type": "agent",
+        }
+    ]
+    assert client.auth_logout_supported is True
+
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_uses_cached_token_when_supported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _FakeProcess(
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {
+                    "protocolVersion": 1,
+                    "agentCapabilities": {},
+                    "authMethods": [
+                        {"id": "cached_token", "name": "Cached token"},
+                    ],
+                },
+            },
+            {"jsonrpc": "2.0", "id": 2, "result": {}},
+        ]
+    )
+
+    async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
+        return process
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    client = _CachedAuthACPClient(cli_path="/usr/bin/stub-acp")
+
+    await client.start(auto_session=False)
+
+    messages = _written_messages(process)
+    assert [message["method"] for message in messages] == ["initialize", "authenticate"]
+    assert messages[1]["params"] == {"methodId": "cached_token"}
+
+    await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_authenticate_sends_selected_method(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _StubACPClient(cli_path="/usr/bin/stub-acp")
+    requests: list[tuple[str, dict[str, Any]]] = []
+
+    async def send_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        requests.append((method, params))
+        return {}
+
+    monkeypatch.setattr(client, "_send_request", send_request)
+
+    await client.authenticate(method_id="browser")
+
+    assert requests == [("authenticate", {"methodId": "browser"})]
+
+
+@pytest.mark.asyncio
+async def test_logout_is_gated_by_agent_capability(monkeypatch: pytest.MonkeyPatch) -> None:
+    client = _StubACPClient(cli_path="/usr/bin/stub-acp")
+    requests: list[tuple[str, dict[str, Any]]] = []
+
+    async def send_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        requests.append((method, params))
+        return {}
+
+    monkeypatch.setattr(client, "_send_request", send_request)
+
+    with pytest.raises(RuntimeError, match="does not support logout"):
+        await client.logout()
+
+    client._session_state.update_agent_capabilities({"auth": {"logout": {}}})
+
+    await client.logout()
+
+    assert requests == [("logout", {})]
 
 
 @pytest.mark.asyncio

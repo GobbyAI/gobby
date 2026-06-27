@@ -1,4 +1,9 @@
-import type { AcpConfigOption, ApprovalOption, ToolResult } from "../../types/chat";
+import type {
+  AcpAuthMethod,
+  AcpConfigOption,
+  ApprovalOption,
+  ToolResult,
+} from "../../types/chat";
 
 export interface ChatStreamChunk {
   type: "chat_stream";
@@ -25,6 +30,10 @@ export interface ChatError {
   request_id?: string;
   error: string;
   error_detail?: string;
+  code?: string;
+  auth_required?: boolean;
+  auth_methods?: AcpAuthMethod[];
+  auth_logout_supported?: boolean;
 }
 
 export interface ToolStatusMessage {
@@ -183,6 +192,8 @@ export interface SessionInfoMessage {
   agent_name?: string;
   chat_mode?: string;
   config_options?: AcpConfigOption[];
+  auth_methods?: AcpAuthMethod[];
+  auth_logout_supported?: boolean;
   plan_auto_switch?: boolean;
 }
 
@@ -190,6 +201,13 @@ export interface SessionConfigOptionsMessage {
   type: "session_config_options";
   conversation_id?: string;
   config_options?: AcpConfigOption[];
+}
+
+export interface SessionAuthStateMessage {
+  type: "session_auth_state";
+  conversation_id?: string;
+  auth_methods?: AcpAuthMethod[];
+  auth_logout_supported?: boolean;
 }
 
 export interface WorktreeSwitchedMessage {
@@ -303,6 +321,7 @@ export type WebSocketMessage =
   | ModeChangedMessage
   | SessionInfoMessage
   | SessionConfigOptionsMessage
+  | SessionAuthStateMessage
   | WorktreeSwitchedMessage
   | AgentChangedMessage
   | SessionContinuedMessage

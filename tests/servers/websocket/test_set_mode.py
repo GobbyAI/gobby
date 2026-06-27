@@ -244,3 +244,79 @@ class TestSetSessionConfigOption:
 
         server._send_error.assert_awaited_once()
         assert "does not support config options" in server._send_error.await_args.args[1]
+
+
+class TestSessionAuthentication:
+    async def test_active_session_authenticates_with_selected_method(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        session = SimpleNamespace(
+            authenticate=AsyncMock(
+                return_value={
+                    "auth_methods": [{"id": "browser", "name": "Browser", "type": "agent"}],
+                    "auth_logout_supported": True,
+                }
+            )
+        )
+        server._chat_sessions["conv-1"] = session
+
+        await server._handle_authenticate_session(
+            ws,
+            {"conversation_id": "conv-1", "method_id": "browser"},
+        )
+
+        session.authenticate.assert_awaited_once_with(method_id="browser")
+        payload = json.loads(ws.send.await_args.args[0])
+        assert payload == {
+            "type": "session_auth_state",
+            "conversation_id": "conv-1",
+            "auth_methods": [{"id": "browser", "name": "Browser", "type": "agent"}],
+            "auth_logout_supported": True,
+        }
+
+    async def test_active_session_logout_returns_auth_state(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        session = SimpleNamespace(
+            logout=AsyncMock(
+                return_value={
+                    "auth_methods": [{"id": "browser", "name": "Browser", "type": "agent"}],
+                    "auth_logout_supported": True,
+                }
+            )
+        )
+        server._chat_sessions["conv-1"] = session
+
+        await server._handle_logout_session(ws, {"conversation_id": "conv-1"})
+
+        session.logout.assert_awaited_once_with()
+        payload = json.loads(ws.send.await_args.args[0])
+        assert payload == {
+            "type": "session_auth_state",
+            "conversation_id": "conv-1",
+            "auth_methods": [{"id": "browser", "name": "Browser", "type": "agent"}],
+            "auth_logout_supported": True,
+        }
+
+    async def test_rejects_sessions_without_authentication_support(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server._chat_sessions["conv-1"] = object()
+
+        await server._handle_authenticate_session(
+            ws,
+            {"conversation_id": "conv-1", "method_id": "browser"},
+        )
+
+        server._send_error.assert_awaited_once()
+        assert "does not support authentication" in server._send_error.await_args.args[1]
+
+    async def test_rejects_sessions_without_logout_support(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server._chat_sessions["conv-1"] = object()
+
+        await server._handle_logout_session(ws, {"conversation_id": "conv-1"})
+
+        server._send_error.assert_awaited_once()
+        assert "does not support logout" in server._send_error.await_args.args[1]

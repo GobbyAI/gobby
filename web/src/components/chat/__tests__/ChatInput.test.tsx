@@ -367,6 +367,47 @@ describe('ChatInput', () => {
     expect(toolbarLeft?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
   })
 
+  it('renders ACP auth methods and logout when supported', async () => {
+    const onAuthenticate = vi.fn()
+    const onLogout = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        acpAuthMethods={[
+          {
+            id: 'browser',
+            name: 'Browser',
+            description: 'Open browser login',
+          },
+        ]}
+        acpAuthLogoutSupported={true}
+        onAcpAuthenticate={onAuthenticate}
+        onAcpLogout={onLogout}
+      />,
+    )
+
+    await userEvent.click(screen.getByText('Sign in: Browser'))
+    await userEvent.click(screen.getByText('Logout'))
+
+    expect(onAuthenticate).toHaveBeenCalledWith('browser')
+    expect(onLogout).toHaveBeenCalledTimes(1)
+  })
+
+  it('hides ACP logout when unsupported', () => {
+    render(
+      <ChatInput
+        {...defaultProps}
+        acpAuthMethods={[{ id: 'browser', name: 'Browser' }]}
+        acpAuthLogoutSupported={false}
+        onAcpAuthenticate={vi.fn()}
+        onAcpLogout={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByText('Sign in: Browser')).toBeTruthy()
+    expect(screen.queryByText('Logout')).toBeNull()
+  })
+
   it('disables proxy-owned footer controls while leaving text entry enabled', () => {
     render(
       <ChatInput

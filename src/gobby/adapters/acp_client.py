@@ -209,6 +209,16 @@ class ACPClient:
         return self._session_state.agent_capabilities
 
     @property
+    def auth_methods(self) -> list[dict[str, Any]]:
+        """ACP authentication methods advertised during initialize."""
+        return self._session_state.auth_methods
+
+    @property
+    def auth_logout_supported(self) -> bool:
+        """Whether the ACP agent advertises logout support."""
+        return self._session_state.auth_logout_supported
+
+    @property
     def config_options(self) -> list[dict[str, Any]]:
         """Current ACP session config options in provider order."""
         return self._session_state.config_options
@@ -300,7 +310,8 @@ class ACPClient:
                     f"agent selected {negotiated_version!r}"
                 )
             self._session_state.update_agent_capabilities(init_result.get("agentCapabilities"))
-            await self._maybe_authenticate(init_result)
+            self._session_state.update_auth_methods(init_result.get("authMethods"))
+            await self._maybe_authenticate()
             if auto_session:
                 if session_id and self._session_state.supports_session_load():
                     session_result = await self.load_session(
@@ -346,21 +357,26 @@ class ACPClient:
             cmd.extend(self._extra_args)
         return cmd
 
-    async def _maybe_authenticate(self, init_result: dict[str, Any]) -> None:
+    async def _maybe_authenticate(self) -> None:
         """Authenticate with cached credentials when a provider advertises them."""
         if not self.supports_cached_auth:
             return
-        auth_methods = init_result.get("authMethods")
-        if not isinstance(auth_methods, list):
-            return
-        method_id = None
-        for method in auth_methods:
-            if isinstance(method, dict) and method.get("id") == "cached_token":
-                method_id = "cached_token"
-                break
-        if method_id is None:
-            return
+        for method in self._session_state.auth_methods:
+            if method.get("id") == "cached_token":
+                await self.authenticate(method_id="cached_token")
+                return
+
+    async def authenticate(self, *, method_id: str) -> None:
+        """Authenticate with an advertised ACP auth method."""
+        if not method_id:
+            raise ValueError("method_id is required")
         await self._send_request("authenticate", {"methodId": method_id})
+
+    async def logout(self) -> None:
+        """Log out of the ACP agent when the provider advertises support."""
+        if not self._session_state.auth_logout_supported:
+            raise RuntimeError(f"{self.display_name} ACP agent does not support logout")
+        await self._send_request("logout", {})
 
     async def create_session(
         self,

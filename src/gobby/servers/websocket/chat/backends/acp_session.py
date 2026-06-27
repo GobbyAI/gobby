@@ -49,6 +49,8 @@ class ACPManagedChatSession(
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
     _is_first_turn: bool = field(default=True, repr=False)
+    auth_methods: list[dict[str, Any]] = field(default_factory=list)
+    auth_logout_supported: bool = False
     config_options: list[dict[str, Any]] = field(default_factory=list)
 
     def _web_chat_source(self) -> str:
@@ -130,6 +132,10 @@ class ACPManagedChatSession(
                         )
                         yield SessionConfigOptionsEvent(config_options=config_options)
                         continue
+                    elif stream_event.event_type == "error":
+                        message = str(stream_event.data.get("message", ""))
+                        if "auth_required" in message.lower():
+                            raise RuntimeError(message)
                     elif stream_event.event_type == "content_delta":
                         saw_content_delta = True
 
@@ -204,6 +210,8 @@ class ACPManagedChatSession(
                     context_window=self._resolve_context_window(),
                 )
             except Exception as exc:
+                if "auth_required" in str(exc).lower():
+                    raise
                 logger.error(
                     "%s managed session %s error: %s",
                     self._provider_label(),
@@ -300,6 +308,21 @@ class ACPManagedChatSession(
         )
         self.config_options = config_options
         return config_options
+
+    async def authenticate(self, *, method_id: str) -> dict[str, Any]:
+        auth_state = cast(
+            "dict[str, Any]",
+            await self._backend.authenticate(self, method_id=method_id),
+        )
+        self.auth_methods = cast("list[dict[str, Any]]", auth_state["auth_methods"])
+        self.auth_logout_supported = bool(auth_state["auth_logout_supported"])
+        return auth_state
+
+    async def logout(self) -> dict[str, Any]:
+        auth_state = cast("dict[str, Any]", await self._backend.logout(self))
+        self.auth_methods = cast("list[dict[str, Any]]", auth_state["auth_methods"])
+        self.auth_logout_supported = bool(auth_state["auth_logout_supported"])
+        return auth_state
 
 
 __all__ = ["ACPManagedChatSession"]

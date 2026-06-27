@@ -1,5 +1,10 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { AcpConfigOption, ChatMessage, QueuedFile } from "../types/chat";
+import type {
+  AcpAuthMethod,
+  AcpConfigOption,
+  ChatMessage,
+  QueuedFile,
+} from "../types/chat";
 import type {
   ChatError,
   ChatStreamChunk,
@@ -44,6 +49,9 @@ export function useChat() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [transportError, setTransportError] =
     useState<TransportErrorNotice | null>(null);
+  const [acpAuthMethods, setAcpAuthMethods] = useState<AcpAuthMethod[]>([]);
+  const [acpAuthLogoutSupported, setAcpAuthLogoutSupported] = useState(false);
+  const acpAuthLogoutSupportedRef = useRef(false);
   const [acpConfigOptions, setAcpConfigOptions] = useState<AcpConfigOption[]>([]);
 
   // Keep a ref so onopen/reconnect can read the current project
@@ -255,6 +263,8 @@ export function useChat() {
     planContentRef.current = null;
     setContextUsage(createEmptyContextUsage());
     setMessages([]);
+    setAcpAuthMethods([]);
+    setAcpAuthLogoutSupported(false);
     setAcpConfigOptions([]);
     setIsLoadingMessages(false);
   }, [
@@ -273,6 +283,10 @@ export function useChat() {
   useEffect(() => {
     messagesRef.current = messages;
   }, [messages]);
+
+  useEffect(() => {
+    acpAuthLogoutSupportedRef.current = acpAuthLogoutSupported;
+  }, [acpAuthLogoutSupported]);
 
   // Track the active chat request to filter stale stream chunks from cancelled requests
   const activeRequestIdRef = useRef<string | null>(null);
@@ -429,6 +443,8 @@ export function useChat() {
     sessionInteractionModeRef,
     sessionRefRef,
     setActiveAgent,
+    setAcpAuthLogoutSupported,
+    setAcpAuthMethods,
     setAcpConfigOptions,
     setAttachedSessionId,
     setAttachedSessionMeta,
@@ -482,6 +498,8 @@ export function useChat() {
     sendMessageRef,
     sessionInteractionMode,
     sessionInteractionModeRef,
+    setAcpAuthLogoutSupported,
+    setAcpAuthMethods,
     setContextUsage,
     setIsStreaming,
     setIsThinking,
@@ -505,6 +523,8 @@ export function useChat() {
     stopStreaming,
     sendMode,
     sendSessionConfigOption,
+    sendAcpAuthenticate,
+    sendAcpLogout,
     sendAttachedSessionMode,
     sendProjectChange,
     sendAgentChange,
@@ -516,6 +536,7 @@ export function useChat() {
     requestPlanChanges,
   } = useChatActions({
     activeRequestIdRef,
+    acpAuthLogoutSupportedRef,
     applyMainSessionMeta,
     attachedSessionId,
     attachedSessionIdRef,
@@ -560,6 +581,8 @@ export function useChat() {
     sessionRef,
     sessionTitle,
     setActiveAgent,
+    setAcpAuthLogoutSupported,
+    setAcpAuthMethods,
     setAcpConfigOptions,
     setContextUsage,
     setConversationId,
@@ -674,12 +697,16 @@ export function useChat() {
     isLoadingMessages,
     transportError,
     contextUsage,
+    acpAuthMethods,
+    acpAuthLogoutSupported,
     acpConfigOptions,
     contextUsageUpdatedAt,
     sendMessage,
     ensureMainSession,
     sendMode,
     sendSessionConfigOption,
+    sendAcpAuthenticate,
+    sendAcpLogout,
     sendProjectChange,
     projectIdRef,
     setProjectIdRef,

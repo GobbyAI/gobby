@@ -1,7 +1,8 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {
-  ApprovalOption,
+  AcpAuthMethod,
   AcpConfigOption,
+  ApprovalOption,
   ChatMessage,
   ChatMode,
   ContextUsage,
@@ -35,6 +36,7 @@ interface PendingChatMessage {
 
 export interface UseChatActionsParams {
   activeRequestIdRef: MutableRefObject<string | null>;
+  acpAuthLogoutSupportedRef: MutableRefObject<boolean>;
   applyMainSessionMeta: (session: Record<string, unknown> | null) => void;
   attachedSessionId: string | null;
   attachedSessionIdRef: MutableRefObject<string | null>;
@@ -81,6 +83,8 @@ export interface UseChatActionsParams {
   sessionRef: string | null;
   sessionTitle: string | null;
   setActiveAgent: Setter<string>;
+  setAcpAuthLogoutSupported: Setter<boolean>;
+  setAcpAuthMethods: Setter<AcpAuthMethod[]>;
   setAcpConfigOptions: Setter<AcpConfigOption[]>;
   setContextUsage: Setter<ContextUsage>;
   setConversationId: Setter<string>;
@@ -150,6 +154,10 @@ export type SendSessionConfigOptionAction = (
   value: string,
 ) => void;
 
+export type SendAcpAuthenticateAction = (methodId: string) => void;
+
+export type SendAcpLogoutAction = () => void;
+
 export type SendAttachedSessionModeAction = (
   targetSessionId: string,
   mode: ChatMode,
@@ -204,6 +212,8 @@ export interface ChatControlActions {
   stopStreaming: () => void;
   sendMode: SendModeAction;
   sendSessionConfigOption: SendSessionConfigOptionAction;
+  sendAcpAuthenticate: SendAcpAuthenticateAction;
+  sendAcpLogout: SendAcpLogoutAction;
   sendAttachedSessionMode: SendAttachedSessionModeAction;
   sendProjectChange: SendProjectChangeAction;
   sendAgentChange: SendAgentChangeAction;
