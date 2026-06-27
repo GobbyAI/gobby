@@ -7,6 +7,7 @@ import { MESSAGE_SPACING } from '../shared/spacing'
 import { GobbyLogo } from '../shared/GobbyLogo'
 import { Markdown } from './Markdown'
 import { ThinkingBlock } from './ThinkingBlock'
+import { CompactionSummaryCard } from './CompactionSummaryCard'
 import { ToolCallCards } from './ToolCallCard'
 import { RichContentBlocks } from './RichContentBlocks'
 import { UnknownBlockCard } from './UnknownBlockCard'
@@ -253,6 +254,9 @@ export const MessageItem = memo(function MessageItem({ message, isStreaming = fa
               }
               if (block.type === 'thinking') {
                 return <ThinkingBlock key={`${message.id}-b${i}`} content={block.content} messageId={message.id} />
+              }
+              if (block.type === 'compaction_summary') {
+                return <CompactionSummaryCard key={`${message.id}-b${i}`} content={block.content} />
               }
               if (block.type === 'tool_chain') {
                 return (

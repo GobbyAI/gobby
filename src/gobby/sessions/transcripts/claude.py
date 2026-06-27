@@ -11,7 +11,7 @@ import logging
 from collections import deque
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, ClassVar
 
 from gobby.sessions.transcripts.base import (
     BaseTranscriptParser,
@@ -39,6 +39,33 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
 
     Thread-safe: All methods are stateless and can be called concurrently.
     """
+
+    # Claude Code session-metadata envelope records. These are not conversation
+    # content (auto titles, prompt-queue ops, hook traces, mode/permission
+    # flags, PR/agent/worktree coordination) and were silently dropped before
+    # fail-soft passthrough was added. Recognized here so they are not surfaced
+    # as unknown blocks in the chat UI. ``system`` is handled separately
+    # (``compact_boundary`` is first-classed as a divider; other subtypes are
+    # skipped). ``summary``/``file-history-snapshot`` are listed for
+    # forward-compatibility with Claude Code's classic transcript format.
+    _SKIPPED_RECORD_TYPES: ClassVar[frozenset[str]] = frozenset(
+        {
+            "ai-title",
+            "queue-operation",
+            "last-prompt",
+            "attachment",
+            "agent-name",
+            "mode",
+            "permission-mode",
+            "pr-link",
+            "started",
+            "result",
+            "worktree-state",
+            "fork-context-ref",
+            "summary",
+            "file-history-snapshot",
+        }
+    )
 
     def __init__(
         self,
@@ -424,6 +451,22 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 usage=usage,
             )
 
+        def _make_compaction_summary() -> ParsedMessage:
+            meta = data.get("compactMetadata")
+            trigger = meta.get("trigger") if isinstance(meta, dict) else None
+            text = str(data.get("content") or "Conversation compacted")
+            if trigger:
+                text = f"{text} ({trigger})"
+            # uuid keys the renderer's content dedup so repeated compactions in
+            # one transcript each render their own divider.
+            uuid = data.get("uuid")
+            return _make_msg(
+                role="system",
+                content=text,
+                content_type="compaction_summary",
+                tool_use_id=uuid if isinstance(uuid, str) else None,
+            )
+
         if self._is_hook_blocking_error(data):
             content = self._extract_hook_blocking_content(data)
             results.append(
@@ -549,10 +592,23 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                     tool_use_id=data.get("tool_use_id"),
                 )
             )
-        # else: unknown type, return empty list
+        elif msg_type == "system":
+            # Hook-blocking system records are handled above. The compaction
+            # boundary is first-classed as a divider; every other system record
+            # (e.g. stop_hook_summary) is session metadata and is not rendered.
+            if data.get("subtype") == "compact_boundary":
+                results.append(_make_compaction_summary())
+
+        elif msg_type in self._SKIPPED_RECORD_TYPES:
+            # Known session-metadata envelope record — recognized, not rendered.
+            pass
+
         else:
-            block_type = str(msg_type or "<missing>")
-            results.append(_make_unknown(role="assistant", block_type=block_type, raw=data))
+            # Genuinely-unknown record type: keep the discovery signal without
+            # surfacing a card for an unrecognized session envelope.
+            self.error_log.log_unknown_block(
+                index, self.session_id, str(msg_type or "<missing>"), data
+            )
 
         return results
 
@@ -672,16 +728,28 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             tool_use_id = data.get("tool_use_id")
             content = str(tool_result)
 
+        elif msg_type == "system":
+            if data.get("subtype") != "compact_boundary":
+                return None  # known system metadata (e.g. stop_hook_summary)
+            role = "system"
+            content_type = "compaction_summary"
+            meta = data.get("compactMetadata")
+            trigger = meta.get("trigger") if isinstance(meta, dict) else None
+            content = str(data.get("content") or "Conversation compacted")
+            if trigger:
+                content = f"{content} ({trigger})"
+            uuid = data.get("uuid")
+            tool_use_id = uuid if isinstance(uuid, str) else None
+
+        elif msg_type in self._SKIPPED_RECORD_TYPES:
+            return None  # known session-metadata envelope record — not rendered
+
         else:
-            return _unknown_block_message(
-                index=index,
-                block_type=str(msg_type or "<missing>"),
-                raw=data,
-                timestamp=timestamp,
-                usage=usage,
-                model=model,
-                message_id=message_id,
+            # Genuinely-unknown record type: keep the discovery signal (no card).
+            self.error_log.log_unknown_block(
+                index, self.session_id, str(msg_type or "<missing>"), data
             )
+            return None
 
         return ParsedMessage(
             index=index,

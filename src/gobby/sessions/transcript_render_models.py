@@ -43,7 +43,7 @@ class RenderedToolCall:
 class ContentBlock:
     """A block of content within a message."""
 
-    type: str  # text, thinking, tool_chain, tool_reference, image, document, web_search_result, unknown
+    type: str  # text, thinking, tool_chain, tool_reference, image, document, web_search_result, compaction_summary, unknown
     content: Any | None = None  # content can be Any for pass-through types
     tool_calls: list[RenderedToolCall] | None = None
     tool_name: str | None = None  # For tool_reference

@@ -214,11 +214,9 @@ class TestClaudeTranscriptParser:
         assert msg is None
 
     def test_parse_line_unknown_type(self, parser) -> None:
+        """An unrecognized record-level type is dropped (not surfaced as a card)."""
         line = json.dumps({"type": "unknown_event"})
-        msg = parser.parse_line(line, 0)
-        assert msg is not None
-        assert msg.content_type == "unknown_event"
-        assert msg.raw_json == {"type": "unknown_event"}
+        assert parser.parse_line(line, 0) is None
 
     def test_parse_lines_continuous(self, parser) -> None:
         lines = [
@@ -527,6 +525,168 @@ class TestClaudeTranscriptParser:
         assert not has_orphan, "Orphaned tool_result should have been removed"
 
 
+class TestClaudeRecordEnvelopes:
+    """Record-level envelope handling: session-metadata records are recognized
+    and not surfaced as cards, compaction boundaries are first-classed, and a
+    genuinely-unknown record type is dropped but logged for discovery."""
+
+    @pytest.fixture
+    def parser(self):
+        return ClaudeTranscriptParser(session_id="probe")
+
+    @pytest.mark.parametrize(
+        "record_type",
+        [
+            "ai-title",
+            "queue-operation",
+            "last-prompt",
+            "attachment",
+            "agent-name",
+            "mode",
+            "permission-mode",
+            "pr-link",
+            "started",
+            "result",
+            "worktree-state",
+            "fork-context-ref",
+            "summary",
+            "file-history-snapshot",
+        ],
+    )
+    def test_known_envelope_records_are_dropped(self, parser, record_type) -> None:
+        line = json.dumps({"type": record_type, "foo": "bar", "timestamp": "2024-01-01T12:00:00Z"})
+        assert parser._expand_line(line, 0) == []
+        assert parser.parse_line(line, 0) is None
+
+    def test_system_metadata_record_is_dropped(self, parser) -> None:
+        line = json.dumps(
+            {
+                "type": "system",
+                "subtype": "stop_hook_summary",
+                "hookCount": 1,
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        assert parser._expand_line(line, 0) == []
+        assert parser.parse_line(line, 0) is None
+
+    def test_compact_boundary_is_first_classed(self, parser) -> None:
+        line = json.dumps(
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "content": "Conversation compacted",
+                "compactMetadata": {"trigger": "manual", "preTokens": 266101},
+                "uuid": "u1",
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 1
+        block = msgs[0]
+        assert block.role == "system"
+        assert block.content_type == "compaction_summary"
+        assert block.content == "Conversation compacted (manual)"
+        assert block.tool_use_id == "u1"  # keyed for render dedup
+
+        single = parser.parse_line(line, 0)
+        assert single is not None
+        assert single.content_type == "compaction_summary"
+        assert single.content == "Conversation compacted (manual)"
+        assert single.tool_use_id == "u1"
+
+    def test_compact_boundary_without_metadata_uses_default_text(self, parser) -> None:
+        line = json.dumps(
+            {
+                "type": "system",
+                "subtype": "compact_boundary",
+                "uuid": "u9",
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 1
+        assert msgs[0].content == "Conversation compacted"
+
+    def test_unknown_record_type_is_dropped_but_logged(self, parser, monkeypatch) -> None:
+        calls: list[tuple] = []
+        monkeypatch.setattr(
+            parser.error_log,
+            "log_unknown_block",
+            lambda *a, **k: calls.append((a, k)),
+        )
+        line = json.dumps(
+            {"type": "brand-new-envelope", "x": 1, "timestamp": "2024-01-01T12:00:00Z"}
+        )
+        assert parser._expand_line(line, 0) == []  # no card
+        assert len(calls) == 1  # discovery signal preserved
+
+    def test_block_level_unknown_content_still_passes_through(self, parser) -> None:
+        """Regression guard: record-level changes must not disturb block-level
+        fail-soft. An unknown content block inside an assistant message still
+        surfaces with its original content_type."""
+        line = json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "before"},
+                        {"type": "mystery_block", "data": 1},
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        )
+        msgs = parser._expand_line(line, 0)
+        assert "mystery_block" in [m.content_type for m in msgs]
+
+    def test_repeated_compactions_render_distinct_dividers(self, parser) -> None:
+        lines = [
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "compact_boundary",
+                    "content": "Conversation compacted",
+                    "compactMetadata": {"trigger": "manual"},
+                    "uuid": "u1",
+                    "timestamp": "2024-01-01T12:00:00Z",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "assistant",
+                    "message": {"content": [{"type": "text", "text": "mid"}]},
+                    "timestamp": "2024-01-01T12:00:01Z",
+                }
+            ),
+            json.dumps(
+                {
+                    "type": "system",
+                    "subtype": "compact_boundary",
+                    "content": "Conversation compacted",
+                    "compactMetadata": {"trigger": "auto"},
+                    "uuid": "u2",
+                    "timestamp": "2024-01-01T12:00:02Z",
+                }
+            ),
+        ]
+        msgs = [m for m in parser.parse_lines(lines) if isinstance(m, ParsedMessage)]
+        rendered = render_transcript(msgs, session_id="probe", source="claude")
+        dividers = [
+            block
+            for group in rendered
+            for block in group.content_blocks
+            if block.type == "compaction_summary"
+        ]
+        assert [b.content for b in dividers] == [
+            "Conversation compacted (manual)",
+            "Conversation compacted (auto)",
+        ]
+        assert not [
+            block for group in rendered for block in group.content_blocks if block.type == "unknown"
+        ]
+
+
 class TestClaudeExpandLine:
     """Tests for _expand_line multi-block expansion."""
 
@@ -828,13 +988,11 @@ class TestClaudeExpandLine:
         assert msg.tool_use_id == "toolu_blocked"
         assert msg.content == "Gobby blocked [require-uv]: Use uv instead."
 
-    def test_expand_unknown_type_returns_unknown_message(self, parser) -> None:
-        """Unknown message type returns a represented unknown block."""
+    def test_expand_unknown_record_type_is_dropped(self, parser) -> None:
+        """An unrecognized record-level type is dropped (session envelopes are
+        not conversation content). Block-level fail-soft is covered separately."""
         line = json.dumps({"type": "progress", "timestamp": "2024-01-01T12:00:00Z"})
-        msgs = parser._expand_line(line, 0)
-        assert len(msgs) == 1
-        assert msgs[0].content_type == "progress"
-        assert msgs[0].raw_json == {"type": "progress", "timestamp": "2024-01-01T12:00:00Z"}
+        assert parser._expand_line(line, 0) == []
 
     def test_expand_invalid_json_returns_empty(self, parser) -> None:
         """Invalid JSON returns empty list."""

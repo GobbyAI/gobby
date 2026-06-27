@@ -13,6 +13,7 @@ function ref<T>(current: T): MutableRefObject<T> {
 const contentBlockSamples = {
   text: { type: "text", content: "Text block" },
   thinking: { type: "thinking", content: "Thinking block" },
+  compaction_summary: { type: "compaction_summary", content: "Conversation compacted (manual)" },
   tool_chain: {
     type: "tool_chain",
     tool_calls: [
@@ -168,17 +169,18 @@ function renderRestoreHook(setMessages = vi.fn()) {
 
 describe("useContinuationRestore content block normalization", () => {
   it("accepts every ContentBlock variant", () => {
-    expect(Object.keys(contentBlockSamples)).toHaveLength(14);
+    expect(Object.keys(contentBlockSamples)).toHaveLength(15);
     for (const block of Object.values(contentBlockSamples)) {
       expect(isContentBlock(block)).toBe(true);
     }
   });
 
-  it("preserves restored document, diff, and unknown content blocks", () => {
+  it("preserves restored document, diff, compaction_summary, and unknown content blocks", () => {
     const setMessages = vi.fn();
     const blocks = [
       contentBlockSamples.document,
       contentBlockSamples.diff,
+      contentBlockSamples.compaction_summary,
       contentBlockSamples.unknown,
     ];
     const snapshot = makeSnapshot([

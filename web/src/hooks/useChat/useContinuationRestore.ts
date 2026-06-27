@@ -101,6 +101,7 @@ export function isContentBlock(value: unknown): value is ContentBlock {
   switch (value.type) {
     case "text":
     case "thinking":
+    case "compaction_summary":
       return typeof value.content === "string";
     case "tool_chain":
       return Array.isArray(value.tool_calls) && value.tool_calls.every(isToolCall);

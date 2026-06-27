@@ -130,6 +130,7 @@ export function classifyTool(toolName: string | null | undefined): string {
 export type ContentBlock =
   | { type: "text"; content: string }
   | { type: "thinking"; content: string }
+  | { type: "compaction_summary"; content: string }
   | { type: "tool_chain"; tool_calls: ToolCall[] }
   | { type: "tool_reference"; tool_name: string; server_name: string }
   | { type: "attachment"; attachment: ChatAttachment }

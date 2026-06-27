@@ -231,7 +231,14 @@ def _process_message_block(
     elif block_type == "web_search_tool_result":
         block_type = "web_search_result"
         block_content = msg.tool_result if msg.tool_result is not None else block_text
-    elif block_type in ["text", "thinking", "tool_reference", "image", "document"]:
+    elif block_type in [
+        "text",
+        "thinking",
+        "tool_reference",
+        "image",
+        "document",
+        "compaction_summary",
+    ]:
         pass  # Use as-is
     else:
         # Fallback for unknown types

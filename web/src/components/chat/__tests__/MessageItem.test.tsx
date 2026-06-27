@@ -30,6 +30,7 @@ function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
 const contentBlockDispatchCases = {
   text: { type: 'text', content: 'Text block' },
   thinking: { type: 'thinking', content: 'Thinking block' },
+  compaction_summary: { type: 'compaction_summary', content: 'Conversation compacted (manual)' },
   tool_chain: {
     type: 'tool_chain',
     tool_calls: [
@@ -197,6 +198,7 @@ describe('MessageItem', () => {
 
     expect(screen.getByText('Text block')).toBeTruthy()
     expect(screen.getByTestId('thinking')).toHaveTextContent('Thinking block')
+    expect(screen.getByText('Conversation compacted (manual)')).toBeTruthy()
     expect(screen.getByText('1 tool calls')).toBeTruthy()
     expect(screen.getByText('Referencing tool: search (builtin)')).toBeTruthy()
     expect(screen.getByText('notes.txt')).toBeTruthy()
