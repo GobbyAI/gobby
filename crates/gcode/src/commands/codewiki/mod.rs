@@ -50,7 +50,9 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // (Aggregate -> feature_high, Module -> feature_mid, Standard -> feature_low) and
 // the Direct route honors per-tier profile targets, so cached pages written under
 // the prior None-profile defaults re-render.
-const CODEWIKI_RENDER_VERSION: u32 = 16;
+// 17 (#976): the repo overview gains a bounded code-graph dependency diagram, so
+// prior on-disk overview pages re-render to pick it up.
+const CODEWIKI_RENDER_VERSION: u32 = 17;
 
 /// Default daemon feature profile for the grounded verification pass (#904):
 /// `feature_mid` (sonnet) runs the "is this claim supported by the cited
@@ -127,7 +129,9 @@ pub use system_model::{
 // Model-seeded architectural Mermaid diagrams for the architecture page (#891).
 #[cfg(test)]
 pub(crate) use architecture_diagrams::is_valid_mermaid;
-pub(crate) use architecture_diagrams::{render_architecture_diagrams, render_service_matrix};
+pub(crate) use architecture_diagrams::{
+    render_architecture_diagrams, render_dependency_diagram, render_service_matrix,
+};
 // Rendered markdown and graph-derived narrative analysis.
 pub(crate) use render::{
     build_repo_doc, collect_subsystem_dependency_edges, render_architecture_doc,

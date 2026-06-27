@@ -375,6 +375,8 @@ pub(crate) fn generate_hierarchical_docs_core(
         &module_docs,
         &input.leading_chunks,
         &audit_links,
+        &input.graph_edges,
+        input.graph_availability,
         generate,
         reuse,
         progress,

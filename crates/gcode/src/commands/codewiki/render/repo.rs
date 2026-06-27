@@ -3,11 +3,17 @@ use super::super::*;
 use super::{cell_summary, model_degraded_sources};
 use crate::index::hasher;
 
+// The repo overview aggregates many independent, already-separate inputs
+// (content, links, code-graph, and the shared generate/reuse/progress build
+// context); threading them as a single bag would obscure more than it helps.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn build_repo_doc(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     audit_links: &[(&str, &str)],
+    graph_edges: &[CodewikiGraphEdge],
+    graph_availability: CodewikiGraphAvailability,
     generate: &mut Option<&mut TextGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
@@ -47,7 +53,27 @@ pub(crate) fn build_repo_doc(
     let fallback = structural_repo_summary(files.len(), modules.len());
     let source_spans = collect_link_spans(&root_files, &top_modules);
     let source_files = span_files(&source_spans);
-    let repo_key = repo_audit_link_key(audit_links);
+    // Subsystem-level import edges from the indexed code graph drive the
+    // overview's dependency diagram. Resolved before the reuse check so the
+    // cache key tracks graph changes (a new edge re-renders the page); the
+    // diagram degrades to nothing — never to a degraded skeleton — when the
+    // graph backend is unavailable.
+    let dependency_edges = match graph_availability {
+        CodewikiGraphAvailability::Unavailable => Default::default(),
+        CodewikiGraphAvailability::Available | CodewikiGraphAvailability::Truncated => {
+            let file_paths: Vec<String> = files.iter().map(|file| file.path.clone()).collect();
+            let roots = cluster::subsystem_roots(&file_paths);
+            collect_subsystem_dependency_edges(&roots, files, graph_edges)
+        }
+    };
+    let mut repo_key = repo_audit_link_key(audit_links);
+    repo_key.push_str("repo-dep-edges:v1\n");
+    for (from, to) in &dependency_edges {
+        repo_key.push_str(from);
+        repo_key.push('\t');
+        repo_key.push_str(to);
+        repo_key.push('\n');
+    }
     // The repo overview's provenance rolls up every source file, so it is
     // reusable only when nothing changed at all and the deterministic audit-link
     // appendix set is the same; nothing downstream consumes its summary, so the
@@ -73,6 +99,15 @@ pub(crate) fn build_repo_doc(
             ground_text(&generated, &source_spans, Some(&markers))
         }
         Generation::Failed | Generation::Skipped => ground_text(&fallback, &source_spans, None),
+    };
+
+    // Append the bounded code-graph dependency diagram to the narrative body.
+    // When the graph backend is off the edge set is empty and no diagram is
+    // drawn — a benign data-source gap, distinct from an AI-generation failure,
+    // so it never sets `degraded`.
+    let summary = match render_dependency_diagram(&dependency_edges) {
+        Some(diagram) => format!("{summary}\n\n{diagram}"),
+        None => summary,
     };
 
     let doc = render_repo_doc(
