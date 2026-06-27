@@ -335,6 +335,11 @@ class ManagedWebChatPermissionsMixin:
         if self._pending_approval_event is not None:
             self._pending_approval_event.set()
 
+    def cancel_pending_approval(self) -> None:
+        self._pending_approval_decision = "reject"
+        if self._pending_approval_event is not None:
+            self._pending_approval_event.set()
+
     async def sync_sdk_permission_mode(self) -> None:
         """Apply the post-plan mode transition for managed CLIs.
 

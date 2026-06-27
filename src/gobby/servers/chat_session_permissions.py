@@ -675,6 +675,12 @@ class ChatSessionPermissionsMixin:
         if self._pending_approval_event is not None:
             self._pending_approval_event.set()
 
+    def cancel_pending_approval(self) -> None:
+        """Cancel an in-flight tool approval prompt, if one exists."""
+        self._pending_approval_decision = "reject"
+        if self._pending_approval_event is not None:
+            self._pending_approval_event.set()
+
     @property
     def has_pending_approval(self) -> bool:
         """Whether a tool approval is currently awaiting a response."""

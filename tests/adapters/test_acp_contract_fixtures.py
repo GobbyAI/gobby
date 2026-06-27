@@ -161,7 +161,7 @@ def _assert_initialize_request(request: dict[str, Any]) -> None:
     assert request["jsonrpc"] == "2.0"
     assert request["params"]["protocolVersion"] == 1
     assert request["params"]["clientInfo"] == {"name": "gobby", "version": "1.0.0"}
-    assert request["params"]["clientCapabilities"] == {}
+    assert request["params"]["clientCapabilities"] == {"terminal": True}
 
 
 def _assert_authenticate_request(request: dict[str, Any]) -> None:
@@ -372,6 +372,16 @@ async def test_grok_recorded_fixture_stream_drives_authenticated_client_flow() -
 async def test_grok_load_fixture_handles_terminal_client_request() -> None:
     process = FakeACPProcess(_fixture_lines("grok-0.1.216-session-load-tool-prompt.stdout.jsonl"))
 
+    class FakeTerminalManager:
+        async def create(
+            self, params: dict[str, Any], *, default_cwd: str | None = None
+        ) -> dict[str, str]:
+            assert params["command"] == "/bin/bash"
+            assert params["args"] == ["-lc", "pwd"]
+            assert params["cwd"] == "/tmp"
+            assert default_cwd is None
+            return {"terminalId": "term-fixture"}
+
     with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/grok"):
         with patch(
             "asyncio.create_subprocess_exec",
@@ -379,6 +389,7 @@ async def test_grok_load_fixture_handles_terminal_client_request() -> None:
             return_value=process,
         ):
             client = GrokACPClient()
+            client._terminal_manager = FakeTerminalManager()
             await client.start(session_id="grok-existing-session")
             events = [event async for event in client.send(PROMPT_TEXT)]
 
@@ -394,4 +405,4 @@ async def test_grok_load_fixture_handles_terminal_client_request() -> None:
     assert any(event.event_type == "tool_result" for event in events)
     responses = [request for request in requests if request.get("id") == 0 and "result" in request]
     assert responses
-    assert responses[0]["result"]["exitCode"] == 1
+    assert responses[0]["result"] == {"terminalId": "term-fixture"}

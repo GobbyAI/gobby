@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -10,7 +11,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from gobby.adapters import acp_client_requests
+from gobby.adapters import acp_client_requests, acp_terminal
+from gobby.adapters.acp_terminal import ACPTerminalManager
 from gobby.agents.constants import UV_CACHE_DIR
 
 pytestmark = pytest.mark.unit
@@ -39,13 +41,23 @@ async def test_terminal_create_env_uses_minimal_allowlist(
     """Terminal requests preserve only the minimal env allowlist plus ACP guard vars."""
     captured: dict[str, Any] = {}
 
+    class FakeStdout:
+        async def read(self, _n: int) -> bytes:
+            return b""
+
     class FakeProcess:
         returncode = 0
+        stdout = FakeStdout()
 
-        async def communicate(self) -> tuple[bytes, bytes]:
-            return b"ok", b""
+        async def wait(self) -> int:
+            return 0
 
-    async def fake_create_subprocess_shell(*_args: Any, **kwargs: Any) -> FakeProcess:
+        def kill(self) -> None:
+            return None
+
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> FakeProcess:
+        captured["args"] = args
+        captured["cwd"] = kwargs["cwd"]
         captured["env"] = kwargs["env"]
         return FakeProcess()
 
@@ -53,22 +65,28 @@ async def test_terminal_create_env_uses_minimal_allowlist(
     monkeypatch.setenv(UV_CACHE_DIR, "/tmp/gobby-uv-cache")
     monkeypatch.setenv("SECRET_TOKEN", "should-not-leak")
     monkeypatch.setattr(
-        acp_client_requests.asyncio,
-        "create_subprocess_shell",
-        fake_create_subprocess_shell,
+        acp_terminal.asyncio,
+        "create_subprocess_exec",
+        fake_create_subprocess_exec,
     )
 
-    result = await acp_client_requests._run_terminal_create(
-        "printf ok",
-        cwd=str(tmp_path),
-        timeout_seconds=1.0,
-        output_limit=1024,
+    manager = ACPTerminalManager()
+    result = await manager.create(
+        {
+            "command": "printf",
+            "args": ["ok"],
+            "cwd": str(tmp_path),
+            "env": [{"name": "NODE_ENV", "value": "test"}],
+        }
     )
 
-    assert result["exitCode"] == 0
+    assert result["terminalId"].startswith("term_")
+    assert captured["args"][:2] == ("printf", "ok")
+    assert captured["cwd"] == str(tmp_path)
     env = captured["env"]
     assert env["PATH"] == "/usr/bin"
     assert env[UV_CACHE_DIR] == "/tmp/gobby-uv-cache"
+    assert env["NODE_ENV"] == "test"
     assert env["GOBBY_HOOKS_DISABLED"] == "1"
     assert env["GOBBY_ACP_CHILD_TOOL"] == "1"
     assert "SECRET_TOKEN" not in env
@@ -88,6 +106,8 @@ class _RecordingStdin:
 def _recording_client() -> SimpleNamespace:
     return SimpleNamespace(
         _process=SimpleNamespace(stdin=_RecordingStdin()),
+        _terminal_manager=ACPTerminalManager(),
+        _cwd=None,
         display_name="Gemini",
     )
 
@@ -213,30 +233,159 @@ async def test_request_permission_cancels_when_pre_tool_blocks() -> None:
 
 
 @pytest.mark.asyncio
+async def test_terminal_request_lifecycle_uses_spec_methods(tmp_path: Path) -> None:
+    """Terminal methods create a handle, read output, wait, kill, and release by ID."""
+    client = _recording_client()
+    create_request = {
+        "jsonrpc": "2.0",
+        "id": "create-1",
+        "method": "terminal/create",
+        "params": {
+            "sessionId": "sess-1",
+            "command": sys.executable,
+            "args": [
+                "-c",
+                "import sys; sys.stdout.write('hello'); sys.stdout.flush(); sys.stderr.write('!')",
+            ],
+            "cwd": str(tmp_path),
+            "outputByteLimit": 1024,
+        },
+    }
+
+    events = [
+        event async for event in acp_client_requests.handle_client_request(client, create_request)
+    ]
+
+    assert [event.event_type for event in events] == ["tool_call", "tool_result"]
+    terminal_id = _written_messages(client)[0]["result"]["terminalId"]
+    assert terminal_id.startswith("term_")
+
+    for request_id, method in [
+        ("wait-1", "terminal/wait_for_exit"),
+        ("output-1", "terminal/output"),
+        ("kill-1", "terminal/kill"),
+        ("release-1", "terminal/release"),
+    ]:
+        request = {
+            "jsonrpc": "2.0",
+            "id": request_id,
+            "method": method,
+            "params": {"sessionId": "sess-1", "terminalId": terminal_id},
+        }
+        assert [
+            event async for event in acp_client_requests.handle_client_request(client, request)
+        ] == []
+
+    messages = _written_messages(client)
+    assert messages[1]["result"] == {"exitCode": 0, "signal": None}
+    assert messages[2]["result"] == {
+        "output": "hello!",
+        "truncated": False,
+        "exitStatus": {"exitCode": 0, "signal": None},
+    }
+    assert messages[3]["result"] == {}
+    assert messages[4]["result"] == {}
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_rejects_invalid_terminal_id() -> None:
+    """Unknown or released terminal IDs return JSON-RPC invalid-params errors."""
+    client = _recording_client()
+
+    events = [
+        event
+        async for event in acp_client_requests.handle_client_request(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": "output-1",
+                "method": "terminal/output",
+                "params": {"sessionId": "sess-1", "terminalId": "term_missing"},
+            },
+        )
+    ]
+
+    assert events == []
+    response = _written_messages(client)[0]
+    assert response["id"] == "output-1"
+    assert response["error"]["code"] == -32602
+    assert "term_missing" in response["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_terminal_output_truncates_from_end_on_character_boundary(tmp_path: Path) -> None:
+    """Output retention keeps the tail and never returns broken UTF-8."""
+    manager = ACPTerminalManager()
+    result = await manager.create(
+        {
+            "command": sys.executable,
+            "args": ["-c", "print('alphaéomega')"],
+            "cwd": str(tmp_path),
+            "outputByteLimit": 7,
+        }
+    )
+    terminal_id = result["terminalId"]
+
+    assert await manager.wait_for_exit(terminal_id) == {"exitCode": 0, "signal": None}
+    output = await manager.output(terminal_id)
+    await manager.release(terminal_id)
+
+    assert output["truncated"] is True
+    assert output["output"] == "omega\n"
+
+
+@pytest.mark.asyncio
+async def test_terminal_create_rejects_relative_cwd() -> None:
+    """ACP terminal/create only accepts absolute cwd values."""
+    client = _recording_client()
+
+    events = [
+        event
+        async for event in acp_client_requests.handle_client_request(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": "create-relative",
+                "method": "terminal/create",
+                "params": {
+                    "sessionId": "sess-1",
+                    "command": sys.executable,
+                    "args": ["-c", "print('nope')"],
+                    "cwd": "relative/path",
+                },
+            },
+        )
+    ]
+
+    assert events == []
+    response = _written_messages(client)[0]
+    assert response["id"] == "create-relative"
+    assert response["error"]["code"] == -32602
+    assert "cwd must be an absolute path" in response["error"]["message"]
+
+
+@pytest.mark.asyncio
 async def test_terminal_create_does_not_execute_when_pre_tool_blocks(
-    monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    """A Gobby pre-tool block returns a cancelled terminal result without execution."""
+    """A Gobby pre-tool block returns a JSON-RPC error without execution."""
     client = _recording_client()
     pre_tool_callback = AsyncMock(return_value={"decision": "deny", "reason": "no shell"})
-    run_terminal = AsyncMock()
-    monkeypatch.setattr(acp_client_requests, "_run_terminal_create", run_terminal)
     request = {
         "jsonrpc": "2.0",
         "id": "terminal-1",
         "method": "terminal/create",
         "params": {
-            "command": "printf nope",
+            "command": sys.executable,
+            "args": ["-c", "print('nope')"],
             "cwd": str(tmp_path),
-            "timeout": 1,
             "outputByteLimit": 4096,
         },
     }
 
     events = [
         event
-        async for event in acp_client_requests._handle_terminal_create_request(
+        async for event in acp_client_requests.handle_client_request(
             client,
             request,
             pre_tool_callback=pre_tool_callback,
@@ -244,29 +393,21 @@ async def test_terminal_create_does_not_execute_when_pre_tool_blocks(
     ]
 
     assert events == []
-    run_terminal.assert_not_awaited()
     pre_tool_callback.assert_awaited_once_with(
         {
             "tool_name": "run_terminal_command",
             "tool_input": {
-                "command": "printf nope",
+                "command": sys.executable,
+                "args": ["-c", "print('nope')"],
                 "cwd": str(tmp_path),
-                "timeout": 1.0,
+                "env": [],
                 "outputByteLimit": 4096,
             },
         }
     )
     response = _written_messages(client)[0]
     assert response["id"] == "terminal-1"
-    assert response["result"] == {
-        "exitCode": 1,
-        "stdout": "",
-        "stderr": "no shell",
-        "error": "no shell",
-        "timedOut": False,
-        "truncated": False,
-        "cancelled": True,
-    }
+    assert response["error"] == {"code": -32000, "message": "no shell"}
 
 
 @pytest.mark.asyncio

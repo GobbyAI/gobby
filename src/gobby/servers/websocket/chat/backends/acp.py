@@ -214,6 +214,9 @@ class ACPWebChatBackend:
         ):
             yield event
 
+    async def interrupt(self, session: ACPManagedChatSession) -> None:
+        await self._client.cancel_session(session.sdk_session_id)
+
     async def switch_model(self, session: ACPManagedChatSession, new_model: str) -> None:
         session._model = new_model
         session._connected = False

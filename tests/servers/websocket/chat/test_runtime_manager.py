@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
@@ -453,6 +454,40 @@ class TestQwenBackend:
 
         assert context is not None
         assert "gcode outline/search/symbol" in context
+
+    @pytest.mark.asyncio
+    async def test_interrupt_cancels_pending_acp_tool_approval(self) -> None:
+        class FakeBackend:
+            def __init__(self) -> None:
+                self.cancelled_sessions: list[str | None] = []
+
+            async def interrupt(self, session: QwenManagedChatSession) -> None:
+                self.cancelled_sessions.append(session.sdk_session_id)
+
+        backend = FakeBackend()
+        session = QwenManagedChatSession(
+            conversation_id="qwen-cancel",
+            _backend=backend,
+            chat_mode="normal",
+            project_path=".",
+            sdk_session_id="qwen-session",
+        )
+        approval_ready = asyncio.Event()
+
+        async def mark_approval_ready(_tool_name: str, _input_data: dict[str, Any]) -> None:
+            approval_ready.set()
+
+        session._tool_approval_callback = mark_approval_ready
+        approval_task = asyncio.create_task(
+            session._wait_for_tool_approval("Bash", {"command": "touch blocked"})
+        )
+        await asyncio.wait_for(approval_ready.wait(), timeout=1.0)
+
+        await session.interrupt()
+        result = await approval_task
+
+        assert backend.cancelled_sessions == ["qwen-session"]
+        assert acp_client_requests.is_pre_tool_decision_denied(result)
 
     def test_managed_session_logs_upstream_error_context(
         self, caplog: pytest.LogCaptureFixture

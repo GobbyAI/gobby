@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
 
+from gobby.adapters.acp_terminal import ACPTerminalManager
 from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
 
 logger = logging.getLogger(__name__)
@@ -195,10 +196,15 @@ class ACPClient:
         self._started = False
         self._session_id: str | None = None
         self._session_info: dict[str, Any] = {}
+        self._agent_capabilities: dict[str, Any] = {}
         self._io_lock = asyncio.Lock()
+        self._stdin_write_lock = asyncio.Lock()
         self._active_operations = 0
+        self._active_prompt_session_id: str | None = None
+        self._active_prompt_request_id: int | None = None
         self._request_ids = itertools.count(1)
         self._stderr_drain = SubprocessStderrDrain(f"{self.display_name} ACP", logger=logger)
+        self._terminal_manager = ACPTerminalManager()
 
     @property
     def is_started(self) -> bool:
@@ -214,6 +220,11 @@ class ACPClient:
     def session_info(self) -> dict[str, Any]:
         """The full ACP session/new or session/load result."""
         return dict(self._session_info)
+
+    @property
+    def agent_capabilities(self) -> dict[str, Any]:
+        """The capabilities advertised by the ACP agent during initialize."""
+        return dict(self._agent_capabilities)
 
     async def start(
         self,
@@ -279,13 +290,23 @@ class ACPClient:
                         "name": "gobby",
                         "version": "1.0.0",
                     },
-                    "clientCapabilities": {},
+                    "clientCapabilities": {"terminal": True},
                 },
             )
             logger.debug(f"ACP initialize response: {init_result}")
+            negotiated_version = init_result.get("protocolVersion")
+            if negotiated_version != self.protocol_version:
+                raise RuntimeError(
+                    f"ACP protocol version mismatch: requested {self.protocol_version}, "
+                    f"agent selected {negotiated_version!r}"
+                )
+            agent_capabilities = init_result.get("agentCapabilities")
+            self._agent_capabilities = (
+                dict(agent_capabilities) if isinstance(agent_capabilities, dict) else {}
+            )
             await self._maybe_authenticate(init_result)
             if auto_session:
-                if session_id:
+                if session_id and self._agent_capabilities.get("loadSession") is True:
                     session_result = await self.load_session(
                         session_id,
                         model=model,
@@ -293,6 +314,11 @@ class ACPClient:
                         reasoning_effort=reasoning_effort,
                     )
                 else:
+                    if session_id:
+                        logger.debug(
+                            "%s ACP agent does not support session/load; creating new session",
+                            self.display_name,
+                        )
                     session_result = await self.create_session(
                         model=model,
                         cwd=cwd,
@@ -373,6 +399,12 @@ class ACPClient:
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Load an existing ACP session on an already-started shared backend."""
+        if self._agent_capabilities.get("loadSession") is not True:
+            return await self.create_session(
+                model=model,
+                cwd=cwd,
+                reasoning_effort=reasoning_effort,
+            )
         session_params: dict[str, Any] = {
             "cwd": cwd or self._cwd or ".",
             "mcpServers": [],
@@ -403,6 +435,28 @@ class ACPClient:
         async with self._io_lock:
             return await self._send_request_locked(method, params)
 
+    async def cancel_session(self, session_id: str | None = None) -> None:
+        """Send an out-of-band ACP session/cancel notification."""
+        if not self._started or not self._process or not self._process.stdin:
+            return
+        target_session_id = session_id or self._active_prompt_session_id or self._session_id
+        if not target_session_id:
+            return
+        await self._write_json_rpc_message(
+            {
+                "jsonrpc": "2.0",
+                "method": "session/cancel",
+                "params": {"sessionId": target_session_id},
+            }
+        )
+
+    async def _write_json_rpc_message(self, message: dict[str, Any]) -> None:
+        if not self._process or not self._process.stdin:
+            raise RuntimeError(f"{type(self).__name__} process not available")
+        async with self._stdin_write_lock:
+            self._process.stdin.write((json.dumps(message) + "\n").encode())
+            await self._process.stdin.drain()
+
     async def _send_request_locked(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         self._active_operations += 1
         try:
@@ -417,9 +471,7 @@ class ACPClient:
                 "id": request_id,
             }
 
-            request_line = json.dumps(request) + "\n"
-            self._process.stdin.write(request_line.encode())
-            await self._process.stdin.drain()
+            await self._write_json_rpc_message(request)
             logger.debug(f"Sent ACP request: {method}")
             pending_session_id: str | None = None
 
@@ -538,6 +590,7 @@ class ACPClient:
         # across the `yield` points of this async generator. Released in finally.
         self._active_operations += 1
         lock_acquired = False
+        request_id: int | None = None
         try:
             await self._io_lock.acquire()
             lock_acquired = True
@@ -556,9 +609,9 @@ class ACPClient:
             if reasoning_effort:
                 request["params"]["reasoningEffort"] = reasoning_effort
 
-            request_line = json.dumps(request) + "\n"
-            self._process.stdin.write(request_line.encode())
-            await self._process.stdin.drain()
+            self._active_prompt_session_id = target_session_id
+            self._active_prompt_request_id = request_id
+            await self._write_json_rpc_message(request)
             logger.debug("Sent prompt to %s ACP: %r", self.display_name, message[:80])
 
             async for event in self._read_stream(
@@ -566,7 +619,13 @@ class ACPClient:
                 pre_tool_callback=pre_tool_callback,
             ):
                 yield event
+        except asyncio.CancelledError:
+            await self.cancel_session(target_session_id)
+            raise
         finally:
+            if self._active_prompt_request_id == request_id:
+                self._active_prompt_session_id = None
+                self._active_prompt_request_id = None
             if lock_acquired:
                 self._io_lock.release()
             self._active_operations = max(0, self._active_operations - 1)
@@ -803,13 +862,18 @@ class ACPClient:
         """
         if not self._process:
             await self._stderr_drain.stop()
+            await self._terminal_manager.release_all()
             self._started = False
             self._session_id = None
             self._session_info = {}
+            self._agent_capabilities = {}
+            self._active_prompt_session_id = None
+            self._active_prompt_request_id = None
             return
 
         process = self._process
         try:
+            await self._terminal_manager.release_all()
             if process.returncode is None:
                 if process.stdin:
                     try:
@@ -852,5 +916,8 @@ class ACPClient:
             self._started = False
             self._session_id = None
             self._session_info = {}
+            self._agent_capabilities = {}
+            self._active_prompt_session_id = None
+            self._active_prompt_request_id = None
             self._active_operations = 0
             logger.debug("%s ACP client stopped", self.display_name)

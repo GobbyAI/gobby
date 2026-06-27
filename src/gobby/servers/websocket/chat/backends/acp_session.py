@@ -271,11 +271,9 @@ class ACPManagedChatSession(
         return None
 
     async def interrupt(self) -> None:
-        logger.debug(
-            "%s interrupt requested for %s (no-op)",
-            self._provider_label(),
-            self.conversation_id,
-        )
+        self.cancel_pending_approval()
+        await self._backend.interrupt(self)
+        logger.debug("%s interrupt requested for %s", self._provider_label(), self.conversation_id)
 
 
 __all__ = ["ACPManagedChatSession"]

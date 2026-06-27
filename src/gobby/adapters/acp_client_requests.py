@@ -2,53 +2,17 @@
 
 from __future__ import annotations
 
-import asyncio
 import json
 import logging
-import os
 from collections.abc import AsyncIterator, Awaitable, Callable
-from pathlib import Path
 from typing import Any
 
 from gobby.adapters.acp_client import StreamEvent, _make_id
-from gobby.agents.constants import UV_CACHE_DIR
+from gobby.adapters.acp_terminal import TerminalNotFoundError
 
-DEFAULT_TERMINAL_REQUEST_TIMEOUT_SECONDS = 30.0
-MAX_TERMINAL_OUTPUT_BYTES = 200_000
-_TERMINAL_ENV_ALLOWLIST = ("PATH", "LANG", "LC_ALL", "LC_CTYPE", "TERM", "TMPDIR", UV_CACHE_DIR)
 logger = logging.getLogger(__name__)
 PreToolCallback = Callable[[dict[str, Any]], Awaitable[dict[str, Any] | None]]
-_PRE_TOOL_DENY_DECISIONS = {"deny", "block"}
-
-
-def _coerce_terminal_timeout(value: Any) -> float:
-    if isinstance(value, bool) or value is None:
-        return DEFAULT_TERMINAL_REQUEST_TIMEOUT_SECONDS
-    try:
-        parsed = float(value)
-    except (TypeError, ValueError):
-        return DEFAULT_TERMINAL_REQUEST_TIMEOUT_SECONDS
-    if parsed > 1_000:
-        parsed = parsed / 1_000
-    return min(max(parsed, 0.1), 300.0)
-
-
-def _coerce_output_limit(value: Any) -> int:
-    if isinstance(value, bool) or value is None:
-        return 20_000
-    try:
-        parsed = int(value)
-    except (TypeError, ValueError):
-        return 20_000
-    return min(max(parsed, 1_024), MAX_TERMINAL_OUTPUT_BYTES)
-
-
-def _decode_limited(data: bytes, limit: int) -> tuple[str, bool]:
-    if limit <= 0:
-        return "", bool(data)
-    truncated = len(data) > limit
-    clipped = data[:limit]
-    return clipped.decode(errors="replace"), truncated
+_PRE_TOOL_DENY_DECISIONS = {"deny", "block", "decline", "reject"}
 
 
 async def write_json_rpc_result(client: Any, request_id: Any, result: dict[str, Any]) -> None:
@@ -86,8 +50,14 @@ async def handle_client_request(
     pre_tool_callback: PreToolCallback | None = None,
 ) -> AsyncIterator[StreamEvent]:
     method = request.get("method")
-    if method == "terminal/create":
-        async for event in _handle_terminal_create_request(
+    if method in {
+        "terminal/create",
+        "terminal/output",
+        "terminal/wait_for_exit",
+        "terminal/kill",
+        "terminal/release",
+    }:
+        async for event in _handle_terminal_request(
             client, request, pre_tool_callback=pre_tool_callback
         ):
             yield event
@@ -164,18 +134,6 @@ def _permission_tool_details(params: dict[str, Any]) -> tuple[str, dict[str, Any
             break
     tool_input = raw_input if isinstance(raw_input, dict) else dict(tool_call)
     return tool_name, tool_input
-
-
-def _denied_terminal_result(reason: str) -> dict[str, Any]:
-    return {
-        "exitCode": 1,
-        "stdout": "",
-        "stderr": reason,
-        "error": reason,
-        "timedOut": False,
-        "truncated": False,
-        "cancelled": True,
-    }
 
 
 # Permission-option kinds we treat as approval, in preference order. We prefer
@@ -275,23 +233,80 @@ async def _handle_request_permission_request(
     )
 
 
-async def _handle_terminal_create_request(
+async def _handle_terminal_request(
     client: Any,
     request: dict[str, Any],
     *,
     pre_tool_callback: PreToolCallback | None = None,
 ) -> AsyncIterator[StreamEvent]:
+    method = str(request.get("method") or "")
     params = request.get("params")
     if not isinstance(params, dict):
         await write_json_rpc_error(
             client,
             request.get("id"),
             code=-32602,
-            message="terminal/create params must be an object",
+            message=f"{method} params must be an object",
         )
         return
 
-    command = str(params.get("command") or "").strip()
+    manager = getattr(client, "_terminal_manager", None)
+    if manager is None:
+        await write_json_rpc_error(
+            client,
+            request.get("id"),
+            code=-32601,
+            message="ACP terminal support is not available",
+        )
+        return
+
+    if method == "terminal/create":
+        async for event in _handle_terminal_create(
+            client,
+            request,
+            params,
+            pre_tool_callback=pre_tool_callback,
+        ):
+            yield event
+        return
+
+    terminal_id = str(params.get("terminalId") or "")
+    if not terminal_id:
+        await write_json_rpc_error(
+            client,
+            request.get("id"),
+            code=-32602,
+            message=f"{method} terminalId is required",
+        )
+        return
+
+    try:
+        if method == "terminal/output":
+            result = await manager.output(terminal_id)
+        elif method == "terminal/wait_for_exit":
+            result = await manager.wait_for_exit(terminal_id)
+        elif method == "terminal/kill":
+            result = await manager.kill(terminal_id)
+        elif method == "terminal/release":
+            result = await manager.release(terminal_id)
+        else:
+            raise TerminalNotFoundError(f"Unknown terminal method: {method}")
+    except TerminalNotFoundError as exc:
+        await write_json_rpc_error(client, request.get("id"), code=-32602, message=str(exc))
+        return
+
+    await write_json_rpc_result(client, request.get("id"), result)
+
+
+async def _handle_terminal_create(
+    client: Any,
+    request: dict[str, Any],
+    params: dict[str, Any],
+    *,
+    pre_tool_callback: PreToolCallback | None = None,
+) -> AsyncIterator[StreamEvent]:
+    manager = client._terminal_manager
+    command = str(params.get("command") or "")
     if not command:
         await write_json_rpc_error(
             client,
@@ -301,15 +316,13 @@ async def _handle_terminal_create_request(
         )
         return
 
-    cwd = str(params.get("cwd") or getattr(client, "_cwd", None) or ".")
-    timeout_seconds = _coerce_terminal_timeout(params.get("timeout"))
-    output_limit = _coerce_output_limit(params.get("outputByteLimit"))
     call_id = str(request.get("id") or f"terminal-{_make_id()}")
     tool_input = {
         "command": command,
-        "cwd": cwd,
-        "timeout": timeout_seconds,
-        "outputByteLimit": output_limit,
+        "args": params.get("args") or [],
+        "cwd": params.get("cwd"),
+        "env": params.get("env") or [],
+        "outputByteLimit": params.get("outputByteLimit"),
     }
     pre_tool_response = await _apply_pre_tool_decision(
         pre_tool_callback,
@@ -317,8 +330,21 @@ async def _handle_terminal_create_request(
         tool_input=tool_input,
     )
     if is_pre_tool_decision_denied(pre_tool_response):
-        result = _denied_terminal_result(pre_tool_denial_reason(pre_tool_response))
-        await write_json_rpc_result(client, request.get("id"), result)
+        await write_json_rpc_error(
+            client,
+            request.get("id"),
+            code=-32000,
+            message=pre_tool_denial_reason(pre_tool_response),
+        )
+        return
+
+    try:
+        result = await manager.create(params, default_cwd=getattr(client, "_cwd", None))
+    except ValueError as exc:
+        await write_json_rpc_error(client, request.get("id"), code=-32602, message=str(exc))
+        return
+    except OSError as exc:
+        await write_json_rpc_error(client, request.get("id"), code=-32000, message=str(exc))
         return
 
     yield StreamEvent(
@@ -331,74 +357,13 @@ async def _handle_terminal_create_request(
             "pre_tool_checked": pre_tool_callback is not None,
         },
     )
-
-    result = await _run_terminal_create(
-        command,
-        cwd=cwd,
-        timeout_seconds=timeout_seconds,
-        output_limit=output_limit,
-    )
-    success = result.get("exitCode") == 0 and not result.get("timedOut")
     yield StreamEvent(
         event_type="tool_result",
         data={
             "call_id": call_id,
-            "success": success,
+            "success": True,
             "result": result,
-            "error": None if success else result.get("stderr") or result.get("error"),
+            "error": None,
         },
     )
     await write_json_rpc_result(client, request.get("id"), result)
-
-
-async def _run_terminal_create(
-    command: str,
-    *,
-    cwd: str,
-    timeout_seconds: float,
-    output_limit: int,
-) -> dict[str, Any]:
-    env = {key: os.environ[key] for key in _TERMINAL_ENV_ALLOWLIST if key in os.environ}
-    env["GOBBY_HOOKS_DISABLED"] = "1"
-    env["GOBBY_ACP_CHILD_TOOL"] = "1"
-
-    try:
-        resolved_cwd = str(Path(cwd).expanduser().resolve())
-        proc = await asyncio.create_subprocess_shell(
-            command,
-            stdin=asyncio.subprocess.DEVNULL,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            cwd=resolved_cwd,
-            env=env,
-        )
-        try:
-            stdout, stderr = await asyncio.wait_for(
-                proc.communicate(),
-                timeout=timeout_seconds,
-            )
-            timed_out = False
-        except TimeoutError:
-            proc.kill()
-            stdout, stderr = await proc.communicate()
-            timed_out = True
-    except Exception as exc:
-        return {
-            "exitCode": 1,
-            "stdout": "",
-            "stderr": "",
-            "error": str(exc),
-            "timedOut": False,
-            "truncated": False,
-        }
-
-    stdout_text, stdout_truncated = _decode_limited(stdout, output_limit)
-    stderr_limit = max(0, output_limit - len(stdout_text.encode("utf-8", errors="replace")))
-    stderr_text, stderr_truncated = _decode_limited(stderr, stderr_limit)
-    return {
-        "exitCode": proc.returncode,
-        "stdout": stdout_text,
-        "stderr": stderr_text,
-        "timedOut": timed_out,
-        "truncated": stdout_truncated or stderr_truncated,
-    }
