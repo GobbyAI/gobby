@@ -1,4 +1,8 @@
-use gobby_core::ai::{daemon, effective_route, text};
+use gobby_core::ai::effective_route;
+use gobby_core::ai::generation::{
+    DirectGenerationTarget, GenerationTier, generate_one_shot, profile_for_tier,
+    resolve_direct_generation_target,
+};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
 
@@ -7,6 +11,14 @@ use crate::commands::ask::citation::citation_check;
 use crate::commands::ask::evidence::EvidencePlan;
 use crate::commands::ask::narration::strip_leading_model_narration;
 use crate::output::{AskAiOutput, AskOutput, AskSynthesisOutput};
+
+/// Ask answers are a single bounded synthesis over retrieved evidence, so they
+/// generate on the module tier. Tier -> feature profile is owned by gcore's
+/// `profile_for_tier` (Module -> feature_mid); provider/model resolution stays
+/// in config and is never pinned here. The Daemon route forwards the resolved
+/// profile name; the Direct route resolves it to a concrete target so a
+/// standalone gcore.yaml routes ask to its own provider/model/api_key.
+const ASK_TIER: GenerationTier = GenerationTier::Module;
 
 /// Run the single bounded-prompt completion over the planned evidence.
 /// Transport is the daemon route or the direct OpenAI-compatible endpoint
@@ -38,36 +50,45 @@ pub(super) fn synthesize(
     });
 
     match route {
-        AiRouting::Direct => generate_direct(output, plan, &context, require_ai),
-        AiRouting::Daemon => generate_daemon(output, plan, &context, require_ai),
+        AiRouting::Direct => {
+            // Resolve the per-tier target from the same config source (hub
+            // config_store plus any standalone gcore.yaml) the context was
+            // built from; the Daemon route forwards the profile name instead.
+            let target =
+                resolve_direct_generation_target(&mut source, &profile_for_tier(ASK_TIER, None));
+            generate_synthesis(output, plan, &context, route, Some(&target), require_ai)
+        }
+        AiRouting::Daemon => generate_synthesis(output, plan, &context, route, None, require_ai),
         AiRouting::Auto | AiRouting::Off => mark_ai_unavailable(output, require_ai, None),
     }
 }
 
-fn generate_direct(
+fn generate_synthesis(
     output: &mut AskOutput,
     plan: &EvidencePlan,
     context: &AiContext,
+    route: AiRouting,
+    target: Option<&DirectGenerationTarget>,
     require_ai: bool,
 ) -> Result<(), WikiError> {
-    match text::generate_text(context, &plan.prompt, Some(synthesis_system())) {
+    match generate_one_shot(
+        context,
+        route,
+        ASK_TIER,
+        None,
+        target,
+        &plan.prompt,
+        Some(synthesis_system()),
+        None,
+    ) {
         Ok(result) => {
-            record_synthesis(output, &plan.excerpts, "direct", result.text, result.model);
-            Ok(())
-        }
-        Err(error) => mark_ai_unavailable(output, require_ai, Some(error.to_string())),
-    }
-}
-
-fn generate_daemon(
-    output: &mut AskOutput,
-    plan: &EvidencePlan,
-    context: &AiContext,
-    require_ai: bool,
-) -> Result<(), WikiError> {
-    match daemon::generate_via_daemon(context, &plan.prompt, Some(synthesis_system())) {
-        Ok(result) => {
-            record_synthesis(output, &plan.excerpts, "daemon", result.text, result.model);
+            record_synthesis(
+                output,
+                &plan.excerpts,
+                routing_label(route),
+                result.text,
+                result.model,
+            );
             Ok(())
         }
         Err(error) => mark_ai_unavailable(output, require_ai, Some(error.to_string())),
@@ -166,6 +187,13 @@ mod tests {
     use crate::commands::ask::test_support::retrieval_with_hooks_hit;
     use crate::commands::search::SearchRetrieval;
     use crate::output::SearchOutput;
+
+    #[test]
+    fn ask_generates_on_the_module_feature_profile() {
+        use gobby_core::ai::generation::FEATURE_MID;
+        assert_eq!(ASK_TIER, GenerationTier::Module);
+        assert_eq!(profile_for_tier(ASK_TIER, None), FEATURE_MID);
+    }
 
     #[test]
     fn synthesis_with_ungrounded_claim_is_flagged_in_json() {

@@ -2,7 +2,11 @@ use std::collections::HashSet;
 use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
-use gobby_core::ai::{daemon as core_ai_daemon, effective_route, text as core_ai_text};
+use gobby_core::ai::effective_route;
+use gobby_core::ai::generation::{
+    DirectGenerationTarget, GenerationTier, generate_one_shot, profile_for_tier,
+    resolve_direct_generation_target,
+};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::config::{AiCapability, AiRouting};
 
@@ -236,6 +240,14 @@ fn accepted_note_from_source(
     })
 }
 
+/// Compiled wiki articles are gwiki's curated narrative surface, so they
+/// generate on the aggregate tier. Tier -> feature profile is owned by gcore's
+/// `profile_for_tier` (Aggregate -> feature_high); provider/model resolution
+/// stays in config and is never pinned here. The Daemon route forwards the
+/// resolved profile name; the Direct route resolves it to a concrete target so
+/// a standalone gcore.yaml routes compile to its own provider/model/api_key.
+const COMPILE_TIER: GenerationTier = GenerationTier::Aggregate;
+
 /// Resolved explainer transport, mirroring `gwiki ask` honesty semantics:
 /// `Off` skips synthesis structurally; an unresolved explicit daemon/direct
 /// request still runs an attempt so the failure is recorded as degradation.
@@ -248,6 +260,10 @@ enum ExplainerTransport {
     Resolved {
         route: AiRouting,
         context: Box<AiContext>,
+        /// Per-tier direct-generation target resolved for `COMPILE_TIER`,
+        /// present only on the Direct route; the Daemon route forwards the
+        /// profile name and leaves this `None`.
+        target: Option<DirectGenerationTarget>,
     },
 }
 
@@ -267,15 +283,21 @@ impl ExplainerTransport {
         match self {
             Self::Off => Err("AI synthesis is off".to_string()),
             Self::Unresolved { error, .. } => Err(error.clone()),
-            Self::Resolved { route, context } => {
-                let result = match route {
-                    AiRouting::Daemon => core_ai_daemon::generate_via_daemon(
-                        context,
-                        &prompt.user,
-                        Some(prompt.system),
-                    ),
-                    _ => core_ai_text::generate_text(context, &prompt.user, Some(prompt.system)),
-                }
+            Self::Resolved {
+                route,
+                context,
+                target,
+            } => {
+                let result = generate_one_shot(
+                    context,
+                    *route,
+                    COMPILE_TIER,
+                    None,
+                    target.as_ref(),
+                    &prompt.user,
+                    Some(prompt.system),
+                    None,
+                )
                 .map_err(|error| error.to_string())?;
                 Ok(ExplainerResponse {
                     text: result.text,
@@ -305,10 +327,23 @@ fn resolve_explainer_transport(requested: AiRouting) -> ExplainerTransport {
                 },
             );
             match effective_route(&context, AiCapability::TextGenerate) {
-                route @ (AiRouting::Daemon | AiRouting::Direct) => ExplainerTransport::Resolved {
-                    route,
-                    context: Box::new(context),
-                },
+                route @ (AiRouting::Daemon | AiRouting::Direct) => {
+                    // The Direct route needs a concrete per-tier target resolved
+                    // from the same config source (hub config_store plus any
+                    // standalone gcore.yaml). The Daemon route forwards the
+                    // profile name and ignores the target.
+                    let target = matches!(route, AiRouting::Direct).then(|| {
+                        resolve_direct_generation_target(
+                            &mut source,
+                            &profile_for_tier(COMPILE_TIER, None),
+                        )
+                    });
+                    ExplainerTransport::Resolved {
+                        route,
+                        context: Box::new(context),
+                        target,
+                    }
+                }
                 _ => ExplainerTransport::Off,
             }
         }
@@ -336,6 +371,13 @@ mod tests {
     use super::*;
     use crate::sources::{CompileStatus, IngestionMethod, SourceKind};
     use std::fs;
+
+    #[test]
+    fn compile_generates_on_the_aggregate_feature_profile() {
+        use gobby_core::ai::generation::FEATURE_HIGH;
+        assert_eq!(COMPILE_TIER, GenerationTier::Aggregate);
+        assert_eq!(profile_for_tier(COMPILE_TIER, None), FEATURE_HIGH);
+    }
 
     fn source_record(
         id: &str,
