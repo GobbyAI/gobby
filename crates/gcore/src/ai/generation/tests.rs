@@ -222,6 +222,27 @@ fn content_completion(text: &str) -> ChatCompletion {
     }
 }
 
+fn two_tool_call_completion() -> ChatCompletion {
+    ChatCompletion {
+        content: None,
+        tool_calls: vec![
+            ToolCall {
+                id: "call_a".to_string(),
+                name: "echo".to_string(),
+                arguments: json!({"text":"a"}),
+            },
+            ToolCall {
+                id: "call_b".to_string(),
+                name: "echo".to_string(),
+                arguments: json!({"text":"b"}),
+            },
+        ],
+        finish_reason: Some("tool_calls".to_string()),
+        model: Some("stub-model".to_string()),
+        usage: None,
+    }
+}
+
 #[test]
 fn lane_b_executes_tool_then_completes_with_observability() {
     let transport = StubTransport::new(vec![
@@ -516,6 +537,118 @@ fn lane_b_stops_at_timeout() {
     assert_eq!(outcome.observability.elapsed_ms, 100);
 }
 
+#[test]
+fn lane_b_content_completion_times_out_after_transport() {
+    let transport = StubTransport::new(vec![content_completion("late answer")]);
+    let mut executor = EchoExecutor::new("unused");
+    let limits = ToolLoopLimits {
+        timeout: Duration::from_millis(50),
+        ..ToolLoopLimits::default()
+    };
+    let elapsed = [
+        Duration::from_millis(0),
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+    ];
+    let index = Cell::new(0usize);
+    let clock = || {
+        let current = index.get();
+        let value = elapsed[current.min(elapsed.len() - 1)];
+        index.set(current + 1);
+        value
+    };
+
+    let outcome = run_tool_loop_with_clock(
+        &transport,
+        &mut executor,
+        vec![ChatMessage::user("go")],
+        &limits,
+        None,
+        clock,
+    )
+    .expect("loop runs");
+
+    assert_eq!(outcome.stop_reason, StopReason::Timeout);
+    assert!(outcome.content.is_none());
+    assert_eq!(outcome.observability.turns, 1);
+    assert!(executor.calls.is_empty());
+}
+
+#[test]
+fn lane_b_tool_call_completion_times_out_after_transport_without_executing_tools() {
+    let transport = StubTransport::new(vec![tool_call_completion("echo", "a", json!({}))]);
+    let mut executor = EchoExecutor::new("unused");
+    let limits = ToolLoopLimits {
+        timeout: Duration::from_millis(50),
+        ..ToolLoopLimits::default()
+    };
+    let elapsed = [
+        Duration::from_millis(0),
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+    ];
+    let index = Cell::new(0usize);
+    let clock = || {
+        let current = index.get();
+        let value = elapsed[current.min(elapsed.len() - 1)];
+        index.set(current + 1);
+        value
+    };
+
+    let outcome = run_tool_loop_with_clock(
+        &transport,
+        &mut executor,
+        vec![ChatMessage::user("go")],
+        &limits,
+        None,
+        clock,
+    )
+    .expect("loop runs");
+
+    assert_eq!(outcome.stop_reason, StopReason::Timeout);
+    assert!(executor.calls.is_empty());
+    assert_eq!(outcome.observability.tool_call_count, 0);
+}
+
+#[test]
+fn lane_b_times_out_after_first_tool_result_before_next_tool_call() {
+    let transport = StubTransport::new(vec![two_tool_call_completion()]);
+    let mut executor = EchoExecutor::new("r");
+    let limits = ToolLoopLimits {
+        timeout: Duration::from_millis(50),
+        max_tool_calls: 100,
+        ..ToolLoopLimits::default()
+    };
+    let elapsed = [
+        Duration::from_millis(0),
+        Duration::from_millis(0),
+        Duration::from_millis(100),
+        Duration::from_millis(100),
+    ];
+    let index = Cell::new(0usize);
+    let clock = || {
+        let current = index.get();
+        let value = elapsed[current.min(elapsed.len() - 1)];
+        index.set(current + 1);
+        value
+    };
+
+    let outcome = run_tool_loop_with_clock(
+        &transport,
+        &mut executor,
+        vec![ChatMessage::user("go")],
+        &limits,
+        None,
+        clock,
+    )
+    .expect("loop runs");
+
+    assert_eq!(outcome.stop_reason, StopReason::Timeout);
+    assert_eq!(executor.calls.len(), 1);
+    assert_eq!(executor.calls[0].id, "call_a");
+    assert_eq!(outcome.observability.tool_call_count, 1);
+}
+
 // ----- Direct OpenAI-compatible transport ------------------------------------
 
 fn blank_binding() -> CapabilityBinding {
@@ -616,12 +749,46 @@ fn direct_transport_sends_tools_and_parses_tool_calls() {
 }
 
 #[test]
+fn direct_transport_rejects_malformed_chat_completion_through_tool_loop() {
+    for response in [
+        r#"{"model":"local-model","choices":[{"finish_reason":"stop"}]}"#,
+        r#"{"model":"local-model","choices":[{"finish_reason":"stop","message":"bad"}]}"#,
+    ] {
+        let (api_base, handle) = spawn_json_response(response).expect("spawn test server");
+        let context = direct_context();
+        let target = DirectGenerationTarget {
+            api_base: Some(api_base),
+            api_key: Some("sk-test".to_string()),
+            model: Some("local-model".to_string()),
+            provider: Some("lm-studio".to_string()),
+            reasoning_effort: None,
+        };
+        let transport =
+            DirectChatTransport::new(&context, target, Some("feature_high".to_string())).unwrap();
+        let mut executor = EchoExecutor::new("unused");
+
+        let error = run_tool_loop(
+            &transport,
+            &mut executor,
+            vec![ChatMessage::user("go")],
+            &ToolLoopLimits::default(),
+            None,
+        )
+        .expect_err("malformed response fails");
+
+        assert!(matches!(error, AiError::ParseFailure { .. }));
+        handle.join().unwrap().unwrap();
+        assert!(executor.calls.is_empty());
+    }
+}
+
+#[test]
 fn parse_completion_reads_plain_content_and_usage() {
     let value: Value = serde_json::from_str(
         r#"{"model":"m","choices":[{"finish_reason":"stop","message":{"role":"assistant","content":"hello"}}],"usage":{"prompt_tokens":3,"completion_tokens":5,"total_tokens":8}}"#,
     )
     .unwrap();
-    let completion = parse_completion(&value);
+    let completion = parse_completion(&value).expect("completion parses");
     assert_eq!(completion.content.as_deref(), Some("hello"));
     assert!(completion.tool_calls.is_empty());
     assert_eq!(completion.finish_reason.as_deref(), Some("stop"));
@@ -629,6 +796,32 @@ fn parse_completion_reads_plain_content_and_usage() {
         completion.usage.and_then(|usage| usage.token_count()),
         Some(8)
     );
+}
+
+#[test]
+fn parse_completion_defaults_malformed_tool_arguments_to_null() {
+    let value = json!({
+        "model": "m",
+        "choices": [{
+            "finish_reason": "tool_calls",
+            "message": {
+                "role": "assistant",
+                "tool_calls": [{
+                    "id": "call_1",
+                    "type": "function",
+                    "function": {
+                        "name": "search",
+                        "arguments": "{bad json",
+                    },
+                }],
+            },
+        }],
+    });
+
+    let completion = parse_completion(&value).expect("valid tool call parses");
+
+    assert_eq!(completion.tool_calls.len(), 1);
+    assert_eq!(completion.tool_calls[0].arguments, Value::Null);
 }
 
 #[test]

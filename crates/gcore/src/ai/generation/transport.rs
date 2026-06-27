@@ -91,7 +91,7 @@ impl ChatTransport for DirectChatTransport<'_> {
             std::thread::sleep,
         )?;
 
-        Ok(parse_completion(&value))
+        parse_completion(&value)
     }
 
     fn route(&self) -> &'static str {
@@ -190,7 +190,7 @@ fn tool_to_json(tool: &ToolSchema) -> Value {
 }
 
 /// Parse an OpenAI-compatible chat-completion response into a [`ChatCompletion`].
-pub(crate) fn parse_completion(value: &Value) -> ChatCompletion {
+pub(crate) fn parse_completion(value: &Value) -> Result<ChatCompletion, AiError> {
     let choice = value
         .get("choices")
         .and_then(Value::as_array)
@@ -203,24 +203,30 @@ pub(crate) fn parse_completion(value: &Value) -> ChatCompletion {
         .filter(|content| !content.is_empty())
         .map(str::to_string);
 
-    let tool_calls = message
+    let tool_calls: Vec<ToolCall> = message
         .and_then(|message| message.get("tool_calls"))
         .and_then(Value::as_array)
         .map(|calls| calls.iter().filter_map(parse_tool_call).collect())
         .unwrap_or_default();
+
+    if content.is_none() && tool_calls.is_empty() {
+        return Err(AiError::parse_failure(
+            "chat completion response missing assistant content or tool calls",
+        ));
+    }
 
     let finish_reason = choice
         .and_then(|choice| choice.get("finish_reason"))
         .and_then(Value::as_str)
         .map(str::to_string);
 
-    ChatCompletion {
+    Ok(ChatCompletion {
         content,
         tool_calls,
         finish_reason,
         model: chat_completion_model(value),
         usage: chat_completion_usage(value),
-    }
+    })
 }
 
 fn parse_tool_call(value: &Value) -> Option<ToolCall> {
@@ -232,9 +238,7 @@ fn parse_tool_call(value: &Value) -> Option<ToolCall> {
         .map(str::to_string)
         .unwrap_or_else(|| format!("call_{name}"));
     let arguments = match function.get("arguments") {
-        Some(Value::String(raw)) => {
-            serde_json::from_str::<Value>(raw).unwrap_or(Value::String(raw.clone()))
-        }
+        Some(Value::String(raw)) => serde_json::from_str::<Value>(raw).unwrap_or(Value::Null),
         Some(other) => other.clone(),
         None => Value::Null,
     };

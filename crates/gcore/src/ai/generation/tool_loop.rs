@@ -343,6 +343,10 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
             model = Some(completion_model);
         }
 
+        if elapsed() >= limits.timeout {
+            break (None, StopReason::Timeout);
+        }
+
         if completion.tool_calls.is_empty() {
             break (completion.content, StopReason::Completed);
         }
@@ -353,6 +357,7 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
         ));
 
         let mut hit_call_limit = false;
+        let mut hit_timeout = false;
         for call in &completion.tool_calls {
             if tool_call_count >= limits.max_tool_calls {
                 hit_call_limit = true;
@@ -368,6 +373,14 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
             let result = truncate_utf8(result, limits.max_bytes_per_tool_result);
             messages.push(ChatMessage::tool_result(call.id.clone(), result));
             tool_call_count += 1;
+            if elapsed() >= limits.timeout {
+                hit_timeout = true;
+                break;
+            }
+        }
+
+        if hit_timeout {
+            break (None, StopReason::Timeout);
         }
 
         if hit_call_limit {
