@@ -61,12 +61,20 @@ async def test_dispatch_before_tool_once_shares_inflight_none_response() -> None
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "resume_session_id, expected_request", [(None, "create"), ("prev", "load")]
+    "resume_session_id, session_capabilities, agent_capabilities, expected_request",
+    [
+        (None, {}, {}, "create"),
+        ("prev", {"resume": True}, {"loadSession": True}, "resume"),
+        ("prev", {}, {"loadSession": True}, "load"),
+        ("prev", {}, {}, "create"),
+    ],
 )
 async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_request(
     temp_dir: Path,
     monkeypatch: pytest.MonkeyPatch,
     resume_session_id: str | None,
+    session_capabilities: dict[str, bool],
+    agent_capabilities: dict[str, bool],
     expected_request: str,
 ) -> None:
     monkeypatch.chdir(temp_dir)
@@ -83,14 +91,21 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
         order.append("load")
         return {"sessionId": "loaded"}
 
+    async def resume_session(_session_id: str, **_kwargs: object) -> dict[str, str]:
+        order.append("resume")
+        return {"sessionId": "resumed"}
+
     def record_trust(_provider: str, _cwd: str) -> None:
         order.append("trust")
 
     client = MagicMock()
     client.is_started = True
     client.session_id = None
+    client.session_capabilities = session_capabilities
+    client.agent_capabilities = agent_capabilities
     client.create_session = AsyncMock(side_effect=create_session)
     client.load_session = AsyncMock(side_effect=load_session)
+    client.resume_session = AsyncMock(side_effect=resume_session)
 
     backend = QwenWebChatBackend(client=client, default_model="qwen-default")
     backend._health = ProviderBackendHealth(provider="qwen", available=True)
@@ -106,6 +121,8 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
 
     pre_approve.assert_called_once_with("qwen", expected_cwd)
     assert order == ["trust", expected_request]
+    expected_ids = {"create": "created", "load": "loaded", "resume": "resumed"}
+    assert session.sdk_session_id == expected_ids[expected_request]
     if expected_request == "create":
         client.create_session.assert_awaited_once_with(
             model="qwen-default",
@@ -113,8 +130,8 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
             reasoning_effort=None,
         )
         client.load_session.assert_not_awaited()
-        assert session.sdk_session_id == "created"
-    else:
+        client.resume_session.assert_not_awaited()
+    elif expected_request == "load":
         client.load_session.assert_awaited_once_with(
             "prev",
             model="qwen-default",
@@ -122,7 +139,16 @@ async def test_acp_attach_session_resolves_cwd_and_seeds_trust_before_session_re
             reasoning_effort=None,
         )
         client.create_session.assert_not_awaited()
-        assert session.sdk_session_id == "loaded"
+        client.resume_session.assert_not_awaited()
+    else:
+        client.resume_session.assert_awaited_once_with(
+            "prev",
+            model="qwen-default",
+            cwd=expected_cwd,
+            reasoning_effort=None,
+        )
+        client.create_session.assert_not_awaited()
+        client.load_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio

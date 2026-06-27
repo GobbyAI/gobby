@@ -9,6 +9,7 @@ and ``UnsupportedACPMethodError`` when the matching capability is ungated.
 from __future__ import annotations
 
 import json
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -408,3 +409,86 @@ async def test_backend_exposes_session_capabilities_and_delegates(
     assert result == {"sessions": [{"sessionId": "s1"}]}
 
     await client.stop()
+
+
+# --------------------------------------------------------------------------- #
+# attach_session resume/load/new selection (prefers session/resume)
+# --------------------------------------------------------------------------- #
+
+
+def _fake_session(*, sdk_session_id: str | None) -> SimpleNamespace:
+    """A minimal stand-in for ACPManagedChatSession for attach_session.
+
+    Only the attributes attach_session reads/writes are provided.
+    """
+    return SimpleNamespace(
+        _model="m1",
+        sdk_session_id=sdk_session_id,
+        resume_session_id=None,
+        project_path="/repo",
+        reasoning_effort=None,
+        available_commands=None,
+        _connected=False,
+        last_activity=None,
+    )
+
+
+async def _attach_with_capabilities(
+    monkeypatch: pytest.MonkeyPatch,
+    *,
+    agent_capabilities: dict[str, Any],
+    sdk_session_id: str | None,
+) -> _FakeProcess:
+    """Drive attach_session on a started stub backend and return its process."""
+    monkeypatch.setattr(
+        "gobby.servers.websocket.chat.backends.acp.pre_approve_directory",
+        lambda *_a, **_k: None,
+    )
+    client, process = await _start_client(
+        monkeypatch,
+        agent_capabilities=agent_capabilities,
+        response_payloads=[_result("attached-1")],
+    )
+    backend = _StubACPBackend(client=client)
+    await backend.attach_session(_fake_session(sdk_session_id=sdk_session_id))
+    await client.stop()
+    return process
+
+
+async def test_attach_session_prefers_resume_when_advertised(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = await _attach_with_capabilities(
+        monkeypatch,
+        agent_capabilities={"loadSession": True, "sessionCapabilities": {"resume": {}}},
+        sdk_session_id="sess-1",
+    )
+
+    # resume wins even when loadSession is also advertised.
+    assert _last_request(process)["method"] == "session/resume"
+
+
+async def test_attach_session_falls_back_to_load_when_only_load_session(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = await _attach_with_capabilities(
+        monkeypatch,
+        agent_capabilities={"loadSession": True, "sessionCapabilities": {}},
+        sdk_session_id="sess-1",
+    )
+
+    assert _last_request(process)["method"] == "session/load"
+
+
+async def test_attach_session_starts_new_when_neither_resume_nor_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A stored session id is present, but neither capability is advertised, so
+    # the selection starts a fresh session rather than resuming or loading.
+    process = await _attach_with_capabilities(
+        monkeypatch,
+        agent_capabilities={"sessionCapabilities": {}},
+        sdk_session_id="sess-1",
+    )
+
+    assert _last_request(process)["method"] == "session/new"

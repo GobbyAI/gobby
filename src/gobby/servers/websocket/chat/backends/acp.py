@@ -191,7 +191,23 @@ class ACPWebChatBackend:
         session_id = session.sdk_session_id or session.resume_session_id
         cwd = str(Path(session.project_path or ".").expanduser().resolve())
         pre_approve_directory(self.provider, cwd)
-        if session_id:
+        # Re-establish an existing session preferring session/resume, since
+        # Gobby re-renders the transcript from its own DB on continue_in_chat:
+        #   resume (no agent-side replay) -> load (replays history) -> new.
+        if not session_id:
+            session_info = await self._client.create_session(
+                model=session._model,
+                cwd=cwd,
+                reasoning_effort=session.reasoning_effort,
+            )
+        elif self._client.session_capabilities.get("resume"):
+            session_info = await self._client.resume_session(
+                session_id,
+                model=session._model,
+                cwd=cwd,
+                reasoning_effort=session.reasoning_effort,
+            )
+        elif self._client.agent_capabilities.get("loadSession") is True:
             session_info = await self._client.load_session(
                 session_id,
                 model=session._model,
