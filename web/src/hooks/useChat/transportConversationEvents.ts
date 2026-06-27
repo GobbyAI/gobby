@@ -1,7 +1,5 @@
 import { normalizeChatMode } from "../../types/chat";
 import type {
-  AcpAuthMethod,
-  AcpConfigOption,
   ApprovalOption,
   SessionObservationMeta,
 } from "../../types/chat";
@@ -30,67 +28,6 @@ function isApprovalOption(value: unknown): value is ApprovalOption {
     (decision === undefined || decision === "approve") &&
     (emphasis === undefined || emphasis === "primary" || emphasis === "accent")
   );
-}
-
-function isAcpConfigOptionValue(
-  value: unknown,
-): value is AcpConfigOption["options"][number] {
-  if (!value || typeof value !== "object") return false;
-  const optionValue = value as Record<string, unknown>;
-  return (
-    typeof optionValue.value === "string" &&
-    typeof optionValue.name === "string" &&
-    (optionValue.description === undefined ||
-      typeof optionValue.description === "string")
-  );
-}
-
-function isAcpConfigOption(value: unknown): value is AcpConfigOption {
-  if (!value || typeof value !== "object") return false;
-  const option = value as Record<string, unknown>;
-  return (
-    typeof option.id === "string" &&
-    typeof option.name === "string" &&
-    typeof option.type === "string" &&
-    typeof option.currentValue === "string" &&
-    (option.description === undefined || typeof option.description === "string") &&
-    (option.category === undefined || typeof option.category === "string") &&
-    Array.isArray(option.options) &&
-    option.options.every(isAcpConfigOptionValue)
-  );
-}
-
-function readAcpConfigOptions(data: Record<string, unknown>): AcpConfigOption[] {
-  const raw = data.config_options;
-  if (!Array.isArray(raw)) return [];
-  return raw.filter(isAcpConfigOption);
-}
-
-function isAcpAuthMethod(value: unknown): value is AcpAuthMethod {
-  if (!value || typeof value !== "object") return false;
-  const method = value as Record<string, unknown>;
-  return (
-    typeof method.id === "string" &&
-    method.id.length > 0 &&
-    typeof method.name === "string" &&
-    method.name.length > 0 &&
-    (method.description === undefined || typeof method.description === "string") &&
-    (method.type === undefined || typeof method.type === "string")
-  );
-}
-
-function readAcpAuthMethods(data: Record<string, unknown>): AcpAuthMethod[] {
-  const raw = data.auth_methods;
-  if (!Array.isArray(raw)) return [];
-  return raw.filter(isAcpAuthMethod);
-}
-
-function applyAcpAuthState(
-  data: Record<string, unknown>,
-  ctx: UseChatTransportParams,
-) {
-  ctx.setAcpAuthMethods(readAcpAuthMethods(data));
-  ctx.setAcpAuthLogoutSupported(data.auth_logout_supported === true);
 }
 
 function readNullableString(
@@ -250,32 +187,6 @@ export function handleSessionInfo(
       ctx.onModeChangedRef.current?.(restored);
     }
   }
-  if (matchesCurrentConversation) {
-    if ("config_options" in data) {
-      ctx.setAcpConfigOptions(readAcpConfigOptions(data));
-    }
-    if ("auth_methods" in data || "auth_logout_supported" in data) {
-      applyAcpAuthState(data, ctx);
-    }
-  }
-}
-
-export function handleSessionConfigOptions(
-  data: Record<string, unknown>,
-  ctx: UseChatTransportParams,
-) {
-  const msgConvId = data.conversation_id as string | undefined;
-  if (msgConvId && msgConvId !== ctx.conversationIdRef.current) return;
-  ctx.setAcpConfigOptions(readAcpConfigOptions(data));
-}
-
-export function handleSessionAuthState(
-  data: Record<string, unknown>,
-  ctx: UseChatTransportParams,
-) {
-  const msgConvId = data.conversation_id as string | undefined;
-  if (msgConvId && msgConvId !== ctx.conversationIdRef.current) return;
-  applyAcpAuthState(data, ctx);
 }
 
 export function handleWorktreeSwitched(

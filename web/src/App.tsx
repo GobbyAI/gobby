@@ -71,15 +71,9 @@ export default function App() {
     isLoadingMessages,
     transportError,
     contextUsage,
-    acpAuthMethods,
-    acpAuthLogoutSupported,
-    acpConfigOptions,
     sendMessage,
     ensureMainSession,
     sendMode,
-    sendSessionConfigOption,
-    sendAcpAuthenticate,
-    sendAcpLogout,
     sendAttachedSessionMode,
     sendProjectChange,
     projectIdRef,
@@ -545,12 +539,6 @@ export default function App() {
                     updateChatMode(mode);
                     sendMode(mode);
                   },
-                  acpConfigOptions,
-                  onAcpConfigOptionChange: sendSessionConfigOption,
-                  acpAuthMethods,
-                  acpAuthLogoutSupported,
-                  onAcpAuthenticate: sendAcpAuthenticate,
-                  onAcpLogout: sendAcpLogout,
                   onModeChangeLocal: updateChatMode,
                   onWorktreeChange: isPersonalProject
                     ? undefined

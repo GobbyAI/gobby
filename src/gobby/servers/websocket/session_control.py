@@ -179,15 +179,6 @@ class SessionControlMixin:
     async def _handle_set_mode(self, websocket: Any, data: dict[str, Any]) -> None:
         await _config.handle_set_mode(self, websocket, data)
 
-    async def _handle_set_session_config_option(self, websocket: Any, data: dict[str, Any]) -> None:
-        await _config.handle_set_session_config_option(self, websocket, data)
-
-    async def _handle_authenticate_session(self, websocket: Any, data: dict[str, Any]) -> None:
-        await _config.handle_authenticate_session(self, websocket, data)
-
-    async def _handle_logout_session(self, websocket: Any, data: dict[str, Any]) -> None:
-        await _config.handle_logout_session(self, websocket, data)
-
     async def _handle_set_project(self, websocket: Any, data: dict[str, Any]) -> None:
         await _config.handle_set_project(self, websocket, data)
 

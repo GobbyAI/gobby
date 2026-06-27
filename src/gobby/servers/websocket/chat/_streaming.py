@@ -56,8 +56,6 @@ class ChatStreamingMixin:
         msg = str(exc).lower()
         if "rate_limit" in msg or "429" in msg:
             return "Rate limited by Claude API. Please wait and try again.", "RATE_LIMITED"
-        if "auth_required" in msg:
-            return "Authentication required. Choose a sign-in method to continue.", "AUTH_REQUIRED"
         if "auth" in msg or "401" in msg or "403" in msg or "api_key" in msg:
             return "Authentication error with Claude API.", "AUTH_ERROR"
         if isinstance(exc, TimeoutError) or "timeout" in msg:
@@ -98,7 +96,6 @@ class ChatStreamingMixin:
         )
 
         gen: AsyncIterator[Any] | None = None
-        session: ChatSessionProtocol | None = None
         try:
             session = self._chat_sessions.get(conversation_id)
             if session is None:
@@ -158,23 +155,16 @@ class ChatStreamingMixin:
         except Exception as exc:
             logger.exception("Chat error for conversation %s", conversation_id)
             error_msg, error_code = self._classify_chat_error(exc)
-            error_payload = transport.base_msg(
-                type="chat_error",
-                message_id=state.assistant_message_id,
-                conversation_id=conversation_id,
-                error=error_msg,
-                code=error_code,
-            )
-            if error_code == "AUTH_REQUIRED" and session is not None:
-                auth_methods = getattr(session, "auth_methods", None)
-                if isinstance(auth_methods, list) and auth_methods:
-                    error_payload["auth_required"] = True
-                    error_payload["auth_methods"] = auth_methods
-                    error_payload["auth_logout_supported"] = bool(
-                        getattr(session, "auth_logout_supported", False)
-                    )
             try:
-                await transport.send_direct(error_payload)
+                await transport.send_direct(
+                    transport.base_msg(
+                        type="chat_error",
+                        message_id=state.assistant_message_id,
+                        conversation_id=conversation_id,
+                        error=error_msg,
+                        code=error_code,
+                    )
+                )
             except (ConnectionClosed, ConnectionClosedError):
                 pass
 
@@ -250,15 +240,6 @@ class ChatStreamingMixin:
             session_chat_mode = getattr(session, "chat_mode", None)
             if isinstance(session_chat_mode, str) and session_chat_mode:
                 session_info_msg["chat_mode"] = session_chat_mode
-            config_options = getattr(session, "config_options", None)
-            if isinstance(config_options, list) and config_options:
-                session_info_msg["config_options"] = config_options
-            auth_methods = getattr(session, "auth_methods", None)
-            if isinstance(auth_methods, list) and auth_methods:
-                session_info_msg["auth_methods"] = auth_methods
-            auth_logout_supported = getattr(session, "auth_logout_supported", None)
-            if isinstance(auth_logout_supported, bool):
-                session_info_msg["auth_logout_supported"] = auth_logout_supported
             await transport.send_direct(session_info_msg)
             return session
         except Exception as exc:

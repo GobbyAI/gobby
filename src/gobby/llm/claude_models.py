@@ -54,14 +54,6 @@ class ToolResultEvent:
 
 
 @dataclass
-class SessionConfigOptionsEvent:
-    """Event when ACP session config options change."""
-
-    config_options: list[dict[str, Any]]
-    """Complete current ACP config option state."""
-
-
-@dataclass
 class SessionInfoUpdateEvent:
     """Event when ACP session metadata changes."""
 
@@ -139,7 +131,6 @@ ChatEvent = (
     | ToolResultEvent
     | DoneEvent
     | ThinkingEvent
-    | SessionConfigOptionsEvent
     | SessionInfoUpdateEvent
     | SessionModeUpdateEvent
     | SessionUsageUpdateEvent

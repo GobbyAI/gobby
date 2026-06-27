@@ -149,11 +149,6 @@
   min-width: 7.5rem;
 }
 
-.chat-input-select--acp-option {
-  min-width: 9rem;
-  max-width: min(18rem, 100%);
-}
-
 .chat-input-select__value {
   display: inline-flex;
   align-items: center;

@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type {
   QueuedFile,
-  AcpAuthMethod,
-  AcpConfigOption,
   ChatMode,
   ChatModeInfo,
   ChatSendOptions,
@@ -42,12 +40,6 @@ interface ChatInputProps {
   mode?: ChatMode
   onModeChange?: (mode: ChatMode) => void
   modeOptions?: ChatModeInfo[]
-  acpConfigOptions?: AcpConfigOption[]
-  onAcpConfigOptionChange?: (configId: string, value: string) => void
-  acpAuthMethods?: AcpAuthMethod[]
-  acpAuthLogoutSupported?: boolean
-  onAcpAuthenticate?: (methodId: string) => void
-  onAcpLogout?: () => void
   modeDisabled?: boolean
   sttEnabled?: boolean
   ttsEnabled?: boolean
@@ -151,12 +143,6 @@ export function ChatInput({
   mode = 'normal',
   onModeChange,
   modeOptions,
-  acpConfigOptions,
-  onAcpConfigOptionChange,
-  acpAuthMethods,
-  acpAuthLogoutSupported = false,
-  onAcpAuthenticate,
-  onAcpLogout,
   modeDisabled = false,
   sttEnabled = false,
   ttsEnabled = false,
@@ -468,13 +454,7 @@ export function ChatInput({
           mode={mode}
           modeDisabled={modeDisabled}
           modeOptions={modeOptions}
-          acpConfigOptions={acpConfigOptions}
-          acpAuthMethods={acpAuthMethods}
-          acpAuthLogoutSupported={acpAuthLogoutSupported}
           onAgentChange={onAgentChange}
-          onAcpAuthenticate={onAcpAuthenticate}
-          onAcpConfigOptionChange={onAcpConfigOptionChange}
-          onAcpLogout={onAcpLogout}
           onModeChange={onModeChange}
           onSttEnabledChange={onSttEnabledChange}
           onTtsEnabledChange={onTtsEnabledChange}

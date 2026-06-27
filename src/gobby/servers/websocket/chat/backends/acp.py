@@ -126,18 +126,6 @@ class ACPWebChatBackend:
     def health(self) -> ProviderBackendHealth:
         return self._health
 
-    def _auth_state(self) -> dict[str, Any]:
-        return {
-            "auth_methods": self._client.auth_methods,
-            "auth_logout_supported": self._client.auth_logout_supported,
-        }
-
-    def _sync_auth_state(self, session: ACPManagedChatSession) -> dict[str, Any]:
-        auth_state = self._auth_state()
-        session.auth_methods = auth_state["auth_methods"]
-        session.auth_logout_supported = auth_state["auth_logout_supported"]
-        return auth_state
-
     async def attach_session(
         self,
         session: ACPManagedChatSession,
@@ -158,7 +146,6 @@ class ACPWebChatBackend:
             raise RuntimeError(
                 self._health.startup_error or f"{self.display_name} backend unavailable"
             )
-        self._sync_auth_state(session)
 
         session_id = session.sdk_session_id or session.resume_session_id
         cwd = str(Path(session.project_path or ".").expanduser().resolve())
@@ -185,8 +172,6 @@ class ACPWebChatBackend:
         )
         if isinstance(resolved_session_id, str) and resolved_session_id:
             session.sdk_session_id = resolved_session_id
-        session.config_options = self._client.config_options
-        self._sync_auth_state(session)
         session._connected = True
         session.last_activity = datetime.now(UTC)
 
@@ -228,56 +213,6 @@ class ACPWebChatBackend:
             pre_tool_callback=_apply_pre_tool,
         ):
             yield event
-
-    async def set_config_option(
-        self,
-        session: ACPManagedChatSession,
-        *,
-        config_id: str,
-        value: str,
-    ) -> list[dict[str, Any]]:
-        if not session.sdk_session_id:
-            raise RuntimeError(f"{self.display_name} session missing sessionId")
-        config_options = await self._client.set_config_option(
-            session_id=session.sdk_session_id,
-            config_id=config_id,
-            value=value,
-        )
-        session.config_options = config_options
-        return config_options
-
-    async def authenticate(
-        self,
-        session: ACPManagedChatSession,
-        *,
-        method_id: str,
-    ) -> dict[str, Any]:
-        await self.start()
-        if not self._health.available:
-            raise RuntimeError(
-                self._health.startup_error or f"{self.display_name} backend unavailable"
-            )
-        await self._client.authenticate(method_id=method_id)
-        return self._sync_auth_state(session)
-
-    async def logout(self, session: ACPManagedChatSession) -> dict[str, Any]:
-        await self.start()
-        if not self._health.available:
-            raise RuntimeError(
-                self._health.startup_error or f"{self.display_name} backend unavailable"
-            )
-        await self._client.logout()
-        session._connected = False
-        return self._sync_auth_state(session)
-
-    def apply_config_options_update(
-        self,
-        session: ACPManagedChatSession,
-        payload: dict[str, Any],
-    ) -> list[dict[str, Any]]:
-        config_options = self._client.update_config_options(payload)
-        session.config_options = config_options
-        return config_options
 
     async def interrupt(self, session: ACPManagedChatSession) -> None:
         await self._client.cancel_session(session.sdk_session_id)

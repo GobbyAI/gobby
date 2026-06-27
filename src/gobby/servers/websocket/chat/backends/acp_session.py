@@ -7,14 +7,13 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any, cast
+from typing import Any
 
 from gobby.adapters.acp_client import StreamEvent
 from gobby.adapters.acp_client_requests import is_pre_tool_decision_denied
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
-    SessionConfigOptionsEvent,
     SessionInfoUpdateEvent,
     SessionModeUpdateEvent,
     SessionUsageUpdateEvent,
@@ -61,9 +60,6 @@ class ACPManagedChatSession(
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
     _is_first_turn: bool = field(default=True, repr=False)
-    auth_methods: list[dict[str, Any]] = field(default_factory=list)
-    auth_logout_supported: bool = False
-    config_options: list[dict[str, Any]] = field(default_factory=list)
 
     def _web_chat_source(self) -> str:
         return f"{self.provider}_web_chat"
@@ -137,13 +133,6 @@ class ACPManagedChatSession(
                         model_name = stream_event.data.get("model")
                         if isinstance(model_name, str) and model_name:
                             self._model = model_name
-                    elif stream_event.event_type == "config_option_update":
-                        config_options = self._backend.apply_config_options_update(
-                            self,
-                            stream_event.data,
-                        )
-                        yield SessionConfigOptionsEvent(config_options=config_options)
-                        continue
                     elif stream_event.event_type == "plan_update":
                         plan_text = _format_plan_update(stream_event.data)
                         await self._maybe_broadcast_pending_plan(
@@ -173,10 +162,6 @@ class ACPManagedChatSession(
                             usage=_normalize_usage_update(stream_event.data)
                         )
                         continue
-                    elif stream_event.event_type == "error":
-                        message = str(stream_event.data.get("message", ""))
-                        if "auth_required" in message.lower():
-                            raise RuntimeError(message)
                     elif stream_event.event_type == "content_delta":
                         saw_content_delta = True
 
@@ -251,8 +236,6 @@ class ACPManagedChatSession(
                     context_window=self._resolve_context_window(),
                 )
             except Exception as exc:
-                if "auth_required" in str(exc).lower():
-                    raise
                 logger.error(
                     "%s managed session %s error: %s",
                     self._provider_label(),
@@ -332,38 +315,6 @@ class ACPManagedChatSession(
         self.cancel_pending_approval()
         await self._backend.interrupt(self)
         logger.debug("%s interrupt requested for %s", self._provider_label(), self.conversation_id)
-
-    async def set_config_option(
-        self,
-        *,
-        config_id: str,
-        value: str,
-    ) -> list[dict[str, Any]]:
-        config_options = cast(
-            "list[dict[str, Any]]",
-            await self._backend.set_config_option(
-                self,
-                config_id=config_id,
-                value=value,
-            ),
-        )
-        self.config_options = config_options
-        return config_options
-
-    async def authenticate(self, *, method_id: str) -> dict[str, Any]:
-        auth_state = cast(
-            "dict[str, Any]",
-            await self._backend.authenticate(self, method_id=method_id),
-        )
-        self.auth_methods = cast("list[dict[str, Any]]", auth_state["auth_methods"])
-        self.auth_logout_supported = bool(auth_state["auth_logout_supported"])
-        return auth_state
-
-    async def logout(self) -> dict[str, Any]:
-        auth_state = cast("dict[str, Any]", await self._backend.logout(self))
-        self.auth_methods = cast("list[dict[str, Any]]", auth_state["auth_methods"])
-        self.auth_logout_supported = bool(auth_state["auth_logout_supported"])
-        return auth_state
 
 
 def _map_acp_mode_to_gobby_mode(mode_id: str) -> str | None:

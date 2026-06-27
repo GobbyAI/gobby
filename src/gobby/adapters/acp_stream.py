@@ -92,9 +92,6 @@ def normalize_notification(
                 },
             )
 
-        if update_type == "config_option_update":
-            return StreamEvent(event_type="config_option_update", data=update)
-
         if update_type == "plan":
             return StreamEvent(event_type="plan_update", data=update)
 

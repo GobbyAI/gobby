@@ -1,16 +1,9 @@
 import type { RefObject } from 'react'
 import type { AgentDefInfo } from '../../hooks/useAgentDefinitions'
 import type { VoiceInputMode } from '../../hooks/useSettings'
-import type {
-  AcpAuthMethod,
-  AcpConfigOption,
-  ChatMode,
-  ChatModeInfo,
-} from '../../types/chat'
+import type { ChatMode, ChatModeInfo } from '../../types/chat'
 import { Button } from '../shared/Button'
 import { ActiveAgentIndicator } from './ActiveAgentIndicator'
-import { AcpAuthControls } from './AcpAuthControls'
-import { AcpConfigOptions } from './AcpConfigOptions'
 import { BranchIndicator } from './BranchIndicator'
 import { ChatInputVoiceControls } from './ChatInputVoiceControls'
 import { PaperclipIcon } from './ChatInputIcons'
@@ -38,13 +31,7 @@ interface ChatInputToolbarProps {
   mode: ChatMode
   modeDisabled: boolean
   modeOptions?: ChatModeInfo[]
-  acpAuthLogoutSupported?: boolean
-  acpAuthMethods?: AcpAuthMethod[]
-  acpConfigOptions?: AcpConfigOption[]
   onAgentChange?: (agentName: string) => void
-  onAcpAuthenticate?: (methodId: string) => void
-  onAcpConfigOptionChange?: (configId: string, value: string) => void
-  onAcpLogout?: () => void
   onModeChange?: (mode: ChatMode) => void
   onSttEnabledChange?: (enabled: boolean) => void
   onTtsEnabledChange?: (enabled: boolean) => void
@@ -85,13 +72,7 @@ export function ChatInputToolbar({
   mode,
   modeDisabled,
   modeOptions,
-  acpAuthLogoutSupported = false,
-  acpAuthMethods = [],
-  acpConfigOptions = [],
   onAgentChange,
-  onAcpAuthenticate,
-  onAcpConfigOptionChange,
-  onAcpLogout,
   onModeChange,
   onSttEnabledChange,
   onTtsEnabledChange,
@@ -112,10 +93,6 @@ export function ChatInputToolbar({
   const attachmentButtonLabel = attachmentsDisabled
     ? 'Attached session owns attachments'
     : 'Attach file'
-  const hasAcpConfigOptions = acpConfigOptions.length > 0 && Boolean(onAcpConfigOptionChange)
-  const hasAcpAuthControls =
-    (acpAuthMethods.length > 0 && Boolean(onAcpAuthenticate)) ||
-    (acpAuthLogoutSupported && Boolean(onAcpLogout))
 
   return (
     <div ref={metaRef} className="chat-input-meta">
@@ -130,7 +107,7 @@ export function ChatInputToolbar({
 
       <div className="chat-input-toolbar">
         <div className="chat-input-toolbar__left">
-          {onModeChange ? (
+          {onModeChange && (
             <ModeSelector
               mode={mode}
               onModeChange={onModeChange}
@@ -138,23 +115,7 @@ export function ChatInputToolbar({
               modes={modeOptions}
               size={isNarrow ? 'sm' : 'md'}
             />
-          ) : null}
-          {hasAcpConfigOptions ? (
-            <AcpConfigOptions
-              options={acpConfigOptions}
-              onChange={onAcpConfigOptionChange!}
-              disabled={disabled}
-            />
-          ) : null}
-          {hasAcpAuthControls ? (
-            <AcpAuthControls
-              authMethods={acpAuthMethods}
-              logoutSupported={acpAuthLogoutSupported}
-              onAuthenticate={onAcpAuthenticate}
-              onLogout={onAcpLogout}
-              disabled={disabled}
-            />
-          ) : null}
+          )}
           <Button
             size="icon"
             variant="ghost"

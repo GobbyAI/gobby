@@ -2,7 +2,6 @@
 import { useCallback, useEffect } from "react";
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {
-  AcpAuthMethod,
   ChatMessage,
   ContextUsage,
   SessionObservationMeta,
@@ -28,8 +27,6 @@ interface UseChatMessageHandlersParams extends Record<string, any> {
   isActiveRequest: (requestId?: string) => boolean;
   observedSessionIdRef: MutableRefObject<string | null>;
   setContextUsage: Setter<ContextUsage>;
-  setAcpAuthLogoutSupported: Setter<boolean>;
-  setAcpAuthMethods: Setter<AcpAuthMethod[]>;
   setIsStreaming: Setter<boolean>;
   setIsThinking: Setter<boolean>;
   setMainSessionMeta: Setter<SessionObservationMeta | null>;
@@ -63,8 +60,6 @@ export function useChatMessageHandlers(params: UseChatMessageHandlersParams) {
     sendMessageRef,
     sessionInteractionMode,
     sessionInteractionModeRef,
-    setAcpAuthLogoutSupported,
-    setAcpAuthMethods,
     setContextUsage,
     setIsStreaming,
     setIsThinking,
@@ -199,10 +194,6 @@ const handleChatError = useCallback((error: ChatError) => {
   setIsThinking(false);
   if (import.meta.env.DEV && error.error_detail) {
     console.error("Chat startup error detail:", error.error_detail);
-  }
-  if (error.auth_required) {
-    setAcpAuthMethods(Array.isArray(error.auth_methods) ? error.auth_methods : []);
-    setAcpAuthLogoutSupported(error.auth_logout_supported === true);
   }
   setMessages((prev) => [
     ...prev,
