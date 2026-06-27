@@ -200,6 +200,29 @@ func run(client Client) {
 }
 
 #[test]
+fn rust_signature_truncation_keeps_utf8_boundaries() {
+    let mut source = String::from("pub fn boundary(arg: ");
+    let fill = 199usize
+        .checked_sub(source.len())
+        .expect("test prefix shorter than truncation point");
+    source.push_str(&"A".repeat(fill));
+    source.push('é');
+    source.push_str("Tail) {}\n");
+
+    let parsed = parse_rust(&source, &[]);
+    let symbol = parsed
+        .symbols
+        .iter()
+        .find(|symbol| symbol.name == "boundary")
+        .expect("boundary symbol");
+    let signature = symbol.signature.as_ref().expect("signature");
+
+    assert!(signature.ends_with("..."), "{signature}");
+    assert!(signature.is_char_boundary(200));
+    assert!(signature.len() <= 203, "{}", signature.len());
+}
+
+#[test]
 fn classifies_external_rust_use_alias_and_path_calls() {
     let parsed = parse_rust(
         r#"

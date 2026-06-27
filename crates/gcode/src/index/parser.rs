@@ -195,7 +195,7 @@ fn extract_symbols(
             .trim()
             .to_string();
         if signature.len() > 200 {
-            signature.truncate(200);
+            truncate_to_char_boundary(&mut signature, 200);
             signature.push_str("...");
         }
 
@@ -232,6 +232,17 @@ fn extract_symbols(
     }
 
     Ok(symbols)
+}
+
+fn truncate_to_char_boundary(text: &mut String, max_bytes: usize) {
+    if text.len() <= max_bytes {
+        return;
+    }
+    let mut boundary = max_bytes;
+    while boundary > 0 && !text.is_char_boundary(boundary) {
+        boundary -= 1;
+    }
+    text.truncate(boundary);
 }
 
 fn link_parents(symbols: &mut [Symbol]) {
