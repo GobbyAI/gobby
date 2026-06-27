@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import Iterable
 
+from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.transcript_render_blocks import (
     _INTERNAL_CONTENT_TYPES,
     _classify_render_role,
@@ -37,6 +38,8 @@ def render_transcript(
     session_id: str | None = None,
     cli_name: str = "claude",
     error_log: TranscriptParserErrorLog | None = None,
+    source: str | None = None,
+    observation_tracker: ObservationTracker | None = None,
 ) -> list[RenderedMessage]:
     """
     Render a full transcript from a stream of parsed messages.
@@ -52,13 +55,20 @@ def render_transcript(
     """
     if not error_log:
         error_log = TranscriptParserErrorLog(cli_name)
+    if observation_tracker is None:
+        observation_tracker = ObservationTracker()
 
     state = RenderState()
     rendered_messages = []
 
     for msg in parsed_messages:
         completed, state = render_incremental(
-            [msg], state, session_id=session_id, error_log=error_log
+            [msg],
+            state,
+            session_id=session_id,
+            error_log=error_log,
+            source=source or cli_name,
+            observation_tracker=observation_tracker,
         )
         rendered_messages.extend(completed)
 
@@ -73,6 +83,8 @@ def render_incremental(
     pending_state: RenderState,
     session_id: str | None = None,
     error_log: TranscriptParserErrorLog | None = None,
+    source: str | None = None,
+    observation_tracker: ObservationTracker | None = None,
 ) -> tuple[list[RenderedMessage], RenderState]:
     """
     Process new messages and return completed turns.
@@ -88,6 +100,8 @@ def render_incremental(
     """
     completed_messages = []
     state = pending_state
+    if observation_tracker is None:
+        observation_tracker = ObservationTracker()
 
     for msg in new_messages:
         if msg.content_type in _INTERNAL_CONTENT_TYPES:
@@ -99,7 +113,14 @@ def render_incremental(
         # 2. Tool result pairing (can bypass turn logic if paired)
         is_tool_result = msg.content_type in ["tool_result", "mcp_tool_result"]
         if is_tool_result and msg.tool_use_id in state.pending_tool_calls:
-            _process_message_block(msg, state, session_id=session_id, error_log=error_log)
+            _process_message_block(
+                msg,
+                state,
+                session_id=session_id,
+                error_log=error_log,
+                source=source,
+                observation_tracker=observation_tracker,
+            )
             continue
 
         # 3. Detect turn boundary
@@ -128,6 +149,13 @@ def render_incremental(
             )
 
         # 5. Process block
-        _process_message_block(msg, state, session_id=session_id, error_log=error_log)
+        _process_message_block(
+            msg,
+            state,
+            session_id=session_id,
+            error_log=error_log,
+            source=source,
+            observation_tracker=observation_tracker,
+        )
 
     return completed_messages, state

@@ -262,6 +262,36 @@ async def span_cleanup_loop(
             break
 
 
+async def unmodeled_observation_cleanup_loop(
+    db: Any,
+    is_shutdown_requested: Callable[[], bool],
+    retention_days: int = 30,
+) -> None:
+    """Background loop for pruning old unmodeled-observation occurrence guards."""
+    interval_seconds = 24 * 60 * 60
+
+    from gobby.storage.unmodeled_observations import UnmodeledObservationStore
+
+    store = UnmodeledObservationStore(db)
+
+    while not is_shutdown_requested():
+        try:
+            deleted = store.prune_events_older_than(retention_days=retention_days)
+            if deleted > 0:
+                logger.info(
+                    "Periodic unmodeled-observation cleanup: removed %s old occurrence rows",
+                    deleted,
+                )
+        except asyncio.CancelledError:
+            break
+        except Exception as e:
+            logger.error(f"Error in unmodeled observation cleanup loop: {e}")
+        try:
+            await asyncio.sleep(interval_seconds)
+        except asyncio.CancelledError:
+            break
+
+
 async def rebuild_vector_store(
     vector_store: VectorStore,
     memory_dicts: list[dict[str, str]],

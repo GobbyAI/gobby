@@ -171,6 +171,7 @@ class HTTPServer:
         transcript_reader = None
         if services.session_manager:
             from gobby.sessions.transcript_reader import TranscriptReader
+            from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
             archive_dir = None
             if services.config and hasattr(services.config, "sessions"):
@@ -178,6 +179,7 @@ class HTTPServer:
             transcript_reader = TranscriptReader(
                 session_manager=services.session_manager,
                 archive_dir=archive_dir,
+                observation_store=UnmodeledObservationStore(services.database),
             )
             services.transcript_reader = transcript_reader
 

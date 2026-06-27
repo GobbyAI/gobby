@@ -32,6 +32,7 @@ from gobby.sessions.transcript_renderer import RenderState
 from gobby.sessions.transcripts.base import ParsedToolEvent, TokenUsage, TranscriptParser
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.token_events import TokenEventStore
+from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 from gobby.telemetry.instruments import inc_counter
 
 logger = logging.getLogger(__name__)
@@ -82,6 +83,7 @@ class SessionMessageProcessor(
         # Track render state for incremental rendering per session
         self._render_states: dict[str, RenderState] = {}
         self._index_appenders: dict[str, TranscriptIndexAppender] = {}
+        self._observation_store = UnmodeledObservationStore(db)
 
         # Incremental stat accumulators per session
         self._stats: dict[str, MessageStats] = {}

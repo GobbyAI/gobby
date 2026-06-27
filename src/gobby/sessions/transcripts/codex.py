@@ -34,6 +34,7 @@ from gobby.sessions.transcripts.base import (
     ParseEvent,
     RawLine,
     TokenUsage,
+    annotate_record_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -377,11 +378,16 @@ class CodexTranscriptParser(BaseTranscriptParser):
             record = self.parse_line(raw.text, current_index)
             if record is None:
                 continue
+            records = annotate_record_source(
+                [record],
+                source=self.cli_name,
+                raw_line_no=raw.raw_line_no,
+            )
             yield ParseEvent(
                 byte_offset=raw.byte_offset,
                 raw_line_no=raw.raw_line_no,
                 parsed_index=current_index,
-                records=[record],
+                records=records,
                 parser_safe=True,
             )
             if isinstance(record, ParsedMessage):

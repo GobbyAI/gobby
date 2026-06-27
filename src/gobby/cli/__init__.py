@@ -24,6 +24,7 @@ from .mcp import mcp_server
 from .mcp_proxy import mcp_proxy
 from .memory import memory
 from .merge import merge
+from .observations import observations
 from .pack import pack, unpack
 from .pipelines import pipelines
 from .plan import plan
@@ -93,6 +94,7 @@ cli.add_command(tasks)
 cli.add_command(test_quality)
 cli.add_command(tokens)
 cli.add_command(memory)
+cli.add_command(observations)
 cli.add_command(sessions)
 cli.add_command(skills)
 cli.add_command(stages)

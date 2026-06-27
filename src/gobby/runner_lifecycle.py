@@ -107,6 +107,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
         setup_signal_handlers,
         span_cleanup_loop,
         tmux_window_name_repair_loop,
+        unmodeled_observation_cleanup_loop,
     )
 
     try:
@@ -159,6 +160,7 @@ async def run_daemon(runner: GobbyRunner) -> None:
                 metrics_cleanup_loop=metrics_cleanup_loop,
                 metrics_archive_loop=metrics_archive_loop,
                 span_cleanup_loop=span_cleanup_loop,
+                unmodeled_observation_cleanup_loop=unmodeled_observation_cleanup_loop,
                 memory_reconcile_loop=memory_reconcile_loop,
                 cleanup_zombie_messages_loop=cleanup_zombie_messages_loop,
                 cleanup_comms_messages_loop=cleanup_comms_messages_loop,

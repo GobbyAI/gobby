@@ -25,6 +25,7 @@ from gobby.sessions.gzip_seek_index import (
     ensure_gzip_block_index,
     iter_gzip_block_raw_lines,
 )
+from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.transcript_archive import get_archive_dir
 from gobby.sessions.transcript_index import (
     SOURCE_SAMPLE_LINES,
@@ -62,6 +63,7 @@ from gobby.sessions.transcript_window import (
     render_window,
 )
 from gobby.sessions.transcripts.base import ParsedMessage, RawLine
+from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
 if TYPE_CHECKING:
     from collections.abc import AsyncIterator
@@ -121,9 +123,11 @@ class TranscriptReader:
         self,
         session_manager: SessionManager,
         archive_dir: str | None = None,
+        observation_store: UnmodeledObservationStore | None = None,
     ):
         self._session_manager = session_manager
         self._archive_dir = archive_dir
+        self._observation_store = observation_store
 
     # ------------------------------------------------------------------ #
     # Flat messages (streaming, limit-capped)
@@ -265,6 +269,7 @@ class TranscriptReader:
             lines=resolved.lines,
             gzip_index=resolved.gzip_index,
             max_span=max_span,
+            observation_tracker=ObservationTracker(self._observation_store),
         )
 
     async def iter_rendered_windows(
@@ -329,7 +334,13 @@ class TranscriptReader:
         if not parsed:
             return WindowResult(groups=[], returned_count=0, total_groups=0)
 
-        rendered = await asyncio.to_thread(render_transcript, parsed, session_id=session_id)
+        rendered = await asyncio.to_thread(
+            render_transcript,
+            parsed,
+            session_id=session_id,
+            source=parsed[0].source if parsed else None,
+            observation_tracker=ObservationTracker(self._observation_store),
+        )
         total = len(rendered)
         g_start, g_end = _requested_range(total, max(0, int(limit)), max(0, int(offset)), order)
         groups = rendered[g_start:g_end]

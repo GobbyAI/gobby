@@ -41,6 +41,7 @@ from gobby.sessions.message_stats import (
     accumulate_message_stats,
     empty_message_stats,
 )
+from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.transcript_index_sidecar import (
     _INDEX_CACHE as _INDEX_CACHE,
 )
@@ -321,12 +322,14 @@ class TranscriptIndexAppender:
         *,
         seek_mode: str = "byte",
         parser: BaseTranscriptParser | None = None,
+        observation_tracker: ObservationTracker | None = None,
     ) -> None:
         self._parser = parser or _get_parser(
             source, session_id=session_id, transcript_path=transcript_path
         )
         self._session_id = session_id
         self._state = RenderState()
+        self._observation_tracker = observation_tracker or ObservationTracker()
         self._role_counts: dict[str, int] = {}
         self._prev_current_id: str | None = None
         self._next_start_index = 0
@@ -391,6 +394,8 @@ class TranscriptIndexAppender:
                     self._state,
                     session_id=self._session_id,
                     error_log=self._parser.error_log,
+                    source=self.index.source,
+                    observation_tracker=self._observation_tracker,
                 )
 
                 current = self._state.current_message

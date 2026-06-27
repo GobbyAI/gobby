@@ -10,6 +10,7 @@ import os
 import aiofiles
 import psycopg
 
+from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.processor_types import ProcessorHost
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_renderer import RenderState, render_incremental
@@ -256,7 +257,14 @@ class ProcessorTranscriptMixin:
         messages: list[ParsedMessage],
     ) -> None:
         render_state = self._render_states.get(session_id, RenderState())
-        completed, render_state = render_incremental(messages, render_state, session_id=session_id)
+        source = messages[0].source if messages else None
+        completed, render_state = render_incremental(
+            messages,
+            render_state,
+            session_id=session_id,
+            source=source,
+            observation_tracker=ObservationTracker(self._observation_store),
+        )
         self._render_states[session_id] = render_state
 
         if self.websocket_server:

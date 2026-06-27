@@ -16,6 +16,7 @@ from gobby.sessions.transcripts.base import (
     ParseEvent,
     RawLine,
     TokenUsage,
+    annotate_record_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -317,11 +318,16 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
         for raw in raw_lines:
             message = self.parse_line(raw.text, current_index)
             if message:
+                records = annotate_record_source(
+                    [message],
+                    source=self.cli_name,
+                    raw_line_no=raw.raw_line_no,
+                )
                 yield ParseEvent(
                     byte_offset=raw.byte_offset,
                     raw_line_no=raw.raw_line_no,
                     parsed_index=current_index,
-                    records=[message],
+                    records=records,
                     parser_safe=True,
                 )
                 current_index += 1

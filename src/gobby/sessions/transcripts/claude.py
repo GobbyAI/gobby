@@ -19,6 +19,7 @@ from gobby.sessions.transcripts.base import (
     ParseEvent,
     RawLine,
     TokenUsage,
+    annotate_record_source,
 )
 
 logger = logging.getLogger(__name__)
@@ -764,11 +765,16 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                 current_index += 1
 
             if expanded:
+                records = annotate_record_source(
+                    expanded,
+                    source=self.cli_name,
+                    raw_line_no=cur.raw_line_no,
+                )
                 yield ParseEvent(
                     byte_offset=cur.byte_offset,
                     raw_line_no=cur.raw_line_no,
                     parsed_index=start_idx,
-                    records=list(expanded),
+                    records=records,
                     parser_safe=not peek,
                 )
 

@@ -7,6 +7,7 @@ import logging
 import os
 
 from gobby.sessions.message_stats import MessageStats
+from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.processor_types import ProcessorHost
 from gobby.sessions.transcript_index import TranscriptIndexAppender, load_index_sidecar
 from gobby.sessions.transcript_index_resume import hydrate_appender_from_index
@@ -72,6 +73,7 @@ class ProcessorLifecycleMixin:
                 source,
                 session_id,
                 transcript_path,
+                observation_tracker=ObservationTracker(self._observation_store),
             )
             self._index_appenders[session_id] = appender
             if transcript_exists:

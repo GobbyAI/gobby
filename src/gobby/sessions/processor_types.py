@@ -50,6 +50,7 @@ class ProcessorHost(Protocol):
     _message_indices: dict[str, int]
     _render_states: dict[str, RenderState]
     _index_appenders: dict[str, TranscriptIndexAppender]
+    _observation_store: Any
     _stats: dict[str, MessageStats]
     _stats_hydration_skipped: set[str]
     _running: bool

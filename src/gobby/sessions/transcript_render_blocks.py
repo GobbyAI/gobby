@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.transcript_protocol import (
     _extract_protocol_content_segments,
     _is_protocol_only_text,
@@ -121,6 +122,8 @@ def _process_message_block(
     state: RenderState,
     session_id: str | None = None,
     error_log: TranscriptParserErrorLog | None = None,
+    source: str | None = None,
+    observation_tracker: ObservationTracker | None = None,
 ) -> None:
     """Integrate a ParsedMessage into the current RenderedMessage or pair as tool result."""
 
@@ -203,6 +206,13 @@ def _process_message_block(
     else:
         # Fallback for unknown types
         block_type = "unknown"
+        if observation_tracker:
+            observation_tracker.observe_block_type(
+                msg,
+                session_id=session_id,
+                source=source,
+                block_type=original_type,
+            )
         if error_log:
             error_log.log_unknown_block(
                 line_num=msg.index,
@@ -253,6 +263,15 @@ def _process_message_block(
 
         if block_type == "tool_chain":
             tool_type, server_name = classify_tool(msg.tool_name)
+            if observation_tracker and (tool_type == "unknown" or server_name == "unknown"):
+                observation_tracker.observe_tool_name(
+                    msg,
+                    session_id=session_id,
+                    source=source,
+                    tool_name=msg.tool_name or "unknown",
+                    server_name=server_name or "unknown",
+                    tool_type=tool_type,
+                )
             tool_call = RenderedToolCall(
                 id=msg.tool_use_id or f"call-{msg.index}",
                 tool_name=msg.tool_name or "unknown",

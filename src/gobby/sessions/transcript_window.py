@@ -43,6 +43,7 @@ from gobby.sessions.gzip_seek_index import (
     GzipBlockIndex,
     iter_gzip_block_raw_lines,
 )
+from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_parsing import _get_parser
 from gobby.sessions.transcript_renderer import (
@@ -297,6 +298,7 @@ def render_window(
     lines: list[str] | None = None,
     gzip_index: GzipBlockIndex | None = None,
     max_span: int = MAX_WINDOW_SPAN_BYTES,
+    observation_tracker: ObservationTracker | None = None,
 ) -> WindowResult:
     """Render the rendered-group window ``[g_start, g_end)`` of a transcript.
 
@@ -337,6 +339,7 @@ def render_window(
 
     parser = _get_parser(source, session_id=session_id, transcript_path=path)
     state = RenderState()
+    tracker = observation_tracker or ObservationTracker()
     _seed_stubs(state, index, window_start_parsed_index)
 
     if index.seek_mode == "byte":
@@ -371,7 +374,12 @@ def render_window(
             if not isinstance(record, ParsedMessage):
                 continue
             done, state = render_incremental(
-                [record], state, session_id=session_id, error_log=parser.error_log
+                [record],
+                state,
+                session_id=session_id,
+                error_log=parser.error_log,
+                source=source,
+                observation_tracker=tracker,
             )
             if done:
                 completed.extend(done)

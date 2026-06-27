@@ -36,12 +36,14 @@ def _default_loops() -> dict[str, Any]:
         metrics_cleanup_loop,
         span_cleanup_loop,
         tmux_window_name_repair_loop,
+        unmodeled_observation_cleanup_loop,
     )
 
     return {
         "metrics_cleanup_loop": metrics_cleanup_loop,
         "metrics_archive_loop": metrics_archive_loop,
         "span_cleanup_loop": span_cleanup_loop,
+        "unmodeled_observation_cleanup_loop": unmodeled_observation_cleanup_loop,
         "memory_reconcile_loop": memory_reconcile_loop,
         "cleanup_zombie_messages_loop": cleanup_zombie_messages_loop,
         "cleanup_comms_messages_loop": cleanup_comms_messages_loop,
@@ -109,6 +111,13 @@ def start_periodic_tasks(
             runner.database, lambda: runner._shutdown_requested, retention_days=retention_days
         ),
         name="span-cleanup",
+    )
+    runner._unmodeled_observations_cleanup_task = asyncio.create_task(
+        loops["unmodeled_observation_cleanup_loop"](
+            runner.database,
+            lambda: runner._shutdown_requested,
+        ),
+        name="unmodeled-observation-cleanup",
     )
 
     runner._memory_reconcile_task = None
@@ -229,6 +238,7 @@ def start_periodic_tasks(
             runner._metrics_cleanup_task,
             runner._metrics_archive_task,
             runner._span_cleanup_task,
+            runner._unmodeled_observations_cleanup_task,
             getattr(runner, "_memory_reconcile_task", None),
             runner._zombie_messages_task,
             runner._comms_messages_task,

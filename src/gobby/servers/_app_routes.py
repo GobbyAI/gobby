@@ -36,6 +36,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
         create_memory_dream_router,
         create_memory_router,
         create_metrics_router,
+        create_observations_router,
         create_pipelines_router,
         create_profiles_router,
         create_projects_router,
@@ -87,6 +88,7 @@ def register_routes(app: FastAPI, server: "HTTPServer") -> None:
     app.include_router(create_source_control_router(server))
     app.include_router(create_traces_router(server))
     app.include_router(create_metrics_router(server))
+    app.include_router(create_observations_router(server))
     app.include_router(create_wiki_router(server))
 
     comms_config = getattr(server.services.config, "communications", None)

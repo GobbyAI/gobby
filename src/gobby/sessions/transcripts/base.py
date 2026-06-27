@@ -117,6 +117,9 @@ class ParsedMessage:
     tool_use_id: str | None = None
     model: str | None = None
     message_id: str | None = None
+    source: str | None = None
+    source_ref: str | None = None
+    source_line: int | None = None
 
 
 @dataclass
@@ -287,6 +290,25 @@ def raw_lines_from_texts(texts: Iterable[str]) -> Iterator[RawLine]:
         yield RawLine(byte_offset=None, raw_line_no=i, text=text)
 
 
+def annotate_record_source(
+    records: Iterable[ParsedMessage | ParsedToolEvent],
+    *,
+    source: str,
+    raw_line_no: int,
+) -> list[ParsedMessage | ParsedToolEvent]:
+    """Attach stable source provenance to parsed messages."""
+    annotated = list(records)
+    for record in annotated:
+        if isinstance(record, ParsedMessage):
+            if record.source is None:
+                record.source = source
+            if record.source_line is None:
+                record.source_line = raw_line_no
+            if record.source_ref is None:
+                record.source_ref = str(raw_line_no)
+    return annotated
+
+
 def apply_adjustment(
     messages: list[ParsedMessage | ParsedToolEvent], adjustment: ParsedAdjustment
 ) -> None:
@@ -347,6 +369,11 @@ class BaseTranscriptParser:
                 continue
             record = self.parse_line(raw.text, idx)
             records: list[ParsedMessage | ParsedToolEvent] = [record] if record else []
+            records = annotate_record_source(
+                records,
+                source=self.cli_name,
+                raw_line_no=raw.raw_line_no,
+            )
             yield ParseEvent(
                 byte_offset=raw.byte_offset,
                 raw_line_no=raw.raw_line_no,
