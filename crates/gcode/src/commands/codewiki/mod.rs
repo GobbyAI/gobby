@@ -46,7 +46,11 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // infrastructure, deprecations, dead-code candidates) from a new "Analysis &
 // catalogs" section, narrative extra chapters carry readable `NN-<title>` slugs,
 // and aggregate prose is written opus-first — so prior on-disk pages re-render.
-const CODEWIKI_RENDER_VERSION: u32 = 15;
+// 16 (#976): tier -> feature profile is owned by gcore's `profile_for_tier`
+// (Aggregate -> feature_high, Module -> feature_mid, Standard -> feature_low) and
+// the Direct route honors per-tier profile targets, so cached pages written under
+// the prior None-profile defaults re-render.
+const CODEWIKI_RENDER_VERSION: u32 = 16;
 
 /// Default daemon feature profile for the grounded verification pass (#904):
 /// `feature_mid` (sonnet) runs the "is this claim supported by the cited

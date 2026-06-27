@@ -1,9 +1,11 @@
 use std::time::Duration;
 
+use gobby_core::ai::generation::{
+    DirectGenerationTarget, GenerationTier, generate_one_shot, profile_for_tier,
+    resolve_direct_generation_target,
+};
 use gobby_core::ai::{
-    daemon::generate_via_daemon_with_max_tokens,
-    effective_route,
-    text::{generate_text, generate_text_with_max_tokens},
+    daemon::generate_via_daemon_with_max_tokens, effective_route, text::generate_text,
 };
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
 use gobby_core::ai_types::AiError;
@@ -19,12 +21,6 @@ use crate::{db, secrets};
 pub(super) const GENERATION_RETRY_BACKOFF: [Duration; 2] =
     [Duration::from_millis(200), Duration::from_millis(500)];
 
-/// Daemon feature profile for [`PromptTier::Module`] writing (#904): module docs
-/// and file-body narratives are mid-level per-unit synthesis, written by sonnet
-/// — cheaper than the opus-first top-level writer, richer than the per-symbol
-/// default tier.
-const MODULE_WRITER_PROFILE: &str = "feature_mid";
-
 pub(crate) fn resolve_text_generator(
     ctx: &Context,
     ai: &CodewikiAiOptions,
@@ -36,41 +32,37 @@ pub(crate) fn resolve_text_generator(
     }
 
     // Aggregate prose (curated narrative/concepts, repo/architecture/modules) is
-    // the high-value writing surface. An explicit `--ai-aggregate-profile`
-    // selects a named daemon feature profile for it; module writing uses the
-    // mid-tier profile, and per-file Standard summaries stay on the binding's
-    // lighter default tier. Provider/model resolution is owned by config, not
-    // pinned here. (Tier -> feature_low/mid/high mapping lands with the Lane A/B
-    // generation foundation.)
+    // the high-value writing surface. Tier -> feature profile is owned by gcore's
+    // `profile_for_tier`: Aggregate -> feature_high (or an explicit
+    // `--ai-aggregate-profile` override), Module -> feature_mid, Standard ->
+    // feature_low. Provider/model resolution stays in config, never pinned here.
+    // The Daemon route forwards the resolved profile name; the Direct route
+    // resolves each profile to a concrete target so a standalone gcore.yaml
+    // routes the tiers to their own provider/model/api_key.
     let aggregate_profile = ai.aggregate_profile.clone();
+    let direct_targets = matches!(route, AiRouting::Direct)
+        .then(|| resolve_direct_tier_targets(ctx, aggregate_profile.as_deref()));
     let max_tokens = ai.prose_depth.max_tokens();
     let register = ai.register;
     let mut warned = false;
     let quiet = ctx.quiet;
     Some(Box::new(move |prompt, system, tier| {
-        let profile = match tier {
-            PromptTier::Aggregate => aggregate_profile.as_deref(),
-            PromptTier::Module => Some(MODULE_WRITER_PROFILE),
-            PromptTier::Standard => None,
-        };
+        let gen_tier = generation_tier(tier);
+        let target = direct_targets
+            .as_ref()
+            .map(|targets| targets.for_tier(gen_tier));
         let system = prompts::with_register(system, register);
-        let result = generate_with_bounded_retry(|| match route {
-            AiRouting::Daemon => generate_via_daemon_with_max_tokens(
+        let result = generate_with_bounded_retry(|| {
+            generate_one_shot(
                 &ai_context,
+                route,
+                gen_tier,
+                aggregate_profile.as_deref(),
+                target,
                 prompt,
                 Some(system.as_ref()),
                 max_tokens,
-                profile,
-            ),
-            AiRouting::Direct => generate_text_with_max_tokens(
-                &ai_context,
-                prompt,
-                Some(system.as_ref()),
-                max_tokens,
-            ),
-            AiRouting::Off | AiRouting::Auto => {
-                unreachable!("non-generating routes returned above")
-            }
+            )
         });
         match result {
             Ok(result) => clean_generated(result.text),
@@ -86,6 +78,68 @@ pub(crate) fn resolve_text_generator(
             }
         }
     }))
+}
+
+/// Maps the codewiki prompt tier onto the shared, provider-neutral generation
+/// tier owned by gcore. The three tiers line up one-to-one.
+fn generation_tier(tier: PromptTier) -> GenerationTier {
+    match tier {
+        PromptTier::Aggregate => GenerationTier::Aggregate,
+        PromptTier::Module => GenerationTier::Module,
+        PromptTier::Standard => GenerationTier::Standard,
+    }
+}
+
+/// Direct-route generation targets resolved once per tier, so a standalone
+/// `gcore.yaml` can route `feature_low/mid/high` to their own
+/// provider/model/api_key. Only built when the resolved route is Direct.
+struct DirectTierTargets {
+    aggregate: DirectGenerationTarget,
+    module: DirectGenerationTarget,
+    standard: DirectGenerationTarget,
+}
+
+impl DirectTierTargets {
+    fn for_tier(&self, tier: GenerationTier) -> &DirectGenerationTarget {
+        match tier {
+            GenerationTier::Aggregate => &self.aggregate,
+            GenerationTier::Module => &self.module,
+            GenerationTier::Standard => &self.standard,
+        }
+    }
+}
+
+/// Resolve a Direct-route target per tier from the AI config source. A failed
+/// config read leaves every field unset; generation then surfaces a clear
+/// "profile api_base required" error rather than silently degrading to skeleton.
+fn resolve_direct_tier_targets(
+    ctx: &Context,
+    aggregate_override: Option<&str>,
+) -> DirectTierTargets {
+    let Ok(mut conn) = db::connect_readonly(&ctx.database_url) else {
+        return DirectTierTargets {
+            aggregate: DirectGenerationTarget::default(),
+            module: DirectGenerationTarget::default(),
+            standard: DirectGenerationTarget::default(),
+        };
+    };
+    let standalone = config::read_standalone_config_optional();
+    let primary = PostgresAiConfigSource::new(&mut conn, secrets::resolve_config_value);
+    let mut source = AiConfigSource::with_primary(primary, standalone);
+    DirectTierTargets {
+        aggregate: resolve_direct_generation_target(
+            &mut source,
+            &profile_for_tier(GenerationTier::Aggregate, aggregate_override),
+        ),
+        module: resolve_direct_generation_target(
+            &mut source,
+            &profile_for_tier(GenerationTier::Module, None),
+        ),
+        standard: resolve_direct_generation_target(
+            &mut source,
+            &profile_for_tier(GenerationTier::Standard, None),
+        ),
+    }
 }
 
 /// Resolve the grounded-verification call that pairs with
@@ -308,4 +362,44 @@ pub(super) fn is_model_refusal(text: &str) -> bool {
 fn clean_generated(text: String) -> Option<String> {
     let text = text.trim();
     (!text.is_empty()).then(|| text.to_string())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use gobby_core::ai::generation::{FEATURE_HIGH, FEATURE_LOW, FEATURE_MID};
+
+    #[test]
+    fn prompt_tier_maps_to_feature_profiles() {
+        assert_eq!(
+            generation_tier(PromptTier::Aggregate),
+            GenerationTier::Aggregate
+        );
+        assert_eq!(generation_tier(PromptTier::Module), GenerationTier::Module);
+        assert_eq!(
+            generation_tier(PromptTier::Standard),
+            GenerationTier::Standard
+        );
+
+        // Aggregate defaults to the high tier; an explicit override wins.
+        assert_eq!(
+            profile_for_tier(generation_tier(PromptTier::Aggregate), None),
+            FEATURE_HIGH
+        );
+        assert_eq!(
+            profile_for_tier(
+                generation_tier(PromptTier::Aggregate),
+                Some("custom-writer")
+            ),
+            "custom-writer"
+        );
+        assert_eq!(
+            profile_for_tier(generation_tier(PromptTier::Module), None),
+            FEATURE_MID
+        );
+        assert_eq!(
+            profile_for_tier(generation_tier(PromptTier::Standard), None),
+            FEATURE_LOW
+        );
+    }
 }
