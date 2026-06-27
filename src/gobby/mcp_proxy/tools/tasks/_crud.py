@@ -8,6 +8,11 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._formatters import (
+    dependency_payload,
+    task_discovery_payload,
+    task_summary_payload,
+)
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 from gobby.storage.projects import PERSONAL_PROJECT_ID
 from gobby.storage.task_affected_files import TaskAffectedFileManager
@@ -379,34 +384,27 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
         if not task:
             return {"error": f"Task {task_id} not found", "found": False}
 
-        result: dict[str, Any] = task.to_brief() if brief else task.to_dict()
-
         # Enrich with dependency info
         blockers = ctx.dep_manager.get_blockers(resolved_id)
         blocking = ctx.dep_manager.get_blocking(resolved_id)
 
         if brief:
 
-            def _dep_brief(dep: Any, linked_task_id: str) -> dict[str, Any]:
+            def _dep_summary(dep: Any, linked_task_id: str) -> dict[str, Any]:
                 linked = ctx.task_manager.get_task(linked_task_id)
-                if linked:
-                    return {
-                        "ref": f"#{linked.seq_num}" if linked.seq_num else linked.id[:8],
-                        "title": linked.title,
-                        "state": linked.to_brief().get("state"),
-                        "dep_type": dep.dep_type,
-                    }
-                return dict(dep.to_dict())
+                return dependency_payload(dep, linked_task_id, linked)
 
-            result["dependencies"] = {
-                "blocked_by": [_dep_brief(b, b.depends_on) for b in blockers],
-                "blocking": [_dep_brief(b, b.task_id) for b in blocking],
+            dependencies = {
+                "blocked_by": [_dep_summary(b, b.depends_on) for b in blockers],
+                "blocking": [_dep_summary(b, b.task_id) for b in blocking],
             }
-        else:
-            result["dependencies"] = {
-                "blocked_by": [b.to_dict() for b in blockers],
-                "blocking": [b.to_dict() for b in blocking],
-            }
+            return task_summary_payload(task, dependencies)
+
+        result: dict[str, Any] = task.to_dict()
+        result["dependencies"] = {
+            "blocked_by": [b.to_dict() for b in blockers],
+            "blocking": [b.to_dict() for b in blocking],
+        }
 
         return result
 
@@ -668,7 +666,7 @@ def create_crud_registry(ctx: RegistryContext) -> InternalToolRegistry:
             limit=limit,
             project_id=project_id,
         )
-        return {"tasks": [t.to_brief() for t in tasks], "count": len(tasks)}
+        return {"tasks": [task_discovery_payload(t) for t in tasks], "count": len(tasks)}
 
     registry.register(
         name="list_tasks",

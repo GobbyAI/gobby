@@ -7,6 +7,7 @@ from typing import Any
 
 from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.tasks._context import RegistryContext
+from gobby.mcp_proxy.tools.tasks._formatters import task_search_payload
 from gobby.mcp_proxy.tools.tasks._resolution import resolve_task_id_for_mcp
 
 
@@ -98,13 +99,7 @@ def create_search_registry(ctx: RegistryContext) -> InternalToolRegistry:
         )
 
         return {
-            "tasks": [
-                {
-                    **task.to_brief(),
-                    "score": round(score, 4),
-                }
-                for task, score in results
-            ],
+            "tasks": [task_search_payload(task, score) for task, score in results],
             "count": len(results),
             "query": query.strip(),
         }

@@ -1,5 +1,6 @@
 """Focused coverage tests for task MCP tools."""
 
+from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -7,6 +8,72 @@ import pytest
 from gobby.mcp_proxy.tools.tasks import create_task_registry
 
 pytestmark = pytest.mark.unit
+
+COMPACT_STATE_KEYS = {
+    "current_stage",
+    "is_closed",
+    "closed_at",
+    "is_claimed",
+    "is_blocked",
+    "is_escalated",
+}
+
+DISCOVERY_TASK_KEYS = {
+    "ref",
+    "id",
+    "seq_num",
+    "title",
+    "task_type",
+    "category",
+    "priority",
+    "path_cache",
+    "updated_at",
+    "state",
+}
+
+SUMMARY_TASK_KEYS = {
+    "ref",
+    "id",
+    "seq_num",
+    "title",
+    "task_type",
+    "category",
+    "priority",
+    "path_cache",
+    "description",
+    "validation_criteria",
+    "labels",
+    "parent_task_id",
+    "created_at",
+    "updated_at",
+    "state",
+    "dependencies",
+    "allow_automation",
+    "unattended",
+    "isolation",
+    "assigned_agent",
+    "implementation_domain",
+    "additional_skills",
+}
+
+NOISY_TASK_KEYS = {
+    "claimed_by_session_id",
+    "closed_in_session_id",
+    "closed_commit_sha",
+    "validation_status",
+    "validation_feedback",
+    "validation_fail_count",
+    "dispatch_failure_count",
+    "validation_override_reason",
+    "merge_in_progress",
+    "blocked_by_merge",
+    "commits",
+    "github_issue_number",
+    "github_pr_number",
+    "github_repo",
+    "linear_issue_id",
+    "linear_team_id",
+}
 
 
 class TestGetTaskTool:
@@ -29,6 +96,7 @@ class TestGetTaskTool:
 
             assert result["id"] == sample_task.id
             assert result["title"] == "Test Task"
+            assert result["description"] == "Test description"
             assert "state" in result
             assert result["state"]["is_blocked"] is False
             assert "dependencies" in result
@@ -85,12 +153,20 @@ class TestGetTaskTool:
 
             assert len(result["dependencies"]["blocked_by"]) == 1
             assert len(result["dependencies"]["blocking"]) == 1
+            assert result["dependencies"]["blocked_by"][0] == {
+                "from_task": "550e8400-e29b-41d4-a716-446655440001",
+                "type": "blocks",
+            }
+            assert result["dependencies"]["blocking"][0] == {
+                "from_task": "550e8400-e29b-41d4-a716-446655440000",
+                "type": "blocks",
+            }
 
     @pytest.mark.asyncio
-    async def test_get_task_brief_excludes_description(
+    async def test_get_task_brief_returns_agent_task_card(
         self, mock_task_manager, mock_sync_manager, sample_task
     ):
-        """Test get_task with brief=True (default) excludes heavy fields."""
+        """Test get_task with brief=True returns concise actionable fields."""
         with patch("gobby.mcp_proxy.tools.tasks._context.TaskDependencyManager") as MockDepManager:
             mock_dep_instance = MagicMock()
             mock_dep_instance.get_blockers.return_value = []
@@ -98,14 +174,18 @@ class TestGetTaskTool:
             MockDepManager.return_value = mock_dep_instance
 
             registry = create_task_registry(mock_task_manager, mock_sync_manager)
+            sample_task.validation_criteria = "Run focused task MCP validation"
             mock_task_manager.get_task.return_value = sample_task
 
             result = await registry.call("get_task", {"task_id": sample_task.id})
 
+            assert set(result) == SUMMARY_TASK_KEYS
             assert result["id"] == sample_task.id
             assert result["title"] == "Test Task"
-            assert "description" not in result
-            assert "validation_criteria" not in result
+            assert result["description"] == "Test description"
+            assert result["validation_criteria"] == "Run focused task MCP validation"
+            assert set(result["state"]) == COMPACT_STATE_KEYS
+            assert NOISY_TASK_KEYS.isdisjoint(result)
             assert "expansion_context" not in result
             assert "dependencies" in result
 
@@ -147,13 +227,14 @@ class TestGetTaskTool:
             mock_dep_instance.get_blocking.return_value = []
             MockDepManager.return_value = mock_dep_instance
 
-            # Create a linked task that the blocker resolves to
-            linked_task = MagicMock()
-            linked_task.seq_num = 42
-            linked_task.title = "Blocking Task"
-            linked_task.id = "550e8400-e29b-41d4-a716-446655440001"
-            linked_state = {"current_stage": {"name": "implementation", "state": "in_progress"}}
-            linked_task.to_brief.return_value = {"state": linked_state}
+            # Create a linked task that the blocker resolves to.
+            linked_stage = {"name": "implementation", "state": "in_progress"}
+            linked_task = SimpleNamespace(
+                id="550e8400-e29b-41d4-a716-446655440001",
+                seq_num=42,
+                title="Blocking Task",
+                current_stage=linked_stage,
+            )
 
             def get_task_side_effect(task_id):
                 if task_id == sample_task.id:
@@ -171,8 +252,10 @@ class TestGetTaskTool:
             blocked_by = result["dependencies"]["blocked_by"]
             assert len(blocked_by) == 1
             assert blocked_by[0]["ref"] == "#42"
+            assert blocked_by[0]["id"] == "550e8400-e29b-41d4-a716-446655440001"
             assert blocked_by[0]["title"] == "Blocking Task"
-            assert blocked_by[0]["state"] == linked_state
+            assert blocked_by[0]["state"]["current_stage"] == linked_stage
+            assert set(blocked_by[0]["state"]) == COMPACT_STATE_KEYS
             assert blocked_by[0]["dep_type"] == "blocks"
 
 
@@ -617,10 +700,26 @@ class TestListTasksTool:
         """Test list_tasks returns tasks with count."""
         registry = create_task_registry(mock_task_manager, mock_sync_manager)
 
-        mock_task1 = MagicMock()
-        mock_task1.to_brief.return_value = {"id": "t1", "title": "Task 1"}
-        mock_task2 = MagicMock()
-        mock_task2.to_brief.return_value = {"id": "t2", "title": "Task 2"}
+        mock_task1 = SimpleNamespace(
+            id="t1",
+            seq_num=1,
+            title="Task 1",
+            task_type="task",
+            category="code",
+            priority=2,
+            path_cache="1",
+            updated_at="2024-01-01T00:00:00Z",
+        )
+        mock_task2 = SimpleNamespace(
+            id="t2",
+            seq_num=2,
+            title="Task 2",
+            task_type="bug",
+            category="code",
+            priority=1,
+            path_cache="2",
+            updated_at="2024-01-02T00:00:00Z",
+        )
 
         mock_task_manager.list_tasks.return_value = [mock_task1, mock_task2]
 
@@ -631,6 +730,10 @@ class TestListTasksTool:
 
             assert result["count"] == 2
             assert len(result["tasks"]) == 2
+            for task in result["tasks"]:
+                assert set(task) == DISCOVERY_TASK_KEYS
+                assert set(task["state"]) == COMPACT_STATE_KEYS
+                assert NOISY_TASK_KEYS.isdisjoint(task)
 
     @pytest.mark.asyncio
     async def test_list_tasks_with_filters(self, mock_task_manager, mock_sync_manager):

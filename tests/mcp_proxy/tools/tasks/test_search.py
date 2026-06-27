@@ -27,6 +27,51 @@ if TYPE_CHECKING:
 
 pytestmark = pytest.mark.unit
 
+COMPACT_STATE_KEYS = {
+    "current_stage",
+    "is_closed",
+    "closed_at",
+    "is_claimed",
+    "is_blocked",
+    "is_escalated",
+}
+
+SEARCH_TASK_KEYS = {
+    "ref",
+    "id",
+    "seq_num",
+    "title",
+    "task_type",
+    "category",
+    "priority",
+    "path_cache",
+    "updated_at",
+    "state",
+    "score",
+    "match_preview",
+}
+
+NOISY_TASK_KEYS = {
+    "description",
+    "validation_criteria",
+    "claimed_by_session_id",
+    "closed_in_session_id",
+    "closed_commit_sha",
+    "validation_status",
+    "validation_feedback",
+    "validation_fail_count",
+    "dispatch_failure_count",
+    "validation_override_reason",
+    "merge_in_progress",
+    "blocked_by_merge",
+    "commits",
+    "github_issue_number",
+    "github_pr_number",
+    "github_repo",
+    "linear_issue_id",
+    "linear_team_id",
+}
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -59,16 +104,42 @@ def seeded_tasks(
     """Create several tasks for search tests."""
     tasks = []
     task_data = [
-        ("Fix login authentication bug", "bug", 1),
-        ("Add user profile page", "feature", 2),
-        ("Refactor database connection pooling", "task", 2),
-        ("Write unit tests for auth module", "task", 3),
-        ("Deploy to staging environment", "task", 2),
+        (
+            "Fix login authentication bug",
+            "bug",
+            1,
+            "Authentication sessions fail when refresh tokens expire.",
+        ),
+        (
+            "Add user profile page",
+            "feature",
+            2,
+            "Profile page should display user settings and account metadata.",
+        ),
+        (
+            "Refactor database connection pooling",
+            "task",
+            2,
+            "Database connection pooling needs clearer ownership and lifecycle boundaries.",
+        ),
+        (
+            "Write unit tests for auth module",
+            "task",
+            3,
+            "Auth module tests should cover token refresh and login failure branches.",
+        ),
+        (
+            "Deploy to staging environment",
+            "task",
+            2,
+            "Staging deployment should publish the current build and verify health checks.",
+        ),
     ]
-    for title, task_type, priority in task_data:
+    for title, task_type, priority, description in task_data:
         task = task_manager.create_task(
             project_id=real_project["id"],
             title=title,
+            description=description,
             task_type=task_type,
             priority=priority,
         )
@@ -184,12 +255,14 @@ class TestSearchTasksResults:
 
         result = func(query="login bug")
 
-        if result["count"] > 0:
-            first_task = result["tasks"][0]
-            assert "score" in first_task
-            assert isinstance(first_task["score"], float)
+        assert result["count"] > 0
+        first_task = result["tasks"][0]
+        assert "score" in first_task
+        assert isinstance(first_task["score"], float)
+        assert "match_preview" in first_task
+        assert len(first_task["match_preview"]) <= 160
 
-    def test_search_results_include_brief_fields(
+    def test_search_results_include_compact_fields(
         self,
         task_manager: LocalTaskManager,
         real_project: dict,
@@ -201,12 +274,39 @@ class TestSearchTasksResults:
 
         result = func(query="database")
 
-        if result["count"] > 0:
-            first = result["tasks"][0]
-            # Should have brief fields from to_brief() plus score
-            assert "title" in first
-            assert "state" in first
-            assert "score" in first
+        assert result["count"] > 0
+        for task in result["tasks"]:
+            assert set(task) == SEARCH_TASK_KEYS
+            assert set(task["state"]) == COMPACT_STATE_KEYS
+            assert NOISY_TASK_KEYS.isdisjoint(task)
+
+    def test_search_match_preview_is_bounded_and_normalized(
+        self,
+        task_manager: LocalTaskManager,
+        real_project: dict,
+        seeded_tasks: list,
+    ) -> None:
+        ctx = _make_ctx(task_manager, project_id=real_project["id"])
+        registry = create_search_registry(ctx)
+        func = registry.get_tool("search_tasks")
+        long_description = "First line\n\n" + "token  " * 80
+        task_manager.create_task(
+            project_id=real_project["id"],
+            title="Bounded preview marker",
+            description=long_description,
+            task_type="task",
+            priority=2,
+        )
+
+        result = func(query="Bounded preview marker")
+
+        assert result["count"] > 0
+        match = next(task for task in result["tasks"] if task["title"] == "Bounded preview marker")
+        preview = match["match_preview"]
+        assert len(preview) <= 160
+        assert "\n" not in preview
+        assert "  " not in preview
+        assert preview.endswith("...")
 
     def test_query_is_stripped(
         self,
