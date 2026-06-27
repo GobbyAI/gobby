@@ -12,6 +12,7 @@ import pytest
 
 from gobby.sessions.processor import SessionMessageProcessor
 from gobby.sessions.transcript_parsing import _get_parser, _parse_lines
+from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcript_source import (
     _detect_source_from_jsonl_lines,
     _detect_source_from_path,
@@ -160,7 +161,7 @@ def test_parse_line_returns_first_expanded_block() -> None:
 def test_todo_state_metadata_is_ignored_without_unknown_warning(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    parser = DroidTranscriptParser()
+    parser = DroidTranscriptParser(session_id="droid-session")
     calls: list[dict[str, Any]] = []
 
     def _log_unknown_block(**kwargs: Any) -> None:
@@ -168,10 +169,50 @@ def test_todo_state_metadata_is_ignored_without_unknown_warning(
 
     monkeypatch.setattr(parser.error_log, "log_unknown_block", _log_unknown_block)
 
-    line = json.dumps({"type": "todo_state", "todos": [{"content": "check", "status": "done"}]})
+    todos = [{"content": "check", "status": "completed"}]
+    line = json.dumps({"type": "todo_state", "id": "snapshot-1", "todos": todos})
 
-    assert parser.parse_line(line, 0) is None
+    records = parser.parse_lines([line])
+
     assert calls == []
+    messages = [record for record in records if isinstance(record, ParsedMessage)]
+    assert len(messages) == 2
+
+    tool_use, tool_result = messages
+    assert tool_use.role == "assistant"
+    assert tool_use.content_type == "tool_use"
+    assert tool_use.tool_name == "TodoWrite"
+    assert tool_use.tool_input == {"todos": todos}
+    assert tool_use.tool_use_id is not None
+    assert tool_use.tool_use_id.startswith("droid-todo-state-")
+
+    assert tool_result.role == "tool"
+    assert tool_result.content_type == "tool_result"
+    assert tool_result.tool_result == {"todos": todos, "source": "todo_state"}
+    assert tool_result.tool_use_id == tool_use.tool_use_id
+
+    same_session_records = DroidTranscriptParser(session_id="droid-session").parse_lines([line])
+    same_session_messages = [
+        record for record in same_session_records if isinstance(record, ParsedMessage)
+    ]
+    assert same_session_messages[0].tool_use_id == tool_use.tool_use_id
+
+    other_session_records = DroidTranscriptParser(session_id="other-session").parse_lines([line])
+    other_session_messages = [
+        record for record in other_session_records if isinstance(record, ParsedMessage)
+    ]
+    assert other_session_messages[0].tool_use_id != tool_use.tool_use_id
+
+    rendered = render_transcript(messages, cli_name="droid", source="droid")
+    assert len(rendered) == 1
+    assert rendered[0].role == "assistant"
+    block = rendered[0].content_blocks[0]
+    assert block.type == "tool_chain"
+    tool_call = block.tool_calls[0]
+    assert tool_call.tool_name == "TodoWrite"
+    assert tool_call.status == "completed"
+    assert tool_call.result is not None
+    assert tool_call.result.content == {"todos": todos, "source": "todo_state"}
 
 
 def test_extract_last_messages_strips_injected_user_blocks() -> None:

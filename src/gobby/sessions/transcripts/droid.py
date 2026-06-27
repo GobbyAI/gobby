@@ -7,6 +7,7 @@ import logging
 import re
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
+from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
@@ -52,6 +53,16 @@ def _coerce_token_count(value: Any) -> int:
     if isinstance(value, str) and value.isdigit():
         return int(value)
     return 0
+
+
+def _todo_state_tool_use_id(session_id: str | None, todos: list[Any]) -> str:
+    payload = json.dumps(
+        {"session_id": session_id or "", "todos": todos},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    digest = sha256(payload.encode("utf-8")).hexdigest()[:16]
+    return f"droid-todo-state-{digest}"
 
 
 class DroidTranscriptParser(BaseTranscriptParser):
@@ -125,13 +136,47 @@ class DroidTranscriptParser(BaseTranscriptParser):
             self.error_log.log_unknown_block(index, self.session_id, "<non-object>", {})
             return []
 
-        record_type = record.get("type")
-        if record_type in {"session_start", "todo_state"}:
-            return []
         timestamp_raw = record.get("timestamp")
         timestamp = _parse_timestamp(timestamp_raw if isinstance(timestamp_raw, str) else None)
         message_id_raw = record.get("id")
         message_id = message_id_raw if isinstance(message_id_raw, str) else None
+        record_type = record.get("type")
+        if record_type == "session_start":
+            return []
+        if record_type == "todo_state":
+            todos = record.get("todos")
+            todos_payload = todos if isinstance(todos, list) else []
+            todo_tool_use_id = _todo_state_tool_use_id(self.session_id, todos_payload)
+            return [
+                ParsedMessage(
+                    index=index,
+                    role="assistant",
+                    content="",
+                    content_type="tool_use",
+                    tool_name="TodoWrite",
+                    tool_input={"todos": todos_payload},
+                    tool_result=None,
+                    tool_use_id=todo_tool_use_id,
+                    timestamp=timestamp,
+                    raw_json=record,
+                    message_id=message_id,
+                    model=self._sidecar_model,
+                ),
+                ParsedMessage(
+                    index=index,
+                    role="tool",
+                    content="",
+                    content_type="tool_result",
+                    tool_name=None,
+                    tool_input=None,
+                    tool_result={"todos": todos_payload, "source": "todo_state"},
+                    tool_use_id=todo_tool_use_id,
+                    timestamp=timestamp,
+                    raw_json=record,
+                    message_id=message_id,
+                    model=self._sidecar_model,
+                ),
+            ]
         if record_type != "message":
             record_block_type = str(record_type or "<missing>")
             self.error_log.log_unknown_block(

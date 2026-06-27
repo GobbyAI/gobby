@@ -15,6 +15,7 @@ TranscriptRecord = ParsedMessage | ParsedToolEvent
 
 MAX_TEXT_COLLECT_DEPTH = 50
 TRUNCATED_TEXT_MARKER = "[truncated]"
+_DROID_TODO_STATE_TOOL_USE_ID_PREFIX = "droid-todo-state-"
 
 _SUCCESS_VALUES = frozenset(
     {"complete", "completed", "ok", "pass", "passed", "success", "successful", "succeeded"}
@@ -28,6 +29,9 @@ def normalize_transcript_records(
     records: Iterable[TranscriptRecord], source: str | None
 ) -> list[TranscriptRecord]:
     """Return canonical transcript records safe for rendering, indexing, and stats."""
+    if source == "droid":
+        return _collapse_droid_todo_state_snapshots(records)
+
     if source != "grok":
         return list(records)
 
@@ -64,6 +68,48 @@ def normalize_transcript_records(
             )
         )
     return normalized
+
+
+def _collapse_droid_todo_state_snapshots(
+    records: Iterable[TranscriptRecord],
+) -> list[TranscriptRecord]:
+    items = list(records)
+    normalized: list[TranscriptRecord] = []
+    previous_snapshot_id: str | None = None
+    index = 0
+    while index < len(items):
+        snapshot_id = _droid_todo_state_snapshot_id(items, index)
+        if snapshot_id is None:
+            normalized.append(items[index])
+            previous_snapshot_id = None
+            index += 1
+            continue
+        if snapshot_id != previous_snapshot_id:
+            normalized.extend((items[index], items[index + 1]))
+        previous_snapshot_id = snapshot_id
+        index += 2
+    return normalized
+
+
+def _droid_todo_state_snapshot_id(records: list[TranscriptRecord], index: int) -> str | None:
+    if index + 1 >= len(records):
+        return None
+    tool_use = records[index]
+    tool_result = records[index + 1]
+    if not isinstance(tool_use, ParsedMessage) or not isinstance(tool_result, ParsedMessage):
+        return None
+    if tool_use.content_type != "tool_use" or tool_use.tool_name != "TodoWrite":
+        return None
+    tool_use_id = tool_use.tool_use_id
+    if not tool_use_id or not tool_use_id.startswith(_DROID_TODO_STATE_TOOL_USE_ID_PREFIX):
+        return None
+    if tool_result.content_type != "tool_result" or tool_result.tool_use_id != tool_use_id:
+        return None
+    if not isinstance(tool_result.tool_result, dict):
+        return None
+    if tool_result.tool_result.get("source") != "todo_state":
+        return None
+    return tool_use_id
 
 
 def _grok_hook_execution_update(record: ParsedMessage) -> dict[str, Any] | None:
