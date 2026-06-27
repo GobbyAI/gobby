@@ -472,7 +472,6 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                             results.append(_make_msg(role="user", content=" ".join(text_parts)))
                             text_parts = []
                         block_type = str(btype or "<missing>")
-                        self.error_log.log_unknown_block(index, self.session_id, block_type, block)
                         results.append(_make_unknown(role="user", block_type=block_type, raw=block))
                 # Remaining text
                 if text_parts:
@@ -521,7 +520,6 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                             )
                             text_parts = []
                         block_type = str(btype or "<missing>")
-                        self.error_log.log_unknown_block(index, self.session_id, block_type, block)
                         results.append(
                             _make_unknown(role="assistant", block_type=block_type, raw=block)
                         )
@@ -554,7 +552,6 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         # else: unknown type, return empty list
         else:
             block_type = str(msg_type or "<missing>")
-            self.error_log.log_unknown_block(index, self.session_id, block_type, data)
             results.append(_make_unknown(role="assistant", block_type=block_type, raw=data))
 
         return results

@@ -216,7 +216,9 @@ class TestClaudeTranscriptParser:
     def test_parse_line_unknown_type(self, parser) -> None:
         line = json.dumps({"type": "unknown_event"})
         msg = parser.parse_line(line, 0)
-        assert msg is None
+        assert msg is not None
+        assert msg.content_type == "unknown_event"
+        assert msg.raw_json == {"type": "unknown_event"}
 
     def test_parse_lines_continuous(self, parser) -> None:
         lines = [
@@ -826,11 +828,13 @@ class TestClaudeExpandLine:
         assert msg.tool_use_id == "toolu_blocked"
         assert msg.content == "Gobby blocked [require-uv]: Use uv instead."
 
-    def test_expand_unknown_type_returns_empty(self, parser) -> None:
-        """Unknown message type returns empty list."""
+    def test_expand_unknown_type_returns_unknown_message(self, parser) -> None:
+        """Unknown message type returns a represented unknown block."""
         line = json.dumps({"type": "progress", "timestamp": "2024-01-01T12:00:00Z"})
         msgs = parser._expand_line(line, 0)
-        assert msgs == []
+        assert len(msgs) == 1
+        assert msgs[0].content_type == "progress"
+        assert msgs[0].raw_json == {"type": "progress", "timestamp": "2024-01-01T12:00:00Z"}
 
     def test_expand_invalid_json_returns_empty(self, parser) -> None:
         """Invalid JSON returns empty list."""
@@ -1713,8 +1717,8 @@ class TestQwenTranscriptParser:
         assert msg.role == "assistant"  # Normalized
         assert msg.content == "I am Qwen"
 
-    def test_qwen_parser_nested_message_structure_skipped(self, parser) -> None:
-        # Legacy nested message structure without type field is now skipped
+    def test_qwen_parser_nested_message_structure_becomes_unknown(self, parser) -> None:
+        # Legacy nested message structure without type field is preserved as unknown.
         line = json.dumps(
             {
                 "message": {"role": "user", "content": "Nested content"},
@@ -1723,7 +1727,12 @@ class TestQwenTranscriptParser:
         )
 
         msg = parser.parse_line(line, 2)
-        assert msg is None
+        assert msg is not None
+        assert msg.content_type == "<missing>"
+        assert msg.raw_json == {
+            "message": {"role": "user", "content": "Nested content"},
+            "timestamp": "2023-01-01T12:00:02Z",
+        }
 
     def test_qwen_parser_list_content(self, parser) -> None:
         # Test content as list of parts via type-based format
@@ -1748,7 +1757,9 @@ class TestQwenTranscriptParser:
         """Test handling of messages without role."""
         line = json.dumps({"data": "something"})
         msg = parser.parse_line(line, 0)
-        assert msg is None
+        assert msg is not None
+        assert msg.content_type == "<missing>"
+        assert msg.raw_json == {"data": "something"}
 
     def test_qwen_parse_line_type_field_user(self, parser) -> None:
         """Test parsing with type field as 'user'."""

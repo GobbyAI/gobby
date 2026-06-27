@@ -62,8 +62,10 @@ def test_unknown_records_are_preserved_but_protocol_records_stay_skipped():
 
     messages = droid_parser.parse_lines([_line(unknown), _line(session_start), _line(todo_state)])
 
-    assert [msg.content_type for msg in messages] == ["agent_event"]
+    assert [msg.content_type for msg in messages] == ["agent_event", "tool_use", "tool_result"]
     assert messages[0].content == "kept"
+    assert messages[1].tool_name == "TodoWrite"
+    assert messages[2].tool_result == {"todos": [], "source": "todo_state"}
     assert (
         codex_parser.parse_line(
             _line({"type": "response_item", "payload": {"type": "reasoning"}}), 0

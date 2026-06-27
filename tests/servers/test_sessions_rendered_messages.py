@@ -9,6 +9,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from gobby.sessions.transcript_normalization import normalize_transcript_records
+from gobby.sessions.transcript_reader import TranscriptReader
 from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcript_window import WindowResult
 from gobby.sessions.transcripts.base import ParsedMessage
@@ -180,6 +181,60 @@ class TestGetMessagesRendered:
             "tools": [{"name": "mcp__gobby", "type": "namespace", "tool_count": 8}],
             "tools_count": 1,
         }
+
+    def test_get_messages_represents_unknown_block_without_parser_error_log(
+        self,
+        session_storage: SessionManager,
+        test_project: dict[str, Any],
+        temp_dir: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Represented unknown transcript blocks reach the API without parser-error spam."""
+        monkeypatch.setenv("HOME", str(temp_dir))
+        transcript_path = temp_dir / "codex-unknown.jsonl"
+        unknown_payload = {
+            "type": "synthetic_unknown_block",
+            "id": "synthetic-unknown-1",
+            "text": "visible synthetic payload",
+            "metadata": {"shape": "future"},
+        }
+        transcript_path.write_text(
+            json.dumps(
+                {
+                    "timestamp": "2024-06-15T10:30:00Z",
+                    "type": "response_item",
+                    "payload": unknown_payload,
+                }
+            )
+            + "\n",
+            encoding="utf-8",
+        )
+        session = session_storage.register(
+            external_id="codex-unknown-block",
+            machine_id="machine",
+            source="codex",
+            project_id=test_project["id"],
+            transcript_path=str(transcript_path),
+        )
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+            transcript_reader=TranscriptReader(session_storage),
+        )
+
+        response = TestClient(server.app).get(f"/api/sessions/{session.id}/messages")
+
+        assert response.status_code == 200
+        data = response.json()
+        block = data["messages"][0]["content_blocks"][0]
+        assert block["type"] == "unknown"
+        assert block["block_type"] == "response_item/synthetic_unknown_block"
+        assert block["content"] == "visible synthetic payload"
+        assert block["raw"] == unknown_payload
+        log_path = temp_dir / ".gobby" / "logs" / "codex-parser-error.log"
+        if log_path.exists():
+            assert "Unknown block type" not in log_path.read_text(encoding="utf-8")
 
     def test_get_messages_tail_order(
         self,

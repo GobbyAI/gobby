@@ -243,13 +243,6 @@ def _process_message_block(
                 source=source,
                 block_type=original_type,
             )
-        if error_log:
-            error_log.log_unknown_block(
-                line_num=msg.index,
-                session_id=session_id,
-                block_type=original_type,
-                raw=msg.raw_json,
-            )
 
     # Skip empty thinking blocks (defense in depth)
     if block_type == "thinking" and (not block_content or not str(block_content).strip()):

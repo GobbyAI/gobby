@@ -52,7 +52,7 @@ def test_log_unknown_block(tmp_path, monkeypatch):
     assert json.dumps(raw) in content
 
 
-def test_renderer_logs_unknown_block(tmp_path, monkeypatch):
+def test_renderer_represents_unknown_block_without_parser_error_log(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
     cli_name = "test-cli-renderer"
     error_log = TranscriptParserErrorLog(cli_name)
@@ -70,13 +70,14 @@ def test_renderer_logs_unknown_block(tmp_path, monkeypatch):
         raw_json={"type": "magic_block", "extra": "data"},
     )
 
-    render_transcript([msg], session_id="session-3", error_log=error_log)
+    rendered = render_transcript([msg], session_id="session-3", error_log=error_log)
 
-    content = error_log.log_path.read_text()
-    assert "line:5" in content
-    assert "session:session-3" in content
-    assert "Unknown block type: magic_block" in content
-    assert '"extra": "data"' in content
+    block = rendered[0].content_blocks[0]
+    assert block.type == "unknown"
+    assert block.block_type == "magic_block"
+    assert block.raw == {"type": "magic_block", "extra": "data"}
+    if error_log.log_path.exists():
+        assert "Unknown block type" not in error_log.log_path.read_text()
 
 
 def test_unknown_block_message_preserves_raw_for_render_passthrough(tmp_path, monkeypatch):

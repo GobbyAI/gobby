@@ -179,12 +179,6 @@ class DroidTranscriptParser(BaseTranscriptParser):
             ]
         if record_type != "message":
             record_block_type = str(record_type or "<missing>")
-            self.error_log.log_unknown_block(
-                index,
-                self.session_id,
-                record_block_type,
-                record,
-            )
             return [
                 _unknown_block_message(
                     index=index,
@@ -296,12 +290,6 @@ class DroidTranscriptParser(BaseTranscriptParser):
                 )
             else:
                 block_type = str(raw_block_type or "<missing>")
-                self.error_log.log_unknown_block(
-                    index,
-                    self.session_id,
-                    block_type,
-                    block,
-                )
                 out.append(
                     _unknown_block_message(
                         index=index,

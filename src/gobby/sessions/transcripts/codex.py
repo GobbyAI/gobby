@@ -240,12 +240,6 @@ class CodexTranscriptParser(BaseTranscriptParser):
             return None
 
         block_type = f"response_item/{payload_type or '<missing>'}"
-        self.error_log.log_unknown_block(
-            line_num=index,
-            session_id=self.session_id,
-            block_type=block_type,
-            raw=data,
-        )
         return _unknown_block_message(
             index=index,
             block_type=block_type,
