@@ -24,10 +24,25 @@ import logging
 import os
 import shutil
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping
-from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, ClassVar
 
+from gobby.adapters.acp_session_state import (
+    DEFAULT_ACP_CLIENT_CAPABILITIES,
+    ACPSessionState,
+)
+from gobby.adapters.acp_session_state import (
+    extract_session_id as _extract_session_id,
+)
+from gobby.adapters.acp_stream import (
+    StreamEvent,
+)
+from gobby.adapters.acp_stream import (
+    extract_text as _extract_text_content,
+)
+from gobby.adapters.acp_stream import (
+    normalize_notification as _normalize_notification,
+)
 from gobby.adapters.acp_terminal import ACPTerminalManager
 from gobby.adapters.subprocess_stderr import SubprocessStderrDrain
 
@@ -74,31 +89,6 @@ def _resolve_timeout(value: float | None, *, env_name: str, default: float) -> f
     return parsed
 
 
-def _extract_session_id(payload: Any) -> str | None:
-    """Extract an ACP session ID from common response/notification shapes."""
-    if not isinstance(payload, dict):
-        return None
-
-    for key in ("sessionId", "session_id"):
-        value = payload.get(key)
-        if isinstance(value, str) and value:
-            return value
-
-    session = payload.get("session")
-    if isinstance(session, dict):
-        nested = _extract_session_id(session)
-        if nested:
-            return nested
-
-    result = payload.get("result")
-    if isinstance(result, dict):
-        nested = _extract_session_id(result)
-        if nested:
-            return nested
-
-    return None
-
-
 def _compact_stderr(data: bytes | str | None, *, limit: int = 300) -> str | None:
     """Return a compact single-line stderr snippet for startup diagnostics."""
     if data is None:
@@ -113,19 +103,6 @@ def _compact_stderr(data: bytes | str | None, *, limit: int = 300) -> str | None
     if len(compact) > limit:
         return f"...{compact[-limit:]}"
     return compact
-
-
-@dataclass
-class StreamEvent:
-    """A normalized event from the provider ACP stream.
-
-    Attributes:
-        event_type: One of "init", "content_delta", "result", "error".
-        data: Event-specific payload.
-    """
-
-    event_type: str
-    data: dict[str, Any] = field(default_factory=dict)
 
 
 class ACPClient:
@@ -194,9 +171,7 @@ class ACPClient:
         )
         self._process: asyncio.subprocess.Process | None = None
         self._started = False
-        self._session_id: str | None = None
-        self._session_info: dict[str, Any] = {}
-        self._agent_capabilities: dict[str, Any] = {}
+        self._session_state = ACPSessionState()
         self._io_lock = asyncio.Lock()
         self._stdin_write_lock = asyncio.Lock()
         self._active_operations = 0
@@ -214,17 +189,17 @@ class ACPClient:
     @property
     def session_id(self) -> str | None:
         """The ACP session ID obtained from session/new or session/load."""
-        return self._session_id
+        return self._session_state.session_id
 
     @property
     def session_info(self) -> dict[str, Any]:
         """The full ACP session/new or session/load result."""
-        return dict(self._session_info)
+        return self._session_state.session_info
 
     @property
     def agent_capabilities(self) -> dict[str, Any]:
         """The capabilities advertised by the ACP agent during initialize."""
-        return dict(self._agent_capabilities)
+        return self._session_state.agent_capabilities
 
     async def start(
         self,
@@ -290,7 +265,7 @@ class ACPClient:
                         "name": "gobby",
                         "version": "1.0.0",
                     },
-                    "clientCapabilities": {"terminal": True},
+                    "clientCapabilities": dict(DEFAULT_ACP_CLIENT_CAPABILITIES),
                 },
             )
             logger.debug(f"ACP initialize response: {init_result}")
@@ -300,13 +275,10 @@ class ACPClient:
                     f"ACP protocol version mismatch: requested {self.protocol_version}, "
                     f"agent selected {negotiated_version!r}"
                 )
-            agent_capabilities = init_result.get("agentCapabilities")
-            self._agent_capabilities = (
-                dict(agent_capabilities) if isinstance(agent_capabilities, dict) else {}
-            )
+            self._session_state.update_agent_capabilities(init_result.get("agentCapabilities"))
             await self._maybe_authenticate(init_result)
             if auto_session:
-                if session_id and self._agent_capabilities.get("loadSession") is True:
+                if session_id and self._session_state.supports_session_load():
                     session_result = await self.load_session(
                         session_id,
                         model=model,
@@ -324,16 +296,13 @@ class ACPClient:
                         cwd=cwd,
                         reasoning_effort=reasoning_effort,
                     )
-                self._session_info = session_result if isinstance(session_result, dict) else {}
-                self._session_id = (
-                    session_result.get("sessionId")
-                    if session_result and session_result.get("sessionId")
-                    else session_id
+                self._session_state.update_session_info(
+                    session_result,
+                    fallback_session_id=session_id,
                 )
-                logger.debug(f"ACP session ID: {self._session_id}")
+                logger.debug(f"ACP session ID: {self._session_state.session_id}")
             else:
-                self._session_id = None
-                self._session_info = {}
+                self._session_state.clear_session()
         except BaseException:
             await self.stop()
             raise
@@ -386,9 +355,7 @@ class ACPClient:
         if reasoning_effort:
             session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/new", session_params)
-        self._session_info = result if isinstance(result, dict) else {}
-        self._session_id = _extract_session_id(self._session_info)
-        return self._session_info
+        return self._session_state.update_session_info(result)
 
     async def load_session(
         self,
@@ -399,7 +366,7 @@ class ACPClient:
         reasoning_effort: str | None = None,
     ) -> dict[str, Any]:
         """Load an existing ACP session on an already-started shared backend."""
-        if self._agent_capabilities.get("loadSession") is not True:
+        if not self._session_state.supports_session_load():
             return await self.create_session(
                 model=model,
                 cwd=cwd,
@@ -415,9 +382,7 @@ class ACPClient:
         if reasoning_effort:
             session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/load", session_params)
-        self._session_info = result if isinstance(result, dict) else {}
-        self._session_id = _extract_session_id(self._session_info) or session_id
-        return self._session_info
+        return self._session_state.update_session_info(result, fallback_session_id=session_id)
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Send a JSON-RPC request and wait for the response.
@@ -439,7 +404,7 @@ class ACPClient:
         """Send an out-of-band ACP session/cancel notification."""
         if not self._started or not self._process or not self._process.stdin:
             return
-        target_session_id = session_id or self._active_prompt_session_id or self._session_id
+        target_session_id = session_id or self._active_prompt_session_id or self.session_id
         if not target_session_id:
             return
         await self._write_json_rpc_message(
@@ -582,7 +547,7 @@ class ACPClient:
         assert self._process.stdin is not None
         assert self._process.stdout is not None
 
-        target_session_id = session_id or self._session_id
+        target_session_id = session_id or self.session_id
         if not target_session_id:
             raise RuntimeError(f"{type(self).__name__} missing session ID for session/prompt")
 
@@ -733,126 +698,12 @@ class ACPClient:
         Returns:
             A normalized StreamEvent.
         """
-        # JSON-RPC notification format: {method: "...", params: {...}}
-        method = raw.get("method", "")
-        params = raw.get("params", {})
-
-        if method == "session/init" or method == "init":
-            return StreamEvent(
-                event_type="init",
-                data=params,
-            )
-
-        if method == "session/message" or method == "message":
-            role = params.get("role", "")
-            is_delta = params.get("delta", False)
-            content = params.get("content", "")
-
-            if role == "assistant" and is_delta:
-                return StreamEvent(
-                    event_type="content_delta",
-                    data={"content": content, "role": role},
-                )
-
-            return StreamEvent(
-                event_type="message",
-                data=params,
-            )
-
-        if method == "session/update":
-            update = params.get("update", {})
-            if not isinstance(update, dict):
-                return StreamEvent(event_type="session/update", data=params or raw)
-
-            update_type = update.get("sessionUpdate", "")
-            content = update.get("content")
-            text = cls._extract_text_content(content)
-
-            if update_type == "agent_message_chunk":
-                return StreamEvent(
-                    event_type="content_delta",
-                    data={
-                        "content": text,
-                        "role": "assistant",
-                        "message_id": update.get("messageId"),
-                    },
-                )
-
-            if update_type == "agent_thought_chunk":
-                return StreamEvent(
-                    event_type="thinking_delta",
-                    data={
-                        "content": text,
-                        "message_id": update.get("messageId"),
-                    },
-                )
-
-            if update_type == "user_message_chunk":
-                return StreamEvent(
-                    event_type="message",
-                    data={
-                        "role": "user",
-                        "content": text,
-                        "message_id": update.get("messageId"),
-                    },
-                )
-
-            if update_type == "tool_call":
-                tool_input = {}
-                for input_key in ("rawInput", "input"):
-                    if input_key in update:
-                        value = update[input_key]
-                        tool_input = value if isinstance(value, dict) else {}
-                        break
-                return StreamEvent(
-                    event_type="tool_call",
-                    data={
-                        "call_id": update.get("toolCallId"),
-                        "tool_name": update.get("title") or update.get("name"),
-                        "tool_input": tool_input,
-                    },
-                )
-
-            return StreamEvent(event_type=update_type or method, data=update)
-
-        if method == "session/result" or method == "result":
-            return StreamEvent(
-                event_type="result",
-                data={"stats": params.get("stats", params)},
-            )
-
-        if method == "session/error" or method == "error":
-            return StreamEvent(
-                event_type="error",
-                data={
-                    "message": params.get("message", "Unknown error"),
-                    "code": params.get("code"),
-                },
-            )
-
-        # Unknown notification — pass through
-        return StreamEvent(event_type=method or "unknown", data=params or raw)
+        return _normalize_notification(raw, extract_text_content=cls._extract_text_content)
 
     @classmethod
     def _extract_text_content(cls, content: Any) -> str:
         """Extract text from ACP content payloads."""
-        if isinstance(content, str):
-            return content
-
-        if isinstance(content, dict):
-            if content.get("type") == "text":
-                return str(content.get("text", ""))
-            if "text" in content:
-                return str(content.get("text", ""))
-            if "content" in content:
-                return str(content.get("content", ""))
-            return ""
-
-        if isinstance(content, list):
-            parts = [cls._extract_text_content(item) for item in content]
-            return "".join(part for part in parts if part)
-
-        return ""
+        return _extract_text_content(content)
 
     async def stop(self) -> None:
         """Gracefully stop the subprocess and clean up.
@@ -864,9 +715,7 @@ class ACPClient:
             await self._stderr_drain.stop()
             await self._terminal_manager.release_all()
             self._started = False
-            self._session_id = None
-            self._session_info = {}
-            self._agent_capabilities = {}
+            self._session_state.reset()
             self._active_prompt_session_id = None
             self._active_prompt_request_id = None
             return
@@ -914,9 +763,7 @@ class ACPClient:
             await self._stderr_drain.stop()
             self._process = None
             self._started = False
-            self._session_id = None
-            self._session_info = {}
-            self._agent_capabilities = {}
+            self._session_state.reset()
             self._active_prompt_session_id = None
             self._active_prompt_request_id = None
             self._active_operations = 0

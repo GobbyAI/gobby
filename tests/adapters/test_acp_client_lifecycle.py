@@ -8,6 +8,7 @@ from typing import Any
 import pytest
 
 from gobby.adapters.acp_client import ACPClient
+from gobby.adapters.acp_session_state import ACPSessionState
 
 pytestmark = pytest.mark.unit
 
@@ -70,6 +71,26 @@ class _FakeProcess:
 
 def _written_messages(process: _FakeProcess) -> list[dict[str, Any]]:
     return [json.loads(line) for line in process.stdin.buffer.decode().splitlines() if line.strip()]
+
+
+def test_session_state_copies_capabilities_and_tracks_roots() -> None:
+    state = ACPSessionState()
+
+    state.update_agent_capabilities({"loadSession": True})
+    capabilities = state.agent_capabilities
+    capabilities["loadSession"] = False
+
+    state.update_session_info(
+        {
+            "session": {"sessionId": "nested-session"},
+            "roots": [{"uri": "file:///workspace"}, {"path": "/tmp/project"}],
+        },
+    )
+
+    assert state.supports_session_load() is True
+    assert state.agent_capabilities == {"loadSession": True}
+    assert state.session_id == "nested-session"
+    assert state.root_uris == ("file:///workspace", "/tmp/project")
 
 
 @pytest.mark.asyncio
@@ -166,7 +187,7 @@ async def test_cancel_session_sends_out_of_band_notification() -> None:
     client = _StubACPClient(cli_path="/usr/bin/stub-acp")
     client._process = process
     client._started = True
-    client._session_id = "sess-1"
+    client._session_state.update_session_info({"sessionId": "sess-1"})
 
     await client.cancel_session()
 
