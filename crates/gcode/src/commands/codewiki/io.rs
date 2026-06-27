@@ -410,6 +410,15 @@ pub(crate) fn write_doc(out_dir: &Path, relative_path: &str, content: &str) -> a
     if let Some(parent) = target.parent() {
         std::fs::create_dir_all(parent)?;
     }
+    let content = if Path::new(relative_path)
+        .extension()
+        .and_then(|extension| extension.to_str())
+        == Some("md")
+    {
+        gobby_core::markdown::normalize_markdown(content)
+    } else {
+        content.to_string()
+    };
     std::fs::write(target, content)?;
     Ok(())
 }

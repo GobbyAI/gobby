@@ -35,3 +35,23 @@ fn write_doc_rejects_symlinked_target() {
     assert!(err.to_string().contains("symlinked codewiki path"));
     assert!(!outside_target.exists());
 }
+
+#[test]
+fn write_doc_normalizes_markdown_only() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    let out_dir = project.path().join("codewiki");
+
+    write_doc(&out_dir, "code/page.md", "# Page\n\n\nBody\n").expect("write markdown");
+    write_doc(
+        &out_dir,
+        "_meta/codewiki.json",
+        "{\n\n\n  \"ok\": true\n}\n",
+    )
+    .expect("write json");
+
+    let markdown = std::fs::read_to_string(out_dir.join("code/page.md")).expect("read markdown");
+    let json = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read json");
+
+    assert_eq!(markdown, "# Page\n\nBody\n");
+    assert_eq!(json, "{\n\n\n  \"ok\": true\n}\n");
+}

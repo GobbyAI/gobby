@@ -19,6 +19,7 @@ pub mod codewiki_contract;
 pub mod config;
 pub mod degradation;
 mod libpq;
+pub mod markdown;
 pub mod setup;
 pub mod token_budget;
 

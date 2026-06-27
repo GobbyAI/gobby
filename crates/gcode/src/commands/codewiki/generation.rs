@@ -224,6 +224,7 @@ pub(crate) fn generate_hierarchical_docs_core(
     doc_scope: &DocPruneScope,
     emit: &mut dyn FnMut(BuiltDoc) -> anyhow::Result<()>,
 ) -> anyhow::Result<()> {
+    let emit = &mut |doc: BuiltDoc| emit(doc.with_normalized_markdown());
     let mut files = input
         .files
         .iter()

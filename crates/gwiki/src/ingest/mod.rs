@@ -45,7 +45,22 @@ pub(crate) fn write_raw_markdown(
     markdown: &str,
 ) -> Result<PathBuf, WikiError> {
     let raw_path = PathBuf::from("raw").join(format!("{}.md", record.id));
-    write_immutable(vault_root, &raw_path, markdown.as_bytes())?;
+    let normalized = crate::markdown::normalize(markdown);
+    let path = vault_root.join(&raw_path);
+    if path.exists() {
+        match validate_existing_raw_bytes(&path, &raw_path, normalized.as_bytes()) {
+            Ok(()) => return Ok(raw_path),
+            Err(error) => {
+                if normalized != markdown
+                    && validate_existing_raw_bytes(&path, &raw_path, markdown.as_bytes()).is_ok()
+                {
+                    return Ok(raw_path);
+                }
+                return Err(error);
+            }
+        }
+    }
+    write_immutable(vault_root, &raw_path, normalized.as_bytes())?;
     Ok(raw_path)
 }
 
@@ -513,7 +528,7 @@ mod tests {
 
     use super::{
         MetadataValue, asset_path, markdown_metadata, markdown_metadata_values,
-        write_asset_from_path,
+        write_asset_from_path, write_raw_markdown,
     };
     use gobby_core::ai_context::AiContext;
     use gobby_core::config::EnvOnlySource;
@@ -626,6 +641,24 @@ mod tests {
         assert!(metadata.contains("unsafe_number: \"NaN\"\n"));
         assert!(metadata.contains("is_subagent: true\n"));
         assert!(metadata.contains("tool_counts: {\"Read\":2,\"Write\":1}\n"));
+    }
+
+    #[test]
+    fn generated_raw_markdown_is_normalized_before_write() {
+        let temp = tempfile::tempdir().expect("tempdir");
+        let record = test_source_record();
+        let raw_path = write_raw_markdown(
+            temp.path(),
+            &record,
+            "---\nsource_kind: pdf\n---\n\n\n# Report\n\n\n```text\none\n\n\ntwo\n```\n\n\nBody\n",
+        )
+        .expect("write raw markdown");
+        let raw = std::fs::read_to_string(temp.path().join(raw_path)).expect("read raw");
+
+        assert!(!raw.contains("\n\n\n# Report"));
+        assert!(!raw.contains("```\n\n\nBody"));
+        assert!(raw.contains("```text\none\n\n\ntwo\n```"));
+        assert_eq!(raw, crate::markdown::normalize(&raw));
     }
 
     #[test]

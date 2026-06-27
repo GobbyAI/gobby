@@ -550,6 +550,13 @@ impl BuiltDoc {
         }
     }
 
+    pub(crate) fn with_normalized_markdown(mut self) -> Self {
+        if self.path.ends_with(".md") {
+            self.content = gobby_core::markdown::normalize_markdown(&self.content);
+        }
+        self
+    }
+
     /// A deterministic derived page (architecture, infrastructure, feature
     /// catalog, audit) keyed on `invalidation_key` rather than a source-file
     /// set: it is rewritten only when the digest changes (Leaf H).
