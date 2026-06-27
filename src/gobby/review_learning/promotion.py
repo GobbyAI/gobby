@@ -29,6 +29,8 @@ class PromotionDecision:
     guardrail_target: GuardrailTarget | None
     category: str | None
     should_create_task: bool
+    skipped_reason: str | None = None
+    missing_guardrail_fields: tuple[str, ...] = ()
 
 
 class PromotionMemoryManager(Protocol):
@@ -95,6 +97,17 @@ def resolve_promotion(
         if target is None:
             return PromotionDecision("lesson", occurrence_count, None, None, False)
         tier = "high-risk" if lesson.risk == "high" else f"confirmed-{min(occurrence_count, 3)}"
+        missing_fields = _missing_guardrail_fields(lesson)
+        if missing_fields:
+            return PromotionDecision(
+                tier,
+                occurrence_count,
+                None,
+                None,
+                False,
+                "insufficient_guardrail_signal",
+                missing_fields,
+            )
         return PromotionDecision(tier, occurrence_count, target, TARGET_CATEGORY[target], True)
 
     if lesson.decision == "no-fix-policy":
@@ -105,6 +118,17 @@ def resolve_promotion(
             if lesson.guardrail_target in {"checklist", "tool-config"}
             else "checklist"
         )
+        missing_fields = _missing_guardrail_fields(lesson)
+        if missing_fields:
+            return PromotionDecision(
+                "policy-guardrail",
+                occurrence_count,
+                None,
+                None,
+                False,
+                "insufficient_guardrail_signal",
+                missing_fields,
+            )
         return PromotionDecision(
             "policy-guardrail",
             occurrence_count,
@@ -139,6 +163,9 @@ async def promote_lesson(
         "occurrence_count": decision.occurrence_count,
         "guardrail_target": decision.guardrail_target,
     }
+    if decision.skipped_reason is not None:
+        result["skipped_reason"] = decision.skipped_reason
+        result["missing_guardrail_fields"] = list(decision.missing_guardrail_fields)
     if not decision.should_create_task or decision.guardrail_target is None:
         return result
 
@@ -161,19 +188,82 @@ def _confirmed_target(
     lesson: NormalizedLesson,
     occurrence_count: int,
 ) -> GuardrailTarget | None:
-    if lesson.risk == "high":
-        if lesson.guardrail_target in {"rule", "workflow", "pipeline", "validation"}:
-            return lesson.guardrail_target
-        return "rule"
+    explicit_target = lesson.guardrail_target
     if occurrence_count < 2:
-        return None
-    if occurrence_count == 2:
-        if lesson.guardrail_target in {"helper", "checklist"}:
-            return lesson.guardrail_target
+        if lesson.risk != "high":
+            return None
+        if explicit_target is not None and explicit_target in {
+            "rule",
+            "workflow",
+            "pipeline",
+            "validation",
+        }:
+            return explicit_target
         return "test"
-    if lesson.guardrail_target in {"rule", "workflow", "pipeline"}:
-        return lesson.guardrail_target
+    if occurrence_count == 2:
+        if explicit_target is not None and explicit_target in {
+            "helper",
+            "test",
+            "checklist",
+            "rule",
+            "workflow",
+            "pipeline",
+        }:
+            return explicit_target
+        return "test"
+    if explicit_target is not None and explicit_target in {
+        "helper",
+        "test",
+        "checklist",
+        "rule",
+        "workflow",
+        "pipeline",
+    }:
+        return explicit_target
     return "validation"
+
+
+def _missing_guardrail_fields(lesson: NormalizedLesson) -> tuple[str, ...]:
+    missing: list[str] = []
+    if not _has_guardrail_value(lesson.finding.get("prevention")):
+        missing.append("prevention")
+    if not (
+        _has_guardrail_value(lesson.finding.get("principle"))
+        or _has_guardrail_value(lesson.finding.get("root_cause"))
+    ):
+        missing.append("principle_or_root_cause")
+    if not _has_implementation_anchor(lesson):
+        missing.append("implementation_anchor")
+    return tuple(missing)
+
+
+def _has_implementation_anchor(lesson: NormalizedLesson) -> bool:
+    finding_anchor_fields = (
+        "path",
+        "symbol",
+        "rule_id",
+        "rule_url",
+        "query_hints",
+        "suggestion",
+    )
+    evidence_anchor_fields = ("files", "changed_files")
+    return any(
+        _has_guardrail_value(lesson.finding.get(field)) for field in finding_anchor_fields
+    ) or any(_has_guardrail_value(lesson.evidence.get(field)) for field in evidence_anchor_fields)
+
+
+def _has_guardrail_value(value: Any) -> bool:
+    if value is None:
+        return False
+    if isinstance(value, str):
+        return bool(value.strip())
+    if isinstance(value, dict):
+        return any(
+            _has_guardrail_value(key) or _has_guardrail_value(item) for key, item in value.items()
+        )
+    if isinstance(value, list | tuple | set):
+        return any(_has_guardrail_value(item) for item in value)
+    return bool(value)
 
 
 def _create_or_update_task(
@@ -287,7 +377,7 @@ def _task_description(
     locations = _diagnostic_locations(lesson.finding)
     return "\n".join(
         [
-            "Build or update a guardrail for a repeated review-learning pattern.",
+            "Build or update a guardrail for a review-learning pattern.",
             "",
             f"pattern_id: {lesson.identity.pattern_id}",
             f"pattern_key: {lesson.identity.pattern_key}",

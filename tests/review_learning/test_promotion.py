@@ -18,9 +18,82 @@ def _finding(**overrides: str) -> dict[str, str]:
         "principle": "Persist state after changing it",
         "root_cause": "Mutation happened without a storage write",
         "prevention": "Add regression coverage around persistence",
+        "path": "src/gobby/tasks/state.py",
     }
     finding.update(overrides)
     return finding
+
+
+@pytest.mark.asyncio
+async def test_high_risk_weak_lesson_records_memory_without_task(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    result = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(prevention="", path=""),
+        evidence={"commit": "abc"},
+        risk="high",
+    )
+
+    assert result["guardrail_target"] is None
+    assert result["skipped_reason"] == "insufficient_guardrail_signal"
+    assert set(result["missing_guardrail_fields"]) == {"prevention", "implementation_anchor"}
+    assert len(fake_memory_manager.memories) == 1
+    assert fake_task_manager.created == []
+
+
+@pytest.mark.asyncio
+async def test_high_risk_actionable_first_occurrence_creates_test_by_default(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    result = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "abc"},
+        risk="high",
+    )
+
+    assert result["guardrail_target"] == "test"
+    assert result["task_ref"] == "#1"
+    assert fake_task_manager.created[0]["category"] == "test"
+    assert "target:test" in fake_task_manager.tasks[0].labels
+    assert "(1x, target=test)" in fake_task_manager.tasks[0].title
+    assert "repeated review-learning pattern" not in fake_task_manager.tasks[0].description
+
+
+@pytest.mark.asyncio
+async def test_high_risk_actionable_explicit_rule_target_creates_rule_task(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    result = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(guardrail_target="rule"),
+        evidence={"commit": "abc"},
+        risk="high",
+    )
+
+    assert result["guardrail_target"] == "rule"
+    assert result["task_ref"] == "#1"
+    assert fake_task_manager.created[0]["category"] == "config"
+    assert "target:rule" in fake_task_manager.tasks[0].labels
 
 
 @pytest.mark.asyncio
@@ -55,6 +128,51 @@ async def test_confirmed_second_occurrence_creates_test_guardrail_task(
     assert "guardrail" in fake_task_manager.tasks[0].labels
     assert "mem-1" in fake_task_manager.tasks[0].description
     assert "mem-2" in fake_task_manager.tasks[0].description
+    assert "review-learning pattern" in fake_task_manager.tasks[0].description
+    assert "repeated review-learning pattern" not in fake_task_manager.tasks[0].description
+
+
+@pytest.mark.asyncio
+async def test_repeated_weak_confirmed_lessons_wait_for_actionable_occurrence(
+    fake_memory_manager,
+    fake_task_manager,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    weak_finding = _finding(prevention="", path="")
+    first = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=weak_finding,
+        evidence={"commit": "abc"},
+    )
+    second = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-2",
+        decision="confirmed",
+        finding=weak_finding,
+        evidence={"commit": "def"},
+    )
+    third = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-3",
+        decision="confirmed",
+        finding=_finding(),
+        evidence={"commit": "ghi"},
+    )
+
+    assert first["guardrail_target"] is None
+    assert "skipped_reason" not in first
+    assert second["guardrail_target"] is None
+    assert second["skipped_reason"] == "insufficient_guardrail_signal"
+    assert third["guardrail_target"] == "validation"
+    assert third["task_ref"] == "#1"
+    assert len(fake_memory_manager.memories) == 3
+    assert len(fake_task_manager.created) == 1
 
 
 @pytest.mark.asyncio

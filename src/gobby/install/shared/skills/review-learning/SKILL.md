@@ -56,6 +56,10 @@ Use `pattern_id` when you can generalize the issue. Without it, the service
 derives from `lesson_type` plus `principle`; without either, the lesson is
 stored as `non-promotable` and will not create guardrail tasks.
 
+Broad lessons are still useful as memories. Weak one-off findings stay
+memory-only unless they include enough implementation signal to build a
+guardrail task.
+
 ## Decisions
 
 Use:
@@ -82,12 +86,16 @@ session's project and preserves `source_session_id`.
 ## Promotion Ladder
 
 The service records a lesson memory first. It creates or updates a guardrail
-implementation task only when thresholds cross:
+implementation task only when thresholds cross and the lesson has actionable
+guardrail signal: non-empty `prevention`, at least one of `principle` or
+`root_cause`, and an implementation anchor such as `path`, `symbol`, `rule_id`,
+`rule_url`, `query_hints`, `suggestion`, `evidence.files`, or
+`evidence.changed_files`.
 
 - `confirmed`, first occurrence: memory only.
 - `confirmed`, second occurrence: `test` target by default.
 - `confirmed`, third or later occurrence: `validation` target by default.
-- `confirmed`, high risk: `rule` target immediately.
+- `confirmed`, high risk with actionable signal: `test` target by default.
 - `no-fix-policy`, first occurrence: memory only.
 - `no-fix-policy`, second or later occurrence: only `checklist` or `tool-config`.
 - `stale` or `invalid`: no-op.
@@ -95,6 +103,11 @@ implementation task only when thresholds cross:
 `guardrail_target` may be `helper`, `test`, `checklist`, `rule`, `workflow`,
 `pipeline`, `validation`, or `tool-config`. The task is not the guardrail; it is
 the evidence-backed work item to build or update the guardrail.
+`rule`, `workflow`, and `pipeline` targets require an explicit
+`guardrail_target`; high risk alone does not imply one. When a lesson crosses a
+threshold but lacks guardrail signal, the response keeps `guardrail_target: null`
+and includes `skipped_reason: insufficient_guardrail_signal` with
+`missing_guardrail_fields`.
 
 ## Sibling Sweep
 
