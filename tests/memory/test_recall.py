@@ -614,3 +614,27 @@ async def test_runner_drops_stale_turn_result(temp_db: HubDatabase) -> None:
     payload = await runner.run(_event(), SESSION_ID, _variables(parent_turn_seq=3))
 
     assert payload is None
+
+
+async def test_runner_deferred_mode_keeps_result_after_turn_advances(
+    temp_db: HubDatabase,
+) -> None:
+    sv_mgr = SessionVariableManager(temp_db)
+    sv_mgr.set_variable(SESSION_ID, "parent_turn_seq", 4)
+    runner = MemoryRecallRunner(
+        db=temp_db,
+        memory_manager=FakeMemoryManager([_memory("mem-1")]),  # type: ignore[arg-type]
+        llm_service=FakeLLMService({"memory_ids": ["mem-1"]}),
+        config=MemoryRecallConfig(),
+    )
+
+    payload = await runner.run(
+        _event(),
+        SESSION_ID,
+        _variables(parent_turn_seq=3),
+        require_same_turn=False,
+    )
+
+    assert payload is not None
+    assert payload.origin_turn_seq == 3
+    assert [memory["id"] for memory in payload.memories] == ["mem-1"]

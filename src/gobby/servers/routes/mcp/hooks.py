@@ -52,6 +52,7 @@ SUPPORTED_HOOK_ENVELOPE_SCHEMA_VERSION = 1
 # Fail-safe hook calls are synchronous CLI-path gates; keep this short enough
 # that a stuck daemon cannot leave provider hooks hanging indefinitely.
 FAIL_SAFE_HOOK_TIMEOUT_SECONDS = 20.0
+NON_CRITICAL_HOOK_TIMEOUT_SECONDS = 25.0
 FAIL_SAFE_HOOK_TYPES = frozenset(hook_type.casefold() for hook_type in {"Stop", "stop"})
 SUPPORTED_HOOK_SOURCES: Final = ("claude", "grok", "qwen", "codex", "droid", "agy")
 
@@ -221,6 +222,11 @@ def _fail_safe_hook_timeout_seconds(
     if normalized_hook_type in FAIL_SAFE_HOOK_TYPES or metadata.get("critical") is True:
         return FAIL_SAFE_HOOK_TIMEOUT_SECONDS
     return None
+
+
+def _adapter_hook_timeout_seconds(hook_type: str | None, metadata: dict[str, Any]) -> float:
+    """Return the bounded execution timeout for normal hook adapter execution."""
+    return _fail_safe_hook_timeout_seconds(hook_type, metadata) or NON_CRITICAL_HOOK_TIMEOUT_SECONDS
 
 
 def _hook_timeout_response(
@@ -632,7 +638,7 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             # Execute hook via adapter
             try:
-                hook_timeout = _fail_safe_hook_timeout_seconds(hook_type, request_metadata)
+                hook_timeout = _adapter_hook_timeout_seconds(hook_type, request_metadata)
                 result = await _run_adapter_hook(
                     adapter,
                     payload,
@@ -692,7 +698,27 @@ def create_hooks_router(server: "HTTPServer") -> APIRouter:
 
             except TimeoutError:
                 inc_counter("hooks_failed_total")
-                timeout_seconds = _fail_safe_hook_timeout_seconds(hook_type, request_metadata) or 0
+                timeout_seconds = _fail_safe_hook_timeout_seconds(hook_type, request_metadata)
+                if timeout_seconds is None:
+                    timeout_seconds = NON_CRITICAL_HOOK_TIMEOUT_SECONDS
+                    logger.warning(
+                        "Non-critical hook timed out: %s",
+                        hook_type,
+                        extra=_hook_log_extra(
+                            hook_type,
+                            request_metadata,
+                            source=source,
+                            timeout_seconds=timeout_seconds,
+                        ),
+                    )
+                    return mark_processed_and_return(
+                        _graceful_error_response(
+                            hook_type,
+                            f"hook evaluation timed out after {timeout_seconds:g}s",
+                            source=source,
+                        )
+                    )
+
                 logger.error(
                     "Critical hook timed out: %s",
                     hook_type,

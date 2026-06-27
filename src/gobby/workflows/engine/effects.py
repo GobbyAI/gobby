@@ -17,6 +17,7 @@ from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
+_MEMORY_RECALL_PRODUCER = "daemon_memory_recall"
 
 REVIEW_LESSON_TAG = "review-lesson"
 
@@ -345,12 +346,14 @@ class EffectsMixin:
 
         messages = result.get("messages") or []
         other_messages: list[Any] = []
+        memory_parts: list[str] = []
 
         for msg in messages:
             if not isinstance(msg, dict):
                 other_messages.append(msg)
                 continue
 
+            is_memory_message = msg.get("message_type") == "memory_recall"
             content = msg.get("content")
             parsed: Any = None
             if isinstance(content, dict):
@@ -361,10 +364,28 @@ class EffectsMixin:
                 except (json.JSONDecodeError, ValueError):
                     parsed = None
 
-            if not (isinstance(parsed, dict) and parsed.get("type") == "memory_recall"):
+            metadata = msg.get("metadata")
+            if (
+                not (isinstance(parsed, dict) and parsed.get("type") == "memory_recall")
+                and isinstance(metadata, dict)
+                and metadata.get("type") == "memory_recall"
+            ):
+                parsed = metadata
+
+            if isinstance(parsed, dict) and parsed.get("type") == "memory_recall":
+                formatted_memory = self._format_memory_recall_delivery(
+                    parsed,
+                    _platform_session_id,
+                    _variables,
+                )
+                if formatted_memory:
+                    memory_parts.append(formatted_memory)
+            elif is_memory_message:
+                logger.debug("Dropping malformed memory_recall delivery payload")
+            else:
                 other_messages.append(msg)
 
-        parts: list[str] = []
+        parts: list[str] = list(memory_parts)
         if other_messages:
             message_formatted = format_discovery_result(
                 {
@@ -376,6 +397,48 @@ class EffectsMixin:
                 parts.append(message_formatted)
 
         return "\n\n".join(parts) if parts else None
+
+    def _format_memory_recall_delivery(
+        self,
+        payload: dict[str, Any],
+        platform_session_id: str | None,
+        variables: dict[str, Any],
+    ) -> str | None:
+        """Validate and format a deferred daemon memory recall payload."""
+        if payload.get("producer") != _MEMORY_RECALL_PRODUCER:
+            logger.debug("Dropping memory_recall delivery with non-daemon producer")
+            return None
+        if payload.get("enabled") is False or payload.get("disabled") is True:
+            logger.debug("Dropping disabled memory_recall delivery payload")
+            return None
+
+        origin_turn_seq = payload.get("origin_turn_seq")
+        parent_turn_seq = variables.get("parent_turn_seq")
+        if (
+            not isinstance(origin_turn_seq, int)
+            or isinstance(origin_turn_seq, bool)
+            or not isinstance(parent_turn_seq, int)
+            or isinstance(parent_turn_seq, bool)
+        ):
+            logger.debug("Dropping memory_recall delivery without valid turn sequence")
+            return None
+        if origin_turn_seq != parent_turn_seq - 1:
+            logger.debug(
+                "Dropping stale memory_recall delivery: origin=%s parent=%s",
+                origin_turn_seq,
+                parent_turn_seq,
+            )
+            return None
+
+        memories = payload.get("memories")
+        if not isinstance(memories, list):
+            logger.debug("Dropping memory_recall delivery with malformed memories")
+            return None
+        return self._format_search_memories_result(
+            {"memories": memories},
+            platform_session_id,
+            variables,
+        )
 
     def _format_search_memories_result(
         self,

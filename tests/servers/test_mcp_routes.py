@@ -41,6 +41,10 @@ from gobby.mcp_proxy.wait_tools import (
     mcp_wrapper_current_source_fingerprint,
 )
 from gobby.servers.http import HTTPServer
+from gobby.servers.routes.mcp.hooks import (
+    FAIL_SAFE_HOOK_TIMEOUT_SECONDS,
+    NON_CRITICAL_HOOK_TIMEOUT_SECONDS,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.projects import LocalProjectManager
 from gobby.storage.sessions import SessionManager
@@ -2910,6 +2914,84 @@ class TestHooksEndpoints:
         assert data["continue"] is True
         assert "droid adapter failed" in data["systemMessage"]
         assert "hookSpecificOutput" not in data
+
+    def test_execute_hook_non_critical_timeout_returns_graceful_response(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """Non-critical hook timeouts degrade before the CLI transport timeout."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+
+        timeout_mock = AsyncMock(side_effect=TimeoutError())
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.servers.routes.mcp.hooks._run_adapter_hook", new=timeout_mock),
+        ):
+            response = client.post(
+                "/api/hooks/execute",
+                json=_hook_envelope(
+                    hook_type="PreToolUse",
+                    source="droid",
+                    input_data={"session_id": "droid-123", "tool_name": "Read"},
+                ),
+            )
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["continue"] is True
+        assert "timed out after 25s" in data["systemMessage"]
+        assert (
+            timeout_mock.await_args.kwargs["timeout_seconds"] == NON_CRITICAL_HOOK_TIMEOUT_SECONDS
+        )
+
+    def test_execute_hook_stop_timeout_blocks_fail_safe(
+        self,
+        session_storage: SessionManager,
+    ) -> None:
+        """Critical/fail-safe hook timeouts still return provider-native blocks."""
+        server = create_http_server(
+            port=60887,
+            test_mode=True,
+            session_manager=session_storage,
+        )
+        server.app.state.hook_manager = _mock_hook_manager()
+
+        timeout_mock = AsyncMock(side_effect=TimeoutError())
+        with (
+            TestClient(server.app) as client,
+            patch("gobby.adapters.codex_impl.hooks_adapter.CodexHooksAdapter") as MockAdapter,
+            patch("gobby.servers.routes.mcp.hooks._run_adapter_hook", new=timeout_mock),
+        ):
+            mock_adapter = MagicMock()
+            mock_adapter.translate_from_hook_response.return_value = {
+                "continue": False,
+                "decision": "block",
+                "reason": "timed out",
+            }
+            MockAdapter.return_value = mock_adapter
+
+            response = client.post(
+                "/api/hooks/execute",
+                json=_hook_envelope(
+                    hook_type="Stop",
+                    source="codex",
+                    input_data={"session_id": "test-stop"},
+                ),
+            )
+
+        assert response.status_code == 200
+        assert response.json() == {
+            "continue": False,
+            "decision": "block",
+            "reason": "timed out",
+        }
+        assert timeout_mock.await_args.kwargs["timeout_seconds"] == FAIL_SAFE_HOOK_TIMEOUT_SECONDS
+        mock_adapter.translate_from_hook_response.assert_called_once()
 
     @pytest.mark.parametrize(
         ("source", "hook_type", "adapter_patch"),

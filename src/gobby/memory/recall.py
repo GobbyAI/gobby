@@ -169,6 +169,8 @@ class MemoryRecallRunner:
         event: HookEvent,
         session_id: str,
         variables: dict[str, Any],
+        *,
+        require_same_turn: bool = True,
     ) -> MemoryRecallResult | None:
         """Return fresh memory recall results for an eligible parent turn."""
         decision = classify_memory_recall_prompt(event, variables, self.config)
@@ -281,7 +283,7 @@ class MemoryRecallRunner:
                 event=event,
             )
             return None
-        if not self._is_fresh(session_id, origin_turn_seq):
+        if require_same_turn and not self._is_fresh(session_id, origin_turn_seq):
             self._log_recall_diagnostic(
                 "Dropping stale memory_recall",
                 decision=decision,

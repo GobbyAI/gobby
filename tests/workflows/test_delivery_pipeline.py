@@ -52,12 +52,26 @@ def _memory(mid: str, *, tags: list[str] | None = None) -> dict[str, Any]:
 def _memory_recall_message(
     memories: list[dict[str, Any]],
     *,
-    origin_turn_seq: int | None = 4,
-    from_session: str = "legacy-memory-recall",
+    origin_turn_seq: Any = 4,
+    producer: str | None = "daemon_memory_recall",
+    recall_request_id: str = "recall-123",
+    enabled: bool | None = None,
+    disabled: bool | None = None,
+    from_session: str = "daemon-memory-recall",
 ) -> dict[str, Any]:
-    payload: dict[str, Any] = {"type": "memory_recall", "memories": memories}
+    payload: dict[str, Any] = {
+        "type": "memory_recall",
+        "recall_request_id": recall_request_id,
+        "memories": memories,
+    }
+    if producer is not None:
+        payload["producer"] = producer
     if origin_turn_seq is not None:
         payload["origin_turn_seq"] = origin_turn_seq
+    if enabled is not None:
+        payload["enabled"] = enabled
+    if disabled is not None:
+        payload["disabled"] = disabled
     return {"from_session": from_session, "content": json.dumps(payload)}
 
 
@@ -117,15 +131,19 @@ def test_empty_delivery_no_mutation(engine: RuleEngine, db: HubDatabase) -> None
     assert "injected_memory_ids" not in _vars(db, "plat-Y")
 
 
-def test_memory_recall_delivery_payload_ignored(engine: RuleEngine, db: HubDatabase) -> None:
+def test_memory_recall_delivery_payload_formats_and_tracks_ids(
+    engine: RuleEngine,
+    db: HubDatabase,
+) -> None:
     result = engine._format_delivery_result(
         {"messages": [_memory_recall_message([_memory("m1")])], "count": 1},
         "plat-Y",
         _variables(),
     )
 
-    assert result is None
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
+    assert result is not None
+    assert "content-sentinel-m1" in result
+    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
 
 
 def test_memory_recall_delivery_does_not_touch_existing_injected_ids(
@@ -144,7 +162,7 @@ def test_memory_recall_delivery_does_not_touch_existing_injected_ids(
     assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
 
 
-def test_mixed_memory_recall_and_plain_messages_formats_plain_only(
+def test_mixed_memory_recall_and_plain_messages_formats_both(
     engine: RuleEngine,
     db: HubDatabase,
 ) -> None:
@@ -161,9 +179,9 @@ def test_mixed_memory_recall_and_plain_messages_formats_plain_only(
     )
 
     assert result is not None
-    assert "content-sentinel-m1" not in result
+    assert "content-sentinel-m1" in result
     assert "plain-msg-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
+    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1"]
 
 
 def test_malformed_message_content_falls_through(engine: RuleEngine) -> None:
@@ -193,7 +211,7 @@ async def test_concurrent_append_race_safe(db: HubDatabase) -> None:
     assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m1", "m2"]
 
 
-def test_memory_recall_delivery_payload_ignored_independent_of_sender(
+def test_memory_recall_delivery_accepts_daemon_producer_independent_of_sender(
     engine: RuleEngine,
     db: HubDatabase,
 ) -> None:
@@ -210,9 +228,9 @@ def test_memory_recall_delivery_payload_ignored_independent_of_sender(
     )
 
     assert result is not None
-    assert "content-sentinel-m-recall" not in result
+    assert "content-sentinel-m-recall" in result
     assert "plain-sentinel" in result
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
+    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["m-recall"]
 
 
 @pytest.mark.asyncio
@@ -257,15 +275,26 @@ def test_stale_memory_recall_delivery_payloads_ignored(
                 _memory_recall_message([_memory("same-turn")], origin_turn_seq=5),
                 _memory_recall_message([_memory("future")], origin_turn_seq=6),
                 _memory_recall_message([_memory("missing")], origin_turn_seq=None),
+                _memory_recall_message([_memory("legacy")], producer="legacy-memory-recall"),
+                _memory_recall_message([_memory("malformed")], origin_turn_seq="bad"),
+                _memory_recall_message([_memory("disabled")], enabled=False),
             ],
-            "count": 5,
+            "count": 8,
         },
         "plat-Y",
         _variables(),
     )
 
-    assert result is None
-    assert "injected_memory_ids" not in _vars(db, "plat-Y")
+    assert result is not None
+    assert "content-sentinel-fresh" in result
+    assert "content-sentinel-too-old" not in result
+    assert "content-sentinel-same-turn" not in result
+    assert "content-sentinel-future" not in result
+    assert "content-sentinel-missing" not in result
+    assert "content-sentinel-legacy" not in result
+    assert "content-sentinel-malformed" not in result
+    assert "content-sentinel-disabled" not in result
+    assert _vars(db, "plat-Y")["injected_memory_ids"] == ["fresh"]
 
 
 def test_memory_recall_delivery_ignored_when_parent_turn_seq_missing(
@@ -292,20 +321,20 @@ def test_memory_recall_delivery_ignored_when_parent_turn_seq_missing(
     assert "injected_memory_ids" not in _vars(db, "plat-Y")
 
 
-def test_removed_kill_switch_does_not_enable_memory_recall_delivery(
+def test_disabled_memory_recall_delivery_payload_dropped_beside_plain_message(
     engine: RuleEngine,
     db: HubDatabase,
 ) -> None:
     result = engine._format_delivery_result(
         {
             "messages": [
-                _memory_recall_message([_memory("disabled")]),
+                _memory_recall_message([_memory("disabled")], disabled=True),
                 _plain_message("plain-msg-disabled-sentinel"),
             ],
             "count": 2,
         },
         "plat-Y",
-        _variables(memory_recall_helper_enabled=False),
+        _variables(),
     )
 
     assert result is not None

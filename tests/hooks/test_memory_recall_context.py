@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import asyncio
+import concurrent.futures
+import json
 import logging
 from datetime import UTC, datetime
 from types import SimpleNamespace
@@ -9,10 +12,10 @@ from uuid import UUID
 import pytest
 
 from gobby.config.sessions import MemoryRecallConfig
-from gobby.hooks.dispatchers.mcp import PROJECT_MEMORY_CLOSE_TAG, PROJECT_MEMORY_OPEN_TAG
 from gobby.hooks.events import HookEvent, HookEventType, SessionSource
-from gobby.hooks.hook_manager import _MEMORY_RECALL_BRIDGE_TIMEOUT_BUFFER_SECONDS, HookManager
+from gobby.hooks.hook_manager import HookManager
 from gobby.storage.hub.protocol import HubDatabase
+from gobby.storage.inter_session_messages import InterSessionMessageManager
 from gobby.storage.memories import Memory
 from gobby.workflows.state_manager import SessionVariableManager
 
@@ -80,6 +83,20 @@ def _event() -> HookEvent:
     )
 
 
+def _create_session(db: HubDatabase, session_id: str = SESSION_ID) -> None:
+    db.execute(
+        "INSERT INTO projects (id, name, created_at) VALUES (%s, %s, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
+        ("project-1", "test-project"),
+    )
+    db.execute(
+        "INSERT INTO sessions (id, external_id, machine_id, source, project_id, created_at, "
+        "updated_at) VALUES (%s, %s, %s, %s, %s, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP) "
+        "ON CONFLICT (id) DO NOTHING",
+        (session_id, "external-hook-session", "machine-1", "claude", "project-1"),
+    )
+
+
 def _make_manager(
     temp_db: HubDatabase,
     memory_manager: FakeMemoryManager,
@@ -95,15 +112,18 @@ def _make_manager(
     manager._database = temp_db
     manager._memory_manager = memory_manager
     manager._llm_service = llm_service
+    manager._inter_session_msg_manager = InterSessionMessageManager(temp_db)
+    manager._memory_recall_tasks = {}
     manager._loop = None
     manager.logger = logging.getLogger("tests.memory_recall_context")
     manager._dedup_memory_results = _dedup_memory_results  # type: ignore[method-assign]
     return manager
 
 
-def test_turn_start_memory_recall_context_excludes_low_score_candidates(
+def test_turn_start_memory_recall_schedules_deferred_message(
     temp_db: HubDatabase,
 ) -> None:
+    _create_session(temp_db)
     SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     memory_manager = FakeMemoryManager(
         [
@@ -113,14 +133,42 @@ def test_turn_start_memory_recall_context_excludes_low_score_candidates(
     )
     llm_service = FakeLLMService({"memory_ids": ["weak", "strong"]})
     manager = _make_manager(temp_db, memory_manager, llm_service)
+    scheduled: dict[str, Any] = {}
 
-    context = manager._append_memory_recall_context(_event(), None)
+    def _schedule_memory_recall_task(
+        key: tuple[str, int],
+        coro: Any,
+    ) -> concurrent.futures.Future[Any]:
+        scheduled["key"] = key
+        scheduled["coro"] = coro
+        future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+        future.set_result(None)
+        return future
 
-    assert context is not None
-    assert PROJECT_MEMORY_OPEN_TAG in context
-    assert PROJECT_MEMORY_CLOSE_TAG in context
-    assert "Strong memory should render." in context
-    assert "Weak memory should not render." not in context
+    manager._schedule_memory_recall_task = _schedule_memory_recall_task  # type: ignore[method-assign]
+
+    context = manager._append_memory_recall_context(_event(), "existing workflow context")
+
+    assert context == "existing workflow context"
+    assert scheduled["key"] == (SESSION_ID, 3)
+    assert memory_manager.calls == []
+    assert llm_service.calls == []
+
+    asyncio.run(scheduled["coro"])
+
+    messages = InterSessionMessageManager(temp_db).get_undelivered_messages(SESSION_ID)
+    assert len(messages) == 1
+    assert messages[0].message_type == "memory_recall"
+    assert messages[0].metadata_json is not None
+    assert json.loads(messages[0].metadata_json) == json.loads(messages[0].content)
+    payload = json.loads(messages[0].content)
+    assert payload["type"] == "memory_recall"
+    assert payload["producer"] == "daemon_memory_recall"
+    assert payload["origin_turn_seq"] == 3
+    UUID(payload["recall_request_id"])
+    rendered = json.dumps(payload["memories"])
+    assert "Strong memory should render." in rendered
+    assert "Weak memory should not render." not in rendered
     assert memory_manager.calls[0]["min_score"] == 0.7
     assert memory_manager.calls[0]["session_id"] == SESSION_ID
     UUID(memory_manager.calls[0]["recall_request_id"])
@@ -129,38 +177,34 @@ def test_turn_start_memory_recall_context_excludes_low_score_candidates(
     assert '"weak"' not in llm_service.calls[0]["prompt"]
 
 
-def test_memory_recall_context_uses_labeled_buffered_bridge_timeout(
+def test_memory_recall_context_skips_duplicate_turn_schedule(
     temp_db: HubDatabase,
 ) -> None:
-    memory_recall = MemoryRecallConfig(timeout=12, candidate_limit=8, selected_limit=3)
+    SessionVariableManager(temp_db).set_variable(SESSION_ID, "parent_turn_seq", 3)
     manager = _make_manager(
         temp_db,
         FakeMemoryManager([]),
         FakeLLMService({"memory_ids": []}),
     )
-    manager._config.memory_recall = memory_recall
-    captured: dict[str, Any] = {}
+    scheduled: list[tuple[str, int]] = []
 
-    def _run_coro_blocking(
+    def _schedule_memory_recall_task(
+        key: tuple[str, int],
         coro: Any,
-        *,
-        label: str | None = None,
-        timeout_seconds: float = 30,
-    ) -> Any:
-        captured["label"] = label
-        captured["timeout_seconds"] = timeout_seconds
+    ) -> concurrent.futures.Future[Any]:
+        scheduled.append(key)
         close = getattr(coro, "close", None)
         if callable(close):
             close()
-        return SimpleNamespace(memories=[])
+        future: concurrent.futures.Future[Any] = concurrent.futures.Future()
+        future.set_result(None)
+        return future
 
-    manager._run_coro_blocking = _run_coro_blocking  # type: ignore[method-assign]
+    manager._schedule_memory_recall_task = _schedule_memory_recall_task  # type: ignore[method-assign]
 
-    context = manager._append_memory_recall_context(_event(), "existing context")
+    first = manager._append_memory_recall_context(_event(), "existing context")
+    second = manager._append_memory_recall_context(_event(), "existing context")
 
-    assert context == "existing context"
-    assert captured["label"] == "before_agent:memory_recall"
-    assert (
-        captured["timeout_seconds"]
-        == memory_recall.timeout + _MEMORY_RECALL_BRIDGE_TIMEOUT_BUFFER_SECONDS
-    )
+    assert first == "existing context"
+    assert second == "existing context"
+    assert scheduled == [(SESSION_ID, 3)]
