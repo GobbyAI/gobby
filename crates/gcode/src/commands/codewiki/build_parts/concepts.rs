@@ -26,11 +26,11 @@ const MAX_CURATED_KEY_COMPONENTS: usize = 8;
 /// Cap on the bounded "Relevant source files" links a curated page lists (no
 /// per-range expansion). Curated pages keep a small provenance footprint;
 /// reference pages keep the full range-complete block.
-const MAX_CURATED_SOURCE_FILE_LINKS: usize = 12;
+const MAX_CURATED_SOURCE_FILE_LINKS: usize = 8;
 /// Cap on *extra* model-supplied narrative chapters beyond the required
-/// introduction/architecture/data-flow spine, so a verbose structure response
+/// ten-chapter handbook spine, so a verbose structure response
 /// cannot crowd out the canonical guided tour.
-const MAX_EXTRA_NARRATIVE_PAGES: usize = 4;
+const MAX_EXTRA_NARRATIVE_PAGES: usize = 2;
 
 pub(crate) fn build_curated_navigation_docs(
     files: &[FileDoc],

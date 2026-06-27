@@ -357,6 +357,14 @@ fn transient_generation_failure_retries_to_healthy_doc() {
     let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            generate_with_bounded_retry(&mut flaky_transport)
+                .ok()
+                .map(|_| test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            generate_with_bounded_retry(&mut flaky_transport)
+                .ok()
+                .map(|_| test_narrative_handbook_body())
         } else {
             generate_with_bounded_retry(&mut flaky_transport).ok()
         }

@@ -104,3 +104,13 @@ pub(crate) fn test_curated_navigation_json() -> String {
     }"#
     .to_string()
 }
+
+pub(crate) fn test_concept_handbook_body() -> String {
+    "## Purpose\n\nThe source tour resolves requests into repository answers [src/lib.rs:1].\n\n## How it works\n\n1. The source module anchors the concept [src/lib.rs:1].\n\n## Key components\n\n| Symbol | Role |\n| --- | --- |\n| Client | Public client [src/lib.rs:1] |\n\n## Failure modes\n\n| Signal | Response |\n| --- | --- |\n| Missing source | Inspect the linked module [src/lib.rs:1] |\n\n## How to change it\n\nUpdate the linked source and regenerate codewiki [src/lib.rs:1].\n\n## What to read next\n\nContinue to the linked module page [src/lib.rs:1].\n"
+        .to_string()
+}
+
+pub(crate) fn test_narrative_handbook_body() -> String {
+    "## Why this matters\n\nThe source tour is the reader's first path into the code reference [src/lib.rs:1].\n\n## How it works\n\n1. The source module anchors the walkthrough [src/lib.rs:1].\n\n## Key components\n\n| Symbol | Role |\n| --- | --- |\n| Client | Public client [src/lib.rs:1] |\n\n## Failure modes\n\n| Signal | Response |\n| --- | --- |\n| Missing source | Inspect the linked module [src/lib.rs:1] |\n\n## How to change it\n\nUpdate the linked source and regenerate codewiki [src/lib.rs:1].\n\n## What to read next\n\nContinue to the next handbook chapter [src/lib.rs:1].\n"
+        .to_string()
+}

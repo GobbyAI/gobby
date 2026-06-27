@@ -3,12 +3,120 @@ use super::support::{concept_title, slugify};
 use super::types::*;
 use super::{MAX_CONCEPT_LINKS, MAX_CONCEPT_MODULES, MAX_EXTRA_NARRATIVE_PAGES};
 
+#[derive(Clone, Copy)]
+struct DefaultChapter {
+    slug: &'static str,
+    title: &'static str,
+    summary: &'static str,
+    patterns: &'static [&'static str],
+}
+
+const DEFAULT_CHAPTERS: [DefaultChapter; 10] = [
+    DefaultChapter {
+        slug: "introduction",
+        title: "Introduction",
+        summary: "Start with the system purpose, major crates, runtime modes, and the shortest path into the grounded reference.",
+        patterns: &[],
+    },
+    DefaultChapter {
+        slug: "architecture",
+        title: "Architecture",
+        summary: "Explain the codebase layers, ownership boundaries, and why the modules are separated the way they are.",
+        patterns: &[
+            "architecture",
+            "config",
+            "context",
+            "schema",
+            "model",
+            "core",
+        ],
+    },
+    DefaultChapter {
+        slug: "indexing-pipeline",
+        title: "Indexing Pipeline",
+        summary: "Follow file discovery, parsing, chunking, symbol extraction, hashing, and incremental index updates.",
+        patterns: &["index", "parser", "walker", "chunk", "language", "hash"],
+    },
+    DefaultChapter {
+        slug: "search-rrf",
+        title: "Search/RRF",
+        summary: "Trace lexical, semantic, graph-boosted, and reciprocal-rank-fusion search behavior.",
+        patterns: &["search", "rrf", "bm25", "semantic", "rank", "query"],
+    },
+    DefaultChapter {
+        slug: "codewiki-generation",
+        title: "CodeWiki Generation",
+        summary: "Explain how gcode builds grounded wiki pages, prompts AI sections, verifies claims, and writes cache metadata.",
+        patterns: &[
+            "codewiki",
+            "wiki",
+            "prompt",
+            "verify",
+            "frontmatter",
+            "reuse",
+        ],
+    },
+    DefaultChapter {
+        slug: "gwiki-vault",
+        title: "Gwiki Vault",
+        summary: "Describe vault layout, Obsidian-compatible pages, ask/search entrypoints, and project-scoped wiki operations.",
+        patterns: &["gwiki", "vault", "obsidian", "librarian", "scope", "wiki"],
+    },
+    DefaultChapter {
+        slug: "graph-vector-storage",
+        title: "Graph/Vector Storage",
+        summary: "Map PostgreSQL hub data, FalkorDB graph projection, Qdrant vectors, and degraded behavior when services are absent.",
+        patterns: &[
+            "graph",
+            "falkor",
+            "qdrant",
+            "vector",
+            "embedding",
+            "postgres",
+        ],
+    },
+    DefaultChapter {
+        slug: "cli-contracts",
+        title: "CLI Contracts",
+        summary: "Cover command dispatch, contract catalogs, output modes, and the flags users and agents rely on.",
+        patterns: &["cli", "command", "contract", "dispatch", "main", "output"],
+    },
+    DefaultChapter {
+        slug: "failure-modes",
+        title: "Failure Modes",
+        summary: "Surface fallback paths, degraded service states, unavailable dependencies, and verification notes.",
+        patterns: &[
+            "degrad",
+            "fallback",
+            "unavailable",
+            "failure",
+            "error",
+            "verify",
+        ],
+    },
+    DefaultChapter {
+        slug: "contributor-guide",
+        title: "Contributor Guide",
+        summary: "Explain how to make changes safely, run focused validation, respect ownership boundaries, and regenerate the wiki.",
+        patterns: &[
+            "test",
+            "setup",
+            "contribut",
+            "workflow",
+            "validation",
+            "release",
+        ],
+    },
+];
+
 pub(super) fn curated_navigation_prompt(files: &[FileDoc], modules: &[ModuleDoc]) -> String {
     let mut prompt = String::from(
-        "Build a curated codewiki navigation layer over the existing grounded reference.\n\
+        "Build a curated handbook layer over the existing grounded reference.\n\
          Return only JSON with keys concept_modules, sections, and narrative_pages.\n\
          Each concept module must name a user-facing concept and link to existing module/file names.\n\
-         Do not duplicate source content.\n\n\
+         Do not duplicate source content.\n\
+         Prefer 8-12 narrative_pages and include these handbook chapters when the supplied modules/files support them: \
+         Introduction, Architecture, Indexing Pipeline, Search/RRF, CodeWiki Generation, Gwiki Vault, Graph/Vector Storage, CLI Contracts, Failure Modes, Contributor Guide.\n\n\
          Schema:\n\
          {\"concept_modules\":[{\"title\":\"...\",\"summary\":\"...\",\"modules\":[\"...\"],\"files\":[\"...\"]}],\
          \"sections\":[{\"title\":\"...\",\"summary\":\"...\",\"concepts\":[\"concept title\"]}],\
@@ -99,41 +207,11 @@ pub(super) fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> Curated
     CuratedNavigationPlan {
         concept_modules: concepts,
         sections: vec![section],
-        narrative_pages: vec![
-            NarrativePage {
-                slug: "introduction".to_string(),
-                title: "Introduction".to_string(),
-                summary: "Start with the highest-level modules, then follow the concept pages into source-backed reference pages.".to_string(),
-                concepts: concept_titles.clone(),
-                modules: root_modules.clone(),
-            files: representative_files.clone(),
-            body: None,
-            body_degraded: false,
-            verify_notes: Vec::new(),
-        },
-        NarrativePage {
-            slug: "architecture".to_string(),
-                title: "Architecture".to_string(),
-                summary: "Read across the major module boundaries and use the linked reference modules for grounded implementation detail.".to_string(),
-                concepts: concept_titles.clone(),
-                modules: root_modules,
-            files: representative_files.clone(),
-            body: None,
-            body_degraded: false,
-            verify_notes: Vec::new(),
-        },
-        NarrativePage {
-            slug: "data-flow".to_string(),
-                title: "Data Flow".to_string(),
-                summary: "Follow the representative files and modules that connect data entry, transformation, and output paths.".to_string(),
-                concepts: concept_titles,
-                modules: Vec::new(),
-            files: representative_files,
-            body: None,
-            body_degraded: false,
-            verify_notes: Vec::new(),
-        },
-        ],
+        narrative_pages: default_chapter_pages(
+            &concept_titles,
+            &root_modules,
+            &representative_files,
+        ),
     }
 }
 
@@ -290,15 +368,10 @@ pub(super) fn normalize_narrative_pages(
         })
         .collect::<Vec<_>>();
 
-    // The canonical spine (introduction -> architecture -> data-flow) always
-    // leads, in that dependency order; only *extra* model chapters are capped,
-    // so a verbose structure response cannot crowd out the guided tour.
-    const DEFAULT_CHAPTERS: [(&str, &str); 3] = [
-        ("introduction", "Introduction"),
-        ("architecture", "Architecture"),
-        ("data-flow", "Data Flow"),
-    ];
-    let is_default = |slug: &str| DEFAULT_CHAPTERS.iter().any(|(default, _)| *default == slug);
+    // The canonical handbook spine always leads, in dependency order; only
+    // *extra* model chapters are capped, so a verbose structure response cannot
+    // crowd out the guided tour.
+    let is_default = |slug: &str| DEFAULT_CHAPTERS.iter().any(|chapter| chapter.slug == slug);
     let mut spine: std::collections::BTreeMap<String, NarrativePage> =
         std::collections::BTreeMap::new();
     let mut extras: Vec<NarrativePage> = Vec::new();
@@ -312,25 +385,17 @@ pub(super) fn normalize_narrative_pages(
     extras.truncate(MAX_EXTRA_NARRATIVE_PAGES);
 
     let mut ordered = Vec::with_capacity(DEFAULT_CHAPTERS.len() + extras.len());
-    for (slug, title) in DEFAULT_CHAPTERS {
-        if let Some(page) = spine.remove(slug) {
+    for chapter in DEFAULT_CHAPTERS {
+        if let Some(mut page) = spine.remove(chapter.slug) {
+            enrich_default_chapter(&mut page, chapter, modules, files, concepts);
             ordered.push(page);
         } else {
-            ordered.push(NarrativePage {
-                slug: slug.to_string(),
-                title: title.to_string(),
-                summary: format!("{title} tour linking into the code reference."),
-                concepts: concepts
-                    .iter()
-                    .take(MAX_CONCEPT_LINKS)
-                    .map(|concept| concept.slug.clone())
-                    .collect(),
-                modules: Vec::new(),
-                files: Vec::new(),
-                body: None,
-                body_degraded: false,
-                verify_notes: Vec::new(),
-            });
+            ordered.push(default_chapter_page(
+                chapter,
+                chapter_concepts(chapter, concepts),
+                chapter_modules(chapter, modules),
+                chapter_files(chapter, files),
+            ));
         }
     }
     ordered.extend(extras);
@@ -360,6 +425,160 @@ pub(super) fn normalize_narrative_pages(
         };
     }
     ordered
+}
+
+fn default_chapter_pages(
+    concepts: &[String],
+    modules: &[String],
+    files: &[String],
+) -> Vec<NarrativePage> {
+    DEFAULT_CHAPTERS
+        .iter()
+        .copied()
+        .map(|chapter| {
+            default_chapter_page(chapter, concepts.to_vec(), modules.to_vec(), files.to_vec())
+        })
+        .collect()
+}
+
+fn default_chapter_page(
+    chapter: DefaultChapter,
+    concepts: Vec<String>,
+    modules: Vec<String>,
+    files: Vec<String>,
+) -> NarrativePage {
+    NarrativePage {
+        slug: chapter.slug.to_string(),
+        title: chapter.title.to_string(),
+        summary: chapter.summary.to_string(),
+        concepts,
+        modules,
+        files,
+        body: None,
+        body_degraded: false,
+        verify_notes: Vec::new(),
+    }
+}
+
+fn enrich_default_chapter(
+    page: &mut NarrativePage,
+    chapter: DefaultChapter,
+    modules: &[ModuleDoc],
+    files: &[FileDoc],
+    concepts: &[ConceptModule],
+) {
+    if page.concepts.is_empty() {
+        page.concepts = chapter_concepts(chapter, concepts);
+    }
+    if page.modules.is_empty() {
+        page.modules = chapter_modules(chapter, modules);
+    }
+    if page.files.is_empty() {
+        page.files = chapter_files(chapter, files);
+    }
+}
+
+fn chapter_concepts(chapter: DefaultChapter, concepts: &[ConceptModule]) -> Vec<String> {
+    if chapter.patterns.is_empty() {
+        return concepts
+            .iter()
+            .take(MAX_CONCEPT_LINKS)
+            .map(|concept| concept.slug.clone())
+            .collect();
+    }
+    let matched = concepts
+        .iter()
+        .filter(|concept| {
+            matches_chapter_text(chapter, &concept.slug)
+                || matches_chapter_text(chapter, &concept.title)
+                || matches_chapter_text(chapter, &concept.summary)
+                || concept
+                    .modules
+                    .iter()
+                    .any(|module| matches_chapter_text(chapter, module))
+                || concept
+                    .files
+                    .iter()
+                    .any(|file| matches_chapter_text(chapter, file))
+        })
+        .take(MAX_CONCEPT_LINKS)
+        .map(|concept| concept.slug.clone())
+        .collect::<Vec<_>>();
+    if matched.is_empty() {
+        concepts
+            .iter()
+            .take(MAX_CONCEPT_LINKS)
+            .map(|concept| concept.slug.clone())
+            .collect()
+    } else {
+        matched
+    }
+}
+
+fn chapter_modules(chapter: DefaultChapter, modules: &[ModuleDoc]) -> Vec<String> {
+    if chapter.patterns.is_empty() {
+        return root_module_names(modules);
+    }
+    let matched = modules
+        .iter()
+        .filter(|module| {
+            matches_chapter_text(chapter, &module.module)
+                || matches_chapter_text(chapter, &module.summary)
+        })
+        .take(MAX_CONCEPT_LINKS)
+        .map(|module| module.module.clone())
+        .collect::<Vec<_>>();
+    if matched.is_empty() {
+        root_module_names(modules)
+    } else {
+        matched
+    }
+}
+
+fn chapter_files(chapter: DefaultChapter, files: &[FileDoc]) -> Vec<String> {
+    if chapter.patterns.is_empty() {
+        return representative_file_names(files);
+    }
+    let matched = files
+        .iter()
+        .filter(|file| {
+            matches_chapter_text(chapter, &file.path)
+                || matches_chapter_text(chapter, &file.summary)
+                || matches_chapter_text(chapter, &file.module)
+        })
+        .take(MAX_CONCEPT_LINKS)
+        .map(|file| file.path.clone())
+        .collect::<Vec<_>>();
+    if matched.is_empty() {
+        representative_file_names(files)
+    } else {
+        matched
+    }
+}
+
+fn root_module_names(modules: &[ModuleDoc]) -> Vec<String> {
+    modules
+        .iter()
+        .filter(|module| parent_module(&module.module).is_none())
+        .map(|module| module.module.clone())
+        .take(MAX_CONCEPT_LINKS)
+        .collect()
+}
+
+fn representative_file_names(files: &[FileDoc]) -> Vec<String> {
+    files
+        .iter()
+        .take(MAX_CONCEPT_LINKS)
+        .map(|file| file.path.clone())
+        .collect()
+}
+
+fn matches_chapter_text(chapter: DefaultChapter, text: &str) -> bool {
+    let text = text.to_ascii_lowercase();
+    chapter
+        .patterns
+        .iter()
+        .any(|pattern| text.contains(pattern))
 }
 
 fn strip_ordinal_slug_prefix(slug: &str) -> &str {
@@ -424,15 +643,21 @@ mod tests {
             vec![
                 "01-introduction",
                 "02-architecture",
-                "03-data-flow",
-                "04-cli-entrypoints",
-                "05-indexing-pipeline"
+                "03-indexing-pipeline",
+                "04-search-rrf",
+                "05-codewiki-generation",
+                "06-gwiki-vault",
+                "07-graph-vector-storage",
+                "08-cli-contracts",
+                "09-failure-modes",
+                "10-contributor-guide",
+                "11-cli-entrypoints"
             ]
         );
     }
 
     // Re-titling an extra chapter moves it to a new readable slug while the
-    // ordinal prefix holds its tour position: position 4 stays `04-*`, but the
+    // ordinal prefix holds its tour position: position 11 stays `11-*`, but the
     // suffix tracks the title. The orphan GC reclaims the old page and the
     // curated layer (the only linker of extras) regenerates in the same run, so
     // nothing dangles (#900).
@@ -450,7 +675,7 @@ mod tests {
             &[],
             &[],
         );
-        assert_eq!(before[3].slug, "04-cli-entrypoints");
-        assert_eq!(after[3].slug, "04-cli-runtime");
+        assert_eq!(before[10].slug, "11-cli-entrypoints");
+        assert_eq!(after[10].slug, "11-cli-runtime");
     }
 }

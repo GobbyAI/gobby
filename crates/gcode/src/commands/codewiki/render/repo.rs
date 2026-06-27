@@ -138,19 +138,39 @@ pub(crate) fn render_repo_doc(
     append_relevant_source_files(&mut doc, source_spans);
     doc.push_str("# Repository Overview\n\n");
     let summary = replace_citations_with_markers(summary, source_spans);
-    // Lead with the guided tour: the canonical narrative spine
-    // (introduction -> architecture -> data-flow, always generated) as a
-    // numbered Chapter 1..N path, with a "new to this codebase" callout and a
-    // one-line ask/search pointer. The module/file tables are demoted to a
-    // reference appendix below (#853 root cause: the reference dump crowded out
-    // the narrative entry points).
+    // Lead with the guided tour: the canonical handbook spine as a numbered
+    // Chapter 1..N path, with a "new to this codebase" callout and a one-line
+    // ask/search pointer. The module/file tables are demoted to a reference
+    // appendix below (#853 root cause: the reference dump crowded out the
+    // narrative entry points).
     doc.push_str("## Start here — guided tour\n\n");
     doc.push_str(
         "New to this codebase? Begin with [[code/narrative/01-introduction|Introduction]].\n\n",
     );
-    doc.push_str("1. [[code/narrative/01-introduction|Introduction]]\n");
-    doc.push_str("2. [[code/narrative/02-architecture|Architecture]]\n");
-    doc.push_str("3. [[code/narrative/03-data-flow|Data Flow]]\n\n");
+    for (index, (slug, title)) in [
+        ("01-introduction", "Introduction"),
+        ("02-architecture", "Architecture"),
+        ("03-indexing-pipeline", "Indexing Pipeline"),
+        ("04-search-rrf", "Search/RRF"),
+        ("05-codewiki-generation", "CodeWiki Generation"),
+        ("06-gwiki-vault", "Gwiki Vault"),
+        ("07-graph-vector-storage", "Graph/Vector Storage"),
+        ("08-cli-contracts", "CLI Contracts"),
+        ("09-failure-modes", "Failure Modes"),
+        ("10-contributor-guide", "Contributor Guide"),
+    ]
+    .iter()
+    .enumerate()
+    {
+        let _ = std::fmt::Write::write_fmt(
+            &mut doc,
+            format_args!(
+                "{index}. [[code/narrative/{slug}|{title}]]\n",
+                index = index + 1
+            ),
+        );
+    }
+    doc.push('\n');
     doc.push_str(
         "Browse all concepts in the [[code/concepts/index|Concept tree and narrative tours]].\n\n",
     );

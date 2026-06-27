@@ -194,7 +194,7 @@ pub fn concept_page_prompt(
     sources: &[SourceExcerpt],
 ) -> String {
     build_curated_page_prompt(
-        "Write a reference explainer page for this concept.",
+        "Write a handbook-grade concept page. Do not return an H1. Lead with prose, use small tables only for enumerable facts, include failure-mode and how-to-change guidance, and cite only supplied file:line anchors.",
         title,
         summary,
         members,
@@ -214,7 +214,7 @@ pub fn narrative_page_prompt(
     sources: &[SourceExcerpt],
 ) -> String {
     build_curated_page_prompt(
-        "Write one guided-tour chapter for this part of the codebase.",
+        "Write one handbook chapter. Do not return an H1. Include the required chapter sections, keep Key components bounded, include failure-mode and how-to-change guidance, and cite only supplied file:line anchors.",
         title,
         summary,
         members,
@@ -271,6 +271,14 @@ fn build_curated_page_prompt(
         summary_excerpt(summary)
     );
     append_table_guidance(&mut prompt);
+    prompt.push_str(
+        "Output contract:\n\
+         - Use prose before any table in each section.\n\
+         - Keep Key components and Failure modes to at most six rows each.\n\
+         - Include a practical How to change it section grounded in member links.\n\
+         - Cite exact file:line anchors from the evidence; leave unsupported claims out.\n\
+         - Do not emit exhaustive symbol/member dumps.\n\n",
+    );
     prompt.push_str("Member modules and files (cite these file:line anchors):\n");
     if members.is_empty() {
         prompt.push_str("- No members.\n");

@@ -37,6 +37,10 @@ fn unchanged_sources_are_reused_without_any_generation_call() {
     let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
         } else {
             Some("Generated prose.".to_string())
         }
@@ -112,6 +116,10 @@ fn stale_render_version_disables_reuse() {
     let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
         } else {
             Some("Generated prose.".to_string())
         }
@@ -157,6 +165,10 @@ fn stale_render_version_disables_reuse() {
         calls += 1;
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
         } else {
             Some("Regenerated prose.".to_string())
         }
@@ -188,6 +200,10 @@ fn reused_docs_feed_recorded_summaries_into_parent_prompts() {
     let mut first_generator = |prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
         } else if system == prompts::MODULE_SYSTEM && prompt.contains("src/nested") {
             Some("Nested module marker prose.".to_string())
         } else {
@@ -326,6 +342,10 @@ fn interrupted_run_resumes_from_persisted_docs() {
     let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
         } else {
             Some("Generated prose.".to_string())
         }
@@ -421,6 +441,10 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
     let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
         } else {
             Some("Generated prose.".to_string())
         }
@@ -450,6 +474,10 @@ fn metas_without_recorded_summaries_rewrite_once_to_backfill() {
         calls += 1;
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
         } else {
             Some("Backfilled prose.".to_string())
         }
@@ -506,6 +534,10 @@ fn missing_page_on_disk_regenerates_that_doc() {
     let mut first_generator = |_prompt: &str, system: &str, _tier: PromptTier| {
         if system == prompts::CURATED_NAVIGATION_SYSTEM {
             Some(test_curated_navigation_json())
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(test_concept_handbook_body())
+        } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
+            Some(test_narrative_handbook_body())
         } else {
             Some("Generated prose.".to_string())
         }

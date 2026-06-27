@@ -421,21 +421,28 @@ fn narrative_page_prompt_grounds_with_members_and_symbols() {
 fn curated_page_systems_demand_grounded_multi_section_output() {
     for heading in [
         "## Purpose",
-        "## Data flow",
+        "## How it works",
         "## Key components",
-        "## Where to start",
+        "## Failure modes",
+        "## How to change it",
+        "## What to read next",
     ] {
         assert!(CONCEPT_PAGE_SYSTEM.contains(heading), "{heading}");
     }
     for heading in [
         "## Why this matters",
         "## How it works",
+        "## Key components",
+        "## Failure modes",
+        "## How to change it",
         "## What to read next",
     ] {
         assert!(NARRATIVE_PAGE_SYSTEM.contains(heading), "{heading}");
     }
     for system in [CONCEPT_PAGE_SYSTEM, NARRATIVE_PAGE_SYSTEM] {
         assert!(system.contains("file:line"), "{system}");
+        assert!(system.contains("at most six rows"), "{system}");
+        assert!(system.contains("exhaustive member dump"), "{system}");
         assert!(system.contains("No markdown fences."), "{system}");
     }
 }

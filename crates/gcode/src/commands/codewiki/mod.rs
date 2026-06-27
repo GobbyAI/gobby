@@ -46,7 +46,7 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // infrastructure, deprecations, dead-code candidates) from a new "Analysis &
 // catalogs" section, narrative extra chapters carry readable `NN-<title>` slugs,
 // and aggregate prose is written opus-first — so prior on-disk pages re-render.
-const CODEWIKI_RENDER_VERSION: u32 = 14;
+const CODEWIKI_RENDER_VERSION: u32 = 15;
 
 /// Default daemon feature profile for the grounded verification pass (#904):
 /// `feature_mid` (sonnet) runs the "is this claim supported by the cited

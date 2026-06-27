@@ -96,12 +96,12 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
             )
         } else if system == prompts::CONCEPT_PAGE_SYSTEM {
             Some(
-                "## Purpose\n\nThe query engine resolves requests into repository answers [src/search.rs:4].\n\n## Key components\n\n| Symbol | Role |\n| --- | --- |\n| query | Runs a hybrid search [src/search.rs:4] |\n\n## Where to start\n\nBegin with `query` [src/search.rs:4].\n"
+                "## Purpose\n\nThe query engine resolves requests into repository answers [src/search.rs:4].\n\n## How it works\n\n1. Requests enter the query path [src/search.rs:4].\n\n## Key components\n\n| Symbol | Role |\n| --- | --- |\n| query | Runs a hybrid search [src/search.rs:4] |\n\n## Failure modes\n\n| Signal | Response |\n| --- | --- |\n| Missing index | Search has no results [src/search.rs:4] |\n\n## How to change it\n\nUpdate `query` and rerun focused tests [src/search.rs:4].\n\n## What to read next\n\nBegin with `query` [src/search.rs:4].\n"
                     .to_string(),
             )
         } else if system == prompts::NARRATIVE_PAGE_SYSTEM {
             Some(
-                "## Why this matters\n\nQuery flow is the spine of the system [src/search.rs:4].\n\n## How it works\n\n1. A request enters and is parsed into a query [src/search.rs:4].\n\n## What to read next\n\nContinue to the architecture chapter.\n"
+                "## Why this matters\n\nQuery flow is the spine of the system [src/search.rs:4].\n\n## How it works\n\n1. A request enters and is parsed into a query [src/search.rs:4].\n\n## Key components\n\n| Symbol | Role |\n| --- | --- |\n| query | Runs the query path [src/search.rs:4] |\n\n## Failure modes\n\n| Signal | Response |\n| --- | --- |\n| Missing index | Search has no results [src/search.rs:4] |\n\n## How to change it\n\nUpdate `query` and rerun focused tests [src/search.rs:4].\n\n## What to read next\n\nContinue to the architecture chapter.\n"
                     .to_string(),
             )
         } else {
@@ -156,6 +156,12 @@ fn curated_navigation_falls_back_to_structural_concepts_without_ai() {
     assert!(introduction.contains("provenance:"));
     // --ai off still yields a structural multi-section body, not a bare summary.
     assert!(introduction.contains("## Key components"), "{introduction}");
+    assert!(introduction.contains("## Failure modes"), "{introduction}");
+    assert!(
+        introduction.contains("## How to change it"),
+        "{introduction}"
+    );
+    assert!(!introduction.contains("degraded: true"), "{introduction}");
 }
 
 #[test]
@@ -216,7 +222,11 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
             "{path}: {doc}"
         );
         assert!(
-            doc.contains("3. [[code/narrative/03-data-flow|Data Flow]]"),
+            doc.contains("3. [[code/narrative/03-indexing-pipeline|Indexing Pipeline]]"),
+            "{path}: {doc}"
+        );
+        assert!(
+            doc.contains("10. [[code/narrative/10-contributor-guide|Contributor Guide]]"),
             "{path}: {doc}"
         );
         assert!(doc.contains("`gwiki ask"), "{path}: {doc}");
@@ -238,14 +248,19 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
         "{arch}"
     );
     assert!(
-        arch.contains("Next →: [[code/narrative/03-data-flow|Data Flow]]"),
+        arch.contains("Next →: [[code/narrative/03-indexing-pipeline|Indexing Pipeline]]"),
         "{arch}"
     );
 
-    let data_flow = rendered_doc(&docs, "code/narrative/03-data-flow.md");
+    let indexing = rendered_doc(&docs, "code/narrative/03-indexing-pipeline.md");
     assert!(
-        data_flow.contains("← Previous: [[code/narrative/02-architecture|Architecture]]"),
-        "{data_flow}"
+        indexing.contains("← Previous: [[code/narrative/02-architecture|Architecture]]"),
+        "{indexing}"
+    );
+    let guide = rendered_doc(&docs, "code/narrative/10-contributor-guide.md");
+    assert!(
+        guide.contains("← Previous: [[code/narrative/09-failure-modes|Failure Modes]]"),
+        "{guide}"
     );
 }
 
@@ -276,13 +291,13 @@ fn verify_pass_records_notes_without_stripping_curated_page() {
             )
         } else if system == prompts::CONCEPT_PAGE_SYSTEM {
             Some(
-                "## Purpose\n\nThe query engine resolves requests into repository answers [src/search.rs:4].\n\nFabricated: the engine secretly trains a neural ranker each night [src/search.rs:4].\n\n## Where to start\n\nBegin with `query` [src/search.rs:4].\n"
+                "## Purpose\n\nThe query engine resolves requests into repository answers [src/search.rs:4].\n\n## How it works\n\n1. A request enters the query path [src/search.rs:4].\n\nFabricated: the engine secretly trains a neural ranker each night [src/search.rs:4].\n\n## Key components\n\n| Symbol | Role |\n| --- | --- |\n| query | Runs the query path [src/search.rs:4] |\n\n## Failure modes\n\n| Signal | Response |\n| --- | --- |\n| Missing index | Search has no results [src/search.rs:4] |\n\n## How to change it\n\nUpdate `query` and rerun focused tests [src/search.rs:4].\n\n## What to read next\n\nBegin with `query` [src/search.rs:4].\n"
                     .to_string(),
             )
         } else {
             // Narrative chapters: keep a clean, fully-supported body.
             Some(
-                "## Why this matters\n\nQuery flow is the spine of the system [src/search.rs:4].\n\n## What to read next\n\nContinue to the architecture chapter.\n"
+                "## Why this matters\n\nQuery flow is the spine of the system [src/search.rs:4].\n\n## How it works\n\n1. A request enters the query path [src/search.rs:4].\n\n## Key components\n\n| Symbol | Role |\n| --- | --- |\n| query | Runs the query path [src/search.rs:4] |\n\n## Failure modes\n\n| Signal | Response |\n| --- | --- |\n| Missing index | Search has no results [src/search.rs:4] |\n\n## How to change it\n\nUpdate `query` and rerun focused tests [src/search.rs:4].\n\n## What to read next\n\nContinue to the architecture chapter.\n"
                     .to_string(),
             )
         }

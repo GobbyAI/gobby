@@ -20,6 +20,7 @@ use super::super::*;
 /// Cap on key-symbol evidence rows fed into one content prompt. Bounds prompt
 /// size; the structural fallback table reuses the same cap.
 const MAX_PAGE_SYMBOL_ROWS: usize = 12;
+const MAX_STRUCTURAL_KEY_COMPONENTS: usize = 6;
 
 /// Which curated page voice to generate. Selects the system prompt and the
 /// prompt builder: concept pages are reference explainers, narrative pages are
@@ -35,10 +36,9 @@ pub(crate) struct CuratedBody {
     /// The multi-section page body, ready to drop in after the page title.
     /// `None` only when the page has no member content to describe at all.
     pub(crate) body: Option<String>,
-    /// True when a content-pass generation was attempted and failed, so the
-    /// page fell back to the structural body. Recorded honestly rather than
-    /// hidden behind fallback prose (review #1). `false` for `--ai off` skips,
-    /// where the structural body is the intended, non-degraded output.
+    /// True when a requested content pass fell back to structural prose instead
+    /// of a complete handbook body. Explicit `--ai off` skips remain healthy
+    /// structural output.
     pub(crate) degraded: bool,
     pub(crate) verify_notes: Vec<VerifyNote>,
 }
@@ -112,7 +112,7 @@ pub(crate) fn curated_page_body(
                 VerifyOutcome::Verified { text, notes } => (text, notes),
             };
             let grounded = ground_text(&text, spans, None);
-            if grounded.trim().is_empty() {
+            if grounded.trim().is_empty() || !has_required_curated_sections(kind, &grounded) {
                 CuratedBody {
                     body: Some(structural_body(kind, title, &members, &symbols)),
                     degraded: true,
@@ -248,9 +248,16 @@ fn structural_body(
                 &mut body,
                 "Purpose",
                 &format!(
-                    "{title} groups the related modules and files listed below; \
-                     read the key components for the grounded detail."
+                    "{title} is a source-backed concept assembled from the related \
+                     modules and files below. Use this page as a handbook entry \
+                     point, then drill into the linked reference pages for \
+                     implementation detail."
                 ),
+            );
+            write_section(
+                &mut body,
+                "How it works",
+                &component_walkthrough(title, members, symbols),
             );
         }
         CuratedPageKind::Narrative => {
@@ -258,21 +265,41 @@ fn structural_body(
                 &mut body,
                 "Why this matters",
                 &format!(
-                    "{title} walks through the modules and files listed below; \
-                     follow the key components in order, then continue to the linked pages."
+                    "{title} is part of the guided tour through the source-backed \
+                     reference. It explains why this area matters before sending \
+                     the reader into the exact modules, files, and symbols."
                 ),
+            );
+            write_section(
+                &mut body,
+                "How it works",
+                &component_walkthrough(title, members, symbols),
             );
         }
     }
 
+    append_structural_key_components(&mut body, members, symbols);
+    append_structural_failure_modes(&mut body, members, symbols);
+    append_structural_change_guide(&mut body, members, symbols);
+    append_structural_next_steps(&mut body, members, symbols);
+    body
+}
+
+fn append_structural_key_components(
+    body: &mut String,
+    members: &[prompts::PageEvidenceRow],
+    symbols: &[prompts::PageEvidenceRow],
+) {
     body.push_str("## Key components\n\n");
-    if symbols.is_empty() {
-        body.push_str("- No indexed symbols.\n\n");
-    } else {
-        write_markdown_table_header(&mut body, &["Symbol", "Kind", "Source", "Role"]);
-        for row in symbols {
+    body.push_str(
+        "These are the highest-signal grounded entries for this page. The full \
+         reference remains in the linked module and file pages.\n\n",
+    );
+    if !symbols.is_empty() {
+        write_markdown_table_header(body, &["Symbol", "Kind", "Source", "Role"]);
+        for row in symbols.iter().take(MAX_STRUCTURAL_KEY_COMPONENTS) {
             write_markdown_table_row(
-                &mut body,
+                body,
                 [
                     row.name.clone(),
                     row.kind.clone(),
@@ -281,17 +308,165 @@ fn structural_body(
                 ],
             );
         }
-        body.push('\n');
-    }
-
-    if !members.is_empty() {
-        body.push_str("## Members\n\n");
-        for row in members {
-            let _ = writeln!(body, "- `{}` ({}) {}", row.name, row.kind, row.citation);
+    } else if !members.is_empty() {
+        write_markdown_table_header(body, &["Member", "Kind", "Source", "Role"]);
+        for row in members.iter().take(MAX_STRUCTURAL_KEY_COMPONENTS) {
+            write_markdown_table_row(
+                body,
+                [
+                    row.name.clone(),
+                    row.kind.clone(),
+                    row.citation.clone(),
+                    row.summary.clone(),
+                ],
+            );
         }
-        body.push('\n');
+    } else {
+        body.push_str("- No indexed components were available for this page.\n");
+    }
+    body.push('\n');
+}
+
+fn append_structural_failure_modes(
+    body: &mut String,
+    members: &[prompts::PageEvidenceRow],
+    symbols: &[prompts::PageEvidenceRow],
+) {
+    body.push_str("## Failure modes\n\n");
+    body.push_str(
+        "This structural section is conservative: it names only failure signals \
+         that can be inferred from the available source-backed evidence.\n\n",
+    );
+    write_markdown_table_header(body, &["Signal", "What to inspect", "Evidence"]);
+    let evidence = first_citation(members, symbols);
+    write_markdown_table_row(
+        body,
+        [
+            "Generated prose unavailable".to_string(),
+            "The page fell back to deterministic structure; regenerate with an AI aggregate pass and inspect verify_notes.".to_string(),
+            evidence.clone(),
+        ],
+    );
+    write_markdown_table_row(
+        body,
+        [
+            "Behavior unclear".to_string(),
+            "Open the linked module or file page before changing code that is only summarized here.".to_string(),
+            evidence,
+        ],
+    );
+    body.push('\n');
+}
+
+fn append_structural_change_guide(
+    body: &mut String,
+    members: &[prompts::PageEvidenceRow],
+    symbols: &[prompts::PageEvidenceRow],
+) {
+    body.push_str("## How to change it\n\n");
+    body.push_str(
+        "Start from the grounded entries below, make the code change in the \
+         linked module or file, then regenerate the codewiki so citations and \
+         verify_notes reflect the new source.\n\n",
+    );
+    for row in members
+        .iter()
+        .chain(symbols.iter())
+        .take(MAX_STRUCTURAL_KEY_COMPONENTS)
+    {
+        let _ = writeln!(
+            body,
+            "- Inspect `{}` ({}) at {} before editing.",
+            row.name, row.kind, row.citation
+        );
+    }
+    if members.is_empty() && symbols.is_empty() {
+        body.push_str("- Add module or file evidence before making a behavioral claim here.\n");
+    }
+    body.push('\n');
+}
+
+fn append_structural_next_steps(
+    body: &mut String,
+    members: &[prompts::PageEvidenceRow],
+    symbols: &[prompts::PageEvidenceRow],
+) {
+    body.push_str("## What to read next\n\n");
+    for row in members
+        .iter()
+        .chain(symbols.iter())
+        .take(MAX_STRUCTURAL_KEY_COMPONENTS)
+    {
+        let _ = writeln!(body, "- `{}` ({}) - {}", row.name, row.kind, row.citation);
+    }
+    if members.is_empty() && symbols.is_empty() {
+        body.push_str("- Return to the concept tree and choose a page with source members.\n");
+    }
+    body.push('\n');
+}
+
+fn component_walkthrough(
+    title: &str,
+    members: &[prompts::PageEvidenceRow],
+    symbols: &[prompts::PageEvidenceRow],
+) -> String {
+    let mut body = format!(
+        "The {title} page is grounded by a bounded set of modules, files, and \
+         symbols rather than an exhaustive dump.\n\n"
+    );
+    for (index, row) in members
+        .iter()
+        .chain(symbols.iter())
+        .take(MAX_STRUCTURAL_KEY_COMPONENTS)
+        .enumerate()
+    {
+        let _ = writeln!(
+            body,
+            "{}. `{}` ({}) anchors the walkthrough at {}.",
+            index + 1,
+            row.name,
+            row.kind,
+            row.citation
+        );
+    }
+    if members.is_empty() && symbols.is_empty() {
+        body.push_str("No grounded members were available for a step-by-step walkthrough.");
     }
     body
+}
+
+fn has_required_curated_sections(kind: CuratedPageKind, body: &str) -> bool {
+    let required: &[&str] = match kind {
+        CuratedPageKind::Concept => &[
+            "## Purpose",
+            "## How it works",
+            "## Key components",
+            "## Failure modes",
+            "## How to change it",
+            "## What to read next",
+        ],
+        CuratedPageKind::Narrative => &[
+            "## Why this matters",
+            "## How it works",
+            "## Key components",
+            "## Failure modes",
+            "## How to change it",
+            "## What to read next",
+        ],
+    };
+    required.iter().all(|heading| body.contains(heading))
+}
+
+fn first_citation(
+    members: &[prompts::PageEvidenceRow],
+    symbols: &[prompts::PageEvidenceRow],
+) -> String {
+    members
+        .iter()
+        .chain(symbols.iter())
+        .next()
+        .map(|row| row.citation.clone())
+        .unwrap_or_else(|| "No source member available".to_string())
 }
 
 /// Renders the "Start here — guided tour" block shared by the front page and
