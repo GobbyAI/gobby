@@ -12,19 +12,40 @@ export type { InteractionMode };
 interface SessionsContextMenuProps {
   closeCtxMenu: () => void;
   ctxMenu: SessionContextMenu | null;
+  handleClose: (entry: WatchingSessionEntry) => Promise<boolean>;
+  handleDelete: (entry: WatchingSessionEntry) => Promise<boolean>;
   handleExpire: (entry: WatchingSessionEntry) => Promise<boolean>;
+  onResumeSession?: (sessionId: string) => Promise<string> | string | void;
   openModal: (mode: InteractionMode, entry: WatchingSessionEntry) => void;
 }
 
 export function SessionsContextMenu({
   closeCtxMenu,
   ctxMenu,
+  handleClose,
+  handleDelete,
   handleExpire,
+  onResumeSession,
   openModal,
 }: SessionsContextMenuProps) {
   if (!ctxMenu) {
     return null;
   }
+
+  const entry = ctxMenu.entry;
+  // ACP lifecycle actions are gated strictly on the agent-advertised
+  // capabilities carried by the normalized `acp` block — never the source
+  // string. Absent flags fall through to exact legacy behavior (non-ACP rows
+  // keep Expire). Today's providers advertise none, so ACP rows degrade to
+  // Send Context only.
+  const acp = entry.acp ?? null;
+  const canResume = Boolean(acp?.capabilities.resume);
+  const canClose = Boolean(acp?.capabilities.close);
+  const canDelete = Boolean(acp?.capabilities.delete);
+  // Non-ACP rows keep Expire; ACP rows surface Close in its place.
+  const showExpire = !acp && entry.status !== "expired";
+  // Whether any session-ending action renders below the interaction divider.
+  const showEndingDivider = showExpire || canClose || canDelete;
 
   return (
     <>
@@ -35,38 +56,73 @@ export function SessionsContextMenu({
       >
         <button
           className="session-ctx-item"
-          onClick={() => openModal("context", ctxMenu.entry)}
+          onClick={() => openModal("context", entry)}
         >
           Send Context
         </button>
-        {ctxMenu.entry.hasTmux && (
+        {entry.hasTmux && (
           <>
             <button
               className="session-ctx-item"
-              onClick={() => openModal("keys", ctxMenu.entry)}
+              onClick={() => openModal("keys", entry)}
             >
               Send Keys
             </button>
             <button
               className="session-ctx-item"
-              onClick={() => openModal("pane", ctxMenu.entry)}
+              onClick={() => openModal("pane", entry)}
             >
               Capture Pane
             </button>
           </>
         )}
-        {ctxMenu.entry.status !== "expired" && (
+        {canResume && onResumeSession && (
+          <button
+            className="session-ctx-item"
+            onClick={() => {
+              closeCtxMenu();
+              void onResumeSession(entry.id);
+            }}
+          >
+            Resume Session
+          </button>
+        )}
+        {showEndingDivider && <div className="session-ctx-divider" />}
+        {showExpire && (
+          <button
+            className="session-ctx-item session-ctx-item--destructive"
+            onClick={() => {
+              closeCtxMenu();
+              void handleExpire(entry);
+            }}
+          >
+            Expire Session
+          </button>
+        )}
+        {canClose && (
+          <button
+            className="session-ctx-item session-ctx-item--destructive"
+            onClick={() => {
+              closeCtxMenu();
+              void handleClose(entry);
+            }}
+          >
+            Close Session
+          </button>
+        )}
+        {canDelete && (
           <>
-            <div className="session-ctx-divider" />
+            {/* Delete is irreversible — isolate it below its own divider so the
+                terminal action never sits flush against a recoverable one. */}
+            {canClose && <div className="session-ctx-divider" />}
             <button
               className="session-ctx-item session-ctx-item--destructive"
               onClick={() => {
-                const entry = ctxMenu.entry;
                 closeCtxMenu();
-                void handleExpire(entry);
+                void handleDelete(entry);
               }}
             >
-              Expire Session
+              Delete Session
             </button>
           </>
         )}

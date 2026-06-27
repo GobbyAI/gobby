@@ -138,6 +138,52 @@ export function useAppSessionActions({
     [showToast],
   );
 
+  const handleCloseSession = useCallback(
+    async (sessionId: string) => {
+      try {
+        const res = await fetch(
+          `/api/sessions/${encodeURIComponent(sessionId)}/acp/close`,
+          { method: "POST" },
+        );
+        if (!res.ok) {
+          showToast("Failed to close session");
+          return false;
+        }
+        return true;
+      } catch {
+        showToast("Failed to close session");
+        return false;
+      }
+    },
+    [showToast],
+  );
+
+  const handleDeleteSession = useCallback(
+    async (sessionId: string) => {
+      // ACP delete is a hard removal; optimistically remove the row at the
+      // catalog level, then let the existing `session_deleted` WebSocket event
+      // confirm it. Restore the row if the request fails.
+      markSessionDeleting(sessionId);
+      try {
+        const res = await fetch(
+          `/api/sessions/${encodeURIComponent(sessionId)}/acp/delete`,
+          { method: "POST" },
+        );
+        if (!res.ok) {
+          restoreSession(sessionId);
+          showToast("Failed to delete session");
+          return false;
+        }
+        return true;
+      } catch {
+        restoreSession(sessionId);
+        showToast("Failed to delete session");
+        return false;
+      }
+    },
+    [markSessionDeleting, restoreSession, showToast],
+  );
+
   const handleContinueInChat = useCallback(
     async (session: GobbySession) => {
       setActiveTab("chat");
@@ -149,8 +195,10 @@ export function useAppSessionActions({
   );
 
   return {
+    handleCloseSession,
     handleContinueInChat,
     handleDeleteConversation,
+    handleDeleteSession,
     handleExpireSession,
     handleKillAgent,
     handleSelectConversation,

@@ -138,6 +138,7 @@ export function useWatchingSessionEntries({
               hasTmux: Boolean(matchedSession.terminal_context),
               sandboxEnabled: matchedSession.sandbox_enabled ?? false,
               isLocal: sessionIsLocal || agentIsLocal,
+              acp: matchedSession.acp ?? null,
             });
             return nextEntries;
           }, [])
@@ -163,6 +164,7 @@ export function useWatchingSessionEntries({
         hasTmux: Boolean(session.terminal_context),
         sandboxEnabled: session.sandbox_enabled ?? false,
         isLocal: resolveLocalFlag(session.is_local, session.source, session.model),
+        acp: session.acp ?? null,
       }));
 
     return [...agentEntries, ...sessionEntries].sort((a, b) => {

@@ -219,6 +219,8 @@ export function ChatPage({
         mcp={mcp}
         onKillAgent={conversations.onKillAgent}
         onExpireSession={conversations.onExpireSession}
+        onAcpCloseSession={conversations.onAcpCloseSession}
+        onAcpDeleteSession={conversations.onAcpDeleteSession}
         chatSessionId={routing.activityPanelChatSessionId}
         focusSessionId={routing.focusSessionId}
         dirtyGuard={dirtyGuard}

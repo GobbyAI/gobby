@@ -331,8 +331,10 @@ export default function App() {
   );
 
   const {
+    handleCloseSession,
     handleContinueInChat,
     handleDeleteConversation,
+    handleDeleteSession,
     handleExpireSession,
     handleKillAgent,
     handleSelectConversation,
@@ -600,6 +602,8 @@ export default function App() {
                   onRenameSession: sessionCatalog.renameSession,
                   onKillAgent: handleKillAgent,
                   onExpireSession: handleExpireSession,
+                  onAcpCloseSession: handleCloseSession,
+                  onAcpDeleteSession: handleDeleteSession,
                   viewingSessionId,
                   attachedSessionId,
                 }}

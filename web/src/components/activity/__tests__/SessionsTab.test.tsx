@@ -1176,4 +1176,284 @@ describe("SessionsTab", () => {
 
     expect(clearSessionError).toHaveBeenCalledTimes(1);
   });
+
+  describe("ACP capability-gated actions (#17400)", () => {
+    const acpBlock = (caps: {
+      resume: boolean;
+      close: boolean;
+      delete: boolean;
+    }): NonNullable<GobbySession["acp"]> => ({
+      capabilities: caps,
+      additional_directories: [],
+    });
+
+    const makeAcpSession = (
+      acp: GobbySession["acp"],
+      overrides: Partial<GobbySession> = {},
+    ): GobbySession =>
+      makeSession({
+        id: "acp-1",
+        ref: "#301",
+        external_id: "acp-ext-1",
+        source: "qwen",
+        title: "ACP Session",
+        status: "active",
+        session_type: "web_chat",
+        seq_num: 301,
+        updated_at: "2026-04-08T12:20:00Z",
+        terminal_context: null,
+        acp,
+        ...overrides,
+      });
+
+    const openRowMenu = async () => {
+      await waitFor(() => {
+        expect(screen.getByText("#301: ACP Session")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+    };
+
+    it("shows Resume/Close/Delete and hides Expire when all caps are advertised", async () => {
+      render(
+        <SessionsTab
+          sessions={[
+            makeAcpSession(acpBlock({ resume: true, close: true, delete: true })),
+          ]}
+          onExpireSession={vi.fn(async () => true)}
+          onResumeSession={vi.fn(async () => "new-id")}
+          onAcpCloseSession={vi.fn(async () => true)}
+          onAcpDeleteSession={vi.fn(async () => true)}
+        />,
+      );
+      await openRowMenu();
+
+      expect(
+        screen.getByRole("button", { name: "Resume Session" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Close Session" }),
+      ).toBeInTheDocument();
+      expect(
+        screen.getByRole("button", { name: "Delete Session" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Expire Session" })).toBeNull();
+    });
+
+    it("invokes the resume handler from the menu", async () => {
+      const onResumeSession = vi.fn(async () => "new-id");
+      render(
+        <SessionsTab
+          sessions={[
+            makeAcpSession(acpBlock({ resume: true, close: false, delete: false })),
+          ]}
+          onResumeSession={onResumeSession}
+        />,
+      );
+      await openRowMenu();
+
+      fireEvent.click(screen.getByRole("button", { name: "Resume Session" }));
+      expect(onResumeSession).toHaveBeenCalledWith("acp-1");
+    });
+
+    it("optimistically hides the row on Close and restores it when close fails", async () => {
+      let resolveClose: ((value: boolean) => void) | null = null;
+      const onAcpCloseSession = vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveClose = resolve;
+          }),
+      );
+      render(
+        <SessionsTab
+          sessions={[
+            makeAcpSession(acpBlock({ resume: false, close: true, delete: false })),
+          ]}
+          onAcpCloseSession={onAcpCloseSession}
+        />,
+      );
+      await openRowMenu();
+
+      fireEvent.click(screen.getByRole("button", { name: "Close Session" }));
+      expect(onAcpCloseSession).toHaveBeenCalledWith("acp-1");
+      expect(screen.queryByText("#301: ACP Session")).toBeNull();
+
+      await act(async () => {
+        resolveClose?.(false);
+      });
+      await waitFor(() => {
+        expect(screen.getByText("#301: ACP Session")).toBeInTheDocument();
+      });
+    });
+
+    it("optimistically hides the row on Delete and restores it when delete fails", async () => {
+      let resolveDelete: ((value: boolean) => void) | null = null;
+      const onAcpDeleteSession = vi.fn(
+        () =>
+          new Promise<boolean>((resolve) => {
+            resolveDelete = resolve;
+          }),
+      );
+      render(
+        <SessionsTab
+          sessions={[
+            makeAcpSession(acpBlock({ resume: false, close: false, delete: true })),
+          ]}
+          onAcpDeleteSession={onAcpDeleteSession}
+        />,
+      );
+      await openRowMenu();
+
+      fireEvent.click(screen.getByRole("button", { name: "Delete Session" }));
+      expect(onAcpDeleteSession).toHaveBeenCalledWith("acp-1");
+      expect(screen.queryByText("#301: ACP Session")).toBeNull();
+
+      await act(async () => {
+        resolveDelete?.(false);
+      });
+      await waitFor(() => {
+        expect(screen.getByText("#301: ACP Session")).toBeInTheDocument();
+      });
+    });
+
+    it("shows only Close when only the close capability is advertised", async () => {
+      render(
+        <SessionsTab
+          sessions={[
+            makeAcpSession(acpBlock({ resume: false, close: true, delete: false })),
+          ]}
+          onExpireSession={vi.fn(async () => true)}
+          onAcpCloseSession={vi.fn(async () => true)}
+        />,
+      );
+      await openRowMenu();
+
+      expect(
+        screen.getByRole("button", { name: "Close Session" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Resume Session" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Delete Session" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Expire Session" })).toBeNull();
+    });
+
+    it("degrades to Send Context only when an ACP row advertises no capabilities", async () => {
+      render(
+        <SessionsTab
+          sessions={[
+            makeAcpSession(acpBlock({ resume: false, close: false, delete: false })),
+          ]}
+          onExpireSession={vi.fn(async () => true)}
+        />,
+      );
+      await openRowMenu();
+
+      expect(
+        screen.getByRole("button", { name: "Send Context" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Resume Session" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Close Session" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Delete Session" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Expire Session" })).toBeNull();
+    });
+
+    it("keeps Expire and omits ACP actions for non-ACP rows", async () => {
+      render(
+        <SessionsTab
+          sessions={[PAUSED_SESSION]}
+          onExpireSession={vi.fn(async () => true)}
+          onAcpCloseSession={vi.fn(async () => true)}
+          onAcpDeleteSession={vi.fn(async () => true)}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText("#202: Paused Terminal")).toBeInTheDocument();
+      });
+      fireEvent.click(screen.getByRole("button", { name: "Session actions" }));
+
+      expect(
+        screen.getByRole("button", { name: "Expire Session" }),
+      ).toBeInTheDocument();
+      expect(screen.queryByRole("button", { name: "Close Session" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Delete Session" })).toBeNull();
+      expect(screen.queryByRole("button", { name: "Resume Session" })).toBeNull();
+    });
+
+    it("hides the detail-pane Resume button when the ACP resume capability is absent", async () => {
+      const acpPaused = makeAcpSession(
+        acpBlock({ resume: false, close: true, delete: false }),
+        {
+          id: "acp-paused-1",
+          ref: "#302",
+          status: "paused",
+          seq_num: 302,
+          title: "ACP Paused",
+        },
+      );
+      mockUseSessionDetail.mockReturnValue({
+        session: acpPaused,
+        sessionError: null,
+        clearSessionError: vi.fn(),
+        messages: [
+          {
+            id: "m1",
+            role: "assistant",
+            content: "Transcript output",
+            timestamp: "2026-04-08T12:26:00Z",
+          },
+        ],
+        isLoading: false,
+        transcriptStatus: null,
+      });
+      render(
+        <SessionsTab
+          sessions={[acpPaused]}
+          focusSessionId="acp-paused-1"
+          onResumeSession={vi.fn(async () => "new-id")}
+        />,
+      );
+      await waitFor(() => {
+        expect(screen.getByText("Transcript output")).toBeInTheDocument();
+      });
+      expect(screen.queryByRole("button", { name: "Resume" })).toBeNull();
+    });
+
+    it("shows the detail-pane Resume button when the ACP resume capability is advertised", async () => {
+      const acpPaused = makeAcpSession(
+        acpBlock({ resume: true, close: false, delete: false }),
+        {
+          id: "acp-paused-1",
+          ref: "#302",
+          status: "paused",
+          seq_num: 302,
+          title: "ACP Paused",
+        },
+      );
+      mockUseSessionDetail.mockReturnValue({
+        session: acpPaused,
+        sessionError: null,
+        clearSessionError: vi.fn(),
+        messages: [
+          {
+            id: "m1",
+            role: "assistant",
+            content: "Transcript output",
+            timestamp: "2026-04-08T12:26:00Z",
+          },
+        ],
+        isLoading: false,
+        transcriptStatus: null,
+      });
+      render(
+        <SessionsTab
+          sessions={[acpPaused]}
+          focusSessionId="acp-paused-1"
+          onResumeSession={vi.fn(async () => "new-id")}
+        />,
+      );
+      await waitFor(() => {
+        expect(
+          screen.getByRole("button", { name: "Resume" }),
+        ).toBeInTheDocument();
+      });
+    });
+  });
 });

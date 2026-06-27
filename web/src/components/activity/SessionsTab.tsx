@@ -35,6 +35,7 @@ import {
   SessionsInteractionModalHost,
   type InteractionMode,
 } from "./SessionsTabMenu";
+import { useAcpSessionDiscovery } from "./useAcpSessionDiscovery";
 
 function resolveSessionSummaryMarkdown(
   ...sessions: Array<
@@ -62,6 +63,11 @@ interface SessionsTabProps {
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
   onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   onResumeSession?: (sessionId: string) => Promise<string> | string | void;
+  // ACP lifecycle dispatch — distinct from the chat-conversation `onDeleteSession`.
+  // Both target an ACP-backed row by canonical session id; gated upstream by
+  // the row's advertised `acp` capabilities.
+  onAcpCloseSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+  onAcpDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   chatSessionId?: string | null;
   focusSessionId?: string | null;
   onFocusHandled?: () => void;
@@ -109,6 +115,8 @@ export const SessionsTab = memo(function SessionsTab({
   onKillAgent,
   onExpireSession,
   onResumeSession,
+  onAcpCloseSession,
+  onAcpDeleteSession,
   chatSessionId,
   focusSessionId,
   onFocusHandled,
@@ -194,6 +202,11 @@ export const SessionsTab = memo(function SessionsTab({
   // agent-entries block below also gates on this — agents are by definition
   // live, so hide them when the user is looking at Expired only.
   const statusMode = resolveSessionStatusMode(filters);
+
+  // §C5: reconcile agent-side ACP sessions when the panel opens and on each
+  // Live | Expired change; discovered rows flow back through the canonical
+  // session list + WebSocket feed (no separate discover button or data path).
+  useAcpSessionDiscovery(statusMode);
 
   const setStatusMode = useCallback(
     (mode: typeof statusMode) => {
@@ -379,52 +392,35 @@ export const SessionsTab = memo(function SessionsTab({
     selectedSessionId != null &&
     selectedSessionStatus !== "active" &&
     !hideResumeAndSwap &&
-    Boolean(onResumeSession);
+    Boolean(onResumeSession) &&
+    // ACP rows only offer resume when the agent advertises the capability;
+    // non-ACP rows are unchanged.
+    (selectedEntry.acp ? selectedEntry.acp.capabilities.resume === true : true);
   const showSwapButton = Boolean(selectedEntry && onSwapSession && !hideResumeAndSwap);
 
-  const handleExpire = useCallback(
-    async (entry: WatchingSessionEntry) => {
-      const expireEntry = () => {
-        setExpiringIds((prev) => {
-          const next = new Set(prev);
-          next.add(entry.id);
-          return next;
-        });
-      };
+  // Optimistically hide a row while a lifecycle action is in flight, restoring
+  // it if the action reports failure (returns `false` or throws). Shared by
+  // Expire, Close, and Delete so all three feel instant and recover identically.
+  const runOptimisticRowAction = useCallback(
+    async (
+      entryId: string,
+      action: () => Promise<boolean | void> | boolean | void,
+    ): Promise<boolean> => {
       const restoreEntry = () => {
         setExpiringIds((prev) => {
           const next = new Set(prev);
-          next.delete(entry.id);
+          next.delete(entryId);
           return next;
         });
       };
-
-      if (entry.type === "agent" && entry.runId) {
-        if (!onKillAgent) {
-          return false;
-        }
-        expireEntry();
-        try {
-          const didCancel = await onKillAgent(entry.runId);
-          if (didCancel === false) {
-            restoreEntry();
-            return false;
-          }
-          return true;
-        } catch {
-          restoreEntry();
-          return false;
-        }
-      }
-
-      if (!onExpireSession) {
-        return false;
-      }
-
-      expireEntry();
+      setExpiringIds((prev) => {
+        const next = new Set(prev);
+        next.add(entryId);
+        return next;
+      });
       try {
-        const didExpire = await onExpireSession(entry.id);
-        if (didExpire === false) {
+        const outcome = await action();
+        if (outcome === false) {
           restoreEntry();
           return false;
         }
@@ -434,7 +430,44 @@ export const SessionsTab = memo(function SessionsTab({
         return false;
       }
     },
-    [onExpireSession, onKillAgent],
+    [],
+  );
+
+  const handleExpire = useCallback(
+    async (entry: WatchingSessionEntry) => {
+      const runId = entry.runId;
+      if (entry.type === "agent" && runId) {
+        if (!onKillAgent) {
+          return false;
+        }
+        return runOptimisticRowAction(entry.id, () => onKillAgent(runId));
+      }
+      if (!onExpireSession) {
+        return false;
+      }
+      return runOptimisticRowAction(entry.id, () => onExpireSession(entry.id));
+    },
+    [onExpireSession, onKillAgent, runOptimisticRowAction],
+  );
+
+  const handleClose = useCallback(
+    async (entry: WatchingSessionEntry) => {
+      if (!onAcpCloseSession) {
+        return false;
+      }
+      return runOptimisticRowAction(entry.id, () => onAcpCloseSession(entry.id));
+    },
+    [onAcpCloseSession, runOptimisticRowAction],
+  );
+
+  const handleDelete = useCallback(
+    async (entry: WatchingSessionEntry) => {
+      if (!onAcpDeleteSession) {
+        return false;
+      }
+      return runOptimisticRowAction(entry.id, () => onAcpDeleteSession(entry.id));
+    },
+    [onAcpDeleteSession, runOptimisticRowAction],
   );
 
   const handleMenuButtonClick = useCallback(
@@ -561,7 +594,10 @@ export const SessionsTab = memo(function SessionsTab({
       <SessionsContextMenu
         closeCtxMenu={closeCtxMenu}
         ctxMenu={ctxMenu}
+        handleClose={handleClose}
+        handleDelete={handleDelete}
         handleExpire={handleExpire}
+        onResumeSession={onResumeSession}
         openModal={openModal}
       />
 

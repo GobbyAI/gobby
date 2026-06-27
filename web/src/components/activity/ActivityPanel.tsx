@@ -101,6 +101,8 @@ interface ActivityPanelProps {
   // Sessions tab
   onKillAgent?: (runId: string) => Promise<boolean | void> | boolean | void;
   onExpireSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+  onAcpCloseSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
+  onAcpDeleteSession?: (sessionId: string) => Promise<boolean | void> | boolean | void;
   chatSessionId?: string | null;
   focusSessionId?: string | null;
   dirtyGuard?: DirtyGuardContextValue;
@@ -215,6 +217,8 @@ export function ActivityPanel({
   mcp,
   onKillAgent,
   onExpireSession,
+  onAcpCloseSession,
+  onAcpDeleteSession,
   chatSessionId,
   focusSessionId,
   onFocusSessionHandled,
@@ -311,6 +315,8 @@ export function ActivityPanel({
             onFiltersChange={onSessionsFiltersChange}
             onKillAgent={onKillAgent}
             onExpireSession={onExpireSession}
+            onAcpCloseSession={onAcpCloseSession}
+            onAcpDeleteSession={onAcpDeleteSession}
             chatSessionId={chatSessionId ?? undefined}
             focusSessionId={focusSessionId}
             onFocusHandled={onFocusSessionHandled}
