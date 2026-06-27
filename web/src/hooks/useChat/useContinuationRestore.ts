@@ -83,21 +83,73 @@ function isToolCall(value: unknown): value is ToolCall {
   return value.error === undefined || typeof value.error === "string";
 }
 
-function isContentBlock(value: unknown): value is ContentBlock {
+function optionalString(value: unknown): boolean {
+  return value === undefined || typeof value === "string";
+}
+
+function optionalNumber(value: unknown): boolean {
+  return value === undefined || typeof value === "number";
+}
+
+function isImageUrl(value: unknown): boolean {
+  return typeof value === "string" || (isRecord(value) && optionalString(value.url));
+}
+
+export function isContentBlock(value: unknown): value is ContentBlock {
   if (!isRecord(value) || typeof value.type !== "string") return false;
-  if (value.type === "text" || value.type === "thinking") {
-    return typeof value.content === "string";
+
+  switch (value.type) {
+    case "text":
+    case "thinking":
+      return typeof value.content === "string";
+    case "tool_chain":
+      return Array.isArray(value.tool_calls) && value.tool_calls.every(isToolCall);
+    case "tool_reference":
+      return typeof value.tool_name === "string" && typeof value.server_name === "string";
+    case "attachment":
+      return isRecord(value.attachment);
+    case "image":
+      return (
+        (value.source === undefined || isRecord(value.source)) &&
+        (value.image_url === undefined || isImageUrl(value.image_url)) &&
+        optionalString(value.url)
+      );
+    case "document":
+      return isRecord(value.source);
+    case "web_search_result":
+      return isRecord(value.content);
+    case "resource_link":
+      return (
+        typeof value.uri === "string" &&
+        optionalString(value.name) &&
+        optionalString(value.description) &&
+        optionalString(value.mime_type)
+      );
+    case "resource":
+      return isRecord(value.resource);
+    case "audio":
+      return (
+        optionalString(value.data) &&
+        optionalString(value.url) &&
+        optionalString(value.mime_type)
+      );
+    case "diff":
+      return (
+        optionalString(value.path) &&
+        optionalString(value.old_text) &&
+        optionalString(value.new_text)
+      );
+    case "terminal":
+      return optionalString(value.terminal_id);
+    case "unknown":
+      return (
+        typeof value.block_type === "string" &&
+        isRecord(value.raw) &&
+        optionalNumber(value.source_line)
+      );
+    default:
+      return false;
   }
-  if (value.type === "tool_chain") {
-    return Array.isArray(value.tool_calls) && value.tool_calls.every(isToolCall);
-  }
-  if (value.type === "tool_reference") {
-    return typeof value.tool_name === "string" && typeof value.server_name === "string";
-  }
-  if (value.type === "attachment") {
-    return isRecord(value.attachment);
-  }
-  return value.type === "image";
 }
 
 function normalizeMessages(value: unknown): ChatMessage[] | null {

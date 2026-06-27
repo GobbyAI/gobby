@@ -1,7 +1,8 @@
 import { describe, it, expect, vi } from 'vitest'
 import { fireEvent, render, screen } from '@testing-library/react'
 import { MessageItem } from '../MessageItem'
-import type { ChatMessage } from '../../../types/chat'
+import { UnknownBlockCard } from '../UnknownBlockCard'
+import type { ChatMessage, ContentBlock } from '../../../types/chat'
 
 // Mock heavy deps
 vi.mock('../Markdown', () => ({
@@ -25,6 +26,81 @@ function makeMessage(overrides: Partial<ChatMessage> = {}): ChatMessage {
     ...overrides,
   }
 }
+
+const contentBlockDispatchCases = {
+  text: { type: 'text', content: 'Text block' },
+  thinking: { type: 'thinking', content: 'Thinking block' },
+  tool_chain: {
+    type: 'tool_chain',
+    tool_calls: [
+      {
+        id: 'tc-1',
+        tool_name: 'read',
+        server_name: 'builtin',
+        tool_type: 'read',
+        status: 'completed',
+      },
+    ],
+  },
+  tool_reference: {
+    type: 'tool_reference',
+    tool_name: 'search',
+    server_name: 'builtin',
+  },
+  attachment: {
+    type: 'attachment',
+    attachment: {
+      id: 'att-doc',
+      project_id: 'proj-1',
+      filename: 'notes.txt',
+      mime_type: 'text/plain',
+      size_bytes: 12,
+      content_url: '/api/chat/attachments/att-doc/content',
+    },
+  },
+  image: {
+    type: 'image',
+    image_url: { url: 'https://example.test/generated.png' },
+  },
+  document: {
+    type: 'document',
+    source: { name: 'Design notes' },
+  },
+  web_search_result: {
+    type: 'web_search_result',
+    content: { title: 'Search hit' },
+  },
+  resource_link: {
+    type: 'resource_link',
+    uri: 'file:///src/app.py',
+    name: 'src/app.py',
+    description: 'Agent referenced source',
+  },
+  resource: {
+    type: 'resource',
+    resource: { name: 'Resource doc', text: 'resource body' },
+  },
+  audio: {
+    type: 'audio',
+    url: 'data:audio/wav;base64,AAAA',
+    mime_type: 'audio/wav',
+  },
+  diff: {
+    type: 'diff',
+    path: 'src/main.ts',
+    old_text: 'old',
+    new_text: 'new',
+  },
+  terminal: {
+    type: 'terminal',
+    terminal_id: 'term-1',
+  },
+  unknown: {
+    type: 'unknown',
+    block_type: 'custom_payload',
+    raw: { custom: true },
+  },
+} satisfies Record<ContentBlock['type'], ContentBlock>
 
 describe('MessageItem', () => {
   it('renders user message with "You" label', () => {
@@ -107,6 +183,39 @@ describe('MessageItem', () => {
     const markdowns = screen.getAllByTestId('markdown')
     expect(markdowns).toHaveLength(2)
     expect(screen.getByTestId('tool-calls')).toBeTruthy()
+  })
+
+  it('renders every content block variant through chat dispatch', () => {
+    render(
+      <MessageItem
+        message={makeMessage({
+          content: '',
+          contentBlocks: Object.values(contentBlockDispatchCases),
+        })}
+      />,
+    )
+
+    expect(screen.getByText('Text block')).toBeTruthy()
+    expect(screen.getByTestId('thinking')).toHaveTextContent('Thinking block')
+    expect(screen.getByText('1 tool calls')).toBeTruthy()
+    expect(screen.getByText('Referencing tool: search (builtin)')).toBeTruthy()
+    expect(screen.getByText('notes.txt')).toBeTruthy()
+    expect(screen.getByAltText('Image content')).toBeTruthy()
+    expect(screen.getByText('Design notes')).toBeTruthy()
+    expect(screen.getByText('Search result included.')).toBeTruthy()
+    expect(screen.getByText('src/app.py')).toBeTruthy()
+    expect(screen.getByText('Resource doc')).toBeTruthy()
+    expect(screen.getByLabelText('Audio content')).toBeTruthy()
+    expect(screen.getByText('src/main.ts')).toBeTruthy()
+    expect(screen.getByText('Terminal term-1')).toBeTruthy()
+    expect(screen.getByText('custom_payload')).toBeTruthy()
+  })
+
+  it('renders UnknownBlockCard for unknown blocks', () => {
+    render(<UnknownBlockCard blockType="future_payload" raw={{ value: 42 }} />)
+
+    expect(screen.getByText('Unknown block:')).toBeTruthy()
+    expect(screen.getByText('future_payload')).toBeTruthy()
   })
 
   it('renders protocol tags inside text as collapsed tool chains', () => {
