@@ -118,15 +118,8 @@ pub(super) fn codewiki_writer_request_body(
     body.insert("prompt".to_string(), Value::String(prompt.to_string()));
     insert_optional(&mut body, "system_prompt", system);
     insert_optional(&mut body, "cwd", options.cwd);
-    match (non_empty(options.profile), candidates.is_some()) {
-        (Some(profile), false) => {
-            body.insert("profile".to_string(), Value::String(profile.to_string()));
-        }
-        (None, true) => {}
-        (Some(profile), true) => {
-            body.insert("profile".to_string(), Value::String(profile.to_string()));
-        }
-        (None, false) => {}
+    if let Some(profile) = non_empty(options.profile) {
+        body.insert("profile".to_string(), Value::String(profile.to_string()));
     }
     if let Some(candidates) = candidates {
         body.insert(
