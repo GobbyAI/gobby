@@ -130,7 +130,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
         try:
             record = json.loads(line)
         except json.JSONDecodeError as exc:
-            self.error_log.log_malformed_line(index, self.session_id, line, str(exc))
+            self.error_log.log_decode_failure(index, self.session_id, line, exc)
             return []
         if not isinstance(record, dict):
             self.error_log.log_unknown_block(index, self.session_id, "<non-object>", {})

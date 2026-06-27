@@ -26,15 +26,22 @@ def test_parser_error_log_creation(tmp_path, monkeypatch):
     expected_path = tmp_path / ".gobby" / "logs" / f"{cli_name}-parser-error.log"
     assert error_log.log_path == expected_path
 
-    # Trigger logging
-    error_log.log_malformed_line(1, "session-1", '{"bad": "json"', "Unexpected EOF")
+    # A truncated partial write is kept at INFO and reaches the log file.
+    raw = '{"bad": "json"'
+    error: json.JSONDecodeError | None = None
+    try:
+        json.loads(raw)
+    except json.JSONDecodeError as exc:
+        error = exc
+    assert error is not None
+    error_log.log_decode_failure(1, "session-1", raw, error)
 
     assert expected_path.exists()
     content = expected_path.read_text()
     assert "line:1" in content
     assert "session:session-1" in content
-    assert "Malformed line: Unexpected EOF" in content
-    assert '{"bad": "json"' in content
+    assert "Malformed line (truncated)" in content
+    assert raw in content
 
 
 def test_log_unknown_block(tmp_path, monkeypatch):
@@ -162,7 +169,7 @@ def test_classify_decode_failure(raw_text, expected):
     assert _classify_decode_failure(raw_text, error) == expected
 
 
-def test_parser_logs_malformed_line(tmp_path, monkeypatch):
+def test_parser_routes_decode_failures_by_kind(tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path))
 
     class MockParser(BaseTranscriptParser):
@@ -170,18 +177,38 @@ def test_parser_logs_malformed_line(tmp_path, monkeypatch):
             try:
                 return json.loads(line)
             except json.JSONDecodeError as e:
-                self.error_log.log_malformed_line(index, self.session_id, line, str(e))
+                self.error_log.log_decode_failure(index, self.session_id, line, e)
                 return None
 
-    parser = MockParser("mock-cli-malformed", session_id="session-4")
-    parser.parse_line('{"valid": "json"}', 1)
-    parser.parse_line("invalid json", 2)
+    parser = MockParser("mock-cli-decode", session_id="session-4")
+    parser.parse_line('{"valid": "json"}', 1)  # parses fine — nothing logged
+    parser.parse_line('{"truncated": ', 2)  # truncated -> INFO
+    parser.parse_line("not json at all", 3)  # non_json -> DEBUG (suppressed)
+    parser.parse_line("   ", 4)  # empty -> silent
 
     content = parser.error_log.log_path.read_text()
+    # Only the truncated partial write survives the INFO-pinned logger.
     assert "line:2" in content
     assert "session:session-4" in content
-    assert "Malformed line" in content
-    assert "invalid json" in content
+    assert "Malformed line (truncated)" in content
+    assert '{"truncated":' in content
+    # Junk routes to DEBUG and stays out of parser-error.log.
+    assert "line:3" not in content
+    assert "not json at all" not in content
+    # Empty lines never log.
+    assert "line:4" not in content
+
+
+def test_log_decode_failure_non_object_is_non_json(tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path))
+    error_log = TranscriptParserErrorLog("test-cli-nonobject")
+
+    # A decoded-but-not-an-object line (error=None) is non_json -> DEBUG, suppressed.
+    error_log.log_decode_failure(5, "session-9", "[1, 2, 3]", None)
+
+    content = error_log.log_path.read_text()
+    assert "line:5" not in content
+    assert "[1, 2, 3]" not in content
 
 
 def test_rotation(tmp_path, monkeypatch):

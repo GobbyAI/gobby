@@ -80,14 +80,40 @@ class TranscriptParserErrorLog:
         msg = f"[{timestamp}] line:{line_num} session:{session_str} — Unknown block type: {block_type}\n{json_raw}"
         self.logger.info(msg)
 
-    def log_malformed_line(
-        self, line_num: int, session_id: str | None, raw_text: str, error: str
+    def log_decode_failure(
+        self,
+        line_num: int,
+        session_id: str | None,
+        raw_text: str,
+        error: json.JSONDecodeError | None,
     ) -> None:
-        """Log format: [ISO timestamp] line:{N} session:{id} — Malformed line: {error}\n{raw_text}"""
+        """Classify a JSON decode failure and log only the cases worth keeping.
+
+        ``empty`` lines are skipped silently; ``non_json`` content (junk, or a
+        valid JSON value that is not an object) is logged at DEBUG so it stays
+        out of the INFO-pinned ``parser-error.log``; only genuine ``truncated``
+        partial writes are logged at INFO. ``error=None`` marks the
+        decoded-but-not-an-object case, which is always ``non_json``.
+
+        Log format: [ISO timestamp] line:{N} session:{id} — Malformed line
+        ({kind}): {detail}\n{raw_text}
+        """
+        kind: DecodeFailureKind = (
+            "non_json" if error is None else _classify_decode_failure(raw_text, error)
+        )
+        if kind == "empty":
+            return
         timestamp = datetime.now(UTC).isoformat()
         session_str = session_id if session_id else "unknown"
-        msg = f"[{timestamp}] line:{line_num} session:{session_str} — Malformed line: {error}\n{raw_text}"
-        self.logger.info(msg)
+        detail = "Line is not a JSON object" if error is None else str(error)
+        msg = (
+            f"[{timestamp}] line:{line_num} session:{session_str} "
+            f"— Malformed line ({kind}): {detail}\n{raw_text}"
+        )
+        if kind == "truncated":
+            self.logger.info(msg)
+        else:
+            self.logger.debug(msg)
 
 
 @dataclass

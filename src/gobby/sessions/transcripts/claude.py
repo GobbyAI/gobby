@@ -343,20 +343,20 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
         try:
             data = json.loads(line)
         except json.JSONDecodeError as e:
-            self.error_log.log_malformed_line(
+            self.error_log.log_decode_failure(
                 line_num=index,
                 session_id=self.session_id,
                 raw_text=line,
-                error=str(e),
+                error=e,
             )
             return None
 
         if not isinstance(data, dict):
-            self.error_log.log_malformed_line(
+            self.error_log.log_decode_failure(
                 line_num=index,
                 session_id=self.session_id,
                 raw_text=line,
-                error="Line is not a JSON object",
+                error=None,
             )
             return None
 

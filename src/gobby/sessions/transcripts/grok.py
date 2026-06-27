@@ -35,10 +35,10 @@ class GrokTranscriptParser(BaseTranscriptParser):
         try:
             data = json.loads(line)
         except json.JSONDecodeError as exc:
-            self.error_log.log_malformed_line(index, self.session_id, line, str(exc))
+            self.error_log.log_decode_failure(index, self.session_id, line, exc)
             return None
         if not isinstance(data, dict):
-            self.error_log.log_malformed_line(index, self.session_id, line, "Line is not an object")
+            self.error_log.log_decode_failure(index, self.session_id, line, None)
             return None
 
         timestamp = _parse_timestamp(data)
