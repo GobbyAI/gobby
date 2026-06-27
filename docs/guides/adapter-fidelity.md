@@ -7,6 +7,11 @@ context channels.
 
 The executable source of truth is `src/gobby/adapters/capabilities.py`.
 New providers must declare capabilities before adapter behavior is added.
+Unsupported-provider research lives in
+[`docs/research/cli-support-feature-matrix-codex-findings.md`](../research/cli-support-feature-matrix-codex-findings.md).
+Use that matrix before adding first-class CLI support; a provider must have
+proven hooks, transcripts/session identity, and web-chat streaming/control.
+AGY is the negative-control case: hook install parity alone is not enough.
 
 ## Capability API
 
