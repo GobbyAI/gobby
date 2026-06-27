@@ -1,0 +1,136 @@
+{
+  "captured_at": "2026-06-27",
+  "codex_tool_search_call_current": {
+    "field_notes": {
+      "action_path": null,
+      "query_path": "payload.arguments.query",
+      "tool_use_id_candidates": [
+        "payload.id",
+        "payload.call_id"
+      ]
+    },
+    "payload": {
+      "arguments": {
+        "limit": 8,
+        "query": "mcp__gobby list_mcp_servers list_tools get_tool_schema call_tool gobby-skills get_skill"
+      },
+      "call_id": "call_cRYQt6bizw1mytXnF81ZAaAD",
+      "execution": "client",
+      "id": "tsc_0fe970d1876158a6016a3fc7f560088197b76952363106d001",
+      "status": "completed",
+      "type": "tool_search_call"
+    },
+    "source_line": 12,
+    "source_session_ref": "#7689"
+  },
+  "codex_tool_search_call_legacy_parser_error": {
+    "field_notes": {
+      "has_payload_id": false,
+      "tool_use_id_candidates": [
+        "payload.call_id"
+      ]
+    },
+    "payload": {
+      "arguments": {
+        "limit": 8,
+        "query": "gobby-skills list_mcp_servers list_tools get_tool_schema call_tool"
+      },
+      "call_id": "call_mve8QAlktKeRyY8VWVLCMz4f",
+      "execution": "client",
+      "status": "completed",
+      "type": "tool_search_call"
+    },
+    "source_line": "7",
+    "source_session_uuid": "67e42263-f08d-400b-81a7-3e8cc294fe9e"
+  },
+  "codex_tool_search_output_current": {
+    "field_notes": {
+      "has_payload_id": false,
+      "output_path": "payload.tools",
+      "tool_use_id_candidates": [
+        "payload.call_id"
+      ]
+    },
+    "payload": {
+      "call_id": "call_cRYQt6bizw1mytXnF81ZAaAD",
+      "execution": "client",
+      "status": "completed",
+      "tools": [
+        {
+          "description_preview": "<gobby_system>\n\n<tool_discovery>\nProgressive discovery keeps token usage low \\u2014 fetch schemas just-in-time, not upfront.\n\nAll servers follow the same discovery c",
+          "name": "mcp__gobby",
+          "tool_count": 8,
+          "tool_names": [
+            "list_tools",
+            "list_mcp_servers",
+            "get_tool_schema",
+            "remove_mcp_server",
+            "init_project",
+            "get_variable",
+            "set_variable",
+            "import_mcp_server"
+          ],
+          "type": "namespace"
+        }
+      ],
+      "tools_count": 1,
+      "type": "tool_search_output"
+    },
+    "source_line": 13,
+    "source_session_ref": "#7689"
+  },
+  "codex_tool_search_output_legacy_parser_error": {
+    "field_notes": {
+      "has_payload_id": false,
+      "output_path": "payload.tools",
+      "tool_use_id_candidates": [
+        "payload.call_id"
+      ]
+    },
+    "payload": {
+      "call_id": "call_wUZN9iXXhtOKvmEyfhKQ890x",
+      "execution": "client",
+      "status": "completed",
+      "tools": [
+        {
+          "description_preview": "<gobby_system>\n\n<tool_discovery>\nProgressive discovery keeps token usage low \\u2014 fetch schemas just-in-time, not upfront.\n\nAll servers follow the same discovery c",
+          "name": "mcp__gobby",
+          "tool_count": 10,
+          "tool_names": [
+            "call_tool",
+            "get_tool_schema",
+            "list_mcp_servers",
+            "list_tools",
+            "import_mcp_server",
+            "init_project",
+            "remove_mcp_server",
+            "add_mcp_server"
+          ],
+          "type": "namespace"
+        }
+      ],
+      "tools_count": 1,
+      "type": "tool_search_output"
+    },
+    "source_line": "17",
+    "source_session_uuid": "a7961a9d-8d12-48b9-9779-1949432d429f"
+  },
+  "description": "Real transcript payload shapes captured for fail-soft transcript ingestion task #17402. Large tool-search output descriptions are previewed but keys and nesting are preserved.",
+  "droid_todo_state_current": {
+    "field_notes": {
+      "shape": "object wrapper containing a newline-delimited text snapshot",
+      "todo_snapshot_path": "record.todos.todos"
+    },
+    "record": {
+      "id": "d28705e5-95ba-40c1-a039-2c25eb445417",
+      "messageIndex": 1,
+      "timestamp": "2026-06-08T16:30:49.201Z",
+      "todos": {
+        "todos": "1. [in_progress] Create src/gobby/utils/mathutil4.py with subtract function\n2. [pending] Create tests/utils/test_mathutil4.py\n3. [pending] Run lint, type check, and tests"
+      },
+      "type": "todo_state"
+    },
+    "source_line": 6,
+    "source_session_ref": "#6968"
+  }
+}
