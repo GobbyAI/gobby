@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.agents.provider_capabilities import provider_reasoning_flag
 from gobby.agents.reasoning import normalize_reasoning_effort
-from gobby.ai._agy_models import resolve_agy_display
+from gobby.ai._agy_models import normalize_agy_model_selection, resolve_agy_display
 from gobby.ai._text_generation_contracts import TextGenerateAdapter, TextGenerationRequest
 from gobby.ai._text_generation_helpers import (
     _compose_prompt,
@@ -429,10 +429,12 @@ class AgyCLITextGenerateAdapter:
             "--print-timeout",
             _agy_go_duration(self._timeout_seconds),
         ]
-        if request.model:
-            command.extend(
-                ["--model", resolve_agy_display(request.model, request.reasoning_effort)]
-            )
+        model, reasoning_effort = normalize_agy_model_selection(
+            request.model,
+            request.reasoning_effort,
+        )
+        if model:
+            command.extend(["--model", resolve_agy_display(model, reasoning_effort)])
         command.extend(["--print", _compose_prompt(request)])
         return command
 

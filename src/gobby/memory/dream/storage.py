@@ -10,6 +10,8 @@ from uuid import uuid4
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sql_dialect import older_than_now_expr
 
+PLATFORM_TRUTH_SCOPE = "__gobby_platform__"
+
 # Columns added by migration 289 (dream soft-delete). Snapshots taken before
 # 289 lack them, so restore_memory_row defaults them to NULL instead of failing.
 _DREAM_SOFT_DELETE_COLUMNS = ("deleted_at", "dream_action", "last_dreamed_at")
@@ -251,6 +253,10 @@ class MemoryDreamStore:
         )
         return str(row["digest_hash"]) if row is not None else None
 
+    def get_platform_truth_digest_hash(self) -> str | None:
+        """Return the last-seen platform truth digest hash."""
+        return self.get_truth_digest_hash(PLATFORM_TRUTH_SCOPE)
+
     def set_truth_digest_hash(self, project_id: str, digest_hash: str) -> None:
         """Record the current codewiki truth-digest hash for a project."""
         self.db.execute(
@@ -263,6 +269,10 @@ class MemoryDreamStore:
             """,
             (project_id, digest_hash),
         )
+
+    def set_platform_truth_digest_hash(self, digest_hash: str) -> None:
+        """Record the current platform truth digest hash."""
+        self.set_truth_digest_hash(PLATFORM_TRUTH_SCOPE, digest_hash)
 
     def mark_interrupted_runs(self, *, error: str = INTERRUPTED_RESTART_ERROR) -> list[str]:
         """Reconcile runs orphaned in a non-terminal state to 'interrupted'.

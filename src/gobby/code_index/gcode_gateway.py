@@ -45,9 +45,17 @@ class GcodeTimeoutError(GcodeGatewayError):
 class GcodeCommandError(GcodeGatewayError):
     """Raised when gcode exits non-zero."""
 
-    def __init__(self, command: Sequence[str], returncode: int, stderr: str) -> None:
+    def __init__(
+        self,
+        command: Sequence[str],
+        returncode: int,
+        stderr: str,
+        *,
+        stdout: str = "",
+    ) -> None:
         self.command = tuple(command)
         self.returncode = returncode
+        self.stdout = stdout
         self.stderr = stderr
         detail = stderr or "<no stderr>"
         super().__init__(f"gcode exited {returncode}: {detail}")
@@ -81,9 +89,11 @@ class GcodeProjectNotFoundError(GcodeCommandError):
         returncode: int,
         stderr: str,
         project_path: str,
+        *,
+        stdout: str = "",
     ) -> None:
         self.project_path = project_path
-        super().__init__(command, returncode, stderr)
+        super().__init__(command, returncode, stderr, stdout=stdout)
 
 
 class GcodeIndexedFileNotFoundError(GcodeCommandError):
@@ -96,10 +106,12 @@ class GcodeIndexedFileNotFoundError(GcodeCommandError):
         stderr: str,
         file_path: str,
         project_id: str,
+        *,
+        stdout: str = "",
     ) -> None:
         self.file_path = file_path
         self.project_id = project_id
-        super().__init__(command, returncode, stderr)
+        super().__init__(command, returncode, stderr, stdout=stdout)
 
 
 class GcodeJsonError(GcodeGatewayError):
@@ -141,6 +153,7 @@ def _classify_gcode_command_error(
     command: Sequence[str],
     returncode: int,
     stderr_text: str,
+    stdout_text: str = "",
 ) -> GcodeCommandError:
     if match := _INDEXED_FILE_NOT_FOUND_PATTERN.search(stderr_text):
         return GcodeIndexedFileNotFoundError(
@@ -149,6 +162,7 @@ def _classify_gcode_command_error(
             stderr_text,
             match.group(1),
             match.group(2),
+            stdout=stdout_text,
         )
     if match := _PROJECT_NOT_FOUND_PATTERN.search(stderr_text):
         return GcodeProjectNotFoundError(
@@ -156,6 +170,7 @@ def _classify_gcode_command_error(
             returncode,
             stderr_text,
             match.group(1),
+            stdout=stdout_text,
         )
     if _NO_GCODE_PROJECT_FOUND in stderr_text:
         project_path = _command_project_path(command)
@@ -165,8 +180,9 @@ def _classify_gcode_command_error(
                 returncode,
                 stderr_text,
                 project_path,
+                stdout=stdout_text,
             )
-    return GcodeCommandError(command, returncode, stderr_text)
+    return GcodeCommandError(command, returncode, stderr_text, stdout=stdout_text)
 
 
 class GcodeGateway:
@@ -532,12 +548,14 @@ class GcodeGateway:
             raise GcodeTimeoutError(f"gcode timed out: {' '.join(command)}") from exc
 
         if proc.returncode != 0:
+            stdout_text = stdout.decode(errors="replace").strip()
             stderr_text = stderr.decode(errors="replace").strip()
             if check_version:
                 raise _classify_gcode_command_error(
                     command,
                     proc.returncode or 1,
                     stderr_text,
+                    stdout_text,
                 )
             raise GcodeUnavailableError(stderr_text or f"gcode exited {proc.returncode}")
 

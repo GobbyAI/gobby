@@ -95,7 +95,11 @@ def find_json_session_transcript(
             handler.logger.debug("Found %s transcript by prefix: %s", cli_label, matches[0])
             return str(matches[0])
 
-    all_sessions = sorted(chats_dir.glob("session-*.json"), reverse=True)
+    all_sessions = sorted(
+        chats_dir.glob("session-*.json"),
+        key=lambda path: path.stat().st_mtime,
+        reverse=True,
+    )
     if all_sessions:
         handler.logger.debug("Found %s transcript (most recent): %s", cli_label, all_sessions[0])
         return str(all_sessions[0])

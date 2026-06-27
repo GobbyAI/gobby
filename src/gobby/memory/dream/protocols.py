@@ -28,6 +28,8 @@ class MemoryDreamManagerProtocol(Protocol):
 
     def mark_project_memories_due(self, project_id: str) -> int: ...
 
+    def mark_global_memories_due(self) -> int: ...
+
     def mark_dreamed(
         self,
         memory_id: str,

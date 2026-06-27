@@ -120,7 +120,7 @@ def sessions() -> None:
     type=click.Choice(["claude", "grok", "qwen", "codex", "droid", "agy"]),
     help="Filter by source",
 )
-@click.option("--limit", "-n", default=20, help="Max sessions to show")
+@click.option("--limit", "-n", type=click.IntRange(min=1), default=20, help="Max sessions to show")
 @click.option("--json", "json_format", is_flag=True, help="Output as JSON")
 def list_sessions(
     project_ref: str | None,
@@ -224,7 +224,7 @@ def show_session(session_id: str, json_format: bool) -> None:
 
 @sessions.command("messages")
 @click.argument("session_id")
-@click.option("--limit", "-n", default=50, help="Max messages to show")
+@click.option("--limit", "-n", type=click.IntRange(min=1), default=50, help="Max messages to show")
 @click.option(
     "--role",
     "-r",

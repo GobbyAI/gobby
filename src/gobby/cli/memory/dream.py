@@ -111,10 +111,29 @@ def _request(
             json_data=json_data,
             timeout=timeout,
         )
-        response.raise_for_status()
-        return cast("dict[str, Any]", response.json())
-    except (httpx.HTTPError, ConnectionError, OSError, ValueError) as exc:
+    except (httpx.TransportError, ConnectionError, OSError) as exc:
         raise click.ClickException(f"Could not reach daemon: {exc}") from exc
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        try:
+            response.raise_for_status()
+        except httpx.HTTPStatusError as status_exc:
+            raise click.ClickException(
+                f"Daemon returned HTTP {response.status_code}: {response.text}"
+            ) from status_exc
+        raise click.ClickException(f"Daemon returned invalid JSON: {exc}") from exc
+
+    if response.is_error:
+        detail = payload.get("error") if isinstance(payload, dict) else None
+        if not detail and isinstance(payload, dict):
+            detail = payload.get("detail") or payload.get("message")
+        raise click.ClickException(str(detail or f"Daemon returned HTTP {response.status_code}"))
+
+    if not isinstance(payload, dict):
+        raise click.ClickException("Daemon returned an unexpected response")
+    return cast("dict[str, Any]", payload)
 
 
 def _print_aggregate(data: dict[str, Any]) -> None:

@@ -111,8 +111,10 @@ class TestWikiBranchSetup:
         content = (repo / ".gitignore").read_text(encoding="utf-8")
         assert first["success"] is True
         assert first["gitignore_updated"] is True
+        assert first["gitignore_status"] == "updated"
         assert second["success"] is True
         assert second["gitignore_updated"] is False
+        assert second["gitignore_status"] == "unchanged"
         assert content.count(GITIGNORE_START) == 1
         assert f"{GOBBY_WIKI_DIR}/" in content
 

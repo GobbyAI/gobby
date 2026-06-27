@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import signal
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -221,6 +222,56 @@ async def test_global_prune_failure_retries_structured_failed_project_ids(
     assert "global:failed retries=1" in result
     assert storage.marked_dirty == [("proj-2", str(root_two), "global_prune_failed")]
     assert gateway.targeted_roots == [root_two]
+
+
+@pytest.mark.asyncio
+async def test_global_prune_sigterm_with_no_stale_stdout_is_completed(
+    tmp_path: Path,
+) -> None:
+    storage = PruneStorage()
+    gateway = PruneGateway(
+        global_result=_gcode_result(
+            ("/tmp/gcode", "prune", "--force"),
+            returncode=-signal.SIGTERM,
+            stdout="No stale projects found.",
+        )
+    )
+    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    result = await pruner.prune_all_projects()
+
+    assert result.endswith("global:pruned")
+
+
+@pytest.mark.asyncio
+async def test_dirty_prune_drains_until_storage_is_empty(tmp_path: Path) -> None:
+    root_one = tmp_path / "one"
+    root_two = tmp_path / "two"
+    root_one.mkdir()
+    root_two.mkdir()
+
+    class PagingPruneStorage(PruneStorage):
+        def list_prune_dirty_projects(self, _limit: int) -> list[Any]:
+            return self.dirty_projects[:1]
+
+        def clear_prune_dirty(self, project_id: str) -> bool:
+            self.dirty_projects = [
+                dirty for dirty in self.dirty_projects if dirty.project_id != project_id
+            ]
+            return super().clear_prune_dirty(project_id)
+
+    storage = PagingPruneStorage()
+    storage.dirty_projects = [_dirty("proj-1", root_one), _dirty("proj-2", root_two)]
+    gateway = PruneGateway()
+    context = PruneContext(storage, gateway, tmp_path / "maintenance.log")
+    pruner = CodeIndexPruner(context)  # type: ignore[arg-type]
+
+    result = await pruner.prune_dirty_projects()
+
+    assert result == "Code index prune completed: proj-1:pruned, proj-2:pruned"
+    assert gateway.targeted_roots == [root_one, root_two]
+    assert storage.dirty_projects == []
 
 
 @pytest.mark.asyncio

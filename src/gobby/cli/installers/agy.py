@@ -141,7 +141,6 @@ def _remove_gobby_hooks(settings: dict[str, Any]) -> tuple[dict[str, Any], list[
 
 def install_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
     """Install Gobby integration for AGY hooks and MCP registration."""
-    del mode  # AGY 1.0.11 reads the vendor config path for hooks and MCP.
     hooks_installed: list[str] = []
     result: dict[str, Any] = {
         "success": False,
@@ -156,6 +155,9 @@ def install_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
         "trust": None,
         "error": None,
     }
+    if mode != "global":
+        result["error"] = "AGY integration only supports global install mode"
+        return result
 
     hooks_dir = _global_hooks_dir()
     agy_config_dir = _agy_config_dir()
@@ -184,32 +186,53 @@ def install_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
     else:
         result["already_configured"] = True
 
-    shared = install_shared_content(project_path / ".gemini", project_path)
-    cli = install_cli_content("agy", agy_config_dir)
+    try:
+        shared = install_shared_content(project_path / ".gemini", project_path)
+        cli = install_cli_content("agy", agy_config_dir)
+    except Exception as exc:
+        result["error"] = f"Failed to install AGY shared content: {exc}"
+        return result
     result["commands_installed"] = cli.get("commands", [])
     result["plugins_installed"] = shared.get("plugins", [])
 
-    mcp_result = configure_mcp_server_json(
-        _agy_mcp_file(),
-        extra_server_fields={"type": "stdio"},
-    )
+    try:
+        mcp_result = configure_mcp_server_json(
+            _agy_mcp_file(),
+            extra_server_fields={"type": "stdio"},
+        )
+    except Exception as exc:
+        result["error"] = f"Failed to configure AGY MCP server: {exc}"
+        return result
     if mcp_result["success"]:
         result["mcp_configured"] = mcp_result.get("added", False) or mcp_result.get(
             "updated", False
         )
         result["mcp_already_configured"] = mcp_result.get("already_configured", False)
+    else:
+        result["error"] = f"Failed to configure AGY MCP server: {mcp_result.get('error')}"
+        return result
 
     if result["already_configured"] and not result["mcp_already_configured"]:
         result["already_configured"] = False
 
-    result["trust"] = seed_gobby_home_trust("agy")
+    try:
+        trust_result = seed_gobby_home_trust("agy")
+    except Exception as exc:
+        result["error"] = f"Failed to seed AGY trust: {exc}"
+        return result
+    result["trust"] = trust_result
+    if not trust_result.get("success"):
+        errors = trust_result.get("errors") or []
+        detail = "; ".join(str(error) for error in errors) if errors else "unknown error"
+        result["error"] = f"Failed to seed AGY trust: {detail}"
+        return result
     result["success"] = True
     return result
 
 
 def uninstall_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
     """Remove Gobby integration from AGY hooks and MCP config."""
-    del project_path, mode
+    del project_path
     hooks_removed: list[str] = []
     files_removed: list[str] = []
     result: dict[str, Any] = {
@@ -219,6 +242,9 @@ def uninstall_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
         "mcp_removed": False,
         "error": None,
     }
+    if mode != "global":
+        result["error"] = "AGY integration only supports global uninstall mode"
+        return result
 
     hooks_file = _agy_hooks_file()
     if hooks_file.exists():
@@ -242,6 +268,9 @@ def uninstall_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
     mcp_result = remove_mcp_server_json(_agy_mcp_file())
     if mcp_result["success"]:
         result["mcp_removed"] = mcp_result.get("removed", False)
+    else:
+        result["error"] = f"Failed to remove AGY MCP server: {mcp_result.get('error')}"
+        return result
 
     result["success"] = True
     return result

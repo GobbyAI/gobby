@@ -970,6 +970,8 @@ def test_mark_project_memories_due_resets_only_live_project_rows(memory_manager,
     memory_manager.mark_dreamed(hidden.id, hidden_as="delete", when=when)
     other = memory_manager.create_memory(content="b dreamed", project_id=project_b)
     memory_manager.mark_dreamed(other.id, when=when)
+    global_memory = memory_manager.create_memory(content="global dreamed", project_id=None)
+    memory_manager.mark_dreamed(global_memory.id, when=when)
 
     affected = memory_manager.mark_project_memories_due(project_a)
 
@@ -979,9 +981,16 @@ def test_mark_project_memories_due_resets_only_live_project_rows(memory_manager,
     assert memory_manager.get_memory(never.id).last_dreamed_at is None  # already NULL
     # The other project's cooldown is untouched (no cross-project bleed).
     assert memory_manager.get_memory(other.id).last_dreamed_at is not None
+    # Global rows are reset by platform-truth changes, not project-truth changes.
+    assert memory_manager.get_memory(global_memory.id).last_dreamed_at is not None
     # The soft-hidden row stays hidden regardless.
-    with pytest.raises(ValueError, match="not found"):
+    with pytest.raises(ValueError, match=f"Memory {hidden.id} not found"):
         memory_manager.get_memory(hidden.id)
+
+    global_affected = memory_manager.mark_global_memories_due()
+
+    assert global_affected == 1
+    assert memory_manager.get_memory(global_memory.id).last_dreamed_at is None
 
 
 def test_list_dream_candidates_memory_type_scope(memory_manager) -> None:

@@ -34,12 +34,14 @@ def _is_noop_shutdown_prune(exc: Exception) -> bool:
     return (
         isinstance(exc, GcodeCommandError)
         and exc.returncode == -signal.SIGTERM
-        and _NO_STALE_PROJECTS in exc.stderr
+        and (_NO_STALE_PROJECTS in exc.stdout or _NO_STALE_PROJECTS in exc.stderr)
     )
 
 
 def _is_noop_shutdown_result(result: GcodeCommandResult) -> bool:
-    return result.returncode == -signal.SIGTERM and _NO_STALE_PROJECTS in result.stderr
+    return result.returncode == -signal.SIGTERM and (
+        _NO_STALE_PROJECTS in result.stdout or _NO_STALE_PROJECTS in result.stderr
+    )
 
 
 class CronRegistrationProtocol(Protocol):
@@ -56,23 +58,32 @@ class CodeIndexPruner:
         self._project_locks: dict[str, asyncio.Lock] = {}
 
     async def prune_dirty_projects(self, *, limit: int = 100) -> str:
-        dirty_projects = await self._context.run_db(
-            self._context.storage.list_prune_dirty_projects,
-            limit,
-        )
-        if not dirty_projects:
-            return "Code index prune skipped: dirty=0"
-
+        del limit  # Dirty prune retries drain fixed 1000-row pages.
         outcomes: list[str] = []
-        for dirty in dirty_projects:
-            outcomes.append(
-                await self.prune_project(
-                    project_id=dirty.project_id,
-                    root_path=dirty.root_path,
-                    dirty=True,
-                    reason=dirty.reason,
-                )
+        processed_project_ids: set[str] = set()
+        while True:
+            dirty_projects = await self._context.run_db(
+                self._context.storage.list_prune_dirty_projects,
+                1000,
             )
+            pending = [
+                dirty for dirty in dirty_projects if dirty.project_id not in processed_project_ids
+            ]
+            if not pending:
+                break
+
+            for dirty in pending:
+                processed_project_ids.add(dirty.project_id)
+                outcomes.append(
+                    await self.prune_project(
+                        project_id=dirty.project_id,
+                        root_path=dirty.root_path,
+                        dirty=True,
+                        reason=dirty.reason,
+                    )
+                )
+        if not outcomes:
+            return "Code index prune skipped: dirty=0"
         return "Code index prune completed: " + ", ".join(outcomes)
 
     async def prune_all_projects(self) -> str:

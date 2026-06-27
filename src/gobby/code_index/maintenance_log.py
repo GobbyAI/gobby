@@ -11,6 +11,7 @@ from typing import Any
 from gobby.code_index.gcode_gateway import GcodeCommandResult
 
 _LOGGERS: dict[str, logging.Logger] = {}
+_FALLBACK_LOGGER = logging.getLogger(__name__)
 _MAX_STREAM_CHARS = 4000
 
 
@@ -53,17 +54,26 @@ def _logger(log_file: str) -> logging.Logger:
     if existing is not None:
         return existing
 
-    path = Path(expanded)
-    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        path = Path(expanded)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        handler = RotatingFileHandler(
+            path,
+            maxBytes=5 * 1024 * 1024,
+            backupCount=5,
+            encoding="utf-8",
+        )
+    except OSError as exc:
+        _FALLBACK_LOGGER.warning(
+            "Failed to initialize code-index maintenance log file %s: %s",
+            expanded,
+            exc,
+        )
+        return _FALLBACK_LOGGER
+
     logger = logging.getLogger(f"gobby.code_index.maintenance_file.{expanded}")
     logger.setLevel(logging.INFO)
     logger.propagate = False
-    handler = RotatingFileHandler(
-        path,
-        maxBytes=5 * 1024 * 1024,
-        backupCount=5,
-        encoding="utf-8",
-    )
     handler.setFormatter(logging.Formatter("%(message)s"))
     logger.addHandler(handler)
     _LOGGERS[expanded] = logger

@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import os
 from datetime import datetime
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -123,12 +125,12 @@ class TestFindQwenTranscript:
         result = handler._find_qwen_transcript({}, "ext-1")
         assert result is None
 
-    def test_chats_dir_not_exists(self, tmp_path) -> None:
+    def test_chats_dir_not_exists(self, tmp_path: Path) -> None:
         handler = _TestHandler()
         result = handler._find_qwen_transcript({"cwd": str(tmp_path)}, "ext-1")
         assert result is None
 
-    def test_match_by_prefix(self, tmp_path, monkeypatch) -> None:
+    def test_match_by_prefix(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
         import hashlib
 
         handler = _TestHandler()
@@ -146,7 +148,11 @@ class TestFindQwenTranscript:
         assert result is not None
         assert "abcdefgh" in result
 
-    def test_fallback_most_recent(self, tmp_path, monkeypatch) -> None:
+    def test_fallback_most_recent(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
         """When prefix doesn't match, falls back to most recent."""
         import hashlib
 
@@ -155,7 +161,12 @@ class TestFindQwenTranscript:
         project_hash = hashlib.sha256(cwd.encode()).hexdigest()
         chats_dir = tmp_path / ".qwen" / "tmp" / project_hash / "chats"
         chats_dir.mkdir(parents=True)
-        (chats_dir / "session-2024-01-01T10-00-recent.json").touch()
+        old_transcript = chats_dir / "session-2024-01-02T10-00-old.json"
+        recent_transcript = chats_dir / "session-2024-01-01T10-00-recent.json"
+        old_transcript.touch()
+        recent_transcript.touch()
+        os.utime(old_transcript, (100, 100))
+        os.utime(recent_transcript, (200, 200))
 
         import gobby.hooks.event_handlers._session_start as session_mod
 

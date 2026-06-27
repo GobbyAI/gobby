@@ -196,12 +196,15 @@ def _git_toplevel(project_path: Path) -> Path | None:
     if not project_path.exists():
         return None
 
-    proc = subprocess.run(
-        ["git", "-C", str(project_path), "rev-parse", "--show-toplevel"],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
+    try:
+        proc = subprocess.run(
+            ["git", "-C", str(project_path), "rev-parse", "--show-toplevel"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except (FileNotFoundError, OSError):
+        return None
     if proc.returncode != 0:
         return None
 

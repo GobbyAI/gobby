@@ -62,34 +62,42 @@ class CodeIndexNightlyFullReindexer:
         async def reindex_project(project: Any) -> str:
             project_id = str(project.id)
             root_path = project.root_path
-            if not root_path:
-                return f"{project_id}:skipped_missing_root"
+            try:
+                if not root_path:
+                    return f"{project_id}:skipped_missing_root"
 
-            root = Path(str(root_path)).expanduser()
-            if not await asyncio.to_thread(root.is_dir):
-                return f"{project_id}:skipped_missing_root"
+                root = Path(str(root_path)).expanduser()
+                if not await asyncio.to_thread(root.is_dir):
+                    return f"{project_id}:skipped_missing_root"
 
-            async with semaphore:
-                result = await gateway.nightly_full_reindex(
-                    root,
-                    timeout=config.nightly_full_reindex_timeout_seconds,
+                async with semaphore:
+                    result = await gateway.nightly_full_reindex(
+                        root,
+                        timeout=config.nightly_full_reindex_timeout_seconds,
+                    )
+                    if result.timed_out:
+                        status = "timed_out"
+                    elif result.success:
+                        status = "completed"
+                    else:
+                        status = "failed"
+                    log_gcode_maintenance_event(
+                        log_file=config.maintenance_log_file,
+                        event="nightly_full_reindex",
+                        run_id=run_id,
+                        project_id=project_id,
+                        root_path=str(root),
+                        result=result,
+                        status=status,
+                    )
+                    return f"{project_id}:{status}"
+            except Exception:
+                logger.exception(
+                    "Code index nightly full reindex failed for %s at %s",
+                    project_id,
+                    root_path,
                 )
-                if result.timed_out:
-                    status = "timed_out"
-                elif result.success:
-                    status = "completed"
-                else:
-                    status = "failed"
-                log_gcode_maintenance_event(
-                    log_file=config.maintenance_log_file,
-                    event="nightly_full_reindex",
-                    run_id=run_id,
-                    project_id=project_id,
-                    root_path=str(root),
-                    result=result,
-                    status=status,
-                )
-                return f"{project_id}:{status}"
+                return f"{project_id}:failed"
 
         if concurrency == 1:
             outcomes = [await reindex_project(project) for project in projects]

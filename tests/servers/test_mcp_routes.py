@@ -2752,7 +2752,8 @@ class TestHooksEndpoints:
         )
 
         with TestClient(server.app) as client:
-            del client.app.state.hook_manager
+            if hasattr(client.app.state, "hook_manager"):
+                del client.app.state.hook_manager
             response = client.post(
                 "/api/hooks/execute",
                 json=_hook_envelope(hook_type="session-start", source="claude"),

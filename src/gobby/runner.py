@@ -27,6 +27,7 @@ if TYPE_CHECKING:
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
     from gobby.ai import TextGenerationService
+    from gobby.code_index.nightly_reindex import CodeIndexNightlyFullReindexer
     from gobby.code_index.prune import CodeIndexPruner
     from gobby.config.app import DaemonConfig
     from gobby.events.completion_registry import CompletionEventRegistry
@@ -138,7 +139,7 @@ class GobbyRunner:
     memory_manager: MemoryManager | None
     code_indexer: Any | None
     code_index_pruner: CodeIndexPruner | None
-    code_index_nightly_reindexer: Any | None
+    code_index_nightly_reindexer: CodeIndexNightlyFullReindexer | None
     mcp_db_manager: LocalMCPManager
     metrics_event_store: MetricsEventStore
     metrics_manager: ToolMetricsManager

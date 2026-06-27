@@ -330,6 +330,7 @@ function CodeIndexGroup({ fields }: { fields: SettingsSectionFields }) {
         label="Nightly full reindex timezone"
         ariaLabel="Nightly full reindex timezone"
         placeholder="UTC"
+        nullable
       />
       <NumberConfigField
         fields={fields}

@@ -1,6 +1,9 @@
 """Code index configuration."""
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from croniter import croniter
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from gobby.config.feature_base import FeatureDefaultConfig
 
@@ -212,3 +215,21 @@ class CodeIndexConfig(BaseModel):
                 updated["symbol_summary"] = symbol_summary
             return updated
         return data
+
+    @field_validator("nightly_full_reindex_cron")
+    @classmethod
+    def validate_nightly_full_reindex_cron(cls, value: str) -> str:
+        if not croniter.is_valid(value):
+            raise ValueError("nightly_full_reindex_cron must be a valid cron expression")
+        return value
+
+    @field_validator("nightly_full_reindex_timezone")
+    @classmethod
+    def validate_nightly_full_reindex_timezone(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        try:
+            ZoneInfo(value)
+        except ZoneInfoNotFoundError as exc:
+            raise ValueError("nightly_full_reindex_timezone must be a valid IANA timezone") from exc
+        return value

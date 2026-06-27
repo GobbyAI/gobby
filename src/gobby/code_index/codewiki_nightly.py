@@ -180,11 +180,16 @@ def register_codewiki_nightly_crons(
     """
     service = refresh_service or CodewikiRefreshService()
     seen: set[str] = set()
+    seen_repo_paths: set[str] = set()
     registered = 0
     for project_id, repo_path in projects:
         if not project_id or project_id in seen or not repo_path:
             continue
+        repo_key = str(Path(repo_path).resolve(strict=False))
+        if repo_key in seen_repo_paths:
+            continue
         seen.add(project_id)
+        seen_repo_paths.add(repo_key)
         register_codewiki_nightly_cron(
             cron_storage=cron_storage,
             cron_executor=cron_executor,

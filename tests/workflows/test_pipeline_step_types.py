@@ -48,12 +48,12 @@ class TestPipelineStepValidation:
 class TestActivateWorkflowExecution:
     """Tests for activate_workflow step execution in pipeline executor.
 
-    activate_workflow pipeline steps are removed — they always return an error.
+    activate_workflow pipeline steps are removed — they fail fast.
     """
 
     @pytest.mark.asyncio
-    async def test_activate_workflow_step_returns_error(self) -> None:
-        """activate_workflow step returns error (step type removed)."""
+    async def test_activate_workflow_step_raises_error(self) -> None:
+        """activate_workflow step raises an error (step type removed)."""
         from gobby.workflows.definitions import PipelineStep
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
@@ -72,16 +72,12 @@ class TestActivateWorkflowExecution:
             },
         )
 
-        result = await executor._execute_step(
-            step, {"inputs": {}, "steps": {}, "env": {}}, "proj-1"
-        )
-
-        assert result is not None
-        assert "error" in result
+        with pytest.raises(RuntimeError, match="activate_workflow"):
+            await executor._execute_step(step, {"inputs": {}, "steps": {}, "env": {}}, "proj-1")
 
     @pytest.mark.asyncio
-    async def test_activate_workflow_fails_without_loader(self) -> None:
-        """activate_workflow returns error when loader not configured."""
+    async def test_activate_workflow_fails_fast_without_loader(self) -> None:
+        """activate_workflow raises before any loader behavior is consulted."""
         from gobby.workflows.definitions import PipelineStep
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
@@ -96,9 +92,5 @@ class TestActivateWorkflowExecution:
             activate_workflow={"name": "test-wf", "session_id": "sess-1"},
         )
 
-        result = await executor._execute_step(
-            step, {"inputs": {}, "steps": {}, "env": {}}, "proj-1"
-        )
-
-        assert result is not None
-        assert "error" in result
+        with pytest.raises(RuntimeError, match="activate_workflow"):
+            await executor._execute_step(step, {"inputs": {}, "steps": {}, "env": {}}, "proj-1")

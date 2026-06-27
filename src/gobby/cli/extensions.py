@@ -20,6 +20,23 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from gobby.hooks.events import HookEventType
 
+
+def _format_hook_test_decision(result: dict[str, object]) -> str:
+    decision = result.get("decision")
+    if isinstance(decision, str):
+        if decision in {"allow", "accept"}:
+            return "success"
+        if decision in {"deny", "block", "cancel"}:
+            return "deny"
+        return decision
+    continue_value = result.get("continue")
+    if isinstance(continue_value, bool):
+        return "success" if continue_value else "deny"
+    if continue_value is not None:
+        return str(continue_value)
+    return "unknown"
+
+
 # =============================================================================
 # Hooks Commands
 # =============================================================================
@@ -122,7 +139,7 @@ def hooks_test(ctx: click.Context, hook_type: str, source: str, json_format: boo
 
     click.echo(f"Hook test: {hook_type}")
     click.echo(f"  Source: {source}")
-    click.echo(f"  Continue: {result.get('continue', 'unknown')}")
+    click.echo(f"  Decision: {_format_hook_test_decision(result)}")
     if result.get("reason"):
         click.echo(f"  Reason: {result.get('reason')}")
     inject_context = result.get("inject_context")

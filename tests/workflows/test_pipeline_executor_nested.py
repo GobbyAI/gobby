@@ -134,7 +134,7 @@ class TestExecuteNestedPipeline:
     async def test_nested_pipeline_without_loader(
         self, mock_db, mock_execution_manager, mock_llm_service
     ) -> None:
-        """Test that nested pipeline returns placeholder without loader."""
+        """Test that nested pipeline fails fast without loader."""
         from gobby.workflows.pipeline_executor import PipelineExecutor
 
         executor = PipelineExecutor(
@@ -144,9 +144,8 @@ class TestExecuteNestedPipeline:
         )
 
         context: dict = {"inputs": {}, "steps": {}}
-        result = await executor._execute_nested_pipeline("child-pipeline", context, "proj-123")
-
-        assert "error" in result or "pipeline" in result
+        with pytest.raises(RuntimeError, match="No loader configured"):
+            await executor._execute_nested_pipeline("child-pipeline", context, "proj-123")
 
 
 class TestExecuteNestedPipelineDictForm:

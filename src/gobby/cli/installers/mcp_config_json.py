@@ -241,7 +241,7 @@ def configure_mcp_server_json(
     *,
     extra_server_fields: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
-    """Add Gobby MCP server to a JSON settings file (Claude, AGY, Codex).
+    """Add Gobby MCP server to a JSON settings file (Claude, AGY).
 
     Merges the gobby MCP server config into the existing mcpServers section,
     preserving all other servers. Creates a timestamped backup before modifying.

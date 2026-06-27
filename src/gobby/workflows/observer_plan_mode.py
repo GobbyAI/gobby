@@ -136,6 +136,9 @@ def detect_plan_mode_from_context(
                 session_id,
                 indicator,
             )
+        if not variables.get("plan_mode"):
+            variables["plan_mode"] = True
+            logger.info("Session %s: plan_mode=True", session_id)
         return
 
     acp_exit_indicators = [
@@ -154,6 +157,10 @@ def detect_plan_mode_from_context(
                 variables["mode_level"],
                 indicator,
             )
+        if variables.get("plan_mode") or variables.get("plan_skill_loaded"):
+            variables["plan_mode"] = False
+            variables["plan_skill_loaded"] = False
+            logger.info("Session %s: plan_mode=False", session_id)
         return
 
     if '<plan-mode status="active">' in cleaned:
@@ -163,6 +170,9 @@ def detect_plan_mode_from_context(
                 'Session %s: mode_level=0 (plan) (detected from <plan-mode status="active">)',
                 session_id,
             )
+        if not variables.get("plan_mode"):
+            variables["plan_mode"] = True
+            logger.info("Session %s: plan_mode=True", session_id)
         return
 
     if '<plan-mode status="approved">' in cleaned:
@@ -174,6 +184,10 @@ def detect_plan_mode_from_context(
                 session_id,
                 variables["mode_level"],
             )
+        if variables.get("plan_mode") or variables.get("plan_skill_loaded"):
+            variables["plan_mode"] = False
+            variables["plan_skill_loaded"] = False
+            logger.info("Session %s: plan_mode=False", session_id)
         return
 
     if '<chat-mode status="yolo">' in cleaned:

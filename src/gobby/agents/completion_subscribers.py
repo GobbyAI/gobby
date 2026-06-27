@@ -74,7 +74,7 @@ def subscribe_agent_completion(
         try:
             from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
         except ImportError:
-            logger.debug("Could not load pipeline execution manager", exc_info=True)
+            logger.debug("Could not load CompletionSubscriberManager", exc_info=True)
         else:
             manager = CompletionSubscriberManager(db=db)
             try:
@@ -94,7 +94,7 @@ def remove_agent_completion_subscribers(*, db: HubDatabase, run_id: str) -> None
     try:
         from gobby.storage.pipeline_subscribers import CompletionSubscriberManager
     except ImportError:
-        logger.debug("Could not load pipeline execution manager", exc_info=True)
+        logger.debug("Could not load CompletionSubscriberManager", exc_info=True)
         return
 
     manager = CompletionSubscriberManager(db=db)

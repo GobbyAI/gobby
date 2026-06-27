@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Iterator
 from pathlib import Path
 from unittest.mock import patch
 
@@ -22,7 +23,7 @@ def project_path(temp_dir: Path) -> Path:
 
 
 @pytest.fixture
-def agy_env(temp_dir: Path, monkeypatch: pytest.MonkeyPatch):
+def agy_env(temp_dir: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
     monkeypatch.delenv("GOBBY_HOOKS_DIR", raising=False)
     monkeypatch.delenv("GOBBY_AGY_HOOKS_FILE", raising=False)
     monkeypatch.delenv("GOBBY_AGY_MCP_FILE", raising=False)
@@ -67,14 +68,15 @@ def test_install_agy_global_writes_vendor_hooks_and_mcp(
     assert mcp["mcpServers"]["gobby"]["args"] == ["mcp-server"]
 
 
-def test_install_agy_ignores_project_mode_for_vendor_hooks(
+def test_install_agy_rejects_project_mode(
     project_path: Path,
     agy_env: Path,
 ) -> None:
     result = install_agy(project_path, mode="project")
 
-    assert result["success"] is True
-    assert (agy_env / ".gemini" / "config" / "hooks.json").exists()
+    assert result["success"] is False
+    assert result["error"] == "AGY integration only supports global install mode"
+    assert not (agy_env / ".gemini" / "config" / "hooks.json").exists()
     assert not (project_path / ".gemini" / "config" / "hooks.json").exists()
 
 

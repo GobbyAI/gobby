@@ -16,7 +16,7 @@ from gobby.agents.provider_capabilities import (
     provider_reasoning_flag,
 )
 from gobby.agents.reasoning import normalize_reasoning_effort
-from gobby.ai._agy_models import resolve_agy_effort
+from gobby.ai._agy_models import normalize_agy_model_selection, resolve_agy_effort
 from gobby.ai._text_generation_contracts import (
     TextGenerateAdapter,
     TextGenerateAdapterFactory,
@@ -98,6 +98,7 @@ def _gate_reasoning_effort(
     binding: CapabilityBinding,
 ) -> TextGenerationRequest:
     if binding.provider == "agy":
+        request = _normalize_agy_request(request)
         # Resolve effort only against an explicit model. The adapter composes
         # --model solely from request.model (no binding fallback), so resolving
         # against binding.models[0] here would stamp an effort for a model the
@@ -139,6 +140,18 @@ def _gate_reasoning_effort(
     if normalized == request.reasoning_effort:
         return request
     return replace(request, reasoning_effort=normalized)
+
+
+def _normalize_agy_request(request: TextGenerationRequest) -> TextGenerationRequest:
+    if request.provider != "agy":
+        return request
+    model, reasoning_effort = normalize_agy_model_selection(
+        request.model,
+        request.reasoning_effort,
+    )
+    if model == request.model and reasoning_effort == request.reasoning_effort:
+        return request
+    return replace(request, model=model, reasoning_effort=reasoning_effort)
 
 
 class TextGenerationService:
@@ -314,6 +327,7 @@ class TextGenerationService:
         last_reasoning_error: _ReasoningEffortRejectedError | None = None
         reasoning_rejections = 0
         for index, candidate in enumerate(candidates):
+            candidate = _normalize_agy_request(candidate)
             candidate_label = _candidate_debug_label(candidate)
             has_remaining_candidates = index < len(candidates) - 1
             attempted_candidates.append(candidate_label)
@@ -406,6 +420,7 @@ class TextGenerationService:
         last_reasoning_error: _ReasoningEffortRejectedError | None = None
         reasoning_rejections = 0
         for index, candidate in enumerate(candidates):
+            candidate = _normalize_agy_request(candidate)
             candidate_label = _candidate_debug_label(candidate)
             has_remaining_candidates = index < len(candidates) - 1
             attempted_candidates.append(candidate_label)

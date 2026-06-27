@@ -259,7 +259,7 @@ class TestHooksTestCommand:
         assert result.exit_code == 0
         assert "Hook test: session-start" in result.output
         assert "Source: claude" in result.output
-        assert "Continue: True" in result.output
+        assert "Decision: success" in result.output
         assert "Reason: Test hook executed successfully" in result.output
 
     @patch("gobby.cli.extensions.call_mcp_api")
@@ -291,6 +291,31 @@ class TestHooksTestCommand:
         mock_call_api.assert_called_once()
         call_args = mock_call_api.call_args
         assert call_args[1]["json_data"]["source"] == "agy"
+
+    @patch("gobby.cli.extensions.call_mcp_api")
+    @patch("gobby.cli.extensions.check_daemon_running")
+    @patch("gobby.cli.extensions.get_daemon_client")
+    @patch("gobby.cli.load_full_config_from_db")
+    def test_hooks_test_formats_agy_decision_response(
+        self,
+        mock_load_config: MagicMock,
+        mock_get_client: MagicMock,
+        mock_check_daemon: MagicMock,
+        mock_call_api: MagicMock,
+        runner: CliRunner,
+        mock_config: MagicMock,
+        mock_daemon_client: MagicMock,
+    ) -> None:
+        """Test hooks test renders AGY decision responses as user-facing decisions."""
+        mock_load_config.return_value = mock_config
+        mock_get_client.return_value = mock_daemon_client
+        mock_check_daemon.return_value = True
+        mock_call_api.return_value = {"decision": "allow"}
+
+        result = runner.invoke(cli, ["hooks", "test", "before-tool", "-s", "agy"])
+
+        assert result.exit_code == 0
+        assert "Decision: success" in result.output
 
     @patch("gobby.cli.extensions.call_mcp_api")
     @patch("gobby.cli.extensions.check_daemon_running")

@@ -48,16 +48,31 @@ class MemoryDreamMixin(MemoryStoreBase):
         The truth-change trigger calls this when a project's codewiki truth
         digest changes: clearing the cooldown cursor makes every live memory in
         the project "due" again, so the next sweep re-judges them against the
-        new stack without waiting for the per-memory cooldown to elapse. Only
-        already-stamped, non-deleted rows are touched (soft-hidden rows and
-        never-dreamed rows are left as-is). Returns the number of rows reset.
+        new stack without waiting for the per-memory cooldown to elapse. Global
+        rows are deliberately excluded; platform truth changes reset those via
+        ``mark_global_memories_due``. Only already-stamped, non-deleted rows are
+        touched (soft-hidden rows and never-dreamed rows are left as-is).
+        Returns the number of rows reset.
         """
         with self.db.transaction() as conn:
             cursor = conn.execute(
                 "UPDATE memories SET last_dreamed_at = NULL "
-                "WHERE (project_id = %s OR project_id IS NULL) AND deleted_at IS NULL "
+                "WHERE project_id = %s AND deleted_at IS NULL "
                 "AND last_dreamed_at IS NOT NULL",
                 (project_id,),
+            )
+            affected = cursor.rowcount
+        if affected:
+            self._notify_listeners()
+        return affected
+
+    def mark_global_memories_due(self) -> int:
+        """Clear ``last_dreamed_at`` for global live memories only."""
+        with self.db.transaction() as conn:
+            cursor = conn.execute(
+                "UPDATE memories SET last_dreamed_at = NULL "
+                "WHERE project_id IS NULL AND deleted_at IS NULL "
+                "AND last_dreamed_at IS NOT NULL"
             )
             affected = cursor.rowcount
         if affected:

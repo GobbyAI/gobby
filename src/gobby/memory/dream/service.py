@@ -26,7 +26,11 @@ from gobby.memory.dream.plan import validate_dream_plan
 from gobby.memory.dream.planner import build_raw_plan
 from gobby.memory.dream.protocols import MemoryDreamLLMProtocol, MemoryDreamManagerProtocol
 from gobby.memory.dream.storage import INTERRUPTED_CANCELLED_ERROR, MemoryDreamStore
-from gobby.memory.dream.truth_digest import build_current_truth_digest, build_project_truth_digest
+from gobby.memory.dream.truth_digest import (
+    build_current_truth_digest,
+    build_project_truth_digest,
+    build_project_truth_digest_async,
+)
 from gobby.storage.projects import LocalProjectManager
 
 logger = logging.getLogger(__name__)
@@ -296,7 +300,7 @@ class MemoryDreamService:
                 repo_path = self._resolve_repo_path(project_id)
                 if not repo_path:
                     continue
-                digest = build_project_truth_digest(repo_path)
+                digest = await build_project_truth_digest_async(repo_path)
                 if not digest:
                     continue
                 digest_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
@@ -323,12 +327,13 @@ class MemoryDreamService:
         daemon's own project use platform truth rather than a per-project
         codewiki digest and are skipped. Per-project failures are isolated.
         """
+        await self._apply_platform_truth_change_trigger()
         for project_id in await self._truth_changed_project_ids():
             try:
                 repo_path = self._resolve_repo_path(project_id)
                 if not repo_path:
                     continue
-                digest = build_project_truth_digest(repo_path)
+                digest = await build_project_truth_digest_async(repo_path)
                 if not digest:
                     continue
                 digest_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
@@ -350,6 +355,30 @@ class MemoryDreamService:
                     "memory dream: truth-change trigger failed for project %s",
                     project_id,
                 )
+
+    async def _apply_platform_truth_change_trigger(self) -> None:
+        try:
+            digest = build_current_truth_digest(self._daemon_config)
+            digest_hash = hashlib.sha256(digest.encode("utf-8")).hexdigest()
+            previous = await asyncio.to_thread(self.store.get_platform_truth_digest_hash)
+            if previous == digest_hash:
+                return
+            global_reset = await asyncio.to_thread(self.memory_manager.mark_global_memories_due)
+            project_reset = 0
+            if self.current_project_id:
+                project_reset = await asyncio.to_thread(
+                    self.memory_manager.mark_project_memories_due,
+                    self.current_project_id,
+                )
+            await asyncio.to_thread(self.store.set_platform_truth_digest_hash, digest_hash)
+            logger.info(
+                "memory dream: platform truth digest changed; "
+                "cleared cooldown for %d global and %d current-project memory(ies)",
+                global_reset,
+                project_reset,
+            )
+        except Exception:
+            logger.exception("memory dream: platform truth-change trigger failed")
 
     async def _ensure_schema_async(self) -> None:
         if self._schema_ready:
@@ -514,6 +543,20 @@ class MemoryDreamService:
             "unscoped runs must fan out via run_all_due_projects"
         )
 
+    async def _build_truth_digest_async(self, options: DreamRunOptions) -> str:
+        if options.global_only:
+            return build_current_truth_digest(self._daemon_config)
+        if options.project_id and self._is_current_daemon_project(options.project_id):
+            return build_current_truth_digest(self._daemon_config)
+        if options.project_id:
+            return await build_project_truth_digest_async(
+                self._resolve_repo_path(options.project_id)
+            )
+        raise ValueError(
+            "memory dream sweep requires global_only or a project_id; "
+            "unscoped runs must fan out via run_all_due_projects"
+        )
+
     def _is_current_daemon_project(self, project_id: str | None) -> bool:
         return project_id is not None and project_id == self.current_project_id
 
@@ -546,7 +589,7 @@ class MemoryDreamService:
                 if options.full_sweep
                 else (run_started - timedelta(hours=redream_hours)).isoformat()
             )
-            digest = self._build_truth_digest(options)
+            digest = await self._build_truth_digest_async(options)
 
             if options.dry_run:
                 return await self._execute_dry_run(

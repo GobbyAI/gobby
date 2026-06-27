@@ -101,7 +101,10 @@ class DroidPermissionResolver:
             return DROID_PERMISSION_PROCEED_ONCE
 
         if session.chat_mode == "plan":
-            if self._plan_mode_blocks_tool(tool_name, tool_input):
+            if any(
+                self._plan_mode_blocks_tool(tool_name, tool_input)
+                for tool_name, tool_input, _tool_id in tool_payloads
+            ):
                 return DROID_PERMISSION_CANCEL
             return await self._resolve_plan_mode_request(session, tool_payloads)
 

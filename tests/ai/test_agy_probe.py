@@ -30,10 +30,14 @@ from gobby.ai import (
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureCandidateConfig
 
-pytestmark = pytest.mark.skipif(
-    os.environ.get("GOBBY_RUN_AGY_PROBE") != "1",
-    reason="set GOBBY_RUN_AGY_PROBE=1 to run the live AGY probe",
-)
+pytestmark = [
+    pytest.mark.integration,
+    pytest.mark.asyncio,
+    pytest.mark.skipif(
+        os.environ.get("GOBBY_RUN_AGY_PROBE") != "1",
+        reason="set GOBBY_RUN_AGY_PROBE=1 to run the live AGY probe",
+    ),
+]
 
 # tier -> (base model id, exact AGY --model display, resolved auto effort)
 _CASES = [

@@ -300,6 +300,8 @@ def test_session_wiki_schema_removed_from_baseline_and_dropped_by_migration() ->
     migration = (
         SRC_ROOT / "storage" / "migrations" / "298_drop_session_wiki_schema.postgres.sql"
     ).read_text()
+    for removed_object in removed_objects:
+        assert removed_object in migration
     _assert_contains_all(
         "session wiki drop migration",
         migration,

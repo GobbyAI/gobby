@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 import pytest
 
+from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookEvent, HookEventType, HookResponse
 
 pytestmark = pytest.mark.unit
@@ -209,7 +210,7 @@ class TestEdgeCases:
         assert event.session_id == ""
         assert event.data == {}
 
-    def test_translate_none_values_in_event(self, adapter) -> None:
+    def test_translate_none_values_in_event(self, adapter: QwenAdapter) -> None:
         """Handles None values in event data."""
         native_event = {
             "hook_type": "SessionStart",
@@ -220,14 +221,14 @@ class TestEdgeCases:
             },
         }
 
-        # Should not raise
+        before = datetime.now(UTC)
         event = adapter.translate_to_hook_event(native_event)
+        after = datetime.now(UTC)
 
-        # Translation succeeded - event was created
-        assert event is not None
-        # None session_id becomes empty string via .get() default
-        # This test documents current behavior - session_id would be None
-        # since dict.get returns None for existing key with None value
+        assert event.event_type == HookEventType.SESSION_START
+        assert event.session_id == ""
+        assert event.cwd is None
+        assert before <= event.timestamp <= after
 
     def test_translate_nested_data_preserved(self, adapter) -> None:
         """Complex nested data in input_data is preserved."""

@@ -267,6 +267,10 @@ class MemoryManagerFacadeMethods:
         """Delegate to storage: clear the dream cooldown for a project's memories."""
         return self.storage.mark_project_memories_due(project_id)
 
+    def mark_global_memories_due(self) -> int:
+        """Delegate to storage: clear the dream cooldown for global memories."""
+        return self.storage.mark_global_memories_due()
+
     def mark_dreamed(
         self,
         memory_id: str,

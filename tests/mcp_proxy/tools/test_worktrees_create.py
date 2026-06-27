@@ -3,6 +3,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from gobby.mcp_proxy.tools.internal import InternalToolRegistry
 from gobby.mcp_proxy.tools.worktrees import create_worktrees_registry
 from gobby.storage.worktrees import Worktree
 
@@ -10,19 +11,22 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def mock_worktree_storage():
+def mock_worktree_storage() -> MagicMock:
     return MagicMock()
 
 
 @pytest.fixture
-def mock_git_manager():
+def mock_git_manager() -> MagicMock:
     manager = MagicMock()
     manager.repo_path = "/tmp/repo"
     return manager
 
 
 @pytest.fixture
-def registry(mock_worktree_storage, mock_git_manager):
+def registry(
+    mock_worktree_storage: MagicMock,
+    mock_git_manager: MagicMock,
+) -> InternalToolRegistry:
     return create_worktrees_registry(
         worktree_storage=mock_worktree_storage,
         git_manager=mock_git_manager,

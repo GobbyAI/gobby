@@ -602,8 +602,17 @@ def install_codex(project_path: Path, *, mode: str = "global") -> dict[str, Any]
     elif not strip_result["success"]:
         logger.warning(f"Failed to strip MCP tool overrides: {strip_result['error']}")
 
-    trust_result = seed_gobby_home_trust("codex")
+    try:
+        trust_result = seed_gobby_home_trust("codex")
+    except Exception as e:
+        result["error"] = f"Failed to seed Codex trust: {e}"
+        return result
     result["trust"] = trust_result
+    if not trust_result.get("success"):
+        errors = trust_result.get("errors") or []
+        detail = "; ".join(str(error) for error in errors) if errors else "unknown error"
+        result["error"] = f"Failed to seed Codex trust: {detail}"
+        return result
     if trust_result.get("files_written"):
         result["config_updated"] = True
 

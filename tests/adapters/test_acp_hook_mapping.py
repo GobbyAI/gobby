@@ -2,6 +2,7 @@
 
 import pytest
 
+from gobby.adapters.qwen import QwenAdapter
 from gobby.hooks.events import HookEventType
 
 pytestmark = pytest.mark.unit
@@ -26,11 +27,16 @@ class TestEventTypeMapping:
             ("Notification", HookEventType.NOTIFICATION),
         ],
     )
-    def test_event_map_coverage(self, adapter, acp_type, expected_type) -> None:
+    def test_event_map_coverage(
+        self,
+        adapter: QwenAdapter,
+        acp_type: str,
+        expected_type: HookEventType,
+    ) -> None:
         """EVENT_MAP maps all ACP hook types correctly."""
         assert adapter.EVENT_MAP[acp_type] == expected_type
 
-    def test_event_map_has_all_acp_types(self, adapter) -> None:
+    def test_event_map_has_all_acp_types(self, adapter: QwenAdapter) -> None:
         """EVENT_MAP contains exactly 11 ACP hook types."""
         assert len(adapter.EVENT_MAP) == 11
 
@@ -51,7 +57,10 @@ class TestEventTypeMapping:
         ],
     )
     def test_hook_event_name_map_coverage(
-        self, adapter, event_type_value, expected_acp_name
+        self,
+        adapter: QwenAdapter,
+        event_type_value: str,
+        expected_acp_name: str,
     ) -> None:
         """HOOK_EVENT_NAME_MAP reverse maps all event types correctly."""
         assert adapter.HOOK_EVENT_NAME_MAP[event_type_value] == expected_acp_name
@@ -109,15 +118,20 @@ class TestToolNameNormalization:
             ("delegate_to_agent", "Task"),
         ],
     )
-    def test_tool_map_coverage(self, adapter, acp_tool, expected_tool) -> None:
+    def test_tool_map_coverage(
+        self,
+        adapter: QwenAdapter,
+        acp_tool: str,
+        expected_tool: str,
+    ) -> None:
         """TOOL_MAP normalizes all known ACP tool names."""
         assert adapter.normalize_tool_name(acp_tool) == expected_tool
 
-    def test_unknown_tool_passes_through(self, adapter) -> None:
+    def test_unknown_tool_passes_through(self, adapter: QwenAdapter) -> None:
         """Unknown tool names pass through unchanged."""
         assert adapter.normalize_tool_name("CustomTool") == "CustomTool"
         assert adapter.normalize_tool_name("mcp_server_tool") == "mcp_server_tool"
 
-    def test_empty_tool_name(self, adapter) -> None:
+    def test_empty_tool_name(self, adapter: QwenAdapter) -> None:
         """Empty tool name passes through unchanged."""
         assert adapter.normalize_tool_name("") == ""

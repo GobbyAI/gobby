@@ -400,7 +400,11 @@ async def generate_session_summaries(
     try:
         from gobby.sessions.session_wiki_file import write_session_wiki_page
 
-        session_wiki_result = write_session_wiki_page(session, final_summary)
+        session_wiki_result = await asyncio.to_thread(
+            write_session_wiki_page,
+            session,
+            final_summary,
+        )
     except Exception as e:  # noqa: BLE001 — boundary: wiki file must not break summary
         logger.warning(f"Session wiki file write failed for session {session_id}: {e}")
         session_wiki_result = {"written": False, "skipped": "error", "error": str(e)}

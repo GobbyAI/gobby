@@ -9,6 +9,7 @@ from pathlib import Path
 from typing import Any
 
 import click
+import psycopg
 
 from gobby.storage.skills import LocalSkillManager
 
@@ -169,7 +170,7 @@ def set_skill_enabled(storage_factory: StorageFactory, name: str, enabled: bool)
     action = "enabling" if enabled else "disabling"
     try:
         storage.update_skill(skill.id, enabled=enabled)
-    except (OSError, RuntimeError, ValueError) as exc:
+    except (OSError, RuntimeError, ValueError, psycopg.Error) as exc:
         click.echo(f"Error {action} skill: {exc}", err=True)
         sys.exit(1)
 

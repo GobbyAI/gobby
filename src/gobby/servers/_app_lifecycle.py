@@ -407,7 +407,10 @@ def create_lifespan(
                 logger.exception("PendingInteractionManager cleanup failed: %s", e)
 
         if hasattr(app.state, "hook_manager"):
-            await app.state.hook_manager.shutdown_async()
+            hook_manager_shutdown = getattr(app.state.hook_manager, "shutdown_async", None)
+            if not callable(hook_manager_shutdown):
+                raise RuntimeError("Hook manager must provide callable shutdown_async()")
+            await hook_manager_shutdown()
             app.state.hook_manager_shutdown_complete = True
             if server._hook_manager is app.state.hook_manager:
                 server._hook_manager = None

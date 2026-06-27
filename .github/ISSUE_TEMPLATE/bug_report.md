@@ -15,7 +15,7 @@ A clear and concise description of the bug.
 - **OS**: (e.g., macOS 14.0, Ubuntu 22.04)
 - **Python version**: (output of `python --version`)
 - **Gobby version**: (output of `gobby --version` or commit hash)
-- **AI CLI**: (Claude Code / Codex CLI / Qwen CLI / Droid / AGY and version)
+- **AI CLI**: (Claude Code / Codex CLI / Qwen CLI / Droid / AGY / Grok and version)
 
 ## Steps to Reproduce
 

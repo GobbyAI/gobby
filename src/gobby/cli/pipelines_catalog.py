@@ -5,6 +5,7 @@ Pipeline definition CLI commands.
 from __future__ import annotations
 
 import sys
+from importlib import import_module
 from typing import Any
 
 import click
@@ -15,7 +16,7 @@ _FACADE_MODULE = "gobby.cli.pipelines"
 
 
 def _facade() -> Any:
-    return sys.modules[_FACADE_MODULE]
+    return sys.modules.get(_FACADE_MODULE) or import_module(_FACADE_MODULE)
 
 
 @click.command("list")

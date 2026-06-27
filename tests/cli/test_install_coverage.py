@@ -294,6 +294,7 @@ class TestInstallCommand:
             patch("gobby.cli.install._is_codex_cli_installed", return_value=False),
             patch("gobby.cli.install._is_droid_cli_installed", return_value=False),
             patch("gobby.cli.install.install_agy", return_value=agy_result) as mock_agy,
+            patch("gobby.cli.install._run_git_hooks_install"),
             patch("gobby.cli.install._run_embedding_install", return_value="none"),
             patch("gobby.cli.install._maybe_start_daemon_after_install"),
         ):

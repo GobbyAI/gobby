@@ -1176,6 +1176,44 @@ async def test_text_generation_service_resolves_agy_effort_before_adapter(
     ]
 
 
+@pytest.mark.asyncio
+async def test_text_generation_service_normalizes_legacy_agy_effort_model_alias() -> None:
+    registry = AICapabilityRegistry(
+        [
+            CapabilityBinding(
+                capability=AICapability.TEXT_GENERATE,
+                provider="agy",
+                adapter_style=AIAdapterStyle.CLI,
+                available=True,
+                models=("gemini-3.5-flash",),
+                strict_models=True,
+            ),
+        ]
+    )
+    agy = RecordingAdapter("agy")
+    service = TextGenerationService(registry, {"agy": agy})
+
+    result = await service.generate_result(
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="agy",
+            model="gemini-3.5-flash-medium",
+        )
+    )
+
+    assert result.provider == "agy"
+    assert result.model == "gemini-3.5-flash"
+    assert result.applied_reasoning_effort == "medium"
+    assert agy.requests == [
+        TextGenerationRequest(
+            prompt="summarize",
+            provider="agy",
+            model="gemini-3.5-flash",
+            reasoning_effort="medium",
+        )
+    ]
+
+
 def test_gate_reasoning_effort_skips_agy_without_explicit_model() -> None:
     binding = CapabilityBinding(
         capability=AICapability.TEXT_GENERATE,
@@ -3295,6 +3333,9 @@ def test_agy_cli_text_generate_adapter_omits_model_when_not_requested() -> None:
         ("claude-sonnet-4-6", "high", "Claude Sonnet 4.6 (Thinking)"),
         ("claude-opus-4-6", "high", "Claude Opus 4.6 (Thinking)"),
         ("gpt-oss-120b", None, "GPT-OSS 120B (Medium)"),
+        ("gemini-3.5-flash-medium", None, "Gemini 3.5 Flash (Medium)"),
+        ("claude-sonnet-4-6-thinking", None, "Claude Sonnet 4.6 (Thinking)"),
+        ("GPT-OSS 120B (Medium)", None, "GPT-OSS 120B (Medium)"),
     ],
 )
 def test_agy_cli_text_generate_adapter_composes_effort_model_display(

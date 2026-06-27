@@ -1,3 +1,4 @@
+from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -225,7 +226,7 @@ class TestInstallProviderHooks:
             mock_install.assert_called_once_with(tmp_path, mode="project")
             assert "Install failed" in caplog.text
 
-    def test_codex_hooks_success(self, tmp_path) -> None:
+    def test_codex_hooks_success(self, tmp_path: Path) -> None:
         """Test Codex hooks installation uses project-local installer without mode."""
         from gobby.cli.installers import codex as codex_mod
 

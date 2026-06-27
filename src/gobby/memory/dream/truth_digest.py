@@ -13,6 +13,7 @@ budget so they stay cheap to inject on every page.
 
 from __future__ import annotations
 
+import asyncio
 import json
 import logging
 import re
@@ -94,12 +95,33 @@ def build_project_truth_digest(
     has explicitly selected platform scope.
     """
     payload = _load_project_truth_payload(repo_path)
+    return _render_project_truth_digest(payload, repo_path=repo_path, max_chars=max_chars)
+
+
+async def build_project_truth_digest_async(
+    repo_path: str | None,
+    *,
+    max_chars: int = DEFAULT_DIGEST_MAX_CHARS,
+) -> str:
+    """Build a project truth digest without blocking the event loop on file I/O."""
+    payload = await asyncio.to_thread(_load_project_truth_payload, repo_path)
+    return _render_project_truth_digest(payload, repo_path=repo_path, max_chars=max_chars)
+
+
+def _render_project_truth_digest(
+    payload: dict[str, Any],
+    *,
+    repo_path: str | None,
+    max_chars: int,
+) -> str:
     if not payload:
         return ""
-    if payload.get("schema_version") != 1:
+    schema_version = payload.get("schema_version")
+    if schema_version != 1:
         logger.warning(
-            "Unsupported project truth digest schema_version: %r",
-            payload.get("schema_version"),
+            "Unsupported project truth digest schema_version for repo_path=%s: %r",
+            repo_path,
+            schema_version,
         )
         return ""
 

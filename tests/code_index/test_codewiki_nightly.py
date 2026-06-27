@@ -152,6 +152,7 @@ def test_register_codewiki_nightly_crons_covers_each_project_once(
     repo_b = tmp_path / "b"
     project_a = pm.create(name="codewiki-a", repo_path=str(repo_a))
     project_b = pm.create(name="codewiki-b", repo_path=str(repo_b))
+    duplicate_repo_project = "44444444-4444-4444-4444-444444444444"
     # A repo-less project ID that does not exist in ``projects``: it must be
     # skipped on the empty-repo gate before any FK-touching cron write.
     no_repo_project = "33333333-3333-3333-3333-333333333333"
@@ -167,6 +168,7 @@ def test_register_codewiki_nightly_crons_covers_each_project_once(
             (project_a.id, repo_a),
             (project_b.id, repo_b),
             (project_a.id, repo_a),
+            (duplicate_repo_project, repo_a),
             (no_repo_project, ""),
         ],
         wiki_config=WikiConfig(codewiki_nightly_enabled=True),
@@ -179,6 +181,7 @@ def test_register_codewiki_nightly_crons_covers_each_project_once(
     }
     assert storage.get_job_by_name(codewiki_nightly_job_name(project_a.id)) is not None
     assert storage.get_job_by_name(codewiki_nightly_job_name(project_b.id)) is not None
+    assert storage.get_job_by_name(codewiki_nightly_job_name(duplicate_repo_project)) is None
     assert storage.get_job_by_name(codewiki_nightly_job_name(no_repo_project)) is None
 
 

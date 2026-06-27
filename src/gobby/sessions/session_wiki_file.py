@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import logging
 import re
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
@@ -34,8 +35,11 @@ _EPHEMERAL_SOURCES = ("pipeline", "cron")
 _SECRET_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     # OpenAI / Anthropic style keys: sk-..., sk-proj-..., sk-ant-...
     (re.compile(r"sk-[A-Za-z0-9][A-Za-z0-9_-]{15,}"), "sk-<redacted>"),
-    # GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_
-    (re.compile(r"\bgh[pousr]_[A-Za-z0-9]{16,}"), "gh<redacted-token>"),
+    # GitHub tokens: ghp_, gho_, ghu_, ghs_, ghr_, github_pat_
+    (
+        re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{22,})"),
+        "gh<redacted-token>",
+    ),
     # AWS access key IDs
     (re.compile(r"\bAKIA[0-9A-Z]{16}\b"), "AKIA<redacted>"),
     # Bearer / Authorization tokens
@@ -142,13 +146,43 @@ def session_wiki_path_exists(session: Any) -> bool:
         return False
 
 
-def _write_file(path: Path, content: str) -> None:
+def session_wiki_path_is_fresh(session: Any) -> bool:
+    """Return true when the flat wiki file exists and is not older than the summary."""
+    try:
+        stat = resolve_session_wiki_path(session).stat()
+    except FileNotFoundError:
+        return False
+    except OSError as exc:
+        logger.warning("Failed to stat session wiki file: %s", exc)
+        return False
+
+    summary_generated_at = _parse_datetime(getattr(session, "summary_generated_at", None))
+    if summary_generated_at is None:
+        return True
+    return stat.st_mtime >= summary_generated_at.timestamp()
+
+
+def _write_file(path: Path, content: str) -> bool:
     """Write the redacted page, creating parent dirs. Best-effort."""
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(content, encoding="utf-8")
+        return True
     except OSError as exc:
         logger.warning("Failed to write session wiki file %s: %s", path, exc)
+        return False
+
+
+def _parse_datetime(value: Any) -> datetime | None:
+    if not isinstance(value, str) or not value.strip():
+        return None
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed
 
 
 def _skip_reason(session: Any) -> str | None:
@@ -186,7 +220,8 @@ def write_session_wiki_page(session: Any, summary_markdown: str | None) -> dict[
     page = f"{frontmatter}\n\n{summary_markdown.strip()}\n"
     redacted = redact_session_markdown(page)
     path = resolve_session_wiki_path(session)
-    _write_file(path, redacted)
+    if not _write_file(path, redacted):
+        return {"written": False, "skipped": "write_failed", "path": str(path)}
     logger.info(
         "Session wiki page written for %s (%d chars)",
         getattr(session, "id", "?"),

@@ -1,6 +1,19 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useRef,
+  useState,
+  type Dispatch,
+  type SetStateAction,
+} from "react";
 
-export function useAppToast() {
+type AppToastState = {
+  toastMessage: string | null;
+  setToastMessage: Dispatch<SetStateAction<string | null>>;
+  showToast: (msg: string, durationMs?: number) => void;
+};
+
+export function useAppToast(): AppToastState {
   const [toastMessage, setToastMessage] = useState<string | null>(null);
   const toastTimerRef = useRef<number | null>(null);
 

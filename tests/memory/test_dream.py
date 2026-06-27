@@ -34,9 +34,14 @@ from gobby.memory.dream.service import (
 from gobby.memory.dream.storage import (
     INTERRUPTED_CANCELLED_ERROR,
     INTERRUPTED_RESTART_ERROR,
+    PLATFORM_TRUTH_SCOPE,
     MemoryDreamStore,
 )
-from gobby.memory.dream.truth_digest import build_current_truth_digest, build_project_truth_digest
+from gobby.memory.dream.truth_digest import (
+    build_current_truth_digest,
+    build_project_truth_digest,
+    build_project_truth_digest_async,
+)
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.memories import LocalMemoryManager
 from gobby.storage.projects import LocalProjectManager
@@ -1674,6 +1679,16 @@ def test_build_project_truth_digest_matches_real_gobby_cli_artifact_shape(
 
 
 @pytest.mark.asyncio
+async def test_build_project_truth_digest_async_matches_sync_render(tmp_path: Path) -> None:
+    repo_path = tmp_path / "repo"
+    _write_truth_digest(repo_path, _complete_digest_payload(service="Async sidecar"))
+
+    assert await build_project_truth_digest_async(str(repo_path)) == build_project_truth_digest(
+        str(repo_path)
+    )
+
+
+@pytest.mark.asyncio
 async def test_service_uses_platform_truth_for_global_and_current_daemon_project(
     tmp_path: Path,
 ) -> None:
@@ -1833,11 +1848,17 @@ class _FakeDueProjectsManager:
     def __init__(self, targets: list[str | None]) -> None:
         self.targets = targets
         self.cutoffs: list[str] = []
-        self.db = MagicMock()
+        self.db = _FakeDreamDB()
 
     def list_dream_project_ids(self, *, redream_cutoff: str) -> list[str | None]:
         self.cutoffs.append(redream_cutoff)
         return list(self.targets)
+
+    def mark_global_memories_due(self) -> int:
+        return 0
+
+    def mark_project_memories_due(self, project_id: str) -> int:
+        return 0
 
 
 @pytest.mark.asyncio
@@ -1999,6 +2020,46 @@ async def test_truth_change_trigger_rejudges_cooled_memory_on_digest_change(
     await service._apply_truth_change_triggers()
     assert manager.get_memory(memory.id).last_dreamed_at is None
     assert project.id in manager.list_dream_project_ids(redream_cutoff=cooldown_cutoff)
+
+
+@pytest.mark.asyncio
+async def test_platform_truth_change_rejudges_global_and_current_project_memories(
+    temp_db: HubDatabase,
+) -> None:
+    pm = LocalProjectManager(temp_db)
+    current_project = pm.create(name="current-project", repo_path=None)
+    other_project = pm.create(name="other-project", repo_path=None)
+    manager = LocalMemoryManager(temp_db)
+    service = MemoryDreamService(
+        memory_manager=cast(MemoryDreamManagerProtocol, manager),
+        dream_config=_sweep_config(),
+        current_project_id=current_project.id,
+    )
+    await service._ensure_schema_async()
+
+    just_now = datetime.now(UTC).isoformat()
+    global_memory = manager.create_memory(content="global platform fact", project_id=None)
+    current_memory = manager.create_memory(
+        content="current platform fact", project_id=current_project.id
+    )
+    other_memory = manager.create_memory(content="other project fact", project_id=other_project.id)
+    for memory in (global_memory, current_memory, other_memory):
+        manager.mark_dreamed(memory.id, when=just_now)
+
+    await service._apply_truth_change_triggers()
+
+    assert manager.get_memory(global_memory.id).last_dreamed_at is None
+    assert manager.get_memory(current_memory.id).last_dreamed_at is None
+    assert manager.get_memory(other_memory.id).last_dreamed_at is not None
+    assert service.store.get_truth_digest_hash(PLATFORM_TRUTH_SCOPE) is not None
+
+    manager.mark_dreamed(global_memory.id, when=just_now)
+    manager.mark_dreamed(current_memory.id, when=just_now)
+
+    await service._apply_truth_change_triggers()
+
+    assert manager.get_memory(global_memory.id).last_dreamed_at is not None
+    assert manager.get_memory(current_memory.id).last_dreamed_at is not None
 
 
 def test_build_truth_digest_requires_explicit_scope() -> None:

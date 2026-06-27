@@ -859,6 +859,16 @@ class TestProviderModelCatalog:
         agy = shutil.which("agy")
         if agy is None:
             pytest.skip("agy CLI not installed")
+        version_result = subprocess.run(
+            [agy, "--version"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=10,
+        )
+        version_output = f"{version_result.stdout}\n{version_result.stderr}"
+        if "1.0.10" not in version_output:
+            pytest.skip(f"agy models fixture is pinned to 1.0.10; found {version_output.strip()}")
         result = subprocess.run(
             [agy, "models"],
             check=True,

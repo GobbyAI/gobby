@@ -538,6 +538,39 @@ async def test_plan_mode_cancels_unapproved_tool_and_broadcasts_plan() -> None:
     assert isinstance(events[-1], DoneEvent)
 
 
+@pytest.mark.asyncio
+async def test_plan_mode_batch_blocks_destructive_tool_before_exit_spec() -> None:
+    backend = DroidWebChatBackend()
+    session, broadcasts = _exit_spec_session(backend)
+    payload = json.loads(
+        _permission_request_line(
+            tool_id="tool-write",
+            tool_name="Write",
+            tool_input={"file_path": "src/gobby/runtime.py", "content": "x"},
+        )
+    )
+    payload["params"]["toolUses"].append(
+        {
+            "toolUse": {
+                "type": "tool_use",
+                "id": "tool-exit",
+                "name": "ExitSpecMode",
+                "input": {"plan": "## Spec\n\n1. Edit runtime"},
+            },
+            "confirmationType": "edit",
+            "details": {"type": "edit", "filePath": "src/gobby/runtime.py"},
+        }
+    )
+
+    events = parse_droid_stream_line(json.dumps(payload))
+
+    result = await backend._resolve_permission_request(session, events)
+
+    assert result == "cancel"
+    assert broadcasts == []
+    assert session.has_blocking_plan_decision is False
+
+
 def _exit_spec_session(
     backend: DroidWebChatBackend,
 ) -> tuple[DroidManagedChatSession, list[str | None]]:

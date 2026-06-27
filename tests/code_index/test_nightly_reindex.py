@@ -206,6 +206,39 @@ async def test_nightly_reindex_concurrency_and_timeout_failure(tmp_path: Path) -
     assert log_text.count('"status": "timed_out"') == 2
 
 
+@pytest.mark.asyncio
+async def test_nightly_reindex_isolates_per_project_exception(tmp_path: Path) -> None:
+    root_one = tmp_path / "one"
+    root_two = tmp_path / "two"
+    root_one.mkdir()
+    root_two.mkdir()
+
+    class FailingOnceGateway(NightlyGateway):
+        async def nightly_full_reindex(
+            self,
+            project_root: Path,
+            *,
+            timeout: float | None = None,
+        ) -> GcodeCommandResult:
+            self.calls.append((project_root, timeout))
+            if project_root == root_one:
+                raise RuntimeError("boom")
+            return _gcode_result(("/tmp/gcode", "index", "--full"), timeout_seconds=timeout)
+
+    gateway = FailingOnceGateway()
+    context = NightlyContext(
+        projects=[_project("proj-1", root_one), _project("proj-2", root_two)],
+        gateway=gateway,
+        log_file=tmp_path / "maintenance.log",
+    )
+    reindexer = CodeIndexNightlyFullReindexer(context)  # type: ignore[arg-type]
+
+    result = await reindexer.run_once()
+
+    assert "completed=1 failed=1 skipped=0" in result
+    assert gateway.calls == [(root_one, 7200), (root_two, 7200)]
+
+
 def test_register_nightly_reindex_cron_creates_global_system_job() -> None:
     class CronStorage:
         def __init__(self) -> None:

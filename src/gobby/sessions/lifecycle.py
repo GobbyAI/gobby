@@ -28,7 +28,7 @@ from gobby.sessions.context_usage import (
     snapshot_from_window_metadata,
 )
 from gobby.sessions.message_stats import MessageProtocol, compute_message_stats
-from gobby.sessions.session_wiki_file import session_wiki_path_exists
+from gobby.sessions.session_wiki_file import session_wiki_path_is_fresh
 from gobby.sessions.summarize import TURN_PATTERN
 from gobby.sessions.summary_validity import is_summary_markdown_valid
 from gobby.sessions.transcript_archive import backup_transcript
@@ -76,6 +76,12 @@ def _coerce_context_window(value: Any) -> int | None:
 
 def _message_context_window(message: ParsedMessage) -> int | None:
     return context_window_from_raw_message(getattr(message, "raw_json", None))
+
+
+def _session_artifacts_complete(session: Any) -> bool:
+    return is_summary_markdown_valid(session.summary_markdown) and session_wiki_path_is_fresh(
+        session
+    )
 
 
 class SessionLifecycleManager:
@@ -493,12 +499,8 @@ class SessionLifecycleManager:
             refreshed = self.session_manager.get(session.id)
             if not self.llm_service:
                 should_mark = bool(refreshed)
-            elif transcript_missing:
-                should_mark = refreshed is not None and is_summary_markdown_valid(
-                    refreshed.summary_markdown
-                )
             else:
-                should_mark = refreshed is not None and bool(refreshed.summary_markdown)
+                should_mark = refreshed is not None and _session_artifacts_complete(refreshed)
 
             if should_mark:
                 self.session_manager.mark_transcript_processed(session.id)
@@ -553,7 +555,7 @@ class SessionLifecycleManager:
         if not session:
             return
 
-        if is_summary_markdown_valid(session.summary_markdown) and session_wiki_path_exists(
+        if is_summary_markdown_valid(session.summary_markdown) and session_wiki_path_is_fresh(
             session
         ):
             return

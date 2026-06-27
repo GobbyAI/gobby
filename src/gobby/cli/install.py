@@ -387,6 +387,10 @@ def install(
 
     project_path = working_dir.resolve() if working_dir else Path.cwd()
     mode = "project" if project_flag else "global"
+    if project_flag and agy_flag:
+        raise click.UsageError(
+            "AGY integration does not support --project; install AGY globally without --project."
+        )
 
     if (
         not claude_flag
@@ -416,7 +420,7 @@ def install(
             clis_to_install.append("grok")
         if _is_qwen_cli_installed():
             clis_to_install.append("qwen")
-        if _is_agy_cli_installed():
+        if not project_flag and _is_agy_cli_installed():
             clis_to_install.append("agy")
         if _is_codex_cli_installed():
             clis_to_install.append("codex")

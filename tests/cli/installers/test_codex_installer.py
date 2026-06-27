@@ -3,6 +3,7 @@
 import json
 import os
 import tomllib
+from collections.abc import Iterator
 from pathlib import Path
 from typing import Any, Final
 from unittest.mock import patch
@@ -260,7 +261,7 @@ class TestInstallCodex:
     """Tests for install_codex function."""
 
     @pytest.fixture
-    def mock_home(self, temp_dir: Path):
+    def mock_home(self, temp_dir: Path) -> Iterator[Path]:
         """Mock Path.home() and GOBBY_HOOKS_DIR to return temp directory."""
         hooks_dir = str(temp_dir / ".gobby" / "hooks")
         with (
@@ -274,7 +275,7 @@ class TestInstallCodex:
             yield temp_dir
 
     @pytest.fixture
-    def mock_install_dir(self, temp_dir: Path):
+    def mock_install_dir(self, temp_dir: Path) -> Iterator[Path]:
         """Create a mock install directory with hooks-template.json."""
         install_dir = temp_dir / "install"
         codex_dir = install_dir / "codex"
@@ -718,7 +719,7 @@ class TestInstallCodexProjectHooks:
     """Tests for project-local Codex hook installation."""
 
     @pytest.fixture
-    def mock_home(self, temp_dir: Path):
+    def mock_home(self, temp_dir: Path) -> Iterator[Path]:
         """Mock Path.home() and GOBBY_HOOKS_DIR to return temp directory."""
         hooks_dir = str(temp_dir / ".gobby" / "hooks")
         with (
@@ -732,7 +733,7 @@ class TestInstallCodexProjectHooks:
             yield temp_dir
 
     @pytest.fixture
-    def mock_install_dir(self, temp_dir: Path):
+    def mock_install_dir(self, temp_dir: Path) -> Iterator[Path]:
         """Create a mock install directory with hooks-template.json."""
         install_dir = temp_dir / "install"
         codex_dir = install_dir / "codex"
@@ -886,7 +887,7 @@ class TestUninstallCodex:
     """Tests for uninstall_codex function."""
 
     @pytest.fixture
-    def mock_home(self, temp_dir: Path):
+    def mock_home(self, temp_dir: Path) -> Iterator[Path]:
         """Mock Path.home() and GOBBY_HOOKS_DIR to return temp directory."""
         hooks_dir = str(temp_dir / ".gobby" / "hooks")
         with (
@@ -1081,7 +1082,7 @@ class TestHooksTemplateFormat:
     """Tests for hooks.json format and content."""
 
     @pytest.fixture
-    def mock_home(self, temp_dir: Path):
+    def mock_home(self, temp_dir: Path) -> Iterator[Path]:
         """Mock Path.home() and GOBBY_HOOKS_DIR to return temp directory."""
         hooks_dir = str(temp_dir / ".gobby" / "hooks")
         with (
@@ -1091,7 +1092,7 @@ class TestHooksTemplateFormat:
             yield temp_dir
 
     @pytest.fixture
-    def mock_install_dir(self, temp_dir: Path):
+    def mock_install_dir(self, temp_dir: Path) -> Iterator[Path]:
         """Create a mock install directory with hooks-template.json."""
         install_dir = temp_dir / "install"
         codex_dir = install_dir / "codex"
@@ -1182,7 +1183,7 @@ class TestEdgeCases:
     """Tests for edge cases and error conditions."""
 
     @pytest.fixture
-    def mock_home(self, temp_dir: Path):
+    def mock_home(self, temp_dir: Path) -> Iterator[Path]:
         """Mock Path.home() and GOBBY_HOOKS_DIR to return temp directory."""
         hooks_dir = str(temp_dir / ".gobby" / "hooks")
         with (
@@ -1313,7 +1314,7 @@ class TestResultStructure:
     """Tests for the result dictionary structure."""
 
     @pytest.fixture
-    def mock_home(self, temp_dir: Path):
+    def mock_home(self, temp_dir: Path) -> Iterator[Path]:
         """Mock Path.home() and GOBBY_HOOKS_DIR to return temp directory."""
         hooks_dir = str(temp_dir / ".gobby" / "hooks")
         with (
@@ -1323,7 +1324,7 @@ class TestResultStructure:
             yield temp_dir
 
     @pytest.fixture
-    def mock_install_dir(self, temp_dir: Path):
+    def mock_install_dir(self, temp_dir: Path) -> Iterator[Path]:
         """Create a mock install directory with hooks-template.json."""
         install_dir = temp_dir / "install"
         codex_dir = install_dir / "codex"

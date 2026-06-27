@@ -24,6 +24,7 @@ def default_wiki_setup_result() -> dict[str, Any]:
     return {
         "success": False,
         "gitignore_updated": False,
+        "gitignore_status": "unknown",
         "worktree_path": None,
         "branch": WIKI_BRANCH,
         "warnings": [],
@@ -52,7 +53,11 @@ def setup_wiki_branch(
         )
         return result
 
-    result["gitignore_updated"] = _ensure_gitignore_block(git_root)
+    gitignore_status, gitignore_warning = _ensure_gitignore_block(git_root)
+    result["gitignore_status"] = gitignore_status
+    result["gitignore_updated"] = gitignore_status == "updated"
+    if gitignore_warning:
+        result["warnings"].append(gitignore_warning)
 
     tracked_files = _tracked_wiki_files(git_root)
     result["tracked_files"] = tracked_files
@@ -96,24 +101,26 @@ def _git_toplevel(project_path: Path) -> Path | None:
     return Path(root).resolve() if root else None
 
 
-def _ensure_gitignore_block(repo_path: Path) -> bool:
+def _ensure_gitignore_block(repo_path: Path) -> tuple[str, str | None]:
     gitignore_path = repo_path / ".gitignore"
     try:
         original = gitignore_path.read_text(encoding="utf-8") if gitignore_path.exists() else ""
     except OSError as exc:
-        logger.warning("Failed to read .gitignore for wiki setup: %s", exc)
-        return False
+        warning = f"Failed to read .gitignore for wiki setup: {exc}"
+        logger.warning(warning)
+        return "failed", warning
 
     updated = _replace_gitignore_block(original)
     if updated == original:
-        return False
+        return "unchanged", None
 
     try:
         gitignore_path.write_text(updated, encoding="utf-8")
     except OSError as exc:
-        logger.warning("Failed to update .gitignore for wiki setup: %s", exc)
-        return False
-    return True
+        warning = f"Failed to update .gitignore for wiki setup: {exc}"
+        logger.warning(warning)
+        return "failed", warning
+    return "updated", None
 
 
 def _replace_gitignore_block(content: str) -> str:

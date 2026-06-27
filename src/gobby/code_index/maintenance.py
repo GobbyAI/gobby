@@ -141,11 +141,13 @@ async def _run_maintenance(
                             purge_project = True
                         else:
                             logger.error(
-                                f"Maintenance reindex failed for {project.id} "
-                                f"(exit code {result.returncode}): {detail}"
+                                "Maintenance reindex failed for %s (exit code %s): %s",
+                                project.id,
+                                result.returncode,
+                                detail,
                             )
-            except Exception as e:
-                logger.exception("Maintenance reindex failed for %s: %s", project.id, e)
+            except Exception:
+                logger.exception("Maintenance reindex failed for %s", project.id)
 
             if purge_project:
                 await purge_missing_project(

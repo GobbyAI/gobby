@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -27,11 +28,15 @@ def _session(**overrides: object) -> SimpleNamespace:
 
 
 def test_redact_session_markdown_scrubs_secrets() -> None:
-    text = "key sk-ABCDEFGHIJKLMNOPQRSTUV and token ghp_ABCDEFGHIJKLMNOPQR"
+    text = (
+        "key sk-ABCDEFGHIJKLMNOPQRSTUV and token ghp_ABCDEFGHIJKLMNOPQR "
+        "plus github_pat_1234567890_abcdefghijklmnopqrstuv"
+    )
     redacted = swf.redact_session_markdown(text)
     assert "sk-ABCDEFGHIJKLMNOPQRSTUV" not in redacted
     assert "sk-<redacted>" in redacted
     assert "ghp_ABCDEFGHIJKLMNOPQR" not in redacted
+    assert "github_pat_1234567890_abcdefghijklmnopqrstuv" not in redacted
 
 
 def test_redact_session_markdown_rewrites_home_path(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -88,6 +93,18 @@ def test_write_session_wiki_page_skips_invalid_summary(
     assert not (tmp_path / "session_wiki").exists()
 
 
+def test_write_session_wiki_page_reports_write_failure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    monkeypatch.setattr(swf, "_write_file", lambda _path, _content: False)
+
+    result = swf.write_session_wiki_page(_session(), "## Current State\nwork")
+
+    assert result["written"] is False
+    assert result["skipped"] == "write_failed"
+
+
 def test_write_session_wiki_page_skips_subagent(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -113,3 +130,22 @@ def test_session_wiki_path_exists_tracks_file(
     assert swf.session_wiki_path_exists(session) is False  # missing → restore needed
     swf.write_session_wiki_page(session, "## Current State\nwork")
     assert swf.session_wiki_path_exists(session) is True
+
+
+def test_session_wiki_path_is_fresh_uses_summary_generated_at(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("gobby.cli.utils_config.get_gobby_home", lambda: tmp_path)
+    session = _session(summary_generated_at="2026-05-02T12:00:00+00:00")
+    path = swf.resolve_session_wiki_path(session)
+    path.parent.mkdir(parents=True)
+    path.write_text("old", encoding="utf-8")
+    old_mtime = 1_000_000_000
+    os.utime(path, (old_mtime, old_mtime))
+
+    assert swf.session_wiki_path_is_fresh(session) is False
+
+    future_mtime = 2_000_000_000
+    os.utime(path, (future_mtime, future_mtime))
+
+    assert swf.session_wiki_path_is_fresh(session) is True

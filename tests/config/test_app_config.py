@@ -84,6 +84,18 @@ def test_code_index_config_maintenance_defaults() -> None:
     assert config.maintenance_log_file == "~/.gobby/logs/code-index-maintenance.log"
 
 
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"nightly_full_reindex_cron": "not a cron"},
+        {"nightly_full_reindex_timezone": "Not/AZone"},
+    ],
+)
+def test_code_index_config_rejects_invalid_nightly_schedule(kwargs: dict[str, str]) -> None:
+    with pytest.raises(ValidationError):
+        CodeIndexConfig(**kwargs)
+
+
 def write_secure_bootstrap(path: Path, content: str) -> None:
     path.write_text(content)
     path.chmod(0o600)

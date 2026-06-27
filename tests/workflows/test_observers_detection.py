@@ -235,18 +235,24 @@ class TestDetectPlanModeFromContext:
         prompt = "# Active Approval Mode: Plan\nPlease analyze the codebase."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 0
+        assert variables.get("plan_mode") is True
 
     def test_detects_acp_operating_in_plan_mode(self, variables) -> None:
         prompt = "You are operating in **Plan Mode**. Research only."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 0
+        assert variables.get("plan_mode") is True
 
     def test_detects_acp_exit_via_execute_mode(self, variables) -> None:
         variables["mode_level"] = 0
         variables["chat_mode"] = "bypass"
+        variables["plan_mode"] = True
+        variables["plan_skill_loaded"] = True
         prompt = "# Active Approval Mode: Execute\nNow implement."
         detect_plan_mode_from_context(prompt, variables, SESSION_ID)
         assert variables.get("mode_level") == 2
+        assert variables.get("plan_mode") is False
+        assert variables.get("plan_skill_loaded") is False
 
     def test_acp_markers_inside_conversation_history_ignored(self, variables) -> None:
         prompt = (

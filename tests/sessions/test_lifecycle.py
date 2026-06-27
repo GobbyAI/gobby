@@ -449,6 +449,7 @@ class TestSessionLifecycleManager:
                 manager, "_process_session_transcript", new_callable=AsyncMock
             ) as mock_proc,
             patch.object(manager, "_generate_artifacts_if_needed", new_callable=AsyncMock),
+            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=True),
         ):
             mock_proc.side_effect = [Exception("Fail"), None]
 
@@ -488,12 +489,45 @@ class TestSessionLifecycleManager:
                 manager, "_generate_artifacts_if_needed", new_callable=AsyncMock
             ) as mock_gen,
             patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
+            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=True),
         ):
             processed = await manager._process_pending_transcripts()
 
         mock_gen.assert_awaited_once_with("s1")  # did NOT short-circuit
         manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert processed == 1
+
+    @pytest.mark.asyncio
+    async def test_missing_transcript_valid_summary_without_fresh_wiki_stays_unprocessed(
+        self,
+        manager,
+    ):
+        """Valid summary alone is not enough; the wiki mirror must be fresh."""
+        digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
+        session = MagicMock(spec=Session)
+        session.id = "s1"
+        session.transcript_path = "/nonexistent/missing-s1.jsonl"
+        session.external_id = "ext-s1"
+        session.agent_depth = 0
+        session.source = "claude"
+        session.digest_markdown = digest
+        manager.session_manager.get_pending_transcript_sessions.return_value = [session]
+        manager.llm_service = MagicMock()
+
+        refreshed = MagicMock()
+        refreshed.summary_markdown = "valid summary"
+        manager.session_manager.get.return_value = refreshed
+
+        with (
+            patch.object(manager, "_process_session_transcript", new_callable=AsyncMock),
+            patch.object(manager, "_generate_artifacts_if_needed", new_callable=AsyncMock),
+            patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
+            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=False),
+        ):
+            processed = await manager._process_pending_transcripts()
+
+        manager.session_manager.mark_transcript_processed.assert_not_called()
+        assert processed == 0
 
     @pytest.mark.asyncio
     async def test_missing_transcript_invalid_summary_stays_unprocessed(self, manager):
@@ -784,7 +818,7 @@ class TestGenerateArtifactsIfNeeded:
 
         with (
             patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
-            patch("gobby.sessions.lifecycle.session_wiki_path_exists", return_value=True),
+            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=True),
             patch(
                 "gobby.sessions.summarize.generate_session_summaries",
                 new_callable=AsyncMock,
@@ -877,7 +911,7 @@ class TestGenerateArtifactsIfNeeded:
 
         with (
             patch("gobby.sessions.lifecycle.is_summary_markdown_valid", return_value=True),
-            patch("gobby.sessions.lifecycle.session_wiki_path_exists", return_value=False),
+            patch("gobby.sessions.lifecycle.session_wiki_path_is_fresh", return_value=False),
             patch(
                 "gobby.sessions.summarize.generate_session_summaries",
                 new_callable=AsyncMock,

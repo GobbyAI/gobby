@@ -86,7 +86,7 @@
 - **Failure mode:** Daemon stopped/crashed (unplanned — the planned-shutdown marker correctly suppresses only fresh intents): Claude/Qwen/Droid agents stop freely with claimed tasks. Documented only in a completed plan file and Rust unit tests, never operator-facing. The cross-CLI asymmetry (codex closed, others open) reads accidental.
 - **Minimal fix:** Document per-CLI daemon-down posture in `docs/guides/hook-schemas.md`; deliberately decide whether claude/qwen Stop join codex's fail-closed set.
 
-### [IMPORTANT] No daemon-side execution bound for non-Stop hooks; ghook gives up at 30s and the CLI proceeds — and Gemini's stop equivalent has no fail-safe at all
+### [IMPORTANT] No daemon-side execution bound for non-Stop hooks; ghook gives up at 30s and the CLI proceeds — and ACP/Qwen AfterAgent has no fail-safe at all
 
 - **Where:** `servers/routes/mcp/hooks.py:46` (`FAIL_SAFE_HOOK_TYPES = {"stop"}` — `afteragent` absent), `:206-213` (non-fail-safe → no timeout), ghook `transport.rs:23` (30s POST timeout, then fail-open for non-critical).
 - **Failure mode:** A >30s rule/webhook/DB stall on PreToolUse → tool executes; any later-computed deny is read by nobody. Qwen ACP's `AfterAgent` (its turn-end gate) is not fail-safe, so its stop gate is unbounded daemon-side and resolves by ghook timeout → allow — unlike claude/codex Stop which gets the 20s block.
