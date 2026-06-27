@@ -412,3 +412,69 @@ async def test_grok_load_fixture_handles_terminal_client_request() -> None:
     responses = [request for request in requests if request.get("id") == 0 and "result" in request]
     assert responses
     assert responses[0]["result"] == {"terminalId": "term-fixture"}
+
+
+async def _start_qwen_lifecycle_fixture(
+    fixture_name: str,
+) -> tuple[QwenACPClient, FakeACPProcess]:
+    """Start a Qwen client from a capability-advertising lifecycle fixture.
+
+    ``auto_session=False`` keeps the only pre-lifecycle request the ``initialize``
+    handshake, so the lifecycle call is request id ``2``.
+    """
+    process = FakeACPProcess(_fixture_lines(fixture_name))
+    with patch("gobby.adapters.acp_client.shutil.which", return_value="/usr/bin/qwen"):
+        with patch(
+            "asyncio.create_subprocess_exec",
+            new_callable=AsyncMock,
+            return_value=process,
+        ):
+            client = QwenACPClient()
+            await client.start(auto_session=False)
+    return client, process
+
+
+async def test_qwen_session_list_fixture_drives_gated_list() -> None:
+    client, process = await _start_qwen_lifecycle_fixture("qwen-0.15.6-session-list.stdout.jsonl")
+
+    assert client.session_capabilities["list"] is True
+    result = await client.list_sessions(cwd="/repo")
+
+    requests = _written_requests(process)
+    assert [request["method"] for request in requests] == ["initialize", "session/list"]
+    assert requests[1]["params"] == {"cwd": "/repo"}
+    assert [session["sessionId"] for session in result["sessions"]] == [
+        "qwen-session-1",
+        "qwen-session-2",
+    ]
+    assert result["nextCursor"] == "qwen-cursor-2"
+
+    await client.stop()
+
+
+async def test_qwen_session_close_fixture_drives_gated_close() -> None:
+    client, process = await _start_qwen_lifecycle_fixture("qwen-0.15.6-session-close.stdout.jsonl")
+
+    assert client.session_capabilities["close"] is True
+    result = await client.close_session("qwen-session-1")
+
+    requests = _written_requests(process)
+    assert [request["method"] for request in requests] == ["initialize", "session/close"]
+    assert requests[1]["params"] == {"sessionId": "qwen-session-1"}
+    assert result == {}
+
+    await client.stop()
+
+
+async def test_qwen_session_delete_fixture_drives_gated_delete() -> None:
+    client, process = await _start_qwen_lifecycle_fixture("qwen-0.15.6-session-delete.stdout.jsonl")
+
+    assert client.session_capabilities["delete"] is True
+    result = await client.delete_session("qwen-session-1")
+
+    requests = _written_requests(process)
+    assert [request["method"] for request in requests] == ["initialize", "session/delete"]
+    assert requests[1]["params"] == {"sessionId": "qwen-session-1"}
+    assert result == {}
+
+    await client.stop()

@@ -36,6 +36,7 @@ from gobby.servers.websocket.chat.backends import (
     QwenManagedChatSession,
     QwenWebChatBackend,
 )
+from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 
 
 class WebChatRuntimeManager:
@@ -89,6 +90,10 @@ class WebChatRuntimeManager:
         self._droid_backend = DroidWebChatBackend(
             sandbox_config=self._sandbox_config.model_copy(deep=True)
         )
+        # Discovered ACP SessionInfo payloads keyed by (provider, sessionId).
+        # The ACP lifecycle service (discovery) populates this; readers use it to
+        # reconcile agent-side sessions against canonical rows.
+        self._acp_session_infos: dict[tuple[str, str], dict[str, Any]] = {}
 
     @property
     def sandbox_config(self) -> SandboxConfig:
@@ -182,6 +187,38 @@ class WebChatRuntimeManager:
             "codex": self.health("codex").to_dict(),
             "droid": self.health("droid").to_dict(),
         }
+
+    def acp_backends(self) -> dict[str, ACPWebChatBackend]:
+        """Return ACP-routed provider backends keyed by provider.
+
+        Only Grok and Qwen route through the ACP backend; there is no literal
+        ``"acp"`` provider.
+        """
+        return {"grok": self._grok_backend, "qwen": self._qwen_backend}
+
+    def acp_backend(self, provider: str) -> ACPWebChatBackend | None:
+        """Return the daemon-owned ACP backend for a provider, or ``None``."""
+        return self.acp_backends().get(provider)
+
+    def acp_session_capabilities(self, provider: str) -> dict[str, bool]:
+        """Return ACP session lifecycle capabilities for a provider (empty when N/A)."""
+        backend = self.acp_backend(provider)
+        if backend is None:
+            return {}
+        return backend.session_capabilities
+
+    def cache_acp_session_info(self, provider: str, session_id: str, info: dict[str, Any]) -> None:
+        """Cache a discovered ACP ``SessionInfo`` keyed by ``(provider, sessionId)``."""
+        self._acp_session_infos[(provider, session_id)] = dict(info)
+
+    def get_acp_session_info(self, provider: str, session_id: str) -> dict[str, Any] | None:
+        """Return a cached ACP ``SessionInfo`` copy, or ``None`` when absent."""
+        cached = self._acp_session_infos.get((provider, session_id))
+        return dict(cached) if cached is not None else None
+
+    def acp_session_infos(self) -> dict[tuple[str, str], dict[str, Any]]:
+        """Return a copy of the discovered ACP ``SessionInfo`` cache."""
+        return {key: dict(value) for key, value in self._acp_session_infos.items()}
 
     def create_session(
         self,

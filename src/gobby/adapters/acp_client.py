@@ -61,7 +61,23 @@ __all__ = [
     "ACP_PROMPT_TIMEOUT_ENV_GROK",
     "ACP_PROMPT_TIMEOUT_ENV_QWEN",
     "StreamEvent",
+    "UnsupportedACPMethodError",
 ]
+
+
+class UnsupportedACPMethodError(RuntimeError):
+    """Raised when an ACP lifecycle method is invoked without the matching capability.
+
+    The ACP agent advertises session lifecycle support through
+    ``agentCapabilities.sessionCapabilities`` (presence-not-null semantics). A
+    method whose capability is absent must not be sent on the wire; callers
+    receive this error so the REST layer can map it to a ``409``.
+    """
+
+    def __init__(self, method: str) -> None:
+        self.method = method
+        super().__init__(f"ACP agent does not support {method}")
+
 
 # asyncio subprocess pipes default to a 64 KiB StreamReader limit. A single
 # stdout JSON-RPC line larger than that raises LimitOverrunError from
@@ -208,6 +224,11 @@ class ACPClient:
         """The capabilities advertised by the ACP agent during initialize."""
         return self._session_state.agent_capabilities
 
+    @property
+    def session_capabilities(self) -> dict[str, bool]:
+        """Session lifecycle capabilities (list/resume/close/delete/additional_directories)."""
+        return self._session_state.session_capabilities
+
     async def start(
         self,
         session_id: str | None = None,
@@ -353,27 +374,65 @@ class ACPClient:
             return
         await self._send_request("authenticate", {"methodId": method_id})
 
+    def _include_additional_directories(
+        self,
+        params: dict[str, Any],
+        additional_directories: list[str] | None,
+    ) -> tuple[str, ...]:
+        """Add ``additionalDirectories`` to session params when supported and non-empty.
+
+        ACP spec: omitted == empty, so the camelCase key is included only when the
+        agent advertises ``sessionCapabilities.additionalDirectories`` and the caller
+        passes a non-empty list. Returns the cleaned directories that were included so
+        the caller can track them as session roots.
+        """
+        if not additional_directories:
+            return ()
+        if not self._session_state.supports_session_additional_directories:
+            return ()
+        cleaned = tuple(
+            directory
+            for directory in additional_directories
+            if isinstance(directory, str) and directory
+        )
+        if not cleaned:
+            return ()
+        params["additionalDirectories"] = list(cleaned)
+        return cleaned
+
+    def _track_additional_directories(self, directories: tuple[str, ...]) -> None:
+        """Merge granted additional directories into the tracked session roots."""
+        if not directories:
+            return
+        merged = list(dict.fromkeys((*self._session_state.root_uris, *directories)))
+        self._session_state.set_roots(merged)
+
     async def create_session(
         self,
         *,
         model: str | None = None,
         cwd: str | None = None,
         reasoning_effort: str | None = None,
+        additional_directories: list[str] | None = None,
     ) -> dict[str, Any]:
         """Create a new ACP session on an already-started shared backend."""
+        resolved_cwd = cwd or self._cwd or "."
         session_params: dict[str, Any] = {
-            "cwd": cwd or self._cwd or ".",
+            "cwd": resolved_cwd,
             "mcpServers": [],
         }
+        extra = self._include_additional_directories(session_params, additional_directories)
         if model:
             session_params["model"] = model
         if reasoning_effort:
             session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/new", session_params)
-        return self._session_state.update_session_info(
+        info = self._session_state.update_session_info(
             result,
-            fallback_roots=(session_params["cwd"],),
+            fallback_roots=(resolved_cwd,),
         )
+        self._track_additional_directories(extra)
+        return info
 
     async def load_session(
         self,
@@ -382,6 +441,7 @@ class ACPClient:
         model: str | None = None,
         cwd: str | None = None,
         reasoning_effort: str | None = None,
+        additional_directories: list[str] | None = None,
     ) -> dict[str, Any]:
         """Load an existing ACP session on an already-started shared backend."""
         if not self._session_state.supports_session_load():
@@ -389,22 +449,100 @@ class ACPClient:
                 model=model,
                 cwd=cwd,
                 reasoning_effort=reasoning_effort,
+                additional_directories=additional_directories,
             )
+        resolved_cwd = cwd or self._cwd or "."
         session_params: dict[str, Any] = {
-            "cwd": cwd or self._cwd or ".",
+            "cwd": resolved_cwd,
             "mcpServers": [],
             "sessionId": session_id,
         }
+        extra = self._include_additional_directories(session_params, additional_directories)
         if model:
             session_params["model"] = model
         if reasoning_effort:
             session_params["reasoningEffort"] = reasoning_effort
         result = await self._send_request("session/load", session_params)
-        return self._session_state.update_session_info(
+        info = self._session_state.update_session_info(
             result,
             fallback_session_id=session_id,
-            fallback_roots=(session_params["cwd"],),
+            fallback_roots=(resolved_cwd,),
         )
+        self._track_additional_directories(extra)
+        return info
+
+    async def list_sessions(
+        self,
+        *,
+        cwd: str | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """Enumerate agent-side sessions via ``session/list`` (``{sessions, nextCursor}``).
+
+        Gated by ``sessionCapabilities.list``. ``cursor`` carries an opaque
+        pagination token returned as ``nextCursor`` by a prior page.
+        """
+        if not self._session_state.supports_session_list:
+            raise UnsupportedACPMethodError("session/list")
+        params: dict[str, Any] = {}
+        if cwd is not None:
+            params["cwd"] = cwd
+        if cursor is not None:
+            params["cursor"] = cursor
+        return await self._send_request("session/list", params)
+
+    async def resume_session(
+        self,
+        session_id: str,
+        *,
+        cwd: str | None = None,
+        additional_directories: list[str] | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> dict[str, Any]:
+        """Resume an existing session via ``session/resume`` (gated by ``resume``).
+
+        Distinct from ``session/load``: ``resume`` does not replay transcript
+        history, which is the exact semantic Gobby wants since it re-renders the
+        transcript from its own DB.
+        """
+        if not self._session_state.supports_session_resume:
+            raise UnsupportedACPMethodError("session/resume")
+        resolved_cwd = cwd or self._cwd or "."
+        session_params: dict[str, Any] = {
+            "cwd": resolved_cwd,
+            "mcpServers": [],
+            "sessionId": session_id,
+        }
+        extra = self._include_additional_directories(session_params, additional_directories)
+        if model:
+            session_params["model"] = model
+        if reasoning_effort:
+            session_params["reasoningEffort"] = reasoning_effort
+        result = await self._send_request("session/resume", session_params)
+        info = self._session_state.update_session_info(
+            result,
+            fallback_session_id=session_id,
+            fallback_roots=(resolved_cwd,),
+        )
+        self._track_additional_directories(extra)
+        return info
+
+    async def close_session(self, session_id: str) -> dict[str, Any]:
+        """End a session's lifecycle via ``session/close`` (gated by ``close``).
+
+        Distinct from the ``session/cancel`` turn-interrupt notification: this is a
+        request that retires the session rather than interrupting the current turn.
+        """
+        if not self._session_state.supports_session_close:
+            raise UnsupportedACPMethodError("session/close")
+        return await self._send_request("session/close", {"sessionId": session_id})
+
+    async def delete_session(self, session_id: str) -> dict[str, Any]:
+        """Hard-delete a session via ``session/delete`` (gated by ``delete``)."""
+        if not self._session_state.supports_session_delete:
+            raise UnsupportedACPMethodError("session/delete")
+        return await self._send_request("session/delete", {"sessionId": session_id})
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Send a JSON-RPC request and wait for the response.

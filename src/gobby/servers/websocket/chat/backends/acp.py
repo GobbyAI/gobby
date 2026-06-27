@@ -127,6 +127,46 @@ class ACPWebChatBackend:
     def health(self) -> ProviderBackendHealth:
         return self._health
 
+    @property
+    def session_capabilities(self) -> dict[str, bool]:
+        """ACP session lifecycle capabilities advertised by this provider's agent."""
+        return self._client.session_capabilities
+
+    async def list_sessions(
+        self,
+        *,
+        cwd: str | None = None,
+        cursor: str | None = None,
+    ) -> dict[str, Any]:
+        """List agent-side ACP sessions on the warm shared client."""
+        return await self._client.list_sessions(cwd=cwd, cursor=cursor)
+
+    async def resume_session(
+        self,
+        session_id: str,
+        *,
+        cwd: str | None = None,
+        additional_directories: list[str] | None = None,
+        model: str | None = None,
+        reasoning_effort: str | None = None,
+    ) -> dict[str, Any]:
+        """Resume an agent-side ACP session on the warm shared client."""
+        return await self._client.resume_session(
+            session_id,
+            cwd=cwd,
+            additional_directories=additional_directories,
+            model=model,
+            reasoning_effort=reasoning_effort,
+        )
+
+    async def close_session(self, session_id: str) -> dict[str, Any]:
+        """Close an agent-side ACP session on the warm shared client."""
+        return await self._client.close_session(session_id)
+
+    async def delete_session(self, session_id: str) -> dict[str, Any]:
+        """Delete an agent-side ACP session on the warm shared client."""
+        return await self._client.delete_session(session_id)
+
     async def attach_session(
         self,
         session: ACPManagedChatSession,

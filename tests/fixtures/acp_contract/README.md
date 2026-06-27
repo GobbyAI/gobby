@@ -23,3 +23,14 @@ transport contract.
 
 Keep fixtures minimal and scrubbed. Do not include user secrets, local project
 paths, auth tokens, or large model output.
+
+## Synthetic session-lifecycle fixtures
+
+`qwen-0.15.6-session-list.stdout.jsonl`, `qwen-0.15.6-session-close.stdout.jsonl`,
+and `qwen-0.15.6-session-delete.stdout.jsonl` are **hand-authored**, not recorded:
+no provider Gobby talks to today advertises the `session/list`, `session/close`,
+or `session/delete` capabilities (qwen ships `sessionCapabilities: {}`). Each
+fixture's `initialize` response advertises exactly the one capability under test
+so the gated client method is allowed, followed by the lifecycle response. They
+prove the capability-gated request/response contract until a real CLI advertises
+these capabilities and the fixtures can be re-recorded.

@@ -77,6 +77,39 @@ class TestWebChatRuntimeManager:
         assert "droid" in health
         assert health["droid"]["provider"] == "droid"
 
+    def test_acp_backends_expose_grok_and_qwen_only(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        backends = manager.acp_backends()
+
+        assert set(backends) == {"grok", "qwen"}
+        assert isinstance(backends["grok"], GrokWebChatBackend)
+        assert isinstance(backends["qwen"], QwenWebChatBackend)
+        assert manager.acp_backend("grok") is backends["grok"]
+        assert manager.acp_backend("qwen") is backends["qwen"]
+        assert manager.acp_backend("codex") is None
+
+    def test_acp_session_capabilities_default_empty_before_initialize(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        # No initialize handshake yet → graceful-degradation default.
+        assert manager.acp_session_capabilities("grok") == {}
+        assert manager.acp_session_capabilities("codex") == {}
+
+    def test_acp_session_info_cache_roundtrip_is_isolated(self) -> None:
+        manager = WebChatRuntimeManager(codex_client=None)
+
+        assert manager.get_acp_session_info("grok", "s1") is None
+
+        manager.cache_acp_session_info("grok", "s1", {"sessionId": "s1", "cwd": "/repo"})
+        cached = manager.get_acp_session_info("grok", "s1")
+        assert cached == {"sessionId": "s1", "cwd": "/repo"}
+
+        # Returned copies are isolated from the internal cache.
+        cached["cwd"] = "/mutated"
+        assert manager.get_acp_session_info("grok", "s1") == {"sessionId": "s1", "cwd": "/repo"}
+        assert manager.acp_session_infos() == {("grok", "s1"): {"sessionId": "s1", "cwd": "/repo"}}
+
     def test_create_session_routes_droid_to_managed_backend(self) -> None:
         from gobby.servers.websocket.chat.backends import DroidManagedChatSession
 

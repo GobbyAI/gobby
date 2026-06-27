@@ -1,0 +1,2 @@
+{"jsonrpc":"2.0","id":1,"result":{"protocolVersion":1,"serverInfo":{"name":"qwen","version":"0.15.6"},"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false,"audio":false,"embeddedContext":false},"mcpCapabilities":{"http":false,"sse":false},"sessionCapabilities":{"list":{}},"auth":{}}}}
+{"jsonrpc":"2.0","id":2,"result":{"sessions":[{"sessionId":"qwen-session-1","cwd":"/repo","title":"First session","updatedAt":"2026-06-27T05:00:00Z"},{"sessionId":"qwen-session-2","cwd":"/repo/sub"}],"nextCursor":"qwen-cursor-2"}}
