@@ -71,9 +71,11 @@ export default function App() {
     isLoadingMessages,
     transportError,
     contextUsage,
+    acpConfigOptions,
     sendMessage,
     ensureMainSession,
     sendMode,
+    sendSessionConfigOption,
     sendAttachedSessionMode,
     sendProjectChange,
     projectIdRef,
@@ -539,6 +541,8 @@ export default function App() {
                     updateChatMode(mode);
                     sendMode(mode);
                   },
+                  acpConfigOptions,
+                  onAcpConfigOptionChange: sendSessionConfigOption,
                   onModeChangeLocal: updateChatMode,
                   onWorktreeChange: isPersonalProject
                     ? undefined

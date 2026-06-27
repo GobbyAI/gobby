@@ -1,4 +1,4 @@
-import type { ApprovalOption, ToolResult } from "../../types/chat";
+import type { AcpConfigOption, ApprovalOption, ToolResult } from "../../types/chat";
 
 export interface ChatStreamChunk {
   type: "chat_stream";
@@ -181,7 +181,15 @@ export interface SessionInfoMessage {
   current_branch?: string;
   worktree_path?: string;
   agent_name?: string;
+  chat_mode?: string;
+  config_options?: AcpConfigOption[];
   plan_auto_switch?: boolean;
+}
+
+export interface SessionConfigOptionsMessage {
+  type: "session_config_options";
+  conversation_id?: string;
+  config_options?: AcpConfigOption[];
 }
 
 export interface WorktreeSwitchedMessage {
@@ -294,6 +302,7 @@ export type WebSocketMessage =
   | PlanPendingApprovalMessage
   | ModeChangedMessage
   | SessionInfoMessage
+  | SessionConfigOptionsMessage
   | WorktreeSwitchedMessage
   | AgentChangedMessage
   | SessionContinuedMessage

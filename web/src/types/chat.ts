@@ -10,6 +10,22 @@ export interface ChatModeInfo {
   level: number; // 0=plan, 1=act, 2=yolo
 }
 
+export interface AcpConfigOptionValue {
+  value: string;
+  name: string;
+  description?: string;
+}
+
+export interface AcpConfigOption {
+  id: string;
+  name: string;
+  description?: string;
+  category?: string;
+  type: string;
+  currentValue: string;
+  options: AcpConfigOptionValue[];
+}
+
 /**
  * One selectable plan-acceptance choice. Sourced from the backend registry
  * (gobby.adapters.plan_options) and emitted in the plan_pending_approval
@@ -272,6 +288,8 @@ export interface ChatState {
   onPaletteSelect: (item: PaletteItem) => void;
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
+  acpConfigOptions?: AcpConfigOption[];
+  onAcpConfigOptionChange?: (configId: string, value: string) => void;
   onModeChangeLocal?: (mode: ChatMode) => void;
   onWorktreeChange?: (worktreePath: string, worktreeId?: string) => void;
   activeAgent?: string;

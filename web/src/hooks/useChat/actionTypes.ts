@@ -1,6 +1,7 @@
 import type { Dispatch, MutableRefObject, SetStateAction } from "react";
 import type {
   ApprovalOption,
+  AcpConfigOption,
   ChatMessage,
   ChatMode,
   ContextUsage,
@@ -80,6 +81,7 @@ export interface UseChatActionsParams {
   sessionRef: string | null;
   sessionTitle: string | null;
   setActiveAgent: Setter<string>;
+  setAcpConfigOptions: Setter<AcpConfigOption[]>;
   setContextUsage: Setter<ContextUsage>;
   setConversationId: Setter<string>;
   setConversationSwitchKey: Setter<number>;
@@ -143,6 +145,11 @@ export type DeleteConversationAction = (
 
 export type SendModeAction = (mode: ChatMode) => void;
 
+export type SendSessionConfigOptionAction = (
+  configId: string,
+  value: string,
+) => void;
+
 export type SendAttachedSessionModeAction = (
   targetSessionId: string,
   mode: ChatMode,
@@ -196,6 +203,7 @@ export interface ChatControlActions {
   deleteConversation: DeleteConversationAction;
   stopStreaming: () => void;
   sendMode: SendModeAction;
+  sendSessionConfigOption: SendSessionConfigOptionAction;
   sendAttachedSessionMode: SendAttachedSessionModeAction;
   sendProjectChange: SendProjectChangeAction;
   sendAgentChange: SendAgentChangeAction;

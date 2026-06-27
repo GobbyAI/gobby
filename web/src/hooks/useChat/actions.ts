@@ -25,6 +25,7 @@ export function useChatActions(params: UseChatActionsParams): UseChatActions {
     deleteConversation: controlActions.deleteConversation,
     stopStreaming: controlActions.stopStreaming,
     sendMode: controlActions.sendMode,
+    sendSessionConfigOption: controlActions.sendSessionConfigOption,
     sendAttachedSessionMode: controlActions.sendAttachedSessionMode,
     sendProjectChange: controlActions.sendProjectChange,
     sendAgentChange: controlActions.sendAgentChange,

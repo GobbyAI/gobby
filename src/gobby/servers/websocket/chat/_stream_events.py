@@ -10,6 +10,7 @@ from uuid import uuid4
 
 from gobby.llm.claude_models import (
     DoneEvent,
+    SessionConfigOptionsEvent,
     TextChunk,
     ThinkingEvent,
     ToolCallEvent,
@@ -87,6 +88,8 @@ class ChatStreamEventHandler:
             return await self._handle_tool_call(event)
         if isinstance(event, ToolResultEvent):
             return await self._handle_tool_result(event)
+        if isinstance(event, SessionConfigOptionsEvent):
+            return await self._handle_session_config_options(event)
         if isinstance(event, DoneEvent):
             return await self._handle_done(event, session)
         return True
@@ -103,6 +106,14 @@ class ChatStreamEventHandler:
         self.assistant_blocks.append_thinking(event.content)
         return await self.transport.safe_send(
             self._msg(type="chat_thinking", content=event.content)
+        )
+
+    async def _handle_session_config_options(self, event: SessionConfigOptionsEvent) -> bool:
+        return await self.transport.safe_send(
+            self._msg(
+                type="session_config_options",
+                config_options=event.config_options,
+            )
         )
 
     async def _handle_text(self, event: TextChunk, session: Any) -> bool:

@@ -321,6 +321,52 @@ describe('ChatInput', () => {
     expect(container.querySelector('.chat-input-mode-row')).toBeNull()
   })
 
+  it('renders ACP config selects beside the mode selector and ignores unknown types', () => {
+    const { container } = render(
+      <ChatInput
+        {...defaultProps}
+        onModeChange={vi.fn()}
+        mode="plan"
+        acpConfigOptions={[
+          {
+            id: 'model',
+            name: 'Model',
+            category: 'provider_custom',
+            type: 'select',
+            currentValue: 'fast',
+            options: [
+              { value: 'fast', name: 'Fast' },
+              { value: 'deep', name: 'Deep' },
+            ],
+          },
+          {
+            id: 'future',
+            name: 'Future',
+            type: 'provider_future_type',
+            currentValue: 'enabled',
+            options: [{ value: 'enabled', name: 'Enabled' }],
+          },
+          {
+            id: 'thought',
+            name: 'Thought',
+            type: 'select',
+            currentValue: 'high',
+            options: [{ value: 'high', name: 'High' }],
+          },
+        ]}
+        onAcpConfigOptionChange={vi.fn()}
+      />,
+    )
+
+    expect(screen.getByTestId('mode-selector')).toBeTruthy()
+    expect(screen.getByText('Model: Fast')).toBeTruthy()
+    expect(screen.getByText('Thought: High')).toBeTruthy()
+    expect(screen.queryByText('Future: Enabled')).toBeNull()
+
+    const toolbarLeft = container.querySelector('.chat-input-toolbar__left')
+    expect(toolbarLeft?.firstElementChild).toBe(screen.getByTestId('mode-selector'))
+  })
+
   it('disables proxy-owned footer controls while leaving text entry enabled', () => {
     render(
       <ChatInput

@@ -202,6 +202,8 @@ export function ChatMainColumn({
             onModeChange={handleInputModeChange}
             modeDisabled={isAutonomousSession || chat.planPendingApproval}
             modeOptions={isAutonomousSession ? AUTONOMOUS_CHAT_MODES : undefined}
+            acpConfigOptions={chat.acpConfigOptions}
+            onAcpConfigOptionChange={chat.onAcpConfigOptionChange}
             currentBranch={effectiveBranch}
             worktreePath={chat.worktreePath}
             projectId={projectId ?? null}

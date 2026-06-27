@@ -208,6 +208,15 @@ class ACPClient:
         """The capabilities advertised by the ACP agent during initialize."""
         return self._session_state.agent_capabilities
 
+    @property
+    def config_options(self) -> list[dict[str, Any]]:
+        """Current ACP session config options in provider order."""
+        return self._session_state.config_options
+
+    def update_config_options(self, payload: Any) -> list[dict[str, Any]]:
+        """Store ACP config options from a complete config state payload."""
+        return self._session_state.update_config_options(payload)
+
     async def start(
         self,
         session_id: str | None = None,
@@ -405,6 +414,27 @@ class ACPClient:
             fallback_session_id=session_id,
             fallback_roots=(session_params["cwd"],),
         )
+
+    async def set_config_option(
+        self,
+        *,
+        config_id: str,
+        value: str,
+        session_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        """Set an ACP session config option and store the complete returned state."""
+        resolved_session_id = session_id or self._session_state.session_id
+        if not resolved_session_id:
+            raise RuntimeError(f"{self.display_name} session missing sessionId")
+        result = await self._send_request(
+            "session/set_config_option",
+            {
+                "sessionId": resolved_session_id,
+                "configId": config_id,
+                "value": value,
+            },
+        )
+        return self._session_state.update_config_options(result)
 
     async def _send_request(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
         """Send a JSON-RPC request and wait for the response.

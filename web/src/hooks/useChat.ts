@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { ChatMessage, QueuedFile } from "../types/chat";
+import type { AcpConfigOption, ChatMessage, QueuedFile } from "../types/chat";
 import type {
   ChatError,
   ChatStreamChunk,
@@ -44,6 +44,7 @@ export function useChat() {
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
   const [transportError, setTransportError] =
     useState<TransportErrorNotice | null>(null);
+  const [acpConfigOptions, setAcpConfigOptions] = useState<AcpConfigOption[]>([]);
 
   // Keep a ref so onopen/reconnect can read the current project
   const projectIdRef = useRef<string | null>(null);
@@ -254,6 +255,7 @@ export function useChat() {
     planContentRef.current = null;
     setContextUsage(createEmptyContextUsage());
     setMessages([]);
+    setAcpConfigOptions([]);
     setIsLoadingMessages(false);
   }, [
     lastSeqRef,
@@ -427,6 +429,7 @@ export function useChat() {
     sessionInteractionModeRef,
     sessionRefRef,
     setActiveAgent,
+    setAcpConfigOptions,
     setAttachedSessionId,
     setAttachedSessionMeta,
     setContextUsage,
@@ -501,6 +504,7 @@ export function useChat() {
     deleteConversation,
     stopStreaming,
     sendMode,
+    sendSessionConfigOption,
     sendAttachedSessionMode,
     sendProjectChange,
     sendAgentChange,
@@ -556,6 +560,7 @@ export function useChat() {
     sessionRef,
     sessionTitle,
     setActiveAgent,
+    setAcpConfigOptions,
     setContextUsage,
     setConversationId,
     setConversationSwitchKey,
@@ -669,10 +674,12 @@ export function useChat() {
     isLoadingMessages,
     transportError,
     contextUsage,
+    acpConfigOptions,
     contextUsageUpdatedAt,
     sendMessage,
     ensureMainSession,
     sendMode,
+    sendSessionConfigOption,
     sendProjectChange,
     projectIdRef,
     setProjectIdRef,

@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.adapters.acp_client import ACPClient
+from gobby.adapters.acp_config_options import normalize_config_options
 from gobby.adapters.acp_session_state import ACPSessionState
 
 pytestmark = pytest.mark.unit
@@ -99,6 +100,111 @@ def test_session_state_copies_capabilities_and_tracks_roots() -> None:
     assert state.root_uris == ("/tmp/fallback",)
 
 
+def test_normalize_config_options_preserves_order_and_ignores_invalid_entries() -> None:
+    config_options = normalize_config_options(
+        [
+            {
+                "id": "model",
+                "name": "Model",
+                "description": "Provider model",
+                "category": "model",
+                "type": "select",
+                "currentValue": "fast",
+                "options": [
+                    {"value": "fast", "name": "Fast"},
+                    {"value": "deep", "name": "Deep", "description": "More depth"},
+                ],
+            },
+            {
+                "id": "future",
+                "name": "Future",
+                "type": "provider_future_type",
+                "currentValue": "enabled",
+                "options": [{"value": "enabled", "name": "Enabled"}],
+            },
+            {"id": "broken", "name": "Broken", "type": "select"},
+            "not-a-config-option",
+        ]
+    )
+
+    assert config_options == [
+        {
+            "id": "model",
+            "name": "Model",
+            "description": "Provider model",
+            "category": "model",
+            "type": "select",
+            "currentValue": "fast",
+            "options": [
+                {"value": "fast", "name": "Fast"},
+                {"value": "deep", "name": "Deep", "description": "More depth"},
+            ],
+        },
+        {
+            "id": "future",
+            "name": "Future",
+            "type": "provider_future_type",
+            "currentValue": "enabled",
+            "options": [{"value": "enabled", "name": "Enabled"}],
+        },
+    ]
+
+
+def test_session_state_tracks_config_options_from_complete_session_payloads() -> None:
+    state = ACPSessionState()
+
+    state.update_session_info(
+        {
+            "sessionId": "sess-1",
+            "configOptions": [
+                {
+                    "id": "mode",
+                    "name": "Mode",
+                    "category": "mode",
+                    "type": "select",
+                    "currentValue": "build",
+                    "options": [{"value": "build", "name": "Build"}],
+                }
+            ],
+        }
+    )
+
+    assert state.config_options == [
+        {
+            "id": "mode",
+            "name": "Mode",
+            "category": "mode",
+            "type": "select",
+            "currentValue": "build",
+            "options": [{"value": "build", "name": "Build"}],
+        }
+    ]
+
+    updated = state.update_config_options(
+        {
+            "configOptions": [
+                {
+                    "id": "mode",
+                    "name": "Mode",
+                    "category": "mode",
+                    "type": "select",
+                    "currentValue": "review",
+                    "options": [
+                        {"value": "build", "name": "Build"},
+                        {"value": "review", "name": "Review"},
+                    ],
+                }
+            ],
+        }
+    )
+
+    assert updated[0]["currentValue"] == "review"
+    updated[0]["currentValue"] = "mutated"
+    updated[0]["options"][0]["name"] = "Mutated"
+    assert state.config_options[0]["currentValue"] == "review"
+    assert state.config_options[0]["options"][0]["name"] == "Build"
+
+
 @pytest.mark.asyncio
 async def test_start_advertises_terminal_capability_and_gates_session_load(
     monkeypatch: pytest.MonkeyPatch,
@@ -139,6 +245,65 @@ async def test_start_advertises_terminal_capability_and_gates_session_load(
 
 
 @pytest.mark.asyncio
+async def test_start_stores_config_options_from_session_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    process = _FakeProcess(
+        [
+            {
+                "jsonrpc": "2.0",
+                "id": 1,
+                "result": {"protocolVersion": 1, "agentCapabilities": {}},
+            },
+            {
+                "jsonrpc": "2.0",
+                "id": 2,
+                "result": {
+                    "sessionId": "new-session",
+                    "configOptions": [
+                        {
+                            "id": "thought_level",
+                            "name": "Thought Level",
+                            "category": "thought_level",
+                            "type": "select",
+                            "currentValue": "low",
+                            "options": [
+                                {"value": "low", "name": "Low"},
+                                {"value": "high", "name": "High"},
+                            ],
+                        }
+                    ],
+                },
+            },
+        ]
+    )
+
+    async def fake_create_subprocess_exec(*_args: Any, **_kwargs: Any) -> _FakeProcess:
+        return process
+
+    monkeypatch.setattr("asyncio.create_subprocess_exec", fake_create_subprocess_exec)
+    client = _StubACPClient(cli_path="/usr/bin/stub-acp")
+
+    await client.start()
+
+    assert client.config_options == [
+        {
+            "id": "thought_level",
+            "name": "Thought Level",
+            "category": "thought_level",
+            "type": "select",
+            "currentValue": "low",
+            "options": [
+                {"value": "low", "name": "Low"},
+                {"value": "high", "name": "High"},
+            ],
+        }
+    ]
+
+    await client.stop()
+
+
+@pytest.mark.asyncio
 async def test_start_logs_initialize_response_with_provider_context(
     monkeypatch: pytest.MonkeyPatch,
     caplog: pytest.LogCaptureFixture,
@@ -171,6 +336,68 @@ async def test_start_logs_initialize_response_with_provider_context(
     assert record.payload == init_result
 
     await client.stop()
+
+
+@pytest.mark.asyncio
+async def test_set_config_option_sends_protocol_payload_and_stores_complete_response(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client = _StubACPClient(cli_path="/usr/bin/stub-acp")
+    client._session_state.update_session_info({"sessionId": "sess-1"})
+    requests: list[tuple[str, dict[str, Any]]] = []
+
+    async def send_request(method: str, params: dict[str, Any]) -> dict[str, Any]:
+        requests.append((method, params))
+        return {
+            "configOptions": [
+                {
+                    "id": "model",
+                    "name": "Model",
+                    "type": "select",
+                    "currentValue": "deep",
+                    "options": [{"value": "deep", "name": "Deep"}],
+                }
+            ],
+        }
+
+    monkeypatch.setattr(client, "_send_request", send_request)
+
+    config_options = await client.set_config_option(config_id="model", value="deep")
+
+    assert requests == [
+        (
+            "session/set_config_option",
+            {"sessionId": "sess-1", "configId": "model", "value": "deep"},
+        )
+    ]
+    assert config_options == client.config_options
+    assert client.config_options[0]["currentValue"] == "deep"
+
+
+def test_normalize_notification_maps_config_option_update() -> None:
+    event = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {
+                "sessionId": "sess-1",
+                "update": {
+                    "sessionUpdate": "config_option_update",
+                    "configOptions": [
+                        {
+                            "id": "model",
+                            "name": "Model",
+                            "type": "select",
+                            "currentValue": "deep",
+                            "options": [{"value": "deep", "name": "Deep"}],
+                        }
+                    ],
+                },
+            },
+        }
+    )
+
+    assert event.event_type == "config_option_update"
+    assert event.data["configOptions"][0]["currentValue"] == "deep"
 
 
 @pytest.mark.asyncio

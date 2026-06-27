@@ -54,6 +54,14 @@ class ToolResultEvent:
 
 
 @dataclass
+class SessionConfigOptionsEvent:
+    """Event when ACP session config options change."""
+
+    config_options: list[dict[str, Any]]
+    """Complete current ACP config option state."""
+
+
+@dataclass
 class DoneEvent:
     """Event when streaming is complete."""
 
@@ -98,4 +106,11 @@ class ThinkingEvent:
 
 
 # Union type for all streaming events
-ChatEvent = TextChunk | ToolCallEvent | ToolResultEvent | DoneEvent | ThinkingEvent
+ChatEvent = (
+    TextChunk
+    | ToolCallEvent
+    | ToolResultEvent
+    | DoneEvent
+    | ThinkingEvent
+    | SessionConfigOptionsEvent
+)

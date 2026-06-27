@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
+from copy import deepcopy
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any
+
+from gobby.adapters.acp_config_options import normalize_config_options
 
 DEFAULT_ACP_CLIENT_CAPABILITIES: Mapping[str, Any] = MappingProxyType(
     {
@@ -82,6 +85,7 @@ class ACPSessionState:
     _session_id: str | None = None
     _session_info: dict[str, Any] = field(default_factory=dict)
     _agent_capabilities: dict[str, Any] = field(default_factory=dict)
+    _config_options: tuple[dict[str, Any], ...] = ()
     _root_uris: tuple[str, ...] = ()
 
     @property
@@ -95,6 +99,10 @@ class ACPSessionState:
     @property
     def agent_capabilities(self) -> dict[str, Any]:
         return dict(self._agent_capabilities)
+
+    @property
+    def config_options(self) -> list[dict[str, Any]]:
+        return deepcopy(list(self._config_options))
 
     @property
     def root_uris(self) -> tuple[str, ...]:
@@ -115,6 +123,7 @@ class ACPSessionState:
     ) -> dict[str, Any]:
         self._session_info = dict(result) if isinstance(result, dict) else {}
         self._session_id = extract_session_id(self._session_info) or fallback_session_id
+        self.update_config_options(self._session_info)
         roots = extract_root_uris(self._session_info)
         if not roots and fallback_roots is not None:
             roots = tuple(root for root in fallback_roots if root)
@@ -122,12 +131,20 @@ class ACPSessionState:
             self._root_uris = roots
         return self.session_info
 
+    def update_config_options(self, payload: Any) -> list[dict[str, Any]]:
+        if isinstance(payload, dict):
+            self._config_options = tuple(normalize_config_options(payload.get("configOptions")))
+        else:
+            self._config_options = ()
+        return self.config_options
+
     def set_roots(self, roots: Iterable[str]) -> None:
         self._root_uris = tuple(root for root in roots if root)
 
     def clear_session(self) -> None:
         self._session_id = None
         self._session_info = {}
+        self._config_options = ()
         self._root_uris = ()
 
     def reset(self) -> None:

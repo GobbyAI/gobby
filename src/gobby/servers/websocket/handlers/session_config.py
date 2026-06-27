@@ -308,6 +308,58 @@ async def handle_set_mode(mixin: SessionControlMixin, websocket: Any, data: dict
         logger.debug(f"Chat mode '{mode}' queued for future conversation {conversation_id[:8]}")
 
 
+async def handle_set_session_config_option(
+    mixin: SessionControlMixin,
+    websocket: Any,
+    data: dict[str, Any],
+) -> None:
+    """Handle ACP session config option changes for the current conversation."""
+    conversation_id = data.get("conversation_id")
+    config_id = data.get("config_id")
+    value = data.get("value")
+    if not isinstance(conversation_id, str) or not conversation_id:
+        await mixin._send_error(websocket, "conversation_id is required")
+        return
+    if not isinstance(config_id, str) or not config_id:
+        await mixin._send_error(websocket, "config_id is required")
+        return
+    if not isinstance(value, str):
+        await mixin._send_error(websocket, "value is required")
+        return
+
+    session = mixin._chat_sessions.get(conversation_id)
+    if session is None:
+        await mixin._send_error(websocket, "Conversation session is not active")
+        return
+    setter = getattr(session, "set_config_option", None)
+    if not callable(setter):
+        await mixin._send_error(websocket, "Session does not support config options")
+        return
+
+    try:
+        config_options = await setter(config_id=config_id, value=value)
+    except Exception as exc:
+        logger.warning(
+            "Failed to set config option %s for conversation %s: %s",
+            config_id,
+            conversation_id[:8],
+            exc,
+            exc_info=True,
+        )
+        await mixin._send_error(websocket, f"Failed to set config option: {exc}")
+        return
+
+    await websocket.send(
+        json.dumps(
+            {
+                "type": "session_config_options",
+                "conversation_id": conversation_id,
+                "config_options": config_options,
+            }
+        )
+    )
+
+
 async def handle_set_project(
     mixin: SessionControlMixin, websocket: Any, data: dict[str, Any]
 ) -> None:

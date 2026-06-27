@@ -7,13 +7,14 @@ import logging
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from typing import Any
+from typing import Any, cast
 
 from gobby.adapters.acp_client import StreamEvent
 from gobby.adapters.acp_client_requests import is_pre_tool_decision_denied
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
+    SessionConfigOptionsEvent,
     TextChunk,
     ThinkingEvent,
     ToolCallEvent,
@@ -48,6 +49,7 @@ class ACPManagedChatSession(
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
     _is_first_turn: bool = field(default=True, repr=False)
+    config_options: list[dict[str, Any]] = field(default_factory=list)
 
     def _web_chat_source(self) -> str:
         return f"{self.provider}_web_chat"
@@ -121,6 +123,13 @@ class ACPManagedChatSession(
                         model_name = stream_event.data.get("model")
                         if isinstance(model_name, str) and model_name:
                             self._model = model_name
+                    elif stream_event.event_type == "config_option_update":
+                        config_options = self._backend.apply_config_options_update(
+                            self,
+                            stream_event.data,
+                        )
+                        yield SessionConfigOptionsEvent(config_options=config_options)
+                        continue
                     elif stream_event.event_type == "content_delta":
                         saw_content_delta = True
 
@@ -274,6 +283,23 @@ class ACPManagedChatSession(
         self.cancel_pending_approval()
         await self._backend.interrupt(self)
         logger.debug("%s interrupt requested for %s", self._provider_label(), self.conversation_id)
+
+    async def set_config_option(
+        self,
+        *,
+        config_id: str,
+        value: str,
+    ) -> list[dict[str, Any]]:
+        config_options = cast(
+            "list[dict[str, Any]]",
+            await self._backend.set_config_option(
+                self,
+                config_id=config_id,
+                value=value,
+            ),
+        )
+        self.config_options = config_options
+        return config_options
 
 
 __all__ = ["ACPManagedChatSession"]

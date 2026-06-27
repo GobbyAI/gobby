@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type KeyboardEvent } from 'react'
 import type {
   QueuedFile,
+  AcpConfigOption,
   ChatMode,
   ChatModeInfo,
   ChatSendOptions,
@@ -40,6 +41,8 @@ interface ChatInputProps {
   mode?: ChatMode
   onModeChange?: (mode: ChatMode) => void
   modeOptions?: ChatModeInfo[]
+  acpConfigOptions?: AcpConfigOption[]
+  onAcpConfigOptionChange?: (configId: string, value: string) => void
   modeDisabled?: boolean
   sttEnabled?: boolean
   ttsEnabled?: boolean
@@ -143,6 +146,8 @@ export function ChatInput({
   mode = 'normal',
   onModeChange,
   modeOptions,
+  acpConfigOptions,
+  onAcpConfigOptionChange,
   modeDisabled = false,
   sttEnabled = false,
   ttsEnabled = false,
@@ -454,7 +459,9 @@ export function ChatInput({
           mode={mode}
           modeDisabled={modeDisabled}
           modeOptions={modeOptions}
+          acpConfigOptions={acpConfigOptions}
           onAgentChange={onAgentChange}
+          onAcpConfigOptionChange={onAcpConfigOptionChange}
           onModeChange={onModeChange}
           onSttEnabledChange={onSttEnabledChange}
           onTtsEnabledChange={onTtsEnabledChange}

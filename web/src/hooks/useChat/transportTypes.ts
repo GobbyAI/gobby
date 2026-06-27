@@ -5,6 +5,7 @@ import type {
 } from "react";
 import type {
   ApprovalOption,
+  AcpConfigOption,
   ChatMessage,
   ChatMode,
   ContextUsage,
@@ -97,6 +98,7 @@ export interface HandlerCallbacks {
 
 export interface StateSetters {
   setActiveAgent: Setter<string>;
+  setAcpConfigOptions: Setter<AcpConfigOption[]>;
   setAttachedSessionId: Setter<string | null>;
   setAttachedSessionMeta: Setter<SessionObservationMeta | null>;
   setContextUsage: Setter<ContextUsage>;

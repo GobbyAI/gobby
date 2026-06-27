@@ -10,6 +10,7 @@ import type {
   SendAttachedSessionModeAction,
   SendModeAction,
   SendProjectChangeAction,
+  SendSessionConfigOptionAction,
   SendWorktreeChangeAction,
   StartNewChatAction,
   UseChatActionsParams,
@@ -27,6 +28,7 @@ export function useChatControlActions(
     currentModeRef,
     sessionInteractionModeRef,
     setActiveAgent,
+    setAcpConfigOptions,
     setCurrentMode,
     setIsStreaming,
     setIsThinking,
@@ -113,6 +115,28 @@ export function useChatControlActions(
           type: "set_mode",
           mode: normalizedMode,
           target_session_id: targetSessionId,
+        }),
+      );
+    },
+    [],
+  );
+
+  const sendSessionConfigOption: SendSessionConfigOptionAction = useCallback(
+    (configId, value) => {
+      if (!configId) return;
+      setAcpConfigOptions((prev) =>
+        prev.map((option) =>
+          option.id === configId ? { ...option, currentValue: value } : option,
+        ),
+      );
+      if (!wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
+      if (!conversationIdRef.current) return;
+      wsRef.current.send(
+        JSON.stringify({
+          type: "set_session_config_option",
+          conversation_id: conversationIdRef.current,
+          config_id: configId,
+          value,
         }),
       );
     },
@@ -222,6 +246,7 @@ export function useChatControlActions(
     deleteConversation,
     stopStreaming,
     sendMode,
+    sendSessionConfigOption,
     sendAttachedSessionMode,
     sendProjectChange,
     sendAgentChange,

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -177,3 +179,68 @@ class TestSetModeAttachedSession:
         server._send_error.assert_awaited_once()
         assert "not found" in server._send_error.await_args.args[1]
         server.session_manager.update_chat_mode.assert_not_called()
+
+
+class TestSetSessionConfigOption:
+    async def test_active_session_sets_config_option_and_returns_complete_state(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        session = SimpleNamespace(
+            set_config_option=AsyncMock(
+                return_value=[
+                    {
+                        "id": "model",
+                        "name": "Model",
+                        "type": "select",
+                        "currentValue": "deep",
+                        "options": [{"value": "deep", "name": "Deep"}],
+                    }
+                ]
+            )
+        )
+        server._chat_sessions["conv-1"] = session
+
+        await server._handle_set_session_config_option(
+            ws,
+            {
+                "conversation_id": "conv-1",
+                "config_id": "model",
+                "value": "deep",
+            },
+        )
+
+        session.set_config_option.assert_awaited_once_with(
+            config_id="model",
+            value="deep",
+        )
+        payload = json.loads(ws.send.await_args.args[0])
+        assert payload == {
+            "type": "session_config_options",
+            "conversation_id": "conv-1",
+            "config_options": [
+                {
+                    "id": "model",
+                    "name": "Model",
+                    "type": "select",
+                    "currentValue": "deep",
+                    "options": [{"value": "deep", "name": "Deep"}],
+                }
+            ],
+        }
+
+    async def test_rejects_sessions_without_config_option_support(self) -> None:
+        server = ConcreteSessionControl()
+        ws = _make_ws()
+        server._chat_sessions["conv-1"] = object()
+
+        await server._handle_set_session_config_option(
+            ws,
+            {
+                "conversation_id": "conv-1",
+                "config_id": "model",
+                "value": "deep",
+            },
+        )
+
+        server._send_error.assert_awaited_once()
+        assert "does not support config options" in server._send_error.await_args.args[1]

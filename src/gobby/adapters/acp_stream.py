@@ -92,6 +92,9 @@ def normalize_notification(
                 },
             )
 
+        if update_type == "config_option_update":
+            return StreamEvent(event_type="config_option_update", data=update)
+
         if update_type == "tool_call":
             tool_input = {}
             for input_key in ("rawInput", "input"):

@@ -172,6 +172,7 @@ class ACPWebChatBackend:
         )
         if isinstance(resolved_session_id, str) and resolved_session_id:
             session.sdk_session_id = resolved_session_id
+        session.config_options = self._client.config_options
         session._connected = True
         session.last_activity = datetime.now(UTC)
 
@@ -213,6 +214,32 @@ class ACPWebChatBackend:
             pre_tool_callback=_apply_pre_tool,
         ):
             yield event
+
+    async def set_config_option(
+        self,
+        session: ACPManagedChatSession,
+        *,
+        config_id: str,
+        value: str,
+    ) -> list[dict[str, Any]]:
+        if not session.sdk_session_id:
+            raise RuntimeError(f"{self.display_name} session missing sessionId")
+        config_options = await self._client.set_config_option(
+            session_id=session.sdk_session_id,
+            config_id=config_id,
+            value=value,
+        )
+        session.config_options = config_options
+        return config_options
+
+    def apply_config_options_update(
+        self,
+        session: ACPManagedChatSession,
+        payload: dict[str, Any],
+    ) -> list[dict[str, Any]]:
+        config_options = self._client.update_config_options(payload)
+        session.config_options = config_options
+        return config_options
 
     async def interrupt(self, session: ACPManagedChatSession) -> None:
         await self._client.cancel_session(session.sdk_session_id)

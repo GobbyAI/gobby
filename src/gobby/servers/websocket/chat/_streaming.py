@@ -240,6 +240,9 @@ class ChatStreamingMixin:
             session_chat_mode = getattr(session, "chat_mode", None)
             if isinstance(session_chat_mode, str) and session_chat_mode:
                 session_info_msg["chat_mode"] = session_chat_mode
+            config_options = getattr(session, "config_options", None)
+            if isinstance(config_options, list) and config_options:
+                session_info_msg["config_options"] = config_options
             await transport.send_direct(session_info_msg)
             return session
         except Exception as exc:

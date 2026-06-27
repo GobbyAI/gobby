@@ -1,5 +1,5 @@
 import { normalizeChatMode } from "../../types/chat";
-import type { ApprovalOption } from "../../types/chat";
+import type { AcpConfigOption, ApprovalOption } from "../../types/chat";
 import {
   saveConversationId,
   saveDbSessionId,
@@ -25,6 +25,40 @@ function isApprovalOption(value: unknown): value is ApprovalOption {
     (decision === undefined || decision === "approve") &&
     (emphasis === undefined || emphasis === "primary" || emphasis === "accent")
   );
+}
+
+function isAcpConfigOptionValue(
+  value: unknown,
+): value is AcpConfigOption["options"][number] {
+  if (!value || typeof value !== "object") return false;
+  const optionValue = value as Record<string, unknown>;
+  return (
+    typeof optionValue.value === "string" &&
+    typeof optionValue.name === "string" &&
+    (optionValue.description === undefined ||
+      typeof optionValue.description === "string")
+  );
+}
+
+function isAcpConfigOption(value: unknown): value is AcpConfigOption {
+  if (!value || typeof value !== "object") return false;
+  const option = value as Record<string, unknown>;
+  return (
+    typeof option.id === "string" &&
+    typeof option.name === "string" &&
+    typeof option.type === "string" &&
+    typeof option.currentValue === "string" &&
+    (option.description === undefined || typeof option.description === "string") &&
+    (option.category === undefined || typeof option.category === "string") &&
+    Array.isArray(option.options) &&
+    option.options.every(isAcpConfigOptionValue)
+  );
+}
+
+function readAcpConfigOptions(data: Record<string, unknown>): AcpConfigOption[] {
+  const raw = data.config_options;
+  if (!Array.isArray(raw)) return [];
+  return raw.filter(isAcpConfigOption);
 }
 
 export function handlePlanPendingApproval(
@@ -126,6 +160,18 @@ export function handleSessionInfo(
       ctx.onModeChangedRef.current?.(restored);
     }
   }
+  if (!infoConvId || infoConvId === ctx.conversationIdRef.current) {
+    ctx.setAcpConfigOptions(readAcpConfigOptions(data));
+  }
+}
+
+export function handleSessionConfigOptions(
+  data: Record<string, unknown>,
+  ctx: UseChatTransportParams,
+) {
+  const msgConvId = data.conversation_id as string | undefined;
+  if (msgConvId && msgConvId !== ctx.conversationIdRef.current) return;
+  ctx.setAcpConfigOptions(readAcpConfigOptions(data));
 }
 
 export function handleWorktreeSwitched(
