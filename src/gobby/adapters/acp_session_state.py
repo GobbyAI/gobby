@@ -75,6 +75,56 @@ def extract_root_uris(payload: Any) -> tuple[str, ...]:
     return tuple(root_uris)
 
 
+# ACP wire (camelCase) -> internal snake_case capability key. Camel-case names
+# are translated here so ACP protocol vocabulary never leaks past this seam.
+_SESSION_CAPABILITY_KEYS: Mapping[str, str] = MappingProxyType(
+    {
+        "list": "list",
+        "resume": "resume",
+        "close": "close",
+        "delete": "delete",
+        "additionalDirectories": "additional_directories",
+    }
+)
+
+
+def parse_session_capabilities(capabilities: Any) -> dict[str, bool]:
+    """Parse ``agentCapabilities.sessionCapabilities`` with presence-not-null semantics.
+
+    The ACP wire shape is an object of optional sub-objects keyed
+    ``list``/``resume``/``close``/``delete``/``additionalDirectories``. A key
+    present with a non-null value (e.g. ``{}``) means the capability is
+    supported; an omitted or ``null`` value means unsupported. A boolean parse
+    would invert this. Camel-case wire keys map to snake_case internal keys.
+    """
+    parsed = dict.fromkeys(_SESSION_CAPABILITY_KEYS.values(), False)
+    raw = capabilities.get("sessionCapabilities") if isinstance(capabilities, dict) else None
+    if not isinstance(raw, dict):
+        return parsed
+    for wire_key, internal_key in _SESSION_CAPABILITY_KEYS.items():
+        if raw.get(wire_key) is not None:
+            parsed[internal_key] = True
+    return parsed
+
+
+def extract_session_infos(payload: Any) -> list[dict[str, Any]]:
+    """Extract ACP ``SessionInfo`` entries from a ``session/list`` result.
+
+    Accepts the full result object (``{"sessions": [...]}``) or a bare list of
+    ``SessionInfo`` objects. Non-dict entries are dropped. Pagination cursors
+    are handled by callers, not here.
+    """
+    if isinstance(payload, dict):
+        sessions: Any = payload.get("sessions")
+    elif isinstance(payload, list):
+        sessions = payload
+    else:
+        sessions = None
+    if not isinstance(sessions, list):
+        return []
+    return [dict(item) for item in sessions if isinstance(item, dict)]
+
+
 @dataclass
 class ACPSessionState:
     """Mutable state derived from ACP initialize and session responses."""
@@ -82,6 +132,7 @@ class ACPSessionState:
     _session_id: str | None = None
     _session_info: dict[str, Any] = field(default_factory=dict)
     _agent_capabilities: dict[str, Any] = field(default_factory=dict)
+    _session_capabilities: dict[str, bool] = field(default_factory=dict)
     _root_uris: tuple[str, ...] = ()
 
     @property
@@ -100,11 +151,36 @@ class ACPSessionState:
     def root_uris(self) -> tuple[str, ...]:
         return self._root_uris
 
+    @property
+    def session_capabilities(self) -> dict[str, bool]:
+        return dict(self._session_capabilities)
+
     def update_agent_capabilities(self, capabilities: Any) -> None:
         self._agent_capabilities = dict(capabilities) if isinstance(capabilities, dict) else {}
+        self._session_capabilities = parse_session_capabilities(self._agent_capabilities)
 
     def supports_session_load(self) -> bool:
         return self._agent_capabilities.get("loadSession") is True
+
+    @property
+    def supports_session_list(self) -> bool:
+        return self._session_capabilities.get("list", False)
+
+    @property
+    def supports_session_resume(self) -> bool:
+        return self._session_capabilities.get("resume", False)
+
+    @property
+    def supports_session_close(self) -> bool:
+        return self._session_capabilities.get("close", False)
+
+    @property
+    def supports_session_delete(self) -> bool:
+        return self._session_capabilities.get("delete", False)
+
+    @property
+    def supports_session_additional_directories(self) -> bool:
+        return self._session_capabilities.get("additional_directories", False)
 
     def update_session_info(
         self,
@@ -133,3 +209,4 @@ class ACPSessionState:
     def reset(self) -> None:
         self.clear_session()
         self._agent_capabilities = {}
+        self._session_capabilities = {}
