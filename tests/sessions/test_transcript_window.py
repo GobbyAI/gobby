@@ -86,6 +86,36 @@ def _codex_out(call_id: str, output: str) -> str:
     )
 
 
+def _codex_tool_search_call(call_id: str, response_id: str) -> str:
+    return json.dumps(
+        {
+            "timestamp": "2024-06-15T10:30:00Z",
+            "type": "response_item",
+            "payload": {
+                "type": "tool_search_call",
+                "call_id": call_id,
+                "id": response_id,
+                "arguments": {"query": "mcp__gobby list_tools", "limit": 3},
+            },
+        }
+    )
+
+
+def _codex_tool_search_output(call_id: str) -> str:
+    return json.dumps(
+        {
+            "timestamp": "2024-06-15T10:30:01Z",
+            "type": "response_item",
+            "payload": {
+                "type": "tool_search_output",
+                "call_id": call_id,
+                "tools": [{"name": "mcp__gobby", "type": "namespace", "tool_count": 8}],
+                "tools_count": 1,
+            },
+        }
+    )
+
+
 def _grok_event(update: dict[str, object]) -> str:
     return json.dumps(
         {
@@ -135,6 +165,20 @@ def _codex_postcut_duplicate() -> list[str]:
         _codex_out("dup", "second-result"),  # duplicate; call opened before any later window
         _codex_msg("user", "q3"),
         _codex_msg("assistant", "a3"),
+    ]
+
+
+def _codex_orphan_missing_call() -> list[str]:
+    """A function_call_output whose call_id never had a function_call — a
+    *genuinely-missing* call (absent from ``tool_first_open``), so windowing
+    seeds no stub and the orphan path renders a synthetic completed card. This
+    is the complement of :func:`_codex_postcut_duplicate`, where the call *was*
+    opened (so its later result is suppressed)."""
+    return [
+        _codex_msg("user", "q1"),
+        _codex_msg("assistant", "a1"),
+        _codex_out("ghost", "result-without-call"),  # no matching function_call anywhere
+        _codex_msg("assistant", "a2"),
     ]
 
 
@@ -346,6 +390,89 @@ def test_postcut_duplicate_result_suppressed(tmp_path) -> None:
     )
     assert result.returned_count == index.total_groups - 2
     _assert_equiv(full[2:], result.groups)
+
+
+def test_orphan_missing_call_renders_synthetic_completed_card_through_window(tmp_path) -> None:
+    """A tool_result whose call is absent from the transcript (genuinely missing,
+    not merely evicted by the window) renders through ``render_window`` as a
+    synthetic *completed* tool_chain that reuses the original ``tool_use_id`` as
+    the call id. Contrast with :func:`test_postcut_duplicate_result_suppressed`,
+    where the opened-then-evicted call is seeded as a stub and suppressed."""
+    lines = _codex_orphan_missing_call()
+    path = _write(tmp_path, "codex", lines)
+    st = os.stat(path)
+    index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+
+    # The crux: the missing call_id is NOT in tool_first_open, so _seed_stubs
+    # never seeds it for any window — the orphan path is the genuine one.
+    assert "ghost" not in index.tool_first_open
+
+    full = _full_render(CodexTranscriptParser, lines)
+    result = render_window(
+        path,
+        "codex",
+        SESSION,
+        index,
+        limit=index.total_groups,
+        offset=0,
+        order="head",
+        max_span=HUGE,
+    )
+    _assert_equiv(full, result.groups)
+
+    orphan_calls = [
+        call
+        for message in result.groups
+        for block in message.content_blocks
+        if block.type == "tool_chain"
+        for call in block.tool_calls
+        if call.id == "ghost"
+    ]
+    assert len(orphan_calls) == 1
+    assert orphan_calls[0].status == "completed"
+    assert orphan_calls[0].result is not None
+
+
+def test_codex_tool_search_renders_as_tool_chain_through_window(tmp_path) -> None:
+    """A tool_search_call + tool_search_output pair renders as a paired, completed
+    tool_chain through the real (unmocked) windowed renderer — proving the pair
+    travels as ParsedMessage tool_use/tool_result (registered in
+    ``pending_tool_calls`` and paired), not the filtered ParsedToolEvent."""
+    lines = [
+        _codex_msg("user", "find the tools"),
+        _codex_tool_search_call("call-search", "tsc-1"),
+        _codex_tool_search_output("call-search"),
+        _codex_msg("assistant", "done"),
+    ]
+    path = _write(tmp_path, "codex", lines)
+    st = os.stat(path)
+    index = build_index_from_file(path, "codex", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+
+    full = _full_render(CodexTranscriptParser, lines)
+    result = render_window(
+        path,
+        "codex",
+        SESSION,
+        index,
+        limit=index.total_groups,
+        offset=0,
+        order="head",
+        max_span=HUGE,
+    )
+    _assert_equiv(full, result.groups)
+
+    search_calls = [
+        call
+        for message in result.groups
+        for block in message.content_blocks
+        if block.type == "tool_chain"
+        for call in block.tool_calls
+        if call.tool_name == "tool_search"
+    ]
+    assert len(search_calls) == 1
+    assert search_calls[0].id == "call-search"
+    assert search_calls[0].status == "completed"
+    assert search_calls[0].result is not None
 
 
 def test_grok_hook_execution_window_does_not_render_unknown(tmp_path) -> None:
