@@ -69,6 +69,7 @@ export default function App() {
     isStreaming,
     isThinking,
     isLoadingMessages,
+    acpAvailableCommands,
     transportError,
     contextUsage,
     sendMessage,
@@ -180,6 +181,7 @@ export default function App() {
     mcp.servers,
     mcp.toolsByServer,
     mcp.fetchToolSchema,
+    acpAvailableCommands,
   );
   const [activeModal, setActiveModal] = useState<"skills" | "gobby" | null>(
     null,
@@ -534,6 +536,7 @@ export default function App() {
                   onInputChange: handleInputChange,
                   paletteItems,
                   onPaletteSelect: handlePaletteSelect,
+                  acpAvailableCommands,
                   mode: settings.chatMode,
                   onModeChange: (mode) => {
                     updateChatMode(mode);

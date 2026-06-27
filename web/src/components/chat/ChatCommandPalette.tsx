@@ -39,6 +39,11 @@ export function ChatCommandPalette({
               {item.description && (
                 <span className="ml-2 text-xs opacity-60">{item.description}</span>
               )}
+              {item.inputHint && (
+                <span className="ml-2 font-mono text-xs opacity-70">
+                  {item.inputHint}
+                </span>
+              )}
             </>
           ) : (
             <>

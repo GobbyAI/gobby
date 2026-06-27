@@ -129,10 +129,24 @@ describe("useChat project and mode controls", () => {
         db_session_id: "db-1",
         session_title: "ACP title",
         updated_at: "2026-06-27T05:00:00Z",
+        available_commands: [
+          {
+            name: "research",
+            description: "Research a topic",
+            input: { hint: "topic" },
+          },
+        ],
       });
     });
 
     expect(result.current.sessionTitle).toBe("ACP title");
+    expect(result.current.acpAvailableCommands).toEqual([
+      {
+        name: "research",
+        description: "Research a topic",
+        input: { hint: "topic" },
+      },
+    ]);
 
     act(() => {
       ws.simulateMessage({
@@ -163,5 +177,29 @@ describe("useChat project and mode controls", () => {
     expect(result.current.contextUsage.contextUsageRatio).toBe(0.25);
     expect(result.current.contextUsage.contextUsageSource).toBe("acp");
     expect(result.current.contextUsage.contextUsageConfidence).toBe("reported");
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_available_commands",
+        conversation_id: result.current.conversationId,
+        available_commands: [
+          { name: "summarize", description: "Summarize context" },
+        ],
+      });
+    });
+
+    expect(result.current.acpAvailableCommands).toEqual([
+      { name: "summarize", description: "Summarize context" },
+    ]);
+
+    act(() => {
+      ws.simulateMessage({
+        type: "session_available_commands",
+        conversation_id: result.current.conversationId,
+        available_commands: [],
+      });
+    });
+
+    expect(result.current.acpAvailableCommands).toEqual([]);
   });
 });

@@ -1,5 +1,8 @@
 import { describe, it, expect } from 'vitest'
-import { buildToolIndex } from '../useColonAutocomplete'
+import {
+  buildToolIndex,
+  buildTopLevelCommands,
+} from '../useColonAutocomplete'
 import type { McpServer, McpTool } from '../useMcp'
 
 function makeServer(name: string, transport: string): McpServer {
@@ -83,5 +86,48 @@ describe('buildToolIndex', () => {
     const result = buildToolIndex(servers, toolsByServer)
 
     expect(result).toEqual([])
+  })
+})
+
+describe('buildTopLevelCommands', () => {
+  it('merges ACP commands without duplicating built-in command names', () => {
+    const commands = buildTopLevelCommands([
+      {
+        name: 'research',
+        description: 'Research a topic',
+        input: { hint: 'topic' },
+      },
+      {
+        name: 'plan',
+        description: 'Provider plan command',
+      },
+      {
+        name: 'research',
+        description: 'Duplicate provider command',
+      },
+    ])
+
+    const research = commands.find((command) => command.name === 'research')
+    expect(research).toEqual({
+      kind: 'command',
+      name: 'research',
+      description: 'Research a topic',
+      action: 'acp_prompt',
+      source: 'acp',
+      inputHint: 'topic',
+    })
+    expect(commands.filter((command) => command.name === 'plan')).toHaveLength(1)
+    expect(commands.filter((command) => command.name === 'research')).toHaveLength(1)
+  })
+
+  it('reflects provider command removal from replacement input', () => {
+    expect(
+      buildTopLevelCommands([
+        { name: 'research', description: 'Research a topic' },
+      ]).some((command) => command.name === 'research'),
+    ).toBe(true)
+    expect(
+      buildTopLevelCommands([]).some((command) => command.name === 'research'),
+    ).toBe(false)
   })
 })

@@ -247,6 +247,43 @@ describe('ChatInput', () => {
     })
   })
 
+  it('sends selected ACP slash commands as prompt text', async () => {
+    const onSend = vi.fn()
+    const onPaletteSelect = vi.fn()
+    render(
+      <ChatInput
+        {...defaultProps}
+        onSend={onSend}
+        onPaletteSelect={onPaletteSelect}
+        paletteItems={[
+          {
+            kind: 'command',
+            name: 'research',
+            description: 'Research a topic',
+            action: 'acp_prompt',
+            source: 'acp',
+            inputHint: 'topic',
+          },
+        ]}
+      />,
+    )
+
+    const textarea = screen.getByRole('textbox')
+    await userEvent.type(textarea, '/research auth flow')
+
+    expect(screen.getByText('/research')).toBeTruthy()
+    expect(screen.getByText('topic')).toBeTruthy()
+
+    await userEvent.keyboard('{Enter}')
+
+    expect(onSend).toHaveBeenCalledWith('/research auth flow', undefined, {
+      reasoningEffort: 'auto',
+      ttsEnabled: false,
+    })
+    expect(onPaletteSelect).not.toHaveBeenCalled()
+    expect(textarea).toHaveValue('')
+  })
+
   it('prepares playback before sending with enabled TTS intent', async () => {
     const callOrder: string[] = []
     const prepareTTSPlayback = vi.fn(() => {

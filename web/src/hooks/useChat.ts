@@ -1,5 +1,9 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import type { ChatMessage, QueuedFile } from "../types/chat";
+import type {
+  AcpAvailableCommand,
+  ChatMessage,
+  QueuedFile,
+} from "../types/chat";
 import type {
   ChatError,
   ChatStreamChunk,
@@ -42,6 +46,9 @@ export function useChat() {
   const [isStreaming, setIsStreaming] = useState(false);
   const [isThinking, setIsThinking] = useState(false);
   const [isLoadingMessages, setIsLoadingMessages] = useState(false);
+  const [acpAvailableCommands, setAcpAvailableCommands] = useState<
+    AcpAvailableCommand[]
+  >([]);
   const [transportError, setTransportError] =
     useState<TransportErrorNotice | null>(null);
 
@@ -253,12 +260,14 @@ export function useChat() {
     setPlanApproved(false);
     planContentRef.current = null;
     setContextUsage(createEmptyContextUsage());
+    setAcpAvailableCommands([]);
     setMessages([]);
     setIsLoadingMessages(false);
   }, [
     lastSeqRef,
     planContentRef,
     setContextUsage,
+    setAcpAvailableCommands,
     setCurrentBranch,
     setMainSessionMeta,
     setPlanApproved,
@@ -427,6 +436,7 @@ export function useChat() {
     sessionInteractionModeRef,
     sessionRefRef,
     setActiveAgent,
+    setAcpAvailableCommands,
     setAttachedSessionId,
     setAttachedSessionMeta,
     setContextUsage,
@@ -670,6 +680,7 @@ export function useChat() {
     transportError,
     contextUsage,
     contextUsageUpdatedAt,
+    acpAvailableCommands,
     sendMessage,
     ensureMainSession,
     sendMode,

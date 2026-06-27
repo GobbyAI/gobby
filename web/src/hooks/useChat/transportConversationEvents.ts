@@ -1,5 +1,6 @@
 import { normalizeChatMode } from "../../types/chat";
 import type {
+  AcpAvailableCommand,
   ApprovalOption,
   SessionObservationMeta,
 } from "../../types/chat";
@@ -42,6 +43,42 @@ function readNullableString(
 function readSessionTitle(data: Record<string, unknown>): string | null | undefined {
   const explicit = readNullableString(data, "session_title");
   return explicit !== undefined ? explicit : readNullableString(data, "title");
+}
+
+function readAcpAvailableCommands(value: unknown): AcpAvailableCommand[] {
+  if (!Array.isArray(value)) return [];
+
+  const commands: AcpAvailableCommand[] = [];
+  for (const item of value) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+    const command = item as Record<string, unknown>;
+    if (typeof command.name !== "string" || !command.name.trim()) continue;
+    if (
+      typeof command.description !== "string" ||
+      !command.description.trim()
+    ) {
+      continue;
+    }
+
+    const normalized: AcpAvailableCommand = {
+      name: command.name.trim(),
+      description: command.description.trim(),
+    };
+    if (command.input === null) {
+      normalized.input = null;
+    } else if (
+      command.input &&
+      typeof command.input === "object" &&
+      !Array.isArray(command.input)
+    ) {
+      const input = command.input as Record<string, unknown>;
+      if (typeof input.hint === "string" && input.hint.trim()) {
+        normalized.input = { hint: input.hint.trim() };
+      }
+    }
+    commands.push(normalized);
+  }
+  return commands;
 }
 
 function patchSessionMeta(
@@ -148,6 +185,11 @@ export function handleSessionInfo(
   const matchesCurrentConversation =
     !infoConvId || infoConvId === ctx.conversationIdRef.current;
   if (matchesCurrentConversation) {
+    if ("available_commands" in data) {
+      ctx.setAcpAvailableCommands(
+        readAcpAvailableCommands(data.available_commands),
+      );
+    }
     const title = readSessionTitle(data);
     const updatedAt =
       typeof data.updated_at === "string" ? data.updated_at : undefined;
@@ -187,6 +229,19 @@ export function handleSessionInfo(
       ctx.onModeChangedRef.current?.(restored);
     }
   }
+}
+
+export function handleSessionAvailableCommands(
+  data: Record<string, unknown>,
+  ctx: UseChatTransportParams,
+) {
+  const infoConvId = data.conversation_id as string | undefined;
+  if (infoConvId && infoConvId !== ctx.conversationIdRef.current) {
+    return;
+  }
+  ctx.setAcpAvailableCommands(
+    readAcpAvailableCommands(data.available_commands),
+  );
 }
 
 export function handleWorktreeSwitched(

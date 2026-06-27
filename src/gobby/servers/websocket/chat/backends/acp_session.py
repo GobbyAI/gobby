@@ -11,9 +11,11 @@ from typing import Any
 
 from gobby.adapters.acp_client import StreamEvent
 from gobby.adapters.acp_client_requests import is_pre_tool_decision_denied
+from gobby.adapters.acp_commands import normalize_available_commands
 from gobby.llm.claude_models import (
     ChatEvent,
     DoneEvent,
+    SessionAvailableCommandsEvent,
     SessionInfoUpdateEvent,
     SessionModeUpdateEvent,
     SessionUsageUpdateEvent,
@@ -60,6 +62,7 @@ class ACPManagedChatSession(
     _plan_approved: bool = field(default=False, repr=False)
     _plan_feedback: str | None = field(default=None, repr=False)
     _is_first_turn: bool = field(default=True, repr=False)
+    available_commands: list[dict[str, Any]] = field(default_factory=list)
 
     def _web_chat_source(self) -> str:
         return f"{self.provider}_web_chat"
@@ -160,6 +163,14 @@ class ACPManagedChatSession(
                     elif stream_event.event_type == "usage_update":
                         yield SessionUsageUpdateEvent(
                             usage=_normalize_usage_update(stream_event.data)
+                        )
+                        continue
+                    elif stream_event.event_type == "available_commands_update":
+                        self.available_commands = normalize_available_commands(
+                            stream_event.data.get("commands")
+                        )
+                        yield SessionAvailableCommandsEvent(
+                            available_commands=self.available_commands
                         )
                         continue
                     elif stream_event.event_type == "content_delta":

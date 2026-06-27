@@ -196,6 +196,16 @@ export interface ChatSendOptions {
   ttsEnabled?: boolean;
 }
 
+export interface AcpAvailableCommandInput {
+  hint: string;
+}
+
+export interface AcpAvailableCommand {
+  name: string;
+  description: string;
+  input?: AcpAvailableCommandInput | null;
+}
+
 export interface ProjectOption {
   id: string;
   name: string;
@@ -272,6 +282,7 @@ export interface ChatState {
   onInputChange: (value: string) => void;
   paletteItems: PaletteItem[];
   onPaletteSelect: (item: PaletteItem) => void;
+  acpAvailableCommands?: AcpAvailableCommand[];
   mode: ChatMode;
   onModeChange: (mode: ChatMode) => void;
   onModeChangeLocal?: (mode: ChatMode) => void;

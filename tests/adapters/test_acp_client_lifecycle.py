@@ -10,6 +10,7 @@ from typing import Any
 import pytest
 
 from gobby.adapters.acp_client import ACPClient
+from gobby.adapters.acp_commands import normalize_available_commands
 from gobby.adapters.acp_session_state import ACPSessionState
 
 pytestmark = pytest.mark.unit
@@ -97,6 +98,31 @@ def test_session_state_copies_capabilities_and_tracks_roots() -> None:
     state.update_session_info({"sessionId": "fallback-session"}, fallback_roots=("/tmp/fallback",))
 
     assert state.root_uris == ("/tmp/fallback",)
+
+
+def test_normalize_available_commands_uses_current_acp_schema() -> None:
+    assert normalize_available_commands(
+        [
+            {
+                "name": "research",
+                "description": "Research a topic",
+                "input": {"hint": "topic"},
+            },
+            {"name": " summarize ", "description": " Summarize context "},
+            {"name": "", "description": "missing name"},
+            {"name": "broken", "description": ""},
+            {"name": "ignored-input", "description": "No hint", "input": {"hint": ""}},
+            "not-a-command",
+        ]
+    ) == [
+        {
+            "name": "research",
+            "description": "Research a topic",
+            "input": {"hint": "topic"},
+        },
+        {"name": "summarize", "description": "Summarize context"},
+        {"name": "ignored-input", "description": "No hint"},
+    ]
 
 
 @pytest.mark.asyncio
@@ -223,6 +249,23 @@ def test_normalize_notification_maps_session_update_variants() -> None:
             },
         }
     )
+    available_commands = _StubACPClient._normalize_notification(
+        {
+            "method": "session/update",
+            "params": {
+                "update": {
+                    "sessionUpdate": "available_commands_update",
+                    "commands": [
+                        {
+                            "name": "research",
+                            "description": "Research a topic",
+                            "input": {"hint": "topic"},
+                        }
+                    ],
+                },
+            },
+        }
+    )
     unknown = _StubACPClient._normalize_notification(
         {
             "method": "session/update",
@@ -239,6 +282,8 @@ def test_normalize_notification_maps_session_update_variants() -> None:
     assert usage.event_type == "usage_update"
     assert usage.data["used"] == 250
     assert usage.data["cost"]["amount"] == 0.01
+    assert available_commands.event_type == "available_commands_update"
+    assert available_commands.data["commands"][0]["name"] == "research"
     assert unknown.event_type == "future_update"
 
 

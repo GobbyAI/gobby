@@ -17,6 +17,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar
 
 from gobby.adapters.acp_client import ACPClient, StreamEvent
+from gobby.adapters.acp_commands import normalize_available_commands
 from gobby.agents.sandbox import SandboxConfig
 from gobby.agents.trust import pre_approve_directory
 from gobby.config.ai import LocalGenerationEndpointConfig
@@ -172,6 +173,9 @@ class ACPWebChatBackend:
         )
         if isinstance(resolved_session_id, str) and resolved_session_id:
             session.sdk_session_id = resolved_session_id
+        session.available_commands = normalize_available_commands(
+            session_info.get("availableCommands")
+        )
         session._connected = True
         session.last_activity = datetime.now(UTC)
 

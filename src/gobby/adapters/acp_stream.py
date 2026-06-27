@@ -109,6 +109,9 @@ def normalize_notification(
         if update_type == "usage_update":
             return StreamEvent(event_type="usage_update", data=dict(update))
 
+        if update_type == "available_commands_update":
+            return StreamEvent(event_type="available_commands_update", data=dict(update))
+
         if update_type == "tool_call":
             tool_input = {}
             for input_key in ("rawInput", "input"):

@@ -17,6 +17,7 @@ import pytest
 from gobby.adapters.acp_client import StreamEvent
 from gobby.llm.claude_models import (
     DoneEvent,
+    SessionAvailableCommandsEvent,
     SessionInfoUpdateEvent,
     SessionModeUpdateEvent,
     SessionUsageUpdateEvent,
@@ -223,6 +224,48 @@ async def test_session_update_events_translate_to_shared_chat_events() -> None:
         "context_usage_confidence": "reported",
         "cost": {"currency": "USD", "amount": 0.01},
     }
+
+
+@pytest.mark.asyncio
+async def test_available_commands_update_replaces_session_commands() -> None:
+    session, _broadcasts = _make_session(
+        "plan",
+        [
+            StreamEvent(
+                event_type="available_commands_update",
+                data={
+                    "commands": [
+                        {
+                            "name": "research",
+                            "description": "Research a topic",
+                            "input": {"hint": "topic"},
+                        },
+                        {"name": "summarize", "description": "Summarize context"},
+                    ],
+                },
+            ),
+            StreamEvent(
+                event_type="available_commands_update",
+                data={"commands": [{"name": "summarize", "description": "Summarize context"}]},
+            ),
+        ],
+    )
+
+    events = [e async for e in session.send_message("continue")]
+
+    command_events = [e for e in events if isinstance(e, SessionAvailableCommandsEvent)]
+    assert [event.available_commands for event in command_events] == [
+        [
+            {
+                "name": "research",
+                "description": "Research a topic",
+                "input": {"hint": "topic"},
+            },
+            {"name": "summarize", "description": "Summarize context"},
+        ],
+        [{"name": "summarize", "description": "Summarize context"}],
+    ]
+    assert session.available_commands == [{"name": "summarize", "description": "Summarize context"}]
 
 
 @pytest.mark.asyncio

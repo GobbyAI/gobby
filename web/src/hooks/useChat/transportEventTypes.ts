@@ -1,4 +1,8 @@
-import type { ApprovalOption, ToolResult } from "../../types/chat";
+import type {
+  AcpAvailableCommand,
+  ApprovalOption,
+  ToolResult,
+} from "../../types/chat";
 
 export interface ChatStreamChunk {
   type: "chat_stream";
@@ -185,6 +189,13 @@ export interface SessionInfoMessage {
   worktree_path?: string;
   agent_name?: string;
   plan_auto_switch?: boolean;
+  available_commands?: AcpAvailableCommand[];
+}
+
+export interface SessionAvailableCommandsMessage {
+  type: "session_available_commands";
+  conversation_id?: string;
+  available_commands?: AcpAvailableCommand[];
 }
 
 export interface WorktreeSwitchedMessage {

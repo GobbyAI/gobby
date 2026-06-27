@@ -1,5 +1,6 @@
-import { useState, useCallback, useMemo } from 'react'
+import { useState, useCallback, useEffect, useMemo, useRef } from 'react'
 import { COMMANDS } from './useSlashCommands'
+import type { AcpAvailableCommand } from '../types/chat'
 import type { GobbySkill } from './useSkills'
 import type { McpServer, McpTool, McpToolSchema } from './useMcp'
 
@@ -10,6 +11,8 @@ export interface PaletteCommand {
   name: string
   description: string
   action: string
+  source?: 'gobby' | 'acp'
+  inputHint?: string
 }
 
 export interface PaletteSubItem {
@@ -64,6 +67,35 @@ export function buildToolIndex(
   return entries
 }
 
+export function buildTopLevelCommands(
+  acpAvailableCommands: AcpAvailableCommand[] = [],
+): PaletteCommand[] {
+  const commands: PaletteCommand[] = COMMANDS.map((command) => ({
+    kind: 'command',
+    source: 'gobby',
+    ...command,
+  }))
+  const seenNames = new Set(commands.map((command) => command.name.toLowerCase()))
+
+  for (const command of acpAvailableCommands) {
+    const name = command.name.trim()
+    const description = command.description.trim()
+    const normalizedName = name.toLowerCase()
+    if (!name || !description || seenNames.has(normalizedName)) continue
+    commands.push({
+      kind: 'command',
+      name,
+      description,
+      action: 'acp_prompt',
+      source: 'acp',
+      inputHint: command.input?.hint?.trim() || undefined,
+    })
+    seenNames.add(normalizedName)
+  }
+
+  return commands
+}
+
 // --- Hook ---
 
 export function useColonAutocomplete(
@@ -71,16 +103,23 @@ export function useColonAutocomplete(
   servers: McpServer[],
   toolsByServer: Record<string, McpTool[]>,
   fetchToolSchema: (serverName: string, toolName: string) => Promise<McpToolSchema | null>,
+  acpAvailableCommands: AcpAvailableCommand[] = [],
 ) {
   const [paletteItems, setPaletteItems] = useState<PaletteItem[]>([])
+  const lastInputRef = useRef('')
 
   const toolIndex = useMemo(
     () => buildToolIndex(servers, toolsByServer),
     [servers, toolsByServer],
   )
+  const topLevelCommands = useMemo(
+    () => buildTopLevelCommands(acpAvailableCommands),
+    [acpAvailableCommands],
+  )
 
   const filterInput = useCallback(
     (value: string) => {
+      lastInputRef.current = value
       if (!value.startsWith('/')) {
         // Only update if not already empty — avoids re-render on every keystroke
         setPaletteItems((prev) => prev.length === 0 ? prev : [])
@@ -150,21 +189,23 @@ export function useColonAutocomplete(
         // No colon — filter top-level commands (existing behavior)
         const search = commandPart.toLowerCase()
         if (!search) {
-          setPaletteItems(
-            COMMANDS.map((c) => ({ kind: 'command' as const, ...c })),
-          )
+          setPaletteItems(topLevelCommands)
         } else {
           setPaletteItems(
-            COMMANDS.filter((c) => c.name.includes(search)).map((c) => ({
-              kind: 'command' as const,
-              ...c,
-            })),
+            topLevelCommands.filter((c) => c.name.toLowerCase().includes(search)),
           )
         }
       }
     },
-    [skills, toolIndex],
+    [skills, toolIndex, topLevelCommands],
   )
+
+  useEffect(() => {
+    const lastInput = lastInputRef.current
+    if (lastInput.startsWith('/')) {
+      filterInput(lastInput)
+    }
+  }, [filterInput])
 
   const parseColonCommand = useCallback(
     (input: string): ColonCommandParsed | null => {

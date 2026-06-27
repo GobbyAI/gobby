@@ -278,6 +278,28 @@ export function ChatInput({
 
   const handlePaletteSelect = useCallback((item: PaletteItem) => {
     if (item.kind === 'command') {
+      if (item.action === 'acp_prompt') {
+        if (disabled) return
+        const filesToSend = attachmentsDisabled ? [] : queuedFiles
+        const hasBlockingUpload = filesToSend.some((qf) => qf.status !== 'uploaded')
+        if (hasBlockingUpload) return
+        const commandText = item.name.startsWith('/') ? item.name : `/${item.name}`
+        const trimmed = input.trim()
+        const firstToken = trimmed.split(/\s/)[0]
+        const prompt = firstToken === commandText ? trimmed : commandText
+        if (!prompt) return
+        if (ttsEnabled) {
+          prepareTTSPlayback?.()
+        }
+        onSend(prompt, filesToSend.length > 0 ? filesToSend : undefined, {
+          reasoningEffort: currentReasoning,
+          ttsEnabled,
+        })
+        setInput('')
+        clearQueuedFiles()
+        onScrollToBottom?.()
+        return
+      }
       onPaletteSelect?.(item)
       setInput('')
     } else {
@@ -286,7 +308,20 @@ export function ChatInput({
       onInputChange?.(completed)
       textareaRef.current?.focus()
     }
-  }, [onPaletteSelect, onInputChange])
+  }, [
+    attachmentsDisabled,
+    clearQueuedFiles,
+    currentReasoning,
+    disabled,
+    input,
+    onInputChange,
+    onPaletteSelect,
+    onScrollToBottom,
+    onSend,
+    prepareTTSPlayback,
+    queuedFiles,
+    ttsEnabled,
+  ])
 
   const handleKeyDown = useCallback((e: KeyboardEvent<HTMLTextAreaElement>) => {
     if (e.key === 'Escape') {

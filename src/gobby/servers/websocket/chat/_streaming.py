@@ -240,6 +240,9 @@ class ChatStreamingMixin:
             session_chat_mode = getattr(session, "chat_mode", None)
             if isinstance(session_chat_mode, str) and session_chat_mode:
                 session_info_msg["chat_mode"] = session_chat_mode
+            available_commands = getattr(session, "available_commands", None)
+            if isinstance(available_commands, list):
+                session_info_msg["available_commands"] = available_commands
             await transport.send_direct(session_info_msg)
             return session
         except Exception as exc:

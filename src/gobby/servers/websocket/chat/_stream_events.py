@@ -11,6 +11,7 @@ from uuid import uuid4
 
 from gobby.llm.claude_models import (
     DoneEvent,
+    SessionAvailableCommandsEvent,
     SessionInfoUpdateEvent,
     SessionModeUpdateEvent,
     SessionUsageUpdateEvent,
@@ -97,6 +98,8 @@ class ChatStreamEventHandler:
             return await self._handle_session_mode_update(event)
         if isinstance(event, SessionUsageUpdateEvent):
             return await self._handle_session_usage_update(event, session)
+        if isinstance(event, SessionAvailableCommandsEvent):
+            return await self._handle_session_available_commands(event)
         if isinstance(event, DoneEvent):
             return await self._handle_done(event, session)
         return True
@@ -174,6 +177,17 @@ class ChatStreamEventHandler:
         if isinstance(model, str) and model:
             payload["model"] = model
         return await self.transport.safe_send(payload)
+
+    async def _handle_session_available_commands(
+        self,
+        event: SessionAvailableCommandsEvent,
+    ) -> bool:
+        return await self.transport.safe_send(
+            self._msg(
+                type="session_available_commands",
+                available_commands=event.available_commands,
+            )
+        )
 
     async def _handle_text(self, event: TextChunk, session: Any) -> bool:
         content = event.content

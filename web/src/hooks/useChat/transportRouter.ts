@@ -13,6 +13,7 @@ import {
   handleConnectionEstablished,
   handleModeChanged,
   handlePlanPendingApproval,
+  handleSessionAvailableCommands,
   handleSessionContinued,
   handleSessionInfo,
   handleSubscribeSuccess,
@@ -141,6 +142,9 @@ export function routeTransportMessage(
       return;
     case "session_info":
       handleSessionInfo(data, ctx);
+      return;
+    case "session_available_commands":
+      handleSessionAvailableCommands(data, ctx);
       return;
     case "worktree_switched":
       handleWorktreeSwitched(data, ctx);

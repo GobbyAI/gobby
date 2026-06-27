@@ -81,6 +81,14 @@ class SessionUsageUpdateEvent:
 
 
 @dataclass
+class SessionAvailableCommandsEvent:
+    """Event when ACP reports provider-advertised slash commands."""
+
+    available_commands: list[dict[str, Any]]
+    """Normalized ACP available command payloads."""
+
+
+@dataclass
 class DoneEvent:
     """Event when streaming is complete."""
 
@@ -134,4 +142,5 @@ ChatEvent = (
     | SessionInfoUpdateEvent
     | SessionModeUpdateEvent
     | SessionUsageUpdateEvent
+    | SessionAvailableCommandsEvent
 )

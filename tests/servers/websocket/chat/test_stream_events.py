@@ -15,6 +15,7 @@ import pytest
 
 from gobby.llm.claude_models import (
     DoneEvent,
+    SessionAvailableCommandsEvent,
     SessionInfoUpdateEvent,
     SessionModeUpdateEvent,
     SessionUsageUpdateEvent,
@@ -118,6 +119,18 @@ async def test_session_update_events_emit_existing_websocket_frames() -> None:
         ),
         session,
     )
+    await handler.handle_event(
+        SessionAvailableCommandsEvent(
+            available_commands=[
+                {
+                    "name": "research",
+                    "description": "Research a topic",
+                    "input": {"hint": "topic"},
+                }
+            ]
+        ),
+        session,
+    )
 
     assert transport.sent[0] == {
         "type": "session_info",
@@ -145,6 +158,18 @@ async def test_session_update_events_emit_existing_websocket_frames() -> None:
     assert transport.sent[2]["context_used_tokens"] == 250
     assert transport.sent[2]["context_usage_ratio"] == 0.25
     assert transport.sent[2]["cost"] == {"currency": "USD", "amount": 0.01}
+    assert transport.sent[3] == {
+        "type": "session_available_commands",
+        "message_id": "assistant-1",
+        "conversation_id": "conv-1",
+        "available_commands": [
+            {
+                "name": "research",
+                "description": "Research a topic",
+                "input": {"hint": "topic"},
+            }
+        ],
+    }
 
 
 @pytest.mark.asyncio
