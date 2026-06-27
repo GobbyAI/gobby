@@ -1,15 +1,12 @@
 use std::time::Duration;
 
 use gobby_core::ai::{
-    daemon::{
-        CodeWikiWriterOptions, generate_via_daemon_with_max_tokens, write_codewiki_via_daemon,
-    },
-    effective_route,
+    daemon::generate_via_daemon_with_max_tokens, effective_route,
     text::{generate_text, generate_text_with_max_tokens},
 };
 use gobby_core::ai_context::{AiConfigSource, AiContext, AiContextOptions, PostgresAiConfigSource};
 use gobby_core::ai_types::AiError;
-use gobby_core::config::{AiCapability, AiRouting, FeatureCandidate};
+use gobby_core::config::{AiCapability, AiRouting};
 
 use crate::commands::codewiki::{
     CodewikiAiOptions, DEFAULT_VERIFY_PROFILE, PromptTier, TextGenerator, TextVerifier, prompts,
@@ -21,22 +18,11 @@ use crate::{db, secrets};
 pub(super) const GENERATION_RETRY_BACKOFF: [Duration; 2] =
     [Duration::from_millis(200), Duration::from_millis(500)];
 
-/// Default aggregate-writer candidate chain for the dedicated CodeWiki daemon
-/// writer. Keep this Codex-only until another provider has an equivalent
-/// noninteractive read-only execution contract.
-fn writer_candidate_chain() -> Vec<FeatureCandidate> {
-    vec![FeatureCandidate {
-        candidate: "codex/gpt-5.5".to_string(),
-        reasoning_effort: Some("xhigh".to_string()),
-    }]
-}
-
 /// Daemon feature profile for [`PromptTier::Module`] writing (#904): module docs
 /// and file-body narratives are mid-level per-unit synthesis, written by sonnet
 /// — cheaper than the opus-first top-level writer, richer than the per-symbol
 /// default tier.
 const MODULE_WRITER_PROFILE: &str = "feature_mid";
-const CODEWIKI_WRITER_TIMEOUT_SECONDS: f64 = 240.0;
 
 pub(crate) fn resolve_text_generator(
     ctx: &Context,
@@ -49,23 +35,18 @@ pub(crate) fn resolve_text_generator(
     }
 
     // Aggregate prose (curated narrative/concepts, repo/architecture/modules) is
-    // the high-value writing surface. Route daemon aggregate writing through the
-    // dedicated read-only CodeWiki writer endpoint. An explicit
-    // `--ai-aggregate-profile` overrides the default Codex candidate chain with a
-    // named daemon feature profile. Per-file Standard summaries stay on the
-    // binding's lighter default tier.
+    // the high-value writing surface. An explicit `--ai-aggregate-profile`
+    // selects a named daemon feature profile for it; module writing uses the
+    // mid-tier profile, and per-file Standard summaries stay on the binding's
+    // lighter default tier. Provider/model resolution is owned by config, not
+    // pinned here. (Tier -> feature_low/mid/high mapping lands with the Lane A/B
+    // generation foundation.)
     let aggregate_profile = ai.aggregate_profile.clone();
-    let writer_candidates = writer_candidate_chain();
     let max_tokens = ai.prose_depth.max_tokens();
     let register = ai.register;
-    let project_root = ctx.project_root.to_string_lossy().to_string();
     let mut warned = false;
     let quiet = ctx.quiet;
     Some(Box::new(move |prompt, system, tier| {
-        // Top-level aggregate writing uses the dedicated writer endpoint; module
-        // and file-body synthesis routes to sonnet; per-symbol Standard prose
-        // stays light.
-        let use_codewiki_writer = matches!(tier, PromptTier::Aggregate);
         let profile = match tier {
             PromptTier::Aggregate => aggregate_profile.as_deref(),
             PromptTier::Module => Some(MODULE_WRITER_PROFILE),
@@ -73,43 +54,13 @@ pub(crate) fn resolve_text_generator(
         };
         let system = prompts::with_register(system, register);
         let result = generate_with_bounded_retry(|| match route {
-            AiRouting::Daemon => {
-                if use_codewiki_writer {
-                    if !quiet {
-                        eprintln!(
-                            "codewiki: AI writer active ({})",
-                            writer_route_label(profile, &writer_candidates)
-                        );
-                    }
-                    write_codewiki_via_daemon(
-                        &ai_context,
-                        prompt,
-                        Some(system.as_ref()),
-                        CodeWikiWriterOptions {
-                            cwd: Some(project_root.as_str()),
-                            max_tokens,
-                            profile,
-                            candidates: if profile.is_none() {
-                                Some(writer_candidates.as_slice())
-                            } else {
-                                None
-                            },
-                            timeout_seconds: Some(CODEWIKI_WRITER_TIMEOUT_SECONDS),
-                            reasoning_effort: None,
-                            page_kind: Some("aggregate"),
-                        },
-                    )
-                    .map(|result| result.into_text_result())
-                } else {
-                    generate_via_daemon_with_max_tokens(
-                        &ai_context,
-                        prompt,
-                        Some(system.as_ref()),
-                        max_tokens,
-                        profile,
-                    )
-                }
-            }
+            AiRouting::Daemon => generate_via_daemon_with_max_tokens(
+                &ai_context,
+                prompt,
+                Some(system.as_ref()),
+                max_tokens,
+                profile,
+            ),
             AiRouting::Direct => generate_text_with_max_tokens(
                 &ai_context,
                 prompt,
@@ -134,20 +85,6 @@ pub(crate) fn resolve_text_generator(
             }
         }
     }))
-}
-
-fn writer_route_label(profile: Option<&str>, candidates: &[FeatureCandidate]) -> String {
-    match profile {
-        Some(profile) => format!("daemon codewiki writer, profile={profile}"),
-        None => {
-            let labels = candidates
-                .iter()
-                .map(|candidate| candidate.candidate.as_str())
-                .collect::<Vec<_>>()
-                .join(",");
-            format!("daemon codewiki writer, candidates={labels}")
-        }
-    }
 }
 
 /// Resolve the grounded-verification call that pairs with
@@ -370,22 +307,4 @@ pub(super) fn is_model_refusal(text: &str) -> bool {
 fn clean_generated(text: String) -> Option<String> {
     let text = text.trim();
     (!text.is_empty()).then(|| text.to_string())
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn aggregate_writer_default_candidates_are_codex_only() {
-        let candidates = writer_candidate_chain();
-
-        assert_eq!(candidates.len(), 1);
-        assert_eq!(candidates[0].candidate, "codex/gpt-5.5");
-        assert_eq!(candidates[0].reasoning_effort.as_deref(), Some("xhigh"));
-        assert_eq!(
-            writer_route_label(None, &candidates),
-            "daemon codewiki writer, candidates=codex/gpt-5.5"
-        );
-    }
 }

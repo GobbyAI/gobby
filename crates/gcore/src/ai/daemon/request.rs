@@ -6,8 +6,6 @@ use std::io::Cursor;
 use crate::ai_types::AiError;
 use crate::config::{AiCapability, FeatureCandidate};
 
-use super::types::CodeWikiWriterOptions;
-
 const TEXT_GENERATE_DEFAULT_PROFILE: &str = "feature_low";
 
 pub(super) fn audio_capability(capability: AiCapability) -> Result<AiCapability, AiError> {
@@ -102,38 +100,6 @@ pub(super) fn text_request_body(
     insert_optional(&mut body, "project_id", options.project_id);
     if let Some(max_tokens) = options.max_tokens.filter(|value| *value > 0) {
         body.insert("max_tokens".to_string(), Value::from(max_tokens));
-    }
-    Value::Object(body)
-}
-
-pub(super) fn codewiki_writer_request_body(
-    prompt: &str,
-    system: Option<&str>,
-    options: CodeWikiWriterOptions<'_>,
-) -> Value {
-    let mut body = Map::new();
-    let candidates = options
-        .candidates
-        .filter(|candidates| !candidates.is_empty());
-    body.insert("prompt".to_string(), Value::String(prompt.to_string()));
-    insert_optional(&mut body, "system_prompt", system);
-    insert_optional(&mut body, "cwd", options.cwd);
-    if let Some(profile) = non_empty(options.profile) {
-        body.insert("profile".to_string(), Value::String(profile.to_string()));
-    }
-    if let Some(candidates) = candidates {
-        body.insert(
-            "candidates".to_string(),
-            serde_json::to_value(candidates).expect("feature candidates serialize"),
-        );
-    }
-    insert_optional(&mut body, "reasoning_effort", options.reasoning_effort);
-    insert_optional(&mut body, "page_kind", options.page_kind);
-    if let Some(max_tokens) = options.max_tokens.filter(|value| *value > 0) {
-        body.insert("max_tokens".to_string(), Value::from(max_tokens));
-    }
-    if let Some(timeout_seconds) = options.timeout_seconds.filter(|value| *value > 0.0) {
-        body.insert("timeout_seconds".to_string(), Value::from(timeout_seconds));
     }
     Value::Object(body)
 }

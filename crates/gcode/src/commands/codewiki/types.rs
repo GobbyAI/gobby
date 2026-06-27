@@ -720,9 +720,9 @@ pub struct CodewikiAiOptions {
     /// voice; grounding rules hold in every register.
     pub register: Option<ProseRegister>,
     /// Daemon feature profile override for aggregate docs. `None` (the default)
-    /// routes aggregate/curated writing to the opus-first chain
-    /// (`writer_candidate_chain` in `text/generation.rs`); `Some(profile)` pins
-    /// that named daemon feature profile instead.
+    /// routes aggregate/curated writing through the standard generate path with
+    /// the binding's default profile (see `text/generation.rs`); `Some(profile)`
+    /// pins that named daemon feature profile instead.
     pub aggregate_profile: Option<String>,
     /// Override seams for the grounded verification pass. Each `None` falls
     /// back to the resolved `ai.text_generate.verify_*` config, then to the

@@ -50,9 +50,9 @@ const CODEWIKI_RENDER_VERSION: u32 = 15;
 
 /// Default daemon feature profile for the grounded verification pass (#904):
 /// `feature_mid` (sonnet) runs the "is this claim supported by the cited
-/// source?" QA judgment, pairing with the opus-first aggregate writer (see
-/// `writer_candidate_chain` in `text/generation.rs`). File and symbol docs stay
-/// on the daemon's default low-tier profile.
+/// source?" QA judgment, pairing with the aggregate writer profile resolved in
+/// `text/generation.rs`. File and symbol docs stay on the daemon's default
+/// low-tier profile.
 pub(crate) const DEFAULT_VERIFY_PROFILE: &str = "feature_mid";
 
 mod architecture_diagrams;
