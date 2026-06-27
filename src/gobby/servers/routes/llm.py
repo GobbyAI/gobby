@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
-from pydantic import AliasChoices, BaseModel, Field, model_validator
+from pydantic import AliasChoices, BaseModel, Field
 
 from gobby.ai import (
     AICapability,
@@ -25,11 +25,6 @@ from gobby.ai import (
     build_daemon_vision_extract_service,
 )
 from gobby.config.feature_base import FeatureCandidateInput, FeatureProfile
-from gobby.llm.codewiki_writer import (
-    CodeWikiWriterError,
-    CodeWikiWriterRequest,
-    build_codewiki_writer_service,
-)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -65,30 +60,6 @@ class TextGeneratePayload(BaseModel):
         if self.provider or self.model or self.profile or self.candidates:
             return self.profile
         return DEFAULT_TEXT_GENERATE_PROFILE
-
-
-class CodeWikiWritePayload(BaseModel):
-    """Request body for dedicated CodeWiki prose writing."""
-
-    prompt: str = Field(min_length=1)
-    system_prompt: str | None = Field(
-        default=None,
-        validation_alias=AliasChoices("system_prompt", "system"),
-    )
-    cwd: str = Field(min_length=1)
-    profile: str | None = None
-    candidates: tuple[FeatureCandidateInput, ...] = ()
-    max_tokens: int | None = Field(default=None, gt=0)
-    timeout_seconds: float | None = Field(default=None, gt=0)
-    reasoning_effort: str | None = None
-    page_kind: str | None = None
-
-    @model_validator(mode="after")
-    def require_explicit_routing(self) -> CodeWikiWritePayload:
-        """Require one explicit writer route source."""
-        if bool(self.profile) == bool(self.candidates):
-            raise ValueError("exactly one of profile or candidates is required")
-        return self
 
 
 def create_llm_router(server: HTTPServer) -> APIRouter:
@@ -146,44 +117,6 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         except Exception as e:
             logger.error("Text generation failed", exc_info=True)
             raise HTTPException(status_code=500, detail="Text generation failed") from e
-
-    @router.post("/codewiki/write")
-    async def write_codewiki(payload: CodeWikiWritePayload) -> Any:
-        """Run dedicated read-only CodeWiki page writing."""
-        config = server.config
-        if config is None:
-            raise HTTPException(status_code=503, detail="Daemon config not found")
-
-        service = getattr(server.services, "codewiki_writer_service", None)
-        if service is None:
-            service = build_codewiki_writer_service(config)
-        try:
-            result = await service.write(
-                CodeWikiWriterRequest(
-                    prompt=payload.prompt,
-                    system_prompt=payload.system_prompt,
-                    cwd=payload.cwd,
-                    profile=payload.profile,
-                    candidates=payload.candidates,
-                    max_tokens=payload.max_tokens,
-                    timeout_seconds=payload.timeout_seconds,
-                    reasoning_effort=payload.reasoning_effort,
-                    page_kind=payload.page_kind,
-                )
-            )
-            return result.to_dict()
-        except CodeWikiWriterError as e:
-            logger.info("CodeWiki writer rejected request: %s", e)
-            return JSONResponse(status_code=400, content=e.to_dict())
-        except ValueError as e:
-            logger.info("CodeWiki writer request rejected: %s", e)
-            return JSONResponse(
-                status_code=400,
-                content=CodeWikiWriterError("invalid_request", str(e)).to_dict(),
-            )
-        except Exception as e:
-            logger.error("CodeWiki writer failed", exc_info=True)
-            raise HTTPException(status_code=500, detail="CodeWiki writer failed") from e
 
     @router.get("/vision/status")
     async def vision_status() -> dict[str, Any]:

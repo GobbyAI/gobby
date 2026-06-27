@@ -26,11 +26,6 @@ from gobby.config.ai import AIConfig, GenerationConfig, LocalGenerationConfig
 from gobby.config.app import DaemonConfig
 from gobby.config.feature_base import FeatureCandidateConfig
 from gobby.llm.base import LLMTextResult
-from gobby.llm.codewiki_writer import (
-    CodeWikiWriterError,
-    CodeWikiWriterRequest,
-    CodeWikiWriterResult,
-)
 from gobby.servers.routes.llm import create_llm_router
 
 pytestmark = pytest.mark.unit
@@ -64,25 +59,6 @@ class _FakeTextAdapter:
         if self.usage is not None:
             return LLMTextResult(text=self.text, usage=self.usage)
         return self.text
-
-
-class _FakeCodeWikiWriterService:
-    def __init__(self, *, error: CodeWikiWriterError | None = None) -> None:
-        self.error = error
-        self.requests: list[CodeWikiWriterRequest] = []
-
-    async def write(self, request: CodeWikiWriterRequest) -> CodeWikiWriterResult:
-        self.requests.append(request)
-        if self.error is not None:
-            raise self.error
-        return CodeWikiWriterResult(
-            text="CodeWiki page prose",
-            provider="codex",
-            model="gpt-5.5",
-            usage=None,
-            elapsed_ms=42,
-            diagnostics={"candidate": "codex/gpt-5.5"},
-        )
 
 
 @pytest.fixture
@@ -193,78 +169,6 @@ def test_generate_selects_explicit_provider_model(
             cwd="/tmp/project",
         )
     ]
-
-
-def test_codewiki_write_route_executes_dedicated_writer(
-    client: TestClient,
-    server_with_llm: MagicMock,
-    tmp_path: Path,
-) -> None:
-    service = _FakeCodeWikiWriterService()
-    server_with_llm.services.codewiki_writer_service = service
-
-    response = client.post(
-        "/api/llm/codewiki/write",
-        json={
-            "prompt": "Write overview.",
-            "system": "Use repo evidence.",
-            "cwd": str(tmp_path),
-            "profile": "feature_high",
-            "max_tokens": 1200,
-            "timeout_seconds": 11,
-            "reasoning_effort": "xhigh",
-            "page_kind": "repo_overview",
-        },
-    )
-
-    assert response.status_code == 200
-    assert response.json() == {
-        "text": "CodeWiki page prose",
-        "provider": "codex",
-        "model": "gpt-5.5",
-        "usage": None,
-        "elapsed_ms": 42,
-        "diagnostics": {"candidate": "codex/gpt-5.5"},
-    }
-    request = service.requests[0]
-    assert request.prompt == "Write overview."
-    assert request.system_prompt == "Use repo evidence."
-    assert request.cwd == str(tmp_path)
-    assert request.profile == "feature_high"
-    assert request.candidates == ()
-    assert request.max_tokens == 1200
-    assert request.timeout_seconds == 11
-    assert request.reasoning_effort == "xhigh"
-    assert request.page_kind == "repo_overview"
-
-
-def test_codewiki_write_route_returns_structured_writer_error(
-    client: TestClient,
-    server_with_llm: MagicMock,
-    tmp_path: Path,
-) -> None:
-    server_with_llm.services.codewiki_writer_service = _FakeCodeWikiWriterService(
-        error=CodeWikiWriterError("timeout", "timed out", diagnostics={"candidate": "codex"})
-    )
-
-    response = client.post(
-        "/api/llm/codewiki/write",
-        json={
-            "prompt": "Write overview.",
-            "cwd": str(tmp_path),
-            "candidates": ["codex/gpt-5.5"],
-        },
-    )
-
-    assert response.status_code == 400
-    assert response.json() == {
-        "error": {
-            "code": "timeout",
-            "message": "timed out",
-            "retryable": False,
-            "diagnostics": {"candidate": "codex"},
-        }
-    }
 
 
 def test_generate_returns_503_without_text_generation_service(client: TestClient) -> None:
