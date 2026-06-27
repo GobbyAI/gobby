@@ -137,6 +137,50 @@ fn forwards_candidates_and_reasoning_effort_from_binding() {
 }
 
 #[test]
+fn codewiki_writer_forwards_repo_cwd_profile_timeout_and_page_kind() {
+    let (port, request) = spawn_server(
+        r#"{"text":"wiki prose","provider":"codex","model":"gpt-5.5","elapsed_ms":42,"diagnostics":{"candidate":"codex/gpt-5.5"}}"#,
+    );
+    let home = temp_home();
+    let _env = EnvGuard::set_home(home.path());
+    write_daemon_files(home.path(), port, "text-token");
+    let cfg = test_context(Some("project-123"));
+
+    let result = write_codewiki_via_daemon(
+        &cfg,
+        "Write overview",
+        Some("Use evidence"),
+        CodeWikiWriterOptions {
+            cwd: Some("/repo/project"),
+            max_tokens: Some(2048),
+            profile: Some("feature_high"),
+            candidates: None,
+            timeout_seconds: Some(12.5),
+            reasoning_effort: Some("xhigh"),
+            page_kind: Some("repo_overview"),
+        },
+    )
+    .unwrap();
+    let request = request.join().unwrap().unwrap();
+    let body = request_body_json(&request);
+
+    assert!(request.starts_with("POST /api/llm/codewiki/write HTTP/1.1"));
+    assert_eq!(body["prompt"], "Write overview");
+    assert_eq!(body["system_prompt"], "Use evidence");
+    assert_eq!(body["cwd"], "/repo/project");
+    assert_eq!(body["profile"], "feature_high");
+    assert_eq!(body["max_tokens"], 2048);
+    assert_eq!(body["timeout_seconds"], 12.5);
+    assert_eq!(body["reasoning_effort"], "xhigh");
+    assert_eq!(body["page_kind"], "repo_overview");
+    assert!(body.get("candidates").is_none());
+    assert_eq!(result.text, "wiki prose");
+    assert_eq!(result.provider, "codex");
+    assert_eq!(result.model, "gpt-5.5");
+    assert_eq!(result.elapsed_ms, 42);
+}
+
+#[test]
 fn per_call_profile_overrides_configured_binding_profile() {
     let (port, request) = spawn_server(r#"{"text":"ok"}"#);
     let home = temp_home();

@@ -5,16 +5,19 @@ use crate::ai_types::{AiError, TextResult, TranscriptionResult, VisionResult};
 use crate::config::{AiCapability, FeatureCandidate};
 
 use super::request::{
-    TextRequestOptions, add_optional_text, audio_capability, embeddings_request_body,
-    multipart_form_with_file, text_request_body,
+    TextRequestOptions, add_optional_text, audio_capability, codewiki_writer_request_body,
+    embeddings_request_body, multipart_form_with_file, text_request_body,
 };
 use super::response::{parse_daemon_embeddings, parse_daemon_transcription};
 use super::transport::{daemon_client, daemon_url, read_local_cli_token, with_local_token};
-use super::types::{DaemonEmbeddingResult, DaemonTranscriptionOptions};
+use super::types::{
+    CodeWikiWriterOptions, CodeWikiWriterResult, DaemonEmbeddingResult, DaemonTranscriptionOptions,
+};
 
 const VOICE_TRANSCRIBE_PATH: &str = "/api/voice/transcribe";
 const VISION_EXTRACT_PATH: &str = "/api/llm/vision/extract";
 pub(super) const TEXT_GENERATE_PATH: &str = "/api/llm/generate";
+pub(super) const CODEWIKI_WRITE_PATH: &str = "/api/llm/codewiki/write";
 const EMBEDDINGS_PATH: &str = "/api/embeddings";
 
 pub fn transcribe_via_daemon(
@@ -145,6 +148,36 @@ pub fn generate_via_daemon_with_candidates(
     candidates: &[FeatureCandidate],
 ) -> Result<TextResult, AiError> {
     generate_text_via_daemon(cfg, prompt, system, max_tokens, None, Some(candidates))
+}
+
+pub fn write_codewiki_via_daemon(
+    cfg: &AiContext,
+    prompt: &str,
+    system: Option<&str>,
+    options: CodeWikiWriterOptions<'_>,
+) -> Result<CodeWikiWriterResult, AiError> {
+    let capability = AiCapability::TextGenerate;
+    let client = daemon_client()?;
+    let token = read_local_cli_token()?;
+    let url = daemon_url(CODEWIKI_WRITE_PATH);
+    let body = codewiki_writer_request_body(prompt, system, options);
+    let _permit = cfg.limiter.acquire();
+
+    let value = super::super::retry_with_backoff(
+        || {
+            let request = with_local_token(
+                client
+                    .post(&url)
+                    .timeout(super::super::timeout_for(capability))
+                    .json(&body),
+                &token,
+            );
+            super::super::parse_json_response(request.send().map_err(super::super::reqwest_error)?)
+        },
+        std::thread::sleep,
+    )?;
+
+    CodeWikiWriterResult::from_wire_json(value)
 }
 
 fn generate_text_via_daemon(
