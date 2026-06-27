@@ -126,13 +126,18 @@ export const SessionsTab = memo(function SessionsTab({
   const [search, setSearch] = useState("");
   const [searchInput, setSearchInput] = useState("");
   const [contentMode, setContentMode] = useState<WatchingContentMode>("transcript");
-  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(() => {
+  const [persistedWatchingSessionId, setPersistedWatchingSessionId] = useState<
+    string | null
+  >(() => {
     try {
       return localStorage.getItem(WATCHING_SESSION_ID_KEY);
     } catch {
       return null;
     }
   });
+  const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
+    persistedWatchingSessionId,
+  );
   const [topHeight, setTopHeight] = useState(DEFAULT_TOP_PANEL_PERCENT);
   const [expiringIds, setExpiringIds] = useState<Set<string>>(new Set());
   const [ctxMenu, setCtxMenu] = useState<SessionContextMenu | null>(null);
@@ -230,6 +235,24 @@ export const SessionsTab = memo(function SessionsTab({
 
   const isLoading = isLoadingSessions || agentsLoading;
 
+  const persistWatchingSessionId = useCallback((id: string) => {
+    try {
+      localStorage.setItem(WATCHING_SESSION_ID_KEY, id);
+    } catch {
+      /* ignore */
+    }
+    setPersistedWatchingSessionId(id);
+  }, []);
+
+  const clearPersistedWatchingSessionId = useCallback(() => {
+    try {
+      localStorage.removeItem(WATCHING_SESSION_ID_KEY);
+    } catch {
+      /* ignore */
+    }
+    setPersistedWatchingSessionId(null);
+  }, []);
+
   useEffect(() => {
     const timeout = window.setTimeout(() => {
       if (isLoading) {
@@ -238,6 +261,9 @@ export const SessionsTab = memo(function SessionsTab({
 
       if (entries.length === 0) {
         selectionClearedRef.current = false;
+        if (persistedWatchingSessionId !== null) {
+          clearPersistedWatchingSessionId();
+        }
         if (selectedSessionId !== null) {
           setSelectedSessionId(null);
         }
@@ -246,16 +272,23 @@ export const SessionsTab = memo(function SessionsTab({
 
       const hasFocusedEntry =
         focusSessionId != null && entries.some((entry) => entry.id === focusSessionId);
+      const persistedStillPresent =
+        persistedWatchingSessionId != null &&
+        entries.some((entry) => entry.id === persistedWatchingSessionId);
+
+      if (persistedWatchingSessionId !== null && !persistedStillPresent) {
+        clearPersistedWatchingSessionId();
+      }
 
       if (!initialSelectionAppliedRef.current) {
         initialSelectionAppliedRef.current = true;
         selectionClearedRef.current = false;
-        const persistedStillPresent =
+        const selectedStillPresent =
           selectedSessionId != null &&
           entries.some((entry) => entry.id === selectedSessionId);
         const nextSelection = hasFocusedEntry
           ? focusSessionId
-          : persistedStillPresent
+          : selectedStillPresent
             ? selectedSessionId
             : entries[0].id;
         if (nextSelection !== selectedSessionId) {
@@ -305,23 +338,14 @@ export const SessionsTab = memo(function SessionsTab({
     return () => window.clearTimeout(timeout);
   }, [
     chatSessionId,
+    clearPersistedWatchingSessionId,
     entries,
     focusSessionId,
     isLoading,
     onFocusHandled,
+    persistedWatchingSessionId,
     selectedSessionId,
   ]);
-  useEffect(() => {
-    try {
-      if (selectedSessionId) {
-        localStorage.setItem(WATCHING_SESSION_ID_KEY, selectedSessionId);
-      } else {
-        localStorage.removeItem(WATCHING_SESSION_ID_KEY);
-      }
-    } catch {
-      /* ignore */
-    }
-  }, [selectedSessionId]);
 
   useEffect(() => {
     const timeout = window.setTimeout(() => {
@@ -362,8 +386,17 @@ export const SessionsTab = memo(function SessionsTab({
 
   const handleSelect = useCallback((id: string) => {
     selectionClearedRef.current = false;
+    persistWatchingSessionId(id);
     setSelectedSessionId(id);
-  }, []);
+  }, [persistWatchingSessionId]);
+
+  const handleResumeSession = useCallback(
+    (sessionId: string) => {
+      persistWatchingSessionId(sessionId);
+      return onResumeSession?.(sessionId);
+    },
+    [onResumeSession, persistWatchingSessionId],
+  );
 
   const transcriptEmptyStateMessage = useMemo(() => {
     if (transcriptStatus?.content_state === "unparseable") {
@@ -506,12 +539,18 @@ export const SessionsTab = memo(function SessionsTab({
   const handleSwapSelectedSession = useCallback(() => {
     if (!selectedSessionId || !selectedEntry) return;
     setContentMode("transcript");
+    persistWatchingSessionId(selectedSessionId);
     onSwapSession?.({
       sessionId: selectedSessionId,
       sessionType: selectedEntry.sessionType ?? null,
       agentRunId: selectedEntry.agentRunId ?? null,
     });
-  }, [onSwapSession, selectedEntry, selectedSessionId]);
+  }, [
+    onSwapSession,
+    persistWatchingSessionId,
+    selectedEntry,
+    selectedSessionId,
+  ]);
 
   const hasActiveFilters = activeFilterCount > 0 || search.trim().length > 0;
   const emptyListMessage = hasActiveFilters
@@ -575,7 +614,7 @@ export const SessionsTab = memo(function SessionsTab({
           loadNewerMessages={loadNewerMessages}
           messages={messages}
           noopArtifactCtx={noopArtifactCtx}
-          onResumeSession={onResumeSession}
+          onResumeSession={onResumeSession ? handleResumeSession : undefined}
           onSwapSelectedSession={handleSwapSelectedSession}
           selectedEntry={selectedEntry}
           selectedSessionId={selectedSessionId}
@@ -597,7 +636,7 @@ export const SessionsTab = memo(function SessionsTab({
         handleClose={handleClose}
         handleDelete={handleDelete}
         handleExpire={handleExpire}
-        onResumeSession={onResumeSession}
+        onResumeSession={onResumeSession ? handleResumeSession : undefined}
         openModal={openModal}
       />
 

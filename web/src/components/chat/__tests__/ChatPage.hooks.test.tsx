@@ -238,13 +238,45 @@ describe("useChatPageSessionRouting", () => {
 
 describe("useChatPageProviderState", () => {
   beforeEach(() => {
+    localStorage.clear();
     clearProviderModelCache();
     stubProviderFetch();
   });
 
   afterEach(() => {
+    localStorage.clear();
     vi.unstubAllGlobals();
     clearProviderModelCache();
+  });
+
+  it("keeps fresh chat provider controls enabled with activity watch state", async () => {
+    localStorage.setItem("gobby-watching-session-id", "activity-session-1");
+
+    const { result } = renderHook(() =>
+      useChatPageProviderState({
+        chat: createChat({
+          dbSessionId: null,
+          attachedSessionId: null,
+          attachedSessionMeta: null,
+          viewingSessionId: null,
+          viewingSessionMeta: null,
+          isConnected: true,
+          isContinuingSession: false,
+          sessionInteractionMode: "none",
+        }),
+        mainSessionMeta: null,
+        currentModel: "sonnet",
+        reasoningPreferences: {},
+        confirm: vi.fn(async () => true),
+      }),
+    );
+
+    expect(result.current.providerPickerDisabledReason).toBeNull();
+    expect(result.current.showChatInput).toBe(true);
+    expect(result.current.chatInputDisabled).toBe(false);
+    await waitFor(() => {
+      expect(result.current.providerModelCatalog).toHaveLength(2);
+    });
   });
 
   it("reports proxy and autonomous provider disabled reasons", async () => {

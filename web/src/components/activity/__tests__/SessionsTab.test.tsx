@@ -180,6 +180,15 @@ function makeSession(overrides: Partial<GobbySession>): GobbySession {
   };
 }
 
+function getSessionEntry(label: string): HTMLElement {
+  const row = screen
+    .getAllByText(label)
+    .map((node) => node.closest(".session-entry"))
+    .find((candidate): candidate is HTMLElement => candidate != null);
+  if (!row) throw new Error(`No session row found for ${label}`);
+  return row;
+}
+
 const LIVE_SESSION = makeSession({
   id: "live-1",
   ref: "#201",
@@ -351,6 +360,96 @@ describe("SessionsTab", () => {
   afterEach(() => {
     mockFetch.restore();
     vi.restoreAllMocks();
+  });
+
+  it("auto-selects a detail row without persisting a watched session", async () => {
+    mockUseSessionDetail.mockImplementation((sessionId) => ({
+      session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
+      sessionError: null,
+      clearSessionError: vi.fn(),
+      messages: [
+        {
+          id: `msg-${sessionId ?? "none"}`,
+          role: "assistant",
+          content: `Transcript output for ${sessionId ?? "none"}`,
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+    }));
+
+    render(<SessionsTab sessions={[LIVE_SESSION, PAUSED_SESSION]} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Transcript output for paused-1"),
+      ).toBeInTheDocument();
+    });
+    expect(localStorage.getItem("gobby-watching-session-id")).toBeNull();
+  });
+
+  it("persists a watched session only after explicit row selection", async () => {
+    mockUseSessionDetail.mockImplementation((sessionId) => ({
+      session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
+      sessionError: null,
+      clearSessionError: vi.fn(),
+      messages: [
+        {
+          id: `msg-${sessionId ?? "none"}`,
+          role: "assistant",
+          content: `Transcript output for ${sessionId ?? "none"}`,
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+    }));
+
+    render(<SessionsTab sessions={[LIVE_SESSION, PAUSED_SESSION]} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Transcript output for paused-1"),
+      ).toBeInTheDocument();
+    });
+    expect(localStorage.getItem("gobby-watching-session-id")).toBeNull();
+
+    fireEvent.click(getSessionEntry("#201: Live Terminal"));
+    expect(localStorage.getItem("gobby-watching-session-id")).toBe("live-1");
+
+    fireEvent.keyDown(getSessionEntry("#202: Paused Terminal"), {
+      key: "Enter",
+    });
+    expect(localStorage.getItem("gobby-watching-session-id")).toBe("paused-1");
+  });
+
+  it("restores a valid persisted watched session", async () => {
+    localStorage.setItem("gobby-watching-session-id", "live-1");
+    mockUseSessionDetail.mockImplementation((sessionId) => ({
+      session: sessionId === "live-1" ? LIVE_SESSION : PAUSED_SESSION,
+      sessionError: null,
+      clearSessionError: vi.fn(),
+      messages: [
+        {
+          id: `msg-${sessionId ?? "none"}`,
+          role: "assistant",
+          content: `Transcript output for ${sessionId ?? "none"}`,
+          timestamp: "2026-04-08T12:11:00Z",
+        },
+      ],
+      isLoading: false,
+      transcriptStatus: null,
+    }));
+
+    render(<SessionsTab sessions={[LIVE_SESSION, PAUSED_SESSION]} />);
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("Transcript output for live-1"),
+      ).toBeInTheDocument();
+    });
+    expect(localStorage.getItem("gobby-watching-session-id")).toBe("live-1");
   });
 
   it("filters live vs expired, excludes handoff and pipeline sources, and searches", async () => {
