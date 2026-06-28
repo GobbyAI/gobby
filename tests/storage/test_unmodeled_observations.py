@@ -26,6 +26,12 @@ def _observation(name: str, *, source_ref: str = "42") -> UnmodeledObservationIn
     )
 
 
+def test_stable_sample_hash_uses_structure_not_scalar_values() -> None:
+    assert stable_sample_hash({"token": "secret-a", "payload": {"value": "one"}}) == (
+        stable_sample_hash({"token": "secret-b", "payload": {"value": "two"}})
+    )
+
+
 def test_novel_occurrence_inserts_event_and_aggregate(temp_db: HubDatabase) -> None:
     store = UnmodeledObservationStore(temp_db)
     observation = _observation("storage_novel")

@@ -285,8 +285,10 @@ export function ChatInput({
         if (hasBlockingUpload) return
         const commandText = item.name.startsWith('/') ? item.name : `/${item.name}`
         const trimmed = input.trim()
-        const firstToken = trimmed.split(/\s/)[0]
-        const prompt = firstToken === commandText ? trimmed : commandText
+        const match = trimmed.match(/^(\S+)(\s+[\s\S]*)?$/)
+        const firstToken = match?.[1] ?? ''
+        const suffix = match?.[2] ?? ''
+        const prompt = firstToken === commandText ? trimmed : `${commandText}${suffix}`
         if (!prompt) return
         if (ttsEnabled) {
           prepareTTSPlayback?.()

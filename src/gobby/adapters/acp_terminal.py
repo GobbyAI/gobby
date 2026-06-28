@@ -8,6 +8,7 @@ import os
 import signal
 import uuid
 from collections.abc import Mapping, Sequence
+from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -214,3 +215,5 @@ class ACPTerminalManager:
             await asyncio.wait_for(asyncio.shield(terminal.reader_task), timeout=1.0)
         except TimeoutError:
             terminal.reader_task.cancel()
+            with suppress(asyncio.CancelledError):
+                await terminal.reader_task

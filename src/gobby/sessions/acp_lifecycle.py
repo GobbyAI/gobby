@@ -29,6 +29,7 @@ from gobby.sessions.acp_session_mapping import (
     SESSION_TYPE_WEB_CHAT,
     MappedSessionInfo,
     build_acp_block,
+    disposition_for_delete,
     map_session_info,
     normalize_additional_directories,
     status_for_close,
@@ -142,9 +143,9 @@ class ACPSessionLifecycleService:
         self._resolve_project_id = resolve_project_id
         self._machine_id = machine_id
         self._page_cap = max(1, page_cap)
-        # Per-provider in-flight scan tasks. Concurrent discover calls join the
-        # running scan instead of hammering the ACP subprocess again.
-        self._inflight: dict[str, asyncio.Task[dict[str, Any]]] = {}
+        # Per-provider/cwd in-flight scan tasks. Concurrent discover calls join
+        # the matching scan instead of hammering the ACP subprocess again.
+        self._inflight: dict[tuple[str, str | None], asyncio.Task[dict[str, Any]]] = {}
 
     # -- discovery ---------------------------------------------------------
 
@@ -172,24 +173,26 @@ class ACPSessionLifecycleService:
                     "provider": provider,
                     "available": scan["available"],
                     "supports_list": scan["supports_list"],
+                    "truncated": scan.get("truncated", False),
                 }
             )
         return {"sessions": sessions, "skipped": skipped, "providers": providers}
 
     async def _scan_provider(self, provider: str, backend: Any, cwd: str | None) -> dict[str, Any]:
         """Coalesce concurrent scans of one provider onto a single in-flight task."""
-        existing = self._inflight.get(provider)
+        key = (provider, cwd)
+        existing = self._inflight.get(key)
         if existing is not None and not existing.done():
             return await existing
         task: asyncio.Task[dict[str, Any]] = asyncio.create_task(
             self._scan_provider_inner(provider, backend, cwd)
         )
-        self._inflight[provider] = task
+        self._inflight[key] = task
         try:
             return await task
         finally:
-            if self._inflight.get(provider) is task:
-                del self._inflight[provider]
+            if self._inflight.get(key) is task:
+                del self._inflight[key]
 
     async def _scan_provider_inner(
         self, provider: str, backend: Any, cwd: str | None
@@ -207,6 +210,7 @@ class ACPSessionLifecycleService:
                 "skipped": skipped,
                 "available": False,
                 "supports_list": False,
+                "truncated": False,
             }
 
         if not backend.health().available:
@@ -216,6 +220,7 @@ class ACPSessionLifecycleService:
                 "skipped": skipped,
                 "available": False,
                 "supports_list": False,
+                "truncated": False,
             }
 
         capabilities = self._capabilities(provider)
@@ -225,10 +230,12 @@ class ACPSessionLifecycleService:
                 "skipped": skipped,
                 "available": True,
                 "supports_list": False,
+                "truncated": False,
             }
 
         cursor: str | None = None
         pages = 0
+        truncated = False
         while pages < self._page_cap:
             pages += 1
             try:
@@ -239,6 +246,7 @@ class ACPSessionLifecycleService:
                     "skipped": skipped,
                     "available": True,
                     "supports_list": False,
+                    "truncated": False,
                 }
             except Exception as exc:
                 logger.warning("ACP %s session/list failed: %s", provider, exc)
@@ -251,12 +259,17 @@ class ACPSessionLifecycleService:
             cursor = result.get("nextCursor")
             if not cursor:
                 break
+            if pages >= self._page_cap:
+                truncated = True
+                skipped.append({"provider": provider, "reason": "page_cap_reached"})
+                break
 
         return {
             "sessions": sessions,
             "skipped": skipped,
             "available": True,
             "supports_list": True,
+            "truncated": truncated,
         }
 
     def _process_info(
@@ -383,13 +396,13 @@ class ACPSessionLifecycleService:
             logger.warning("ACP delete FK fallback to expire for session %s: %s", session_id, exc)
             self._session_manager.update_status(session_id, status_for_close())
             updated = self._session_manager.get(session_id) or session
-            return {"session": self._serialize(updated)}
+            return {"session": self._serialize(updated), "disposition": status_for_close()}
 
         if not deleted:
             raise ACPSessionNotFoundError(session_id)
         # The row is gone; return its pre-delete snapshot as confirmation. The
         # frontend removes the row off the ``session_deleted`` broadcast.
-        return {"session": self._serialize(session)}
+        return {"session": self._serialize(session), "disposition": disposition_for_delete()}
 
     # -- helpers -----------------------------------------------------------
 

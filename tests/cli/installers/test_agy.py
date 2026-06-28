@@ -77,6 +77,7 @@ def test_install_agy_rejects_project_mode(
     assert result["success"] is False
     assert result["error"] == "AGY integration only supports global install mode"
     assert not (agy_env / ".gemini" / "config" / "hooks.json").exists()
+    assert not (agy_env / ".gemini" / "config" / "mcp_config.json").exists()
     assert not (project_path / ".gemini" / "config" / "hooks.json").exists()
 
 

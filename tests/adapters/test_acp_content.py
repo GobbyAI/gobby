@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import pytest
+
 from gobby.adapters.acp_content import (
+    extract_text,
     normalize_prompt_blocks,
     normalize_tool_call_update,
     parse_prompt_capabilities,
 )
+
+pytestmark = pytest.mark.unit
 
 
 def test_normalize_prompt_blocks_gates_optional_content() -> None:
@@ -55,6 +60,41 @@ def test_normalize_prompt_blocks_gates_optional_content() -> None:
     }
 
 
+def test_normalize_prompt_blocks_reads_audio_from_nested_source() -> None:
+    blocks = normalize_prompt_blocks(
+        [
+            {
+                "type": "audio",
+                "source": {
+                    "data": "abc123",
+                    "media_type": "audio/mpeg",
+                },
+            }
+        ],
+        agent_capabilities={"promptCapabilities": {"audio": {}}},
+    )
+
+    assert blocks == [{"type": "audio", "data": "abc123", "mimeType": "audio/mpeg"}]
+
+
+def test_extract_text_recurses_content_wrappers() -> None:
+    assert (
+        extract_text(
+            {
+                "type": "content",
+                "content": [
+                    {"type": "text", "text": "outer"},
+                    {
+                        "type": "content",
+                        "content": {"type": "text", "content": "inner"},
+                    },
+                ],
+            }
+        )
+        == "outer\ninner"
+    )
+
+
 def test_normalize_prompt_blocks_preserves_supported_embedded_resource() -> None:
     blocks = normalize_prompt_blocks(
         [
@@ -79,6 +119,7 @@ def test_normalize_tool_call_update_preserves_rich_content() -> None:
         {
             "sessionUpdate": "tool_call_update",
             "toolCallId": "tool-1",
+            "name": "canonical_edit",
             "title": "Edit",
             "kind": "edit",
             "status": "in_progress",
@@ -105,6 +146,7 @@ def test_normalize_tool_call_update_preserves_rich_content() -> None:
     )
 
     assert data["call_id"] == "tool-1"
+    assert data["tool_name"] == "canonical_edit"
     assert data["tool_status"] == "calling"
     assert data["tool_kind"] == "edit"
     assert data["locations"] == [{"uri": "file:///src/app.py", "line": 12}]

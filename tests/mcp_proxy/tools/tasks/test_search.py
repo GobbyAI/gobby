@@ -278,6 +278,7 @@ class TestSearchTasksResults:
         for task in result["tasks"]:
             assert set(task) == SEARCH_TASK_KEYS
             assert set(task["state"]) == COMPACT_STATE_KEYS
+            assert isinstance(task["updated_at"], str | type(None))
             assert NOISY_TASK_KEYS.isdisjoint(task)
 
     def test_search_match_preview_is_bounded_and_normalized(

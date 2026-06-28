@@ -9,6 +9,7 @@ non-ACP target → 400.
 
 from __future__ import annotations
 
+import json
 import logging
 from typing import TYPE_CHECKING, Any, NoReturn
 
@@ -77,7 +78,7 @@ def register_acp_routes(
     async def _read_cwd(request: Request) -> str | None:
         try:
             body = await request.json()
-        except Exception:
+        except (json.JSONDecodeError, UnicodeDecodeError):
             return None
         if isinstance(body, dict):
             cwd = body.get("cwd")
@@ -97,7 +98,7 @@ def register_acp_routes(
             raise
         except Exception as exc:
             logger.error("ACP discover failed: %s", exc, exc_info=True)
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="ACP session discovery failed") from exc
 
     @router.post("/{session_id}/acp/close")
     async def close_acp_session(session_id: str) -> dict[str, Any]:
@@ -110,7 +111,7 @@ def register_acp_routes(
             raise
         except Exception as exc:
             logger.error("ACP close failed for %s: %s", session_id, exc, exc_info=True)
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="ACP session close failed") from exc
 
     @router.post("/{session_id}/acp/delete")
     async def delete_acp_session(session_id: str) -> dict[str, Any]:
@@ -123,7 +124,7 @@ def register_acp_routes(
             raise
         except Exception as exc:
             logger.error("ACP delete failed for %s: %s", session_id, exc, exc_info=True)
-            raise HTTPException(status_code=500, detail=str(exc)) from exc
+            raise HTTPException(status_code=500, detail="ACP session delete failed") from exc
 
 
 __all__ = ["register_acp_routes"]

@@ -47,9 +47,10 @@ _TEMPLATE_PLACEHOLDER_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Matches unsubstituted template variables wrapped in angle brackets that some
-# CLIs (e.g. Grok) send as the prompt value instead of the actual user input.
-_ANGLE_BRACKET_PLACEHOLDER_RE = re.compile(r"^<[a-z_][a-z0-9_]*>$", re.IGNORECASE)
+# Matches known unsubstituted template variables wrapped in angle brackets that
+# some CLIs (e.g. Grok) send as the prompt value instead of the actual user input.
+_ANGLE_BRACKET_PLACEHOLDER_RE = re.compile(r"^<([a-z_][a-z0-9_]*)>$", re.IGNORECASE)
+_ANGLE_BRACKET_PLACEHOLDERS = frozenset({"user_query", "user_prompt", "prompt", "input"})
 
 # Droid's default session-start title placeholder.
 _NATIVE_PLACEHOLDER_TITLES = frozenset({"new session"})
@@ -163,7 +164,8 @@ def _is_control_marker(value: str) -> bool:
 
 def _is_angle_bracket_placeholder(value: str) -> bool:
     """Return True for unsubstituted template variables like ``<user_query>``."""
-    return bool(_ANGLE_BRACKET_PLACEHOLDER_RE.fullmatch(value.strip()))
+    match = _ANGLE_BRACKET_PLACEHOLDER_RE.fullmatch(value.strip())
+    return bool(match and match.group(1).lower() in _ANGLE_BRACKET_PLACEHOLDERS)
 
 
 def build_heuristic_title(prompt_text: Any) -> str | None:
@@ -335,6 +337,5 @@ def is_template_placeholder(value: str) -> bool:
     """Return True for prompt-template placeholders echoed by the LLM."""
     stripped = value.strip()
     return bool(
-        _TEMPLATE_PLACEHOLDER_RE.fullmatch(stripped)
-        or _ANGLE_BRACKET_PLACEHOLDER_RE.fullmatch(stripped)
+        _TEMPLATE_PLACEHOLDER_RE.fullmatch(stripped) or _is_angle_bracket_placeholder(stripped)
     )

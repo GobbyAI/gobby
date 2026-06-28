@@ -123,7 +123,7 @@ def _append_orphan_tool_result_block(msg: ParsedMessage, state: RenderState) -> 
 
     tool_name = msg.tool_name or "unknown_result"
     tool_type, server_name = classify_tool(tool_name)
-    content = msg.tool_result or msg.content
+    content = msg.tool_result if msg.tool_result is not None else msg.content
     arguments = msg.tool_input or {}
     tool_call = RenderedToolCall(
         id=msg.tool_use_id or f"orphan-result-{msg.index}",
@@ -133,7 +133,7 @@ def _append_orphan_tool_result_block(msg: ParsedMessage, state: RenderState) -> 
         arguments=arguments,
         result=ToolResult(
             content=content,
-            kind="json" if msg.tool_result else "text",
+            kind="json" if msg.tool_result is not None else "text",
             metadata=extract_result_metadata(tool_type, content, arguments),
         ),
         status="completed",
@@ -247,7 +247,7 @@ def _process_message_block(
             observation_tracker.observe_block_type(
                 msg,
                 session_id=session_id,
-                source=source,
+                source=msg.source or source,
                 block_type=original_type,
             )
 
@@ -297,7 +297,7 @@ def _process_message_block(
                 observation_tracker.observe_tool_name(
                     msg,
                     session_id=session_id,
-                    source=source,
+                    source=msg.source or source,
                     tool_name=msg.tool_name or "unknown",
                     server_name=server_name or "unknown",
                     tool_type=tool_type,

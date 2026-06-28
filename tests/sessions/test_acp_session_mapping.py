@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import pytest
 
 from gobby.sessions.acp_session_mapping import (
@@ -18,7 +20,7 @@ from gobby.sessions.acp_session_mapping import (
 pytestmark = pytest.mark.unit
 
 
-def _resolver(mapping: dict[str, str]):
+def _resolver(mapping: dict[str, str]) -> Callable[[str | None], str | None]:
     def resolve(cwd: str | None) -> str | None:
         return mapping.get(cwd) if cwd else None
 
@@ -61,6 +63,26 @@ def test_map_session_info_unresolved_cwd_yields_none_project() -> None:
 
     assert mapped is not None
     assert mapped.project_id is None
+
+
+def test_map_session_info_strips_strings_and_drops_empty_values() -> None:
+    mapped = map_session_info(
+        {
+            "sessionId": "  sess-123  ",
+            "cwd": "  /repo  ",
+            "title": "   ",
+            "updatedAt": "  ",
+        },
+        provider="qwen",
+        resolve_project_id=_resolver({"/repo": "proj-1"}),
+    )
+
+    assert mapped is not None
+    assert mapped.external_id == "sess-123"
+    assert mapped.cwd == "/repo"
+    assert mapped.title is None
+    assert mapped.updated_at is None
+    assert mapped.project_id == "proj-1"
 
 
 def test_map_session_info_requires_session_id() -> None:

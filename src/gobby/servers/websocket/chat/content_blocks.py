@@ -106,7 +106,12 @@ class AssistantContentBlocks:
         existing = self._find_tool_call(tool_call_id)
         if existing is not None:
             content_blocks_update = tool_call.pop("content_blocks", None)
-            existing.update(tool_call)
+            updates = {
+                key: value
+                for key, value in tool_call.items()
+                if not (key == "arguments" and value == {} and existing.get("arguments"))
+            }
+            existing.update(updates)
             if isinstance(content_blocks_update, list):
                 self._append_tool_content_blocks(existing, content_blocks_update)
             return

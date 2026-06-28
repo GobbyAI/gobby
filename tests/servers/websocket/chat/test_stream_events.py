@@ -133,6 +133,7 @@ async def test_session_update_events_emit_existing_websocket_frames() -> None:
         session,
     )
 
+    assert len(transport.sent) == 4
     assert transport.sent[0] == {
         "type": "session_info",
         "message_id": "assistant-1",
@@ -227,6 +228,18 @@ async def test_tool_status_preserves_acp_metadata_and_content_blocks() -> None:
     assert calling["locations"] == [{"uri": "file:///src/app.py", "line": 12}]
     assert calling["content_blocks"] == [diff_block]
     assert blocks.blocks[0]["tool_calls"][0]["content_blocks"] == [diff_block]
+
+    await handler.handle_event(
+        ToolCallEvent(
+            tool_call_id="tool-1",
+            tool_name="Edit",
+            server_name="qwen",
+            arguments={},
+            status="pending",
+        ),
+        SimpleNamespace(),
+    )
+    assert blocks.blocks[0]["tool_calls"][0]["arguments"] == {"path": "src/app.py"}
 
     await handler.handle_event(
         ToolResultEvent(

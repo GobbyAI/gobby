@@ -150,10 +150,23 @@ describe("useChat project and mode controls", () => {
 
     act(() => {
       ws.simulateMessage({
+        type: "session_info",
+        conversation_id: result.current.conversationId,
+        db_session_id: "db-1",
+        session_title: "ACP title",
+        updated_at: "2026-06-27T05:00:30Z",
+      });
+    });
+
+    expect(result.current.acpAvailableCommands).toEqual([]);
+
+    act(() => {
+      ws.simulateMessage({
         type: "mode_changed",
         conversation_id: result.current.conversationId,
-        mode: "yolo",
+        mode: "bypass",
         reason: "acp_current_mode_update",
+        provider_current_mode_id: "yolo",
       });
     });
 

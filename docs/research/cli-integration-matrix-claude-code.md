@@ -124,7 +124,7 @@ ACP agent registry during synthesis.
 
 | CLI | (A) Hooks | (B) Transcripts | (C) Web-chat | OSS | My verdict | Confidence |
 | --- | --- | --- | --- | --- | --- | --- |
-| **Cursor CLI** | Full, many events, stdio JSON, loads Claude hooks | Yes (`~/.cursor`; `transcript_path` on hook payload) | ACP available | No | **Top candidate** | Med-High |
+| **Cursor CLI** | Hooks documented; verify event parity and payloads | Yes (`~/.cursor`; `transcript_path` on hook payload) | ACP reported; verify | No | **Promising; verify hooks/ACP** | Med |
 | **GitHub Copilot CLI** | Full, Claude-compatible payloads (cheapest adapter) | Yes (`events.jsonl` + SQLite; `transcriptPath` on payload) | ACP (preview) — *verify* | No | **Strong; verify (C)** | Med |
 | **OpenCode** | **Pending** (Claude-hooks compat in progress) | Yes (SQLite/ORM — needs custom parser) | ACP | MIT (yes) | **Best OSS, but hooks gap** | Med |
 | **Goose** | Yes (plugin hooks) | SQLite `sessions.db` (custom parser) | ACP | Apache (yes) | **OSS local-LLM option** | Med |
@@ -144,10 +144,11 @@ and ACP docs directly** before trusting that row either way.
 
 ## Per-candidate notes (sources)
 
-- **Cursor CLI** — mature hooks system, headless `--print` with `text`/`json`/
-  `stream-json`, MCP client, JSONL/SQLite session storage under `~/.cursor`.
-  Proprietary (so is Claude Code — not a blocker for Gobby). Clears all three if
-  ACP is confirmed. Sources: `cursor.com/docs/hooks`, `cursor.com/docs/cli/headless`.
+- **Cursor CLI** — documented hooks system, headless `--print` with `text`/`json`/
+`stream-json`, MCP client, JSONL/SQLite session storage under `~/.cursor`.
+Proprietary (so is Claude Code — not a blocker for Gobby). Could cover all three
+if hook payloads and ACP are confirmed. Sources: `cursor.com/docs/hooks`,
+`cursor.com/docs/cli/headless`.
 - **GitHub Copilot CLI** — hooks with Claude-compatible payload shapes (makes the
   adapter close to a Claude clone), `~/.copilot/session-state/` `events.jsonl` +
   SQLite, MCP client. My pass could not confirm a true live-stream output mode
@@ -189,8 +190,8 @@ caught. Per-surface checks:
 
 ## Recommendation (my independent ranking)
 
-1. **Cursor CLI** — strongest all-around; confirm ACP-server + probe the transcript
-   format, then build.
+1. **Cursor CLI** — promising all-around; confirm hook payloads, ACP server, and
+transcript format before building.
 2. **GitHub Copilot CLI** — cheapest hook adapter (Claude-compatible); gate on
    confirming the web-chat/ACP surface.
 3. **OpenCode** — best OSS bet; blocked until lifecycle hooks ship (watch upstream).

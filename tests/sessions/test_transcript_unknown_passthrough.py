@@ -15,7 +15,7 @@ def _line(data: dict[str, object]) -> str:
     return json.dumps(data)
 
 
-def test_codex_unknown_response_item_is_preserved():
+def test_codex_unknown_response_item_is_preserved() -> None:
     raw = {
         "timestamp": "2026-06-27T15:00:00Z",
         "type": "response_item",
@@ -30,7 +30,7 @@ def test_codex_unknown_response_item_is_preserved():
     assert msg.message_id == "payload-1"
 
 
-def test_droid_unknown_blocks_keep_source_order():
+def test_droid_unknown_blocks_keep_source_order() -> None:
     raw = {
         "type": "message",
         "id": "msg-1",
@@ -52,7 +52,7 @@ def test_droid_unknown_blocks_keep_source_order():
     assert messages[1].raw_json == {"type": "mystery", "content": "middle"}
 
 
-def test_unknown_records_are_preserved_but_protocol_records_stay_skipped():
+def test_unknown_records_are_preserved_but_protocol_records_stay_skipped() -> None:
     unknown = {"type": "agent_event", "timestamp": "2026-06-27T15:00:00Z", "content": "kept"}
     session_start = {"type": "session_start", "timestamp": "2026-06-27T15:00:00Z"}
     todo_state = {"type": "todo_state", "timestamp": "2026-06-27T15:00:00Z"}
@@ -76,7 +76,7 @@ def test_unknown_records_are_preserved_but_protocol_records_stay_skipped():
     assert typed_parser.parse_line(_line({"type": "result"}), 1) is None
 
 
-def test_typed_json_unknown_jsonl_and_session_messages_are_preserved():
+def test_typed_json_unknown_jsonl_and_session_messages_are_preserved() -> None:
     parser = TypedJsonTranscriptParser(cli_name="typed", session_id="session-1")
 
     jsonl_msg = parser.parse_line(
@@ -109,9 +109,12 @@ def test_typed_json_unknown_jsonl_and_session_messages_are_preserved():
     assert jsonl_msg.content == "extension body"
     assert [msg.content_type for msg in session_messages] == ["provider_session_extension"]
     assert session_messages[0].content == "session body"
+    assert session_messages[0].source == "typed"
+    assert session_messages[0].source_line == 1
+    assert session_messages[0].source_ref == "messages[1]"
 
 
-def test_grok_unknown_session_update_is_preserved():
+def test_grok_unknown_session_update_is_preserved() -> None:
     raw = {
         "timestamp": "2026-06-27T15:00:00Z",
         "update": {

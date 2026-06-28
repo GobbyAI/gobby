@@ -48,10 +48,10 @@ function liveProviderE2EIsDisabled(testInfo: TestInfo): boolean {
     return false;
   }
 
-  testInfo.annotations.push({
-    type: "skip",
-    description: `Set ${LIVE_E2E_FLAG}=1 to run real daemon-backed approval verification.`,
-  });
+  testInfo.skip(
+    true,
+    `Set ${LIVE_E2E_FLAG}=1 to run real daemon-backed approval verification.`,
+  );
   return true;
 }
 

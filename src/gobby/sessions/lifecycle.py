@@ -79,9 +79,7 @@ def _message_context_window(message: ParsedMessage) -> int | None:
 
 
 def _session_artifacts_complete(session: Any) -> bool:
-    return is_summary_markdown_valid(session.summary_markdown) and session_wiki_path_is_fresh(
-        session
-    )
+    return is_summary_markdown_valid(session.summary_markdown)
 
 
 class SessionLifecycleManager:

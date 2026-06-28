@@ -103,7 +103,7 @@ function renderMcp(props = makeProps()) {
   return render(<Harness props={props}><ActivityActionButtons /></Harness>);
 }
 
-function treeItemFor(text: string) {
+function treeItemFor(text: string): HTMLElement {
   const tree = screen.getByRole("tree", { name: "MCP servers and tools" });
   return within(tree)
     .getAllByText(text)[0]
@@ -177,15 +177,19 @@ describe("ActivityMcpTab", () => {
     const serverRow = treeItemFor("gobby-tasks");
     // The first row is the tree's tab entry point even with nothing selected.
     expect(serverRow).toHaveAttribute("tabindex", "0");
+    serverRow.focus();
+    expect(document.activeElement).toBe(serverRow);
 
     // ArrowRight expands a collapsed server.
     fireEvent.keyDown(serverRow, { key: "ArrowRight" });
+    await waitFor(() => expect(document.activeElement).toBe(serverRow));
     expect(serverRow).toHaveAttribute("aria-expanded", "true");
     expect(screen.getByText("list_tasks")).toBeInTheDocument();
 
     // ArrowRight again moves the roving anchor into the first tool.
     fireEvent.keyDown(serverRow, { key: "ArrowRight" });
     const toolRow = treeItemFor("list_tasks");
+    await waitFor(() => expect(document.activeElement).toBe(toolRow));
     expect(toolRow).toHaveAttribute("tabindex", "0");
     expect(serverRow).toHaveAttribute("tabindex", "-1");
 
@@ -197,6 +201,7 @@ describe("ActivityMcpTab", () => {
 
     // ArrowLeft from a leaf returns the anchor to the parent server.
     fireEvent.keyDown(toolRow, { key: "ArrowLeft" });
+    await waitFor(() => expect(document.activeElement).toBe(serverRow));
     expect(treeItemFor("gobby-tasks")).toHaveAttribute("tabindex", "0");
   });
 

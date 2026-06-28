@@ -400,11 +400,18 @@ class ACPClient:
         params["additionalDirectories"] = list(cleaned)
         return cleaned
 
-    def _track_additional_directories(self, directories: tuple[str, ...]) -> None:
-        """Merge granted additional directories into the tracked session roots."""
-        if not directories:
+    def _track_additional_directories(self) -> None:
+        """Merge agent-accepted additional directories into the tracked session roots."""
+        session_info = self._session_state.session_info
+        value = session_info.get("additionalDirectories")
+        if not isinstance(value, list):
             return
-        merged = list(dict.fromkeys((*self._session_state.root_uris, *directories)))
+        accepted = tuple(
+            directory for directory in value if isinstance(directory, str) and directory
+        )
+        if not accepted:
+            return
+        merged = list(dict.fromkeys((*self._session_state.root_uris, *accepted)))
         self._session_state.set_roots(merged)
 
     async def create_session(
@@ -421,7 +428,7 @@ class ACPClient:
             "cwd": resolved_cwd,
             "mcpServers": [],
         }
-        extra = self._include_additional_directories(session_params, additional_directories)
+        self._include_additional_directories(session_params, additional_directories)
         if model:
             session_params["model"] = model
         if reasoning_effort:
@@ -431,7 +438,7 @@ class ACPClient:
             result,
             fallback_roots=(resolved_cwd,),
         )
-        self._track_additional_directories(extra)
+        self._track_additional_directories()
         return info
 
     async def load_session(
@@ -457,7 +464,7 @@ class ACPClient:
             "mcpServers": [],
             "sessionId": session_id,
         }
-        extra = self._include_additional_directories(session_params, additional_directories)
+        self._include_additional_directories(session_params, additional_directories)
         if model:
             session_params["model"] = model
         if reasoning_effort:
@@ -468,7 +475,7 @@ class ACPClient:
             fallback_session_id=session_id,
             fallback_roots=(resolved_cwd,),
         )
-        self._track_additional_directories(extra)
+        self._track_additional_directories()
         return info
 
     async def list_sessions(
@@ -514,7 +521,7 @@ class ACPClient:
             "mcpServers": [],
             "sessionId": session_id,
         }
-        extra = self._include_additional_directories(session_params, additional_directories)
+        self._include_additional_directories(session_params, additional_directories)
         if model:
             session_params["model"] = model
         if reasoning_effort:
@@ -525,7 +532,7 @@ class ACPClient:
             fallback_session_id=session_id,
             fallback_roots=(resolved_cwd,),
         )
-        self._track_additional_directories(extra)
+        self._track_additional_directories()
         return info
 
     async def close_session(self, session_id: str) -> dict[str, Any]:

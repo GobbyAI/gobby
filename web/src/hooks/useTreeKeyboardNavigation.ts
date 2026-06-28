@@ -64,7 +64,7 @@ export function useTreeKeyboardNavigation({
   const [prevSelectedId, setPrevSelectedId] = useState<string | null>(selectedId);
   if (selectedId !== prevSelectedId) {
     setPrevSelectedId(selectedId);
-    if (selectedId !== null) setFocusedId(selectedId);
+    setFocusedId(selectedId);
   }
 
   const setRowRef = useCallback((id: string, node: HTMLElement | null) => {

@@ -1,4 +1,5 @@
 from datetime import UTC, datetime
+from pathlib import Path
 
 import pytest
 
@@ -17,7 +18,7 @@ def _message(
     content_type: str = "text",
     tool_name: str | None = None,
     tool_input: dict[str, object] | None = None,
-    tool_result: dict[str, object] | None = None,
+    tool_result: object | None = None,
     tool_use_id: str | None = None,
 ) -> ParsedMessage:
     return ParsedMessage(
@@ -35,7 +36,7 @@ def _message(
 
 
 def test_render_transcript_orphan_tool_result_becomes_completed_tool_chain(
-    tmp_path: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     error_log = TranscriptParserErrorLog("orphan-tool-result")
@@ -68,6 +69,34 @@ def test_render_transcript_orphan_tool_result_becomes_completed_tool_chain(
     assert tool_call.result.content == result
     assert tool_call.result.kind == "json"
     assert not error_log.log_path.exists() or error_log.log_path.read_text() == ""
+
+
+def test_orphan_tool_result_preserves_falsey_json_result(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("HOME", str(tmp_path))
+    error_log = TranscriptParserErrorLog("falsey-tool-result")
+
+    rendered = render_transcript(
+        [
+            _message(
+                index=1,
+                role="tool",
+                content="fallback text",
+                content_type="tool_result",
+                tool_result=False,
+            )
+        ],
+        session_id="session-1",
+        error_log=error_log,
+    )
+
+    block = rendered[0].content_blocks[0]
+    assert block.tool_calls is not None
+    result = block.tool_calls[0].result
+    assert result is not None
+    assert result.kind == "json"
+    assert result.content is False
 
 
 def test_render_incremental_windowed_orphan_reuses_tool_use_id() -> None:

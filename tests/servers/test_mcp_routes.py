@@ -2992,6 +2992,13 @@ class TestHooksEndpoints:
         }
         assert timeout_mock.await_args.kwargs["timeout_seconds"] == FAIL_SAFE_HOOK_TIMEOUT_SECONDS
         mock_adapter.translate_from_hook_response.assert_called_once()
+        hook_response = mock_adapter.translate_from_hook_response.call_args.args[0]
+        assert hook_response.decision == "block"
+        assert hook_response.reason == (
+            "Gobby hook evaluation timed out after 20s; blocking this critical hook for safety. "
+            "Try again after the daemon recovers."
+        )
+        assert hook_response.system_message is None
 
     @pytest.mark.parametrize(
         ("source", "hook_type", "adapter_patch"),

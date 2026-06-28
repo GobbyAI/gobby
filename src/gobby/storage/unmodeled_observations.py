@@ -13,7 +13,7 @@ from gobby.storage.hub.protocol import HubDatabase
 
 logger = logging.getLogger(__name__)
 
-_HASH_VERSION = "unmodeled-observation-sample-v1"
+_HASH_VERSION = "unmodeled-observation-sample-v2"
 _MAX_KEYS = 50
 _MAX_DICT_ITEMS = 20
 _MAX_LIST_ITEMS = 8
@@ -348,10 +348,32 @@ def sample_keys(sample: dict[str, Any]) -> list[str]:
 def stable_sample_hash(sample: dict[str, Any]) -> str:
     payload = {
         "version": _HASH_VERSION,
-        "sample": _redact_value(sample, depth=0),
+        "structure": _hash_structure(sample, depth=0),
     }
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), default=str)
     return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+
+
+def _hash_structure(value: Any, *, depth: int) -> Any:
+    if depth >= _MAX_DEPTH:
+        return _shape(value)
+    if isinstance(value, dict):
+        shaped: dict[str, Any] = {}
+        for key in sorted(value.keys(), key=str)[:_MAX_DICT_ITEMS]:
+            key_text = str(key)
+            shaped[key_text] = _hash_structure(value[key], depth=depth + 1)
+        if len(value) > _MAX_DICT_ITEMS:
+            shaped["..."] = f"{len(value) - _MAX_DICT_ITEMS} more keys"
+        return shaped
+    if isinstance(value, list):
+        return {
+            "type": "list",
+            "length": len(value),
+            "items": [_hash_structure(item, depth=depth + 1) for item in value[:_MAX_LIST_ITEMS]],
+        }
+    if isinstance(value, tuple):
+        return _hash_structure(list(value), depth=depth)
+    return _shape(value)
 
 
 def _redact_value(value: Any, *, depth: int) -> Any:

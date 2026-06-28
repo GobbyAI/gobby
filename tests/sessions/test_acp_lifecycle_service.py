@@ -295,9 +295,17 @@ async def test_discover_creates_new_external_rows() -> None:
 
     assert len(result["sessions"]) == 2
     assert len(sm.registered) == 2
+    assert {row.session_type for row in sm.registered} == {"web_chat"}
     assert sm.events == [("session_created", "sess-qwen-s1"), ("session_created", "sess-qwen-s2")]
     assert result["skipped"] == []
-    assert result["providers"] == [{"provider": "qwen", "available": True, "supports_list": True}]
+    assert result["providers"] == [
+        {
+            "provider": "qwen",
+            "available": True,
+            "supports_list": True,
+            "truncated": False,
+        }
+    ]
     # SessionInfo cached for later list enrichment.
     assert rm.get_acp_session_info("qwen", "s1") == {
         "sessionId": "s1",
@@ -397,7 +405,14 @@ async def test_discover_provider_unavailable_is_skipped_not_fatal() -> None:
 
     assert result["sessions"] == []
     assert result["skipped"] == [{"provider": "qwen", "reason": "provider_unavailable"}]
-    assert result["providers"] == [{"provider": "qwen", "available": False, "supports_list": False}]
+    assert result["providers"] == [
+        {
+            "provider": "qwen",
+            "available": False,
+            "supports_list": False,
+            "truncated": False,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -410,7 +425,14 @@ async def test_discover_provider_without_list_contributes_nothing() -> None:
 
     assert result["sessions"] == []
     assert backend.list_calls == []
-    assert result["providers"] == [{"provider": "qwen", "available": True, "supports_list": False}]
+    assert result["providers"] == [
+        {
+            "provider": "qwen",
+            "available": True,
+            "supports_list": False,
+            "truncated": False,
+        }
+    ]
 
 
 @pytest.mark.asyncio
@@ -442,9 +464,11 @@ async def test_discover_respects_page_cap() -> None:
     )
     rm = _FakeRuntimeManager({"qwen": backend})
 
-    await _service(sm, rm, page_cap=3).discover()
+    result = await _service(sm, rm, page_cap=3).discover()
 
     assert len(backend.list_calls) == 3
+    assert result["providers"][0]["truncated"] is True
+    assert result["skipped"] == [{"provider": "qwen", "reason": "page_cap_reached"}]
 
 
 @pytest.mark.asyncio
@@ -464,6 +488,23 @@ async def test_discover_coalesces_concurrent_runs_per_provider() -> None:
     assert backend.start_calls == 1
     assert len(backend.list_calls) == 1
     assert len(sm.registered) == 1  # not double-upserted
+
+
+@pytest.mark.asyncio
+async def test_discover_does_not_coalesce_different_cwd_scans() -> None:
+    sm = _FakeSessionManager()
+    backend = _FakeBackend(capabilities={"list": True}, pages=[_page(_info("s1"))], gate=True)
+    rm = _FakeRuntimeManager({"qwen": backend})
+    service = _service(sm, rm)
+
+    t1 = asyncio.create_task(service.discover(cwd="/repo"))
+    t2 = asyncio.create_task(service.discover(cwd="/other"))
+    assert backend.entered is not None and backend.release is not None
+    await asyncio.wait_for(backend.entered.wait(), timeout=1.0)
+    backend.release.set()
+    await asyncio.gather(t1, t2)
+
+    assert sorted(call[0] for call in backend.list_calls) == ["/other", "/repo"]
 
 
 # ---------------------------------------------------------------------------
@@ -567,6 +608,7 @@ async def test_delete_hard_removes_with_single_broadcast() -> None:
     assert "sess-1" not in sm.rows
     assert sm.events == [("session_deleted", "sess-1")]
     assert result["session"]["id"] == "sess-1"
+    assert result["disposition"] == "removed"
 
 
 @pytest.mark.asyncio
@@ -583,6 +625,7 @@ async def test_delete_fk_integrity_error_falls_back_to_expire() -> None:
     assert sm.rows["sess-1"].status == "expired"  # fell back to expire
     assert sm.events == [("session_expired", "sess-1")]
     assert result["session"]["status"] == "expired"
+    assert result["disposition"] == "expired"
 
 
 @pytest.mark.asyncio

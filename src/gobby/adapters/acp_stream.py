@@ -120,7 +120,10 @@ def normalize_notification(
             return StreamEvent(event_type="usage_update", data=dict(update))
 
         if update_type == "available_commands_update":
-            return StreamEvent(event_type="available_commands_update", data=dict(update))
+            data = dict(update)
+            if "commands" not in data and "availableCommands" in data:
+                data["commands"] = data.get("availableCommands")
+            return StreamEvent(event_type="available_commands_update", data=data)
 
         if update_type == "tool_call":
             return StreamEvent(

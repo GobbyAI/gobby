@@ -191,7 +191,7 @@ def install_agy(project_path: Path, mode: str = "global") -> dict[str, Any]:
         shared = install_shared_content(project_path / ".gemini", project_path)
         cli = install_cli_content("agy", agy_config_dir)
     except (OSError, ShutilError) as exc:
-        result["error"] = f"Failed to install AGY shared content: {exc}"
+        result["error"] = f"Failed to install AGY shared/CLI content: {exc}"
         return result
     result["commands_installed"] = cli.get("commands", [])
     result["plugins_installed"] = shared.get("plugins", [])

@@ -1,6 +1,7 @@
 """Shared helpers for runner tests."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
+from uuid import uuid4
 
 RUNNER_INIT_SESSION_MANAGER_PATCH = "gobby.runner_init.storage.SessionManager"
 
@@ -73,7 +74,7 @@ def apply_safe_runner_config_defaults(config: MagicMock) -> MagicMock:
     set_mock_default(
         config.code_index,
         "maintenance_log_file",
-        f"/tmp/gobby-test-code-index-maintenance-{id(config)}.log",
+        f"/tmp/gobby-test-code-index-maintenance-{uuid4().hex}.log",
     )
     set_mock_default(config.code_index, "sync_worker_interval_seconds", 5)
     set_mock_default(config.code_index, "sync_worker_batch_size", 50)

@@ -54,7 +54,10 @@ class MappedSessionInfo:
 
 
 def _clean_str(value: Any) -> str | None:
-    return value if isinstance(value, str) and value else None
+    if not isinstance(value, str):
+        return None
+    stripped = value.strip()
+    return stripped or None
 
 
 def normalize_additional_directories(value: Any) -> tuple[str, ...]:

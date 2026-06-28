@@ -189,6 +189,8 @@ export function handleSessionInfo(
       ctx.setAcpAvailableCommands(
         readAcpAvailableCommands(data.available_commands),
       );
+    } else {
+      ctx.setAcpAvailableCommands([]);
     }
     const title = readSessionTitle(data);
     const updatedAt =

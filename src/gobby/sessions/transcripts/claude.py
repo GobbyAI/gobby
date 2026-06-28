@@ -556,6 +556,15 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                         if val.strip():
                             thinking_parts.append(val)
                     else:
+                        if thinking_parts:
+                            results.append(
+                                _make_msg(
+                                    role="assistant",
+                                    content="\n".join(thinking_parts),
+                                    content_type="thinking",
+                                )
+                            )
+                            thinking_parts = []
                         if text_parts:
                             results.append(
                                 _make_msg(role="assistant", content=" ".join(text_parts))

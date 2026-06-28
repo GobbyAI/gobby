@@ -82,6 +82,8 @@ class _SM:
                 row.external_id == external_id
                 and row.source == source
                 and row.project_id == project_id
+                and row.machine_id == machine_id
+                and (session_type is None or row.session_type == session_type)
             ):
                 return row
         return None
@@ -233,7 +235,14 @@ def test_discover_returns_summary_shape() -> None:
     body = resp.json()
     assert set(body) == {"sessions", "skipped", "providers"}
     assert len(body["sessions"]) == 1
-    assert body["providers"] == [{"provider": "qwen", "available": True, "supports_list": True}]
+    assert body["providers"] == [
+        {
+            "provider": "qwen",
+            "available": True,
+            "supports_list": True,
+            "truncated": False,
+        }
+    ]
 
 
 def test_discover_without_runtime_manager_is_empty() -> None:
@@ -274,7 +283,8 @@ def test_delete_returns_session_and_single_broadcast() -> None:
     resp = client.post("/api/sessions/sess-1/acp/delete")
 
     assert resp.status_code == 200
-    assert set(resp.json()) == {"session"}
+    assert set(resp.json()) == {"session", "disposition"}
+    assert resp.json()["disposition"] == "removed"
     assert backend.deleted == ["acp-xyz"]
     assert sm.events == [("session_deleted", "sess-1")]
 

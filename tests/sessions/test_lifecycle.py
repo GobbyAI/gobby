@@ -511,11 +511,11 @@ class TestSessionLifecycleManager:
         assert processed == 1
 
     @pytest.mark.asyncio
-    async def test_missing_transcript_valid_summary_without_fresh_wiki_stays_unprocessed(
+    async def test_missing_transcript_valid_summary_without_fresh_wiki_marks_processed(
         self,
-        manager,
-    ):
-        """Valid summary alone is not enough; the wiki mirror must be fresh."""
+        manager: SessionLifecycleManager,
+    ) -> None:
+        """Valid summary is sufficient; the wiki mirror is optional."""
         digest = "### Turn 1\nA\n### Turn 2\nB\n### Turn 3\nC"
         session = MagicMock(spec=Session)
         session.id = "s1"
@@ -542,9 +542,9 @@ class TestSessionLifecycleManager:
             processed = await manager._process_pending_transcripts()
 
         mock_gen.assert_awaited_once_with("s1")
-        manager.session_manager.mark_transcript_processed.assert_not_called()
+        manager.session_manager.mark_transcript_processed.assert_called_once_with("s1")
         assert manager.session_manager.get.call_args.args == ("s1",)
-        assert processed == 0
+        assert processed == 1
 
     @pytest.mark.asyncio
     async def test_missing_transcript_invalid_summary_stays_unprocessed(self, manager):

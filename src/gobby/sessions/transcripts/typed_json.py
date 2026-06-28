@@ -352,11 +352,18 @@ class TypedJsonTranscriptParser(BaseTranscriptParser):
         parsed: list[ParsedMessage] = []
         index = 0
 
-        for msg in messages:
+        for message_offset, msg in enumerate(messages):
             if not isinstance(msg, dict):
                 continue
             result = self._parse_session_message(msg, index)
             if result:
+                for record in result:
+                    if record.source is None:
+                        record.source = self.cli_name
+                    if record.source_line is None:
+                        record.source_line = message_offset
+                    if record.source_ref is None:
+                        record.source_ref = f"messages[{message_offset}]"
                 parsed.extend(result)
                 index += len(result)
 

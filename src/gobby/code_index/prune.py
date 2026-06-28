@@ -89,9 +89,7 @@ class CodeIndexPruner:
                 )
                 outcomes.append(outcome)
                 remaining -= 1
-                if outcome.endswith(":deferred_pending_sync") or outcome.endswith(
-                    ":skipped_locked"
-                ):
+                if outcome.endswith(":deferred_pending_sync"):
                     deferred_dirty_projects.append(dirty)
                 if remaining <= 0:
                     break

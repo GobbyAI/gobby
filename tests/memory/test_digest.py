@@ -302,8 +302,8 @@ class TestNormalizeNativeTitle:
 
     def test_rejects_xml_block_content(self) -> None:
         assert normalize_native_title("I will help. <function_calls> stuff") is None
-        assert normalize_native_title("<invoke name=\"test\">") is None
-        assert normalize_native_title("<parameter name=\"x\">") is None
+        assert normalize_native_title('<invoke name="test">') is None
+        assert normalize_native_title('<parameter name="x">') is None
 
     def test_rejects_non_string(self) -> None:
         assert normalize_native_title(None) is None
@@ -464,6 +464,9 @@ class TestIsTemplatePlaceholder:
 
     def test_normal_text_not_placeholder(self) -> None:
         assert is_template_placeholder("Fix the auth bug") is False
+
+    def test_angle_bracket_domain_term_not_placeholder(self) -> None:
+        assert is_template_placeholder("<vector_db>") is False
 
 
 class TestBootstrapSessionTitle:

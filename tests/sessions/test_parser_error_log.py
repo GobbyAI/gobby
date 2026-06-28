@@ -1,5 +1,7 @@
 import json
 from datetime import UTC, datetime
+from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -16,7 +18,7 @@ from gobby.sessions.transcripts.base import (
 pytestmark = pytest.mark.unit
 
 
-def test_parser_error_log_creation(tmp_path, monkeypatch):
+def test_parser_error_log_creation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     # Mock home directory for testing
     monkeypatch.setenv("HOME", str(tmp_path))
 
@@ -44,7 +46,7 @@ def test_parser_error_log_creation(tmp_path, monkeypatch):
     assert raw in content
 
 
-def test_log_unknown_block(tmp_path, monkeypatch):
+def test_log_unknown_block(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     cli_name = "test-cli-unknown"
     error_log = TranscriptParserErrorLog(cli_name)
@@ -59,7 +61,9 @@ def test_log_unknown_block(tmp_path, monkeypatch):
     assert json.dumps(raw) in content
 
 
-def test_renderer_represents_unknown_block_without_parser_error_log(tmp_path, monkeypatch):
+def test_renderer_represents_unknown_block_without_parser_error_log(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     cli_name = "test-cli-renderer"
     error_log = TranscriptParserErrorLog(cli_name)
@@ -87,7 +91,9 @@ def test_renderer_represents_unknown_block_without_parser_error_log(tmp_path, mo
         assert "Unknown block type" not in error_log.log_path.read_text()
 
 
-def test_unknown_block_message_preserves_raw_for_render_passthrough(tmp_path, monkeypatch):
+def test_unknown_block_message_preserves_raw_for_render_passthrough(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     timestamp = datetime(2026, 6, 27, tzinfo=UTC)
     usage = TokenUsage(input_tokens=12, output_tokens=3)
@@ -122,7 +128,7 @@ def test_unknown_block_message_preserves_raw_for_render_passthrough(tmp_path, mo
     assert block.raw == raw
 
 
-def test_unknown_block_message_uses_content_or_fallback():
+def test_unknown_block_message_uses_content_or_fallback() -> None:
     timestamp = datetime(2026, 6, 27, tzinfo=UTC)
 
     content_msg = _unknown_block_message(
@@ -158,7 +164,7 @@ def test_unknown_block_message_uses_content_or_fallback():
         ('{"name" "value"}', "non_json"),
     ],
 )
-def test_classify_decode_failure(raw_text, expected):
+def test_classify_decode_failure(raw_text: str, expected: str) -> None:
     try:
         json.loads(raw_text)
     except json.JSONDecodeError as exc:
@@ -169,11 +175,13 @@ def test_classify_decode_failure(raw_text, expected):
     assert _classify_decode_failure(raw_text, error) == expected
 
 
-def test_parser_routes_decode_failures_by_kind(tmp_path, monkeypatch):
+def test_parser_routes_decode_failures_by_kind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
 
     class MockParser(BaseTranscriptParser):
-        def parse_line(self, line, index):
+        def parse_line(self, line: str, index: int) -> Any:
             try:
                 return json.loads(line)
             except json.JSONDecodeError as e:
@@ -199,7 +207,9 @@ def test_parser_routes_decode_failures_by_kind(tmp_path, monkeypatch):
     assert "line:4" not in content
 
 
-def test_log_decode_failure_non_object_is_non_json(tmp_path, monkeypatch):
+def test_log_decode_failure_non_object_is_non_json(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     error_log = TranscriptParserErrorLog("test-cli-nonobject")
 
@@ -211,7 +221,7 @@ def test_log_decode_failure_non_object_is_non_json(tmp_path, monkeypatch):
     assert "[1, 2, 3]" not in content
 
 
-def test_rotation(tmp_path, monkeypatch):
+def test_rotation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("HOME", str(tmp_path))
     cli_name = "test-cli-rotation"
     error_log = TranscriptParserErrorLog(cli_name)

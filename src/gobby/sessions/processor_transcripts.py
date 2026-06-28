@@ -40,13 +40,24 @@ class ProcessorTranscriptMixin:
             return messages
 
         if self.session_manager:
-            session = self.session_manager.get(session_id)
-            if session is not None and _can_replace_with_native_title(session):
-                # Use the last title message (latest ai-title update wins).
-                raw_title = title_msgs[-1].content
-                title = normalize_native_title(raw_title)
-                if title:
-                    self.session_manager.update_title(session_id, title, title_source="native")
+            try:
+                session = self.session_manager.get(session_id)
+                if session is not None and _can_replace_with_native_title(session):
+                    # Use the last title message (latest ai-title update wins).
+                    raw_title = title_msgs[-1].content
+                    title = normalize_native_title(raw_title)
+                    if title:
+                        self.session_manager.update_title(
+                            session_id,
+                            title,
+                            title_source="native",
+                        )
+            except (LookupError, RuntimeError, ValueError, psycopg.Error):
+                logger.warning(
+                    "Failed to sync native transcript title",
+                    extra={"session_id": session_id},
+                    exc_info=True,
+                )
 
         return [m for m in messages if m.content_type != "session_title"]
 
@@ -109,6 +120,7 @@ class ProcessorTranscriptMixin:
             r for r in parsed_records if isinstance(r, ParsedMessage)
         ]
 
+        latest_parsed_index = parsed_messages[-1].index if parsed_messages else last_index
         parsed_messages = self._extract_native_titles(session_id, parsed_messages)
 
         self._byte_offsets[session_id] = valid_offset
@@ -136,6 +148,8 @@ class ProcessorTranscriptMixin:
                 )
 
         if not parsed_messages:
+            if latest_parsed_index > last_index:
+                self._message_indices[session_id] = latest_parsed_index
             if appender is not None and appender_stat is not None and should_persist_appender:
                 self._persist_appender_snapshot(
                     session_id,
@@ -172,7 +186,7 @@ class ProcessorTranscriptMixin:
         await self._persist_usage_events(session_id, parsed_messages)
 
         await self._render_and_broadcast_messages(session_id, parsed_messages)
-        self._message_indices[session_id] = parsed_messages[-1].index
+        self._message_indices[session_id] = latest_parsed_index
 
         logger.debug(
             "Processed transcript messages",
@@ -248,10 +262,13 @@ class ProcessorTranscriptMixin:
 
         last_index = self._message_indices.get(session_id, -1)
         new_messages = [m for m in all_messages if m.index > last_index]
+        latest_new_index = new_messages[-1].index if new_messages else last_index
 
         new_messages = self._extract_native_titles(session_id, new_messages)
 
         if not new_messages:
+            if latest_new_index > last_index:
+                self._message_indices[session_id] = latest_new_index
             self._last_mtime[session_id] = current_mtime
             return
 
@@ -272,8 +289,12 @@ class ProcessorTranscriptMixin:
                     break
         await self._persist_usage_events(session_id, new_messages)
 
-        await self._render_and_broadcast_messages(session_id, new_messages)
-        self._message_indices[session_id] = new_messages[-1].index
+        await self._render_and_broadcast_messages(
+            session_id,
+            new_messages,
+            record_observations=True,
+        )
+        self._message_indices[session_id] = latest_new_index
         self._last_mtime[session_id] = current_mtime
 
         logger.debug(
@@ -289,15 +310,20 @@ class ProcessorTranscriptMixin:
         self: ProcessorHost,
         session_id: str,
         messages: list[ParsedMessage],
+        *,
+        record_observations: bool = False,
     ) -> None:
         render_state = self._render_states.get(session_id, RenderState())
         source = messages[0].source if messages else None
+        observation_tracker = (
+            ObservationTracker(self._observation_store) if record_observations else None
+        )
         completed, render_state = render_incremental(
             messages,
             render_state,
             session_id=session_id,
             source=source,
-            observation_tracker=ObservationTracker(self._observation_store),
+            observation_tracker=observation_tracker,
         )
         self._render_states[session_id] = render_state
 

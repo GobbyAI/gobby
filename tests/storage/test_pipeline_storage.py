@@ -20,7 +20,7 @@ pytestmark = pytest.mark.unit
 
 
 @pytest.fixture
-def db(temp_db: HubDatabase):
+def db(temp_db: HubDatabase) -> HubDatabase:
     """Create a test database with migrations applied."""
     database = temp_db
     # Create a test project
@@ -32,13 +32,15 @@ def db(temp_db: HubDatabase):
 
 
 @pytest.fixture
-def manager(db):
+def manager(db: HubDatabase) -> LocalPipelineExecutionManager:
     """Create a LocalPipelineExecutionManager instance."""
     return LocalPipelineExecutionManager(db, project_id="test-project")
 
 
 @pytest.mark.parametrize("project_id", [None, ""])
-def test_unscoped_manager_rejects_project_required_writes(db, project_id: str | None) -> None:
+def test_unscoped_manager_rejects_project_required_writes(
+    db: HubDatabase, project_id: str | None
+) -> None:
     manager = LocalPipelineExecutionManager(db, project_id=project_id)
     assert manager.project_id is None
 

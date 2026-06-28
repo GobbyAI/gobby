@@ -129,7 +129,7 @@ def normalize_tool_call_update(update: Mapping[str, Any]) -> dict[str, Any]:
     locations = _normalize_locations(update.get("locations"))
     data: dict[str, Any] = {
         "call_id": update.get("toolCallId"),
-        "tool_name": update.get("title") or update.get("name"),
+        "tool_name": update.get("name") or update.get("title"),
         "tool_input": tool_input,
         "tool_kind": update.get("kind"),
         "tool_status": status,
@@ -151,6 +151,11 @@ def extract_text(content: Any) -> str:
             text = _block_text(block)
             if text:
                 parts.append(text)
+            continue
+        if block.get("type") == "content":
+            nested_text = extract_text(block.get("content"))
+            if nested_text:
+                parts.append(nested_text)
     return "\n".join(parts)
 
 
@@ -308,9 +313,16 @@ def _normalize_image_block(block: Mapping[str, Any]) -> dict[str, Any]:
 
 def _normalize_audio_block(block: Mapping[str, Any]) -> dict[str, Any]:
     normalized: dict[str, Any] = {"type": "audio"}
-    data = _string_value(block, "data")
-    uri = _string_value(block, "uri", "url")
-    mime_type = _string_value(block, "mimeType", "mime_type", "media_type")
+    source = block.get("source")
+    source_block = source if isinstance(source, Mapping) else {}
+    data = _string_value(block, "data") or _string_value(source_block, "data")
+    uri = _string_value(block, "uri", "url") or _string_value(source_block, "uri", "url")
+    mime_type = _string_value(
+        block,
+        "mimeType",
+        "mime_type",
+        "media_type",
+    ) or _string_value(source_block, "mimeType", "mime_type", "media_type")
     if data:
         normalized["data"] = data
     if uri:

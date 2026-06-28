@@ -42,5 +42,16 @@ CREATE TABLE IF NOT EXISTS unmodeled_observations (
 CREATE INDEX IF NOT EXISTS idx_unmodeled_observation_events_last_seen
     ON unmodeled_observation_events(last_seen_at);
 
+CREATE INDEX IF NOT EXISTS idx_unmodeled_observation_events_group_recompute
+    ON unmodeled_observation_events(
+        source,
+        kind,
+        name,
+        server_name,
+        tool_type,
+        last_seen_at DESC,
+        first_seen_at DESC
+    );
+
 CREATE INDEX IF NOT EXISTS idx_unmodeled_observations_worklist
     ON unmodeled_observations(count DESC, last_seen_at DESC);

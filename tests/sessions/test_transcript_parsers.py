@@ -1462,6 +1462,30 @@ class TestCodexTranscriptParser:
             "tools_count": 1,
         }
 
+    def test_parse_line_tool_search_outputs_without_ids_pair_fifo(self, parser) -> None:
+        parser.parse_line(
+            self._tool_search_call({"query": "first"}, call_id="call-first", response_id="tsc-1"),
+            1,
+        )
+        parser.parse_line(
+            self._tool_search_call({"query": "second"}, call_id="call-second", response_id="tsc-2"),
+            2,
+        )
+
+        first_result = parser.parse_line(
+            self._tool_search_output({"tools_count": 1}, call_id=None),
+            3,
+        )
+        second_result = parser.parse_line(
+            self._tool_search_output({"tools_count": 2}, call_id=None),
+            4,
+        )
+
+        assert isinstance(first_result, ParsedMessage)
+        assert isinstance(second_result, ParsedMessage)
+        assert first_result.tool_use_id == "call-first"
+        assert second_result.tool_use_id == "call-second"
+
     def test_tool_search_pair_normalizes_and_renders_as_tool_chain(self, parser) -> None:
         records = parser.parse_lines(
             [

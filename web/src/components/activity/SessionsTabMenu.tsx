@@ -39,7 +39,7 @@ export function SessionsContextMenu({
   // keep Expire). Today's providers advertise none, so ACP rows degrade to
   // Send Context only.
   const acp = entry.acp ?? null;
-  const canResume = Boolean(acp?.capabilities.resume);
+  const canResume = acp ? Boolean(acp.capabilities.resume) : true;
   const canClose = Boolean(acp?.capabilities.close);
   const canDelete = Boolean(acp?.capabilities.delete);
   // Non-ACP rows keep Expire; ACP rows surface Close in its place.

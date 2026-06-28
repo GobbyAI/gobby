@@ -163,7 +163,10 @@ async def test_search_memories_no_query_returns_list(
 
     # Reset search mock after create_memory (dedup may call search)
     if manager._background_tasks:
-        await asyncio.gather(*list(manager._background_tasks))
+        await asyncio.wait_for(
+            asyncio.gather(*list(manager._background_tasks)),
+            timeout=5,
+        )
     mock_vector_store.search.reset_mock()
 
     results = await manager.search_memories(query=None, limit=10)

@@ -133,7 +133,7 @@ class DroidTranscriptParser(BaseTranscriptParser):
             self.error_log.log_decode_failure(index, self.session_id, line, exc)
             return []
         if not isinstance(record, dict):
-            self.error_log.log_unknown_block(index, self.session_id, "<non-object>", {})
+            self.error_log.log_decode_failure(index, self.session_id, line, None)
             return []
 
         timestamp_raw = record.get("timestamp")
@@ -345,7 +345,12 @@ class DroidTranscriptParser(BaseTranscriptParser):
             expanded = self._expand_line(raw.text, current_index)
             for msg in expanded:
                 msg.index = current_index
-                if isinstance(msg, ParsedMessage) and msg.role == "assistant":
+                raw_type = msg.raw_json.get("type") if isinstance(msg.raw_json, dict) else None
+                if (
+                    isinstance(msg, ParsedMessage)
+                    and msg.role == "assistant"
+                    and raw_type == "message"
+                ):
                     self._last_assistant_index = current_index
                 current_index += 1
             if expanded:

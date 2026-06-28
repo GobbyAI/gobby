@@ -17,7 +17,7 @@ import pytest
 from gobby.adapters.acp_client import ACPClient, UnsupportedACPMethodError
 from gobby.servers.websocket.chat.backends.acp import ACPWebChatBackend
 
-pytestmark = pytest.mark.unit
+pytestmark = [pytest.mark.unit, pytest.mark.asyncio]
 
 
 class _StubACPClient(ACPClient):
@@ -120,8 +120,10 @@ async def _start_client(
     return client, process
 
 
-def _result(session_id: str) -> dict[str, Any]:
-    return {"jsonrpc": "2.0", "id": 2, "result": {"sessionId": session_id}}
+def _result(session_id: str, **extra: Any) -> dict[str, Any]:
+    result: dict[str, Any] = {"sessionId": session_id}
+    result.update(extra)
+    return {"jsonrpc": "2.0", "id": 2, "result": result}
 
 
 # --------------------------------------------------------------------------- #
@@ -182,7 +184,7 @@ async def test_resume_session_sends_exact_method_and_params(
     client, process = await _start_client(
         monkeypatch,
         agent_capabilities={"sessionCapabilities": {"resume": {}, "additionalDirectories": {}}},
-        response_payloads=[_result("resumed-1")],
+        response_payloads=[_result("resumed-1", additionalDirectories=["/repo/extra"])],
     )
 
     await client.resume_session(
@@ -306,7 +308,9 @@ async def test_create_session_includes_additional_directories_when_supported(
     client, process = await _start_client(
         monkeypatch,
         agent_capabilities={"sessionCapabilities": {"additionalDirectories": {}}},
-        response_payloads=[_result("new-1")],
+        response_payloads=[
+            _result("new-1", additionalDirectories=["/repo/docs"]),
+        ],
     )
 
     await client.create_session(cwd="/repo", additional_directories=["/repo/pkg", "/repo/docs"])
@@ -316,7 +320,7 @@ async def test_create_session_includes_additional_directories_when_supported(
     assert request["params"]["cwd"] == "/repo"
     assert request["params"]["mcpServers"] == []
     assert request["params"]["additionalDirectories"] == ["/repo/pkg", "/repo/docs"]
-    assert "/repo/pkg" in client._session_state.root_uris
+    assert "/repo/pkg" not in client._session_state.root_uris
     assert "/repo/docs" in client._session_state.root_uris
 
     await client.stop()
@@ -365,7 +369,9 @@ async def test_load_session_includes_additional_directories_when_supported(
             "loadSession": True,
             "sessionCapabilities": {"additionalDirectories": {}},
         },
-        response_payloads=[_result("loaded-1")],
+        response_payloads=[
+            _result("loaded-1", additionalDirectories=["/repo/accepted"]),
+        ],
     )
 
     await client.load_session("sess-1", cwd="/repo", additional_directories=["/repo/extra"])
@@ -374,6 +380,8 @@ async def test_load_session_includes_additional_directories_when_supported(
     assert request["method"] == "session/load"
     assert request["params"]["sessionId"] == "sess-1"
     assert request["params"]["additionalDirectories"] == ["/repo/extra"]
+    assert "/repo/extra" not in client._session_state.root_uris
+    assert "/repo/accepted" in client._session_state.root_uris
 
     await client.stop()
 

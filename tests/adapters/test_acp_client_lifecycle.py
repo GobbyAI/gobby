@@ -79,9 +79,10 @@ def _written_messages(process: _FakeProcess) -> list[dict[str, Any]]:
 def test_session_state_copies_capabilities_and_tracks_roots() -> None:
     state = ACPSessionState()
 
-    state.update_agent_capabilities({"loadSession": True})
+    state.update_agent_capabilities({"loadSession": True, "sessionCapabilities": {"list": True}})
     capabilities = state.agent_capabilities
     capabilities["loadSession"] = False
+    capabilities["sessionCapabilities"]["list"] = False
 
     state.update_session_info(
         {
@@ -91,9 +92,15 @@ def test_session_state_copies_capabilities_and_tracks_roots() -> None:
     )
 
     assert state.supports_session_load() is True
-    assert state.agent_capabilities == {"loadSession": True}
+    assert state.agent_capabilities == {
+        "loadSession": True,
+        "sessionCapabilities": {"list": True},
+    }
     assert state.session_id == "nested-session"
     assert state.root_uris == ("file:///workspace", "/tmp/project")
+    session_info = state.session_info
+    session_info["roots"][0]["uri"] = "file:///mutated"
+    assert state.session_info["roots"][0]["uri"] == "file:///workspace"
 
     state.update_session_info({"sessionId": "fallback-session"}, fallback_roots=("/tmp/fallback",))
 
@@ -255,7 +262,7 @@ def test_normalize_notification_maps_session_update_variants() -> None:
             "params": {
                 "update": {
                     "sessionUpdate": "available_commands_update",
-                    "commands": [
+                    "availableCommands": [
                         {
                             "name": "research",
                             "description": "Research a topic",

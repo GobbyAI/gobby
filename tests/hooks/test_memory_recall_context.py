@@ -4,6 +4,7 @@ import asyncio
 import concurrent.futures
 import json
 import logging
+import threading
 from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
@@ -114,6 +115,8 @@ def _make_manager(
     manager._llm_service = llm_service
     manager._inter_session_msg_manager = InterSessionMessageManager(temp_db)
     manager._memory_recall_tasks = {}
+    manager._memory_recall_lock = threading.Lock()
+    manager._memory_recall_closing = False
     manager._loop = None
     manager.logger = logging.getLogger("tests.memory_recall_context")
     manager._dedup_memory_results = _dedup_memory_results  # type: ignore[method-assign]

@@ -30,7 +30,7 @@ def list_observations(
     json_format: bool,
 ) -> None:
     """List unmodeled observations sorted by count."""
-    db = open_runtime_hub_database(apply_migrations=False)
+    db = open_runtime_hub_database(apply_migrations=True)
     rows = UnmodeledObservationStore(db).list_observations(
         source=source,
         kind=kind,

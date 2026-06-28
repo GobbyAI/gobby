@@ -48,16 +48,17 @@ def task_state_payload(task: Any) -> dict[str, Any]:
 
 def task_discovery_payload(task: Any) -> dict[str, Any]:
     """Return compact task row for cheap discovery tools."""
+    task_dict = task.to_dict() if callable(getattr(task, "to_dict", None)) else {}
     return {
         "ref": _task_ref(task),
-        "id": _field(task, "id"),
-        "seq_num": _field(task, "seq_num"),
-        "title": _field(task, "title"),
-        "task_type": _field(task, "task_type"),
-        "category": _field(task, "category"),
-        "priority": _field(task, "priority"),
-        "path_cache": _field(task, "path_cache"),
-        "updated_at": _field(task, "updated_at"),
+        "id": task_dict.get("id", _field(task, "id")),
+        "seq_num": task_dict.get("seq_num", _field(task, "seq_num")),
+        "title": task_dict.get("title", _field(task, "title")),
+        "task_type": task_dict.get("task_type", _field(task, "task_type")),
+        "category": task_dict.get("category", _field(task, "category")),
+        "priority": task_dict.get("priority", _field(task, "priority")),
+        "path_cache": task_dict.get("path_cache", _field(task, "path_cache")),
+        "updated_at": task_dict.get("updated_at", _field(task, "updated_at")),
         "state": task_state_payload(task),
     }
 

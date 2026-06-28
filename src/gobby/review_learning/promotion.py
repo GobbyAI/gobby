@@ -18,6 +18,7 @@ TARGET_CATEGORY: dict[str, str] = {
     "tool-config": "config",
     "checklist": "docs",
 }
+VALID_GUARDRAIL_TARGETS = frozenset(TARGET_CATEGORY)
 
 
 @dataclass(frozen=True)
@@ -192,33 +193,14 @@ def _confirmed_target(
     if occurrence_count < 2:
         if lesson.risk != "high":
             return None
-        if explicit_target is not None and explicit_target in {
-            "rule",
-            "workflow",
-            "pipeline",
-            "validation",
-        }:
+        if explicit_target is not None and explicit_target in VALID_GUARDRAIL_TARGETS:
             return explicit_target
         return "test"
     if occurrence_count == 2:
-        if explicit_target is not None and explicit_target in {
-            "helper",
-            "test",
-            "checklist",
-            "rule",
-            "workflow",
-            "pipeline",
-        }:
+        if explicit_target is not None and explicit_target in VALID_GUARDRAIL_TARGETS:
             return explicit_target
         return "test"
-    if explicit_target is not None and explicit_target in {
-        "helper",
-        "test",
-        "checklist",
-        "rule",
-        "workflow",
-        "pipeline",
-    }:
+    if explicit_target is not None and explicit_target in VALID_GUARDRAIL_TARGETS:
         return explicit_target
     return "validation"
 

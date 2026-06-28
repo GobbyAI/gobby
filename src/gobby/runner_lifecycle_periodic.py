@@ -92,6 +92,7 @@ def start_periodic_tasks(
 ) -> None:
     """Start all lightweight periodic background tasks."""
     loops = {**_default_loops(), **loops}
+    db_executor = getattr(runner, "db_executor", None)
     runner._metrics_cleanup_task = asyncio.create_task(
         loops["metrics_cleanup_loop"](runner.metrics_manager, lambda: runner._shutdown_requested),
         name="metrics-cleanup",
@@ -116,6 +117,7 @@ def start_periodic_tasks(
         loops["unmodeled_observation_cleanup_loop"](
             runner.database,
             lambda: runner._shutdown_requested,
+            run_db=getattr(db_executor, "run", None),
         ),
         name="unmodeled-observation-cleanup",
     )
@@ -137,7 +139,6 @@ def start_periodic_tasks(
         loops["cleanup_comms_messages_loop"](runner.database, lambda: runner._shutdown_requested),
         name="comms-message-cleanup",
     )
-    db_executor = getattr(runner, "db_executor", None)
     chat_config = getattr(runner.config, "chat", None)
     attachment_retention_hours = getattr(
         chat_config,

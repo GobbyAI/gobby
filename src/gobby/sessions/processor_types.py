@@ -16,6 +16,7 @@ if TYPE_CHECKING:
     from gobby.hooks.hook_manager import HookManager
     from gobby.storage.context_usage_snapshot import ContextUsageSnapshot
     from gobby.storage.sessions import SessionManager
+    from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
 
 WINDOW_ONLY_CONTEXT_SOURCES = frozenset({"droid", "agy", "grok"})
@@ -50,7 +51,7 @@ class ProcessorHost(Protocol):
     _message_indices: dict[str, int]
     _render_states: dict[str, RenderState]
     _index_appenders: dict[str, TranscriptIndexAppender]
-    _observation_store: Any
+    _observation_store: UnmodeledObservationStore
     _stats: dict[str, MessageStats]
     _stats_hydration_skipped: set[str]
     _running: bool
@@ -137,6 +138,8 @@ class ProcessorHost(Protocol):
         self,
         session_id: str,
         messages: list[ParsedMessage],
+        *,
+        record_observations: bool = False,
     ) -> None: ...
 
     @staticmethod

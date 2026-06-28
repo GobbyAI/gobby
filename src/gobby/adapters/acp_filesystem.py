@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import stat
 import tempfile
 from collections.abc import Iterable
 from dataclasses import dataclass
@@ -108,21 +109,34 @@ def write_text_file(path_value: Any, roots: Iterable[Path], *, content: Any) -> 
         raise ACPFileSystemError("parent directory does not exist", code=-32000)
 
     encoded = content.encode("utf-8")
-    fd, temp_path = tempfile.mkstemp(
-        dir=os.fspath(resolved.path.parent),
-        prefix=f".{resolved.path.name}.",
-        suffix=".tmp",
-    )
+    try:
+        existing_mode = stat.S_IMODE(resolved.path.stat().st_mode)
+    except FileNotFoundError:
+        existing_mode = None
+    except OSError as exc:
+        raise ACPFileSystemError("failed to inspect target file", code=-32000) from exc
+
+    try:
+        fd, temp_path = tempfile.mkstemp(
+            dir=os.fspath(resolved.path.parent),
+            prefix=f".{resolved.path.name}.",
+            suffix=".tmp",
+        )
+    except OSError as exc:
+        raise ACPFileSystemError("failed to create temporary file", code=-32000) from exc
+
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(encoded)
             handle.flush()
             os.fsync(handle.fileno())
+        if existing_mode is not None:
+            os.chmod(temp_path, existing_mode)
         os.replace(temp_path, resolved.path)
-    except Exception:
+    except OSError as exc:
         if os.path.exists(temp_path):
             os.unlink(temp_path)
-        raise
+        raise ACPFileSystemError("failed to write file", code=-32000) from exc
     return len(encoded)
 
 
@@ -143,7 +157,7 @@ def _root_path_from_value(value: str) -> Path | None:
 
 def _reject_git_path(resolved: ACPResolvedPath) -> None:
     relative_parts = resolved.path.relative_to(resolved.root).parts
-    if relative_parts and relative_parts[0] == ".git":
+    if ".git" in relative_parts:
         raise ACPFileSystemError("access to .git paths is not allowed")
 
 

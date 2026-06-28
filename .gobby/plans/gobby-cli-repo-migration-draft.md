@@ -17,11 +17,13 @@ tags, and `cargo install` UX (crates.io is unaffected). Then reduce
 intact.
 
 Decisions locked with the user:
+
 - **History**: full history via `git-filter-repo` (blame/`log --follow` keep working).
 - **Decommission**: full — README-only swap, disable issues/discussions, then
   archive, gated on a green first helper release from gobby.
 
 ### Verified current state
+
 - Workspace = exactly 4 members: `crates/{gcode,gcore,ghook,gwiki}`; packages
   `gobby-code`/`gobby-hooks`/`gobby-wiki` + library `gobby-core`. (`gsqz`/`gloc`
   no longer exist — older memory was stale.)

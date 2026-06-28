@@ -269,7 +269,7 @@ describe('ChatInput', () => {
     )
 
     const textarea = screen.getByRole('textbox')
-    await userEvent.type(textarea, '/research auth flow')
+    await userEvent.type(textarea, '/res auth flow')
 
     expect(screen.getByText('/research')).toBeTruthy()
     expect(screen.getByText('topic')).toBeTruthy()

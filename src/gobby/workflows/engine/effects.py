@@ -13,11 +13,11 @@ from typing import TYPE_CHECKING, Any
 
 from gobby.hooks.events import HookEvent
 from gobby.hooks.normalization import is_shell_tool
+from gobby.memory.recall_constants import MEMORY_RECALL_PRODUCER
 from gobby.storage.workflow_definitions import WorkflowDefinitionRow
 from gobby.workflows.safe_evaluator import SafeExpressionEvaluator
 
 logger = logging.getLogger(__name__)
-_MEMORY_RECALL_PRODUCER = "daemon_memory_recall"
 
 REVIEW_LESSON_TAG = "review-lesson"
 
@@ -405,7 +405,7 @@ class EffectsMixin:
         variables: dict[str, Any],
     ) -> str | None:
         """Validate and format a deferred daemon memory recall payload."""
-        if payload.get("producer") != _MEMORY_RECALL_PRODUCER:
+        if payload.get("producer") != MEMORY_RECALL_PRODUCER:
             logger.debug("Dropping memory_recall delivery with non-daemon producer")
             return None
         if payload.get("enabled") is False or payload.get("disabled") is True:

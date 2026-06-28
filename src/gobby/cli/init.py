@@ -203,7 +203,7 @@ def _git_toplevel(project_path: Path) -> Path | None:
             text=True,
             check=False,
         )
-    except (FileNotFoundError, OSError):
+    except FileNotFoundError:
         return None
     if proc.returncode != 0:
         return None

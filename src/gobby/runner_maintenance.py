@@ -266,6 +266,7 @@ async def unmodeled_observation_cleanup_loop(
     db: Any,
     is_shutdown_requested: Callable[[], bool],
     retention_days: int = 30,
+    run_db: Callable[..., Awaitable[Any]] | None = None,
 ) -> None:
     """Background loop for pruning old unmodeled-observation occurrence guards."""
     interval_seconds = 24 * 60 * 60
@@ -276,7 +277,11 @@ async def unmodeled_observation_cleanup_loop(
 
     while not is_shutdown_requested():
         try:
-            deleted = store.prune_events_older_than(retention_days=retention_days)
+            deleted = await _run_db(
+                run_db,
+                store.prune_events_older_than,
+                retention_days=retention_days,
+            )
             if deleted > 0:
                 logger.info(
                     "Periodic unmodeled-observation cleanup: removed %s old occurrence rows",

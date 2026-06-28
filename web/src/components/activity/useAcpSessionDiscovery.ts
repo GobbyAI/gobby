@@ -30,13 +30,22 @@ export function useAcpSessionDiscovery(trigger: string): void {
       }
       inFlightRef.current = true;
       try {
-        await fetch("/api/sessions/acp/discover", {
+        const res = await fetch("/api/sessions/acp/discover", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
           body: "{}",
         });
-      } catch {
+        if (!res.ok) {
+          const body = await res.text().catch(() => "");
+          console.warn("ACP session discovery failed", {
+            trigger,
+            status: res.status,
+            body,
+          });
+        }
+      } catch (error) {
         // Best-effort: discovered rows arrive via the session WS broadcasts.
+        console.warn("ACP session discovery failed", { trigger, error });
       } finally {
         inFlightRef.current = false;
         if (pendingRef.current) {

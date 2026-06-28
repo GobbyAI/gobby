@@ -71,7 +71,12 @@ async def _set_attached_session_mode(
     try:
         await run_db(mixin, session_manager.update_chat_mode, target_session_id, mode)
     except ValueError as exc:
-        await mixin._send_error(websocket, str(exc))
+        logger.warning(
+            "Failed to update chat mode for attached session %s: %s",
+            target_session_id[:8],
+            exc,
+        )
+        await mixin._send_error(websocket, "Invalid chat mode", code="INVALID_MODE")
         return
 
     try:

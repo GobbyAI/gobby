@@ -68,6 +68,8 @@ class TestWebChatRuntimeManager:
 
         with pytest.raises(RuntimeError, match="Unsupported web chat provider: unknown"):
             manager.create_session(provider="unknown", conversation_id="conv-unknown")
+        with pytest.raises(RuntimeError, match="Unsupported web chat provider: gemini"):
+            manager.create_session(provider="gemini", conversation_id="conv-gemini")
 
     def test_health_snapshot_contains_droid(self) -> None:
         manager = WebChatRuntimeManager(codex_client=None)

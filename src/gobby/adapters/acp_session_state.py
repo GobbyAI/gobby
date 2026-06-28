@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import copy
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
@@ -141,11 +142,11 @@ class ACPSessionState:
 
     @property
     def session_info(self) -> dict[str, Any]:
-        return dict(self._session_info)
+        return copy.deepcopy(self._session_info)
 
     @property
     def agent_capabilities(self) -> dict[str, Any]:
-        return dict(self._agent_capabilities)
+        return copy.deepcopy(self._agent_capabilities)
 
     @property
     def root_uris(self) -> tuple[str, ...]:
@@ -156,7 +157,9 @@ class ACPSessionState:
         return dict(self._session_capabilities)
 
     def update_agent_capabilities(self, capabilities: Any) -> None:
-        self._agent_capabilities = dict(capabilities) if isinstance(capabilities, dict) else {}
+        self._agent_capabilities = (
+            copy.deepcopy(capabilities) if isinstance(capabilities, dict) else {}
+        )
         self._session_capabilities = parse_session_capabilities(self._agent_capabilities)
 
     def supports_session_load(self) -> bool:
@@ -189,7 +192,7 @@ class ACPSessionState:
         fallback_session_id: str | None = None,
         fallback_roots: Iterable[str] | None = None,
     ) -> dict[str, Any]:
-        self._session_info = dict(result) if isinstance(result, dict) else {}
+        self._session_info = copy.deepcopy(result) if isinstance(result, dict) else {}
         self._session_id = extract_session_id(self._session_info) or fallback_session_id
         roots = extract_root_uris(self._session_info)
         if not roots and fallback_roots is not None:

@@ -132,6 +132,30 @@ async def test_high_risk_actionable_explicit_rule_target_creates_rule_task(
     assert "target:rule" in fake_task_manager.tasks[0].labels
 
 
+@pytest.mark.parametrize("target", ["validation", "tool-config"])
+@pytest.mark.asyncio
+async def test_high_risk_actionable_preserves_explicit_valid_targets(
+    fake_memory_manager,
+    fake_task_manager,
+    target: str,
+) -> None:
+    service = ReviewLearningService(fake_memory_manager, fake_task_manager)
+
+    result = await service.record(
+        source_kind="agent_review",
+        source="code-reviewer",
+        source_review="review-1",
+        decision="confirmed",
+        finding=_finding(guardrail_target=target),
+        evidence={"commit": "abc"},
+        risk="high",
+    )
+
+    assert result["guardrail_target"] == target
+    assert result["task_ref"] == "#1"
+    assert f"target:{target}" in fake_task_manager.tasks[0].labels
+
+
 @pytest.mark.asyncio
 async def test_confirmed_second_occurrence_creates_test_guardrail_task(
     fake_memory_manager,

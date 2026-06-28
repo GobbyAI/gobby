@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import json
 import logging
+from collections import deque
 from collections.abc import Iterable, Iterator
 from datetime import UTC, datetime
 from typing import Any
@@ -142,7 +143,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
         logger_instance: logging.Logger | None = None,
     ):
         super().__init__(cli_name="codex", session_id=session_id, logger_instance=logger_instance)
-        self._last_tool_search_use_id: str | None = None
+        self._pending_tool_search_use_ids: deque[str] = deque()
 
     def extract_last_messages(
         self, turns: list[dict[str, Any]], num_pairs: int = 2
@@ -288,7 +289,7 @@ class CodexTranscriptParser(BaseTranscriptParser):
 
         if payload_type == "tool_search_call":
             call_id = _tool_search_use_id(payload) or f"tool-search-{index}"
-            self._last_tool_search_use_id = call_id
+            self._pending_tool_search_use_ids.append(call_id)
             name = "tool_search"
             tool_input = _parse_tool_search_input(payload)
         elif payload_type == "web_search_call":
@@ -338,9 +339,16 @@ class CodexTranscriptParser(BaseTranscriptParser):
             output = _tool_search_output(payload)
             call_id = _tool_search_use_id(payload)
             if call_id is None:
-                call_id = self._last_tool_search_use_id or f"tool-search-{index}"
-            if call_id == self._last_tool_search_use_id:
-                self._last_tool_search_use_id = None
+                call_id = (
+                    self._pending_tool_search_use_ids.popleft()
+                    if self._pending_tool_search_use_ids
+                    else f"tool-search-{index}"
+                )
+            elif self._pending_tool_search_use_ids:
+                try:
+                    self._pending_tool_search_use_ids.remove(call_id)
+                except ValueError:
+                    pass
             tool_name = "tool_search"
         else:
             output = payload.get("output", "")
