@@ -25,7 +25,7 @@ from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.sessions import SessionManager
 from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
-pytestmark = pytest.mark.integration
+pytestmark = [pytest.mark.integration, pytest.mark.asyncio]
 
 _ASSISTANT = (
     '{"type":"assistant","message":{"content":[{"type":"text","text":"live hello 17418"}]},'

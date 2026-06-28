@@ -237,11 +237,13 @@ def test_claude_unknown_record_routes_to_t2_via_parse_lines(temp_db: HubDatabase
     assert sentinel.source_line == 1
     assert sentinel.source_ref == "1"
 
+    fallback_source = "codex"
+    assert sentinel.source != fallback_source
     store = UnmodeledObservationStore(temp_db)
     rendered = render_transcript(
         parsed,
         session_id="session-claude-unknown",
-        source="claude",
+        source=fallback_source,
         observation_tracker=ObservationTracker(store),
     )
 

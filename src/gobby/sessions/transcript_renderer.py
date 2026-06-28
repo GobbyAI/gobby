@@ -116,7 +116,7 @@ def render_incremental(
             observation_tracker.observe_block_type(
                 msg,
                 session_id=session_id,
-                source=source,
+                source=msg.source or source,
                 block_type=(msg.content or "<missing>"),
             )
             continue

@@ -565,6 +565,7 @@ class TestProcessSession:
         # Message index should be updated to 1
         assert processor._message_indices["session-1"] == 1
 
+    @pytest.mark.asyncio
     async def test_process_session_records_plain_transcript_observations(
         self, processor, tmp_path
     ) -> None:
@@ -1784,6 +1785,7 @@ class TestExtractNativeTitles:
             "sid", "Updated title", title_source="native"
         )
 
+    @pytest.mark.asyncio
     async def test_native_title_db_error_preserves_retry_state(self, mock_db, tmp_path) -> None:
         processor = SessionMessageProcessor(mock_db)
         transcript = tmp_path / "transcript.jsonl"
