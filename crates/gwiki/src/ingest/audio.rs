@@ -4,6 +4,11 @@ use gobby_core::ai_context::AiContext;
 use gobby_core::config::{AiCapability, AiRouting};
 
 #[cfg(feature = "ai")]
+use gobby_core::ai::generation::{
+    DirectGenerationTarget, GenerationTier, profile_for_tier, resolve_direct_generation_target,
+};
+
+#[cfg(feature = "ai")]
 use crate::ai::clients::ProductionTranscriptionClient;
 use crate::ingest::{
     IngestResult, index_after_ingest, markdown_metadata, markdown_title, path_to_string,
@@ -106,7 +111,19 @@ fn available_production_transcription_endpoint(
     _route: AiRouting,
     translate: bool,
 ) -> TranscriptionEndpoint<'static> {
-    let client = Box::new(ProductionTranscriptionClient::new(context.clone()));
+    // Translation runs through the Standard (`feature_low`) text-generate tier;
+    // resolve its Direct-route target once here so the client can route both
+    // transports through the shared tier->profile mapping. Pure transcription
+    // never touches text generation, so it carries no target.
+    let text_generate_target = if translate {
+        text_generate_translation_target(context)
+    } else {
+        None
+    };
+    let client = Box::new(ProductionTranscriptionClient::new(
+        context.clone(),
+        text_generate_target,
+    ));
     if translate {
         TranscriptionEndpoint::Translating {
             client,
@@ -122,6 +139,27 @@ fn available_production_transcription_endpoint(
     } else {
         TranscriptionEndpoint::Available(client)
     }
+}
+
+/// Resolve the Standard (`feature_low`) text-generate tier target for segment
+/// translation. Only the Direct route consumes a per-tier target (the Daemon
+/// route forwards the profile name), so this returns `None` unless text
+/// generation resolves to Direct, and `None` when the hub config source cannot
+/// be resolved.
+#[cfg(feature = "ai")]
+fn text_generate_translation_target(context: &AiContext) -> Option<DirectGenerationTarget> {
+    if !matches!(
+        resolved_transcription_route(context, AiCapability::TextGenerate),
+        AiRouting::Direct
+    ) {
+        return None;
+    }
+    let mut source =
+        crate::support::config::hub_ai_config_source("gwiki transcription translate").ok()?;
+    Some(resolve_direct_generation_target(
+        &mut source,
+        &profile_for_tier(GenerationTier::Standard, None),
+    ))
 }
 
 #[cfg(not(feature = "ai"))]

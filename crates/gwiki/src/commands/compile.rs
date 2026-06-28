@@ -3,8 +3,9 @@ use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 
 use gobby_core::ai::generation::{
-    DirectGenerationTarget, GenerationTier, generate_one_shot, profile_for_tier,
-    resolve_direct_generation_target,
+    ChatMessage, ChatTransport, DaemonChatTransport, DirectChatTransport, DirectGenerationTarget,
+    GenerationTier, ToolLoopLimits, generate_one_shot, profile_for_tier,
+    resolve_direct_generation_target, run_tool_loop,
 };
 use gobby_core::ai::{AiNoticeKind, resolve_route_observed};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
@@ -14,9 +15,11 @@ use crate::explainer::{ExplainerGenerator, ExplainerPrompt, ExplainerReport, Exp
 use crate::sources::{SourceManifest, SourceRecord};
 use crate::support::scope::{resolve_command_scope, resolved_scope_identity};
 use crate::{
-    CommandOutcome, ScopeSelection, WikiError, compile as wiki_compile, daemon, paths, session,
-    synthesis,
+    CommandOutcome, ScopeIdentity, ScopeSelection, WikiError, compile as wiki_compile, daemon,
+    paths, session, synthesis,
 };
+
+use super::vault_tools::VaultToolExecutor;
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn execute(
@@ -38,9 +41,55 @@ pub(crate) fn execute(
     }
     let topic = resolve_compile_topic(topic_seed, &session);
     let daemon_report = daemon::probe_daemon_capabilities();
+    let daemon_synthesis_available = daemon_report.synthesis.available;
+    let output_scope = resolved_scope_identity(&resolved_scope);
+    let vault_root = session.scope.root().to_path_buf();
+
+    let request = wiki_compile::CompileRequest {
+        topic,
+        outline: outline.clone(),
+        target_page,
+        write_intent,
+    };
+
+    // Lane B (tool loop) is the primary compile narrative path: the model
+    // investigates the indexed vault via tools to build its own grounding (#982,
+    // matching codewiki #978). A resolved Lane B route hard-fails on generation
+    // failure (no skeleton fallback); when no tool-chat route resolves, fall back
+    // to the Lane A one-shot explainer.
+    if let Some(mut lane_b) =
+        resolve_compile_lane_b_generator(ai, &scope, vault_root, output_scope.clone())
+    {
+        let info = lane_b.info;
+        let outcome = wiki_compile::compile_to_wiki_with_options(
+            &mut session,
+            request,
+            wiki_compile::WikiCompileOptions {
+                target_kind,
+                daemon_synthesis_available,
+                hard_fail_on_generation_failure: true,
+            },
+            Some(lane_b.generator.as_mut()),
+        )?;
+        return Ok(compile_command_outcome(
+            ai,
+            "tool_loop",
+            info.route_label,
+            info.fallback,
+            info.notice,
+            &output_scope,
+            target_kind,
+            &outline,
+            daemon_synthesis_available,
+            outcome,
+        ));
+    }
+
+    // Lane A one-shot explainer (no tool-chat route resolved).
     let transport = resolve_explainer_transport(ai);
     let route_label = transport.route_label();
     let notice = transport.notice_kind();
+    let fallback = transport.fallback();
     let mut generate = |prompt: &ExplainerPrompt| transport.generate(prompt);
     let generator: Option<ExplainerGenerator<'_>> = if transport.is_active() {
         Some(&mut generate)
@@ -49,31 +98,55 @@ pub(crate) fn execute(
     };
     let outcome = wiki_compile::compile_to_wiki_with_options(
         &mut session,
-        wiki_compile::CompileRequest {
-            topic,
-            outline: outline.clone(),
-            target_page,
-            write_intent,
-        },
+        request,
         wiki_compile::WikiCompileOptions {
             target_kind,
-            daemon_synthesis_available: daemon_report.synthesis.available,
+            daemon_synthesis_available,
+            hard_fail_on_generation_failure: false,
         },
         generator,
     )?;
+    Ok(compile_command_outcome(
+        ai,
+        "one_shot",
+        route_label,
+        fallback,
+        notice,
+        &output_scope,
+        target_kind,
+        &outline,
+        daemon_synthesis_available,
+        outcome,
+    ))
+}
+
+/// Build the `compile` command outcome (JSON payload + human text) shared by the
+/// Lane B and Lane A paths. `lane` is `tool_loop` or `one_shot`.
+#[allow(clippy::too_many_arguments)]
+fn compile_command_outcome(
+    ai: AiRouting,
+    lane: &'static str,
+    route_label: &'static str,
+    fallback: bool,
+    notice: Option<AiNoticeKind>,
+    output_scope: &ScopeIdentity,
+    target_kind: synthesis::ArticleKind,
+    outline: &[String],
+    daemon_synthesis_available: bool,
+    outcome: wiki_compile::WikiCompileOutcome,
+) -> CommandOutcome {
     let explainer = outcome
         .explainer
         .clone()
         .unwrap_or_else(ExplainerReport::skipped);
     let notice = notice_for_explainer_status(explainer.status, notice);
-    let output_scope = resolved_scope_identity(&resolved_scope);
     let payload = serde_json::json!({
         "command": "compile",
         "scope": output_scope,
         "status": "compiled",
         "target_kind": target_kind,
         "outline": outline,
-        "daemon_synthesis_available": daemon_report.synthesis.available,
+        "daemon_synthesis_available": daemon_synthesis_available,
         "article_path": outcome.article_path,
         "source_paths": outcome.source_paths,
         "index_path": outcome.index_path,
@@ -82,8 +155,9 @@ pub(crate) fn execute(
         "prompt": outcome.prompt,
         "ai": {
             "requested_mode": routing_label(ai),
+            "lane": lane,
             "route": route_label,
-            "fallback": transport.fallback(),
+            "fallback": fallback,
             "notice": notice.map(ai_notice_label),
             "status": explainer.status,
             "model": explainer.model,
@@ -103,12 +177,162 @@ Article: {}{}",
         outcome.article_path.display(),
         notice_text
     );
-    Ok(super::scoped_outcome(
-        "compile",
-        &output_scope,
-        payload,
-        text,
-    ))
+    super::scoped_outcome("compile", output_scope, payload, text)
+}
+
+/// Owned Lane B explainer generator (the boxed counterpart of the borrowed
+/// [`ExplainerGenerator`]).
+type BoxedExplainerGenerator =
+    Box<dyn FnMut(&ExplainerPrompt) -> Result<ExplainerResponse, String>>;
+
+/// A resolved Lane B compile generator plus the routing metadata to report.
+struct CompileLaneB {
+    generator: BoxedExplainerGenerator,
+    info: LaneBInfo,
+}
+
+#[derive(Clone, Copy)]
+struct LaneBInfo {
+    route_label: &'static str,
+    fallback: bool,
+    notice: Option<AiNoticeKind>,
+}
+
+/// Resolve a Lane B tool-loop generator for `compile`, mirroring codewiki's
+/// `resolve_tool_loop_generator` (#978). Returns `None` (so the caller falls back
+/// to the Lane A one-shot explainer) when AI is off, no tool-chat route resolves,
+/// or a Direct route lacks a usable `api_base`.
+fn resolve_compile_lane_b_generator(
+    requested: AiRouting,
+    scope: &ScopeSelection,
+    vault_root: PathBuf,
+    scope_identity: ScopeIdentity,
+) -> Option<CompileLaneB> {
+    if matches!(requested, AiRouting::Off) {
+        return None;
+    }
+    let mut source = crate::support::config::hub_ai_config_source("gwiki compile").ok()?;
+    let context = AiContext::resolve_with_options(
+        None,
+        &mut source,
+        AiContextOptions {
+            no_ai: false,
+            forced_routing: Some(requested),
+        },
+    );
+    let observed = resolve_route_observed(&context, AiCapability::ToolChat);
+    let route = observed.route;
+    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+        return None;
+    }
+    let profile = profile_for_tier(COMPILE_TIER, None);
+    let target = if matches!(route, AiRouting::Direct) {
+        let target =
+            resolve_direct_generation_target(&mut source, &profile_for_tier(COMPILE_TIER, None));
+        // A Direct-route Lane B with no resolved api_base cannot run; decline so
+        // the caller falls back to the Lane A one-shot explainer.
+        target.api_base()?;
+        Some(target)
+    } else {
+        None
+    };
+    let info = LaneBInfo {
+        route_label: routing_label(route),
+        fallback: observed.fallback,
+        notice: observed.reason.or_else(|| {
+            (observed.fallback && route == AiRouting::Direct)
+                .then_some(AiNoticeKind::AutoFallbackToDirect)
+        }),
+    };
+    let scope = scope.clone();
+    let generator: BoxedExplainerGenerator = Box::new(move |prompt: &ExplainerPrompt| {
+        run_compile_lane_b(
+            &context,
+            route,
+            &profile,
+            target.as_ref(),
+            prompt,
+            &scope,
+            &vault_root,
+            &scope_identity,
+        )
+    });
+    Some(CompileLaneB { generator, info })
+}
+
+/// Run one Lane B compile tool loop: the model investigates the vault via
+/// [`VaultToolExecutor`] and returns the grounded narrative body. Hard-fails
+/// (returns `Err`) on a non-completed stop reason or empty content; data-source
+/// degradation is logged as evidence, never a generation failure.
+#[allow(clippy::too_many_arguments)]
+fn run_compile_lane_b(
+    context: &AiContext,
+    route: AiRouting,
+    profile: &str,
+    target: Option<&DirectGenerationTarget>,
+    prompt: &ExplainerPrompt,
+    scope: &ScopeSelection,
+    vault_root: &Path,
+    scope_identity: &ScopeIdentity,
+) -> Result<ExplainerResponse, String> {
+    let mut executor = VaultToolExecutor::new(
+        scope.clone(),
+        vault_root.to_path_buf(),
+        scope_identity.clone(),
+    );
+    let messages = vec![
+        ChatMessage::system(prompt.system.to_string()),
+        ChatMessage::user(prompt.user.clone()),
+    ];
+    let limits = ToolLoopLimits::default();
+    let (outcome, model) = match route {
+        AiRouting::Daemon => {
+            let transport = DaemonChatTransport::new(context, profile.to_string())
+                .map_err(|error| error.to_string())?;
+            let model = transport.model().map(str::to_string);
+            let outcome = run_tool_loop(&transport, &mut executor, messages, &limits, None)
+                .map_err(|error| error.to_string())?;
+            (outcome, model)
+        }
+        AiRouting::Direct => {
+            let target = target
+                .ok_or_else(|| "direct Lane B requires a resolved profile target".to_string())?;
+            let transport =
+                DirectChatTransport::new(context, target.clone(), Some(profile.to_string()))
+                    .map_err(|error| error.to_string())?;
+            let model = transport.model().map(str::to_string);
+            let outcome = run_tool_loop(&transport, &mut executor, messages, &limits, None)
+                .map_err(|error| error.to_string())?;
+            (outcome, model)
+        }
+        AiRouting::Off | AiRouting::Auto => {
+            return Err("tool-chat route is off or unresolved".to_string());
+        }
+    };
+    // Data-source degradation (graph/semantic backend down mid-loop) is evidence
+    // degradation, not a generation failure — log it without hard-failing.
+    let degraded = executor.into_data_source_degraded();
+    if !degraded.is_empty() {
+        log::warn!(
+            "compile Lane B: data-source degradation during tool loop: {}",
+            degraded.join(", ")
+        );
+    }
+    if !outcome.stop_reason.is_completed() {
+        return Err(format!(
+            "tool loop did not complete ({})",
+            outcome.stop_reason.as_str()
+        ));
+    }
+    let content = outcome
+        .content
+        .filter(|text| !text.trim().is_empty())
+        .ok_or_else(|| "tool loop returned no content".to_string())?;
+    Ok(ExplainerResponse {
+        text: content,
+        model,
+        route: routing_label(route),
+    })
 }
 
 fn compile_topic_seed(

@@ -807,7 +807,8 @@ fn exit_code_for_error(error: &WikiError) -> ExitCode {
         | WikiError::Registry { .. }
         | WikiError::Daemon { .. }
         | WikiError::Timeout { .. }
-        | WikiError::Setup { .. } => ExitCode::from(1),
+        | WikiError::Setup { .. }
+        | WikiError::Generation { .. } => ExitCode::from(1),
     }
 }
 

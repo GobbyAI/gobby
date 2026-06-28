@@ -1,9 +1,8 @@
 use gobby_core::ai::daemon::{
-    DaemonTranscriptionOptions, describe_image_via_daemon, generate_via_daemon,
-    transcribe_via_daemon,
+    DaemonTranscriptionOptions, describe_image_via_daemon, transcribe_via_daemon,
 };
 use gobby_core::ai::effective_route;
-use gobby_core::ai::text::generate_text;
+use gobby_core::ai::generation::{DirectGenerationTarget, GenerationTier, generate_one_shot};
 use gobby_core::ai::transcription::{TranscriptionTask, transcribe};
 use gobby_core::ai::vision::describe_image;
 use gobby_core::ai_context::AiContext;
@@ -24,11 +23,21 @@ struct IndexedTranslation {
 
 pub(crate) struct ProductionTranscriptionClient {
     context: AiContext,
+    /// Resolved tier->profile target for the Standard (`feature_low`) text-generate
+    /// tier, used by [`Self::translate_segment_batch`] on the Direct route. `None`
+    /// on the Daemon route (which forwards the profile name) or when unresolved.
+    text_generate_target: Option<DirectGenerationTarget>,
 }
 
 impl ProductionTranscriptionClient {
-    pub(crate) fn new(context: AiContext) -> Self {
-        Self { context }
+    pub(crate) fn new(
+        context: AiContext,
+        text_generate_target: Option<DirectGenerationTarget>,
+    ) -> Self {
+        Self {
+            context,
+            text_generate_target,
+        }
     }
 }
 
@@ -188,8 +197,18 @@ impl ProductionTranscriptionClient {
         let prompt = segment_translation_prompt(segments, source_lang, target_lang)?;
         let system = "Return only valid JSON. Preserve array length and segment indexes.";
         let result = match route {
-            AiRouting::Daemon => generate_via_daemon(&self.context, &prompt, Some(system)),
-            AiRouting::Direct => generate_text(&self.context, &prompt, Some(system)),
+            // Segment translation is the Standard (`feature_low`) text-generate tier;
+            // route both transports through the shared tier->profile mapping.
+            AiRouting::Daemon | AiRouting::Direct => generate_one_shot(
+                &self.context,
+                route,
+                GenerationTier::Standard,
+                None,
+                self.text_generate_target.as_ref(),
+                &prompt,
+                Some(system),
+                None,
+            ),
             AiRouting::Off | AiRouting::Auto => Err(route_unavailable(capability, route)),
         }
         .map_err(ai_error_to_wiki_error)?;
@@ -383,7 +402,7 @@ mod tests {
     #[test]
     fn clients_consume_effective_off_and_direct_routes() {
         let audio_client =
-            ProductionTranscriptionClient::new(test_context(binding(AiRouting::Off, None)));
+            ProductionTranscriptionClient::new(test_context(binding(AiRouting::Off, None)), None);
         let audio_path = PathBuf::from("raw/audio.wav");
         let audio_error = audio_client
             .transcribe(&TranscriptionRequest {
@@ -400,8 +419,10 @@ mod tests {
             )
         );
 
-        let direct_audio_client =
-            ProductionTranscriptionClient::new(test_context(binding(AiRouting::Direct, None)));
+        let direct_audio_client = ProductionTranscriptionClient::new(
+            test_context(binding(AiRouting::Direct, None)),
+            None,
+        );
         let direct_audio_error = direct_audio_client
             .transcribe(&TranscriptionRequest {
                 file_name: "audio.wav",

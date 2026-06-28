@@ -1,6 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use gobby_core::ai::{daemon, effective_route, text};
+use gobby_core::ai::effective_route;
+use gobby_core::ai::generation::{
+    GenerationTier, generate_one_shot, profile_for_tier, resolve_direct_generation_target,
+};
 use gobby_core::ai_context::{AiContext, AiContextOptions};
 use gobby_core::ai_types::AiError;
 use gobby_core::config::{AiCapability, AiRouting};
@@ -149,15 +152,28 @@ pub(super) fn model_contradiction_findings(
             forced_routing: None,
         },
     );
-    let result = match effective_route(&context, AiCapability::TextGenerate) {
-        AiRouting::Direct => text::generate_text(&context, &prompt, Some(CONTRADICTION_SYSTEM)),
-        AiRouting::Daemon => {
-            daemon::generate_via_daemon(&context, &prompt, Some(CONTRADICTION_SYSTEM))
-        }
-        AiRouting::Off | AiRouting::Auto => {
-            return Ok(Vec::new());
-        }
+    let route = effective_route(&context, AiCapability::TextGenerate);
+    if matches!(route, AiRouting::Off | AiRouting::Auto) {
+        return Ok(Vec::new());
     }
+    // Contradiction QA is the Module (`feature_mid`) text-generate tier; resolve the
+    // Direct-route target from the same config source and route through tier->profile.
+    let target = matches!(route, AiRouting::Direct).then(|| {
+        resolve_direct_generation_target(
+            &mut source,
+            &profile_for_tier(GenerationTier::Module, None),
+        )
+    });
+    let result = generate_one_shot(
+        &context,
+        route,
+        GenerationTier::Module,
+        None,
+        target.as_ref(),
+        &prompt,
+        Some(CONTRADICTION_SYSTEM),
+        None,
+    )
     .map_err(ai_error_to_wiki_error)?;
     parse_contradiction_findings(&result.text)
 }

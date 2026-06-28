@@ -32,6 +32,11 @@ pub(crate) struct SessionSummarizer {
     context: gobby_core::ai_context::AiContext,
     #[cfg(feature = "ai")]
     route: gobby_core::config::AiRouting,
+    /// Resolved tier->profile target for the Standard (`feature_low`) text-generate
+    /// tier, used on the Direct route. `None` on the Daemon route (which forwards
+    /// the profile name) or when unresolved.
+    #[cfg(feature = "ai")]
+    target: Option<gobby_core::ai::generation::DirectGenerationTarget>,
 }
 
 impl SessionSummarizer {
@@ -41,6 +46,9 @@ impl SessionSummarizer {
     #[cfg(feature = "ai")]
     pub(crate) fn resolve(summarize: bool) -> Option<Self> {
         use gobby_core::ai::effective_route;
+        use gobby_core::ai::generation::{
+            GenerationTier, profile_for_tier, resolve_direct_generation_target,
+        };
         use gobby_core::ai_context::{AiContext, AiContextOptions};
         use gobby_core::config::{AiCapability, AiRouting};
 
@@ -64,7 +72,19 @@ impl SessionSummarizer {
         );
         let route = effective_route(&context, AiCapability::TextGenerate);
         if matches!(route, AiRouting::Direct | AiRouting::Daemon) {
-            Some(Self { context, route })
+            // Standalone summaries are the Standard (`feature_low`) text-generate tier;
+            // resolve the Direct-route target so generation routes through tier->profile.
+            let target = matches!(route, AiRouting::Direct).then(|| {
+                resolve_direct_generation_target(
+                    &mut source,
+                    &profile_for_tier(GenerationTier::Standard, None),
+                )
+            });
+            Some(Self {
+                context,
+                route,
+                target,
+            })
         } else {
             log::warn!(
                 "sync-sessions --summarize: text generation is routed off; writing skeleton pages"
@@ -88,8 +108,7 @@ impl SessionSummarizer {
         bytes: &[u8],
         external_id: &str,
     ) -> Option<Vec<u8>> {
-        use gobby_core::ai::{daemon, text};
-        use gobby_core::config::AiRouting;
+        use gobby_core::ai::generation::{GenerationTier, generate_one_shot};
 
         let parsed = match super::parse_session_archive_bytes(path, bytes) {
             Ok(parsed) => parsed,
@@ -113,16 +132,18 @@ impl SessionSummarizer {
                 return None;
             }
         };
-        let result = match self.route {
-            AiRouting::Direct => {
-                text::generate_text(&self.context, &prompt, Some(summary_system()))
-            }
-            AiRouting::Daemon => {
-                daemon::generate_via_daemon(&self.context, &prompt, Some(summary_system()))
-            }
-            // resolve() only stores Direct/Daemon.
-            _ => return None,
-        };
+        // Standalone summaries are the Standard (`feature_low`) text-generate tier;
+        // resolve() only stores Direct/Daemon, so route both through tier->profile.
+        let result = generate_one_shot(
+            &self.context,
+            self.route,
+            GenerationTier::Standard,
+            None,
+            self.target.as_ref(),
+            &prompt,
+            Some(summary_system()),
+            None,
+        );
         match result {
             Ok(result) if !result.text.trim().is_empty() => Some(assemble_standalone_wiki_md(
                 &parsed,

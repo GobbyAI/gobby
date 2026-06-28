@@ -56,6 +56,41 @@ fn read_path(
     read_existing_path(root, scope, requested, wiki_path)
 }
 
+/// Read a vault document for the Lane B compile tool loop, returning a bounded
+/// text block (title + content, with a truncation note) or a short degradation
+/// note when the path is missing or invalid. Reuses the same scoped,
+/// byte-bounded read path as the `read` command.
+pub(crate) fn read_document_text(
+    root: &Path,
+    scope: ScopeIdentity,
+    requested_path: PathBuf,
+) -> Result<String, WikiError> {
+    let output = read_path(root, scope, requested_path)?;
+    if let Some(content) = output.content {
+        let title = output.title.unwrap_or_else(|| {
+            output
+                .wiki_path
+                .as_ref()
+                .map(|path| path.display().to_string())
+                .unwrap_or_default()
+        });
+        let mut block = format!("# {title}\n\n{content}");
+        if output.truncated {
+            block.push_str("\n\n[truncated: document exceeds the read byte budget]");
+        }
+        Ok(block)
+    } else {
+        let note = output
+            .degradations
+            .first()
+            .map(|degradation| degradation.display_label())
+            .unwrap_or("document is unavailable");
+        Ok(format!(
+            "No readable document at the requested path ({note})."
+        ))
+    }
+}
+
 fn read_title(root: &Path, scope: ScopeIdentity, title: String) -> Result<ReadOutput, WikiError> {
     let requested = ReadRequested::title(title.clone());
     if title.trim().is_empty() {

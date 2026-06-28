@@ -552,6 +552,54 @@ fn compile_explainer_failure_degrades_and_keeps_structural_skeleton() {
 }
 
 #[test]
+fn compile_lane_b_failure_hard_fails_without_skeleton() {
+    let temp = tempfile::tempdir().expect("tempdir");
+    let scope = ResearchScope::project_for_id("project-1", temp.path());
+    let note_path = scope.root().join("raw/research/compile.md");
+    std::fs::create_dir_all(note_path.parent().expect("note parent")).expect("raw dir");
+    std::fs::write(&note_path, "Accepted compile evidence.").expect("note written");
+    let mut session = session_with_note(&scope, "Compile behavior", "raw/research/compile.md");
+
+    let mut generator = |_prompt: &ExplainerPrompt| {
+        Err::<ExplainerResponse, _>("tool loop unavailable".to_string())
+    };
+    // With hard-fail set (Lane B), a generation failure must NOT write a skeleton
+    // article — it hard-fails with a distinct error (#982, matching codewiki #978).
+    let error = compile_to_wiki_with_options(
+        &mut session,
+        CompileRequest {
+            topic: "Hard Fail Compile".to_string(),
+            outline: vec!["Overview".to_string()],
+            target_page: None,
+            write_intent: false,
+        },
+        WikiCompileOptions {
+            hard_fail_on_generation_failure: true,
+            ..WikiCompileOptions::default()
+        },
+        Some(&mut generator),
+    )
+    .expect_err("Lane B failure hard-fails");
+
+    assert!(
+        matches!(error, crate::WikiError::Generation { .. }),
+        "expected a generation error, got: {error}"
+    );
+    let message = error.to_string();
+    assert!(
+        message.contains("Lane B compile generation failed"),
+        "{message}"
+    );
+    assert!(message.contains("no skeleton"), "{message}");
+
+    // No synthesized article was written under the vault's knowledge tree.
+    assert!(
+        !scope.root().join("knowledge").exists(),
+        "no skeleton article should be written on Lane B hard-fail"
+    );
+}
+
+#[test]
 fn compile_without_generator_stays_structural_without_degradation() {
     let temp = tempfile::tempdir().expect("tempdir");
     let scope = ResearchScope::project_for_id("project-1", temp.path());

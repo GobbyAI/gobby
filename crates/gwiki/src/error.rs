@@ -63,6 +63,9 @@ pub enum WikiError {
     Setup {
         source: SetupError,
     },
+    Generation {
+        detail: String,
+    },
 }
 
 impl WikiError {
@@ -82,6 +85,7 @@ impl WikiError {
             Self::Index { .. } => "index_error",
             Self::Search { .. } => "search_error",
             Self::Setup { .. } => "setup_error",
+            Self::Generation { .. } => "generation_error",
         }
     }
 
@@ -105,7 +109,10 @@ impl fmt::Display for WikiError {
             Self::NotImplemented { command, detail } => {
                 write!(f, "{command}: {detail} ({})", self.code())
             }
-            Self::InvalidScope { detail } | Self::Config { detail } | Self::Registry { detail } => {
+            Self::InvalidScope { detail }
+            | Self::Config { detail }
+            | Self::Registry { detail }
+            | Self::Generation { detail } => {
                 write!(f, "{detail} ({})", self.code())
             }
             Self::Io {

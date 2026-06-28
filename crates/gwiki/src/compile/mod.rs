@@ -7,7 +7,8 @@ use serde::Serialize;
 use crate::WikiError;
 use crate::citations::render_source_citations;
 use crate::explainer::{
-    ExplainerGenerator, ExplainerReport, build_explainer_prompt, generate_explainer,
+    ExplainerGeneration, ExplainerGenerator, ExplainerReport, build_explainer_prompt,
+    generate_explainer,
 };
 use crate::session::{CompileState, ResearchSession};
 use crate::synthesis::{
@@ -44,6 +45,10 @@ pub struct CompileOutcome {
 pub struct WikiCompileOptions {
     pub target_kind: ArticleKind,
     pub daemon_synthesis_available: bool,
+    /// When set, a Lane B generation *failure* hard-fails the compile with a
+    /// distinct [`WikiError::Generation`] instead of writing a structural skeleton
+    /// page (#982, matching codewiki #978). Off for the Lane A one-shot path.
+    pub hard_fail_on_generation_failure: bool,
 }
 
 impl Default for WikiCompileOptions {
@@ -51,6 +56,7 @@ impl Default for WikiCompileOptions {
         Self {
             target_kind: ArticleKind::Topic,
             daemon_synthesis_available: false,
+            hard_fail_on_generation_failure: false,
         }
     }
 }
@@ -170,6 +176,18 @@ pub fn compile_to_wiki_with_options(
         truncated_sources: explainer_prompt.truncated_sources,
     };
     let explainer = generate_explainer(&input, &explainer_prompt, generator);
+    if options.hard_fail_on_generation_failure
+        && let ExplainerGeneration::Failed { error } = &explainer
+    {
+        // Lane B generation failed: hard-fail with a distinct reason instead of
+        // writing a structural skeleton page (#982, matching codewiki #978).
+        return Err(WikiError::Generation {
+            detail: format!(
+                "Lane B compile generation failed ({error}); page not written \
+                 (no skeleton, no Lane A fallback)"
+            ),
+        });
+    }
     let article = synthesize_article(vault_root, &input, target_page, &explainer)?;
     let mut pages = vec![article.clone()];
     pages.extend(synthesize_source_pages(vault_root, &input, &article.path)?);

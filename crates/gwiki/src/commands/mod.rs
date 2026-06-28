@@ -23,6 +23,7 @@ pub(crate) mod setup;
 pub(crate) mod sources;
 pub(crate) mod status;
 pub(crate) mod trust;
+pub(crate) mod vault_tools;
 
 use std::path::Path;
 
