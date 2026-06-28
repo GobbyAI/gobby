@@ -36,10 +36,12 @@ pub(crate) struct CuratedBody {
     /// The multi-section page body, ready to drop in after the page title.
     /// `None` only when the page has no member content to describe at all.
     pub(crate) body: Option<String>,
-    /// True when a requested content pass fell back to structural prose instead
-    /// of a complete handbook body. Explicit `--ai off` skips remain healthy
-    /// structural output.
-    pub(crate) degraded: bool,
+    /// Distinct degradation reason codes when a requested content pass fell back
+    /// to structural prose: a refusal/echo/unavailable AI failure or a grounding
+    /// gap, never a blanket `model-unavailable`. Empty when the body is a
+    /// complete handbook body, or when `--ai off` skips leave healthy structural
+    /// output.
+    pub(crate) degraded_sources: Vec<String>,
     pub(crate) verify_notes: Vec<VerifyNote>,
 }
 
@@ -66,7 +68,7 @@ pub(crate) fn curated_page_body(
     if members.is_empty() && symbols.is_empty() {
         return CuratedBody {
             body: None,
-            degraded: false,
+            degraded_sources: Vec::new(),
             verify_notes: Vec::new(),
         };
     }
@@ -93,8 +95,8 @@ pub(crate) fn curated_page_body(
         CuratedPageKind::Narrative => prompts::NARRATIVE_PAGE_SYSTEM,
     };
 
-    match maybe_generate(generate, &prompt, system, PromptTier::Aggregate) {
-        Generation::Generated(text) => {
+    match maybe_generate(generate, &prompt, system, PromptTier::Aggregate).into_content() {
+        GenerationContent::Generated(text) => {
             // Grounded verification leaves prose intact and records unsupported
             // claims as frontmatter-only notes.
             // Curated pages carry no per-file relationship facts; the verifier
@@ -115,25 +117,25 @@ pub(crate) fn curated_page_body(
             if grounded.trim().is_empty() || !has_required_curated_sections(kind, &grounded) {
                 CuratedBody {
                     body: Some(structural_body(kind, title, &members, &symbols)),
-                    degraded: true,
+                    degraded_sources: vec!["grounding-empty".to_string()],
                     verify_notes: Vec::new(),
                 }
             } else {
                 CuratedBody {
                     body: Some(grounded),
-                    degraded: false,
+                    degraded_sources: Vec::new(),
                     verify_notes,
                 }
             }
         }
-        Generation::Failed => CuratedBody {
+        GenerationContent::Failed(cause) => CuratedBody {
             body: Some(structural_body(kind, title, &members, &symbols)),
-            degraded: true,
+            degraded_sources: vec![cause.reason_code().to_string()],
             verify_notes: Vec::new(),
         },
-        Generation::Skipped => CuratedBody {
+        GenerationContent::Skipped => CuratedBody {
             body: Some(structural_body(kind, title, &members, &symbols)),
-            degraded: false,
+            degraded_sources: Vec::new(),
             verify_notes: Vec::new(),
         },
     }

@@ -15,7 +15,8 @@ pub(crate) use frontmatter::{
     frontmatter_with_degradation_without_ranges,
 };
 pub(crate) use generation::{
-    Generation, maybe_generate, resolve_text_generator, resolve_text_verifier,
+    GenerationContent, GenerationOutcome, is_ai_generation_failure_code, maybe_generate,
+    resolve_text_generator, resolve_text_verifier,
 };
 pub(crate) use sanitize::neutralize_symbol_purpose_links;
 pub(crate) use structural::{
@@ -42,7 +43,7 @@ use generation::{GENERATION_RETRY_BACKOFF, is_model_refusal, is_prompt_echo};
 mod tests {
     use super::super::{PromptTier, SourceSpan, TextGenerator, io, prompts};
     use super::{
-        GENERATION_RETRY_BACKOFF, Generation, MAX_FALLBACK_CITATIONS,
+        GENERATION_RETRY_BACKOFF, GenerationContent, MAX_FALLBACK_CITATIONS,
         MAX_FRONTMATTER_PROVENANCE_FILES, citation_list, citation_markers, fallback_spans,
         frontmatter, generate_with_bounded_retry, is_model_refusal, is_prompt_echo, maybe_generate,
         wrap_citation_items, write_references,
@@ -261,7 +262,10 @@ mod tests {
             prompts::MODULE_SYSTEM,
             PromptTier::Aggregate,
         );
-        assert!(generation.failed(), "prompt echo must record degradation");
+        assert!(
+            matches!(generation.into_content(), GenerationContent::Failed(_)),
+            "prompt echo must record degradation"
+        );
 
         let mut healthy = |_prompt: &str, _system: &str, _tier: PromptTier| {
             Some("`crates/gcode` indexes source and serves search.".to_string())
@@ -273,7 +277,10 @@ mod tests {
             prompts::MODULE_SYSTEM,
             PromptTier::Aggregate,
         );
-        assert!(matches!(generation, Generation::Generated(_)));
+        assert!(matches!(
+            generation.into_content(),
+            GenerationContent::Generated(_)
+        ));
     }
 
     #[test]
@@ -319,7 +326,10 @@ mod tests {
             prompts::REPO_SYSTEM,
             PromptTier::Aggregate,
         );
-        assert!(generation.failed(), "model refusal must record degradation");
+        assert!(
+            matches!(generation.into_content(), GenerationContent::Failed(_)),
+            "model refusal must record degradation"
+        );
     }
 
     fn transport_failure() -> AiError {

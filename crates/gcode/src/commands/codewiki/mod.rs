@@ -148,15 +148,15 @@ pub use run::{run, run_repair};
 pub use repair::{CitationRepairSummary, repair_citations};
 // AI and structural text helpers.
 pub(crate) use text::{
-    CitationResolver, Generation, VerifyOutcome, append_curated_source_files,
-    append_relevant_source_files, citation_list, citation_markers, collect_link_spans,
-    display_child_summary, frontmatter_with_degradation,
+    CitationResolver, GenerationContent, GenerationOutcome, VerifyOutcome,
+    append_curated_source_files, append_relevant_source_files, citation_list, citation_markers,
+    collect_link_spans, display_child_summary, frontmatter_with_degradation,
     frontmatter_with_degradation_and_verify_notes_without_ranges,
-    frontmatter_with_degradation_without_ranges, ground_text, maybe_generate,
-    neutralize_symbol_purpose_links, reanchor_citations, replace_citations_with_markers,
-    resolve_text_generator, resolve_text_verifier, structural_file_summary,
-    structural_module_summary, structural_repo_summary, structural_symbol_purpose,
-    verify_with_notes, write_references, write_section,
+    frontmatter_with_degradation_without_ranges, ground_text, is_ai_generation_failure_code,
+    maybe_generate, neutralize_symbol_purpose_links, reanchor_citations,
+    replace_citations_with_markers, resolve_text_generator, resolve_text_verifier,
+    structural_file_summary, structural_module_summary, structural_repo_summary,
+    structural_symbol_purpose, verify_with_notes, write_references, write_section,
 };
 #[cfg(test)]
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};

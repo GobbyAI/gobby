@@ -12,10 +12,10 @@ use super::{
     TextVerifier, build_architecture_doc, build_curated_navigation_docs, build_deprecations_doc,
     build_file_doc, build_hotspots_doc, build_infrastructure_doc, build_module_docs_with_filter,
     build_onboarding_doc, build_ownership_doc, build_repo_doc, cluster, cluster_file_modules,
-    file_doc_path, is_core_file, module_doc_path, module_for_file, relationship_facts_for_file,
-    render_architecture_doc, render_deprecations_doc, render_feature_catalog_doc, render_file_doc,
-    render_hotspots_doc, render_infrastructure_doc, render_module_doc, render_onboarding_doc,
-    span_files,
+    file_doc_path, is_ai_generation_failure_code, is_core_file, module_doc_path, module_for_file,
+    relationship_facts_for_file, render_architecture_doc, render_deprecations_doc,
+    render_feature_catalog_doc, render_file_doc, render_hotspots_doc, render_infrastructure_doc,
+    render_module_doc, render_onboarding_doc, span_files,
 };
 
 pub fn generate_hierarchical_docs(
@@ -446,7 +446,7 @@ pub(crate) fn generate_hierarchical_docs_core(
                 degraded: architecture_doc
                     .degraded_sources
                     .iter()
-                    .any(|source| source == "model-unavailable"),
+                    .any(|source| is_ai_generation_failure_code(source)),
                 summary: None,
                 neighbors: BTreeSet::new(),
                 invalidation_key: architecture_key.clone(),

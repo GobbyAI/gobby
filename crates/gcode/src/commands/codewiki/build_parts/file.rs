@@ -1,11 +1,11 @@
 use std::collections::BTreeSet;
 
 use super::super::{
-    AiDepth, CodewikiProgress, DeprecationIndex, FileDoc, Generation, LeadingChunk, PromptTier,
-    RelationshipFacts, ReusePlan, SourceSpan, SymbolDoc, TestIndex, TextGenerator, TextVerifier,
-    VerifyNote, VerifyOutcome, citation_list, component_label, file_doc_path, ground_text,
-    maybe_generate, prompts, structural_file_summary, structural_symbol_purpose, verify_with_notes,
-    write_section,
+    AiDepth, CodewikiProgress, DeprecationIndex, FileDoc, GenerationContent, GenerationOutcome,
+    LeadingChunk, PromptTier, RelationshipFacts, ReusePlan, SourceSpan, SymbolDoc, TestIndex,
+    TextGenerator, TextVerifier, VerifyNote, VerifyOutcome, citation_list, component_label,
+    file_doc_path, ground_text, maybe_generate, prompts, structural_file_summary,
+    structural_symbol_purpose, verify_with_notes, write_section,
 };
 use crate::models::Symbol;
 
@@ -62,7 +62,6 @@ pub(crate) fn build_file_doc(
         position.index, position.total, file
     ));
     let symbol_total = symbols.len();
-    let mut model_degraded = false;
     let mut degraded_sources = BTreeSet::new();
     let mut verify_notes = Vec::new();
     let symbol_docs = symbols
@@ -86,9 +85,9 @@ pub(crate) fn build_file_doc(
                     PromptTier::Standard,
                 )
             } else {
-                Generation::Skipped
+                GenerationOutcome::skipped()
             }
-            .unwrap_or_record(fallback, &mut model_degraded);
+            .unwrap_or_record(fallback, &mut degraded_sources);
             let component_id = symbol.id.clone();
             let component_label = component_label(&symbol);
             let source_span = SourceSpan::from_symbol(&symbol);
@@ -112,9 +111,6 @@ pub(crate) fn build_file_doc(
             }
         })
         .collect::<Vec<_>>();
-    if model_degraded {
-        degraded_sources.insert("model-unavailable".to_string());
-    }
     let source_excerpt = leading_chunk.map(|chunk| prompts::SourceExcerpt {
         path: file.to_string(),
         line_start: chunk.line_start.max(1),
@@ -228,15 +224,15 @@ fn build_file_body(
         };
         maybe_generate(generate, &prompt, system, PromptTier::Module)
     } else {
-        Generation::Skipped
+        GenerationOutcome::skipped()
     };
-    let text = match generated {
-        Generation::Generated(text) => text,
-        Generation::Failed => {
-            degraded_sources.insert("model-unavailable".to_string());
+    let text = match generated.into_content() {
+        GenerationContent::Generated(text) => text,
+        GenerationContent::Failed(cause) => {
+            degraded_sources.insert(cause.reason_code().to_string());
             return structural_file_body(file, symbol_docs);
         }
-        Generation::Skipped => return structural_file_body(file, symbol_docs),
+        GenerationContent::Skipped => return structural_file_body(file, symbol_docs),
     };
     let text = match verify_with_notes(verify, &text, prompt_symbols, sources, relationships) {
         VerifyOutcome::Skipped => text,

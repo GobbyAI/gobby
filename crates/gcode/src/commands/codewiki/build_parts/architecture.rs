@@ -80,19 +80,18 @@ pub(crate) fn build_architecture_doc(
             prompts::ARCHITECTURE_SYSTEM,
             PromptTier::Aggregate,
         );
-        let responsibility = match generated {
-            Generation::Generated(generated) => {
+        let responsibility = match generated.into_content() {
+            GenerationContent::Generated(generated) => {
                 let citations = citation_list(&source_spans, &generated);
                 ground_text(&generated, &source_spans, Some(&citations))
             }
-            fallback_generation => {
+            GenerationContent::Failed(cause) => {
                 // Only an attempted-and-failed generation is a degradation;
                 // structural output is the intent when no generator runs.
-                if fallback_generation.failed() {
-                    degraded_sources.insert("model-unavailable".to_string());
-                }
+                degraded_sources.insert(cause.reason_code().to_string());
                 ground_text(&fallback, &source_spans, None)
             }
+            GenerationContent::Skipped => ground_text(&fallback, &source_spans, None),
         };
 
         subsystems.push(ArchitectureSubsystem {
@@ -135,16 +134,18 @@ pub(crate) fn build_architecture_doc(
             &prompts::architecture_narrative_prompt(&subsystem_summaries, &subsystem_edges),
             prompts::ARCHITECTURE_NARRATIVE_SYSTEM,
             PromptTier::Aggregate,
-        ) {
-            Generation::Generated(generated) => {
+        )
+        .into_content()
+        {
+            GenerationContent::Generated(generated) => {
                 let citations = citation_list(&source_spans, &generated);
                 Some(ground_text(&generated, &source_spans, Some(&citations)))
             }
-            Generation::Failed => {
-                degraded_sources.insert("model-unavailable".to_string());
+            GenerationContent::Failed(cause) => {
+                degraded_sources.insert(cause.reason_code().to_string());
                 None
             }
-            Generation::Skipped => None,
+            GenerationContent::Skipped => None,
         }
     };
 

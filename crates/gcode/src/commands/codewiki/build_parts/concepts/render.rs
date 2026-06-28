@@ -2,7 +2,9 @@ use super::super::super::*;
 use super::super::curated_content::{self, CuratedPageKind};
 use super::plan::{normalize_concepts, normalize_narrative_pages, normalize_sections};
 use super::spans::{all_input_spans, item_spans, narrative_spans};
-use super::support::{concept_doc_path, concept_doc_stem, degraded_sources, narrative_doc_path};
+use super::support::{
+    combine_degraded_sources, concept_doc_path, concept_doc_stem, narrative_doc_path,
+};
 use super::types::*;
 use super::{MAX_CURATED_KEY_COMPONENTS, MAX_CURATED_SOURCE_FILE_LINKS};
 
@@ -11,7 +13,7 @@ pub(super) fn render_curated_navigation_docs(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     plan: CuratedNavigationPlan,
-    degraded: bool,
+    degraded_sources: Vec<String>,
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
@@ -56,7 +58,7 @@ pub(super) fn render_curated_navigation_docs(
             verify,
         );
         concept.body = result.body;
-        concept.body_degraded = result.degraded;
+        concept.body_degraded_sources = result.degraded_sources;
         concept.verify_notes = result.verify_notes;
     }
     for page in &mut narrative_pages {
@@ -76,7 +78,7 @@ pub(super) fn render_curated_navigation_docs(
             verify,
         );
         page.body = result.body;
-        page.body_degraded = result.degraded;
+        page.body_degraded_sources = result.degraded_sources;
         page.verify_notes = result.verify_notes;
     }
 
@@ -88,8 +90,14 @@ pub(super) fn render_curated_navigation_docs(
     let mut docs = Vec::new();
     docs.push(BuiltDoc {
         path: "code/concepts/index.md".to_string(),
-        content: render_concept_tree(&sections, &concepts, &narrative_pages, &all_spans, degraded),
-        degraded,
+        content: render_concept_tree(
+            &sections,
+            &concepts,
+            &narrative_pages,
+            &all_spans,
+            &degraded_sources,
+        ),
+        degraded: !degraded_sources.is_empty(),
         summary: Some("Curated concept navigation over the code reference.".to_string()),
         neighbors: std::collections::BTreeSet::new(),
         invalidation_key: None,
@@ -112,11 +120,11 @@ pub(super) fn render_curated_navigation_docs(
         );
         docs.push(BuiltDoc {
             path: concept_doc_path(&concept.slug),
-            content: render_concept_page(concept, &spans, degraded, flow.as_deref()),
+            content: render_concept_page(concept, &spans, &degraded_sources, flow.as_deref()),
             // A failed content pass falls back to the structural body — record
             // that honestly so the meta cache and the run summary surface it
             // instead of caching the page as healthy (#900).
-            degraded: degraded || concept.body_degraded,
+            degraded: !degraded_sources.is_empty() || !concept.body_degraded_sources.is_empty(),
             summary: Some(concept.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
             invalidation_key: None,
@@ -145,14 +153,14 @@ pub(super) fn render_curated_navigation_docs(
                 page,
                 &spans,
                 &concept_titles,
-                degraded,
+                &degraded_sources,
                 prev,
                 next,
                 flow.as_deref(),
             ),
             // See the concept page above: a structural-fallback narrative is
             // degraded, not healthy, so the cache and summary must say so (#900).
-            degraded: degraded || page.body_degraded,
+            degraded: !degraded_sources.is_empty() || !page.body_degraded_sources.is_empty(),
             summary: Some(page.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
             invalidation_key: None,
@@ -173,14 +181,13 @@ fn render_concept_tree(
     concepts: &[ConceptModule],
     narrative_pages: &[NarrativePage],
     spans: &[SourceSpan],
-    degraded: bool,
+    degraded_sources: &[String],
 ) -> String {
-    let degraded_sources = degraded_sources(degraded);
     let mut doc = frontmatter_with_degradation_without_ranges(
         "Curated Concept Navigation",
         "code_concept_tree",
         spans,
-        &degraded_sources,
+        degraded_sources,
     );
     append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     doc.push_str("# Curated Concept Navigation\n\n");
@@ -219,11 +226,11 @@ fn render_concept_tree(
 fn render_concept_page(
     concept: &ConceptModule,
     spans: &[SourceSpan],
-    degraded: bool,
+    degraded_sources: &[String],
     flow: Option<&str>,
 ) -> String {
-    let degraded = degraded || concept.body_degraded;
-    let degraded_sources = degraded_sources(degraded);
+    let degraded_sources =
+        combine_degraded_sources(degraded_sources, &concept.body_degraded_sources);
     let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
         &concept.title,
         "code_concept",
@@ -250,13 +257,12 @@ fn render_narrative_page(
     page: &NarrativePage,
     spans: &[SourceSpan],
     concept_titles: &std::collections::BTreeMap<&str, &str>,
-    degraded: bool,
+    degraded_sources: &[String],
     prev: Option<(&str, &str)>,
     next: Option<(&str, &str)>,
     flow: Option<&str>,
 ) -> String {
-    let degraded = degraded || page.body_degraded;
-    let degraded_sources = degraded_sources(degraded);
+    let degraded_sources = combine_degraded_sources(degraded_sources, &page.body_degraded_sources);
     let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
         &page.title,
         "code_narrative",

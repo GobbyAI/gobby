@@ -66,13 +66,16 @@ pub(crate) fn build_repo_doc(
         prompts::REPO_SYSTEM,
         PromptTier::Aggregate,
     );
-    let degraded = generation.failed();
-    let summary = match generation {
-        Generation::Generated(generated) => {
+    let cause = generation.failure_cause();
+    let degraded = cause.is_some();
+    let summary = match generation.into_content() {
+        GenerationContent::Generated(generated) => {
             let markers = citation_markers(&source_spans, &generated);
             ground_text(&generated, &source_spans, Some(&markers))
         }
-        Generation::Failed | Generation::Skipped => ground_text(&fallback, &source_spans, None),
+        GenerationContent::Failed(_) | GenerationContent::Skipped => {
+            ground_text(&fallback, &source_spans, None)
+        }
     };
 
     let doc = render_repo_doc(
@@ -81,7 +84,7 @@ pub(crate) fn build_repo_doc(
         &root_files,
         audit_links,
         &source_spans,
-        degraded,
+        cause.map(|cause| cause.reason_code()),
     );
     (doc, degraded, repo_key)
 }
@@ -128,13 +131,13 @@ pub(crate) fn render_repo_doc(
     files: &[FileLink],
     audit_links: &[(&str, &str)],
     source_spans: &[SourceSpan],
-    degraded: bool,
+    reason: Option<&str>,
 ) -> String {
     let mut doc = frontmatter_with_degradation_without_ranges(
         "Repository Overview",
         "code_repo",
         source_spans,
-        &model_degraded_sources(degraded),
+        &model_degraded_sources(reason),
     );
     append_relevant_source_files(&mut doc, source_spans);
     doc.push_str("# Repository Overview\n\n");

@@ -1,9 +1,10 @@
-pub(crate) fn model_degraded_sources(degraded: bool) -> Vec<String> {
-    if degraded {
-        vec!["model-unavailable".to_string()]
-    } else {
-        Vec::new()
-    }
+/// Page-level degraded-source list for a single AI generation attempt. `reason`
+/// is the distinct failure reason code (`model-refusal`/`model-prompt-echo`/
+/// `model-unavailable`) when the attempt failed, or `None` when it succeeded or
+/// was skipped. Splitting the codes out of a blanket `model-unavailable` lets a
+/// reader tell a refusal from genuine unavailability.
+pub(crate) fn model_degraded_sources(reason: Option<&str>) -> Vec<String> {
+    reason.into_iter().map(str::to_string).collect()
 }
 
 /// Hard ceiling on an inlined table-cell summary, in characters. A leading

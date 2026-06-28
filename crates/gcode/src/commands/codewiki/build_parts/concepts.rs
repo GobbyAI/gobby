@@ -54,32 +54,34 @@ pub(crate) fn build_curated_navigation_docs(
     }
 
     progress.emit("generating curated navigation docs");
-    let mut degraded = false;
+    let mut degraded_sources = Vec::new();
     let plan = match maybe_generate(
         generate,
         &curated_navigation_prompt(files, modules),
         prompts::CURATED_NAVIGATION_SYSTEM,
         PromptTier::Aggregate,
-    ) {
-        Generation::Generated(generated) => match parse_plan(&generated) {
+    )
+    .into_content()
+    {
+        GenerationContent::Generated(generated) => match parse_plan(&generated) {
             Some(plan) => plan,
             None => {
-                degraded = true;
+                degraded_sources.push("grounding-empty".to_string());
                 fallback_plan(files, modules)
             }
         },
-        Generation::Failed => {
-            degraded = true;
+        GenerationContent::Failed(cause) => {
+            degraded_sources.push(cause.reason_code().to_string());
             fallback_plan(files, modules)
         }
-        Generation::Skipped => fallback_plan(files, modules),
+        GenerationContent::Skipped => fallback_plan(files, modules),
     };
 
     render_curated_navigation_docs(
         files,
         modules,
         plan,
-        degraded,
+        degraded_sources,
         leading_chunks,
         generate,
         verify,

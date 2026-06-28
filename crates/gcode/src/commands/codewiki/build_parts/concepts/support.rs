@@ -1,9 +1,14 @@
-pub(super) fn degraded_sources(degraded: bool) -> Vec<String> {
-    if degraded {
-        vec!["model-unavailable".to_string()]
-    } else {
-        Vec::new()
-    }
+/// Union of a curated page's plan-level and per-body degraded-source reason
+/// codes, deduplicated. `model-refusal`/`model-prompt-echo`/`model-unavailable`
+/// (AI failures) and `grounding-empty` (grounding/structure gaps) stay distinct
+/// instead of collapsing to a single blanket code.
+pub(super) fn combine_degraded_sources(plan: &[String], body: &[String]) -> Vec<String> {
+    plan.iter()
+        .chain(body)
+        .cloned()
+        .collect::<std::collections::BTreeSet<_>>()
+        .into_iter()
+        .collect()
 }
 
 pub(super) fn concept_title(module: &str) -> String {

@@ -28,10 +28,12 @@ pub(super) struct ConceptModule {
     /// perturb deserialization); populated after normalization.
     #[serde(skip)]
     pub(super) body: Option<String>,
-    /// True when the content pass was attempted and fell back to the structural
-    /// body, so the page records the degradation honestly (review #1).
+    /// Distinct degradation reason codes when the content pass was attempted and
+    /// fell back to the structural body, so the page records *why* honestly
+    /// (review #1): a refusal/echo/unavailable AI failure or a grounding gap,
+    /// never a blanket `model-unavailable`. Empty when the body is healthy.
     #[serde(skip)]
-    pub(super) body_degraded: bool,
+    pub(super) body_degraded_sources: Vec<String>,
     #[serde(skip)]
     pub(super) verify_notes: Vec<VerifyNote>,
 }
@@ -63,7 +65,7 @@ pub(super) struct NarrativePage {
     #[serde(skip)]
     pub(super) body: Option<String>,
     #[serde(skip)]
-    pub(super) body_degraded: bool,
+    pub(super) body_degraded_sources: Vec<String>,
     #[serde(skip)]
     pub(super) verify_notes: Vec<VerifyNote>,
 }

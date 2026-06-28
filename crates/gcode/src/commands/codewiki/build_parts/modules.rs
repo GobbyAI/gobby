@@ -121,7 +121,7 @@ pub(crate) fn build_module_docs_with_filter(
             module_total,
             module
         ));
-        let mut degraded = false;
+        let mut degraded_sources = BTreeSet::new();
         let (summary, reused_page) = match reused {
             Some((page, summary)) => (summary, Some(page)),
             None => {
@@ -161,7 +161,7 @@ pub(crate) fn build_module_docs_with_filter(
                     prompts::MODULE_SYSTEM,
                     PromptTier::Module,
                 )
-                .unwrap_or_record(fallback, &mut degraded);
+                .unwrap_or_record(fallback, &mut degraded_sources);
                 // Relationship endpoint spans widen the grounding allow-list so
                 // cross-module citations survive; the module's own provenance
                 // (source_spans, used for reuse hashing) stays member-scoped.
@@ -177,10 +177,7 @@ pub(crate) fn build_module_docs_with_filter(
         module_sources.insert(module.clone(), source_spans.clone());
         // Graph availability is informational only and never degrades a module
         // page; the sole content-gap degradation here is a failed generation.
-        let mut degraded_sources = BTreeSet::new();
-        if degraded {
-            degraded_sources.insert("model-unavailable".to_string());
-        }
+        let degraded = !degraded_sources.is_empty();
         let doc = ModuleDoc {
             module,
             summary,

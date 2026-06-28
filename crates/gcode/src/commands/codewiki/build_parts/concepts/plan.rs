@@ -191,7 +191,7 @@ pub(super) fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> Curated
                 .map(|file| file.path.clone())
                 .collect(),
             body: None,
-            body_degraded: false,
+            body_degraded_sources: Vec::new(),
             verify_notes: Vec::new(),
         })
         .collect::<Vec<_>>();
@@ -467,7 +467,7 @@ fn default_chapter_page(
         modules,
         files,
         body: None,
-        body_degraded: false,
+        body_degraded_sources: Vec::new(),
         verify_notes: Vec::new(),
     }
 }
@@ -633,7 +633,7 @@ mod tests {
             modules: Vec::new(),
             files: Vec::new(),
             body: None,
-            body_degraded: false,
+            body_degraded_sources: Vec::new(),
             verify_notes: Vec::new(),
         }
     }
