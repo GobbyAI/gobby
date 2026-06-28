@@ -132,7 +132,15 @@ pub(super) fn render_curated_navigation_docs(
         );
         docs.push(BuiltDoc {
             path: concept_doc_path(&concept.slug),
-            content: render_concept_page(concept, &spans, &degraded_sources, lane, flow.as_deref()),
+            content: render_concept_page(
+                concept,
+                &spans,
+                &degraded_sources,
+                lane,
+                flow.as_deref(),
+                &module_lookup,
+                &file_lookup,
+            ),
             // A failed content pass falls back to the structural body — record
             // that honestly so the meta cache and the run summary surface it
             // instead of caching the page as healthy (#900). graph-unavailable is
@@ -174,6 +182,8 @@ pub(super) fn render_curated_navigation_docs(
                 prev,
                 next,
                 flow.as_deref(),
+                &module_lookup,
+                &file_lookup,
             ),
             // See the concept page above: a structural-fallback narrative is
             // degraded, not healthy, so the cache and summary must say so (#900).
@@ -253,12 +263,15 @@ fn render_concept_tree(
     doc
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_concept_page(
     concept: &ConceptModule,
     spans: &[SourceSpan],
     degraded_sources: &[String],
     lane: &'static str,
     flow: Option<&str>,
+    module_lookup: &std::collections::BTreeMap<&str, &ModuleDoc>,
+    file_lookup: &std::collections::BTreeMap<&str, &FileDoc>,
 ) -> String {
     let degraded_sources =
         combine_degraded_sources(degraded_sources, &concept.body_degraded_sources);
@@ -286,7 +299,13 @@ fn render_concept_page(
     if let Some(flow) = flow {
         doc.push_str(flow);
     }
-    append_explore_section(&mut doc, &concept.modules, &concept.files);
+    append_explore_section(
+        &mut doc,
+        &concept.modules,
+        &concept.files,
+        module_lookup,
+        file_lookup,
+    );
     doc
 }
 
@@ -300,6 +319,8 @@ fn render_narrative_page(
     prev: Option<(&str, &str)>,
     next: Option<(&str, &str)>,
     flow: Option<&str>,
+    module_lookup: &std::collections::BTreeMap<&str, &ModuleDoc>,
+    file_lookup: &std::collections::BTreeMap<&str, &FileDoc>,
 ) -> String {
     let degraded_sources = combine_degraded_sources(degraded_sources, &page.body_degraded_sources);
     let lane_b = (lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
@@ -340,7 +361,7 @@ fn render_narrative_page(
         }
         doc.push('\n');
     }
-    append_explore_section(&mut doc, &page.modules, &[]);
+    append_explore_section(&mut doc, &page.modules, &[], module_lookup, file_lookup);
     curated_content::append_tour_nav(&mut doc, prev, next);
     doc
 }
@@ -412,32 +433,70 @@ fn strip_leading_model_h1(body: &str) -> &str {
     }
 }
 
-/// Bounded reference links for a curated page: module roots (not every member
-/// file), capped at [`MAX_CURATED_KEY_COMPONENTS`]. Files stay reachable and
-/// reciprocal via their parent module pages and the reference appendix, so the
-/// old exhaustive `## Reference Modules`/`## Source Files` down-link dumps -
-/// the missing_backlink source - collapse.
-fn append_explore_section(doc: &mut String, modules: &[String], files: &[String]) {
-    let mut links: Vec<String> = modules
-        .iter()
-        .take(MAX_CURATED_KEY_COMPONENTS)
-        .map(|module| module_wikilink(module))
-        .collect();
-    if links.is_empty() {
-        links = files
+/// Bounded reference table for a curated page: module roots (not every member
+/// file), capped at [`MAX_CURATED_KEY_COMPONENTS`], paired with their one-line
+/// summaries. Files stay reachable and reciprocal via their parent module pages
+/// and the reference appendix, so the old exhaustive `## Reference Modules`/
+/// `## Source Files` down-link dumps - the missing_backlink source - collapse.
+///
+/// Rendered as a `Reference | Summary` Markdown table (via the shared table
+/// helpers) so every curated page carries a deterministic, enumerable reference
+/// table even when the model body omits one (#980). The wikilink keeps its
+/// alias pipe; the table-cell writer escapes it to `\|`, which Obsidian renders
+/// as an aliased link inside a table.
+fn append_explore_section(
+    doc: &mut String,
+    modules: &[String],
+    files: &[String],
+    module_lookup: &std::collections::BTreeMap<&str, &ModuleDoc>,
+    file_lookup: &std::collections::BTreeMap<&str, &FileDoc>,
+) {
+    let rows: Vec<(String, String)> = if !modules.is_empty() {
+        modules
             .iter()
             .take(MAX_CURATED_KEY_COMPONENTS)
-            .map(|file| file_wikilink(file))
-            .collect();
-    }
-    if links.is_empty() {
+            .map(|module| {
+                let summary = module_lookup
+                    .get(module.as_str())
+                    .map(|doc| doc.summary.as_str())
+                    .unwrap_or_default();
+                (module_wikilink(module), reference_summary_cell(summary))
+            })
+            .collect()
+    } else {
+        files
+            .iter()
+            .take(MAX_CURATED_KEY_COMPONENTS)
+            .map(|file| {
+                let summary = file_lookup
+                    .get(file.as_str())
+                    .map(|doc| doc.summary.as_str())
+                    .unwrap_or_default();
+                (file_wikilink(file), reference_summary_cell(summary))
+            })
+            .collect()
+    };
+    if rows.is_empty() {
         return;
     }
     doc.push_str("## Explore\n\n");
-    for link in links {
-        let _ = std::fmt::Write::write_fmt(doc, format_args!("- {link}\n"));
+    write_markdown_table_header(doc, &["Reference", "Summary"]);
+    for (reference, summary) in rows {
+        write_markdown_table_row(doc, [reference, summary]);
     }
     doc.push('\n');
+}
+
+/// Summary cell for the Explore reference table: an em dash when no grounded
+/// summary is available, so the column never renders empty. The table-cell
+/// writer flattens any internal whitespace.
+fn reference_summary_cell(summary: &str) -> String {
+    let summary = summary.trim();
+    if summary.is_empty() {
+        "—".to_string()
+    } else {
+        summary.to_string()
+    }
 }
 
 /// Union a narrative page's own modules/files with those of the concepts it

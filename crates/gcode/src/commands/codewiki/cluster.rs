@@ -111,7 +111,7 @@ pub(crate) fn cluster_file_modules(
     let mut modules = HashMap::new();
     for grouped_files in grouped.values() {
         let module = if grouped_files.len() > 1 {
-            common_module_for_files(grouped_files)
+            cluster_module_name(grouped_files, symbols_by_file)
         } else {
             module_for_file(&grouped_files[0])
         };
@@ -120,6 +120,164 @@ pub(crate) fn cluster_file_modules(
         }
     }
     modules
+}
+
+/// Tokens that say nothing about a cluster's *purpose* — file scaffolding,
+/// generic containers, and test plumbing — dropped when deriving a semantic
+/// cluster name so the label reflects what the code does.
+const CLUSTER_NAME_STOPWORDS: &[&str] = &[
+    "mod", "lib", "main", "common", "shared", "util", "utils", "helper", "helpers", "type",
+    "types", "core", "support", "render", "test", "tests", "mock", "mocks", "impl", "base", "data",
+    "src", "crate", "crates",
+];
+
+/// Name a multi-file cluster.
+///
+/// When every member lives in the same directory the shared path is already a
+/// meaningful label, so it stands. When the cluster spans directory boundaries
+/// the shared path collapses to a generic container (`crates/gcode/src/commands`)
+/// that loses the cluster's purpose, so a semantic leaf derived from the
+/// members' recurring name tokens (e.g. `recovery_cleanup`) is nested under that
+/// container. Nesting keeps the path hierarchy intact for ancestor/child
+/// resolution while giving the concept layer a purpose-named title.
+fn cluster_module_name(
+    files: &[String],
+    symbols_by_file: &BTreeMap<String, Vec<Symbol>>,
+) -> String {
+    let common = common_module_for_files(files);
+    if !spans_sibling_subdirectories(files, &common) {
+        return common;
+    }
+    match semantic_cluster_leaf(files, symbols_by_file) {
+        Some(leaf) if common.is_empty() => leaf,
+        Some(leaf) => format!("{common}/{leaf}"),
+        None => common,
+    }
+}
+
+/// Whether a cluster's members fan out across two or more *sibling*
+/// subdirectories of their common module — the case where the shared path is a
+/// generic fork point (`crates/app/src` for files under `commands/` and
+/// `daemon/`) rather than a real module. Natural nesting under one branch
+/// (`src/api` holding `api/handler.rs` and `api/inner/router.rs`) is a single
+/// branch and keeps its meaningful path name.
+fn spans_sibling_subdirectories(files: &[String], common: &str) -> bool {
+    let common_depth = common.split('/').filter(|part| !part.is_empty()).count();
+    let mut branches = BTreeSet::new();
+    for file in files {
+        let module = module_for_file(file);
+        let branch = module
+            .split('/')
+            .filter(|part| !part.is_empty())
+            .nth(common_depth);
+        if let Some(branch) = branch {
+            branches.insert(branch.to_string());
+        }
+        if branches.len() >= 2 {
+            return true;
+        }
+    }
+    false
+}
+
+/// Derive a purpose-named leaf for a directory-spanning cluster from the
+/// recurring tokens in its member file names (and, secondarily, their symbol
+/// names). Tokens are ranked by how many distinct members they appear in (a
+/// shared theme), then lexicographically for determinism; the top two are
+/// joined with `_`. Returns `None` when no meaningful token survives, so the
+/// caller keeps the path-based name.
+fn semantic_cluster_leaf(
+    files: &[String],
+    symbols_by_file: &BTreeMap<String, Vec<Symbol>>,
+) -> Option<String> {
+    let mut frequency: BTreeMap<String, usize> = BTreeMap::new();
+    for file in files {
+        let mut seen = BTreeSet::new();
+        for token in cluster_name_tokens(file, symbols_by_file.get(file)) {
+            if seen.insert(token.clone()) {
+                *frequency.entry(token).or_default() += 1;
+            }
+        }
+    }
+    if frequency.is_empty() {
+        return None;
+    }
+    let mut ranked: Vec<(String, usize)> = frequency.into_iter().collect();
+    ranked.sort_by(|(left_token, left_count), (right_token, right_count)| {
+        right_count
+            .cmp(left_count)
+            .then_with(|| left_token.cmp(right_token))
+    });
+    let leaf = if ranked[0].1 >= 2 {
+        // One or more tokens recur across members — a genuine shared theme.
+        // Those describe the cluster's purpose on their own.
+        ranked
+            .iter()
+            .filter(|(_, count)| *count >= 2)
+            .take(2)
+            .map(|(token, _)| token.as_str())
+            .collect::<Vec<_>>()
+            .join("_")
+    } else {
+        // No shared token — combine the two most salient distinct tokens so a
+        // cross-directory cluster of differently-named files still reads as a
+        // purpose (e.g. `cleanup_recovery`).
+        ranked
+            .iter()
+            .take(2)
+            .map(|(token, _)| token.as_str())
+            .collect::<Vec<_>>()
+            .join("_")
+    };
+    (!leaf.is_empty()).then_some(leaf)
+}
+
+/// Lowercase purpose tokens from a file's base name (and, secondarily, its
+/// symbol names): the extension is dropped, identifiers are split on
+/// snake_case / kebab-case / camelCase boundaries, and scaffolding stopwords
+/// and tokens shorter than three characters are removed. Symbol names are
+/// capped so one large file cannot dominate the cluster name.
+fn cluster_name_tokens(file: &str, symbols: Option<&Vec<Symbol>>) -> Vec<String> {
+    let stem = Path::new(file)
+        .file_stem()
+        .map(|stem| stem.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let mut tokens = split_identifier_tokens(&stem);
+    if let Some(symbols) = symbols {
+        for symbol in symbols.iter().take(8) {
+            tokens.extend(split_identifier_tokens(&symbol.name));
+        }
+    }
+    tokens
+        .into_iter()
+        .filter(|token| token.len() >= 3 && !CLUSTER_NAME_STOPWORDS.contains(&token.as_str()))
+        .collect()
+}
+
+/// Split an identifier into lowercase word tokens on snake_case, kebab-case,
+/// and camelCase / PascalCase boundaries.
+fn split_identifier_tokens(value: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut prev_alnum_lower = false;
+    for ch in value.chars() {
+        if matches!(ch, '_' | '-' | '/' | '.' | ' ' | ':') {
+            if !current.is_empty() {
+                tokens.push(std::mem::take(&mut current));
+            }
+            prev_alnum_lower = false;
+            continue;
+        }
+        if ch.is_uppercase() && prev_alnum_lower && !current.is_empty() {
+            tokens.push(std::mem::take(&mut current));
+        }
+        current.extend(ch.to_lowercase());
+        prev_alnum_lower = ch.is_lowercase() || ch.is_numeric();
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
 }
 
 pub(crate) fn union_files(
@@ -409,6 +567,52 @@ mod cluster_tests {
             modules.get("crates/gcore/src/lib.rs").map(String::as_str),
             Some("crates/gcore/src"),
             "{modules:?}"
+        );
+    }
+
+    #[test]
+    fn same_directory_cluster_keeps_its_shared_path() {
+        // Every member lives in one directory, so the shared path is already a
+        // meaningful label and the semantic rename does not fire.
+        let files = paths(&[
+            "crates/app/src/search/bm25.rs",
+            "crates/app/src/search/semantic.rs",
+        ]);
+        let symbols = BTreeMap::new();
+        assert_eq!(
+            cluster_module_name(&files, &symbols),
+            "crates/app/src/search"
+        );
+    }
+
+    #[test]
+    fn cross_directory_cluster_is_named_by_shared_purpose() {
+        // Members span two directories, so the shared path collapses to the
+        // generic container; a token recurring across members names a leaf
+        // nested under it rather than leaving the cluster as `.../src`.
+        let files = paths(&[
+            "crates/app/src/commands/recovery_start.rs",
+            "crates/app/src/daemon/recovery_finish.rs",
+        ]);
+        let symbols = BTreeMap::new();
+        assert_eq!(
+            cluster_module_name(&files, &symbols),
+            "crates/app/src/recovery"
+        );
+    }
+
+    #[test]
+    fn cross_directory_cluster_without_a_shared_token_combines_salient_tokens() {
+        // No token recurs across the differently-named members, so the two most
+        // salient purpose tokens combine into a readable leaf.
+        let files = paths(&[
+            "crates/app/src/commands/cleanup_runner.rs",
+            "crates/app/src/jobs/recovery_worker.rs",
+        ]);
+        let symbols = BTreeMap::new();
+        assert_eq!(
+            cluster_module_name(&files, &symbols),
+            "crates/app/src/cleanup_recovery"
         );
     }
 }

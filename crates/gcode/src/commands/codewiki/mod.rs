@@ -57,7 +57,11 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // tool-chat route resolves, recording `lane: tool_loop` + tool-call/turn counts
 // in frontmatter; a Lane B failure hard-fails the page instead of degrading to a
 // skeleton, so prior on-disk aggregate pages re-render under the new shape.
-const CODEWIKI_RENDER_VERSION: u32 = 19;
+// 20 (#980): generalized handbook taxonomy (Overview/Architecture/Capabilities/
+// Workflows/Getting Started/Operations/Data Model/CLI-API/Troubleshooting),
+// semantic cross-directory concept-cluster names, and an enumerable `Reference |
+// Summary` table on curated pages, so prior narrative/concept pages re-render.
+const CODEWIKI_RENDER_VERSION: u32 = 20;
 
 /// Default daemon feature profile for the grounded verification pass (#904):
 /// `feature_mid` (sonnet) runs the "is this claim supported by the cited

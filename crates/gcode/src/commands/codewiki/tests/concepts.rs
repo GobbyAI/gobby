@@ -83,8 +83,8 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
                   ],
                   "narrative_pages": [
                     {
-                      "slug": "introduction",
-                      "title": "Introduction",
+                      "slug": "overview",
+                      "title": "Overview",
                       "summary": "Begin at the query engine and use linked reference pages for implementation detail.",
                       "concepts": ["Query Engine"],
                       "modules": ["src"],
@@ -128,18 +128,28 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
         "{concept}"
     );
     assert!(concept.contains("src/search.rs:4"), "{concept}");
-    // Sparse linking: module roots only, no exhaustive `## Source Files` dump.
-    assert!(concept.contains("[[code/modules/src|src]]"), "{concept}");
+    // Sparse linking rendered as an enumerable reference table: module roots
+    // only (no exhaustive `## Source Files` dump). The wikilink alias pipe is
+    // table-escaped to `\|` (#980).
+    assert!(concept.contains("## Explore"), "{concept}");
+    assert!(concept.contains("| Reference | Summary |"), "{concept}");
+    assert!(concept.contains("[[code/modules/src\\|src]]"), "{concept}");
     assert!(!concept.contains("[[code/files/"), "{concept}");
     assert!(concept.contains("provenance:"));
     // Curated frontmatter is range-free (bounded provenance, commit 5).
     assert!(!concept.contains("ranges:"), "{concept}");
 
-    let narrative = rendered_doc(&docs, "code/narrative/01-introduction.md");
+    let narrative = rendered_doc(&docs, "code/narrative/01-overview.md");
     assert!(narrative.contains("type: code_narrative"));
     assert!(narrative.contains("## Why this matters"), "{narrative}");
+    // The Concepts list keeps plain bullet wikilinks (not a table).
     assert!(narrative.contains("[[code/concepts/src|Query Engine]]"));
-    assert!(narrative.contains("[[code/modules/src|src]]"));
+    // The Explore reference table escapes the wikilink alias pipe (#980).
+    assert!(narrative.contains("| Reference | Summary |"), "{narrative}");
+    assert!(
+        narrative.contains("[[code/modules/src\\|src]]"),
+        "{narrative}"
+    );
 }
 
 #[test]
@@ -147,11 +157,11 @@ fn curated_navigation_falls_back_to_structural_concepts_without_ai() {
     let docs = generate_hierarchical_docs(&concept_input(), None);
     let repo = rendered_doc(&docs, "code/repo.md");
     let index = rendered_doc(&docs, "code/concepts/index.md");
-    let introduction = rendered_doc(&docs, "code/narrative/01-introduction.md");
+    let introduction = rendered_doc(&docs, "code/narrative/01-overview.md");
 
     assert!(repo.contains("[[code/concepts/index|Concept tree and narrative tours]]"));
     assert!(index.contains("## Concept Tree"));
-    assert!(index.contains("[[code/narrative/01-introduction|Introduction]]"));
+    assert!(index.contains("[[code/narrative/01-overview|Overview]]"));
     assert!(introduction.contains("type: code_narrative"));
     assert!(introduction.contains("provenance:"));
     // --ai off still yields a structural multi-section body, not a bare summary.
@@ -180,7 +190,7 @@ fn repo_leads_with_start_here_and_demotes_reference_appendix() {
 
     // The guided tour entry point is the first link a reader sees.
     assert!(
-        repo.contains("[[code/narrative/01-introduction|Introduction]]"),
+        repo.contains("[[code/narrative/01-overview|Overview]]"),
         "{repo}"
     );
 
@@ -209,12 +219,12 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
         assert!(doc.contains("## Start here — guided tour"), "{path}: {doc}");
         assert!(
             doc.contains(
-                "New to this codebase? Begin with [[code/narrative/01-introduction|Introduction]]."
+                "New to this codebase? Begin with [[code/narrative/01-overview|Overview]]."
             ),
             "{path}: {doc}"
         );
         assert!(
-            doc.contains("1. [[code/narrative/01-introduction|Introduction]]"),
+            doc.contains("1. [[code/narrative/01-overview|Overview]]"),
             "{path}: {doc}"
         );
         assert!(
@@ -222,11 +232,11 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
             "{path}: {doc}"
         );
         assert!(
-            doc.contains("3. [[code/narrative/03-indexing-pipeline|Indexing Pipeline]]"),
+            doc.contains("3. [[code/narrative/03-capabilities|Capabilities]]"),
             "{path}: {doc}"
         );
         assert!(
-            doc.contains("10. [[code/narrative/10-contributor-guide|Contributor Guide]]"),
+            doc.contains("9. [[code/narrative/09-troubleshooting|Troubleshooting]]"),
             "{path}: {doc}"
         );
         assert!(doc.contains("`gwiki ask"), "{path}: {doc}");
@@ -234,33 +244,33 @@ fn guided_tour_spine_numbers_chapters_with_callout_and_reciprocal_nav() {
     }
 
     // Sequential reciprocal chapter nav along the spine.
-    let intro = rendered_doc(&docs, "code/narrative/01-introduction.md");
-    assert!(!intro.contains("← Previous"), "{intro}");
+    let overview = rendered_doc(&docs, "code/narrative/01-overview.md");
+    assert!(!overview.contains("← Previous"), "{overview}");
     assert!(
-        intro.contains("Next →: [[code/narrative/02-architecture|Architecture]]"),
-        "{intro}"
+        overview.contains("Next →: [[code/narrative/02-architecture|Architecture]]"),
+        "{overview}"
     );
 
     let arch = rendered_doc(&docs, "code/narrative/02-architecture.md");
     assert!(arch.contains("## Continue the tour"), "{arch}");
     assert!(
-        arch.contains("← Previous: [[code/narrative/01-introduction|Introduction]]"),
+        arch.contains("← Previous: [[code/narrative/01-overview|Overview]]"),
         "{arch}"
     );
     assert!(
-        arch.contains("Next →: [[code/narrative/03-indexing-pipeline|Indexing Pipeline]]"),
+        arch.contains("Next →: [[code/narrative/03-capabilities|Capabilities]]"),
         "{arch}"
     );
 
-    let indexing = rendered_doc(&docs, "code/narrative/03-indexing-pipeline.md");
+    let capabilities = rendered_doc(&docs, "code/narrative/03-capabilities.md");
     assert!(
-        indexing.contains("← Previous: [[code/narrative/02-architecture|Architecture]]"),
-        "{indexing}"
+        capabilities.contains("← Previous: [[code/narrative/02-architecture|Architecture]]"),
+        "{capabilities}"
     );
-    let guide = rendered_doc(&docs, "code/narrative/10-contributor-guide.md");
+    let troubleshooting = rendered_doc(&docs, "code/narrative/09-troubleshooting.md");
     assert!(
-        guide.contains("← Previous: [[code/narrative/09-failure-modes|Failure Modes]]"),
-        "{guide}"
+        troubleshooting.contains("← Previous: [[code/narrative/08-cli-api|CLI-API]]"),
+        "{troubleshooting}"
     );
 }
 

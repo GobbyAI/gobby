@@ -11,80 +11,124 @@ struct DefaultChapter {
     patterns: &'static [&'static str],
 }
 
-const DEFAULT_CHAPTERS: [DefaultChapter; 10] = [
+// Domain-agnostic handbook spine. The slugs/titles describe any indexed
+// codebase (not gobby's own subsystems) so the curated tour generalizes; each
+// chapter's `patterns` are substrings matched (lowercased) against concept,
+// module, and file identifiers to pull in the most relevant grounded reference
+// links. `slug` must equal `slugify(title)` so the spine-matching in
+// `normalize_narrative_pages` reattaches a model-supplied page to its chapter.
+const DEFAULT_CHAPTERS: [DefaultChapter; 9] = [
     DefaultChapter {
-        slug: "introduction",
-        title: "Introduction",
-        summary: "Start with the system purpose, major crates, runtime modes, and the shortest path into the grounded reference.",
+        slug: "overview",
+        title: "Overview",
+        summary: "Start with the system purpose, the major crates or components, runtime modes, and the shortest path into the grounded reference.",
         patterns: &[],
     },
     DefaultChapter {
         slug: "architecture",
         title: "Architecture",
-        summary: "Explain the codebase layers, ownership boundaries, and why the modules are separated the way they are.",
+        summary: "Explain the top-level structure: the layers, ownership boundaries, shared foundations, and why the components are separated the way they are.",
         patterns: &[
             "architecture",
+            "core",
             "config",
             "context",
-            "schema",
-            "model",
-            "core",
+            "module",
+            "layer",
+            "boundary",
+            "foundation",
+            "shared",
         ],
     },
     DefaultChapter {
-        slug: "indexing-pipeline",
-        title: "Indexing Pipeline",
-        summary: "Follow file discovery, parsing, chunking, symbol extraction, hashing, and incremental index updates.",
-        patterns: &["index", "parser", "walker", "chunk", "language", "hash"],
-    },
-    DefaultChapter {
-        slug: "search-rrf",
-        title: "Search/RRF",
-        summary: "Trace lexical, semantic, graph-boosted, and reciprocal-rank-fusion search behavior.",
-        patterns: &["search", "rrf", "bm25", "semantic", "rank", "query"],
-    },
-    DefaultChapter {
-        slug: "codewiki-generation",
-        title: "CodeWiki Generation",
-        summary: "Explain how gcode builds grounded wiki pages, prompts AI sections, verifies claims, and writes cache metadata.",
+        slug: "capabilities",
+        title: "Capabilities",
+        summary: "Survey the primary capabilities the system provides and the modules that implement each feature.",
         patterns: &[
-            "codewiki",
-            "wiki",
-            "prompt",
-            "verify",
-            "frontmatter",
-            "reuse",
+            "feature",
+            "capability",
+            "service",
+            "engine",
+            "command",
+            "handler",
+            "query",
+            "search",
+            "index",
+            "process",
+            "ingest",
         ],
     },
     DefaultChapter {
-        slug: "gwiki-vault",
-        title: "Gwiki Vault",
-        summary: "Describe vault layout, Obsidian-compatible pages, ask/search entrypoints, and project-scoped wiki operations.",
-        patterns: &["gwiki", "vault", "obsidian", "librarian", "scope", "wiki"],
-    },
-    DefaultChapter {
-        slug: "graph-vector-storage",
-        title: "Graph/Vector Storage",
-        summary: "Map PostgreSQL hub data, FalkorDB graph projection, Qdrant vectors, and degraded behavior when services are absent.",
+        slug: "workflows",
+        title: "Workflows",
+        summary: "Trace the end-to-end workflows: how a request or input flows through the pipeline stages from entry to result.",
         patterns: &[
-            "graph",
-            "falkor",
-            "qdrant",
-            "vector",
-            "embedding",
-            "postgres",
+            "workflow",
+            "pipeline",
+            "orchestrat",
+            "flow",
+            "stage",
+            "step",
+            "dispatch",
+            "sequence",
+            "task",
+            "job",
         ],
     },
     DefaultChapter {
-        slug: "cli-contracts",
-        title: "CLI Contracts",
-        summary: "Cover command dispatch, contract catalogs, output modes, and the flags users and agents rely on.",
-        patterns: &["cli", "command", "contract", "dispatch", "main", "output"],
+        slug: "getting-started",
+        title: "Getting Started",
+        summary: "Show how to set the system up and run it for the first time: installation, bootstrap, initialization, and required configuration.",
+        patterns: &[
+            "setup",
+            "init",
+            "bootstrap",
+            "install",
+            "provision",
+            "quickstart",
+            "onboard",
+            "configure",
+        ],
     },
     DefaultChapter {
-        slug: "failure-modes",
-        title: "Failure Modes",
-        summary: "Surface fallback paths, degraded service states, unavailable dependencies, and verification notes.",
+        slug: "operations",
+        title: "Operations",
+        summary: "Cover running the system in practice: the daemon or services, runtime lifecycle, synchronization, health, and monitoring.",
+        patterns: &[
+            "daemon",
+            "server",
+            "runtime",
+            "deploy",
+            "monitor",
+            "health",
+            "sync",
+            "lifecycle",
+            "transport",
+            "schedule",
+        ],
+    },
+    DefaultChapter {
+        slug: "data-model",
+        title: "Data Model",
+        summary: "Describe the core data: the schemas, types, stored entities, and how the datastores and projections relate.",
+        patterns: &[
+            "model", "schema", "type", "struct", "store", "database", "table", "entity", "record",
+            "vector", "graph", "persist",
+        ],
+    },
+    DefaultChapter {
+        slug: "cli-api",
+        title: "CLI-API",
+        summary: "Document the surfaces callers use: CLI commands, flags, contracts, output modes, and programmatic APIs.",
+        patterns: &[
+            "cli", "command", "contract", "api", "dispatch", "output", "flag", "arg", "route",
+            "endpoint", "main",
+        ],
+    },
+    DefaultChapter {
+        slug: "troubleshooting",
+        title: "Troubleshooting",
+        summary: "Surface failure handling: degraded states, fallbacks, unavailable dependencies, recovery paths, and verification notes.",
         patterns: &[
             "degrad",
             "fallback",
@@ -92,19 +136,10 @@ const DEFAULT_CHAPTERS: [DefaultChapter; 10] = [
             "failure",
             "error",
             "verify",
-        ],
-    },
-    DefaultChapter {
-        slug: "contributor-guide",
-        title: "Contributor Guide",
-        summary: "Explain how to make changes safely, run focused validation, respect ownership boundaries, and regenerate the wiki.",
-        patterns: &[
-            "test",
-            "setup",
-            "contribut",
-            "workflow",
-            "validation",
-            "release",
+            "recover",
+            "diagnos",
+            "cleanup",
+            "prune",
         ],
     },
 ];
@@ -134,11 +169,12 @@ pub(super) fn curated_navigation_prompt(files: &[FileDoc], modules: &[ModuleDoc]
          Each concept module must name a user-facing concept and link to existing module/file names.\n\
          Do not duplicate source content.\n\
          Prefer 8-12 narrative_pages and include these handbook chapters when the supplied modules/files support them: \
-         Introduction, Architecture, Indexing Pipeline, Search/RRF, CodeWiki Generation, Gwiki Vault, Graph/Vector Storage, CLI Contracts, Failure Modes, Contributor Guide.\n\n\
+         Overview, Architecture, Capabilities, Workflows, Getting Started, Operations, Data Model, CLI-API, Troubleshooting.\n\
+         Render enumerable facts (CLI commands, configuration keys, data models, public API symbols) as compact Markdown tables, grounded in the supplied identifiers.\n\n\
          Schema:\n\
          {\"concept_modules\":[{\"title\":\"...\",\"summary\":\"...\",\"modules\":[\"...\"],\"files\":[\"...\"]}],\
          \"sections\":[{\"title\":\"...\",\"summary\":\"...\",\"concepts\":[\"concept title\"]}],\
-         \"narrative_pages\":[{\"slug\":\"introduction\",\"title\":\"...\",\"summary\":\"...\",\"concepts\":[\"concept title\"],\"modules\":[\"...\"],\"files\":[\"...\"]}]}\n\n\
+         \"narrative_pages\":[{\"slug\":\"overview\",\"title\":\"...\",\"summary\":\"...\",\"concepts\":[\"concept title\"],\"modules\":[\"...\"],\"files\":[\"...\"]}]}\n\n\
          Available modules:\n",
     );
     for module in modules.iter().take(40) {
@@ -426,7 +462,7 @@ pub(super) fn normalize_narrative_pages(
     // degraded orphan.
     //
     // Every chapter gets a readable, position-ordered slug `NN-<title>`
-    // (`01-introduction`, `04-getting-started-setup-configuration`, ...). The
+    // (`01-overview`, `05-getting-started`, ...). The
     // ordinal prefix pins tour order on disk and keeps slugs unique across
     // chapters. The fixed spine titles never churn; an *extra* chapter's title
     // is volatile, so a re-title moves it to a new `NN-<title>` page — but the
@@ -647,26 +683,25 @@ mod tests {
     #[test]
     fn narrative_extras_get_readable_ordinal_slugs() {
         let pages = vec![
-            narrative_page("introduction", "Introduction"),
+            narrative_page("overview", "Overview"),
             narrative_page("cli-entrypoints", "CLI Entrypoints"),
-            narrative_page("indexing-pipeline", "Indexing Pipeline"),
+            narrative_page("capabilities", "Capabilities"),
         ];
         let ordered = normalize_narrative_pages(pages, &[], &[], &[]);
         let slugs: Vec<&str> = ordered.iter().map(|page| page.slug.as_str()).collect();
         assert_eq!(
             slugs,
             vec![
-                "01-introduction",
+                "01-overview",
                 "02-architecture",
-                "03-indexing-pipeline",
-                "04-search-rrf",
-                "05-codewiki-generation",
-                "06-gwiki-vault",
-                "07-graph-vector-storage",
-                "08-cli-contracts",
-                "09-failure-modes",
-                "10-contributor-guide",
-                "11-cli-entrypoints"
+                "03-capabilities",
+                "04-workflows",
+                "05-getting-started",
+                "06-operations",
+                "07-data-model",
+                "08-cli-api",
+                "09-troubleshooting",
+                "10-cli-entrypoints"
             ]
         );
     }
@@ -690,7 +725,7 @@ mod tests {
             &[],
             &[],
         );
-        assert_eq!(before[10].slug, "11-cli-entrypoints");
-        assert_eq!(after[10].slug, "11-cli-runtime");
+        assert_eq!(before[9].slug, "10-cli-entrypoints");
+        assert_eq!(after[9].slug, "10-cli-runtime");
     }
 }

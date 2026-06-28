@@ -30,7 +30,7 @@ const MAX_CURATED_KEY_COMPONENTS: usize = 8;
 /// reference pages keep the full range-complete block.
 const MAX_CURATED_SOURCE_FILE_LINKS: usize = 8;
 /// Cap on *extra* model-supplied narrative chapters beyond the required
-/// ten-chapter handbook spine, so a verbose structure response
+/// nine-chapter handbook spine, so a verbose structure response
 /// cannot crowd out the canonical guided tour.
 const MAX_EXTRA_NARRATIVE_PAGES: usize = 2;
 
