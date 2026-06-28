@@ -1,6 +1,6 @@
 use serde::Deserialize;
 
-use super::super::super::VerifyNote;
+use super::super::super::{GenerationObservability, VerifyNote};
 
 #[derive(Debug, Deserialize)]
 pub(super) struct CuratedNavigationPlan {
@@ -36,6 +36,10 @@ pub(super) struct ConceptModule {
     pub(super) body_degraded_sources: Vec<String>,
     #[serde(skip)]
     pub(super) verify_notes: Vec<VerifyNote>,
+    /// Per-page Lane B tool-loop observability for the content pass, recorded
+    /// into the page's frontmatter when the run used the tool loop (#978).
+    #[serde(skip)]
+    pub(super) body_observability: GenerationObservability,
 }
 
 #[derive(Debug, Deserialize)]
@@ -68,4 +72,8 @@ pub(super) struct NarrativePage {
     pub(super) body_degraded_sources: Vec<String>,
     #[serde(skip)]
     pub(super) verify_notes: Vec<VerifyNote>,
+    /// Per-page Lane B tool-loop observability for the content pass; see
+    /// [`ConceptModule::body_observability`].
+    #[serde(skip)]
+    pub(super) body_observability: GenerationObservability,
 }

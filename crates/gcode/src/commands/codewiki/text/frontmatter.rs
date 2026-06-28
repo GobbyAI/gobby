@@ -1,7 +1,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
 
-use crate::commands::codewiki::{CodewikiAiOutcome, SourceSpan, VerifyNote};
+use crate::commands::codewiki::{CodewikiAiOutcome, GRAPH_UNAVAILABLE, SourceSpan, VerifyNote};
 
 #[derive(serde::Serialize)]
 struct Frontmatter<'a> {
@@ -21,8 +21,26 @@ struct Frontmatter<'a> {
     degraded: Option<bool>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     degraded_sources: Vec<&'a str>,
+    /// Generation lane for an aggregate page produced by the Lane B tool loop
+    /// (#978): `tool_loop`. Absent for Lane A / leaf pages.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    lane: Option<&'a str>,
+    /// Lane B tool-loop call count, recorded alongside `lane`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    tool_call_count: Option<usize>,
+    /// Lane B completion turns, recorded alongside `lane`.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    turns: Option<usize>,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     verify_notes: Vec<FrontmatterVerifyNote<'a>>,
+}
+
+/// Lane B observability recorded into an aggregate page's frontmatter (#978):
+/// the generation lane and the tool loop's call/turn counts.
+pub(crate) struct FrontmatterLaneB<'a> {
+    pub(crate) lane: &'a str,
+    pub(crate) tool_call_count: usize,
+    pub(crate) turns: usize,
 }
 
 #[derive(Clone, serde::Serialize)]
@@ -56,7 +74,7 @@ pub(crate) fn frontmatter_with_degradation(
     source_spans: &[SourceSpan],
     degraded_sources: &[String],
 ) -> String {
-    frontmatter_with_options(title, kind, source_spans, degraded_sources, true, &[])
+    frontmatter_with_options(title, kind, source_spans, degraded_sources, true, &[], None)
 }
 
 pub(crate) fn frontmatter_with_degradation_without_ranges(
@@ -65,7 +83,15 @@ pub(crate) fn frontmatter_with_degradation_without_ranges(
     source_spans: &[SourceSpan],
     degraded_sources: &[String],
 ) -> String {
-    frontmatter_with_options(title, kind, source_spans, degraded_sources, false, &[])
+    frontmatter_with_options(
+        title,
+        kind,
+        source_spans,
+        degraded_sources,
+        false,
+        &[],
+        None,
+    )
 }
 
 pub(crate) fn frontmatter_with_degradation_and_verify_notes_without_ranges(
@@ -82,6 +108,49 @@ pub(crate) fn frontmatter_with_degradation_and_verify_notes_without_ranges(
         degraded_sources,
         false,
         verify_notes,
+        None,
+    )
+}
+
+/// Aggregate-page frontmatter (no symbol line ranges) carrying optional Lane B
+/// observability (#978). `lane_b` is `Some` only for a page produced by the
+/// tool loop; a Lane A / structural aggregate passes `None`.
+pub(crate) fn frontmatter_aggregate_without_ranges(
+    title: &str,
+    kind: &str,
+    source_spans: &[SourceSpan],
+    degraded_sources: &[String],
+    lane_b: Option<FrontmatterLaneB<'_>>,
+) -> String {
+    frontmatter_with_options(
+        title,
+        kind,
+        source_spans,
+        degraded_sources,
+        false,
+        &[],
+        lane_b,
+    )
+}
+
+/// Aggregate-page frontmatter with verifier notes (curated concept/narrative
+/// pages) carrying optional Lane B observability (#978).
+pub(crate) fn frontmatter_aggregate_with_verify_notes(
+    title: &str,
+    kind: &str,
+    source_spans: &[SourceSpan],
+    degraded_sources: &[String],
+    verify_notes: &[VerifyNote],
+    lane_b: Option<FrontmatterLaneB<'_>>,
+) -> String {
+    frontmatter_with_options(
+        title,
+        kind,
+        source_spans,
+        degraded_sources,
+        false,
+        verify_notes,
+        lane_b,
     )
 }
 
@@ -92,10 +161,18 @@ fn frontmatter_with_options(
     degraded_sources: &[String],
     include_ranges: bool,
     verify_notes: &[VerifyNote],
+    lane_b: Option<FrontmatterLaneB<'_>>,
 ) -> String {
     let (source_files, provenance_truncated) =
         frontmatter_source_files(source_spans, include_ranges);
     let ai_outcome = CodewikiAiOutcome::default();
+    // `graph-unavailable` is data-source (evidence) degradation, not a page
+    // failure: it is listed in `degraded_sources` for transparency but never
+    // flips `degraded: true` (#978). Every other code (model-*, grounding-empty)
+    // marks a structural fallback and does flip the flag.
+    let page_degraded = degraded_sources
+        .iter()
+        .any(|code| code != GRAPH_UNAVAILABLE);
     let data = Frontmatter {
         title,
         kind,
@@ -107,8 +184,11 @@ fn frontmatter_with_options(
         ai_route: ai_outcome.route_label(),
         ai_fallback: ai_outcome.fallback,
         ai_generation_status: ai_outcome.status.as_str(),
-        degraded: (!degraded_sources.is_empty()).then_some(true),
+        degraded: page_degraded.then_some(true),
         degraded_sources: degraded_sources.iter().map(String::as_str).collect(),
+        lane: lane_b.as_ref().map(|lane_b| lane_b.lane),
+        tool_call_count: lane_b.as_ref().map(|lane_b| lane_b.tool_call_count),
+        turns: lane_b.as_ref().map(|lane_b| lane_b.turns),
         verify_notes: verify_notes
             .iter()
             .map(|note| FrontmatterVerifyNote {
@@ -352,5 +432,59 @@ mod tests {
         assert_eq!(notes.len(), 1);
         assert_eq!(notes[0]["id"].as_i64(), Some(2));
         assert_eq!(notes[0]["reason"].as_str(), Some("unsupported claim"));
+    }
+
+    #[test]
+    fn aggregate_frontmatter_records_lane_b_observability() {
+        let with_lane_b = frontmatter_aggregate_without_ranges(
+            "Repository Overview",
+            "code_repo",
+            &spans(),
+            &[],
+            Some(FrontmatterLaneB {
+                lane: "tool_loop",
+                tool_call_count: 5,
+                turns: 3,
+            }),
+        );
+        assert!(with_lane_b.contains("lane: tool_loop"), "{with_lane_b}");
+        assert!(with_lane_b.contains("tool_call_count: 5"), "{with_lane_b}");
+        assert!(with_lane_b.contains("turns: 3"), "{with_lane_b}");
+
+        // A Lane A / structural aggregate records no lane observability.
+        let without = frontmatter_aggregate_without_ranges(
+            "Repository Overview",
+            "code_repo",
+            &spans(),
+            &[],
+            None,
+        );
+        assert!(!without.contains("lane:"), "{without}");
+        assert!(!without.contains("tool_call_count:"), "{without}");
+        assert!(!without.contains("turns:"), "{without}");
+    }
+
+    #[test]
+    fn graph_unavailable_is_listed_but_does_not_mark_the_page_degraded() {
+        // Evidence degradation: graph-unavailable is recorded for transparency
+        // but never flips `degraded: true` (#978).
+        let evidence = frontmatter_with_degradation(
+            "Repository Overview",
+            "code_repo",
+            &spans(),
+            &[GRAPH_UNAVAILABLE.to_string()],
+        );
+        assert!(evidence.contains("graph-unavailable"), "{evidence}");
+        assert!(!evidence.contains("degraded: true"), "{evidence}");
+
+        // A genuine AI-generation failure does mark the page degraded.
+        let failure = frontmatter_with_degradation(
+            "Repository Overview",
+            "code_repo",
+            &spans(),
+            &["model-unavailable".to_string()],
+        );
+        assert!(failure.contains("degraded: true"), "{failure}");
+        assert!(failure.contains("model-unavailable"), "{failure}");
     }
 }

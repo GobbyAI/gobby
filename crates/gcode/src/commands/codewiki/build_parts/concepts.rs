@@ -34,15 +34,17 @@ const MAX_CURATED_SOURCE_FILE_LINKS: usize = 8;
 /// cannot crowd out the canonical guided tour.
 const MAX_EXTRA_NARRATIVE_PAGES: usize = 2;
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn build_curated_navigation_docs(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
-) -> Vec<BuiltDoc> {
+) -> anyhow::Result<Vec<BuiltDoc>> {
     let all_spans = all_input_spans(files, modules);
     let all_sources = span_files(&all_spans);
     if let Some(reused_docs) = reuse.as_deref_mut().and_then(|plan| {
@@ -50,26 +52,40 @@ pub(crate) fn build_curated_navigation_docs(
         plan.reusable_pages_with_prefixes(&["code/concepts/", "code/narrative/"])
     }) {
         progress.emit("reusing curated navigation docs (sources unchanged)");
-        return reused_docs;
+        return Ok(reused_docs);
     }
 
     progress.emit("generating curated navigation docs");
     let mut degraded_sources = Vec::new();
-    let plan = match maybe_generate(
+    // The curated navigation taxonomy is an aggregate-tier generation. Lane B
+    // failures hard-fail (via `generate_aggregate`); a Lane B response that does
+    // not parse into a valid plan is also a hard fail (no fallback). The Lane A
+    // path keeps the deterministic fallback taxonomy.
+    let aggregate = generate_aggregate(
+        tool_loop,
         generate,
         &curated_navigation_prompt(files, modules),
         prompts::CURATED_NAVIGATION_SYSTEM,
-        PromptTier::Aggregate,
-    )
-    .into_content()
-    {
+        "curated navigation plan",
+    )?;
+    let lane = aggregate.lane;
+    let plan_observability = aggregate.observability.clone();
+    degraded_sources.extend(aggregate.data_source_degraded);
+    let plan = match aggregate.content {
         GenerationContent::Generated(generated) => match parse_plan(&generated) {
             Some(plan) => plan,
             None => {
+                if lane == LANE_TOOL_LOOP {
+                    return Err(anyhow::anyhow!(
+                        "Lane B curated navigation plan was unparseable; \
+                         no deterministic fallback (no skeleton)"
+                    ));
+                }
                 degraded_sources.push("grounding-empty".to_string());
                 fallback_plan(files, modules)
             }
         },
+        // A Lane B failure already returned `Err`; this is the Lane A path.
         GenerationContent::Failed(cause) => {
             degraded_sources.push(cause.reason_code().to_string());
             fallback_plan(files, modules)
@@ -82,8 +98,11 @@ pub(crate) fn build_curated_navigation_docs(
         modules,
         plan,
         degraded_sources,
+        lane,
+        &plan_observability,
         leading_chunks,
         generate,
+        tool_loop,
         verify,
     )
 }

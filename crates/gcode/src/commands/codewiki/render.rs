@@ -8,7 +8,7 @@ mod pages;
 mod repo;
 
 pub(crate) use audit::render_deprecations_doc;
-pub(crate) use common::{cell_summary, model_degraded_sources};
+pub(crate) use common::cell_summary;
 pub(crate) use diagrams::collect_subsystem_dependency_edges;
 pub(crate) use features::render_feature_catalog_doc;
 pub(crate) use infrastructure::render_infrastructure_doc;

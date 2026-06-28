@@ -193,6 +193,7 @@ pub(super) fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> Curated
             body: None,
             body_degraded_sources: Vec::new(),
             verify_notes: Vec::new(),
+            body_observability: GenerationObservability::default(),
         })
         .collect::<Vec<_>>();
 
@@ -469,6 +470,7 @@ fn default_chapter_page(
         body: None,
         body_degraded_sources: Vec::new(),
         verify_notes: Vec::new(),
+        body_observability: GenerationObservability::default(),
     }
 }
 
@@ -635,6 +637,7 @@ mod tests {
             body: None,
             body_degraded_sources: Vec::new(),
             verify_notes: Vec::new(),
+            body_observability: GenerationObservability::default(),
         }
     }
 

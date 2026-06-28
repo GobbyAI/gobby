@@ -1,17 +1,19 @@
 use super::super::build::default_chapter_links;
 use super::super::*;
-use super::{cell_summary, model_degraded_sources};
+use super::cell_summary;
 use crate::index::hasher;
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn build_repo_doc(
     files: &[FileDoc],
     modules: &[ModuleDoc],
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     audit_links: &[(&str, &str)],
     generate: &mut Option<&mut TextGenerator<'_>>,
+    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     reuse: &mut Option<&mut ReusePlan>,
     progress: &mut CodewikiProgress,
-) -> (String, bool, String) {
+) -> anyhow::Result<(String, bool, String)> {
     let top_modules = modules
         .iter()
         .filter(|module| parent_module(&module.module).is_none())
@@ -56,27 +58,37 @@ pub(crate) fn build_repo_doc(
         plan.reusable_page_keyed_with_sources("code/repo.md", &repo_key, &source_files)
     }) {
         progress.emit("reusing repo overview (sources unchanged)");
-        return (page, false, repo_key);
+        return Ok((page, false, repo_key));
     }
     progress.emit("generating repo overview");
     let sources = repo_source_excerpts(files, leading_chunks);
-    let generation = maybe_generate(
+    // Aggregate-tier page: Lane B tool loop when configured, else Lane A
+    // one-shot. A Lane B generation failure hard-fails the run here (no skeleton
+    // fallback); a Lane A failure degrades to the structural summary.
+    let aggregate = generate_aggregate(
+        tool_loop,
         generate,
         &prompts::repo_prompt(&module_summaries, &file_summaries, &sources),
         prompts::REPO_SYSTEM,
-        PromptTier::Aggregate,
-    );
-    let cause = generation.failure_cause();
-    let degraded = cause.is_some();
-    let summary = match generation.into_content() {
+        "repo overview",
+    )?;
+    // `data_source_degraded` (e.g. graph-unavailable) is evidence degradation:
+    // listed in the page's degraded_sources but never an AI-generation failure.
+    let mut degraded_sources = aggregate.data_source_degraded;
+    let summary = match aggregate.content {
         GenerationContent::Generated(generated) => {
             let markers = citation_markers(&source_spans, &generated);
             ground_text(&generated, &source_spans, Some(&markers))
         }
-        GenerationContent::Failed(_) | GenerationContent::Skipped => {
+        GenerationContent::Failed(cause) => {
+            degraded_sources.push(cause.reason_code().to_string());
             ground_text(&fallback, &source_spans, None)
         }
+        GenerationContent::Skipped => ground_text(&fallback, &source_spans, None),
     };
+    let degraded = degraded_sources
+        .iter()
+        .any(|source| is_ai_generation_failure_code(source));
 
     let doc = render_repo_doc(
         &summary,
@@ -84,9 +96,11 @@ pub(crate) fn build_repo_doc(
         &root_files,
         audit_links,
         &source_spans,
-        cause.map(|cause| cause.reason_code()),
+        &degraded_sources,
+        aggregate.lane,
+        &aggregate.observability,
     );
-    (doc, degraded, repo_key)
+    Ok((doc, degraded, repo_key))
 }
 
 fn repo_audit_link_key(audit_links: &[(&str, &str)]) -> String {
@@ -125,19 +139,28 @@ fn repo_source_excerpts(
         .collect()
 }
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn render_repo_doc(
     summary: &str,
     modules: &[ModuleLink],
     files: &[FileLink],
     audit_links: &[(&str, &str)],
     source_spans: &[SourceSpan],
-    reason: Option<&str>,
+    degraded_sources: &[String],
+    lane: &str,
+    observability: &GenerationObservability,
 ) -> String {
-    let mut doc = frontmatter_with_degradation_without_ranges(
+    let lane_b = (lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
+        lane,
+        tool_call_count: observability.tool_call_count,
+        turns: observability.turns,
+    });
+    let mut doc = frontmatter_aggregate_without_ranges(
         "Repository Overview",
         "code_repo",
         source_spans,
-        &model_degraded_sources(reason),
+        degraded_sources,
+        lane_b,
     );
     append_relevant_source_files(&mut doc, source_spans);
     doc.push_str("# Repository Overview\n\n");

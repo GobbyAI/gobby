@@ -96,6 +96,7 @@ fn run_generate_with_audit(
         audit,
         &mut generate,
         &mut None,
+        &mut None,
         AiDepth::Symbols,
         &mut reuse,
         &mut progress,

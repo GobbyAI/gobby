@@ -17,7 +17,7 @@ use super::{
     build_audit_context, build_codewiki_changes_doc, build_codewiki_index_snapshot,
     build_feature_catalog_doc, build_system_model, build_truth_digest, fetch_codewiki_graph_edges,
     generation, in_scope, io, is_core_file, read_ownership_meta, resolve_text_generator,
-    resolve_text_verifier, write_ownership_meta, write_truth_digest,
+    resolve_text_verifier, resolve_tool_loop_generator, write_ownership_meta, write_truth_digest,
 };
 
 // CLI entry point: each parameter maps to a distinct codewiki flag, so the
@@ -92,6 +92,12 @@ pub fn run(
     let ai_outcome = resolved_generator.ai_outcome();
     let no_generator_reason = resolved_generator.no_generator_reason;
     let mut generator = resolved_generator.generator;
+    // Lane B aggregate generator (#978): resolved for the `tool_chat` capability,
+    // threaded alongside the Lane A generator. `None` when no tool-chat route
+    // resolves (AI off) — aggregates then fall back to the Lane A path. The run's
+    // resolved graph availability lets the executor's graph tools return an
+    // explicit graph-unavailable result instead of an empty one.
+    let mut tool_loop_generator = resolve_tool_loop_generator(ctx, &ai, input.graph_availability);
     let mut verifier = resolve_text_verifier(ctx, &ai);
     let ai_enabled = generator.is_some();
     let ai_mode = if ai_outcome.route == AiRouting::Off
@@ -175,6 +181,7 @@ pub fn run(
         feature_catalog.as_ref(),
         Some(&audit_context),
         generator.as_deref_mut(),
+        tool_loop_generator.as_deref_mut(),
         verifier.as_deref_mut(),
         ai_depth,
         &mut reuse,

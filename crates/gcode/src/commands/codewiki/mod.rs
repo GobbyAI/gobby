@@ -52,7 +52,12 @@ const MAX_EDGE_LIMIT: usize = 100_000;
 // the prior None-profile defaults re-render.
 // 18 (#985): AI route/fallback/status frontmatter and metadata are explicit, and
 // the rejected repo-level code-graph dependency diagram is absent again.
-const CODEWIKI_RENDER_VERSION: u32 = 18;
+// 19 (#978): aggregate pages (repo overview, architecture, curated
+// navigation/concept/narrative) are produced by the Lane B tool loop when a
+// tool-chat route resolves, recording `lane: tool_loop` + tool-call/turn counts
+// in frontmatter; a Lane B failure hard-fails the page instead of degrading to a
+// skeleton, so prior on-disk aggregate pages re-render under the new shape.
+const CODEWIKI_RENDER_VERSION: u32 = 19;
 
 /// Default daemon feature profile for the grounded verification pass (#904):
 /// `feature_mid` (sonnet) runs the "is this claim supported by the cited
@@ -78,6 +83,7 @@ mod reuse;
 mod run;
 mod system_model;
 mod text;
+mod tool_executor;
 mod truth_digest;
 mod types;
 
@@ -146,17 +152,22 @@ pub use run::{run, run_repair};
 // Citation repair: re-anchor on-disk citations against the current index with
 // no regeneration. Public so a later leaf's `--repair-citations` flag drives it.
 pub use repair::{CitationRepairSummary, repair_citations};
+// In-process tool executor for the Lane B narrative tool loop (#978).
+pub(crate) use tool_executor::CodewikiToolExecutor;
 // AI and structural text helpers.
 pub(crate) use text::{
-    CitationResolver, GenerationContent, GenerationOutcome, VerifyOutcome,
-    append_curated_source_files, append_relevant_source_files, citation_list, citation_markers,
-    collect_link_spans, display_child_summary, frontmatter_with_degradation,
-    frontmatter_with_degradation_and_verify_notes_without_ranges,
-    frontmatter_with_degradation_without_ranges, ground_text, is_ai_generation_failure_code,
-    maybe_generate, neutralize_symbol_purpose_links, reanchor_citations,
-    replace_citations_with_markers, resolve_text_generator, resolve_text_verifier,
-    structural_file_summary, structural_module_summary, structural_repo_summary,
-    structural_symbol_purpose, verify_with_notes, write_references, write_section,
+    CitationResolver, FrontmatterLaneB, GRAPH_UNAVAILABLE, GenerationContent,
+    GenerationObservability, GenerationOutcome, LANE_ONE_SHOT, LANE_TOOL_LOOP, ToolLoopGenerator,
+    VerifyOutcome, append_curated_source_files, append_relevant_source_files, citation_list,
+    citation_markers, collect_link_spans, display_child_summary,
+    frontmatter_aggregate_with_verify_notes, frontmatter_aggregate_without_ranges,
+    frontmatter_with_degradation, frontmatter_with_degradation_and_verify_notes_without_ranges,
+    frontmatter_with_degradation_without_ranges, generate_aggregate, ground_text,
+    is_ai_generation_failure_code, maybe_generate, neutralize_symbol_purpose_links,
+    reanchor_citations, replace_citations_with_markers, resolve_text_generator,
+    resolve_text_verifier, resolve_tool_loop_generator, structural_file_summary,
+    structural_module_summary, structural_repo_summary, structural_symbol_purpose,
+    verify_with_notes, write_references, write_section,
 };
 #[cfg(test)]
 pub(crate) use text::{frontmatter, generate_with_bounded_retry};

@@ -84,11 +84,11 @@ struct GrepResponse {
 }
 
 #[derive(Debug)]
-struct GrepResult {
-    scanned_chunks: usize,
-    matched_lines: usize,
-    truncated: bool,
-    matches: Vec<GrepMatch>,
+pub(crate) struct GrepResult {
+    pub(crate) scanned_chunks: usize,
+    pub(crate) matched_lines: usize,
+    pub(crate) truncated: bool,
+    pub(crate) matches: Vec<GrepMatch>,
 }
 
 pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
@@ -122,6 +122,23 @@ pub fn run(ctx: &Context, options: GrepOptions<'_>) -> anyhow::Result<()> {
             }
         }
     }
+}
+
+/// Result-returning grep beneath the CLI print layer, for the CodeWiki Lane B
+/// tool executor (#978): loads the indexed content chunks in scope and runs the
+/// same matcher [`run`] uses, returning the structured matches instead of
+/// printing them. Reuses the existing read-only connection rather than opening
+/// its own.
+pub(crate) fn grep_repo(
+    ctx: &Context,
+    conn: &mut Client,
+    options: &GrepOptions<'_>,
+) -> anyhow::Result<GrepResult> {
+    let filters = GrepFilters::new(options.paths, options.globs)?;
+    let loaded = load_indexed_chunks(conn, ctx, &filters)?;
+    let mut result = grep_chunks_with_filters(&loaded.chunks, options, &filters)?;
+    result.truncated |= loaded.truncated;
+    Ok(result)
 }
 
 fn load_indexed_chunks(

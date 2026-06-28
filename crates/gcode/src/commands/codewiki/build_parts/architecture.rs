@@ -2,6 +2,7 @@ use super::super::*;
 use super::modules::prompt_component_ids_for_module;
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
+#[expect(clippy::too_many_arguments)]
 pub(crate) fn build_architecture_doc(
     files: &[FileDoc],
     modules: &[ModuleDoc],
@@ -13,8 +14,9 @@ pub(crate) fn build_architecture_doc(
     // is the sole source for diagrams — they never read the code graph.
     system_model: Option<&SystemModel>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     progress: &mut CodewikiProgress,
-) -> ArchitectureDoc {
+) -> anyhow::Result<ArchitectureDoc> {
     // Decomposition starts at meaningful units — the subsystem roots (a
     // workspace's individual crates), not the directory container above
     // them — so subsystems and the layered narrative describe the same level.
@@ -27,6 +29,16 @@ pub(crate) fn build_architecture_doc(
     // architecture page; the sole content-gap degradation is a failed
     // generation, recorded below.
     let mut degraded_sources = BTreeSet::new();
+    // The architecture page rolls several aggregate generations (one per
+    // subsystem plus the layered narrative) into one document; accumulate their
+    // Lane B tool-loop call/turn counts for the page's frontmatter observability
+    // (#978). The lane is tool_loop whenever a Lane B generator is threaded in.
+    let lane = if tool_loop.is_some() {
+        LANE_TOOL_LOOP
+    } else {
+        LANE_ONE_SHOT
+    };
+    let mut observability = GenerationObservability::default();
 
     let mut subsystems = Vec::new();
     let subsystem_modules = modules
@@ -68,7 +80,8 @@ pub(crate) fn build_architecture_doc(
             subsystem_total,
             module.module
         ));
-        let generated = maybe_generate(
+        let generated = generate_aggregate(
+            tool_loop,
             generate,
             &prompts::architecture_prompt(
                 &module.module,
@@ -78,16 +91,20 @@ pub(crate) fn build_architecture_doc(
                 &sources,
             ),
             prompts::ARCHITECTURE_SYSTEM,
-            PromptTier::Aggregate,
-        );
-        let responsibility = match generated.into_content() {
+            &format!("architecture subsystem {}", module.module),
+        )?;
+        observability.tool_call_count += generated.observability.tool_call_count;
+        observability.turns += generated.observability.turns;
+        degraded_sources.extend(generated.data_source_degraded);
+        let responsibility = match generated.content {
             GenerationContent::Generated(generated) => {
                 let citations = citation_list(&source_spans, &generated);
                 ground_text(&generated, &source_spans, Some(&citations))
             }
             GenerationContent::Failed(cause) => {
-                // Only an attempted-and-failed generation is a degradation;
-                // structural output is the intent when no generator runs.
+                // Only an attempted-and-failed Lane A generation is a degradation;
+                // structural output is the intent when no generator runs. (A Lane
+                // B failure hard-fails earlier via `generate_aggregate`.)
                 degraded_sources.insert(cause.reason_code().to_string());
                 ground_text(&fallback, &source_spans, None)
             }
@@ -129,14 +146,17 @@ pub(crate) fn build_architecture_doc(
                 summary: subsystem.responsibility.clone(),
             })
             .collect::<Vec<_>>();
-        match maybe_generate(
+        let generated = generate_aggregate(
+            tool_loop,
             generate,
             &prompts::architecture_narrative_prompt(&subsystem_summaries, &subsystem_edges),
             prompts::ARCHITECTURE_NARRATIVE_SYSTEM,
-            PromptTier::Aggregate,
-        )
-        .into_content()
-        {
+            "architecture narrative",
+        )?;
+        observability.tool_call_count += generated.observability.tool_call_count;
+        observability.turns += generated.observability.turns;
+        degraded_sources.extend(generated.data_source_degraded);
+        match generated.content {
             GenerationContent::Generated(generated) => {
                 let citations = citation_list(&source_spans, &generated);
                 Some(ground_text(&generated, &source_spans, Some(&citations)))
@@ -160,14 +180,16 @@ pub(crate) fn build_architecture_doc(
     // as the diagrams — a model with no services yields `None`.
     let service_matrix = system_model.and_then(render_service_matrix);
 
-    ArchitectureDoc {
+    Ok(ArchitectureDoc {
         source_spans,
         subsystems,
         narrative,
         diagrams,
         service_matrix,
         degraded_sources: degraded_sources.into_iter().collect(),
-    }
+        lane,
+        observability,
+    })
 }
 
 /// Source excerpts per subsystem stay below the module-brief budget because

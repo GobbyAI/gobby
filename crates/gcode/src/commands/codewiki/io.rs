@@ -284,6 +284,10 @@ impl<'a> DocSink<'a> {
             if doc.degraded {
                 self.degraded_docs.push(doc.path.clone());
             }
+            // Mirror the Lane B observability (lane/tool-call/turn counts) from
+            // the page frontmatter into `_meta/codewiki.json` for traceability;
+            // absent for Lane A / leaf / deterministic pages (#978).
+            let lane = lane_observability_from_content(&content);
             CodewikiDocMeta {
                 source_hashes,
                 degraded: doc.degraded,
@@ -301,6 +305,9 @@ impl<'a> DocSink<'a> {
                 render_version: CODEWIKI_RENDER_VERSION,
                 neighbor_hashes,
                 invalidation_key: doc.invalidation_key.clone(),
+                lane: lane.lane,
+                tool_call_count: lane.tool_call_count,
+                turns: lane.turns,
             }
         };
         self.next_docs.insert(doc.path.clone(), entry);
@@ -434,6 +441,26 @@ fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
         cursor = line_end;
     }
     None
+}
+
+/// Lane B observability fields parsed back out of a page's rendered
+/// frontmatter, mirrored into `_meta/codewiki.json` (#978). Only the tool-loop
+/// fields are captured; every other frontmatter key is ignored.
+#[derive(Default, serde::Deserialize)]
+struct LaneObservability {
+    lane: Option<String>,
+    tool_call_count: Option<usize>,
+    turns: Option<usize>,
+}
+
+/// Read the Lane B `lane`/`tool_call_count`/`turns` keys from a doc's rendered
+/// frontmatter. Returns defaults (all `None`) for pages with no frontmatter or
+/// no Lane B keys (Lane A / leaf / deterministic pages).
+fn lane_observability_from_content(content: &str) -> LaneObservability {
+    let Some((frontmatter_body, _)) = split_frontmatter(content) else {
+        return LaneObservability::default();
+    };
+    serde_yaml::from_str(frontmatter_body).unwrap_or_default()
 }
 
 fn is_ai_frontmatter_line(line: &str) -> bool {
@@ -788,4 +815,31 @@ pub(crate) fn safe_doc_path(out_dir: &Path, relative_path: &str) -> anyhow::Resu
         anyhow::bail!("refusing to write unsafe codewiki path: {relative_path}");
     }
     Ok(out_dir.join(path))
+}
+
+#[cfg(test)]
+mod lane_meta_tests {
+    use super::*;
+
+    #[test]
+    fn lane_observability_is_mirrored_from_tool_loop_frontmatter() {
+        let content = "---\ntitle: Repository Overview\ntype: code_repo\nlane: tool_loop\n\
+                       tool_call_count: 7\nturns: 4\n---\n\n# Repository Overview\n";
+        let lane = lane_observability_from_content(content);
+        assert_eq!(lane.lane.as_deref(), Some("tool_loop"));
+        assert_eq!(lane.tool_call_count, Some(7));
+        assert_eq!(lane.turns, Some(4));
+    }
+
+    #[test]
+    fn lane_observability_is_absent_for_lane_a_and_unframed_pages() {
+        let lane_a = "---\ntitle: A File\ntype: code_file\n---\n\n# A File\n";
+        let parsed = lane_observability_from_content(lane_a);
+        assert_eq!(parsed.lane, None);
+        assert_eq!(parsed.tool_call_count, None);
+        assert_eq!(parsed.turns, None);
+        // No frontmatter at all yields defaults rather than an error.
+        let bare = lane_observability_from_content("# Just a heading\n");
+        assert_eq!(bare.lane, None);
+    }
 }

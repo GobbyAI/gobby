@@ -9,13 +9,13 @@ use super::{
     AiDepth, AuditContext, BuiltDoc, CodewikiGraphEdge, CodewikiGraphEdgeKind, CodewikiInput,
     CodewikiProgress, DocPruneScope, FeatureCatalogDoc, FileDoc, FileDocPosition, LeadingChunk,
     ModuleDoc, OwnershipMeta, OwnershipOptions, ReusePlan, SourceSpan, SystemModel, TextGenerator,
-    TextVerifier, build_architecture_doc, build_curated_navigation_docs, build_deprecations_doc,
-    build_file_doc, build_hotspots_doc, build_infrastructure_doc, build_module_docs_with_filter,
-    build_onboarding_doc, build_ownership_doc, build_repo_doc, cluster, cluster_file_modules,
-    file_doc_path, is_ai_generation_failure_code, is_core_file, module_doc_path, module_for_file,
-    relationship_facts_for_file, render_architecture_doc, render_deprecations_doc,
-    render_feature_catalog_doc, render_file_doc, render_hotspots_doc, render_infrastructure_doc,
-    render_module_doc, render_onboarding_doc, span_files,
+    TextVerifier, ToolLoopGenerator, build_architecture_doc, build_curated_navigation_docs,
+    build_deprecations_doc, build_file_doc, build_hotspots_doc, build_infrastructure_doc,
+    build_module_docs_with_filter, build_onboarding_doc, build_ownership_doc, build_repo_doc,
+    cluster, cluster_file_modules, file_doc_path, is_ai_generation_failure_code, is_core_file,
+    module_doc_path, module_for_file, relationship_facts_for_file, render_architecture_doc,
+    render_deprecations_doc, render_feature_catalog_doc, render_file_doc, render_hotspots_doc,
+    render_infrastructure_doc, render_module_doc, render_onboarding_doc, span_files,
 };
 
 pub fn generate_hierarchical_docs(
@@ -43,6 +43,7 @@ fn generate_hierarchical_docs_with_graph_availability(
         None,
         &mut generate,
         &mut None,
+        &mut None,
         AiDepth::Symbols,
         &mut None,
         &mut progress,
@@ -66,6 +67,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
     feature_catalog: Option<&FeatureCatalogDoc>,
     audit: Option<&AuditContext>,
     mut generate: Option<&mut TextGenerator<'_>>,
+    mut tool_loop: Option<&mut ToolLoopGenerator<'_>>,
     mut verify: Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
     reuse: &mut Option<&mut ReusePlan>,
@@ -80,6 +82,7 @@ pub(crate) fn generate_hierarchical_docs_with_ownership(
         feature_catalog,
         audit,
         &mut generate,
+        &mut tool_loop,
         &mut verify,
         ai_depth,
         reuse,
@@ -118,6 +121,7 @@ pub(crate) fn generate_hierarchical_docs_with_reuse(
         None,
         &mut generate,
         &mut None,
+        &mut None,
         ai_depth,
         reuse,
         progress,
@@ -155,6 +159,7 @@ pub(crate) fn generate_hierarchical_docs_with_verify(
         None,
         None,
         &mut generate,
+        &mut None,
         &mut verify,
         ai_depth,
         &mut None,
@@ -217,6 +222,12 @@ pub(crate) fn generate_hierarchical_docs_core(
     // `None` to omit the deprecations page, exactly like `system_model`.
     audit: Option<&AuditContext>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    // Lane B aggregate generator (#978). When present, the aggregate-tier pages
+    // (repo overview, architecture, curated navigation/concept/narrative) are
+    // produced by the gcode tool loop and hard-fail on a Lane B failure; leaf
+    // pages always use the Lane A `generate` one-shot. `None` (tests / AI off)
+    // falls the aggregates back to the Lane A path.
+    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
     ai_depth: AiDepth,
     reuse: &mut Option<&mut ReusePlan>,
@@ -354,10 +365,11 @@ pub(crate) fn generate_hierarchical_docs_core(
         &module_docs,
         &input.leading_chunks,
         generate,
+        tool_loop,
         verify,
         reuse,
         progress,
-    ) {
+    )? {
         emit(doc)?;
     }
     // Audit/analysis pages are deterministic, input-gated projections (#904).
@@ -376,9 +388,10 @@ pub(crate) fn generate_hierarchical_docs_core(
         &input.leading_chunks,
         &audit_links,
         generate,
+        tool_loop,
         reuse,
         progress,
-    );
+    )?;
     emit(
         BuiltDoc {
             path: "code/repo.md".to_string(),
@@ -438,8 +451,9 @@ pub(crate) fn generate_hierarchical_docs_core(
                 &input.leading_chunks,
                 system_model,
                 generate,
+                tool_loop,
                 progress,
-            );
+            )?;
             BuiltDoc {
                 path: "code/_architecture.md".to_string(),
                 content: render_architecture_doc(&architecture_doc),

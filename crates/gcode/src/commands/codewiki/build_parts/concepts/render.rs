@@ -14,10 +14,13 @@ pub(super) fn render_curated_navigation_docs(
     modules: &[ModuleDoc],
     plan: CuratedNavigationPlan,
     degraded_sources: Vec<String>,
+    lane: &'static str,
+    plan_observability: &GenerationObservability,
     leading_chunks: &std::collections::BTreeMap<String, LeadingChunk>,
     generate: &mut Option<&mut TextGenerator<'_>>,
+    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
-) -> Vec<BuiltDoc> {
+) -> anyhow::Result<Vec<BuiltDoc>> {
     let module_lookup = modules
         .iter()
         .map(|module| (module.module.as_str(), module))
@@ -55,11 +58,13 @@ pub(super) fn render_curated_navigation_docs(
             leading_chunks,
             &spans,
             generate,
+            tool_loop,
             verify,
-        );
+        )?;
         concept.body = result.body;
         concept.body_degraded_sources = result.degraded_sources;
         concept.verify_notes = result.verify_notes;
+        concept.body_observability = result.observability;
     }
     for page in &mut narrative_pages {
         let (member_modules, member_files) = narrative_members(page, &concepts);
@@ -75,11 +80,13 @@ pub(super) fn render_curated_navigation_docs(
             leading_chunks,
             &spans,
             generate,
+            tool_loop,
             verify,
-        );
+        )?;
         page.body = result.body;
         page.body_degraded_sources = result.degraded_sources;
         page.verify_notes = result.verify_notes;
+        page.body_observability = result.observability;
     }
 
     let concept_titles = concepts
@@ -96,8 +103,13 @@ pub(super) fn render_curated_navigation_docs(
             &narrative_pages,
             &all_spans,
             &degraded_sources,
+            lane,
+            plan_observability,
         ),
-        degraded: !degraded_sources.is_empty(),
+        // graph-unavailable is evidence degradation, not a page failure (#978).
+        degraded: degraded_sources
+            .iter()
+            .any(|code| code != GRAPH_UNAVAILABLE),
         summary: Some("Curated concept navigation over the code reference.".to_string()),
         neighbors: std::collections::BTreeSet::new(),
         invalidation_key: None,
@@ -120,11 +132,15 @@ pub(super) fn render_curated_navigation_docs(
         );
         docs.push(BuiltDoc {
             path: concept_doc_path(&concept.slug),
-            content: render_concept_page(concept, &spans, &degraded_sources, flow.as_deref()),
+            content: render_concept_page(concept, &spans, &degraded_sources, lane, flow.as_deref()),
             // A failed content pass falls back to the structural body — record
             // that honestly so the meta cache and the run summary surface it
-            // instead of caching the page as healthy (#900).
-            degraded: !degraded_sources.is_empty() || !concept.body_degraded_sources.is_empty(),
+            // instead of caching the page as healthy (#900). graph-unavailable is
+            // evidence degradation only and never marks the page degraded (#978).
+            degraded: degraded_sources
+                .iter()
+                .chain(concept.body_degraded_sources.iter())
+                .any(|code| code != GRAPH_UNAVAILABLE),
             summary: Some(concept.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
             invalidation_key: None,
@@ -154,13 +170,18 @@ pub(super) fn render_curated_navigation_docs(
                 &spans,
                 &concept_titles,
                 &degraded_sources,
+                lane,
                 prev,
                 next,
                 flow.as_deref(),
             ),
             // See the concept page above: a structural-fallback narrative is
             // degraded, not healthy, so the cache and summary must say so (#900).
-            degraded: !degraded_sources.is_empty() || !page.body_degraded_sources.is_empty(),
+            // graph-unavailable is evidence degradation only (#978).
+            degraded: degraded_sources
+                .iter()
+                .chain(page.body_degraded_sources.iter())
+                .any(|code| code != GRAPH_UNAVAILABLE),
             summary: Some(page.summary.clone()),
             neighbors: std::collections::BTreeSet::new(),
             invalidation_key: None,
@@ -168,7 +189,7 @@ pub(super) fn render_curated_navigation_docs(
         });
     }
 
-    docs
+    Ok(docs)
 }
 
 /// Borrows a narrative chapter's `(slug, title)` for guided-tour wikilinks.
@@ -176,18 +197,27 @@ fn chapter_link(page: &NarrativePage) -> (&str, &str) {
     (page.slug.as_str(), page.title.as_str())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_concept_tree(
     sections: &[ConceptSection],
     concepts: &[ConceptModule],
     narrative_pages: &[NarrativePage],
     spans: &[SourceSpan],
     degraded_sources: &[String],
+    lane: &'static str,
+    observability: &GenerationObservability,
 ) -> String {
-    let mut doc = frontmatter_with_degradation_without_ranges(
+    let lane_b = (lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
+        lane,
+        tool_call_count: observability.tool_call_count,
+        turns: observability.turns,
+    });
+    let mut doc = frontmatter_aggregate_without_ranges(
         "Curated Concept Navigation",
         "code_concept_tree",
         spans,
         degraded_sources,
+        lane_b,
     );
     append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     doc.push_str("# Curated Concept Navigation\n\n");
@@ -227,16 +257,23 @@ fn render_concept_page(
     concept: &ConceptModule,
     spans: &[SourceSpan],
     degraded_sources: &[String],
+    lane: &'static str,
     flow: Option<&str>,
 ) -> String {
     let degraded_sources =
         combine_degraded_sources(degraded_sources, &concept.body_degraded_sources);
-    let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
+    let lane_b = (lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
+        lane,
+        tool_call_count: concept.body_observability.tool_call_count,
+        turns: concept.body_observability.turns,
+    });
+    let mut doc = frontmatter_aggregate_with_verify_notes(
         &concept.title,
         "code_concept",
         spans,
         &degraded_sources,
         &concept.verify_notes,
+        lane_b,
     );
     append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", concept.title));
@@ -253,22 +290,30 @@ fn render_concept_page(
     doc
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_narrative_page(
     page: &NarrativePage,
     spans: &[SourceSpan],
     concept_titles: &std::collections::BTreeMap<&str, &str>,
     degraded_sources: &[String],
+    lane: &'static str,
     prev: Option<(&str, &str)>,
     next: Option<(&str, &str)>,
     flow: Option<&str>,
 ) -> String {
     let degraded_sources = combine_degraded_sources(degraded_sources, &page.body_degraded_sources);
-    let mut doc = frontmatter_with_degradation_and_verify_notes_without_ranges(
+    let lane_b = (lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
+        lane,
+        tool_call_count: page.body_observability.tool_call_count,
+        turns: page.body_observability.turns,
+    });
+    let mut doc = frontmatter_aggregate_with_verify_notes(
         &page.title,
         "code_narrative",
         spans,
         &degraded_sources,
         &page.verify_notes,
+        lane_b,
     );
     append_curated_source_files(&mut doc, spans, MAX_CURATED_SOURCE_FILE_LINKS);
     let _ = std::fmt::Write::write_fmt(&mut doc, format_args!("# {}\n\n", page.title));

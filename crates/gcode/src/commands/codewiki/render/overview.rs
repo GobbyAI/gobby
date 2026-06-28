@@ -3,11 +3,17 @@ use std::fmt::Write as _;
 use super::super::*;
 
 pub(crate) fn render_architecture_doc(architecture: &ArchitectureDoc) -> String {
-    let mut doc = frontmatter_with_degradation_without_ranges(
+    let lane_b = (architecture.lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
+        lane: architecture.lane,
+        tool_call_count: architecture.observability.tool_call_count,
+        turns: architecture.observability.turns,
+    });
+    let mut doc = frontmatter_aggregate_without_ranges(
         "Architecture Overview",
         "code_architecture",
         &architecture.source_spans,
         &architecture.degraded_sources,
+        lane_b,
     );
     append_relevant_source_files(&mut doc, &architecture.source_spans);
     doc.push_str("# Architecture Overview\n\n");

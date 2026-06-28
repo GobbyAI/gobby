@@ -10,13 +10,16 @@ pub(crate) use citations::{
     replace_citations_with_markers, write_references,
 };
 pub(crate) use frontmatter::{
-    append_curated_source_files, append_relevant_source_files, frontmatter_with_degradation,
-    frontmatter_with_degradation_and_verify_notes_without_ranges,
+    FrontmatterLaneB, append_curated_source_files, append_relevant_source_files,
+    frontmatter_aggregate_with_verify_notes, frontmatter_aggregate_without_ranges,
+    frontmatter_with_degradation, frontmatter_with_degradation_and_verify_notes_without_ranges,
     frontmatter_with_degradation_without_ranges,
 };
 pub(crate) use generation::{
-    GenerationContent, GenerationOutcome, is_ai_generation_failure_code, maybe_generate,
-    resolve_text_generator, resolve_text_verifier,
+    GRAPH_UNAVAILABLE, GenerationContent, GenerationObservability, GenerationOutcome,
+    LANE_ONE_SHOT, LANE_TOOL_LOOP, ToolLoopGenerator, generate_aggregate,
+    is_ai_generation_failure_code, maybe_generate, resolve_text_generator, resolve_text_verifier,
+    resolve_tool_loop_generator,
 };
 pub(crate) use sanitize::neutralize_symbol_purpose_links;
 pub(crate) use structural::{

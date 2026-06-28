@@ -43,6 +43,10 @@ pub(crate) struct CuratedBody {
     /// output.
     pub(crate) degraded_sources: Vec<String>,
     pub(crate) verify_notes: Vec<VerifyNote>,
+    /// Per-page Lane B tool-loop observability, recorded into the page's
+    /// frontmatter when the run used the tool loop (#978). Default (zero counts)
+    /// for the Lane A / structural path.
+    pub(crate) observability: GenerationObservability,
 }
 
 /// Run the content pass for one curated page.
@@ -61,16 +65,18 @@ pub(crate) fn curated_page_body(
     leading_chunks: &BTreeMap<String, LeadingChunk>,
     spans: &[SourceSpan],
     generate: &mut Option<&mut TextGenerator<'_>>,
+    tool_loop: &mut Option<&mut ToolLoopGenerator<'_>>,
     verify: &mut Option<&mut TextVerifier<'_>>,
-) -> CuratedBody {
+) -> anyhow::Result<CuratedBody> {
     let members = member_evidence_rows(member_modules, member_files, module_lookup, file_lookup);
     let symbols = symbol_evidence_rows(member_files, file_lookup);
     if members.is_empty() && symbols.is_empty() {
-        return CuratedBody {
+        return Ok(CuratedBody {
             body: None,
             degraded_sources: Vec::new(),
             verify_notes: Vec::new(),
-        };
+            observability: GenerationObservability::default(),
+        });
     }
 
     let excerpt_take = match kind {
@@ -95,7 +101,21 @@ pub(crate) fn curated_page_body(
         CuratedPageKind::Narrative => prompts::NARRATIVE_PAGE_SYSTEM,
     };
 
-    match maybe_generate(generate, &prompt, system, PromptTier::Aggregate).into_content() {
+    // Aggregate-tier page: Lane B tool loop when configured, else Lane A. A
+    // Lane B generation failure hard-fails the run via `generate_aggregate`; an
+    // empty/incomplete Lane B body is also a hard fail below (no skeleton). Lane
+    // A failures degrade to the structural body, as before.
+    let aggregate = generate_aggregate(
+        tool_loop,
+        generate,
+        &prompt,
+        system,
+        &format!("curated page '{title}'"),
+    )?;
+    let observability = aggregate.observability.clone();
+    let is_lane_b = aggregate.lane == LANE_TOOL_LOOP;
+    let mut data_source_degraded = aggregate.data_source_degraded;
+    match aggregate.content {
         GenerationContent::Generated(text) => {
             // Grounded verification leaves prose intact and records unsupported
             // claims as frontmatter-only notes.
@@ -115,29 +135,45 @@ pub(crate) fn curated_page_body(
             };
             let grounded = ground_text(&text, spans, None);
             if grounded.trim().is_empty() || !has_required_curated_sections(kind, &grounded) {
-                CuratedBody {
+                if is_lane_b {
+                    // Lane B produced ungroundable or structurally incomplete
+                    // prose: invalid, hard-fail (no skeleton fallback) (#978).
+                    return Err(anyhow::anyhow!(
+                        "Lane B curated page '{title}' produced an ungroundable or \
+                         structurally incomplete body; page not written (no skeleton)"
+                    ));
+                }
+                Ok(CuratedBody {
                     body: Some(structural_body(kind, title, &members, &symbols)),
                     degraded_sources: vec!["grounding-empty".to_string()],
                     verify_notes: Vec::new(),
-                }
+                    observability,
+                })
             } else {
-                CuratedBody {
+                // graph-unavailable (Lane B evidence degradation) is listed but
+                // never marks the page degraded.
+                Ok(CuratedBody {
                     body: Some(grounded),
-                    degraded_sources: Vec::new(),
+                    degraded_sources: std::mem::take(&mut data_source_degraded),
                     verify_notes,
-                }
+                    observability,
+                })
             }
         }
-        GenerationContent::Failed(cause) => CuratedBody {
+        // A Lane B failure already returned `Err` from `generate_aggregate`; this
+        // arm is reached only on the Lane A one-shot path.
+        GenerationContent::Failed(cause) => Ok(CuratedBody {
             body: Some(structural_body(kind, title, &members, &symbols)),
             degraded_sources: vec![cause.reason_code().to_string()],
             verify_notes: Vec::new(),
-        },
-        GenerationContent::Skipped => CuratedBody {
+            observability,
+        }),
+        GenerationContent::Skipped => Ok(CuratedBody {
             body: Some(structural_body(kind, title, &members, &symbols)),
             degraded_sources: Vec::new(),
             verify_notes: Vec::new(),
-        },
+            observability,
+        }),
     }
 }
 

@@ -5,6 +5,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::models::Symbol;
 
+use super::GenerationObservability;
 use super::prompts;
 
 #[derive(Debug, Clone)]
@@ -244,6 +245,13 @@ pub(crate) struct ArchitectureDoc {
     /// supplied or it reached no services.
     pub(crate) service_matrix: Option<String>,
     pub(crate) degraded_sources: Vec<String>,
+    /// Generation lane (`tool_loop` / `one_shot`) for the page's aggregate
+    /// prose, recorded into frontmatter (#978).
+    pub(crate) lane: &'static str,
+    /// Accumulated Lane B tool-loop observability across the subsystem and
+    /// narrative generations, recorded into frontmatter when `lane` is
+    /// `tool_loop`.
+    pub(crate) observability: GenerationObservability,
 }
 
 #[derive(Debug, Clone)]
@@ -589,6 +597,17 @@ pub(crate) struct CodewikiDocMeta {
     /// and the page — unchanged. `None` for source-file pages.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub(crate) invalidation_key: Option<String>,
+    /// Lane B tool-loop observability mirrored from the page frontmatter for an
+    /// aggregate page produced by the tool loop (#978): the generation lane and
+    /// the loop's call/turn counts. `None` for Lane A / leaf / deterministic
+    /// pages. Recorded for traceability; not part of the reuse-invalidation
+    /// comparison.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) lane: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) tool_call_count: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub(crate) turns: Option<usize>,
 }
 
 /// One rendered doc plus the degradation outcome of its generation, carried
