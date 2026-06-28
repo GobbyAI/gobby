@@ -437,15 +437,26 @@ fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
 }
 
 fn is_ai_frontmatter_line(line: &str) -> bool {
-    let key = line.trim_start();
-    frontmatter_line_has_key(key, AI_ROUTE_KEY)
-        || frontmatter_line_has_key(key, AI_FALLBACK_KEY)
-        || frontmatter_line_has_key(key, AI_GENERATION_STATUS_KEY)
+    if has_frontmatter_indentation(line) {
+        return false;
+    }
+    frontmatter_line_has_key(line, AI_ROUTE_KEY)
+        || frontmatter_line_has_key(line, AI_FALLBACK_KEY)
+        || frontmatter_line_has_key(line, AI_GENERATION_STATUS_KEY)
 }
 
 fn frontmatter_line_has_key(line: &str, key: &str) -> bool {
+    if has_frontmatter_indentation(line) {
+        return false;
+    }
     line.strip_prefix(key)
         .is_some_and(|suffix| suffix.starts_with(':'))
+}
+
+fn has_frontmatter_indentation(line: &str) -> bool {
+    line.as_bytes()
+        .first()
+        .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
 }
 
 fn strip_existing_ai_notice(rest: &str) -> &str {

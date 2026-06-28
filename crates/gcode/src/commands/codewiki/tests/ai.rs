@@ -556,6 +556,77 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
 }
 
 #[test]
+fn ai_frontmatter_rewrite_preserves_nested_ai_named_keys() {
+    let project = tempfile::tempdir().expect("project tempdir");
+    let out_dir = project.path().join("codewiki");
+    let doc = BuiltDoc::healthy(
+        "code/repo.md",
+        concat!(
+            "---\n",
+            "title: Repo\n",
+            "type: repo\n",
+            "metadata:\n",
+            "  ai_route: nested-route\n",
+            "  ai_fallback: nested-fallback\n",
+            "  ai_generation_status: nested-status\n",
+            "ai_route: stale-route\n",
+            "ai_fallback: true\n",
+            "ai_generation_status: stale-status\n",
+            "---\n",
+            "# Repo\n\n",
+            "Body.\n",
+        )
+        .to_string(),
+    );
+
+    let mut sink = DocSink::open(project.path(), &out_dir, "sections")
+        .expect("sink opens")
+        .with_ai_outcome(CodewikiAiOutcome::generated(AiRouting::Daemon, false));
+    sink.persist(&doc).expect("doc persists");
+    sink.finish(None).expect("sink finishes");
+
+    let markdown = std::fs::read_to_string(out_dir.join("code/repo.md")).expect("read page");
+    let frontmatter = parse_yaml_frontmatter(&markdown);
+    let metadata = frontmatter.get("metadata").expect("metadata");
+    assert_eq!(
+        metadata
+            .get(AI_ROUTE_KEY)
+            .and_then(serde_yaml::Value::as_str),
+        Some("nested-route")
+    );
+    assert_eq!(
+        metadata
+            .get(AI_FALLBACK_KEY)
+            .and_then(serde_yaml::Value::as_str),
+        Some("nested-fallback")
+    );
+    assert_eq!(
+        metadata
+            .get(AI_GENERATION_STATUS_KEY)
+            .and_then(serde_yaml::Value::as_str),
+        Some("nested-status")
+    );
+    assert_eq!(
+        frontmatter
+            .get(AI_ROUTE_KEY)
+            .and_then(serde_yaml::Value::as_str),
+        Some("daemon")
+    );
+    assert_eq!(
+        frontmatter
+            .get(AI_FALLBACK_KEY)
+            .and_then(serde_yaml::Value::as_bool),
+        Some(false)
+    );
+    assert_eq!(
+        frontmatter
+            .get(AI_GENERATION_STATUS_KEY)
+            .and_then(serde_yaml::Value::as_str),
+        Some("generated")
+    );
+}
+
+#[test]
 fn ai_frontmatter_contract_keys_keep_serialized_names() {
     assert_eq!(AI_ROUTE_KEY, "ai_route");
     assert_eq!(AI_FALLBACK_KEY, "ai_fallback");
