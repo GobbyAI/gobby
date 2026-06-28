@@ -62,7 +62,11 @@ from gobby.sessions.transcript_window import (
     _requested_range,
     render_window,
 )
-from gobby.sessions.transcripts.base import ParsedMessage, RawLine
+from gobby.sessions.transcripts.base import (
+    NON_MESSAGE_CONTENT_TYPES,
+    ParsedMessage,
+    RawLine,
+)
 from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
 if TYPE_CHECKING:
@@ -105,6 +109,11 @@ def _activity_counts_from_index(index: TranscriptIndex) -> dict[str, int]:
 
 
 def _activity_counts_from_messages(messages: list[ParsedMessage]) -> dict[str, int]:
+    # Exclude session metadata (native titles, unmodeled-record sentinel) up
+    # front: this helper keys turn_count off role alone (no content_type gate),
+    # so filtering here is what keeps both message_count and turn_count from
+    # counting a metadata record.
+    messages = [m for m in messages if m.content_type not in NON_MESSAGE_CONTENT_TYPES]
     return {
         "message_count": len(messages),
         "turn_count": sum(1 for msg in messages if msg.role == "assistant"),
@@ -348,7 +357,11 @@ class TranscriptReader:
             groups=groups,
             returned_count=len(groups),
             total_groups=total,
-            parsed_message_count=len(parsed),
+            # Render the full parsed list above (so any unmodeled-record sentinel
+            # is still observed), but the display count excludes session metadata.
+            parsed_message_count=sum(
+                1 for m in parsed if m.content_type not in NON_MESSAGE_CONTENT_TYPES
+            ),
         )
 
     # ------------------------------------------------------------------ #
@@ -364,7 +377,8 @@ class TranscriptReader:
         try:
             resolved = await self._resolve_windowable(session, session_id)
             if resolved.kind == "native":
-                return len(await self._get_parsed_messages_from_file(session_id))
+                parsed = await self._get_parsed_messages_from_file(session_id)
+                return sum(1 for m in parsed if m.content_type not in NON_MESSAGE_CONTENT_TYPES)
         except (DecompressionError, TranscriptTooLargeError) as e:
             logger.warning(f"Failed to count transcript messages for session {session_id}: {e}")
             return 0
@@ -648,7 +662,12 @@ def _collect_flat_from_file_windowed(
         for record in normalize_transcript_records(event.records, source):
             if not isinstance(record, ParsedMessage):
                 continue
-            row = _parsed_to_dicts([record])[0]
+            rows = _parsed_to_dicts([record])
+            if not rows:
+                # Session metadata (titles, unmodeled-record sentinel) flattens
+                # to nothing — skip without IndexError.
+                continue
+            row = rows[0]
             row["session_id"] = session_id
             if role and row.get("role") != role:
                 continue
@@ -694,7 +713,12 @@ def _collect_flat_dicts(
         for record in normalize_transcript_records(event.records, source):
             if not isinstance(record, ParsedMessage):
                 continue
-            row = _parsed_to_dicts([record])[0]
+            rows = _parsed_to_dicts([record])
+            if not rows:
+                # Session metadata (titles, unmodeled-record sentinel) flattens
+                # to nothing — skip without IndexError.
+                continue
+            row = rows[0]
             row["session_id"] = session_id
             if role and row.get("role") != role:
                 continue

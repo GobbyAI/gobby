@@ -1,12 +1,14 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 
 import pytest
 
 from gobby.sessions.observation_tracker import ObservationTracker
 from gobby.sessions.transcript_renderer import RenderState, render_incremental, render_transcript
-from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.transcripts.base import UNMODELED_RECORD_CONTENT_TYPE, ParsedMessage
+from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.storage.hub.protocol import HubDatabase
 from gobby.storage.unmodeled_observations import UnmodeledObservationStore
 
@@ -123,7 +125,9 @@ def test_synthetic_unknown_tool_name_is_excluded(temp_db: HubDatabase) -> None:
     assert rows == []
 
 
-def test_observe_block_type_does_not_raise_keyerror_on_logging() -> None:
+def test_observe_block_type_does_not_raise_keyerror_on_logging(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """The ``observed_name`` extra key must not conflict with LogRecord.name.
 
     Regression: ``"name"`` was previously used in the ``extra`` dict, which
@@ -136,23 +140,25 @@ def test_observe_block_type_does_not_raise_keyerror_on_logging() -> None:
     tracker = ObservationTracker(store=None)
     msg = _message(index=200, content_type="new_block", raw_type="new_block")
 
-    # Force INFO level so the logger.info path in _observe fires
-    obs_logger = logging.getLogger("gobby.sessions.unmodeled_observations")
-    original_level = obs_logger.level
-    obs_logger.setLevel(logging.INFO)
-    try:
-        # Must not raise KeyError
+    # Force INFO so the logger.info discovery path in _observe fires (must not raise).
+    with caplog.at_level(logging.INFO, logger="gobby.sessions.unmodeled_observations"):
         tracker.observe_block_type(
             msg,
             session_id="session-log-test",
             source="grok",
             block_type="new_block",
         )
-    finally:
-        obs_logger.setLevel(original_level)
+
+    records = [r for r in caplog.records if getattr(r, "observed_name", None) == "new_block"]
+    assert len(records) == 1
+    assert records[0].getMessage() == "Unmodeled transcript block observed"
+    # The conflict-free key carries the block name; LogRecord.name stays the logger.
+    assert records[0].name == "gobby.sessions.unmodeled_observations"
 
 
-def test_observe_tool_name_does_not_raise_keyerror_on_persist_failure() -> None:
+def test_observe_tool_name_does_not_raise_keyerror_on_persist_failure(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     """The debug-path extra dict must also use ``observed_name``.
 
     Covers the ``logger.debug`` call in the ``except Exception`` block when
@@ -173,12 +179,8 @@ def test_observe_tool_name_does_not_raise_keyerror_on_persist_failure() -> None:
         tool_input={"x": 1},
     )
 
-    # Force DEBUG level so the logger.debug path in the except block fires
-    obs_logger = logging.getLogger("gobby.sessions.unmodeled_observations")
-    original_level = obs_logger.level
-    obs_logger.setLevel(logging.DEBUG)
-    try:
-        # Must not raise KeyError from the debug logging path
+    # Force DEBUG so the except-block logger.debug fires (must not raise KeyError).
+    with caplog.at_level(logging.DEBUG, logger="gobby.sessions.unmodeled_observations"):
         tracker.observe_tool_name(
             msg,
             session_id="session-log-test-debug",
@@ -187,5 +189,81 @@ def test_observe_tool_name_does_not_raise_keyerror_on_persist_failure() -> None:
             server_name="srv",
             tool_type="call",
         )
-    finally:
-        obs_logger.setLevel(original_level)
+
+    failing_store.record.assert_called_once()
+    # The except-block debug log fired (with the conflict-free key) without raising.
+    debug_records = [
+        r
+        for r in caplog.records
+        if r.getMessage() == "Failed to persist unmodeled transcript observation"
+    ]
+    assert len(debug_records) == 1
+    assert getattr(debug_records[0], "observed_name", None) == "FailingTool"
+    assert debug_records[0].name == "gobby.sessions.unmodeled_observations"
+
+
+def test_claude_unknown_record_routes_to_t2_via_parse_lines(temp_db: HubDatabase) -> None:
+    """End-to-end: a genuinely-unknown Claude record-level type, parsed through
+    ClaudeTranscriptParser.parse_lines() (so annotate_record_source populates
+    raw-line provenance), renders no card and records exactly one T2 block_type
+    observation whose source/source_line/source_ref reflect the RAW line, not the
+    parser index."""
+    parser = ClaudeTranscriptParser(session_id="probe")
+    lines = [
+        # raw line 0 -> two parsed messages (text + tool_use): parser indices 0, 1
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {
+                    "content": [
+                        {"type": "text", "text": "hi"},
+                        {"type": "tool_use", "name": "Read", "id": "t1", "input": {}},
+                    ]
+                },
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        ),
+        # raw line 1 -> the unknown record: parser index 2, raw_line_no 1
+        json.dumps({"type": "brand-new-envelope", "x": 1, "timestamp": "2024-01-01T12:00:01Z"}),
+    ]
+    parsed = [m for m in parser.parse_lines(lines) if isinstance(m, ParsedMessage)]
+
+    sentinel = next(m for m in parsed if m.content_type == UNMODELED_RECORD_CONTENT_TYPE)
+    assert sentinel.content == "brand-new-envelope"
+    assert sentinel.role == "system"
+    # Provenance is the raw line (1), distinct from the parser index (2).
+    assert sentinel.index == 2
+    assert sentinel.source == "claude"
+    assert sentinel.source_line == 1
+    assert sentinel.source_ref == "1"
+
+    store = UnmodeledObservationStore(temp_db)
+    rendered = render_transcript(
+        parsed,
+        session_id="session-claude-unknown",
+        source="claude",
+        observation_tracker=ObservationTracker(store),
+    )
+
+    # No card: the sentinel produces no group and no "unknown" block.
+    assert not [
+        block for group in rendered for block in group.content_blocks if block.type == "unknown"
+    ]
+
+    rows = [
+        row
+        for row in store.list_observations(source="claude", kind="block_type")
+        if row.name == "brand-new-envelope"
+    ]
+    assert len(rows) == 1
+    assert rows[0].count == 1
+
+    events = temp_db.fetchall(
+        "SELECT source, source_ref, source_line FROM unmodeled_observation_events "
+        "WHERE session_id = %s AND kind = 'block_type' AND name = %s",
+        ("session-claude-unknown", "brand-new-envelope"),
+    )
+    assert len(events) == 1
+    assert events[0]["source"] == "claude"
+    assert events[0]["source_ref"] == "1"
+    assert events[0]["source_line"] == 1

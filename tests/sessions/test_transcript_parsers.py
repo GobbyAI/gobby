@@ -13,7 +13,11 @@ import pytest
 from gobby.sessions.transcript_normalization import normalize_transcript_records
 from gobby.sessions.transcript_renderer import render_transcript
 from gobby.sessions.transcripts import PARSER_REGISTRY, get_parser
-from gobby.sessions.transcripts.base import ParsedMessage, ParsedToolEvent
+from gobby.sessions.transcripts.base import (
+    UNMODELED_RECORD_CONTENT_TYPE,
+    ParsedMessage,
+    ParsedToolEvent,
+)
 from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
 from gobby.sessions.transcripts.codex import CodexTranscriptParser
 from gobby.sessions.transcripts.droid import DroidTranscriptParser
@@ -214,9 +218,14 @@ class TestClaudeTranscriptParser:
         assert msg is None
 
     def test_parse_line_unknown_type(self, parser) -> None:
-        """An unrecognized record-level type is dropped (not surfaced as a card)."""
+        """An unrecognized record-level type becomes a non-rendering sentinel
+        (routed to the T2 worklist at render time, not surfaced as a card)."""
         line = json.dumps({"type": "unknown_event"})
-        assert parser.parse_line(line, 0) is None
+        msg = parser.parse_line(line, 0)
+        assert msg is not None
+        assert msg.content_type == UNMODELED_RECORD_CONTENT_TYPE
+        assert msg.role == "system"
+        assert msg.content == "unknown_event"
 
     def test_parse_lines_continuous(self, parser) -> None:
         lines = [
@@ -528,7 +537,9 @@ class TestClaudeTranscriptParser:
 class TestClaudeRecordEnvelopes:
     """Record-level envelope handling: session-metadata records are recognized
     and not surfaced as cards, compaction boundaries are first-classed, and a
-    genuinely-unknown record type is dropped but logged for discovery."""
+    genuinely-unknown record type becomes a non-rendering sentinel
+    (content_type=unmodeled_record) routed to the T2 observation worklist at
+    render time, replacing the parser-error.log stopgap."""
 
     @pytest.fixture
     def parser(self):
@@ -633,18 +644,40 @@ class TestClaudeRecordEnvelopes:
         assert len(msgs) == 1
         assert msgs[0].content == "Conversation compacted"
 
-    def test_unknown_record_type_is_dropped_but_logged(self, parser, monkeypatch) -> None:
+    def test_unknown_record_type_emits_sentinel_not_logged(self, parser, monkeypatch) -> None:
+        """The genuinely-unknown record becomes a non-rendering sentinel via
+        BOTH _expand_line and parse_line, and is NO LONGER sent to the
+        parser-error.log discovery channel (the T2 worklist replaces it)."""
         calls: list[tuple] = []
         monkeypatch.setattr(
             parser.error_log,
             "log_unknown_block",
             lambda *a, **k: calls.append((a, k)),
         )
-        line = json.dumps(
-            {"type": "brand-new-envelope", "x": 1, "timestamp": "2024-01-01T12:00:00Z"}
-        )
-        assert parser._expand_line(line, 0) == []  # no card
-        assert len(calls) == 1  # discovery signal preserved
+        data = {"type": "brand-new-envelope", "x": 1, "timestamp": "2024-01-01T12:00:00Z"}
+        line = json.dumps(data)
+
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 1
+        sentinel = msgs[0]
+        assert sentinel.content_type == UNMODELED_RECORD_CONTENT_TYPE
+        assert sentinel.role == "system"
+        assert sentinel.content == "brand-new-envelope"  # real type rides in content
+        assert sentinel.raw_json == data
+        # Provenance is left None pre-annotation (annotate_record_source fills it
+        # on the events path; the direct parse_line fallback resolves from index).
+        assert sentinel.source is None
+        assert sentinel.source_line is None
+        assert sentinel.source_ref is None
+
+        single = parser.parse_line(line, 0)
+        assert single is not None
+        assert single.content_type == UNMODELED_RECORD_CONTENT_TYPE
+        assert single.role == "system"
+        assert single.content == "brand-new-envelope"
+        assert single.raw_json == data
+
+        assert calls == []  # parser-error.log discovery channel no longer used
 
     def test_block_level_unknown_content_still_passes_through(self, parser) -> None:
         """Regression guard: record-level changes must not disturb block-level
@@ -1013,11 +1046,16 @@ class TestClaudeExpandLine:
         assert msg.tool_use_id == "toolu_blocked"
         assert msg.content == "Gobby blocked [require-uv]: Use uv instead."
 
-    def test_expand_unknown_record_type_is_dropped(self, parser) -> None:
-        """An unrecognized record-level type is dropped (session envelopes are
-        not conversation content). Block-level fail-soft is covered separately."""
+    def test_expand_unknown_record_type_emits_sentinel(self, parser) -> None:
+        """An unrecognized record-level type becomes a non-rendering sentinel
+        (session envelopes are not conversation content, so no card — but the
+        discovery signal flows to the T2 worklist). Block-level fail-soft is
+        covered separately."""
         line = json.dumps({"type": "progress", "timestamp": "2024-01-01T12:00:00Z"})
-        assert parser._expand_line(line, 0) == []
+        msgs = parser._expand_line(line, 0)
+        assert len(msgs) == 1
+        assert msgs[0].content_type == UNMODELED_RECORD_CONTENT_TYPE
+        assert msgs[0].content == "progress"
 
     def test_expand_invalid_json_returns_empty(self, parser) -> None:
         """Invalid JSON returns empty list."""

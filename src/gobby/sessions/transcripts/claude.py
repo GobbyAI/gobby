@@ -14,6 +14,7 @@ from datetime import UTC, datetime
 from typing import Any, ClassVar
 
 from gobby.sessions.transcripts.base import (
+    UNMODELED_RECORD_CONTENT_TYPE,
     BaseTranscriptParser,
     ParsedMessage,
     ParseEvent,
@@ -24,6 +25,35 @@ from gobby.sessions.transcripts.base import (
 )
 
 logger = logging.getLogger(__name__)
+
+
+def _make_unmodeled_record(
+    *, index: int, msg_type: str, data: dict[str, Any], timestamp: datetime
+) -> ParsedMessage:
+    """Build the non-rendering sentinel for a genuinely-unknown record type.
+
+    Emitted instead of dropping+logging an unrecognized session-envelope record.
+    ``render_incremental`` recognizes ``UNMODELED_RECORD_CONTENT_TYPE`` at the top
+    of its loop, fires one telemetry observation (T2 worklist), and skips it — no
+    card, no group. The real envelope type rides in ``content`` (the renderer
+    reads ``block_type=msg.content``). ``timestamp`` is a required
+    ``ParsedMessage`` field with no semantic role here; the caller passes the
+    record's own timestamp. Provenance (``source`` / ``source_line`` /
+    ``source_ref``) is intentionally left ``None`` so ``annotate_record_source``
+    fills it with the raw line number on the events path; the direct
+    ``parse_line`` fallback resolves it from ``index`` at observation time.
+    """
+    return ParsedMessage(
+        index=index,
+        role="system",
+        content=str(msg_type or "<missing>"),
+        content_type=UNMODELED_RECORD_CONTENT_TYPE,
+        tool_name=None,
+        tool_input=None,
+        tool_result=None,
+        timestamp=timestamp,
+        raw_json=data,
+    )
 
 
 class ClaudeTranscriptParser(BaseTranscriptParser):
@@ -623,10 +653,13 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             pass
 
         else:
-            # Genuinely-unknown record type: keep the discovery signal without
-            # surfacing a card for an unrecognized session envelope.
-            self.error_log.log_unknown_block(
-                index, self.session_id, str(msg_type or "<missing>"), data
+            # Genuinely-unknown record type: emit a non-rendering sentinel so the
+            # discovery signal reaches the T2 observation worklist at render time
+            # (no card, no group), replacing the parser-error.log stopgap.
+            results.append(
+                _make_unmodeled_record(
+                    index=index, msg_type=msg_type, data=data, timestamp=timestamp
+                )
             )
 
         return results
@@ -772,11 +805,12 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
             return None  # known session-metadata envelope record — not rendered
 
         else:
-            # Genuinely-unknown record type: keep the discovery signal (no card).
-            self.error_log.log_unknown_block(
-                index, self.session_id, str(msg_type or "<missing>"), data
+            # Genuinely-unknown record type: emit a non-rendering sentinel so the
+            # discovery signal reaches the T2 observation worklist at render time
+            # (no card), replacing the parser-error.log stopgap.
+            return _make_unmodeled_record(
+                index=index, msg_type=msg_type, data=data, timestamp=timestamp
             )
-            return None
 
         return ParsedMessage(
             index=index,

@@ -7,7 +7,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 from gobby.sessions.transcript_normalization import normalize_transcript_records
-from gobby.sessions.transcripts.base import ParsedMessage
+from gobby.sessions.transcripts.base import NON_MESSAGE_CONTENT_TYPES, ParsedMessage
 
 if TYPE_CHECKING:
     from gobby.sessions.transcripts.claude import ClaudeTranscriptParser
@@ -100,6 +100,9 @@ def _parsed_to_dicts(parsed: list[ParsedMessage]) -> list[dict[str, Any]]:
     """Convert ParsedMessage list to dicts."""
     results: list[dict[str, Any]] = []
     for msg in parsed:
+        if msg.content_type in NON_MESSAGE_CONTENT_TYPES:
+            # Session metadata is not a conversation message — never flattened.
+            continue
         results.append(
             {
                 "session_id": None,

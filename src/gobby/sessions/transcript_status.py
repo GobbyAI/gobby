@@ -27,6 +27,7 @@ from gobby.sessions.transcript_io import (
 from gobby.sessions.transcript_parsing import _parse_json_session
 from gobby.sessions.transcript_paths import _is_json_session_file
 from gobby.sessions.transcript_source import _resolve_effective_source
+from gobby.sessions.transcripts.base import NON_MESSAGE_CONTENT_TYPES
 
 if TYPE_CHECKING:
     from gobby.storage.session_models import Session
@@ -74,13 +75,14 @@ async def _json_transcript_counts(
             data=data,
             session_id=session_id,
         )
-        parsed_message_count = len(
-            _parse_json_session(
-                data,
-                effective_source,
-                session_id=session_id,
-                transcript_path=transcript_path,
-            )
+        parsed = _parse_json_session(
+            data,
+            effective_source,
+            session_id=session_id,
+            transcript_path=transcript_path,
+        )
+        parsed_message_count = sum(
+            1 for m in parsed if m.content_type not in NON_MESSAGE_CONTENT_TYPES
         )
         return raw_record_count, parsed_message_count, detected_source, False
     except (json.JSONDecodeError, ValueError, OSError) as e:

@@ -17,9 +17,15 @@ from gobby.sessions.transcript_render_models import (
     ToolResult,
 )
 from gobby.sessions.transcript_tool_metadata import classify_tool, extract_result_metadata
-from gobby.sessions.transcripts.base import ParsedMessage, TranscriptParserErrorLog
+from gobby.sessions.transcripts.base import (
+    RENDER_SKIP_CONTENT_TYPES,
+    ParsedMessage,
+    TranscriptParserErrorLog,
+)
 
-_INTERNAL_CONTENT_TYPES: frozenset[str] = frozenset({"hook_prompt", "session_title"})
+# Plain-skipped metadata content types (no card, no telemetry). Sourced from
+# base so the parser, stats, index, and reader stay in lockstep on the set.
+_INTERNAL_CONTENT_TYPES: frozenset[str] = RENDER_SKIP_CONTENT_TYPES
 
 
 def _is_hook_feedback(msg: ParsedMessage) -> bool:

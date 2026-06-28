@@ -744,3 +744,43 @@ async def test_index_cache_evicts_beyond_capacity(tmp_path: Path) -> None:
 
     assert len(_INDEX_CACHE) == INDEX_CACHE_MAX_ENTRIES
     clear_index_cache()
+
+
+def test_metadata_excluded_from_display_counts_but_counted_for_parser_position(
+    tmp_path: Path,
+) -> None:
+    """parsed_message_count / role_message_counts exclude session metadata (native
+    titles + the unmodeled-record sentinel), while next_parser_index counts every
+    record so resume offsets stay correct. The two legitimately diverge, and the
+    divergence survives a sidecar round-trip."""
+    lines = [
+        json.dumps(
+            {
+                "type": "assistant",
+                "message": {"content": [{"type": "text", "text": "hello"}]},
+                "timestamp": "2024-01-01T12:00:00Z",
+            }
+        ),
+        json.dumps({"type": "brand-new-envelope", "x": 1, "timestamp": "2024-01-01T12:00:01Z"}),
+        json.dumps({"type": "ai-title", "aiTitle": "A title", "timestamp": "2024-01-01T12:00:02Z"}),
+    ]
+    path = _write(tmp_path, "claude-meta", lines)
+    st = os.stat(path)
+    index = build_index_from_file(path, "claude", SESSION, mtime_ns=st.st_mtime_ns, size=st.st_size)
+
+    # Only the assistant text is a conversation message.
+    assert index.parsed_message_count == 1
+    assert index.role_message_counts == {"assistant": 1}
+    assert index.total_groups == 1
+    # All three records advance parser position; resume must not re-parse them.
+    assert index.next_parser_index == 3
+    assert index.next_parser_index > index.parsed_message_count
+
+    persist_index_sidecar(path, index)
+    loaded = load_index_sidecar(
+        path, "claude", SESSION, seek_mode="byte", mtime_ns=st.st_mtime_ns, size=st.st_size
+    )
+    assert loaded is not None
+    assert loaded.parsed_message_count == 1
+    assert loaded.next_parser_index == 3
+    assert loaded.next_parser_index > loaded.parsed_message_count

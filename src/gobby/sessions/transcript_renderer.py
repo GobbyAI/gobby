@@ -17,7 +17,11 @@ from gobby.sessions.transcript_render_models import (
     ToolResultKind,
 )
 from gobby.sessions.transcript_tool_metadata import classify_tool, extract_result_metadata
-from gobby.sessions.transcripts.base import ParsedMessage, TranscriptParserErrorLog
+from gobby.sessions.transcripts.base import (
+    UNMODELED_RECORD_CONTENT_TYPE,
+    ParsedMessage,
+    TranscriptParserErrorLog,
+)
 
 __all__ = [
     "ContentBlock",
@@ -104,6 +108,18 @@ def render_incremental(
         observation_tracker = ObservationTracker()
 
     for msg in new_messages:
+        if msg.content_type == UNMODELED_RECORD_CONTENT_TYPE:
+            # Genuinely-unknown record-level type: route to the T2 observation
+            # worklist (telemetry) then skip — no card, no group. The real
+            # envelope type rides in msg.content. observation_tracker is non-None
+            # here (defaulted above).
+            observation_tracker.observe_block_type(
+                msg,
+                session_id=session_id,
+                source=source,
+                block_type=(msg.content or "<missing>"),
+            )
+            continue
         if msg.content_type in _INTERNAL_CONTENT_TYPES:
             continue
 

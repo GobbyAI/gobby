@@ -68,7 +68,11 @@ from gobby.sessions.transcript_source import (
     _detect_source_from_jsonl_lines,
     _detect_source_from_path,
 )
-from gobby.sessions.transcripts.base import ParsedMessage, RawLine
+from gobby.sessions.transcripts.base import (
+    NON_MESSAGE_CONTENT_TYPES,
+    ParsedMessage,
+    RawLine,
+)
 
 if TYPE_CHECKING:
     from gobby.sessions.transcripts.base import BaseTranscriptParser
@@ -148,7 +152,7 @@ class TranscriptIndex:
 
     boundaries: list[GroupBoundary]
     total_groups: int
-    parsed_message_count: int
+    parsed_message_count: int  # display/flat-row count; excludes session metadata
     raw_record_count: int
     source: str
     session_id: str | None
@@ -160,7 +164,7 @@ class TranscriptIndex:
     parsed_boundaries: list[ParsedBoundary] = field(default_factory=list)
     role_message_counts: dict[str, int] = field(default_factory=dict)
     session_stats: MessageStats | None = None
-    next_parser_index: int | None = None
+    next_parser_index: int | None = None  # parser resume position; counts every record
     next_raw_line_no: int | None = None
     safe_to_start_event: bool | None = None
     logical_size: int | None = None
@@ -382,12 +386,19 @@ class TranscriptIndexAppender:
             for offset_in_event, record in enumerate(records):
                 if not isinstance(record, ParsedMessage):
                     continue
-                stats_messages.append(record)
-                self.index.parsed_message_count += 1
-                self._role_counts[record.role] = self._role_counts.get(record.role, 0) + 1
 
-                if record.content_type in ("tool_use", "mcp_tool_use") and record.tool_use_id:
-                    self.index.tool_first_open.setdefault(record.tool_use_id, record.index)
+                # Session metadata (native titles, unmodeled-record sentinel) is
+                # excluded from display/flat counters, but still advances parser
+                # position via _next_start_index / event.parsed_index below.
+                # render_incremental runs unconditionally so the unmodeled-record
+                # sentinel is still observed (and metadata produces no group).
+                if record.content_type not in NON_MESSAGE_CONTENT_TYPES:
+                    stats_messages.append(record)
+                    self.index.parsed_message_count += 1
+                    self._role_counts[record.role] = self._role_counts.get(record.role, 0) + 1
+
+                    if record.content_type in ("tool_use", "mcp_tool_use") and record.tool_use_id:
+                        self.index.tool_first_open.setdefault(record.tool_use_id, record.index)
 
                 _completed, self._state = render_incremental(
                     [record],

@@ -79,13 +79,15 @@ class WindowResult:
     offset by it, not by the requested ``limit`` (a degraded/short page is
     shorter). ``total_groups`` is the rendered-group pagination total, while
     ``parsed_message_count`` is the parsed-message total used only for the
-    "N messages" display (different unit — never page on it).
+    "N messages" display (different unit — never page on it). It excludes
+    session metadata (titles, the unmodeled-record sentinel); see
+    ``NON_MESSAGE_CONTENT_TYPES``.
     """
 
     groups: list[RenderedMessage]
     returned_count: int
     total_groups: int
-    parsed_message_count: int = 0
+    parsed_message_count: int = 0  # display total; excludes session metadata
     degraded: bool = False
     degraded_reason: str | None = None
     boundaries_used: int = field(default=0, repr=False)

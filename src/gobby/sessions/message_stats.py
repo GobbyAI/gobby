@@ -12,6 +12,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol, TypedDict
 
+from gobby.sessions.transcripts.base import NON_MESSAGE_CONTENT_TYPES
+
 _LAST_ASSISTANT_CONTENT_LIMIT = 500
 
 
@@ -36,7 +38,9 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
 
     The predicate, shared by the live and batch stat writers:
 
-    - ``message_count`` counts every parsed message.
+    - ``message_count`` counts every parsed message except session-metadata
+      content types (``NON_MESSAGE_CONTENT_TYPES``: native titles, hook prompts,
+      and the unmodeled-record sentinel), which are not conversation messages.
     - ``turn_count`` counts assistant messages whose ``content_type`` is
       ``"text"`` (one completed assistant text turn each).
     - ``tool_call_count`` counts messages carrying a truthy ``tool_name``.
@@ -50,9 +54,13 @@ def compute_message_stats(messages: Sequence[MessageProtocol]) -> MessageStats:
     last_assistant_content: str | None = None
 
     for msg in messages:
+        content_type = _message_attr(msg, "content_type")
+        if content_type in NON_MESSAGE_CONTENT_TYPES:
+            # Session metadata (native titles, unmodeled-record sentinel) is not
+            # a conversation message — never counted.
+            continue
         message_count += 1
         role = _message_attr(msg, "role")
-        content_type = _message_attr(msg, "content_type")
         if role == "assistant" and content_type == "text":
             turn_count += 1
             content = _message_attr(msg, "content")
