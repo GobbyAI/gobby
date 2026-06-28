@@ -392,25 +392,32 @@ fn apply_ai_outcome_to_markdown(content: &str, outcome: CodewikiAiOutcome) -> St
         return content.to_string();
     };
 
+    let top_level_indent = frontmatter_top_level_indent(frontmatter_body);
     let mut out = String::from("---\n");
     for line in frontmatter_body.lines() {
-        if !is_ai_frontmatter_line(line) {
+        if !is_ai_frontmatter_line(line, top_level_indent) {
             out.push_str(line);
             out.push('\n');
         }
     }
-    out.push_str(AI_ROUTE_KEY);
-    out.push_str(": ");
-    out.push_str(outcome.route_label());
-    out.push('\n');
-    out.push_str(AI_FALLBACK_KEY);
-    out.push_str(": ");
-    out.push_str(if outcome.fallback { "true" } else { "false" });
-    out.push('\n');
-    out.push_str(AI_GENERATION_STATUS_KEY);
-    out.push_str(": ");
-    out.push_str(outcome.status.as_str());
-    out.push('\n');
+    push_ai_frontmatter_line(
+        &mut out,
+        top_level_indent,
+        AI_ROUTE_KEY,
+        outcome.route_label(),
+    );
+    push_ai_frontmatter_line(
+        &mut out,
+        top_level_indent,
+        AI_FALLBACK_KEY,
+        if outcome.fallback { "true" } else { "false" },
+    );
+    push_ai_frontmatter_line(
+        &mut out,
+        top_level_indent,
+        AI_GENERATION_STATUS_KEY,
+        outcome.status.as_str(),
+    );
     out.push_str("---\n");
 
     let rest = strip_existing_ai_notice(rest);
@@ -443,6 +450,14 @@ fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
     None
 }
 
+fn push_ai_frontmatter_line(out: &mut String, indent: &str, key: &str, value: &str) {
+    out.push_str(indent);
+    out.push_str(key);
+    out.push_str(": ");
+    out.push_str(value);
+    out.push('\n');
+}
+
 /// Lane B observability fields parsed back out of a page's rendered
 /// frontmatter, mirrored into `_meta/codewiki.json` (#978). Only the tool-loop
 /// fields are captured; every other frontmatter key is ignored.
@@ -463,27 +478,54 @@ fn lane_observability_from_content(content: &str) -> LaneObservability {
     serde_yaml::from_str(frontmatter_body).unwrap_or_default()
 }
 
-fn is_ai_frontmatter_line(line: &str) -> bool {
-    if has_frontmatter_indentation(line) {
-        return false;
-    }
-    frontmatter_line_has_key(line, AI_ROUTE_KEY)
-        || frontmatter_line_has_key(line, AI_FALLBACK_KEY)
-        || frontmatter_line_has_key(line, AI_GENERATION_STATUS_KEY)
+fn is_ai_frontmatter_line(line: &str, top_level_indent: &str) -> bool {
+    frontmatter_line_has_key(line, top_level_indent, AI_ROUTE_KEY)
+        || frontmatter_line_has_key(line, top_level_indent, AI_FALLBACK_KEY)
+        || frontmatter_line_has_key(line, top_level_indent, AI_GENERATION_STATUS_KEY)
 }
 
-fn frontmatter_line_has_key(line: &str, key: &str) -> bool {
-    if has_frontmatter_indentation(line) {
+fn frontmatter_line_has_key(line: &str, top_level_indent: &str, key: &str) -> bool {
+    let Some(candidate) = line.strip_prefix(top_level_indent) else {
+        return false;
+    };
+    if starts_with_frontmatter_indentation(candidate) {
         return false;
     }
-    line.strip_prefix(key)
+    candidate
+        .strip_prefix(key)
         .is_some_and(|suffix| suffix.starts_with(':'))
 }
 
-fn has_frontmatter_indentation(line: &str) -> bool {
+fn starts_with_frontmatter_indentation(line: &str) -> bool {
     line.as_bytes()
         .first()
         .is_some_and(|byte| matches!(byte, b' ' | b'\t'))
+}
+
+fn frontmatter_top_level_indent(frontmatter_body: &str) -> &str {
+    frontmatter_body
+        .lines()
+        .filter_map(frontmatter_mapping_indent)
+        .min_by_key(|indent| indent.len())
+        .unwrap_or("")
+}
+
+fn frontmatter_mapping_indent(line: &str) -> Option<&str> {
+    let indent_len = line
+        .as_bytes()
+        .iter()
+        .take_while(|byte| matches!(byte, b' ' | b'\t'))
+        .count();
+    let indent = &line[..indent_len];
+    let candidate = &line[indent_len..];
+    if candidate.is_empty() || candidate.starts_with('#') || candidate.starts_with('-') {
+        return None;
+    }
+    let (key, _) = candidate.split_once(':')?;
+    if key.trim().is_empty() {
+        return None;
+    }
+    Some(indent)
 }
 
 fn strip_existing_ai_notice(rest: &str) -> &str {

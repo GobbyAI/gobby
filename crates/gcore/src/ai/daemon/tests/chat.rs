@@ -2,6 +2,8 @@ use super::*;
 use crate::ai::generation::{
     ChatCompletionRequest, ChatMessage, ChatTransport, DaemonChatTransport, ToolChoice, ToolSchema,
 };
+use crate::ai_types::AiError;
+use crate::config::AiCapability;
 use serde_json::json;
 
 /// One tool-call round-trip on the daemon route: the transport POSTs the
@@ -21,7 +23,7 @@ fn daemon_chat_transport_round_trips_a_tool_call() {
     // from there.
     cfg.bindings.text_generate.reasoning_effort = Some("high".to_string());
 
-    let transport = DaemonChatTransport::new(&cfg, "feature_high").expect("transport builds");
+    let transport = DaemonChatTransport::new(&cfg, " feature_high\t").expect("transport builds");
     let tools = vec![ToolSchema {
         name: "search_code".to_string(),
         description: "search the code index".to_string(),
@@ -102,4 +104,27 @@ fn daemon_chat_transport_omits_unset_fields() {
     assert!(body.get("tools").is_none());
     assert!(body.get("tool_choice").is_none());
     assert_eq!(completion.content.as_deref(), Some("done"));
+}
+
+#[test]
+fn daemon_chat_transport_rejects_blank_profile() {
+    let cfg = test_context(None);
+    let err = match DaemonChatTransport::new(&cfg, " \t ") {
+        Ok(_) => panic!("blank profile accepted"),
+        Err(err) => err,
+    };
+
+    match err {
+        AiError::NotConfigured {
+            capability,
+            message,
+        } => {
+            assert_eq!(
+                capability.as_deref(),
+                Some(AiCapability::TextGenerate.as_str())
+            );
+            assert_eq!(message, "daemon profile must not be blank");
+        }
+        other => panic!("unexpected error: {other:?}"),
+    }
 }

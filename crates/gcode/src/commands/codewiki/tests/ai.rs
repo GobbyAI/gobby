@@ -557,73 +557,161 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
 
 #[test]
 fn ai_frontmatter_rewrite_preserves_nested_ai_named_keys() {
-    let project = tempfile::tempdir().expect("project tempdir");
-    let out_dir = project.path().join("codewiki");
-    let doc = BuiltDoc::healthy(
-        "code/repo.md",
-        concat!(
-            "---\n",
-            "title: Repo\n",
-            "type: repo\n",
-            "metadata:\n",
-            "  ai_route: nested-route\n",
-            "  ai_fallback: nested-fallback\n",
-            "  ai_generation_status: nested-status\n",
-            "ai_route: stale-route\n",
-            "ai_fallback: true\n",
-            "ai_generation_status: stale-status\n",
-            "---\n",
-            "# Repo\n\n",
-            "Body.\n",
-        )
-        .to_string(),
-    );
+    struct Case {
+        name: &'static str,
+        path: &'static str,
+        top_level_indent: &'static str,
+        content: &'static str,
+    }
 
-    let mut sink = DocSink::open(project.path(), &out_dir, "sections")
-        .expect("sink opens")
-        .with_ai_outcome(CodewikiAiOutcome::generated(AiRouting::Daemon, false));
-    sink.persist(&doc).expect("doc persists");
-    sink.finish(None).expect("sink finishes");
+    for case in [
+        Case {
+            name: "root",
+            path: "code/root.md",
+            top_level_indent: "",
+            content: concat!(
+                "---\n",
+                "title: Repo\n",
+                "type: repo\n",
+                "metadata:\n",
+                "  ai_route: nested-route\n",
+                "  ai_fallback: nested-fallback\n",
+                "  ai_generation_status: nested-status\n",
+                "ai_route: stale-route\n",
+                "ai_fallback: true\n",
+                "ai_generation_status: stale-status\n",
+                "---\n",
+                "# Repo\n\n",
+                "Body.\n",
+            ),
+        },
+        Case {
+            name: "indented root",
+            path: "code/indented.md",
+            top_level_indent: "  ",
+            content: concat!(
+                "---\n",
+                "  title: Repo\n",
+                "  type: repo\n",
+                "  metadata:\n",
+                "    ai_route: nested-route\n",
+                "    ai_fallback: nested-fallback\n",
+                "    ai_generation_status: nested-status\n",
+                "  ai_route: stale-route\n",
+                "  ai_fallback: true\n",
+                "  ai_generation_status: stale-status\n",
+                "---\n",
+                "# Repo\n\n",
+                "Body.\n",
+            ),
+        },
+    ] {
+        let project = tempfile::tempdir().expect("project tempdir");
+        let out_dir = project.path().join("codewiki");
+        let doc = BuiltDoc::healthy(case.path, case.content.to_string());
 
-    let markdown = std::fs::read_to_string(out_dir.join("code/repo.md")).expect("read page");
-    let frontmatter = parse_yaml_frontmatter(&markdown);
-    let metadata = frontmatter.get("metadata").expect("metadata");
-    assert_eq!(
-        metadata
-            .get(AI_ROUTE_KEY)
-            .and_then(serde_yaml::Value::as_str),
-        Some("nested-route")
-    );
-    assert_eq!(
-        metadata
-            .get(AI_FALLBACK_KEY)
-            .and_then(serde_yaml::Value::as_str),
-        Some("nested-fallback")
-    );
-    assert_eq!(
-        metadata
-            .get(AI_GENERATION_STATUS_KEY)
-            .and_then(serde_yaml::Value::as_str),
-        Some("nested-status")
-    );
-    assert_eq!(
-        frontmatter
-            .get(AI_ROUTE_KEY)
-            .and_then(serde_yaml::Value::as_str),
-        Some("daemon")
-    );
-    assert_eq!(
-        frontmatter
-            .get(AI_FALLBACK_KEY)
-            .and_then(serde_yaml::Value::as_bool),
-        Some(false)
-    );
-    assert_eq!(
-        frontmatter
-            .get(AI_GENERATION_STATUS_KEY)
-            .and_then(serde_yaml::Value::as_str),
-        Some("generated")
-    );
+        let mut sink = DocSink::open(project.path(), &out_dir, "sections")
+            .expect("sink opens")
+            .with_ai_outcome(CodewikiAiOutcome::generated(AiRouting::Daemon, false));
+        sink.persist(&doc).expect("doc persists");
+        sink.finish(None).expect("sink finishes");
+
+        let markdown = std::fs::read_to_string(out_dir.join(case.path)).expect("read page");
+        for key in [AI_ROUTE_KEY, AI_FALLBACK_KEY, AI_GENERATION_STATUS_KEY] {
+            let top_level_pattern = format!("\n{}{}: ", case.top_level_indent, key);
+            assert_eq!(
+                markdown.matches(&top_level_pattern).count(),
+                1,
+                "{} top-level {key} count",
+                case.name
+            );
+        }
+        assert!(
+            markdown.contains(&format!(
+                "\n{}{}: daemon\n",
+                case.top_level_indent, AI_ROUTE_KEY
+            )),
+            "{} route indentation",
+            case.name
+        );
+        assert!(
+            markdown.contains(&format!(
+                "\n{}{}: false\n",
+                case.top_level_indent, AI_FALLBACK_KEY
+            )),
+            "{} fallback indentation",
+            case.name
+        );
+        assert!(
+            markdown.contains(&format!(
+                "\n{}{}: generated\n",
+                case.top_level_indent, AI_GENERATION_STATUS_KEY
+            )),
+            "{} status indentation",
+            case.name
+        );
+        assert!(
+            !markdown.contains("stale-route"),
+            "{} stale route",
+            case.name
+        );
+        assert!(
+            !markdown.contains("stale-status"),
+            "{} stale status",
+            case.name
+        );
+
+        let frontmatter = parse_yaml_frontmatter(&markdown);
+        let metadata = frontmatter.get("metadata").expect("metadata");
+        assert_eq!(
+            metadata
+                .get(AI_ROUTE_KEY)
+                .and_then(serde_yaml::Value::as_str),
+            Some("nested-route"),
+            "{} nested route",
+            case.name
+        );
+        assert_eq!(
+            metadata
+                .get(AI_FALLBACK_KEY)
+                .and_then(serde_yaml::Value::as_str),
+            Some("nested-fallback"),
+            "{} nested fallback",
+            case.name
+        );
+        assert_eq!(
+            metadata
+                .get(AI_GENERATION_STATUS_KEY)
+                .and_then(serde_yaml::Value::as_str),
+            Some("nested-status"),
+            "{} nested status",
+            case.name
+        );
+        assert_eq!(
+            frontmatter
+                .get(AI_ROUTE_KEY)
+                .and_then(serde_yaml::Value::as_str),
+            Some("daemon"),
+            "{} route",
+            case.name
+        );
+        assert_eq!(
+            frontmatter
+                .get(AI_FALLBACK_KEY)
+                .and_then(serde_yaml::Value::as_bool),
+            Some(false),
+            "{} fallback",
+            case.name
+        );
+        assert_eq!(
+            frontmatter
+                .get(AI_GENERATION_STATUS_KEY)
+                .and_then(serde_yaml::Value::as_str),
+            Some("generated"),
+            "{} status",
+            case.name
+        );
+    }
 }
 
 #[test]

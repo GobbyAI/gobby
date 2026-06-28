@@ -140,11 +140,18 @@ impl<'a> DaemonChatTransport<'a> {
     /// Build a daemon chat transport for a resolved feature `profile`. The local
     /// CLI token is read now so a missing token fails fast before the loop runs.
     pub fn new(context: &'a AiContext, profile: impl Into<String>) -> Result<Self, AiError> {
+        let profile = profile.into().trim().to_string();
+        if profile.is_empty() {
+            return Err(AiError::not_configured(
+                Some(AiCapability::TextGenerate.as_str().to_string()),
+                "daemon profile must not be blank",
+            ));
+        }
         let client = daemon_client()?;
         let token = read_local_cli_token()?;
         Ok(Self {
             context,
-            profile: profile.into(),
+            profile,
             client,
             token,
         })
