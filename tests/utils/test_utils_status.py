@@ -244,6 +244,8 @@ class TestFormatStatusMessage:
                     "gcode_path": None,
                     "ghook": None,
                     "ghook_path": None,
+                    "gwiki": "0.1.0",
+                    "gwiki_path": "/Users/test/.gobby/bin/gwiki",
                 },
                 "coding_clis": {"claude": "installed", "gemini": None, "codex": None, "hooks": {}},
                 "dependencies": {
@@ -261,6 +263,8 @@ class TestFormatStatusMessage:
 
         assert "Gobby:" in result
         assert "0.3.6" in result
+        assert "gwiki:" in result
+        assert "0.1.0 (/Users/test/.gobby/bin/gwiki)" in result
         assert "Coding CLIs:" in result
         assert "Claude Code:" in result
         assert "Dependencies:" in result

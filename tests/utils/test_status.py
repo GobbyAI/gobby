@@ -147,7 +147,7 @@ class TestStatusUtils:
                     "gcode_path": None,
                     "ghook": "0.2.0",
                     "ghook_path": "/Users/test/.gobby/bin/ghook",
-                    "gwiki": "0.3.0",
+                    "gwiki": "0.6.6",
                     "gwiki_path": "/Users/test/.gobby/bin/gwiki",
                 },
                 "coding_clis": {
@@ -171,6 +171,7 @@ class TestStatusUtils:
         assert "0.3.6" in msg
         assert "0.2.1" in msg
         assert "0.2.0" in msg
+        assert "0.6.6" in msg
         assert "Claude Code:" in msg
         assert "tmux:" in msg
         assert "git:" in msg

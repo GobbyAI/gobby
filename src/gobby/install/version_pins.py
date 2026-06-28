@@ -4,9 +4,9 @@ from __future__ import annotations
 
 MANAGED_BIN_VERSION_PINS: dict[str, str] = {
     # Floors track published GobbyAI/gobby-cli release tags.
-    "ghook": "0.4.6",
-    "gcode": "1.0.0",
-    "gwiki": "0.3.0",
+    "ghook": "0.6.2",
+    "gcode": "1.3.4",
+    "gwiki": "0.6.6",
 }
 
 __all__ = ["MANAGED_BIN_VERSION_PINS"]

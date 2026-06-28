@@ -256,6 +256,11 @@ def format_status_message(
             lines.append(f"  {'ghook:':<{_LW}}{gobby['ghook']}{path_str}")
         elif gobby.get("ghook") is None:
             lines.append(f"  {'ghook:':<{_LW}}not installed")
+        if gobby.get("gwiki"):
+            path_str = f" ({gobby['gwiki_path']})" if gobby.get("gwiki_path") else ""
+            lines.append(f"  {'gwiki:':<{_LW}}{gobby['gwiki']}{path_str}")
+        elif gobby.get("gwiki") is None:
+            lines.append(f"  {'gwiki:':<{_LW}}not installed")
         lines.append("")
 
     # ---- Coding CLIs ----
