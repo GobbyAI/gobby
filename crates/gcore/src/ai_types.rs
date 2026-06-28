@@ -204,7 +204,19 @@ impl fmt::Display for AiError {
             }
             Self::TransportFailure { source, .. } => write!(f, "AI transport failed: {source}"),
             Self::RateLimited { .. } => write!(f, "AI request was rate limited"),
-            Self::HttpStatus { status, .. } => write!(f, "AI endpoint returned HTTP {status}"),
+            Self::HttpStatus { status, body } => {
+                match body
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|value| !value.is_empty())
+                {
+                    Some(value) => {
+                        let snippet: String = value.chars().take(400).collect();
+                        write!(f, "AI endpoint returned HTTP {status}: {snippet}")
+                    }
+                    None => write!(f, "AI endpoint returned HTTP {status}"),
+                }
+            }
             Self::ParseFailure { source } => write!(f, "AI response parse failed: {source}"),
         }
     }
@@ -303,6 +315,26 @@ fn duration_to_ms(duration: Duration) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn http_status_display_includes_bounded_response_body() {
+        let error = AiError::HttpStatus {
+            status: 400,
+            body: Some("{\"error\":\"context length exceeded\"}".to_string()),
+        };
+        let rendered = error.to_string();
+        assert!(rendered.contains("HTTP 400"));
+        assert!(rendered.contains("context length exceeded"));
+    }
+
+    #[test]
+    fn http_status_display_omits_empty_body() {
+        let error = AiError::HttpStatus {
+            status: 503,
+            body: Some("   ".to_string()),
+        };
+        assert_eq!(error.to_string(), "AI endpoint returned HTTP 503");
+    }
 
     #[test]
     fn ai_error_is_transport_neutral() {

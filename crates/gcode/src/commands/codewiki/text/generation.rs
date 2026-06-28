@@ -679,6 +679,30 @@ pub(crate) type ToolLoopGenerator<'a> = dyn FnMut(&str, &str) -> LaneBResult + '
 /// Run one Lane B tool loop against the gcode index for the given transport,
 /// returning the classified outcome plus the executor's data-source
 /// degradation. Builds a fresh read-only executor per call.
+/// Maximum byte size of the Lane B seed (user) prompt. The tool loop lets the
+/// model fetch its own grounding, so the seed only needs to orient it; bounding
+/// it keeps the request inside a tool-capable model's effective context (#993).
+const LANE_B_SEED_MAX_BYTES: usize = 16 * 1024;
+
+/// Bound the Lane B seed prompt to [`LANE_B_SEED_MAX_BYTES`], truncating on a
+/// char boundary and appending a tool-investigation note so the model fetches
+/// any details beyond the seed via its tools.
+fn bound_seed_prompt(prompt: &str) -> String {
+    if prompt.len() <= LANE_B_SEED_MAX_BYTES {
+        return prompt.to_string();
+    }
+    let mut end = LANE_B_SEED_MAX_BYTES;
+    while end > 0 && !prompt.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n\n[Seed truncated to fit context. Use the provided tools (search_code, \
+         outline_file, read_symbol, read_file, grep_repo, find_callers, find_usages, \
+         imports) to investigate the codebase for any details beyond this excerpt.]",
+        &prompt[..end]
+    )
+}
+
 fn run_lane_b_loop(
     transport: &dyn ChatTransport,
     ctx: &Context,
@@ -691,13 +715,19 @@ fn run_lane_b_loop(
         Ok(executor) => executor,
         Err(_) => return LaneBResult::unavailable(),
     };
+    // Lane B's premise is that the model gathers its own grounding via tools, so
+    // the seed only orients it. An unbounded pre-assembled aggregate seed (full
+    // source excerpts + repo-wide summary dumps — ~95KB observed) overruns a
+    // tool-capable model's effective context and 400s the request (#993); bound
+    // it and let the model fetch the rest via tools.
+    let prompt = bound_seed_prompt(prompt);
     let messages = vec![
         ChatMessage::system(system.to_string()),
-        ChatMessage::user(prompt.to_string()),
+        ChatMessage::user(prompt.clone()),
     ];
     let limits = ToolLoopLimits::default();
     let outcome = match run_tool_loop(transport, &mut executor, messages, &limits, max_tokens) {
-        Ok(outcome) => GenerationOutcome::from_tool_loop(outcome, prompt),
+        Ok(outcome) => GenerationOutcome::from_tool_loop(outcome, &prompt),
         Err(_) => GenerationOutcome::unavailable(),
     };
     LaneBResult {
@@ -931,6 +961,25 @@ mod tests {
     use gobby_core::ai::generation::{
         FEATURE_HIGH, FEATURE_LOW, FEATURE_MID, ToolLoopObservability,
     };
+
+    #[test]
+    fn bound_seed_prompt_passes_small_prompts_through() {
+        let prompt = "short seed";
+        assert_eq!(bound_seed_prompt(prompt), prompt);
+    }
+
+    #[test]
+    fn bound_seed_prompt_truncates_oversized_seed_on_a_char_boundary_with_a_tool_note() {
+        // A multi-byte char straddling the cap must not be split mid-codepoint.
+        let prompt = "é".repeat(LANE_B_SEED_MAX_BYTES); // 2 bytes each → well over the cap
+        let bounded = bound_seed_prompt(&prompt);
+        assert!(bounded.is_char_boundary(0) && std::str::from_utf8(bounded.as_bytes()).is_ok());
+        assert!(bounded.contains("[Seed truncated to fit context."));
+        assert!(bounded.contains("search_code"));
+        // The retained prefix is bounded; the note adds a small fixed suffix.
+        assert!(bounded.len() < prompt.len());
+        assert!(bounded.len() <= LANE_B_SEED_MAX_BYTES + 512);
+    }
 
     #[test]
     fn prompt_tier_maps_to_feature_profiles() {
