@@ -6,7 +6,7 @@ use std::time::Duration;
 use serde_json::{Value, json};
 
 use super::tool_loop::run_tool_loop_with_clock;
-use super::transport::{build_request_body, parse_completion};
+use super::transport::{build_daemon_chat_body, build_request_body, parse_completion};
 use super::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport,
     DirectChatTransport, DirectGenerationTarget, FEATURE_HIGH, FEATURE_LOW, FEATURE_MID,
@@ -842,4 +842,84 @@ fn build_request_body_suppresses_tools_for_lane_a() {
     assert_eq!(body["model"], "m");
     assert_eq!(body["messages"][0]["role"], "user");
     assert_eq!(body["messages"][0]["content"], "hi");
+}
+
+#[test]
+fn build_request_body_threads_reasoning_effort() {
+    let messages = vec![ChatMessage::user("hi")];
+    let request = ChatCompletionRequest {
+        messages: &messages,
+        tools: &[],
+        max_tokens: None,
+    };
+
+    // Present -> forwarded so direct Lane A/B keep their profile reasoning pin.
+    let target = DirectGenerationTarget {
+        model: Some("m".to_string()),
+        reasoning_effort: Some("high".to_string()),
+        ..DirectGenerationTarget::default()
+    };
+    let body = build_request_body(&target, &request);
+    assert_eq!(body["reasoning_effort"], "high");
+
+    // Absent / blank -> key omitted entirely.
+    let unset = DirectGenerationTarget {
+        model: Some("m".to_string()),
+        reasoning_effort: Some("   ".to_string()),
+        ..DirectGenerationTarget::default()
+    };
+    assert!(
+        build_request_body(&unset, &request)
+            .get("reasoning_effort")
+            .is_none()
+    );
+    let none = DirectGenerationTarget {
+        model: Some("m".to_string()),
+        ..DirectGenerationTarget::default()
+    };
+    assert!(
+        build_request_body(&none, &request)
+            .get("reasoning_effort")
+            .is_none()
+    );
+}
+
+#[test]
+fn build_daemon_chat_body_forwards_profile_project_and_tools() {
+    let tools = vec![ToolSchema {
+        name: "outline_file".to_string(),
+        description: "outline a file".to_string(),
+        parameters: json!({"type":"object"}),
+    }];
+    let messages = vec![ChatMessage::user("map the crate")];
+    let request = ChatCompletionRequest {
+        messages: &messages,
+        tools: &tools,
+        max_tokens: Some(512),
+    };
+
+    let body = build_daemon_chat_body("feature_high", Some("project-9"), Some("high"), &request);
+    assert_eq!(body["profile"], "feature_high");
+    assert_eq!(body["project_id"], "project-9");
+    assert_eq!(body["reasoning_effort"], "high");
+    assert_eq!(body["max_tokens"], 512);
+    assert_eq!(body["tool_choice"], "auto");
+    assert_eq!(body["tools"][0]["function"]["name"], "outline_file");
+    // The daemon resolves the profile to a provider/model; none is pinned here.
+    assert!(body.get("model").is_none());
+    assert!(body.get("provider").is_none());
+
+    // Unset project_id / reasoning_effort are omitted, and Lane A style empty
+    // tools forward neither tools nor tool_choice.
+    let lane_a = ChatCompletionRequest {
+        messages: &messages,
+        tools: &[],
+        max_tokens: None,
+    };
+    let body = build_daemon_chat_body("feature_high", None, None, &lane_a);
+    assert_eq!(body["profile"], "feature_high");
+    assert!(body.get("project_id").is_none());
+    assert!(body.get("reasoning_effort").is_none());
+    assert!(body.get("tools").is_none());
+    assert!(body.get("tool_choice").is_none());
 }

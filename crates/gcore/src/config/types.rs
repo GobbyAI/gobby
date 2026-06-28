@@ -90,6 +90,14 @@ pub enum AiCapability {
     AudioTranslate,
     VisionExtract,
     TextGenerate,
+    /// Tool-calling chat completions (Lane B). A distinct capability so the
+    /// daemon can advertise tool-call support separately (`feature_high` proving
+    /// text generation says nothing about tool-call support), but it reuses the
+    /// `ai.text_generate.*` config tree — there is no parallel `ai.tool_chat.*`
+    /// tree. Every config key method below maps it onto the text_generate keys;
+    /// only [`as_str`](Self::as_str) differs, reporting `tool_chat` to the
+    /// daemon registry.
+    ToolChat,
 }
 
 impl AiCapability {
@@ -100,6 +108,7 @@ impl AiCapability {
             Self::AudioTranslate => "audio_translate",
             Self::VisionExtract => "vision_extract",
             Self::TextGenerate => "text_generate",
+            Self::ToolChat => "tool_chat",
         }
     }
 
@@ -109,7 +118,8 @@ impl AiCapability {
             Self::AudioTranscribe => ai_keys::AUDIO_TRANSCRIBE_NAMESPACE,
             Self::AudioTranslate => ai_keys::AUDIO_TRANSLATE_NAMESPACE,
             Self::VisionExtract => ai_keys::VISION_EXTRACT_NAMESPACE,
-            Self::TextGenerate => ai_keys::TEXT_GENERATE_NAMESPACE,
+            // ToolChat reuses the text_generate config namespace.
+            Self::TextGenerate | Self::ToolChat => ai_keys::TEXT_GENERATE_NAMESPACE,
         }
     }
 
@@ -119,7 +129,7 @@ impl AiCapability {
             Self::AudioTranscribe => ai_keys::AUDIO_TRANSCRIBE_ROUTING,
             Self::AudioTranslate => ai_keys::AUDIO_TRANSLATE_ROUTING,
             Self::VisionExtract => ai_keys::VISION_EXTRACT_ROUTING,
-            Self::TextGenerate => ai_keys::TEXT_GENERATE_ROUTING,
+            Self::TextGenerate | Self::ToolChat => ai_keys::TEXT_GENERATE_ROUTING,
         }
     }
 
@@ -129,7 +139,7 @@ impl AiCapability {
             Self::AudioTranscribe => ai_keys::AUDIO_TRANSCRIBE_TRANSPORT,
             Self::AudioTranslate => ai_keys::AUDIO_TRANSLATE_TRANSPORT,
             Self::VisionExtract => ai_keys::VISION_EXTRACT_TRANSPORT,
-            Self::TextGenerate => ai_keys::TEXT_GENERATE_TRANSPORT,
+            Self::TextGenerate | Self::ToolChat => ai_keys::TEXT_GENERATE_TRANSPORT,
         }
     }
 
@@ -139,7 +149,7 @@ impl AiCapability {
             Self::AudioTranscribe => ai_keys::AUDIO_TRANSCRIBE_API_BASE,
             Self::AudioTranslate => ai_keys::AUDIO_TRANSLATE_API_BASE,
             Self::VisionExtract => ai_keys::VISION_EXTRACT_API_BASE,
-            Self::TextGenerate => ai_keys::TEXT_GENERATE_API_BASE,
+            Self::TextGenerate | Self::ToolChat => ai_keys::TEXT_GENERATE_API_BASE,
         }
     }
 
@@ -149,7 +159,7 @@ impl AiCapability {
             Self::AudioTranscribe => ai_keys::AUDIO_TRANSCRIBE_API_KEY,
             Self::AudioTranslate => ai_keys::AUDIO_TRANSLATE_API_KEY,
             Self::VisionExtract => ai_keys::VISION_EXTRACT_API_KEY,
-            Self::TextGenerate => ai_keys::TEXT_GENERATE_API_KEY,
+            Self::TextGenerate | Self::ToolChat => ai_keys::TEXT_GENERATE_API_KEY,
         }
     }
 
@@ -159,7 +169,7 @@ impl AiCapability {
             Self::AudioTranscribe => ai_keys::AUDIO_TRANSCRIBE_MODEL,
             Self::AudioTranslate => ai_keys::AUDIO_TRANSLATE_MODEL,
             Self::VisionExtract => ai_keys::VISION_EXTRACT_MODEL,
-            Self::TextGenerate => ai_keys::TEXT_GENERATE_MODEL,
+            Self::TextGenerate | Self::ToolChat => ai_keys::TEXT_GENERATE_MODEL,
         }
     }
 
@@ -169,7 +179,7 @@ impl AiCapability {
             Self::AudioTranscribe => ai_keys::AUDIO_TRANSCRIBE_PROVIDER,
             Self::AudioTranslate => ai_keys::AUDIO_TRANSLATE_PROVIDER,
             Self::VisionExtract => ai_keys::VISION_EXTRACT_PROVIDER,
-            Self::TextGenerate => ai_keys::TEXT_GENERATE_PROVIDER,
+            Self::TextGenerate | Self::ToolChat => ai_keys::TEXT_GENERATE_PROVIDER,
         }
     }
 }
@@ -184,6 +194,7 @@ impl std::str::FromStr for AiCapability {
             "audio_translate" => Ok(Self::AudioTranslate),
             "vision_extract" => Ok(Self::VisionExtract),
             "text_generate" => Ok(Self::TextGenerate),
+            "tool_chat" => Ok(Self::ToolChat),
             value => Err(ParseAiCapabilityError {
                 value: value.to_string(),
             }),

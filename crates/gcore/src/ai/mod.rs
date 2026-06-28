@@ -258,7 +258,9 @@ pub(crate) fn timeout_for(capability: AiCapability) -> Duration {
         AiCapability::AudioTranscribe | AiCapability::AudioTranslate => STT_CHUNK_TIMEOUT,
         AiCapability::Embed => EMBEDDINGS_TIMEOUT,
         AiCapability::VisionExtract => VISION_TIMEOUT,
-        AiCapability::TextGenerate => TEXT_GENERATE_TIMEOUT,
+        // Each tool-chat turn is a full reasoning generation; share the
+        // text-generation budget rather than the snappy vision/embedding one.
+        AiCapability::TextGenerate | AiCapability::ToolChat => TEXT_GENERATE_TIMEOUT,
     }
 }
 

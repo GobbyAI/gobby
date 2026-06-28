@@ -102,7 +102,10 @@ impl AiBindings {
             AiCapability::AudioTranscribe => &self.audio_transcribe,
             AiCapability::AudioTranslate => &self.audio_translate,
             AiCapability::VisionExtract => &self.vision_extract,
-            AiCapability::TextGenerate => &self.text_generate,
+            // ToolChat (Lane B) has no binding of its own: it routes off the
+            // resolved text_generate binding, so tool-capability filtering
+            // layers on the same provider/model/profile config.
+            AiCapability::TextGenerate | AiCapability::ToolChat => &self.text_generate,
         }
     }
 
@@ -112,7 +115,7 @@ impl AiBindings {
             AiCapability::AudioTranscribe => &mut self.audio_transcribe,
             AiCapability::AudioTranslate => &mut self.audio_translate,
             AiCapability::VisionExtract => &mut self.vision_extract,
-            AiCapability::TextGenerate => &mut self.text_generate,
+            AiCapability::TextGenerate | AiCapability::ToolChat => &mut self.text_generate,
         }
     }
 
@@ -575,6 +578,41 @@ ai:
                 .api_base
                 .as_deref(),
             Some("http://yaml-text")
+        );
+    }
+
+    #[test]
+    fn tool_chat_reuses_the_text_generate_binding() {
+        let home = tempfile::tempdir().unwrap();
+        write_gcore_yaml(
+            home.path(),
+            r#"
+ai:
+  text_generate:
+    routing: direct
+    api_base: http://yaml-text
+    reasoning_effort: high
+"#,
+        );
+        let primary = TestSource::with_values([]);
+        let mut source =
+            AiConfigSource::with_primary_from_gobby_home(primary, home.path()).unwrap();
+
+        let context = AiContext::resolve(None, &mut source);
+
+        // No parallel ai.tool_chat.* tree: ToolChat routes off the resolved
+        // text_generate binding, so its routing/endpoint/reasoning match.
+        assert_eq!(route(&context, AiCapability::ToolChat), AiRouting::Direct);
+        assert_eq!(
+            context.binding(AiCapability::ToolChat),
+            context.binding(AiCapability::TextGenerate)
+        );
+        assert_eq!(
+            context
+                .binding(AiCapability::ToolChat)
+                .reasoning_effort
+                .as_deref(),
+            Some("high")
         );
     }
 

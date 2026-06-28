@@ -25,7 +25,7 @@ pub use tool_loop::{
     ToolCall, ToolError, ToolExecutor, ToolLoopLimits, ToolLoopObservability, ToolLoopOutcome,
     ToolSchema, run_tool_loop,
 };
-pub use transport::DirectChatTransport;
+pub use transport::{DaemonChatTransport, DirectChatTransport};
 
 #[cfg(test)]
 mod tests;

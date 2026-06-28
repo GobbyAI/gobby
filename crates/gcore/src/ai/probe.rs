@@ -67,7 +67,9 @@ pub fn capability_status_route(capability: AiCapability) -> CapabilityStatusRout
     let path = match capability {
         AiCapability::AudioTranscribe | AiCapability::AudioTranslate => "/api/voice/status",
         AiCapability::VisionExtract => "/api/llm/vision/status",
-        AiCapability::TextGenerate => "/api/llm/status",
+        // ToolChat shares the LLM status route; the body advertises tool-call
+        // support under its own `tool_chat` key (see `status_body_advertises`).
+        AiCapability::TextGenerate | AiCapability::ToolChat => "/api/llm/status",
         AiCapability::Embed => "/api/embeddings/status",
     };
 
@@ -208,6 +210,15 @@ fn status_body_advertises(capability: AiCapability, body: Option<&str>) -> Resul
             &["capabilities", "text_generate"],
             &["enabled"],
         ],
+        // Tool-call support must be advertised explicitly: a daemon with text
+        // generation enabled does NOT imply tool calling. The generic `enabled`
+        // fallback is suppressed for ToolChat below so "LLM is on" can never
+        // satisfy tool_chat — only an explicit tool_chat truth does.
+        AiCapability::ToolChat => &[
+            &["tool_chat"],
+            &["tool_chat_enabled"],
+            &["capabilities", "tool_chat"],
+        ],
         AiCapability::Embed => &[
             &["embed"],
             &["embedding_enabled"],
@@ -217,12 +228,11 @@ fn status_body_advertises(capability: AiCapability, body: Option<&str>) -> Resul
         ],
     };
 
+    // ToolChat requires an explicit tool_chat truth; every other capability may
+    // fall back to a generic top-level `enabled` flag.
+    let generic = (!matches!(capability, AiCapability::ToolChat)).then_some(GENERIC_ENABLED_PATH);
     let mut advertised = false;
-    for path in paths
-        .iter()
-        .copied()
-        .chain(std::iter::once(GENERIC_ENABLED_PATH))
-    {
+    for path in paths.iter().copied().chain(generic) {
         if let Some(enabled) = bool_at_path(&value, path) {
             advertised = true;
             if enabled {
@@ -385,6 +395,57 @@ mod tests {
         assert_eq!(
             status_body_advertises(AiCapability::AudioTranslate, Some(r#"{"enabled":false}"#)),
             Ok(false)
+        );
+    }
+
+    #[test]
+    fn tool_chat_shares_llm_status_route() {
+        assert_eq!(
+            capability_status_route(AiCapability::ToolChat).path,
+            "/api/llm/status"
+        );
+    }
+
+    #[test]
+    fn tool_chat_requires_explicit_tool_capability_truth() {
+        // Explicit tool_chat truth is honored, including the capabilities object
+        // and the `{available: bool}` object form.
+        assert_eq!(
+            status_body_advertises(AiCapability::ToolChat, Some(r#"{"tool_chat":true}"#)),
+            Ok(true)
+        );
+        assert_eq!(
+            status_body_advertises(
+                AiCapability::ToolChat,
+                Some(r#"{"capabilities":{"tool_chat":true}}"#)
+            ),
+            Ok(true)
+        );
+        assert_eq!(
+            status_body_advertises(
+                AiCapability::ToolChat,
+                Some(r#"{"tool_chat":{"available":true}}"#)
+            ),
+            Ok(true)
+        );
+        // Explicitly off is reported as unavailable, not an error.
+        assert_eq!(
+            status_body_advertises(AiCapability::ToolChat, Some(r#"{"tool_chat":false}"#)),
+            Ok(false)
+        );
+
+        // A daemon with text generation enabled does NOT imply tool calling:
+        // neither the generic `enabled` flag nor `text_generate` can satisfy
+        // tool_chat, so the absence of an explicit tool_chat key is an error.
+        assert!(
+            status_body_advertises(AiCapability::ToolChat, Some(r#"{"enabled":true}"#)).is_err()
+        );
+        assert!(
+            status_body_advertises(
+                AiCapability::ToolChat,
+                Some(r#"{"text_generate":true,"enabled":true}"#)
+            )
+            .is_err()
         );
     }
 
