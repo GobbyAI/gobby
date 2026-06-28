@@ -565,6 +565,43 @@ class TestProcessSession:
         # Message index should be updated to 1
         assert processor._message_indices["session-1"] == 1
 
+    async def test_process_session_records_plain_transcript_observations(
+        self, processor, tmp_path
+    ) -> None:
+        transcript = tmp_path / "transcript.jsonl"
+        line = (
+            '{"type": "user", "message": {"content": "hello"}, '
+            '"timestamp": "2024-01-01T10:00:00Z"}\n'
+        )
+        transcript.write_text(line)
+
+        processor.register_session("session-1", str(transcript))
+        parsed_msg = ParsedMessage(
+            index=0,
+            role="user",
+            content="hello",
+            content_type="text",
+            tool_name=None,
+            tool_input=None,
+            tool_result=None,
+            timestamp=datetime.now(),
+            raw_json={},
+        )
+        mock_parser = MagicMock()
+        mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
+        processor._parsers["session-1"] = mock_parser
+        processor._render_and_broadcast_messages = AsyncMock()
+
+        await processor._process_session("session-1", str(transcript))
+
+        processor._render_and_broadcast_messages.assert_awaited_once_with(
+            "session-1",
+            [parsed_msg],
+            record_observations=True,
+        )
+        assert processor._byte_offsets["session-1"] == len(line)
+        assert processor._message_indices["session-1"] == 0
+
 
 class TestWebSocketBroadcast:
     """Tests for WebSocket broadcasting functionality."""
@@ -1746,3 +1783,31 @@ class TestExtractNativeTitles:
         session_manager.update_title.assert_called_once_with(
             "sid", "Updated title", title_source="native"
         )
+
+    async def test_native_title_db_error_preserves_retry_state(self, mock_db, tmp_path) -> None:
+        processor = SessionMessageProcessor(mock_db)
+        transcript = tmp_path / "transcript.jsonl"
+        line = (
+            '{"type": "assistant", "message": {"content": []}, '
+            '"timestamp": "2024-01-01T10:00:00Z"}\n'
+        )
+        transcript.write_text(line)
+        processor.register_session("sid", str(transcript))
+
+        parsed_msg = self._make_title_msg("Native title", index=0)
+        mock_parser = MagicMock()
+        mock_parser.parse_lines = MagicMock(return_value=[parsed_msg])
+        processor._parsers["sid"] = mock_parser
+        session_manager = MagicMock()
+        session = MagicMock()
+        session.title = ""
+        session.title_source = ""
+        session_manager.get.return_value = session
+        session_manager.update_title.side_effect = psycopg.Error("db unavailable")
+        processor.session_manager = session_manager
+
+        with pytest.raises(psycopg.Error):
+            await processor._process_session("sid", str(transcript))
+
+        assert processor._byte_offsets.get("sid", 0) == 0
+        assert processor._message_indices.get("sid", -1) == -1

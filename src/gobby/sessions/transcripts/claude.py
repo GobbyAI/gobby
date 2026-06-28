@@ -586,6 +586,11 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                         if val.strip():
                             thinking_parts.append(val)
                     else:
+                        if text_parts:
+                            results.append(
+                                _make_msg(role="assistant", content=" ".join(text_parts))
+                            )
+                            text_parts = []
                         if thinking_parts:
                             results.append(
                                 _make_msg(
@@ -595,11 +600,6 @@ class ClaudeTranscriptParser(BaseTranscriptParser):
                                 )
                             )
                             thinking_parts = []
-                        if text_parts:
-                            results.append(
-                                _make_msg(role="assistant", content=" ".join(text_parts))
-                            )
-                            text_parts = []
                         block_type = str(btype or "<missing>")
                         results.append(
                             _make_unknown(role="assistant", block_type=block_type, raw=block)

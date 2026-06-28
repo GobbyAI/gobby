@@ -193,6 +193,8 @@ def test_postgres_migrations_limited_to_known_post_baseline() -> None:
     assert _tracked_migration_names(migrations_dir) == [
         "295_relabel_gemini_sessions.postgres.sql",
         "298_drop_session_wiki_schema.postgres.sql",
+        "299_unmodeled_observations.postgres.sql",
+        "300_purge_unmodeled_observations_for_hash_v2.postgres.sql",
     ]
 
 
@@ -201,10 +203,30 @@ def test_postgres_baseline_version_is_flattened_to_297() -> None:
 
     # Baseline stays 297: bumping it would reclassify existing 297 hubs as
     # corrupt_partial (recreation-required) instead of upgrading in place. The
-    # session-wiki drop ships as pending migration 298 (> baseline), so
+    # post-baseline migrations ship above 297, so
     # latest_known_version reflects the migration file.
     assert module.BASELINE_VERSION == 297
-    assert module.latest_known_version() == 298
+    assert module.latest_known_version() == 300
+
+
+def test_unmodeled_observation_hash_v2_purge_migration() -> None:
+    migration = (
+        SRC_ROOT
+        / "storage"
+        / "migrations"
+        / "300_purge_unmodeled_observations_for_hash_v2.postgres.sql"
+    ).read_text(encoding="utf-8")
+
+    _assert_contains_all(
+        "unmodeled observation hash v2 purge",
+        migration,
+        (
+            "to_regclass('public.unmodeled_observation_events')",
+            "DELETE FROM unmodeled_observation_events",
+            "to_regclass('public.unmodeled_observations')",
+            "DELETE FROM unmodeled_observations",
+        ),
+    )
 
 
 def test_postgres_baseline_defines_implementation_domain_and_current_config_state() -> None:

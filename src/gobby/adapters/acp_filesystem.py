@@ -135,7 +135,10 @@ def write_text_file(path_value: Any, roots: Iterable[Path], *, content: Any) -> 
         os.replace(temp_path, resolved.path)
     except OSError as exc:
         if os.path.exists(temp_path):
-            os.unlink(temp_path)
+            try:
+                os.unlink(temp_path)
+            except OSError:
+                pass
         raise ACPFileSystemError("failed to write file", code=-32000) from exc
     return len(encoded)
 

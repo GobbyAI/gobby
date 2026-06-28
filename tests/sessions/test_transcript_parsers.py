@@ -1185,7 +1185,7 @@ class TestCodexTranscriptParser:
     """Tests for Codex transcript parser (envelope format)."""
 
     @pytest.fixture
-    def parser(self):
+    def parser(self) -> CodexTranscriptParser:
         return CodexTranscriptParser()
 
     # -- Helpers --
@@ -1523,6 +1523,38 @@ class TestCodexTranscriptParser:
         assert isinstance(second_result, ParsedMessage)
         assert first_result.tool_use_id == "call-first"
         assert second_result.tool_use_id == "call-second"
+
+    def test_tool_search_explicit_out_of_order_output_removes_pending_id(
+        self, parser: CodexTranscriptParser
+    ) -> None:
+        parser.parse_line(
+            self._tool_search_call({"query": "first"}, call_id="call-first", response_id="tsc-1"),
+            1,
+        )
+        parser.parse_line(
+            self._tool_search_call({"query": "second"}, call_id="call-second", response_id="tsc-2"),
+            2,
+        )
+
+        second_result = parser.parse_line(
+            self._tool_search_output({"tools_count": 2}, call_id="call-second"),
+            3,
+        )
+        first_result = parser.parse_line(
+            self._tool_search_output({"tools_count": 1}, call_id=None),
+            4,
+        )
+        fallback_result = parser.parse_line(
+            self._tool_search_output({"tools_count": 0}, call_id=None),
+            5,
+        )
+
+        assert isinstance(second_result, ParsedMessage)
+        assert isinstance(first_result, ParsedMessage)
+        assert isinstance(fallback_result, ParsedMessage)
+        assert second_result.tool_use_id == "call-second"
+        assert first_result.tool_use_id == "call-first"
+        assert fallback_result.tool_use_id == "tool-search-5"
 
     def test_tool_search_pair_normalizes_and_renders_as_tool_chain(self, parser) -> None:
         records = parser.parse_lines(

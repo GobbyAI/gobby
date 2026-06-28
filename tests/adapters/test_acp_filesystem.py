@@ -31,3 +31,25 @@ def test_write_text_file_preserves_existing_mode(tmp_path: Path) -> None:
     assert written == 3
     assert target.read_text(encoding="utf-8") == "new"
     assert stat.S_IMODE(target.stat().st_mode) == 0o640
+
+
+def test_write_text_file_preserves_write_error_when_cleanup_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    target = tmp_path / "notes.txt"
+
+    def fail_replace(_src: str, _dst: Path) -> None:
+        raise OSError("replace failed")
+
+    def fail_unlink(_path: str) -> None:
+        raise OSError("cleanup failed")
+
+    monkeypatch.setattr("gobby.adapters.acp_filesystem.os.replace", fail_replace)
+    monkeypatch.setattr("gobby.adapters.acp_filesystem.os.unlink", fail_unlink)
+
+    with pytest.raises(ACPFileSystemError) as exc_info:
+        write_text_file(str(target), (tmp_path,), content="new")
+
+    assert str(exc_info.value) == "failed to write file"
+    assert isinstance(exc_info.value.__cause__, OSError)
+    assert str(exc_info.value.__cause__) == "replace failed"

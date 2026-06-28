@@ -52,7 +52,14 @@ class ProcessorTranscriptMixin:
                             title,
                             title_source="native",
                         )
-            except (LookupError, RuntimeError, ValueError, psycopg.Error):
+            except psycopg.Error:
+                logger.warning(
+                    "Failed to sync native transcript title",
+                    extra={"session_id": session_id},
+                    exc_info=True,
+                )
+                raise
+            except (LookupError, RuntimeError, ValueError):
                 logger.warning(
                     "Failed to sync native transcript title",
                     extra={"session_id": session_id},
@@ -185,7 +192,11 @@ class ProcessorTranscriptMixin:
                     break
         await self._persist_usage_events(session_id, parsed_messages)
 
-        await self._render_and_broadcast_messages(session_id, parsed_messages)
+        await self._render_and_broadcast_messages(
+            session_id,
+            parsed_messages,
+            record_observations=True,
+        )
         self._message_indices[session_id] = latest_parsed_index
 
         logger.debug(

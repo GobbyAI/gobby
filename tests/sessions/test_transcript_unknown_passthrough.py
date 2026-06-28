@@ -150,3 +150,22 @@ def test_claude_unknown_block_keeps_source_order():
     assert [msg.content_type for msg in messages] == ["text", "mystery", "tool_use"]
     assert [msg.content for msg in messages] == ["before", "middle", ""]
     assert messages[1].raw_json == {"type": "mystery", "content": "middle"}
+
+
+def test_claude_unknown_block_flushes_text_before_thinking():
+    raw = {
+        "type": "assistant",
+        "timestamp": "2026-06-27T15:00:00Z",
+        "message": {
+            "content": [
+                {"type": "text", "text": "visible"},
+                {"type": "thinking", "thinking": "hidden"},
+                {"type": "mystery", "content": "middle"},
+            ]
+        },
+    }
+
+    messages = ClaudeTranscriptParser(session_id="session-1").parse_lines([_line(raw)])
+
+    assert [msg.content_type for msg in messages] == ["text", "thinking", "mystery"]
+    assert [msg.content for msg in messages] == ["visible", "hidden", "middle"]

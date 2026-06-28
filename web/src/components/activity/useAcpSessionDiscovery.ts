@@ -36,11 +36,9 @@ export function useAcpSessionDiscovery(trigger: string): void {
           body: "{}",
         });
         if (!res.ok) {
-          const body = await res.text().catch(() => "");
           console.warn("ACP session discovery failed", {
             trigger,
             status: res.status,
-            body,
           });
         }
       } catch (error) {

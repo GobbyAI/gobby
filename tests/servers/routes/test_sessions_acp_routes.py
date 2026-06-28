@@ -101,6 +101,7 @@ class _SM:
         row = _Session(
             id=f"sess-{external_id}",
             external_id=external_id,
+            machine_id=machine_id,
             source=source,
             project_id=project_id or "",
             title=title,

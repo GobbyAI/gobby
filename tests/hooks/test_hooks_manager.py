@@ -532,6 +532,39 @@ class TestHookManagerShutdown:
         # Should be marked as shutdown in the health monitor
         assert manager._health_monitor._is_shutdown is True
 
+    def test_shutdown_drain_uses_shared_memory_recall_deadline(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import concurrent.futures
+        import threading
+
+        manager = object.__new__(HookManager)
+        manager.logger = MagicMock()
+        manager._memory_recall_lock = threading.Lock()
+        manager._memory_recall_closing = False
+        manager._memory_recall_tasks = {}
+        timeouts: list[float] = []
+
+        class RecordingFuture(concurrent.futures.Future[None]):
+            def cancel(self) -> bool:
+                return False
+
+            def result(self, timeout: float | None = None) -> None:
+                assert timeout is not None
+                timeouts.append(timeout)
+                raise concurrent.futures.TimeoutError
+
+        registry = manager._memory_recall_task_registry()
+        registry[("first", 1)] = RecordingFuture()
+        registry[("second", 2)] = RecordingFuture()
+        registry[("third", 3)] = RecordingFuture()
+        clock = iter([100.0, 100.0, 102.0, 106.0])
+        monkeypatch.setattr("gobby.hooks.hook_manager.time.monotonic", lambda: next(clock))
+
+        manager._drain_memory_recall_tasks_sync()
+
+        assert timeouts == [5.0, 3.0, 0.0]
+
 
 class TestHookManagerGetEventHandler:
     """Tests for event handler lookup."""

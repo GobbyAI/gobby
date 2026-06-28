@@ -33,6 +33,12 @@ def _task_ref(task: Any) -> str:
     return task_id[:8]
 
 
+def _task_ref_from_seq(task: Any, seq_num: Any) -> str:
+    if seq_num not in (None, ""):
+        return f"#{seq_num}"
+    return _task_ref(task)
+
+
 def task_state_payload(task: Any) -> dict[str, Any]:
     """Return compact task state for MCP list/search/card payloads."""
     state = serialize_task_state(task)
@@ -49,10 +55,11 @@ def task_state_payload(task: Any) -> dict[str, Any]:
 def task_discovery_payload(task: Any) -> dict[str, Any]:
     """Return compact task row for cheap discovery tools."""
     task_dict = task.to_dict() if callable(getattr(task, "to_dict", None)) else {}
+    seq_num = task_dict.get("seq_num", _field(task, "seq_num"))
     return {
-        "ref": _task_ref(task),
+        "ref": _task_ref_from_seq(task, seq_num),
         "id": task_dict.get("id", _field(task, "id")),
-        "seq_num": task_dict.get("seq_num", _field(task, "seq_num")),
+        "seq_num": seq_num,
         "title": task_dict.get("title", _field(task, "title")),
         "task_type": task_dict.get("task_type", _field(task, "task_type")),
         "category": task_dict.get("category", _field(task, "category")),
@@ -107,10 +114,11 @@ def task_summary_payload(
     task: Any, dependencies: dict[str, list[dict[str, Any]]]
 ) -> dict[str, Any]:
     """Return actionable get_task(brief=True) task card."""
+    seq_num = _field(task, "seq_num")
     return {
-        "ref": _task_ref(task),
+        "ref": _task_ref_from_seq(task, seq_num),
         "id": _field(task, "id"),
-        "seq_num": _field(task, "seq_num"),
+        "seq_num": seq_num,
         "title": _field(task, "title"),
         "task_type": _field(task, "task_type"),
         "category": _field(task, "category"),

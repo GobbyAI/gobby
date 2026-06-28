@@ -11,6 +11,7 @@ import json
 import logging
 import os
 import threading
+import time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, cast
 
@@ -814,10 +815,12 @@ class HookManager:
 
     def _drain_memory_recall_tasks_sync(self) -> None:
         items = self._take_memory_recall_tasks_for_shutdown()
+        deadline = time.monotonic() + 5.0
         for key, future in items:
             if isinstance(future, concurrent.futures.Future):
                 try:
-                    future.result(timeout=5.0)
+                    remaining = max(0.0, deadline - time.monotonic())
+                    future.result(timeout=remaining)
                 except concurrent.futures.TimeoutError:
                     self.logger.warning("Timed out cancelling deferred memory recall: %s", key)
                 except (asyncio.CancelledError, concurrent.futures.CancelledError):

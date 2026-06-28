@@ -6,6 +6,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from gobby.mcp_proxy.tools.tasks._formatters import task_discovery_payload
+
 pytestmark = pytest.mark.unit
 
 
@@ -22,3 +24,19 @@ def test_no_legacy_fields(task_registry, mock_task_manager) -> None:
     assert "status" not in result
     assert "lifecycle" not in result
     assert "lifecycle_stage" not in result
+
+
+def test_task_discovery_ref_uses_seq_num_from_dict() -> None:
+    task = SimpleNamespace(
+        id="03940009-0faa-4d80-9b96-289df7f44431",
+        to_dict=lambda: {
+            "id": "03940009-0faa-4d80-9b96-289df7f44431",
+            "seq_num": 17424,
+            "title": "Apply review fixes",
+        },
+    )
+
+    payload = task_discovery_payload(task)
+
+    assert payload["seq_num"] == 17424
+    assert payload["ref"] == "#17424"
