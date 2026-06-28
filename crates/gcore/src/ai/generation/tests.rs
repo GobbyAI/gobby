@@ -10,8 +10,8 @@ use super::transport::{build_daemon_chat_body, build_request_body, parse_complet
 use super::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport,
     DirectChatTransport, DirectGenerationTarget, FEATURE_HIGH, FEATURE_LOW, FEATURE_MID,
-    GenerationTier, StopReason, ToolCall, ToolError, ToolExecutor, ToolLoopLimits, ToolSchema,
-    profile_for_tier, resolve_direct_generation_target, run_tool_loop,
+    GenerationTier, StopReason, ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits,
+    ToolSchema, profile_for_tier, resolve_direct_generation_target, run_tool_loop,
 };
 use crate::ai_context::{AiBindings, AiContext, AiLimiter};
 use crate::ai_types::{AiError, TokenUsage};
@@ -139,6 +139,7 @@ fn profile_unresolved_env_without_default_is_none() {
 struct StubTransport {
     completions: RefCell<VecDeque<ChatCompletion>>,
     requests: RefCell<Vec<Vec<ChatMessage>>>,
+    tool_choices: RefCell<Vec<ToolChoice>>,
 }
 
 impl StubTransport {
@@ -146,6 +147,7 @@ impl StubTransport {
         Self {
             completions: RefCell::new(completions.into()),
             requests: RefCell::new(Vec::new()),
+            tool_choices: RefCell::new(Vec::new()),
         }
     }
 }
@@ -153,6 +155,7 @@ impl StubTransport {
 impl ChatTransport for StubTransport {
     fn complete(&self, request: ChatCompletionRequest<'_>) -> Result<ChatCompletion, AiError> {
         self.requests.borrow_mut().push(request.messages.to_vec());
+        self.tool_choices.borrow_mut().push(request.tool_choice);
         Ok(self
             .completions
             .borrow_mut()
@@ -297,6 +300,37 @@ fn lane_b_executes_tool_then_completes_with_observability() {
         .expect("tool result message present");
     assert_eq!(tool_message.content.as_deref(), Some("ECHO:hi"));
     assert_eq!(tool_message.tool_call_id.as_deref(), Some("call_echo"));
+}
+
+#[test]
+fn lane_b_forces_tool_use_on_first_turn_then_auto() {
+    // Turn 0 forces a tool call (`required`) so a weak function-calling model
+    // cannot one-shot an ungrounded answer and skip investigation entirely;
+    // every later turn lets the model finalize freely (`auto`).
+    let transport = StubTransport::new(vec![
+        tool_call_completion("echo", "call_echo", json!({"text": "hi"})),
+        content_completion("final answer"),
+    ]);
+    let mut executor = EchoExecutor::new("ECHO:hi");
+    let messages = vec![
+        ChatMessage::system("system prompt"),
+        ChatMessage::user("write docs"),
+    ];
+
+    let outcome = run_tool_loop(
+        &transport,
+        &mut executor,
+        messages,
+        &ToolLoopLimits::default(),
+        Some(256),
+    )
+    .expect("loop runs");
+
+    assert_eq!(outcome.stop_reason, StopReason::Completed);
+    assert_eq!(
+        *transport.tool_choices.borrow(),
+        vec![ToolChoice::Required, ToolChoice::Auto]
+    );
 }
 
 #[test]
@@ -718,6 +752,7 @@ fn direct_transport_sends_tools_and_parses_tool_calls() {
         messages: &messages,
         tools: &tools,
         max_tokens: Some(128),
+        tool_choice: ToolChoice::Auto,
     };
 
     let completion = transport.complete(request).expect("completion");
@@ -835,6 +870,7 @@ fn build_request_body_suppresses_tools_for_lane_a() {
         messages: &messages,
         tools: &[],
         max_tokens: None,
+        tool_choice: ToolChoice::Auto,
     };
     let body = build_request_body(&target, &request);
     assert!(body.get("tools").is_none());
@@ -845,12 +881,35 @@ fn build_request_body_suppresses_tools_for_lane_a() {
 }
 
 #[test]
+fn build_request_body_serializes_required_tool_choice() {
+    let target = DirectGenerationTarget {
+        model: Some("m".to_string()),
+        ..DirectGenerationTarget::default()
+    };
+    let tools = vec![ToolSchema {
+        name: "outline_file".to_string(),
+        description: "outline a file".to_string(),
+        parameters: json!({"type":"object"}),
+    }];
+    let messages = vec![ChatMessage::user("map the crate")];
+    let request = ChatCompletionRequest {
+        messages: &messages,
+        tools: &tools,
+        max_tokens: None,
+        tool_choice: ToolChoice::Required,
+    };
+    let body = build_request_body(&target, &request);
+    assert_eq!(body["tool_choice"], "required");
+}
+
+#[test]
 fn build_request_body_threads_reasoning_effort() {
     let messages = vec![ChatMessage::user("hi")];
     let request = ChatCompletionRequest {
         messages: &messages,
         tools: &[],
         max_tokens: None,
+        tool_choice: ToolChoice::Auto,
     };
 
     // Present -> forwarded so direct Lane A/B keep their profile reasoning pin.
@@ -896,6 +955,7 @@ fn build_daemon_chat_body_forwards_profile_project_and_tools() {
         messages: &messages,
         tools: &tools,
         max_tokens: Some(512),
+        tool_choice: ToolChoice::Auto,
     };
 
     let body = build_daemon_chat_body("feature_high", Some("project-9"), Some("high"), &request);
@@ -915,6 +975,7 @@ fn build_daemon_chat_body_forwards_profile_project_and_tools() {
         messages: &messages,
         tools: &[],
         max_tokens: None,
+        tool_choice: ToolChoice::Auto,
     };
     let body = build_daemon_chat_body("feature_high", None, None, &lane_a);
     assert_eq!(body["profile"], "feature_high");

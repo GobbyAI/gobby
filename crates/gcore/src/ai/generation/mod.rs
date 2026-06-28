@@ -22,8 +22,8 @@ pub use profile::{DirectGenerationTarget, resolve_direct_generation_target};
 pub use tier::{FEATURE_HIGH, FEATURE_LOW, FEATURE_MID, GenerationTier, profile_for_tier};
 pub use tool_loop::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport, StopReason,
-    ToolCall, ToolError, ToolExecutor, ToolLoopLimits, ToolLoopObservability, ToolLoopOutcome,
-    ToolSchema, run_tool_loop,
+    ToolCall, ToolChoice, ToolError, ToolExecutor, ToolLoopLimits, ToolLoopObservability,
+    ToolLoopOutcome, ToolSchema, run_tool_loop,
 };
 pub use transport::{DaemonChatTransport, DirectChatTransport};
 

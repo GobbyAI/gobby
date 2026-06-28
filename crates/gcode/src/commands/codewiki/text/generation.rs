@@ -703,6 +703,30 @@ fn bound_seed_prompt(prompt: &str) -> String {
     )
 }
 
+/// Lane B operating directive appended to every aggregate page's system prompt.
+/// The shared page prompts tell the model to write from "only the supplied
+/// input" — correct for the Lane A one-shot, but in Lane B the seed is a
+/// bounded orientation and the real grounding comes from the tools. Without
+/// this, a weak function-calling model both skips investigation and declines to
+/// cite anything it fetched, producing an ungroundable body that hard-fails the
+/// no-skeleton contract (#993/#978).
+const LANE_B_SYSTEM_DIRECTIVE: &str = "Investigation mode: you have tools \
+(search_code, outline_file, read_symbol, read_file, grep_repo, find_callers, \
+find_usages, imports). The user message is a bounded seed for orientation, not \
+the full evidence. Before writing the page, call these tools to read the actual \
+source behind every claim and to collect real file:line anchors. Tool results \
+are authoritative repository source: treat them as supplied input you may cite, \
+in addition to anchors already in the seed. Gather enough grounding to fill \
+every required section with evidence-backed prose, then write the page. Never \
+invent files, symbols, or line numbers.";
+
+/// Compose the Lane B system prompt: the page-specific system prompt followed by
+/// the [`LANE_B_SYSTEM_DIRECTIVE`] so the model investigates via tools before it
+/// answers.
+fn lane_b_system_prompt(page_system: &str) -> String {
+    format!("{page_system}\n\n{LANE_B_SYSTEM_DIRECTIVE}")
+}
+
 fn run_lane_b_loop(
     transport: &dyn ChatTransport,
     ctx: &Context,
@@ -722,7 +746,7 @@ fn run_lane_b_loop(
     // it and let the model fetch the rest via tools.
     let prompt = bound_seed_prompt(prompt);
     let messages = vec![
-        ChatMessage::system(system.to_string()),
+        ChatMessage::system(lane_b_system_prompt(system)),
         ChatMessage::user(prompt.clone()),
     ];
     let limits = ToolLoopLimits::default();
@@ -966,6 +990,16 @@ mod tests {
     fn bound_seed_prompt_passes_small_prompts_through() {
         let prompt = "short seed";
         assert_eq!(bound_seed_prompt(prompt), prompt);
+    }
+
+    #[test]
+    fn lane_b_system_prompt_appends_investigation_directive() {
+        let composed = lane_b_system_prompt(prompts::CONCEPT_PAGE_SYSTEM);
+        // Page contract stays first and intact; the Lane B directive follows.
+        assert!(composed.starts_with(prompts::CONCEPT_PAGE_SYSTEM));
+        assert!(composed.contains("Investigation mode"));
+        assert!(composed.contains("search_code"));
+        assert!(composed.contains("treat them as supplied input you may cite"));
     }
 
     #[test]

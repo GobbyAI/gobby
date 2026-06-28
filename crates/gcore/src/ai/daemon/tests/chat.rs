@@ -1,6 +1,6 @@
 use super::*;
 use crate::ai::generation::{
-    ChatCompletionRequest, ChatMessage, ChatTransport, DaemonChatTransport, ToolSchema,
+    ChatCompletionRequest, ChatMessage, ChatTransport, DaemonChatTransport, ToolChoice, ToolSchema,
 };
 use serde_json::json;
 
@@ -35,6 +35,7 @@ fn daemon_chat_transport_round_trips_a_tool_call() {
         messages: &messages,
         tools: &tools,
         max_tokens: Some(256),
+        tool_choice: ToolChoice::Auto,
     };
 
     let completion = transport.complete(req).expect("completion");
@@ -87,6 +88,7 @@ fn daemon_chat_transport_omits_unset_fields() {
         messages: &messages,
         tools: &[],
         max_tokens: None,
+        tool_choice: ToolChoice::Auto,
     };
 
     let completion = transport.complete(req).expect("completion");

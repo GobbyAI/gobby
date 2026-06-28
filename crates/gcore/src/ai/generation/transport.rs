@@ -239,7 +239,10 @@ fn push_messages_and_tools(body: &mut Map<String, Value>, request: &ChatCompleti
     if !request.tools.is_empty() {
         let tools: Vec<Value> = request.tools.iter().map(tool_to_json).collect();
         body.insert("tools".to_string(), Value::Array(tools));
-        body.insert("tool_choice".to_string(), Value::String("auto".to_string()));
+        body.insert(
+            "tool_choice".to_string(),
+            Value::String(request.tool_choice.as_str().to_string()),
+        );
     }
 }
 

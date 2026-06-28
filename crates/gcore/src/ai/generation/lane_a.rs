@@ -28,7 +28,7 @@ use crate::config::{AiCapability, AiRouting};
 
 use super::profile::DirectGenerationTarget;
 use super::tier::{GenerationTier, profile_for_tier};
-use super::tool_loop::{ChatCompletionRequest, ChatMessage};
+use super::tool_loop::{ChatCompletionRequest, ChatMessage, ToolChoice};
 use super::transport::build_request_body;
 
 /// One-shot generation for a writing tier on an already-resolved route.
@@ -103,6 +103,7 @@ pub fn generate_text_with_target(
         messages: &messages,
         tools: &[],
         max_tokens,
+        tool_choice: ToolChoice::Auto,
     };
     let body = build_request_body(target, &request);
 

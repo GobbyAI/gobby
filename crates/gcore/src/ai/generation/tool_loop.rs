@@ -149,12 +149,37 @@ pub trait ToolExecutor {
     fn execute(&mut self, call: &ToolCall) -> Result<String, ToolError>;
 }
 
+/// How the model is allowed to use the advertised tools on a given turn.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum ToolChoice {
+    /// The model decides whether to call a tool (OpenAI `"auto"`).
+    #[default]
+    Auto,
+    /// The model must emit at least one tool call this turn (OpenAI
+    /// `"required"`). The loop forces this on the first turn so Lane B always
+    /// investigates via tools before it is allowed to answer — a weak
+    /// function-calling model cannot one-shot an ungrounded reply.
+    Required,
+}
+
+impl ToolChoice {
+    /// OpenAI `tool_choice` wire value.
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            Self::Auto => "auto",
+            Self::Required => "required",
+        }
+    }
+}
+
 /// One completion request issued by the loop.
 #[derive(Debug, Clone, Copy)]
 pub struct ChatCompletionRequest<'a> {
     pub messages: &'a [ChatMessage],
     pub tools: &'a [ToolSchema],
     pub max_tokens: Option<usize>,
+    /// Tool-use policy for this turn; only meaningful when `tools` is non-empty.
+    pub tool_choice: ToolChoice,
 }
 
 /// One completion response returned by a [`ChatTransport`].
@@ -331,10 +356,20 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
             break (None, StopReason::MaxTurns);
         }
 
+        // Force tool use on the first turn so Lane B always investigates the
+        // index before answering; let the model finalize freely afterward. A
+        // weak function-calling model would otherwise one-shot an ungrounded
+        // reply on turn 0 and never call a single tool.
+        let tool_choice = if turns == 0 && !tools.is_empty() {
+            ToolChoice::Required
+        } else {
+            ToolChoice::Auto
+        };
         let request = ChatCompletionRequest {
             messages: &messages,
             tools: &tools,
             max_tokens,
+            tool_choice,
         };
         let completion = transport.complete(request)?;
         turns += 1;
