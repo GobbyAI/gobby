@@ -1,4 +1,5 @@
 use super::*;
+use gobby_core::codewiki_contract::{AI_FALLBACK_KEY, AI_GENERATION_STATUS_KEY, AI_ROUTE_KEY};
 use gobby_core::config::AiRouting;
 
 pub fn write_doc_set(out_dir: &Path, docs: &[(String, String)]) -> anyhow::Result<()> {
@@ -391,13 +392,16 @@ fn apply_ai_outcome_to_markdown(content: &str, outcome: CodewikiAiOutcome) -> St
             out.push('\n');
         }
     }
-    out.push_str("ai_route: ");
+    out.push_str(AI_ROUTE_KEY);
+    out.push_str(": ");
     out.push_str(outcome.route_label());
     out.push('\n');
-    out.push_str("ai_fallback: ");
+    out.push_str(AI_FALLBACK_KEY);
+    out.push_str(": ");
     out.push_str(if outcome.fallback { "true" } else { "false" });
     out.push('\n');
-    out.push_str("ai_generation_status: ");
+    out.push_str(AI_GENERATION_STATUS_KEY);
+    out.push_str(": ");
     out.push_str(outcome.status.as_str());
     out.push('\n');
     out.push_str("---\n");
@@ -434,9 +438,14 @@ fn split_frontmatter(content: &str) -> Option<(&str, &str)> {
 
 fn is_ai_frontmatter_line(line: &str) -> bool {
     let key = line.trim_start();
-    key.starts_with("ai_route:")
-        || key.starts_with("ai_fallback:")
-        || key.starts_with("ai_generation_status:")
+    frontmatter_line_has_key(key, AI_ROUTE_KEY)
+        || frontmatter_line_has_key(key, AI_FALLBACK_KEY)
+        || frontmatter_line_has_key(key, AI_GENERATION_STATUS_KEY)
+}
+
+fn frontmatter_line_has_key(line: &str, key: &str) -> bool {
+    line.strip_prefix(key)
+        .is_some_and(|suffix| suffix.starts_with(':'))
 }
 
 fn strip_existing_ai_notice(rest: &str) -> &str {

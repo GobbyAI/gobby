@@ -180,8 +180,8 @@ impl DirectTierTargets {
 
     fn has_usable_target(&self) -> bool {
         self.aggregate.api_base().is_some()
-            || self.module.api_base().is_some()
-            || self.standard.api_base().is_some()
+            && self.module.api_base().is_some()
+            && self.standard.api_base().is_some()
     }
 }
 
@@ -477,6 +477,45 @@ mod tests {
             profile_for_tier(generation_tier(PromptTier::Standard), None),
             FEATURE_LOW
         );
+    }
+
+    #[test]
+    fn direct_tier_targets_require_api_base_for_every_tier() {
+        fn target(api_base: Option<&str>) -> DirectGenerationTarget {
+            DirectGenerationTarget {
+                api_base: api_base.map(str::to_string),
+                ..DirectGenerationTarget::default()
+            }
+        }
+
+        assert!(
+            DirectTierTargets {
+                aggregate: target(Some("http://aggregate.test/v1")),
+                module: target(Some("http://module.test/v1")),
+                standard: target(Some("http://standard.test/v1")),
+            }
+            .has_usable_target()
+        );
+
+        for targets in [
+            DirectTierTargets {
+                aggregate: target(None),
+                module: target(Some("http://module.test/v1")),
+                standard: target(Some("http://standard.test/v1")),
+            },
+            DirectTierTargets {
+                aggregate: target(Some("http://aggregate.test/v1")),
+                module: target(None),
+                standard: target(Some("http://standard.test/v1")),
+            },
+            DirectTierTargets {
+                aggregate: target(Some("http://aggregate.test/v1")),
+                module: target(Some("http://module.test/v1")),
+                standard: target(None),
+            },
+        ] {
+            assert!(!targets.has_usable_target());
+        }
     }
 
     #[test]

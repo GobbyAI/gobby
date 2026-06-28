@@ -1,4 +1,5 @@
 use gobby_core::ai_types::AiError;
+use gobby_core::codewiki_contract::{AI_FALLBACK_KEY, AI_GENERATION_STATUS_KEY, AI_ROUTE_KEY};
 use gobby_core::config::AiRouting;
 
 use super::support::*;
@@ -502,7 +503,7 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
         );
         assert_eq!(
             frontmatter
-                .get("ai_route")
+                .get(AI_ROUTE_KEY)
                 .and_then(serde_yaml::Value::as_str),
             Some(case.route),
             "{} route",
@@ -510,7 +511,7 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
         );
         assert_eq!(
             frontmatter
-                .get("ai_fallback")
+                .get(AI_FALLBACK_KEY)
                 .and_then(serde_yaml::Value::as_bool),
             Some(case.fallback),
             "{} fallback",
@@ -518,7 +519,7 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
         );
         assert_eq!(
             frontmatter
-                .get("ai_generation_status")
+                .get(AI_GENERATION_STATUS_KEY)
                 .and_then(serde_yaml::Value::as_str),
             Some(case.status),
             "{} status",
@@ -536,18 +537,29 @@ fn ai_route_outcomes_render_frontmatter_body_notes_and_meta() {
         let meta = std::fs::read_to_string(out_dir.join("_meta/codewiki.json")).expect("read meta");
         let meta: serde_json::Value = serde_json::from_str(&meta).expect("parse meta");
         let doc_meta = &meta["docs"]["code/repo.md"];
-        assert_eq!(doc_meta["ai_route"], case.route, "{} meta route", case.name);
         assert_eq!(
-            doc_meta["ai_fallback"], case.fallback,
+            doc_meta[AI_ROUTE_KEY], case.route,
+            "{} meta route",
+            case.name
+        );
+        assert_eq!(
+            doc_meta[AI_FALLBACK_KEY], case.fallback,
             "{} meta fallback",
             case.name
         );
         assert_eq!(
-            doc_meta["ai_generation_status"], case.status,
+            doc_meta[AI_GENERATION_STATUS_KEY], case.status,
             "{} meta status",
             case.name
         );
     }
+}
+
+#[test]
+fn ai_frontmatter_contract_keys_keep_serialized_names() {
+    assert_eq!(AI_ROUTE_KEY, "ai_route");
+    assert_eq!(AI_FALLBACK_KEY, "ai_fallback");
+    assert_eq!(AI_GENERATION_STATUS_KEY, "ai_generation_status");
 }
 
 #[test]
@@ -593,21 +605,21 @@ fn ai_frontmatter_schema_is_present_on_representative_page_kinds() {
         );
         assert_eq!(
             frontmatter
-                .get("ai_route")
+                .get(AI_ROUTE_KEY)
                 .and_then(serde_yaml::Value::as_str),
             Some("daemon"),
             "{path} route"
         );
         assert_eq!(
             frontmatter
-                .get("ai_fallback")
+                .get(AI_FALLBACK_KEY)
                 .and_then(serde_yaml::Value::as_bool),
             Some(false),
             "{path} fallback"
         );
         assert_eq!(
             frontmatter
-                .get("ai_generation_status")
+                .get(AI_GENERATION_STATUS_KEY)
                 .and_then(serde_yaml::Value::as_str),
             Some("generated"),
             "{path} status"

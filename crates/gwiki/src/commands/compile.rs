@@ -65,11 +65,7 @@ pub(crate) fn execute(
         .explainer
         .clone()
         .unwrap_or_else(ExplainerReport::skipped);
-    let notice = if explainer.status == "failed" {
-        Some(AiNoticeKind::GenerationFailed)
-    } else {
-        notice
-    };
+    let notice = notice_for_explainer_status(explainer.status, notice);
     let output_scope = resolved_scope_identity(&resolved_scope);
     let payload = serde_json::json!({
         "command": "compile",
@@ -264,7 +260,10 @@ const COMPILE_TIER: GenerationTier = GenerationTier::Aggregate;
 /// `Off` skips synthesis structurally; an unresolved explicit daemon/direct
 /// request still runs an attempt so the failure is recorded as degradation.
 enum ExplainerTransport {
-    Off,
+    Off {
+        fallback: bool,
+        notice: Option<AiNoticeKind>,
+    },
     Unresolved {
         route: AiRouting,
         fallback: bool,
@@ -284,34 +283,38 @@ enum ExplainerTransport {
 }
 
 impl ExplainerTransport {
+    fn off(fallback: bool, notice: Option<AiNoticeKind>) -> Self {
+        Self::Off { fallback, notice }
+    }
+
     fn is_active(&self) -> bool {
-        !matches!(self, Self::Off)
+        !matches!(self, Self::Off { .. })
     }
 
     fn route_label(&self) -> &'static str {
         match self {
-            Self::Off => "off",
+            Self::Off { .. } => "off",
             Self::Unresolved { route, .. } | Self::Resolved { route, .. } => routing_label(*route),
         }
     }
 
     fn fallback(&self) -> bool {
         match self {
-            Self::Off => false,
+            Self::Off { fallback, .. } => *fallback,
             Self::Unresolved { fallback, .. } | Self::Resolved { fallback, .. } => *fallback,
         }
     }
 
     fn notice_kind(&self) -> Option<AiNoticeKind> {
         match self {
-            Self::Off => None,
+            Self::Off { notice, .. } => *notice,
             Self::Unresolved { notice, .. } | Self::Resolved { notice, .. } => *notice,
         }
     }
 
     fn generate(&self, prompt: &ExplainerPrompt) -> Result<ExplainerResponse, String> {
         match self {
-            Self::Off => Err("AI synthesis is off".to_string()),
+            Self::Off { .. } => Err("AI synthesis is off".to_string()),
             Self::Unresolved { error, .. } => Err(error.clone()),
             Self::Resolved {
                 route,
@@ -345,7 +348,7 @@ impl ExplainerTransport {
 /// usable route degrades to a structural skip rather than a failure.
 fn resolve_explainer_transport(requested: AiRouting) -> ExplainerTransport {
     if matches!(requested, AiRouting::Off) {
-        return ExplainerTransport::Off;
+        return ExplainerTransport::off(false, None);
     }
     match crate::support::config::hub_ai_config_source("gwiki compile") {
         Ok(mut source) => {
@@ -393,7 +396,7 @@ fn resolve_explainer_transport(requested: AiRouting) -> ExplainerTransport {
                         target,
                     }
                 }
-                _ => ExplainerTransport::Off,
+                _ => ExplainerTransport::off(observed.fallback, observed.reason),
             }
         }
         Err(error) => match requested {
@@ -409,8 +412,15 @@ fn resolve_explainer_transport(requested: AiRouting) -> ExplainerTransport {
                 notice: Some(AiNoticeKind::NoGenerator),
                 error: error.to_string(),
             },
-            _ => ExplainerTransport::Off,
+            _ => ExplainerTransport::off(false, None),
         },
+    }
+}
+
+fn notice_for_explainer_status(status: &str, notice: Option<AiNoticeKind>) -> Option<AiNoticeKind> {
+    match (status, notice) {
+        ("failed", None) => Some(AiNoticeKind::GenerationFailed),
+        (_, notice) => notice,
     }
 }
 
@@ -481,6 +491,35 @@ mod tests {
                 fallback: false,
                 reason: None,
             }
+        );
+    }
+
+    #[test]
+    fn off_transport_preserves_fallback_notice_metadata() {
+        let transport = ExplainerTransport::off(true, Some(AiNoticeKind::AutoFallbackToOff));
+
+        assert!(!transport.is_active());
+        assert_eq!(transport.route_label(), "off");
+        assert!(transport.fallback());
+        assert_eq!(
+            transport.notice_kind(),
+            Some(AiNoticeKind::AutoFallbackToOff)
+        );
+    }
+
+    #[test]
+    fn failed_explainer_status_preserves_existing_notice() {
+        assert_eq!(
+            notice_for_explainer_status("failed", Some(AiNoticeKind::NoGenerator)),
+            Some(AiNoticeKind::NoGenerator)
+        );
+        assert_eq!(
+            notice_for_explainer_status("failed", None),
+            Some(AiNoticeKind::GenerationFailed)
+        );
+        assert_eq!(
+            notice_for_explainer_status("generated", Some(AiNoticeKind::AutoFallbackToDirect)),
+            Some(AiNoticeKind::AutoFallbackToDirect)
         );
     }
 
