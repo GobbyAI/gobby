@@ -2146,7 +2146,7 @@ dependencies = [
 
 [[package]]
 name = "gobby-core"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "anyhow",
  "base64 0.22.1",
