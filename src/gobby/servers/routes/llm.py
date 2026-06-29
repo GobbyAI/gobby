@@ -10,7 +10,7 @@ import tempfile
 import time
 from pathlib import Path
 from tempfile import NamedTemporaryFile
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal
 
 from fastapi import APIRouter, File, Form, HTTPException, UploadFile
 from fastapi.responses import JSONResponse
@@ -24,7 +24,11 @@ from gobby.ai import (
     build_daemon_ai_capability_registry,
     build_daemon_vision_extract_service,
 )
-from gobby.config.feature_base import FeatureCandidateInput, FeatureProfile
+from gobby.config.feature_base import (
+    DEFAULT_PROFILE_CANDIDATES,
+    FeatureCandidateInput,
+    FeatureProfile,
+)
 
 if TYPE_CHECKING:
     from gobby.servers.http import HTTPServer
@@ -32,6 +36,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 DEFAULT_TEXT_GENERATE_PROFILE = FeatureProfile.LOW.value
+DEFAULT_CHAT_COMPLETIONS_PROFILE = FeatureProfile.HIGH.value
+_DEFAULT_AGENTIC_TURNS = 60
+_MAX_AGENTIC_TURNS = 80
 _VISION_TEMP_DIR_NAME = "gobby-vision"
 _VISION_TEMP_MAX_AGE_SECONDS = 24 * 60 * 60
 _VISION_TEMP_CLEANUP_INTERVAL_SECONDS = max(60.0, min(3600.0, _VISION_TEMP_MAX_AGE_SECONDS / 2))
@@ -60,6 +67,81 @@ class TextGeneratePayload(BaseModel):
         if self.provider or self.model or self.profile or self.candidates:
             return self.profile
         return DEFAULT_TEXT_GENERATE_PROFILE
+
+
+class ChatMessage(BaseModel):
+    """One OpenAI-style chat message."""
+
+    role: Literal["system", "user", "assistant"]
+    content: str
+
+
+class ChatCompletionsPayload(BaseModel):
+    """Request body for daemon-side agentic narrative generation."""
+
+    messages: list[ChatMessage] = Field(min_length=1)
+    project_path: str = Field(min_length=1)
+    profile: str | None = None
+    model: str | None = None
+    max_turns: int | None = Field(default=None, gt=0)
+    reasoning_effort: str | None = None
+
+
+def _resolve_claude_model_for_profile(profile: str | None) -> str | None:
+    """Return the claude candidate model for a feature profile, if any.
+
+    Mirrors how the text-generation path resolves profile candidates, but keeps
+    this endpoint claude-only: it scans ``DEFAULT_PROFILE_CANDIDATES`` for the
+    first ``claude/<model>`` entry (e.g. ``claude/opus`` for ``feature_high``)
+    and returns the bare model alias.
+    """
+    if profile is None:
+        return None
+    try:
+        candidates = DEFAULT_PROFILE_CANDIDATES[FeatureProfile(profile)]
+    except (ValueError, KeyError):
+        return None
+    for candidate in candidates:
+        provider, _, model = candidate.candidate.partition("/")
+        if provider == "claude" and model:
+            return model
+    return None
+
+
+def _clamp_agentic_turns(max_turns: int | None) -> int:
+    """Clamp the requested investigation turn budget to a sane range."""
+    if max_turns is None:
+        return _DEFAULT_AGENTIC_TURNS
+    return max(1, min(max_turns, _MAX_AGENTIC_TURNS))
+
+
+def _split_chat_messages(messages: list[ChatMessage]) -> tuple[str | None, str]:
+    """Split chat messages into a joined system prompt and a user prompt.
+
+    System messages become the agent ``system_prompt``; the remaining user and
+    assistant messages are joined into the investigation prompt. Raises
+    ``ValueError`` when no non-empty user/assistant content is present.
+    """
+    system_parts = [m.content for m in messages if m.role == "system" and m.content.strip()]
+    prompt_parts = [m.content for m in messages if m.role != "system" and m.content.strip()]
+    user_prompt = "\n\n".join(prompt_parts)
+    if not user_prompt.strip():
+        raise ValueError(
+            "chat completion requires at least one non-empty user or assistant message"
+        )
+    system_prompt = "\n\n".join(system_parts) or None
+    return system_prompt, user_prompt
+
+
+def _build_agentic_provider(config: Any) -> Any:
+    """Construct the Claude provider used for agentic narrative generation.
+
+    Isolated as a seam so tests can inject a fake provider without importing the
+    Claude Agent SDK.
+    """
+    from gobby.llm.claude import ClaudeLLMProvider
+
+    return ClaudeLLMProvider(config)
 
 
 def create_llm_router(server: HTTPServer) -> APIRouter:
@@ -117,6 +199,63 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
         except Exception as e:
             logger.error("Text generation failed", exc_info=True)
             raise HTTPException(status_code=500, detail="Text generation failed") from e
+
+    @router.post("/chat/completions")
+    async def chat_completions(payload: ChatCompletionsPayload) -> Any:
+        """Run daemon-side agentic narrative generation via the Claude Agent SDK.
+
+        The Claude provider investigates ``project_path`` with read-only tools
+        (Read/Grep/Glob) over many turns, then returns a grounded Markdown
+        narrative shaped like an OpenAI chat completion plus an ``investigation``
+        provenance block.
+        """
+        config = server.config
+        if config is None:
+            raise HTTPException(status_code=503, detail="Daemon config not found")
+
+        profile = payload.profile or DEFAULT_CHAT_COMPLETIONS_PROFILE
+        model = payload.model or _resolve_claude_model_for_profile(profile)
+        max_turns = _clamp_agentic_turns(payload.max_turns)
+        try:
+            system_prompt, user_prompt = _split_chat_messages(payload.messages)
+            provider = _build_agentic_provider(config)
+            result = await provider.generate_agentic(
+                system_prompt=system_prompt,
+                prompt=user_prompt,
+                project_path=payload.project_path,
+                model=model,
+                max_turns=max_turns,
+                reasoning_effort=payload.reasoning_effort,
+                caller="llm-chat-completions-route",
+            )
+            response: dict[str, Any] = {
+                "choices": [
+                    {
+                        "message": {"role": "assistant", "content": result.text},
+                        "finish_reason": "stop",
+                    }
+                ],
+                "model": result.model,
+                "investigation": {
+                    "tool_use_count": result.tool_use_count,
+                    "turns": result.turns,
+                    "tools": result.tools,
+                },
+            }
+            if result.usage is not None:
+                response["usage"] = result.usage
+            if result.applied_reasoning_effort is not None:
+                response["applied_reasoning_effort"] = result.applied_reasoning_effort
+            return response
+        except CapabilityUnavailableError as e:
+            logger.info("Agentic chat completion capability unavailable: %s", e)
+            return JSONResponse(status_code=400, content=_capability_error_detail(e))
+        except ValueError as e:
+            logger.info("Agentic chat completion rejected: %s", e)
+            raise HTTPException(status_code=400, detail=str(e)) from e
+        except Exception as e:
+            logger.error("Agentic chat completion failed", exc_info=True)
+            raise HTTPException(status_code=500, detail="Agentic chat completion failed") from e
 
     @router.get("/vision/status")
     async def vision_status() -> dict[str, Any]:

@@ -3,7 +3,8 @@
 import asyncio
 import json
 import logging
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -116,6 +117,41 @@ def _normalize_claude_usage(usage: Any) -> dict[str, int] | None:
     return result or None
 
 
+@dataclass(frozen=True, kw_only=True)
+class AgenticGenerationResult:
+    """Result of a tool-enabled agentic investigation run.
+
+    ``text`` is the grounded narrative; the remaining fields describe the
+    investigation so callers can surface provenance (how many turns the agent
+    took, how many tool uses, and a per-tool breakdown).
+    """
+
+    text: str
+    model: str
+    tool_use_count: int = 0
+    turns: int = 0
+    tools: dict[str, int] = field(default_factory=dict)
+    usage: dict[str, int] | None = None
+    applied_reasoning_effort: str | None = None
+
+
+def _strip_leading_preamble(text: str) -> str:
+    """Drop any non-markdown preamble before the first Markdown heading.
+
+    The agentic model sometimes prefixes prose (for example
+    "Now I have the evidence...") before the grounded page. When a line that
+    starts with ``"# "`` or ``"## "`` exists, return everything from that
+    heading onward; otherwise return the input stripped of surrounding
+    whitespace.
+    """
+    lines = text.splitlines()
+    for index, line in enumerate(lines):
+        stripped = line.lstrip()
+        if stripped.startswith("# ") or stripped.startswith("## "):
+            return "\n".join(lines[index:]).strip()
+    return text.strip()
+
+
 class ClaudeSDKProviderFailure(RuntimeError):
     """Typed failure for known Claude SDK/provider degradation paths."""
 
@@ -201,6 +237,19 @@ class ClaudeLLMProvider:
     def _is_error_result_success(e: BaseException) -> bool:
         """Return whether the SDK surfaced its known error-result-success shape."""
         return "claude code returned an error result: success" in str(e).lower()
+
+    @staticmethod
+    def _is_max_turns_error(e: BaseException) -> bool:
+        """Return whether the SDK raised because it hit ``max_turns``.
+
+        The SDK raises (e.g. "Reached maximum number of turns (N)") rather than
+        returning partial text when the turn budget is exhausted. The message
+        may be wrapped, so walk the exception tree.
+        """
+        for current in ClaudeLLMProvider._iter_exception_tree(e):
+            if "maximum number of turns" in str(current).lower():
+                return True
+        return False
 
     @staticmethod
     def _is_sdk_sigterm_shutdown(e: BaseException) -> bool:
@@ -527,6 +576,115 @@ class ClaudeLLMProvider:
             result = result[: max_tokens * 4]
         return LLMTextResult(
             text=result,
+            usage=captured_usage,
+            applied_reasoning_effort=applied_reasoning_effort,
+        )
+
+    async def generate_agentic(
+        self,
+        *,
+        system_prompt: str | None,
+        prompt: str,
+        project_path: str,
+        model: str | None = None,
+        max_turns: int = 60,
+        reasoning_effort: str | None = None,
+        allowed_tools: Sequence[str] = ("Read", "Grep", "Glob"),
+        caller: str | None = None,
+    ) -> AgenticGenerationResult:
+        """Run a tool-enabled agentic investigation and return a grounded narrative.
+
+        Unlike :meth:`generate_text` (single-turn, tools disabled, neutral cwd),
+        this enables read-only investigation tools, points ``cwd`` at the project
+        repository, and grants a high ``max_turns`` so the model can explore the
+        code before producing a grounded Markdown page with file citations.
+
+        The SDK *raises* (rather than returns) when it exhausts ``max_turns``;
+        that case is caught inside the query loop and the accumulated assistant
+        text is returned, so a long investigation that runs out of turns still
+        yields a usable page. An empty accumulation re-raises as a failure.
+        """
+        if not prompt or not prompt.strip():
+            raise ValueError("Agentic generation requires a non-empty prompt")
+
+        cli_path = await self._verify_cli_path()
+        if not cli_path:
+            raise RuntimeError("Agentic generation unavailable (Claude CLI not found)")
+
+        reasoning_options = _claude_reasoning_options(reasoning_effort)
+        applied_reasoning_effort = reasoning_options.get("effort")
+        resolved_model = model or self._default_model
+
+        # tools (custom in-process SDK tools) stays at its SDK default (None);
+        # allowed_tools is the allowlist that enables the built-in CLI tools.
+        options = ClaudeAgentOptions(
+            system_prompt=system_prompt or "You are a helpful assistant.",
+            max_turns=max_turns,
+            model=resolved_model,
+            allowed_tools=list(allowed_tools),
+            permission_mode="bypassPermissions",
+            setting_sources=[],
+            cli_path=cli_path,
+            cwd=project_path,
+            **reasoning_options,
+        )
+
+        captured_usage: dict[str, int] | None = None
+        tool_breakdown: dict[str, int] = {}
+        tool_use_count = 0
+        turn_count = 0
+
+        async def _run_query() -> str:
+            nonlocal captured_usage, tool_use_count, turn_count
+            result_text = ""
+            message_count = 0
+            try:
+                async for message in query(prompt=prompt, options=options):
+                    message_count += 1
+                    if isinstance(message, AssistantMessage):
+                        turn_count += 1
+                        for block in message.content:
+                            if isinstance(block, TextBlock):
+                                result_text += block.text
+                            elif isinstance(block, ToolUseBlock):
+                                tool_use_count += 1
+                                tool_breakdown[block.name] = tool_breakdown.get(block.name, 0) + 1
+                    elif isinstance(message, ResultMessage):
+                        if message.result:
+                            result_text = message.result
+                        usage = _normalize_claude_usage(getattr(message, "usage", None))
+                        if usage is not None:
+                            captured_usage = usage
+            except Exception as exc:  # noqa: BLE001 - re-raised unless it is max-turns
+                if self._is_max_turns_error(exc) and result_text.strip():
+                    self.logger.info(
+                        "generate_agentic reached max_turns=%s; returning accumulated "
+                        "text (%d chars, %d turns, %d tool uses)",
+                        max_turns,
+                        len(result_text),
+                        turn_count,
+                        tool_use_count,
+                    )
+                    return result_text
+                raise
+            if message_count == 0:
+                self.logger.warning("generate_agentic: No messages received from Claude SDK")
+            elif not result_text:
+                self.logger.warning(
+                    "generate_agentic: %d messages but no text content", message_count
+                )
+            return result_text
+
+        operation = f"generate_agentic[{caller}]" if caller else "generate_agentic"
+        raw_text: str = await self._execute_sdk_query(
+            operation, _run_query, options, max_retries=1
+        )
+        return AgenticGenerationResult(
+            text=_strip_leading_preamble(raw_text),
+            model=resolved_model,
+            tool_use_count=tool_use_count,
+            turns=turn_count,
+            tools=dict(tool_breakdown),
             usage=captured_usage,
             applied_reasoning_effort=applied_reasoning_effort,
         )
