@@ -123,6 +123,15 @@ def _assert_absent_all(label: str, content: str, snippets: tuple[str, ...]) -> N
     assert present == [], f"{label} contained forbidden snippets: {present}"
 
 
+def _table_definition(content: str, table_name: str) -> str:
+    marker = f"CREATE TABLE {table_name} ("
+    start = content.find(marker)
+    assert start != -1, f"{table_name} table missing from baseline"
+    end = content.find("\n);\n", start)
+    assert end != -1, f"{table_name} table definition is not terminated"
+    return content[start:end]
+
+
 def _baseline_text() -> str:
     return POSTGRES_BASELINE_SCHEMA.read_text(encoding="utf-8")
 
@@ -343,6 +352,7 @@ def test_session_wiki_schema_removed_from_baseline_and_dropped_by_migration() ->
 
 def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
     baseline = _baseline_text()
+    indexed_files_table = _table_definition(baseline, "code_indexed_files")
 
     projection_snippets = (
         "CREATE TABLE code_index_projection_cleanup_pending",
@@ -351,10 +361,13 @@ def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
         "CHECK (store IN ('graph', 'vector'))",
         "CREATE INDEX idx_cipcp_updated",
     )
-    failure_snippets = (
+    indexed_file_sync_snippets = (
+        "graph_synced BOOLEAN NOT NULL DEFAULT FALSE",
+        "vectors_synced BOOLEAN NOT NULL DEFAULT FALSE",
+        "graph_sync_attempted_at TIMESTAMPTZ",
         "vector_sync_attempted_at TIMESTAMPTZ",
-        "summary_attempted_at TIMESTAMPTZ",
     )
+    failure_snippets = ("summary_attempted_at TIMESTAMPTZ",)
     prune_snippets = (
         "CREATE TABLE code_index_prune_dirty_projects",
         "project_id TEXT PRIMARY KEY",
@@ -365,6 +378,11 @@ def test_code_index_baseline_defines_projection_and_failure_tables() -> None:
     )
 
     _assert_contains_all("projection cleanup baseline", baseline, projection_snippets)
+    _assert_contains_all(
+        "code_indexed_files sync attempts baseline",
+        indexed_files_table,
+        indexed_file_sync_snippets,
+    )
     _assert_contains_all("code index failure attempts baseline", baseline, failure_snippets)
     _assert_contains_all("code index prune dirty baseline", baseline, prune_snippets)
 
