@@ -16,6 +16,7 @@ import pytest
 from gobby.ai import _tool_chat_tools
 from gobby.ai._tool_chat_tools import GCODE_READONLY_TOOLS
 from gobby.mcp_proxy.tools.code_index import create_index_registry
+from gobby.mcp_proxy.tools.internal import InternalRegistryManager
 
 
 def _registry() -> Any:
@@ -107,3 +108,15 @@ async def test_call_rejects_shell_metacharacters_in_args(tmp_path: Path) -> None
     )
 
     assert "error" in result
+
+
+def test_registry_routes_through_proxy_manager() -> None:
+    # The proxy lists + routes gobby-index exactly like any other internal server.
+    manager = InternalRegistryManager()
+    manager.add_registry(_registry())
+
+    assert manager.is_internal("gobby-index")
+    assert manager.get_registry("gobby-index") is not None
+    assert "gobby-index" in {server["name"] for server in manager.list_servers()}
+    # A gcode_* tool resolves back to the gobby-index server for call routing.
+    assert manager.find_tool_server("gcode_search") == "gobby-index"
