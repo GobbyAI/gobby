@@ -156,9 +156,11 @@ pub enum ToolChoice {
     #[default]
     Auto,
     /// The model must emit at least one tool call this turn (OpenAI
-    /// `"required"`). The loop forces this on the first turn so Lane B always
-    /// investigates via tools before it is allowed to answer — a weak
-    /// function-calling model cannot one-shot an ungrounded reply.
+    /// `"required"`). The loop forces this until the first tool call lands so
+    /// Lane B always investigates via tools before it is allowed to answer; a
+    /// model whose runtime ignores `"required"` is re-prompted with a
+    /// correction (see `FORCE_INVESTIGATION_CORRECTION`) rather than allowed to
+    /// one-shot an ungrounded reply.
     Required,
 }
 
@@ -309,6 +311,35 @@ pub struct ToolLoopOutcome {
     pub total_usage: Option<TokenUsage>,
 }
 
+/// How many times the loop re-prompts a model that ignored
+/// `tool_choice = "required"` on a forcing turn before giving up. Re-issuing the
+/// identical request is futile (the model repeats the same one-shot reply), so
+/// each retry appends an escalating correction from
+/// [`FORCE_INVESTIGATION_CORRECTIONS`]; empirically a tool-capable-but-reluctant
+/// model (e.g. a local reasoning model whose runtime treats `required` as
+/// best-effort) starts investigating within one or two corrections, and a few
+/// extra escalations cover the rare model that stays stubborn on a given page.
+pub(super) const MAX_FORCED_INVESTIGATION_RETRIES: usize = 6;
+
+/// Escalating corrections appended (after the model's rejected draft) when it
+/// answers a forcing turn without calling any tool. The wording intensifies so a
+/// model that ignores the first nudge is pushed harder — a varied, increasingly
+/// explicit instruction breaks it out of repeating the same one-shot reply,
+/// where an identical re-issue would not. The final entry repeats for any
+/// retries past its length.
+const FORCE_INVESTIGATION_CORRECTIONS: [&str; 3] = [
+    "You answered without calling any tool. Lane B requires you to investigate the code with the \
+     provided tools before writing. Discard that draft. Call at least one tool now — for example \
+     search_code or outline_file for a symbol or file named in the seed — and read its result \
+     before you write anything.",
+    "You still have not called a tool. Do NOT write the page yet. Your next message must be a tool \
+     call (search_code, outline_file, read_symbol, grep_repo, or read_file) and nothing else. \
+     Investigate first, then answer.",
+    "Stop. Respond with ONLY a single tool call this turn — no prose at all. Pick any tool (for \
+     example search_code with a term from the seed) and call it now. You may write the page only \
+     after you have read at least one tool result.",
+];
+
 /// Run the Lane B tool loop to completion or a limit.
 ///
 /// `initial_messages` should carry the system/user prompt; tool schemas are
@@ -345,6 +376,7 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
     let mut tool_names: Vec<String> = Vec::new();
     let mut tool_call_count = 0usize;
     let mut turns = 0usize;
+    let mut forced_retries = 0usize;
     let mut model = transport.model().map(str::to_string);
     let mut usage = UsageAccumulator::default();
 
@@ -356,11 +388,14 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
             break (None, StopReason::MaxTurns);
         }
 
-        // Force tool use on the first turn so Lane B always investigates the
-        // index before answering; let the model finalize freely afterward. A
-        // weak function-calling model would otherwise one-shot an ungrounded
-        // reply on turn 0 and never call a single tool.
-        let tool_choice = if turns == 0 && !tools.is_empty() {
+        // Force tool use until the model has actually investigated at least
+        // once, so Lane B never answers from the seed alone. `tool_choice =
+        // "required"` is only best-effort on some runtimes (a local reasoning
+        // model routinely ignores it and one-shots), so the forcing window
+        // stays open across turns until the first tool call lands; afterward
+        // the model finalizes freely (`auto`).
+        let forcing = tool_call_count == 0 && !tools.is_empty();
+        let tool_choice = if forcing {
             ToolChoice::Required
         } else {
             ToolChoice::Auto
@@ -383,6 +418,36 @@ pub(super) fn run_tool_loop_with_clock<C: FnMut() -> Duration>(
         }
 
         if completion.tool_calls.is_empty() {
+            // No tool call this turn. During the forcing window the model was
+            // told it must investigate first; if it ignored that, don't accept
+            // the uninvestigated answer — surface its rejected draft (so the
+            // correction reads as a natural follow-up) and append an escalating
+            // correction, then retry. A bare re-issue, or an identical repeated
+            // nudge, just repeats the same reply.
+            if forcing {
+                if forced_retries < MAX_FORCED_INVESTIGATION_RETRIES {
+                    if completion
+                        .content
+                        .as_deref()
+                        .is_some_and(|text| !text.trim().is_empty())
+                    {
+                        messages.push(ChatMessage::assistant_tool_calls(
+                            completion.content.clone(),
+                            Vec::new(),
+                        ));
+                    }
+                    let correction = FORCE_INVESTIGATION_CORRECTIONS
+                        [forced_retries.min(FORCE_INVESTIGATION_CORRECTIONS.len() - 1)];
+                    messages.push(ChatMessage::user(correction));
+                    forced_retries += 1;
+                    continue;
+                }
+                // The model refused to investigate even after repeated
+                // escalating corrections. Lane B's contract is
+                // investigate-then-answer, so fail (callers hard-fail the page,
+                // no skeleton) rather than ship a silent uninvestigated one-shot.
+                break (None, StopReason::MaxTurns);
+            }
             break (completion.content, StopReason::Completed);
         }
 

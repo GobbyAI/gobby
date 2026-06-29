@@ -5,7 +5,7 @@ use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::tool_loop::run_tool_loop_with_clock;
+use super::tool_loop::{MAX_FORCED_INVESTIGATION_RETRIES, run_tool_loop_with_clock};
 use super::transport::{build_daemon_chat_body, build_request_body, parse_completion};
 use super::{
     ChatCompletion, ChatCompletionRequest, ChatMessage, ChatRole, ChatTransport,
@@ -334,6 +334,104 @@ fn lane_b_forces_tool_use_on_first_turn_then_auto() {
 }
 
 #[test]
+fn lane_b_reprompts_a_model_that_ignores_required_tool_choice() {
+    // A runtime may treat `tool_choice = "required"` as best-effort: the model
+    // answers turn 0 with no tool call. The loop must not accept that
+    // uninvestigated reply — it appends a correction and keeps forcing until a
+    // tool call lands, so Lane B genuinely investigates before answering.
+    let transport = StubTransport::new(vec![
+        content_completion("premature one-shot answer"),
+        tool_call_completion("echo", "call_echo", json!({"text": "hi"})),
+        content_completion("grounded final answer"),
+    ]);
+    let mut executor = EchoExecutor::new("ECHO:hi");
+    let messages = vec![
+        ChatMessage::system("system prompt"),
+        ChatMessage::user("write docs"),
+    ];
+
+    let outcome = run_tool_loop(
+        &transport,
+        &mut executor,
+        messages,
+        &ToolLoopLimits::default(),
+        Some(256),
+    )
+    .expect("loop runs");
+
+    // The premature answer was rejected; the grounded one (after a tool call) wins.
+    assert_eq!(outcome.stop_reason, StopReason::Completed);
+    assert_eq!(outcome.content.as_deref(), Some("grounded final answer"));
+    assert_eq!(outcome.observability.tool_call_count, 1);
+
+    // Forcing stayed on across the retry (Required, Required) until the tool
+    // call landed, then switched to Auto for the final turn.
+    assert_eq!(
+        *transport.tool_choices.borrow(),
+        vec![ToolChoice::Required, ToolChoice::Required, ToolChoice::Auto]
+    );
+
+    // The retry surfaced the rejected draft as an assistant turn and appended an
+    // explicit correction, rather than re-issuing blindly.
+    let requests = transport.requests.borrow();
+    assert_eq!(requests[1].len(), requests[0].len() + 2);
+    let draft = &requests[1][requests[1].len() - 2];
+    assert_eq!(draft.role, ChatRole::Assistant);
+    assert_eq!(draft.content.as_deref(), Some("premature one-shot answer"));
+    let correction = requests[1].last().expect("retry request has messages");
+    assert_eq!(correction.role, ChatRole::User);
+    assert!(
+        correction
+            .content
+            .as_deref()
+            .is_some_and(|text| text.contains("without calling any tool"))
+    );
+}
+
+#[test]
+fn lane_b_hard_fails_when_the_model_never_investigates_after_corrections() {
+    // A model that never calls a tool, even after repeated corrections, must
+    // not spin forever and must not ship a silent uninvestigated one-shot:
+    // the forcing retries are bounded, after which the loop fails (a non-
+    // Completed stop reason → callers hard-fail the page, no skeleton).
+    let stubborn = (0..=MAX_FORCED_INVESTIGATION_RETRIES)
+        .map(|_| content_completion("one-shot answer"))
+        .collect();
+    let transport = StubTransport::new(stubborn);
+    let mut executor = EchoExecutor::new("unused");
+    let messages = vec![
+        ChatMessage::system("system prompt"),
+        ChatMessage::user("write docs"),
+    ];
+
+    let outcome = run_tool_loop(
+        &transport,
+        &mut executor,
+        messages,
+        &ToolLoopLimits::default(),
+        Some(256),
+    )
+    .expect("loop runs");
+
+    assert!(!outcome.stop_reason.is_completed());
+    assert_eq!(outcome.stop_reason, StopReason::MaxTurns);
+    assert_eq!(outcome.content, None);
+    assert_eq!(outcome.observability.tool_call_count, 0);
+    // One initial forcing turn plus the bounded retries, all `required`.
+    assert_eq!(
+        transport.tool_choices.borrow().len(),
+        MAX_FORCED_INVESTIGATION_RETRIES + 1
+    );
+    assert!(
+        transport
+            .tool_choices
+            .borrow()
+            .iter()
+            .all(|choice| *choice == ToolChoice::Required)
+    );
+}
+
+#[test]
 fn lane_b_relays_tool_error_to_model() {
     struct FailingExecutor;
     impl ToolExecutor for FailingExecutor {
@@ -412,7 +510,11 @@ fn lane_b_aggregates_token_usage_across_turns() {
 
 #[test]
 fn lane_b_reports_no_usage_when_unreported() {
-    let transport = StubTransport::new(vec![content_completion("done")]);
+    // Neither the investigation turn nor the final turn reports usage.
+    let transport = StubTransport::new(vec![
+        tool_call_completion("echo", "call_echo", json!({"text": "r"})),
+        content_completion("done"),
+    ]);
     let mut executor = EchoExecutor::new("r");
     let outcome = run_tool_loop(
         &transport,

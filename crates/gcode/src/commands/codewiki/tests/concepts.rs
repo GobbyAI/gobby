@@ -153,6 +153,60 @@ fn curated_navigation_uses_one_structured_aggregate_pass() {
 }
 
 #[test]
+fn curated_navigation_retries_an_unparseable_plan_before_falling_back() {
+    // The structure pass is a flaky one-shot JSON emission: a weak local model
+    // occasionally returns garbled JSON, then a fresh generation parses (#993).
+    // The retry must recover the real AI taxonomy instead of degrading the whole
+    // curated layer to the structural fallback on a one-off malformed emission.
+    let mut curated_calls = 0;
+    let mut generator = |_prompt: &str, system: &str, _tier: PromptTier| {
+        if system == prompts::CURATED_NAVIGATION_SYSTEM {
+            curated_calls += 1;
+            if curated_calls == 1 {
+                // First emission: truncated/garbled JSON that cannot parse.
+                Some("Sure, here is the plan: { \"concept_modules\": [ {".to_string())
+            } else {
+                Some(
+                    r#"{
+                      "concept_modules": [
+                        {
+                          "title": "Query Engine",
+                          "summary": "How requests resolve into repository answers.",
+                          "modules": ["src"],
+                          "files": ["src/lib.rs", "src/search.rs"]
+                        }
+                      ],
+                      "sections": [],
+                      "narrative_pages": []
+                    }"#
+                    .to_string(),
+                )
+            }
+        } else if system == prompts::CONCEPT_PAGE_SYSTEM {
+            Some(
+                "## Purpose\n\nThe query engine resolves requests into repository answers [src/search.rs:4].\n\n## How it works\n\n1. Requests enter the query path [src/search.rs:4].\n\n## Key components\n\n| Symbol | Role |\n| --- | --- |\n| query | Runs a hybrid search [src/search.rs:4] |\n\n## Failure modes\n\n| Signal | Response |\n| --- | --- |\n| Missing index | Search has no results [src/search.rs:4] |\n\n## How to change it\n\nUpdate `query` and rerun focused tests [src/search.rs:4].\n\n## What to read next\n\nBegin with `query` [src/search.rs:4].\n"
+                    .to_string(),
+            )
+        } else {
+            None
+        }
+    };
+
+    let docs = generate_hierarchical_docs(&concept_input(), Some(&mut generator));
+    assert_eq!(
+        curated_calls, 2,
+        "the unparseable first emission should trigger exactly one retry"
+    );
+
+    let index = rendered_doc(&docs, "code/concepts/index.md");
+    // The recovered AI taxonomy keeps its semantic concept name; the structural
+    // fallback would have produced path-derived module concepts instead.
+    assert!(index.contains("Query Engine"), "{index}");
+    // A recovered flaky failure must not degrade the curated layer.
+    assert!(!index.contains("degraded: true"), "{index}");
+}
+
+#[test]
 fn curated_navigation_falls_back_to_structural_concepts_without_ai() {
     let docs = generate_hierarchical_docs(&concept_input(), None);
     let repo = rendered_doc(&docs, "code/repo.md");

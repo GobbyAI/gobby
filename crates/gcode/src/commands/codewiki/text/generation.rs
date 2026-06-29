@@ -118,6 +118,7 @@ pub(crate) fn resolve_text_generator(
             .as_ref()
             .map(|targets| targets.for_tier(gen_tier));
         let system = prompts::with_register(system, register);
+        let prompt = bound_one_shot_prompt(prompt);
         let result = generate_with_bounded_retry(|| {
             generate_one_shot(
                 &ai_context,
@@ -125,7 +126,7 @@ pub(crate) fn resolve_text_generator(
                 gen_tier,
                 aggregate_profile.as_deref(),
                 target,
-                prompt,
+                prompt.as_str(),
                 Some(system.as_ref()),
                 max_tokens,
             )
@@ -684,6 +685,31 @@ pub(crate) type ToolLoopGenerator<'a> = dyn FnMut(&str, &str) -> LaneBResult + '
 /// it keeps the request inside a tool-capable model's effective context (#993).
 const LANE_B_SEED_MAX_BYTES: usize = 16 * 1024;
 
+/// Upper bound on a Lane A one-shot prompt. A large module/aggregate prompt
+/// (many child summaries + source excerpts) combined with an unbounded output
+/// budget can overrun the model's loaded context window and 400 the request
+/// ("tokens to keep from the initial prompt is greater than the context
+/// length"). The one-shot path has no tools to recover elided detail, so the cap
+/// is far more generous than the Lane B seed; it only trims pathological inputs.
+const LANE_A_PROMPT_MAX_BYTES: usize = 32 * 1024;
+
+/// Bound a Lane A one-shot prompt to [`LANE_A_PROMPT_MAX_BYTES`], truncating on a
+/// char boundary, so an oversized module/aggregate prompt cannot 400 the request
+/// and degrade the page (#993). No tool note: Lane A has no investigation tools.
+fn bound_one_shot_prompt(prompt: &str) -> String {
+    if prompt.len() <= LANE_A_PROMPT_MAX_BYTES {
+        return prompt.to_string();
+    }
+    let mut end = LANE_A_PROMPT_MAX_BYTES;
+    while end > 0 && !prompt.is_char_boundary(end) {
+        end -= 1;
+    }
+    format!(
+        "{}\n\n[Input truncated to fit the model context.]",
+        &prompt[..end]
+    )
+}
+
 /// Bound the Lane B seed prompt to [`LANE_B_SEED_MAX_BYTES`], truncating on a
 /// char boundary and appending a tool-investigation note so the model fetches
 /// any details beyond the seed via its tools.
@@ -713,12 +739,17 @@ fn bound_seed_prompt(prompt: &str) -> String {
 const LANE_B_SYSTEM_DIRECTIVE: &str = "Investigation mode: you have tools \
 (search_code, outline_file, read_symbol, read_file, grep_repo, find_callers, \
 find_usages, imports). The user message is a bounded seed for orientation, not \
-the full evidence. Before writing the page, call these tools to read the actual \
-source behind every claim and to collect real file:line anchors. Tool results \
-are authoritative repository source: treat them as supplied input you may cite, \
-in addition to anchors already in the seed. Gather enough grounding to fill \
-every required section with evidence-backed prose, then write the page. Never \
-invent files, symbols, or line numbers.";
+the full evidence. Before answering, call these tools to read the actual source \
+so your output is grounded in the real code; treat tool results as authoritative \
+repository source, cite the file:line anchors they reveal alongside any in the \
+seed, and never invent files, symbols, or line numbers. If the task instructions \
+require specific section headings, your final answer must include every one of \
+them verbatim and in the given order; when a section's evidence is thin, state \
+that briefly under its heading rather than dropping the heading. When you have \
+gathered enough, write the complete response in a single final message and \
+return only that answer in exactly the format the task instructions require — no \
+tool-call narration, no preamble, and no extra commentary or code fences \
+wrapping a required JSON object.";
 
 /// Compose the Lane B system prompt: the page-specific system prompt followed by
 /// the [`LANE_B_SYSTEM_DIRECTIVE`] so the model investigates via tools before it
@@ -749,7 +780,18 @@ fn run_lane_b_loop(
         ChatMessage::system(lane_b_system_prompt(system)),
         ChatMessage::user(prompt.clone()),
     ];
-    let limits = ToolLoopLimits::default();
+    // A local standalone model (e.g. gemma) is slower per turn than a frontier
+    // model and accumulates context across investigation turns. Keep each tool
+    // result lean so the running prompt does not balloon back toward the
+    // context limit that 400s the request (#993), give the model room to both
+    // investigate and write, and grant a generous wall-clock budget so genuine
+    // multi-turn investigation completes instead of being cut short.
+    let limits = ToolLoopLimits {
+        max_turns: 12,
+        max_tool_calls: 24,
+        max_bytes_per_tool_result: 8 * 1024,
+        timeout: std::time::Duration::from_secs(600),
+    };
     let outcome = match run_tool_loop(transport, &mut executor, messages, &limits, max_tokens) {
         Ok(outcome) => GenerationOutcome::from_tool_loop(outcome, &prompt),
         Err(_) => GenerationOutcome::unavailable(),
@@ -901,9 +943,12 @@ pub(crate) fn generate_aggregate(
         // reason code — no skeleton, no silent Lane A fallback (#978).
         if let Some(cause) = result.outcome.failure_cause() {
             return Err(anyhow::anyhow!(
-                "Lane B {label} generation failed ({}); page not written \
-                 (no skeleton, no Lane A fallback)",
-                cause.reason_code()
+                "Lane B {label} generation failed ({}, stop={:?}, turns={}, tool_calls={}); \
+                 page not written (no skeleton, no Lane A fallback)",
+                cause.reason_code(),
+                observability.stop_reason,
+                observability.turns,
+                observability.tool_call_count,
             ));
         }
         Ok(AggregateGeneration {
@@ -999,7 +1044,30 @@ mod tests {
         assert!(composed.starts_with(prompts::CONCEPT_PAGE_SYSTEM));
         assert!(composed.contains("Investigation mode"));
         assert!(composed.contains("search_code"));
-        assert!(composed.contains("treat them as supplied input you may cite"));
+        assert!(composed.contains("authoritative repository source"));
+        // Format-agnostic: must not impose a prose-page shape, so it can also
+        // front the JSON curated-navigation pass without corrupting its output.
+        assert!(composed.contains("in exactly the format the task"));
+        assert!(!composed.contains("write the page"));
+        // Completeness clause: every required section heading must be emitted
+        // verbatim (state absence rather than drop a heading), so a thin-evidence
+        // section can't silently disappear and fail the structural check (#993).
+        assert!(composed.contains("verbatim and in the given order"));
+    }
+
+    #[test]
+    fn bound_one_shot_prompt_passes_small_prompts_through() {
+        let prompt = "small module prompt";
+        assert_eq!(bound_one_shot_prompt(prompt), prompt);
+    }
+
+    #[test]
+    fn bound_one_shot_prompt_truncates_oversized_prompt_on_a_char_boundary() {
+        let prompt = "é".repeat(LANE_A_PROMPT_MAX_BYTES); // 2 bytes each → over the cap
+        let bounded = bound_one_shot_prompt(&prompt);
+        assert!(std::str::from_utf8(bounded.as_bytes()).is_ok());
+        assert!(bounded.contains("[Input truncated to fit the model context.]"));
+        assert!(bounded.len() <= LANE_A_PROMPT_MAX_BYTES + 64);
     }
 
     #[test]
@@ -1410,6 +1478,11 @@ mod tests {
         assert!(message.contains("Lane B architecture"), "{message}");
         assert!(message.contains("model-unavailable"), "{message}");
         assert!(message.contains("no skeleton"), "{message}");
+        // The hard-fail surfaces the loop's termination reason so a stalled or
+        // budget-exhausted investigation is diagnosable (not just "unavailable").
+        assert!(message.contains("MaxToolCalls"), "{message}");
+        assert!(message.contains("turns=8"), "{message}");
+        assert!(message.contains("tool_calls=24"), "{message}");
     }
 
     #[test]

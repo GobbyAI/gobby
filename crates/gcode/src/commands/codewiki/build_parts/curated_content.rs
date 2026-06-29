@@ -116,7 +116,7 @@ pub(crate) fn curated_page_body(
     let is_lane_b = aggregate.lane == LANE_TOOL_LOOP;
     let mut data_source_degraded = aggregate.data_source_degraded;
     match aggregate.content {
-        GenerationContent::Generated(text) => {
+        GenerationContent::Generated(raw_text) => {
             // Grounded verification leaves prose intact and records unsupported
             // claims as frontmatter-only notes.
             // Curated pages carry no per-file relationship facts; the verifier
@@ -125,22 +125,33 @@ pub(crate) fn curated_page_body(
                 verifier_evidence_rows(members.iter().chain(symbols.iter()));
             let (text, verify_notes) = match verify_with_notes(
                 verify,
-                &text,
+                &raw_text,
                 &verification_evidence,
                 &sources,
                 &RelationshipFacts::default(),
             ) {
-                VerifyOutcome::Skipped => (text, Vec::new()),
+                VerifyOutcome::Skipped => (raw_text.clone(), Vec::new()),
                 VerifyOutcome::Verified { text, notes } => (text, notes),
             };
             let grounded = ground_text(&text, spans, None);
-            if grounded.trim().is_empty() || !has_required_curated_sections(kind, &grounded) {
+            let grounded_empty = grounded.trim().is_empty();
+            let has_sections = has_required_curated_sections(kind, &grounded);
+            if grounded_empty || !has_sections {
                 if is_lane_b {
                     // Lane B produced ungroundable or structurally incomplete
                     // prose: invalid, hard-fail (no skeleton fallback) (#978).
+                    // The flags/lengths distinguish "grounding stripped every
+                    // citation" (spans too narrow) from "missing a required
+                    // section" (model output shape).
+                    maybe_dump_lane_b_failure(
+                        kind, title, system, &prompt, &raw_text, &text, &grounded,
+                    );
                     return Err(anyhow::anyhow!(
-                        "Lane B curated page '{title}' produced an ungroundable or \
-                         structurally incomplete body; page not written (no skeleton)"
+                        "Lane B curated page '{title}' produced an invalid body \
+                         (grounded_empty={grounded_empty}, has_required_sections={has_sections}, \
+                         grounded_len={}, generated_len={}); page not written (no skeleton)",
+                        grounded.trim().len(),
+                        text.len(),
                     ));
                 }
                 Ok(CuratedBody {
@@ -495,6 +506,71 @@ fn has_required_curated_sections(kind: CuratedPageKind, body: &str) -> bool {
     required.iter().all(|heading| body.contains(heading))
 }
 
+/// Filesystem-safe slug for a curated page title, used to name a Lane B failure
+/// dump. Non-alphanumeric runs collapse to single underscores so the path stays
+/// predictable for offline replay.
+fn lane_b_dump_slug(title: &str) -> String {
+    let mut slug = String::with_capacity(title.len());
+    let mut last_underscore = false;
+    for c in title.chars() {
+        if c.is_ascii_alphanumeric() {
+            slug.push(c.to_ascii_lowercase());
+            last_underscore = false;
+        } else if !last_underscore {
+            slug.push('_');
+            last_underscore = true;
+        }
+    }
+    let trimmed = slug.trim_matches('_');
+    if trimmed.is_empty() {
+        "page".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+/// Diagnostic-only dump of a Lane B curated hard-fail. When
+/// `GOBBY_CODEWIKI_LANE_B_DUMP_DIR` is set, write the page's system prompt, seed
+/// prompt, raw model output, post-verify text, and grounded text to
+/// `<dir>/<slug>.dump.md` so a hard-fail is reproducible offline (replay the
+/// captured prompt against the model) without re-running the whole pipeline.
+/// Off by default: no env var means a no-op, so production runs are unaffected.
+fn maybe_dump_lane_b_failure(
+    kind: CuratedPageKind,
+    title: &str,
+    system: &str,
+    prompt: &str,
+    raw_text: &str,
+    verified_text: &str,
+    grounded: &str,
+) {
+    let Ok(dir) = std::env::var("GOBBY_CODEWIKI_LANE_B_DUMP_DIR") else {
+        return;
+    };
+    if dir.trim().is_empty() {
+        return;
+    }
+    let kind_name = match kind {
+        CuratedPageKind::Concept => "Concept",
+        CuratedPageKind::Narrative => "Narrative",
+    };
+    let path = std::path::Path::new(&dir).join(format!("{}.dump.md", lane_b_dump_slug(title)));
+    let dump = format!(
+        "# Lane B curated hard-fail dump\n\n\
+         - title: {title}\n- kind: {kind_name}\n\
+         - raw_bytes: {}\n- verified_bytes: {}\n- grounded_bytes: {}\n\n\
+         ## SYSTEM\n\n{system}\n\n## SEED PROMPT\n\n{prompt}\n\n\
+         ## RAW MODEL OUTPUT\n\n{raw_text}\n\n\
+         ## POST-VERIFY\n\n{verified_text}\n\n## GROUNDED\n\n{grounded}\n",
+        raw_text.len(),
+        verified_text.len(),
+        grounded.trim().len(),
+    );
+    if let Err(err) = std::fs::create_dir_all(&dir).and_then(|()| std::fs::write(&path, dump)) {
+        eprintln!("warning: failed to write Lane B failure dump to {path:?}: {err}");
+    }
+}
+
 fn first_citation(
     members: &[prompts::PageEvidenceRow],
     symbols: &[prompts::PageEvidenceRow],
@@ -805,6 +881,15 @@ fn role_phrase(summary: &str) -> Option<String> {
 #[cfg(test)]
 mod flow_tests {
     use super::*;
+
+    #[test]
+    fn lane_b_dump_slug_collapses_punctuation_and_trims() {
+        assert_eq!(lane_b_dump_slug("Core Logic Engine"), "core_logic_engine");
+        assert_eq!(lane_b_dump_slug("indexing_engine"), "indexing_engine");
+        assert_eq!(lane_b_dump_slug("  CLI / API!  "), "cli_api");
+        // Degenerate titles still produce a usable filename stem.
+        assert_eq!(lane_b_dump_slug("///"), "page");
+    }
 
     fn module_doc(name: &str, summary: &str) -> ModuleDoc {
         ModuleDoc {

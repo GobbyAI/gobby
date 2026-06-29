@@ -207,7 +207,62 @@ pub(super) fn parse_plan(raw: &str) -> Option<CuratedNavigationPlan> {
         .and_then(|body| body.strip_suffix("```"))
         .map(str::trim)
         .unwrap_or(trimmed);
-    serde_json::from_str::<CuratedNavigationPlan>(json).ok()
+    if let Some(plan) = parse_plan_json(json) {
+        return Some(plan);
+    }
+    // A tool-using model may wrap the plan in reasoning or commentary despite the
+    // "return only JSON" instruction; recover by parsing the outermost {...} span.
+    let start = json.find('{')?;
+    let end = json.rfind('}')?;
+    if end <= start {
+        return None;
+    }
+    parse_plan_json(&json[start..=end])
+}
+
+/// Parse a JSON span into a plan, repairing invalid escape sequences first. A
+/// weak model routinely emits Markdown table content inside the JSON string
+/// values (e.g. an escaped pipe `\|` from a `json\|text` cell); `\|` is not a
+/// valid JSON escape, so the strict parser rejects an otherwise-complete plan
+/// and the run falls back to a degenerate structural taxonomy (#993). Repair the
+/// stray escapes and retry before giving up.
+fn parse_plan_json(json: &str) -> Option<CuratedNavigationPlan> {
+    if let Ok(plan) = serde_json::from_str::<CuratedNavigationPlan>(json) {
+        return Some(plan);
+    }
+    let repaired = repair_json_escapes(json);
+    if repaired != json
+        && let Ok(plan) = serde_json::from_str::<CuratedNavigationPlan>(&repaired)
+    {
+        return Some(plan);
+    }
+    None
+}
+
+/// Drop stray backslashes that do not introduce a valid JSON escape (`"`, `\`,
+/// `/`, `b`, `f`, `n`, `r`, `t`, `u`). Valid escapes — including `\\` and
+/// `\uXXXX` — pass through unchanged; only the non-standard ones a model emits
+/// inside Markdown table content (e.g. `\|`) are unescaped.
+fn repair_json_escapes(json: &str) -> String {
+    let mut out = String::with_capacity(json.len());
+    let mut chars = json.chars();
+    while let Some(c) = chars.next() {
+        if c != '\\' {
+            out.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some(next) if matches!(next, '"' | '\\' | '/' | 'b' | 'f' | 'n' | 'r' | 't' | 'u') => {
+                out.push('\\');
+                out.push(next);
+            }
+            // Invalid escape (e.g. `\|` from a Markdown table cell): drop the
+            // backslash, keep the character.
+            Some(next) => out.push(next),
+            None => out.push('\\'),
+        }
+    }
+    out
 }
 
 pub(super) fn fallback_plan(files: &[FileDoc], modules: &[ModuleDoc]) -> CuratedNavigationPlan {
@@ -675,6 +730,61 @@ mod tests {
             verify_notes: Vec::new(),
             body_observability: GenerationObservability::default(),
         }
+    }
+
+    #[test]
+    fn parse_plan_recovers_json_wrapped_in_reasoning_or_commentary() {
+        let clean = r#"{"concept_modules":[],"sections":[],"narrative_pages":[]}"#;
+        assert!(parse_plan(clean).is_some(), "clean JSON must parse");
+        // A tool-using model may surround the plan with reasoning/commentary
+        // despite the "return only JSON" instruction; recover the {...} span.
+        let wrapped = format!("Let me investigate first.\n\n{clean}\n\nThat is the plan.");
+        assert!(
+            parse_plan(&wrapped).is_some(),
+            "wrapped JSON must be recovered"
+        );
+        // Fenced JSON keeps parsing (existing behavior).
+        let fenced = format!("```json\n{clean}\n```");
+        assert!(parse_plan(&fenced).is_some(), "fenced JSON must parse");
+        // Genuinely non-JSON output still fails (no false positive).
+        assert!(parse_plan("no json here at all").is_none());
+    }
+
+    #[test]
+    fn parse_plan_repairs_invalid_markdown_escapes_in_content() {
+        // A weak model emits Markdown table content inside a JSON string value;
+        // an escaped pipe (`json\|text`) is not a valid JSON escape and would
+        // otherwise sink the whole plan into the degenerate fallback (#993).
+        let raw = "{\"concept_modules\":[{\"title\":\"Command Interface\",\
+            \"summary\":\"The CLI surface.\",\"modules\":[\"crates/gcode/src/cli\"],\"files\":[]}],\
+            \"sections\":[{\"slug\":\"cli\",\"title\":\"CLI\",\"summary\":\"Commands.\",\
+            \"concepts\":[\"Command Interface\"],\"modules\":[],\"files\":[],\
+            \"content\":\"| Flag | Values |\\n| --- | --- |\\n| --format | `json\\|text` |\"}],\
+            \"narrative_pages\":[]}";
+        // The raw text contains a literal backslash-pipe that serde rejects.
+        assert!(
+            serde_json::from_str::<CuratedNavigationPlan>(raw).is_err(),
+            "precondition: the invalid escape makes strict parsing fail"
+        );
+        let plan = parse_plan(raw).expect("escape repair must recover the plan");
+        assert_eq!(plan.concept_modules.len(), 1);
+        assert_eq!(plan.concept_modules[0].title, "Command Interface");
+        assert_eq!(plan.sections.len(), 1);
+    }
+
+    #[test]
+    fn repair_json_escapes_preserves_valid_escapes() {
+        // Valid escapes (\\n, \\", \\\\, \\uXXXX) survive; only the stray ones go.
+        let input =
+            r#"{"a":"line\nbreak","b":"quote\"in","c":"back\\slash","d":"ué","e":"pipe\|x"}"#;
+        let repaired = repair_json_escapes(input);
+        let value: serde_json::Value =
+            serde_json::from_str(&repaired).expect("repaired JSON parses");
+        assert_eq!(value["a"], "line\nbreak");
+        assert_eq!(value["b"], "quote\"in");
+        assert_eq!(value["c"], "back\\slash");
+        assert_eq!(value["d"], "u\u{00e9}");
+        assert_eq!(value["e"], "pipe|x");
     }
 
     // Every chapter — spine and extra alike — gets a readable, position-ordered

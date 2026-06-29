@@ -41,12 +41,10 @@ pub(super) fn render_curated_navigation_docs(
     // the bodies are in place. Mutates `concepts` first, so `concept_titles`
     // (which borrows it) is built afterwards.
     for concept in &mut concepts {
-        let spans = item_spans(
-            &concept.modules,
-            &concept.files,
-            &module_lookup,
-            &file_lookup,
-        );
+        // Lane B investigates beyond this concept's own members via tools, so
+        // grounding must accept citations to any indexed span in scope (#993);
+        // restricting to member spans strips legitimately tool-fetched anchors
+        // and the body reads as ungroundable. all_spans covers the wiki scope.
         let result = curated_content::curated_page_body(
             CuratedPageKind::Concept,
             &concept.title,
@@ -56,7 +54,7 @@ pub(super) fn render_curated_navigation_docs(
             &module_lookup,
             &file_lookup,
             leading_chunks,
-            &spans,
+            &all_spans,
             generate,
             tool_loop,
             verify,
@@ -68,7 +66,6 @@ pub(super) fn render_curated_navigation_docs(
     }
     for page in &mut narrative_pages {
         let (member_modules, member_files) = narrative_members(page, &concepts);
-        let spans = narrative_spans(page, &concepts, &module_lookup, &file_lookup);
         let result = curated_content::curated_page_body(
             CuratedPageKind::Narrative,
             &page.title,
@@ -78,7 +75,7 @@ pub(super) fn render_curated_navigation_docs(
             &module_lookup,
             &file_lookup,
             leading_chunks,
-            &spans,
+            &all_spans,
             generate,
             tool_loop,
             verify,
@@ -275,8 +272,19 @@ fn render_concept_page(
 ) -> String {
     let degraded_sources =
         combine_degraded_sources(degraded_sources, &concept.body_degraded_sources);
-    let lane_b = (lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
-        lane,
+    // The nav structure pass runs Lane A, so the nav-level `lane` no longer
+    // reflects how this page's *content* was generated. A curated content pass
+    // that ran the Lane B tool loop always makes >=1 tool call (turn-0 tool use
+    // is forced), while a Lane A one-shot makes none, so a non-zero tool-call
+    // count is this page's own Lane B signal; otherwise fall back to the nav
+    // lane (#993).
+    let page_lane = if concept.body_observability.tool_call_count > 0 {
+        LANE_TOOL_LOOP
+    } else {
+        lane
+    };
+    let lane_b = (page_lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
+        lane: page_lane,
         tool_call_count: concept.body_observability.tool_call_count,
         turns: concept.body_observability.turns,
     });
@@ -323,8 +331,17 @@ fn render_narrative_page(
     file_lookup: &std::collections::BTreeMap<&str, &FileDoc>,
 ) -> String {
     let degraded_sources = combine_degraded_sources(degraded_sources, &page.body_degraded_sources);
-    let lane_b = (lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
-        lane,
+    // The nav structure pass runs Lane A, so the nav-level `lane` no longer
+    // reflects how this page's *content* was generated. A non-zero tool-call
+    // count is this page's own Lane B signal (turn-0 tool use is forced);
+    // otherwise fall back to the nav lane (#993).
+    let page_lane = if page.body_observability.tool_call_count > 0 {
+        LANE_TOOL_LOOP
+    } else {
+        lane
+    };
+    let lane_b = (page_lane == LANE_TOOL_LOOP).then_some(FrontmatterLaneB {
+        lane: page_lane,
         tool_call_count: page.body_observability.tool_call_count,
         turns: page.body_observability.turns,
     });
@@ -527,6 +544,57 @@ fn narrative_members(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn concept_page_records_its_own_content_lane_not_the_nav_lane() {
+        let module_lookup = std::collections::BTreeMap::new();
+        let file_lookup = std::collections::BTreeMap::new();
+        let mut concept = ConceptModule {
+            slug: "engine".to_string(),
+            title: "Engine".to_string(),
+            summary: "The core engine.".to_string(),
+            modules: Vec::new(),
+            files: Vec::new(),
+            body: Some("## Purpose\n\nReal investigated body.\n".to_string()),
+            body_degraded_sources: Vec::new(),
+            verify_notes: Vec::new(),
+            body_observability: GenerationObservability {
+                tool_call_count: 3,
+                turns: 4,
+                ..GenerationObservability::default()
+            },
+        };
+
+        // The nav structure pass is Lane A (one_shot), but this page's content
+        // pass used the tool loop: the page must record its own tool_loop lane
+        // and counts, not the nav lane (#993 observability regression).
+        let doc = render_concept_page(
+            &concept,
+            &[],
+            &[],
+            LANE_ONE_SHOT,
+            None,
+            &module_lookup,
+            &file_lookup,
+        );
+        assert!(doc.contains("lane: tool_loop"), "{doc}");
+        assert!(doc.contains("tool_call_count: 3"), "{doc}");
+        assert!(doc.contains("turns: 4"), "{doc}");
+
+        // A content pass that made no tool calls is Lane A: no tool_loop lane.
+        concept.body_observability.tool_call_count = 0;
+        concept.body_observability.turns = 1;
+        let doc_a = render_concept_page(
+            &concept,
+            &[],
+            &[],
+            LANE_ONE_SHOT,
+            None,
+            &module_lookup,
+            &file_lookup,
+        );
+        assert!(!doc_a.contains("lane: tool_loop"), "{doc_a}");
+    }
 
     #[test]
     fn strips_a_leading_model_h1() {
