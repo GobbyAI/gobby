@@ -470,12 +470,20 @@ def _text_generate_adapter_style(provider: str) -> AIAdapterStyle | None:
 # Adapter styles whose tool_chat adapter is implemented today. A binding for any
 # other style is registered as unavailable so it is excluded from tool_chat
 # selection yet still visible in /api/llm/status.
+# NOTE: AIAdapterStyle.DAEMON (codex) is intentionally NOT executable yet, even
+# though CodexSpawnToolChatAdapter is built, tested, and proven live. Enabling it
+# makes codex tool-capable, and the codewiki aggregate Lane B path currently sends
+# a bare ``feature_high`` profile (no candidates) which resolves codex-first —
+# silently repointing codewiki aggregates from claude/opus to codex. Flip DAEMON
+# in only after the codewiki daemon caller requests a claude-opus-first candidate
+# chain (matching the direct route + the documented "opus-first writer chain"),
+# so enabling codex never repoints codewiki. The adapter + factory remain wired so
+# re-enabling is this one line plus that caller change.
 _TOOL_CHAT_EXECUTABLE_STYLES: frozenset[AIAdapterStyle] = frozenset(
     {
         AIAdapterStyle.LLM_PROVIDER,
         AIAdapterStyle.OPENAI_COMPATIBLE,
         AIAdapterStyle.LOCAL,
-        AIAdapterStyle.DAEMON,
     }
 )
 
