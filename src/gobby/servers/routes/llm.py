@@ -8,7 +8,6 @@ import os
 import stat
 import tempfile
 import time
-from functools import lru_cache
 from pathlib import Path
 from tempfile import NamedTemporaryFile
 from typing import TYPE_CHECKING, Any, Literal
@@ -21,12 +20,13 @@ from gobby.ai import (
     AICapability,
     CapabilityUnavailableError,
     TextGenerationRequest,
+    ToolChatRequest,
+    ToolPolicy,
     VisionExtractRequest,
     build_daemon_ai_capability_registry,
     build_daemon_vision_extract_service,
 )
 from gobby.config.feature_base import (
-    DEFAULT_PROFILE_CANDIDATES,
     FeatureCandidateInput,
     FeatureProfile,
 )
@@ -77,36 +77,33 @@ class ChatMessage(BaseModel):
     content: str
 
 
+class ToolPolicyPayload(BaseModel):
+    """Caller-declared tool policy for a tool_chat request."""
+
+    cli: str = Field(min_length=1)
+    tools: tuple[str, ...] = Field(min_length=1)
+    allow_mutation: bool = False
+
+
 class ChatCompletionsPayload(BaseModel):
-    """Request body for daemon-side agentic narrative generation."""
+    """Request body for daemon-side provider-agnostic tool_chat generation."""
 
     messages: list[ChatMessage] = Field(min_length=1)
     project_path: str = Field(min_length=1)
+    tool_policy: ToolPolicyPayload
     profile: str | None = None
+    provider: str | None = None
     model: str | None = None
+    candidates: tuple[FeatureCandidateInput, ...] = ()
     max_turns: int | None = Field(default=None, gt=0)
     reasoning_effort: str | None = None
 
-
-def _resolve_claude_model_for_profile(profile: str | None) -> str | None:
-    """Return the claude candidate model for a feature profile, if any.
-
-    Mirrors how the text-generation path resolves profile candidates, but keeps
-    this endpoint claude-only: it scans ``DEFAULT_PROFILE_CANDIDATES`` for the
-    first ``claude/<model>`` entry (e.g. ``claude/opus`` for ``feature_high``)
-    and returns the bare model alias.
-    """
-    if profile is None:
-        return None
-    try:
-        candidates = DEFAULT_PROFILE_CANDIDATES[FeatureProfile(profile)]
-    except (ValueError, KeyError):
-        return None
-    for candidate in candidates:
-        provider, _, model = candidate.candidate.partition("/")
-        if provider == "claude" and model:
-            return model
-    return None
+    @property
+    def effective_profile(self) -> str | None:
+        """Default to the daemon HIGH feature profile unless routing is explicit."""
+        if self.provider or self.model or self.profile or self.candidates:
+            return self.profile
+        return DEFAULT_CHAT_COMPLETIONS_PROFILE
 
 
 def _clamp_agentic_turns(max_turns: int | None) -> int:
@@ -132,62 +129,6 @@ def _split_chat_messages(messages: list[ChatMessage]) -> tuple[str | None, str]:
         )
     system_prompt = "\n\n".join(system_parts) or None
     return system_prompt, user_prompt
-
-
-@lru_cache(maxsize=1)
-def _code_index_skill_text() -> str:
-    """Return the bundled code-index skill that teaches agents to use ``gcode``."""
-    import gobby
-
-    skill_path = (
-        Path(gobby.__file__).resolve().parent
-        / "install"
-        / "shared"
-        / "skills"
-        / "code-index"
-        / "SKILL.md"
-    )
-    try:
-        return skill_path.read_text(encoding="utf-8").strip()
-    except OSError:
-        return ""
-
-
-def _augment_system_prompt_with_code_index(
-    system_prompt: str | None, project_path: str
-) -> str | None:
-    """Append the code-index skill when ``project_path`` is a gcode-indexed repo.
-
-    The agentic investigation runs with ``cwd=project_path``; when that repo is a
-    Gobby project (has ``.gobby/project.json``) it carries a ``gcode`` index, so
-    we teach the agent to investigate via ``gcode`` (AST-grounded, cheap) instead
-    of broad file reads. Non-indexed callers are left untouched so we never point
-    an agent at an index that does not exist.
-    """
-    if not (Path(project_path) / ".gobby" / "project.json").is_file():
-        return system_prompt
-    skill = _code_index_skill_text()
-    if not skill:
-        return system_prompt
-    guidance = (
-        "This repository is indexed by `gcode` (on your PATH). Prefer `gcode` for "
-        "code investigation over reading whole files — it is AST-grounded and "
-        "far cheaper. Follow this skill:\n\n" + skill
-    )
-    if system_prompt and system_prompt.strip():
-        return f"{system_prompt}\n\n{guidance}"
-    return guidance
-
-
-def _build_agentic_provider(config: Any) -> Any:
-    """Construct the Claude provider used for agentic narrative generation.
-
-    Isolated as a seam so tests can inject a fake provider without importing the
-    Claude Agent SDK.
-    """
-    from gobby.llm.claude import ClaudeLLMProvider
-
-    return ClaudeLLMProvider(config)
 
 
 def create_llm_router(server: HTTPServer) -> APIRouter:
@@ -248,35 +189,41 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
 
     @router.post("/chat/completions")
     async def chat_completions(payload: ChatCompletionsPayload) -> Any:
-        """Run daemon-side agentic narrative generation via the Claude Agent SDK.
+        """Run daemon-side provider-agnostic agentic ``tool_chat`` generation.
 
-        The Claude provider investigates ``project_path`` over many turns —
-        driving the project's ``gcode`` code index via Bash (per the bundled
-        code-index skill) alongside Read/Grep/Glob — then returns a grounded
-        Markdown narrative shaped like an OpenAI chat completion plus an
-        ``investigation`` provenance block.
+        Resolves a ``tool_chat`` binding from the requested profile/candidates,
+        dispatches on the binding's ``AIAdapterStyle``, and runs the agent under
+        the caller's declared tool policy and directive. Returns an OpenAI-shaped
+        completion plus an ``investigation`` provenance block. This route holds
+        no provider names and performs no fallback — an unsatisfiable capability
+        is reported as a 400.
         """
         config = server.config
         if config is None:
             raise HTTPException(status_code=503, detail="Daemon config not found")
-
-        profile = payload.profile or DEFAULT_CHAT_COMPLETIONS_PROFILE
-        model = payload.model or _resolve_claude_model_for_profile(profile)
-        max_turns = _clamp_agentic_turns(payload.max_turns)
+        service = getattr(server.services, "tool_chat_service", None)
+        if service is None:
+            raise HTTPException(status_code=503, detail="Tool chat service not initialized")
         try:
             system_prompt, user_prompt = _split_chat_messages(payload.messages)
-            system_prompt = _augment_system_prompt_with_code_index(
-                system_prompt, payload.project_path
-            )
-            provider = _build_agentic_provider(config)
-            result = await provider.generate_agentic(
-                system_prompt=system_prompt,
-                prompt=user_prompt,
-                project_path=payload.project_path,
-                model=model,
-                max_turns=max_turns,
-                reasoning_effort=payload.reasoning_effort,
-                caller="llm-chat-completions-route",
+            result = await service.chat_result(
+                ToolChatRequest(
+                    prompt=user_prompt,
+                    system_prompt=system_prompt,
+                    tool_policy=ToolPolicy(
+                        cli=payload.tool_policy.cli,
+                        tools=tuple(payload.tool_policy.tools),
+                        allow_mutation=payload.tool_policy.allow_mutation,
+                    ),
+                    project_path=payload.project_path,
+                    profile=payload.effective_profile,
+                    provider=payload.provider,
+                    candidates=payload.candidates,
+                    model=payload.model,
+                    max_turns=_clamp_agentic_turns(payload.max_turns),
+                    reasoning_effort=payload.reasoning_effort,
+                    caller="llm-chat-completions-route",
+                )
             )
             response: dict[str, Any] = {
                 "choices": [
@@ -290,6 +237,8 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                     "tool_use_count": result.tool_use_count,
                     "turns": result.turns,
                     "tools": result.tools,
+                    "adapter_style": result.adapter_style,
+                    "stop_reason": result.stop_reason,
                 },
             }
             if result.usage is not None:
@@ -298,14 +247,14 @@ def create_llm_router(server: HTTPServer) -> APIRouter:
                 response["applied_reasoning_effort"] = result.applied_reasoning_effort
             return response
         except CapabilityUnavailableError as e:
-            logger.info("Agentic chat completion capability unavailable: %s", e)
+            logger.info("tool_chat capability unavailable: %s", e)
             return JSONResponse(status_code=400, content=_capability_error_detail(e))
         except ValueError as e:
-            logger.info("Agentic chat completion rejected: %s", e)
+            logger.info("tool_chat rejected: %s", e)
             raise HTTPException(status_code=400, detail=str(e)) from e
         except Exception as e:
-            logger.error("Agentic chat completion failed", exc_info=True)
-            raise HTTPException(status_code=500, detail="Agentic chat completion failed") from e
+            logger.error("tool_chat failed", exc_info=True)
+            raise HTTPException(status_code=500, detail="tool_chat failed") from e
 
     @router.get("/vision/status")
     async def vision_status() -> dict[str, Any]:

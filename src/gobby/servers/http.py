@@ -13,7 +13,10 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING, Any
 
-from gobby.ai import build_daemon_text_generation_service
+from gobby.ai import (
+    build_daemon_text_generation_service,
+    build_daemon_tool_chat_service,
+)
 from gobby.config.bootstrap import DEFAULT_WEBSOCKET_PORT
 from gobby.hooks.broadcaster import HookEventBroadcaster
 from gobby.llm import create_llm_service
@@ -86,6 +89,10 @@ class HTTPServer:
             try:
                 if services.text_generation_service is None:
                     services.text_generation_service = build_daemon_text_generation_service(
+                        services.config,
+                    )
+                if services.tool_chat_service is None:
+                    services.tool_chat_service = build_daemon_tool_chat_service(
                         services.config,
                     )
                 services.llm_service = create_llm_service(

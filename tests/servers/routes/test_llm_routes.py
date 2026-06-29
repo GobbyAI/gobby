@@ -16,8 +16,11 @@ from gobby.ai import (
     AICapability,
     AICapabilityRegistry,
     CapabilityBinding,
+    CapabilityUnavailableError,
     TextGenerationRequest,
     TextGenerationService,
+    ToolChatRequest,
+    ToolChatResult,
     VisionExtractRequest,
     VisionExtractResult,
     VisionExtractService,
@@ -1121,36 +1124,50 @@ async def test_vision_temp_cleanup_task_replaces_stale_loop_task(
     await llm_module.stop_vision_temp_cleanup_task(app)
 
 
-class _FakeAgenticProvider:
-    """Stand-in for ClaudeLLMProvider.generate_agentic in route tests."""
+class _FakeToolChatService:
+    """Stand-in for ToolChatService.chat_result in chat-completions route tests."""
 
-    def __init__(self, result: object = None, *, error: Exception | None = None) -> None:
+    def __init__(
+        self, result: ToolChatResult | None = None, *, error: Exception | None = None
+    ) -> None:
         self.result = result
         self.error = error
-        self.calls: list[dict[str, object]] = []
+        self.requests: list[ToolChatRequest] = []
 
-    async def generate_agentic(self, **kwargs: object) -> object:
-        self.calls.append(kwargs)
+    async def chat_result(self, request: ToolChatRequest) -> ToolChatResult:
+        self.requests.append(request)
         if self.error is not None:
             raise self.error
+        assert self.result is not None
         return self.result
+
+
+_READONLY_TOOL_POLICY = {"cli": "gcode", "tools": ["search", "outline"]}
+
+
+def _chat_result(**overrides: object) -> ToolChatResult:
+    base: dict[str, object] = {
+        "text": "## Overview\n\nGrounded narrative citing src/app.py:12.",
+        "provider": "claude",
+        "model": "opus",
+        "adapter_style": "llm_provider",
+        "tool_use_count": 33,
+        "turns": 39,
+        "tools": {"gcode_search": 28, "gcode_outline": 5},
+        "usage": {"input_tokens": 1000, "output_tokens": 200},
+        "applied_reasoning_effort": "high",
+        "stop_reason": "completed",
+    }
+    base.update(overrides)
+    return ToolChatResult(**base)  # type: ignore[arg-type]
 
 
 def test_chat_completions_returns_openai_shape_with_investigation(
     client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
+    server_with_llm: MagicMock,
 ) -> None:
-    result = SimpleNamespace(
-        text="## Overview\n\nGrounded narrative citing src/app.py:12.",
-        model="opus",
-        tool_use_count=33,
-        turns=39,
-        tools={"Read": 28, "Glob": 4, "Grep": 1},
-        usage={"input_tokens": 1000, "output_tokens": 200},
-        applied_reasoning_effort="high",
-    )
-    provider = _FakeAgenticProvider(result)
-    monkeypatch.setattr(llm_module, "_build_agentic_provider", lambda config: provider)
+    service = _FakeToolChatService(_chat_result())
+    server_with_llm.services.tool_chat_service = service
 
     response = client.post(
         "/api/llm/chat/completions",
@@ -1160,6 +1177,7 @@ def test_chat_completions_returns_openai_shape_with_investigation(
                 {"role": "user", "content": "Document the auth module."},
             ],
             "project_path": "/repo",
+            "tool_policy": _READONLY_TOOL_POLICY,
         },
     )
 
@@ -1178,142 +1196,172 @@ def test_chat_completions_returns_openai_shape_with_investigation(
         "investigation": {
             "tool_use_count": 33,
             "turns": 39,
-            "tools": {"Read": 28, "Glob": 4, "Grep": 1},
+            "tools": {"gcode_search": 28, "gcode_outline": 5},
+            "adapter_style": "llm_provider",
+            "stop_reason": "completed",
         },
         "usage": {"input_tokens": 1000, "output_tokens": 200},
         "applied_reasoning_effort": "high",
     }
-    assert len(provider.calls) == 1
-    call = provider.calls[0]
-    assert call["system_prompt"] == "You write grounded code docs."
-    assert call["prompt"] == "Document the auth module."
-    assert call["project_path"] == "/repo"
-    # The default feature_high profile resolves the claude/opus candidate model.
-    assert call["model"] == "opus"
-    assert call["max_turns"] == 60
-    assert call["caller"] == "llm-chat-completions-route"
+    assert len(service.requests) == 1
+    request = service.requests[0]
+    assert request.system_prompt == "You write grounded code docs."
+    assert request.prompt == "Document the auth module."
+    assert request.project_path == "/repo"
+    assert request.tool_policy.cli == "gcode"
+    assert request.tool_policy.tools == ("search", "outline")
+    assert request.tool_policy.allow_mutation is False
+    # The route sends no provider name; the default profile drives selection.
+    assert request.profile == "feature_high"
+    assert request.provider is None
+    assert request.caller == "llm-chat-completions-route"
+
+
+def test_chat_completions_requires_a_tool_policy(client: TestClient) -> None:
+    response = client.post(
+        "/api/llm/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Go."}],
+            "project_path": "/repo",
+        },
+    )
+    # The caller must declare its tools; the route invents no policy.
+    assert response.status_code == 422
 
 
 def test_chat_completions_clamps_max_turns_and_omits_empty_fields(
     client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
+    server_with_llm: MagicMock,
 ) -> None:
-    result = SimpleNamespace(
-        text="# Title",
-        model="opus",
-        tool_use_count=0,
-        turns=1,
-        tools={},
-        usage=None,
-        applied_reasoning_effort=None,
+    service = _FakeToolChatService(
+        _chat_result(tool_use_count=0, turns=1, tools={}, usage=None, applied_reasoning_effort=None)
     )
-    provider = _FakeAgenticProvider(result)
-    monkeypatch.setattr(llm_module, "_build_agentic_provider", lambda config: provider)
+    server_with_llm.services.tool_chat_service = service
 
     response = client.post(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Investigate."}],
             "project_path": "/repo",
+            "tool_policy": _READONLY_TOOL_POLICY,
             "max_turns": 500,
         },
     )
 
     assert response.status_code == 200
     body = response.json()
-    assert body["investigation"] == {"tool_use_count": 0, "turns": 1, "tools": {}}
     assert "usage" not in body
     assert "applied_reasoning_effort" not in body
-    assert provider.calls[0]["max_turns"] == llm_module._MAX_AGENTIC_TURNS
+    assert service.requests[0].max_turns == llm_module._MAX_AGENTIC_TURNS
 
 
-def test_chat_completions_respects_explicit_model(
+def test_chat_completions_forwards_explicit_routing(
     client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
+    server_with_llm: MagicMock,
 ) -> None:
-    result = SimpleNamespace(
-        text="# X",
-        model="claude-opus-4-8",
-        tool_use_count=0,
-        turns=1,
-        tools={},
-        usage=None,
-        applied_reasoning_effort=None,
-    )
-    provider = _FakeAgenticProvider(result)
-    monkeypatch.setattr(llm_module, "_build_agentic_provider", lambda config: provider)
+    service = _FakeToolChatService(_chat_result())
+    server_with_llm.services.tool_chat_service = service
 
     response = client.post(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
             "project_path": "/repo",
-            "model": "claude-opus-4-8",
-            "profile": "feature_low",
+            "tool_policy": _READONLY_TOOL_POLICY,
+            "provider": "local:lm-studio",
+            "model": "gemma",
         },
     )
 
     assert response.status_code == 200
-    assert provider.calls[0]["model"] == "claude-opus-4-8"
+    request = service.requests[0]
+    assert request.provider == "local:lm-studio"
+    assert request.model == "gemma"
+    # Explicit routing leaves the profile unset (no default override).
+    assert request.profile is None
 
 
 def test_chat_completions_rejects_messages_without_user_content(
     client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
+    server_with_llm: MagicMock,
 ) -> None:
-    provider = _FakeAgenticProvider(SimpleNamespace())
-    monkeypatch.setattr(llm_module, "_build_agentic_provider", lambda config: provider)
+    service = _FakeToolChatService(_chat_result())
+    server_with_llm.services.tool_chat_service = service
 
     response = client.post(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "system", "content": "Only a system prompt."}],
             "project_path": "/repo",
+            "tool_policy": _READONLY_TOOL_POLICY,
         },
     )
 
     assert response.status_code == 400
     assert "at least one non-empty user or assistant message" in response.json()["detail"]
-    assert provider.calls == []
+    assert service.requests == []
 
 
-def test_chat_completions_maps_value_error_to_400(
+def test_chat_completions_maps_capability_unavailable_to_400(
     client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
+    server_with_llm: MagicMock,
 ) -> None:
-    provider = _FakeAgenticProvider(error=ValueError("Unsupported Claude reasoning effort 'turbo'"))
-    monkeypatch.setattr(llm_module, "_build_agentic_provider", lambda config: provider)
+    service = _FakeToolChatService(
+        error=CapabilityUnavailableError(AICapability.TOOL_CHAT, reason="No tool-capable binding")
+    )
+    server_with_llm.services.tool_chat_service = service
 
     response = client.post(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
             "project_path": "/repo",
-            "reasoning_effort": "turbo",
+            "tool_policy": _READONLY_TOOL_POLICY,
         },
     )
 
     assert response.status_code == 400
-    assert response.json() == {"detail": "Unsupported Claude reasoning effort 'turbo'"}
+    assert AICapability.TOOL_CHAT.value in str(response.json())
 
 
-def test_chat_completions_maps_unexpected_error_to_500(
+def test_chat_completions_maps_value_error_to_400(
     client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
+    server_with_llm: MagicMock,
 ) -> None:
-    provider = _FakeAgenticProvider(error=RuntimeError("Agentic generation unavailable"))
-    monkeypatch.setattr(llm_module, "_build_agentic_provider", lambda config: provider)
+    service = _FakeToolChatService(error=ValueError("bad candidate"))
+    server_with_llm.services.tool_chat_service = service
 
     response = client.post(
         "/api/llm/chat/completions",
         json={
             "messages": [{"role": "user", "content": "Go."}],
             "project_path": "/repo",
+            "tool_policy": _READONLY_TOOL_POLICY,
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json() == {"detail": "bad candidate"}
+
+
+def test_chat_completions_maps_unexpected_error_to_500(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    service = _FakeToolChatService(error=RuntimeError("boom"))
+    server_with_llm.services.tool_chat_service = service
+
+    response = client.post(
+        "/api/llm/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Go."}],
+            "project_path": "/repo",
+            "tool_policy": _READONLY_TOOL_POLICY,
         },
     )
 
     assert response.status_code == 500
-    assert response.json() == {"detail": "Agentic chat completion failed"}
+    assert response.json() == {"detail": "tool_chat failed"}
 
 
 def test_chat_completions_returns_503_without_config(
@@ -1327,11 +1375,31 @@ def test_chat_completions_returns_503_without_config(
         json={
             "messages": [{"role": "user", "content": "Go."}],
             "project_path": "/repo",
+            "tool_policy": _READONLY_TOOL_POLICY,
         },
     )
 
     assert response.status_code == 503
     assert response.json() == {"detail": "Daemon config not found"}
+
+
+def test_chat_completions_returns_503_without_service(
+    client: TestClient,
+    server_with_llm: MagicMock,
+) -> None:
+    server_with_llm.services.tool_chat_service = None
+
+    response = client.post(
+        "/api/llm/chat/completions",
+        json={
+            "messages": [{"role": "user", "content": "Go."}],
+            "project_path": "/repo",
+            "tool_policy": _READONLY_TOOL_POLICY,
+        },
+    )
+
+    assert response.status_code == 503
+    assert response.json() == {"detail": "Tool chat service not initialized"}
 
 
 def test_strip_leading_preamble_drops_non_markdown_prefix() -> None:
@@ -1345,72 +1413,3 @@ def test_strip_leading_preamble_drops_non_markdown_prefix() -> None:
 
     no_heading = "   Just prose, no heading.   "
     assert _strip_leading_preamble(no_heading) == "Just prose, no heading."
-
-
-def test_augment_system_prompt_with_code_index_gates_on_index(tmp_path: Path) -> None:
-    """_augment_system_prompt_with_code_index gates skill injection on the index marker."""
-    # No .gobby/project.json -> not a gcode-indexed repo -> prompt unchanged.
-    assert llm_module._augment_system_prompt_with_code_index("base", str(tmp_path)) == "base"
-
-    # Mark the dir as a Gobby project (carries a gcode index).
-    (tmp_path / ".gobby").mkdir()
-    (tmp_path / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
-
-    augmented = llm_module._augment_system_prompt_with_code_index("base", str(tmp_path))
-    assert augmented is not None
-    assert augmented.startswith("base")
-    assert "gcode" in augmented
-    # The bundled code-index skill content is appended verbatim.
-    assert "gcode outline" in augmented
-
-
-def test_augment_system_prompt_with_code_index_handles_missing_system_prompt(
-    tmp_path: Path,
-) -> None:
-    """A None/blank base prompt still yields the standalone skill on an indexed repo."""
-    (tmp_path / ".gobby").mkdir()
-    (tmp_path / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
-
-    augmented = llm_module._augment_system_prompt_with_code_index(None, str(tmp_path))
-    assert augmented is not None
-    assert "gcode" in augmented
-
-
-def test_chat_completions_injects_code_index_skill_for_indexed_repo(
-    client: TestClient,
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    """The route teaches the agent to use gcode when project_path is indexed."""
-    (tmp_path / ".gobby").mkdir()
-    (tmp_path / ".gobby" / "project.json").write_text("{}", encoding="utf-8")
-
-    result = SimpleNamespace(
-        text="## Overview\n\nGrounded narrative.",
-        model="opus",
-        tool_use_count=3,
-        turns=4,
-        tools={"Bash": 2, "Read": 1},
-        usage=None,
-        applied_reasoning_effort=None,
-    )
-    provider = _FakeAgenticProvider(result)
-    monkeypatch.setattr(llm_module, "_build_agentic_provider", lambda config: provider)
-
-    response = client.post(
-        "/api/llm/chat/completions",
-        json={
-            "messages": [
-                {"role": "system", "content": "Base system prompt."},
-                {"role": "user", "content": "Document the auth module."},
-            ],
-            "project_path": str(tmp_path),
-        },
-    )
-
-    assert response.status_code == 200
-    assert len(provider.calls) == 1
-    system_prompt = provider.calls[0]["system_prompt"]
-    assert isinstance(system_prompt, str)
-    assert system_prompt.startswith("Base system prompt.")
-    assert "gcode" in system_prompt

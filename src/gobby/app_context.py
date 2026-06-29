@@ -13,7 +13,7 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any
 
-from gobby.ai import TextGenerationService
+from gobby.ai import TextGenerationService, ToolChatService
 from gobby.config.app import DaemonConfig
 from gobby.llm import LLMService
 from gobby.memory.manager import MemoryManager
@@ -53,6 +53,7 @@ class ServiceContainer:
     # Advanced Features
     memory_manager: MemoryManager | None = None
     text_generation_service: TextGenerationService | None = None
+    tool_chat_service: ToolChatService | None = None
     llm_service: LLMService | None = None
     vector_store: Any | None = None  # VectorStore (Qdrant)
 

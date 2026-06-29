@@ -35,6 +35,14 @@ from gobby.ai.text_generation import (
     TextGenerationService,
     build_daemon_text_generation_service,
 )
+from gobby.ai.tool_chat import (
+    ToolChatRequest,
+    ToolChatResult,
+    ToolChatService,
+    ToolLoopLimits,
+    ToolPolicy,
+    build_daemon_tool_chat_service,
+)
 from gobby.ai.vision import (
     ClaudeVisionExtractAdapter,
     LocalVisionExtractAdapter,
@@ -73,6 +81,11 @@ __all__ = [
     "TextGenerateAdapter",
     "TextGenerationRequest",
     "TextGenerationService",
+    "ToolChatRequest",
+    "ToolChatResult",
+    "ToolChatService",
+    "ToolLoopLimits",
+    "ToolPolicy",
     "VisionExtractAdapter",
     "VisionExtractRequest",
     "VisionExtractResult",
@@ -81,6 +94,7 @@ __all__ = [
     "build_daemon_ai_capability_registry",
     "build_daemon_audio_service",
     "build_daemon_text_generation_service",
+    "build_daemon_tool_chat_service",
     "build_daemon_vision_extract_service",
     "normalize_capability",
 ]

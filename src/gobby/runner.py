@@ -26,7 +26,7 @@ if TYPE_CHECKING:
     from gobby.adapters.codex_impl.client import CodexAppServerClient
     from gobby.agents.lifecycle_monitor import AgentLifecycleMonitor
     from gobby.agents.runner import AgentRunner
-    from gobby.ai import TextGenerationService
+    from gobby.ai import TextGenerationService, ToolChatService
     from gobby.code_index.nightly_reindex import CodeIndexNightlyFullReindexer
     from gobby.code_index.prune import CodeIndexPruner
     from gobby.config.app import DaemonConfig
@@ -135,6 +135,7 @@ class GobbyRunner:
 
     # Phase 2: services (init_services)
     text_generation_service: TextGenerationService | None
+    tool_chat_service: ToolChatService | None
     llm_service: LLMService | None
     vector_store: VectorStore | None
     memory_manager: MemoryManager | None

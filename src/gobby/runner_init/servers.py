@@ -41,6 +41,7 @@ def init_servers(runner: GobbyRunner) -> None:
         memory_sync_manager=runner.memory_sync_manager,
         memory_manager=runner.memory_manager,
         text_generation_service=runner.text_generation_service,
+        tool_chat_service=runner.tool_chat_service,
         llm_service=runner.llm_service,
         vector_store=runner.vector_store,
         mcp_manager=runner.mcp_proxy,
