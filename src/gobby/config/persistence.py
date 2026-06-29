@@ -218,6 +218,14 @@ class EmbeddingsConfig(BaseModel):
         default=None,
         description="Optional text prefix prepended to semantic-search queries before embedding.",
     )
+    catalog_key: str | None = Field(
+        default=None,
+        description=(
+            "Quant-qualified stable identity from the embedding catalog "
+            "(e.g. 'qwen3-8b-q8'). Decoupled from the provider model ID. "
+            "When set, gcode and diagnostics resolve model properties from this key."
+        ),
+    )
 
     @field_validator("dim")
     @classmethod

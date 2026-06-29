@@ -286,6 +286,61 @@ def _prompt_customization(
     return api_base_override, model_override, dim_override
 
 
+def _select_embedding_model(
+    *,
+    provider: str,
+    no_interactive: bool,
+    cli_overrides_supplied: bool,
+) -> str | None:
+    """Present the embedding model picker and return the selected catalog key.
+
+    Returns None when the picker should be skipped (non-interactive, CLI
+    overrides supplied, or provider doesn't support catalog selection).
+    """
+    if no_interactive or cli_overrides_supplied or provider in ("none", "openai", "openai-compatible"):
+        return None
+
+    from gobby.ai.embedding_catalog import DEFAULT_CATALOG_ID, get_spec, picker_keys
+
+    keys = picker_keys()
+    default_idx = keys.index(DEFAULT_CATALOG_ID) + 1 if DEFAULT_CATALOG_ID in keys else 1
+
+    click.echo("")
+    click.echo("Embedding Model")
+    click.echo("-" * 40)
+
+    for i, key in enumerate(keys, start=1):
+        spec = get_spec(key)
+        if spec is None:
+            continue
+        marker = " (default)" if i == default_idx else ""
+        quant_note = ""
+        if provider == "ollama" and not spec.ollama_quant_real:
+            quant_note = " [Ollama: F16 only]"
+        if provider == "lmstudio" and spec.compatibility.lmstudio == "experimental":
+            quant_note = " [experimental on LM Studio]"
+        click.echo(f"  [{i}] {spec.label}{marker}{quant_note}")
+    click.echo("")
+
+    try:
+        choice = click.prompt(
+            "Select embedding model",
+            type=click.IntRange(1, len(keys)),
+            default=default_idx,
+            show_default=False,
+        )
+    except (click.Abort, EOFError):
+        click.echo("")
+        click.echo("Using default embedding model.")
+        return DEFAULT_CATALOG_ID
+
+    selected_key: str = keys[choice - 1]
+    spec = get_spec(selected_key)
+    if spec is not None:
+        click.echo(f"Selected: {spec.label}")
+    return selected_key
+
+
 def _run_embedding_install(
     installer: Callable[..., dict[str, Any]],
     results: dict[str, dict[str, Any]],
@@ -349,6 +404,21 @@ def _run_embedding_install(
         provider_override=provider_override,
     )
 
+    # Model picker: select from catalog after provider selection.
+    # Skipped when CLI overrides are supplied, non-interactive, or provider
+    # doesn't support catalog selection (openai, openai-compatible, none).
+    cli_overrides_supplied = (
+        api_base_override is not None
+        or model_override is not None
+        or dim_override is not None
+        or provider_override is not None
+    )
+    catalog_key = _select_embedding_model(
+        provider=provider,
+        no_interactive=no_interactive,
+        cli_overrides_supplied=cli_overrides_supplied,
+    )
+
     click.echo("")
     if provider == "lmstudio":
         click.echo("Setting up LM Studio (may download model on first run)...")
@@ -364,6 +434,7 @@ def _run_embedding_install(
             model_override=model_override,
             api_base_override=api_base_override,
             dim_override=dim_override,
+            catalog_key=catalog_key,
         )
     except _EMBEDDING_INSTALLER_EXCEPTIONS as exc:
         error = f"Embedding installer failed for provider {provider}: {exc}"
@@ -394,6 +465,8 @@ def _run_embedding_install(
             if result.get("api_base"):
                 click.echo(f"  Endpoint: {result['api_base']}")
             click.echo(f"  Dimensions: {result.get('dim', 'unknown')}")
+            if result.get("catalog_key"):
+                click.echo(f"  Catalog: {result['catalog_key']}")
             if result.get("health_check"):
                 click.echo("  Health check: OK")
     else:

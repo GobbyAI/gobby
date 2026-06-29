@@ -36,6 +36,7 @@ def test_doctor_json_redacts_api_key(monkeypatch: pytest.MonkeyPatch) -> None:
         "endpoint": "http://localhost:1234/v1",
         "model": "nomic-embed-text",
         "dim": 768,
+        "catalog_key": None,
         "api_key_present": True,
         "api_key_fingerprint": hashlib.sha256(b"sk-test").hexdigest()[:8],
         "namespace_resolved": True,

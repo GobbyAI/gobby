@@ -20,8 +20,10 @@ from gobby.cli.installers.embedding import (
 from gobby.config.embedding_keys import (
     AI_EMBEDDING_API_BASE_KEY,
     AI_EMBEDDING_API_KEY_KEY,
+    AI_EMBEDDING_CATALOG_KEY,
     AI_EMBEDDING_DIM_KEY,
     AI_EMBEDDING_MODEL_KEY,
+    AI_EMBEDDING_QUERY_PREFIX_KEY,
     EMBEDDING_API_KEY_SECRET_NAME,
 )
 from gobby.storage.hub.protocol import HubDatabase
@@ -62,6 +64,15 @@ class TestProviderConfig:
 
 class TestInstallEmbedding:
     """Top-level install_embedding entry point."""
+
+    def setup_method(self) -> None:
+        self._smoke_patch = patch(
+            "gobby.cli.installers.embedding._semantic_smoke_test", return_value=True
+        )
+        self._smoke_patch.start()
+
+    def teardown_method(self) -> None:
+        self._smoke_patch.stop()
 
     def test_unknown_provider_returns_error(self) -> None:
         result = install_embedding(provider="bogus")
@@ -136,6 +147,15 @@ class TestInstallEmbedding:
 
 class TestInstallEmbeddingOverrides:
     """Override behavior for --embedding-url / --embedding-model / --embedding-dim."""
+
+    def setup_method(self) -> None:
+        self._smoke_patch = patch(
+            "gobby.cli.installers.embedding._semantic_smoke_test", return_value=True
+        )
+        self._smoke_patch.start()
+
+    def teardown_method(self) -> None:
+        self._smoke_patch.stop()
 
     @patch("gobby.cli.installers.embedding._persist_embedding_config")
     @patch("gobby.cli.installers.embedding._health_check_embedding", return_value=True)
@@ -579,6 +599,8 @@ class TestPersistEmbeddingConfig:
             AI_EMBEDDING_MODEL_KEY: "text-embedding-nomic-embed-text-v1.5@f16",
             AI_EMBEDDING_API_BASE_KEY: "http://localhost:1234/v1",
             AI_EMBEDDING_DIM_KEY: 768,
+            AI_EMBEDDING_QUERY_PREFIX_KEY: None,
+            AI_EMBEDDING_CATALOG_KEY: None,
         }
         # No duplicate namespaces
         assert not any(k.startswith("search.") for k in entries)
@@ -615,6 +637,8 @@ class TestPersistEmbeddingConfig:
             AI_EMBEDDING_MODEL_KEY: None,
             AI_EMBEDDING_API_BASE_KEY: None,
             AI_EMBEDDING_DIM_KEY: 0,
+            AI_EMBEDDING_QUERY_PREFIX_KEY: None,
+            AI_EMBEDDING_CATALOG_KEY: None,
         }
         mock_db.close.assert_called_once()
         assert mock_db.close.call_count == 1
@@ -730,6 +754,8 @@ class TestPersistEmbeddingConfig:
             AI_EMBEDDING_MODEL_KEY: "text-embedding-3-small",
             AI_EMBEDDING_API_BASE_KEY: None,
             AI_EMBEDDING_DIM_KEY: 1536,
+            AI_EMBEDDING_QUERY_PREFIX_KEY: None,
+            AI_EMBEDDING_CATALOG_KEY: None,
         }
         mock_db.close.assert_called_once()
         assert mock_db.close.call_count == 1

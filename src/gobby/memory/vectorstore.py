@@ -15,6 +15,12 @@ from typing import Any, Literal
 import httpx
 from qdrant_client import QdrantClient
 from qdrant_client.http.exceptions import ResponseHandlingException, UnexpectedResponse
+from qdrant_client.http.models.models import (
+    CreateAlias,
+    CreateAliasOperation,
+    DeleteAlias,
+    DeleteAliasOperation,
+)
 from qdrant_client.models import (
     Distance,
     FieldCondition,
@@ -683,6 +689,59 @@ class VectorStore:
                 self._raise_if_recoverable(exc)
                 raise
 
+    async def create_alias(self, collection_name: str, alias_name: str) -> None:
+        """Create or repoint an alias to a physical collection.
+
+        If the alias already exists, it is repointed to the new collection.
+        """
+        client = await self._ensure_initialized()
+        async with self._collection_lifecycle_lock:
+            try:
+                await asyncio.to_thread(
+                    client.update_collection_aliases,
+                    change_aliases_operations=[
+                        CreateAliasOperation(
+                            create_alias=CreateAlias(
+                                collection_name=collection_name,
+                                alias_name=alias_name,
+                            )
+                        )
+                    ],
+                )
+            except Exception as exc:
+                self._raise_if_recoverable(exc)
+                raise
+
+    async def delete_alias(self, alias_name: str) -> None:
+        """Delete an alias. Does not delete the underlying collection."""
+        client = await self._ensure_initialized()
+        async with self._collection_lifecycle_lock:
+            try:
+                await asyncio.to_thread(
+                    client.update_collection_aliases,
+                    change_aliases_operations=[
+                        DeleteAliasOperation(
+                            delete_alias=DeleteAlias(alias_name=alias_name)
+                        )
+                    ],
+                )
+            except Exception as exc:
+                self._raise_if_recoverable(exc)
+                raise
+
+    async def get_aliases(self) -> dict[str, str]:
+        """Return a mapping of alias_name -> collection_name for all aliases."""
+        client = await self._ensure_initialized()
+        try:
+            response = await asyncio.to_thread(client.get_aliases)
+        except Exception as exc:
+            self._raise_if_recoverable(exc)
+            raise
+        result: dict[str, str] = {}
+        for alias in response.aliases:
+            result[alias.alias_name] = alias.collection_name
+        return result
+
     async def count(self) -> int:
         """Return the number of points in the collection."""
         client = await self._ensure_initialized()
@@ -841,3 +900,70 @@ class VectorStore:
         if self._client is not None:
             await asyncio.to_thread(self._client.close)
             self._client = None
+
+
+# ---------------------------------------------------------------------------
+# Collection name resolver for staged embedding switches
+# ---------------------------------------------------------------------------
+
+# Kinds of Qdrant embedding collections managed by the daemon.
+EMBEDDING_COLLECTION_KINDS: tuple[str, ...] = (
+    "memories",
+    "tool_embeddings",
+    "gobby_github_issues",
+)
+
+
+class CollectionNameResolver:
+    """Resolves active alias names vs versioned physical collection names.
+
+    During an embedding switch, new collections are built under versioned
+    physical names (e.g. ``memories@4096-abc123``) while the old collections
+    keep serving under the active alias (e.g. ``memories``). At flip time,
+    the alias is repointed to the new physical collection.
+
+    Build code operates on ``physical_name(kind, run_id)`` only.
+    Serving paths resolve ``active_alias(kind)`` only.
+    This separation prevents build code from accidentally touching the
+    live collection.
+    """
+
+    def __init__(self, kinds: tuple[str, ...] = EMBEDDING_COLLECTION_KINDS) -> None:
+        self._kinds = kinds
+
+    @property
+    def kinds(self) -> tuple[str, ...]:
+        return self._kinds
+
+    def active_alias(self, kind: str) -> str:
+        """Return the serving alias name for a collection kind.
+
+        This is the name that serving paths (search, upsert) use.
+        """
+        return kind
+
+    def physical_name(self, kind: str, run_id: str) -> str:
+        """Return the versioned physical collection name for a build run.
+
+        Format: ``{kind}@{run_id}`` (e.g. ``memories@4096-abc123``).
+        """
+        return f"{kind}@{run_id}"
+
+    def parse_physical_name(self, name: str) -> tuple[str, str] | None:
+        """Parse a physical name back into (kind, run_id), or None if not physical."""
+        if "@" not in name:
+            return None
+        kind, run_id = name.split("@", 1)
+        return kind, run_id
+
+    def is_physical_name(self, name: str) -> bool:
+        """Return True if the name is a versioned physical collection name."""
+        return "@" in name
+
+    def all_physical_names(self, run_id: str) -> list[str]:
+        """Return physical names for all managed kinds for a given run."""
+        return [self.physical_name(kind, run_id) for kind in self._kinds]
+
+    def all_active_aliases(self) -> list[str]:
+        """Return active alias names for all managed kinds."""
+        return [self.active_alias(kind) for kind in self._kinds]
