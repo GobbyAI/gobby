@@ -38,6 +38,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any
 from urllib.parse import quote
 
+from gobby.agents.spawn_cache_policy import merge_spawn_path
 from gobby.ai._text_generation_adapters import (
     _droid_isolated_env,
     _extend_reasoning_args,
@@ -379,10 +380,9 @@ class CodexSpawnToolChatAdapter:
             work = Path(work_str)
             output_path = work / "last-message.txt"
             command = self._build_command(request, model=model, output_path=output_path)
-            # Ensure ~/.gobby/bin (gcode install location) is on the sandbox PATH.
-            gobby_bin = str(Path.home() / ".gobby" / "bin")
-            env_path = os.environ.get("PATH", "")
-            env = {"PATH": f"{gobby_bin}{os.pathsep}{env_path}"}
+            # gcode (the read-only investigation surface) is installed in the
+            # managed ~/.gobby/bin; merge_spawn_path puts it on the sandbox PATH.
+            env = {"PATH": merge_spawn_path(None)}
             stdout = await _run_cli_text_generation_command(
                 "Codex tool_chat",
                 command,
@@ -503,6 +503,7 @@ class DroidSpawnToolChatAdapter:
             base_env = os.environ.copy()
             _seed_droid_factory_state(base_env, temp_home)
             isolated_env = _droid_isolated_env(base_env, temp_home)
+            isolated_env["PATH"] = merge_spawn_path(isolated_env.get("PATH"))
             stdout = await _run_cli_text_generation_command(
                 "Droid tool_chat",
                 command,
@@ -591,7 +592,7 @@ class GrokSpawnToolChatAdapter:
                 command,
                 neutral_cwd=work,
                 timeout_seconds=self._timeout_seconds,
-                env_overrides={},
+                env_overrides={"PATH": merge_spawn_path(None)},
             )
         text = ""
         session_id = ""
@@ -702,6 +703,7 @@ class QwenSpawnToolChatAdapter:
         env: dict[str, str] = {
             "QWEN_CODE_SUPPRESS_YOLO_WARNING": "1",
             "SEATBELT_PROFILE": _QWEN_SEATBELT_PROFILE_NAME,
+            "PATH": merge_spawn_path(None),
         }
         endpoint = self._select_endpoint(model)
         if endpoint is not None:

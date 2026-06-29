@@ -467,6 +467,7 @@ async def test_droid_adapter_captures_narrative_and_counts_tools(
     ) -> str:
         captured["env"] = env_overrides
         captured["provider"] = provider_name
+        assert ".gobby/bin" in env_overrides["PATH"]
         return _DROID_STREAM
 
     monkeypatch.setattr(spawn, "_seed_droid_factory_state", lambda *a, **k: None)
@@ -555,6 +556,7 @@ async def test_grok_adapter_captures_narrative_from_json(
         timeout_seconds: float,
         env_overrides: dict[str, str],
     ) -> str:
+        assert ".gobby/bin" in env_overrides["PATH"]
         return '{"text":"## Auth\\n\\nNarrative citing src/auth.rs:10.","stopReason":"EndTurn"}'
 
     monkeypatch.setattr(spawn, "_run_cli_text_generation_command", fake_run)
@@ -708,6 +710,7 @@ async def test_qwen_adapter_captures_narrative_and_counts_tools(
         captured["env"] = env_overrides
         assert env_overrides.get("QWEN_CODE_SUPPRESS_YOLO_WARNING") == "1"
         assert env_overrides.get("SEATBELT_PROFILE") == "gobby-open"
+        assert ".gobby/bin" in env_overrides["PATH"]
         # Verify the seatbelt profile was written before the temp dir is cleaned up.
         profile_path = neutral_cwd / ".qwen" / "sandbox-macos-gobby-open.sb"
         assert profile_path.exists(), f"Seatbelt profile not found at {profile_path}"
